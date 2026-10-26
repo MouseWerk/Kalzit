@@ -436,6 +436,7 @@ mod tests {
                 text: "cut".into(),
             }],
             executed_query: Some("orders.find(...)".into()),
+            distributable: false,
         };
         let mut named = column("p");
         named.name = Some("Preis".into());

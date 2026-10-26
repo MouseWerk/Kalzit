@@ -45,6 +45,7 @@ import { Inspect } from "../dashboards/ui/Inspect";
 import {
   type DatasourceSummary,
   datasourcesQuery,
+  fetchDistribution,
   kindsQuery,
   runQuery,
   sourceAccess,
@@ -507,6 +508,22 @@ function Explore({ orgId }: { orgId: string }) {
                             }
                           : undefined
                       }
+                      distribution={(_refId, ask, signal) => {
+                        // Over the whole result of the run shown, in the database.
+                        const timeRange = { from: submitted.from, to: submitted.to };
+                        return fetchDistribution(
+                          orgId,
+                          {
+                            datasourceId: submitted.datasourceId,
+                            query: submitted.query,
+                            timeRange,
+                            intervalMs: intervalFor(timeRange),
+                            variables: {},
+                            ...ask,
+                          },
+                          signal,
+                        );
+                      }}
                       stepsRun={stepsRun}
                       kindOf={(id) => list.find((source) => source.id === id)?.kind}
                     />

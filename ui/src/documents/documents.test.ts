@@ -18,7 +18,15 @@ import { serverSchema } from "../features/datasources/test/fakeMongo";
 import { formatValue } from "../panels/frame";
 import { distribution, histogram } from "./distribution";
 import { filterable, filterablePath, toExtendedJson } from "./filter";
-import { filterPath, mongoPath, schemaPath, valueAt, valuesAt } from "./paths";
+import {
+  filterPath,
+  mongoPath,
+  schemaPath,
+  stepsOf,
+  valueAt,
+  valuesAlong,
+  valuesAt,
+} from "./paths";
 import {
   columnProblems,
   hasProjectionProblems,
@@ -94,6 +102,23 @@ describe("paths", () => {
     expect(valueAt(docs[0], "items.1.p")).toBe(2);
     // A typed value is a leaf, not an object to walk into.
     expect(valueAt(docs[0], "_id.value")).toBeUndefined();
+  });
+
+  it("finds the keys behind a schema path, also keys with dots, umlauts and emoji", () => {
+    const stored = [
+      { other: 1 },
+      { "preis.netto": 10, preis: { netto: 99 }, "Größe 🙂": "S" },
+      { items: [{}, { "a.b": [{ c: 1 }] }] },
+    ];
+    // The longer key wins where both readings exist.
+    expect(stepsOf(stored, "preis.netto")).toEqual(["preis.netto"]);
+    expect(stepsOf([{ preis: { netto: 99 } }], "preis.netto")).toEqual(["preis", "netto"]);
+    expect(stepsOf(stored, "Größe 🙂")).toEqual(["Größe 🙂"]);
+    expect(stepsOf(stored, "items[].a.b[].c")).toEqual(["items", null, "a.b", null, "c"]);
+    // A path no document has is split at its dots.
+    expect(stepsOf(stored, "x.y[]")).toEqual(["x", "y", null]);
+    expect(valuesAlong(stored[2], ["items", null, "a.b", null, "c"])).toEqual([1]);
+    expect(valuesAlong(stored[1], ["preis.netto"])).toEqual([10]);
   });
 });
 

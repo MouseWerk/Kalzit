@@ -211,6 +211,20 @@
     overflow: auto;
   }
 
+  /* What the numbers count: the whole result or the loaded documents, and the request's state. */
+  .dist__scope {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .dist__scope--failed {
+    color: var(--danger-text);
+  }
+
   .dist__stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(var(--size-label), 1fr));

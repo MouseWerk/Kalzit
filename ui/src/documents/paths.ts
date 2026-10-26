@@ -68,6 +68,82 @@ export function valuesAt(document: unknown, path: string): unknown[] {
 }
 
 /**
+ * A field path as its keys, unescaped, with `null` for "every element of the array here": the
+ * form the distribution route takes. Unlike a schema path it is never ambiguous, since a key
+ * may itself hold dots (`preis.netto`).
+ */
+export type PathStep = string | null;
+
+/** Every value along `steps` in one document, as `valuesAt` for a schema path. */
+export function valuesAlong(document: unknown, steps: readonly PathStep[]): unknown[] {
+  let current: unknown[] = [document];
+  for (const step of steps) {
+    const next: unknown[] = [];
+    for (const outer of current) {
+      const value = unwrap(outer);
+      if (step === null) {
+        if (Array.isArray(value)) {
+          next.push(...value);
+        }
+      } else if (isObject(value) && Object.hasOwn(value, step)) {
+        next.push(value[step]);
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * The keys behind a schema path, read from the documents themselves: `a.b` is the key `a.b` in
+ * a document that has one, else `a` then `b`. The first document with the path decides; when no
+ * document has it, the dots split it.
+ */
+export function stepsOf(documents: readonly unknown[], path: string): PathStep[] {
+  const found = (value: unknown, rest: string): PathStep[] | null => {
+    if (rest === "") {
+      return [];
+    }
+    const inner = unwrap(value);
+    if (rest.startsWith("[]")) {
+      if (!Array.isArray(inner)) {
+        return null;
+      }
+      const after = rest.slice(2).replace(/^\./, "");
+      for (const element of inner) {
+        const tail = found(element, after);
+        if (tail !== null) {
+          return [null, ...tail];
+        }
+      }
+      return after === "" ? [null] : null;
+    }
+    if (!isObject(inner)) {
+      return null;
+    }
+    // Longest keys first, so `a.b` as one key wins over `a` then `b` where both exist.
+    const keys = Object.keys(inner)
+      .filter((key) => rest === key || rest.startsWith(`${key}.`) || rest.startsWith(`${key}[]`))
+      .sort((a, b) => b.length - a.length);
+    for (const key of keys) {
+      const after = rest.slice(key.length).replace(/^\./, "");
+      const tail = found(inner[key], after);
+      if (tail !== null) {
+        return [key, ...tail];
+      }
+    }
+    return null;
+  };
+  for (const document of documents) {
+    const resolved = found(document, path);
+    if (resolved !== null) {
+      return resolved;
+    }
+  }
+  return steps(path).map((step) => (step === "[]" ? null : step));
+}
+
+/**
  * The one value at a dotted MongoDB path (`customer.address.city`, `items.0.price`); undefined
  * when the document has no such field.
  */

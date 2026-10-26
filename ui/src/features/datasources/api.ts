@@ -2,6 +2,8 @@ import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isApiError, isRecord, request } from "../../api/client";
 import type {
   DatasourceAccess,
+  DistributionRequest,
+  FieldDistribution,
   FieldSchema,
   Page,
   Permission,
@@ -601,6 +603,42 @@ export async function runQuery(
     await send("POST", orgPath(orgId, "query"), body, signal),
     isQueryResponse,
     "query",
+  );
+}
+
+/** A field distribution as the server answers it; enough to draw it. */
+export function isFieldDistribution(value: unknown): value is FieldDistribution {
+  return (
+    isRecord(value) &&
+    ["total", "documents", "missing", "values", "nulls", "distinct"].every(
+      (key) => typeof value[key] === "number",
+    ) &&
+    Array.isArray(value.top) &&
+    value.top.every((entry) => isRecord(entry) && typeof entry.count === "number") &&
+    Array.isArray(value.bins) &&
+    value.bins.every(
+      (bin) =>
+        isRecord(bin) &&
+        typeof bin.from === "number" &&
+        typeof bin.to === "number" &&
+        typeof bin.count === "number",
+    )
+  );
+}
+
+/**
+ * `POST /query/distribution`: how a field's values are spread over the whole result of a free
+ * query, computed in the database. Aborting the signal cancels the request.
+ */
+export async function fetchDistribution(
+  orgId: string,
+  body: DistributionRequest,
+  signal?: AbortSignal,
+): Promise<FieldDistribution> {
+  return expectShape(
+    await send("POST", orgPath(orgId, "query", "distribution"), body, signal),
+    isFieldDistribution,
+    "field distribution",
   );
 }
 

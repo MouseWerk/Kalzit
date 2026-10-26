@@ -1042,6 +1042,71 @@ MongoDB names types by their alias, as `$type` queries do (`double`, `string`, `
 `object`, `array`). The schema counts against the response size limit like the documents: the
 paths that no longer fit are left out, with the notice `documents.schema_cut`.
 
+`distributable: true` (omitted when false) says the source computes field distributions over the
+whole result (MongoDB, see below). For the other document sources the UI counts the documents it
+has loaded and says so.
+
+## Field distribution: `POST /orgs/{orgId}/query/distribution`
+
+How the values of one field path are spread over **all** documents of a query's result, computed
+in the database, not over the page the UI loaded. Same rights as running the query:
+`datasources:query` on the source (role or grant; a source the caller cannot query is
+`404 not_found`). The query's checks, time limit (`maxTimeMS` and the request), concurrency slots
+and target rules apply as for `POST /query`; the document limit does not, since nothing but the
+counts is sent back.
+
+```json
+{ "datasourceId": "...", "query": { "collection": "bestellungen", "pipeline": "[...]" },
+  "timeRange": { "from": 1700000000000, "to": 1800000000000 }, "intervalMs": 60000,
+  "variables": { "land": "AT" }, "path": ["items", null, "preis.netto"], "top": 10, "bins": 20 }
+```
+
+- `path` is the field path as its keys, as stored: a key may hold dots, a leading `$`, umlauts or
+  emoji, and is never read as a dotted path or an operator. `null` means "every element of the
+  array here", as `[]` in a schema path: `items[].preis.netto` with the key `preis.netto` is
+  `["items", null, "preis.netto"]`. 1 to 64 steps, at most 4 KiB of keys.
+- `top` (1 to 100, default 10) most common values, `bins` (1 to 100, default 20) histogram bins.
+
+Answer `FieldDistribution`:
+
+```json
+{ "total": 1200, "documents": 1180, "missing": 20, "values": 3400, "nulls": 12,
+  "distinct": 57, "distinctCapped": false,
+  "types": [{ "name": "int", "count": 3300 }, { "name": "null", "count": 12 }, { "name": "string", "count": 88 }],
+  "top": [{ "value": 2, "count": 940 }, { "value": { "$type": "int64", "value": "9007199254740993" }, "count": 3 }],
+  "scale": "number", "min": 1, "max": { "$type": "int64", "value": "9007199254740993" },
+  "bins": [{ "from": 1, "to": 450359962737050.6, "count": 3390 }] }
+```
+
+- `total` documents in the result, `documents` with the path, `missing` without it.
+- `values` counts every value at the path, array elements one by one; objects and arrays are no
+  values (their fields and elements have paths) but appear in `types`. `nulls` counts `null`
+  values. `types` uses the schema's type names, most common first.
+- `distinct` is counted up to 100,000; `distinctCapped` says there are more.
+- `top` values are typed as in documents, so a value can be filtered by as it came; values that
+  no longer fit the response size limit end the list.
+- `scale` follows the most common kind of value: `number` (`double`, `int`, `long`, `decimal`;
+  `NaN` and infinities left out) or `date` (bins in Unix milliseconds); without either, `min` and
+  `max` are of the texts and there are no bins. `bins` are equal-width from the smallest to the
+  largest value; a single value is one bin.
+- Kinds that cannot compute it in the source answer `422 query_rejected` with
+  `distribution.unsupported` (the UI then counts the documents it has loaded and labels the
+  numbers that way).
+
+**MongoDB** appends reading stages to the query's own (a `find` becomes `$match`, `$sort`, `$skip`,
+`$limit` and `$project` first): a `$project` that gathers the values per document with `$getField`
+(MongoDB 5.0 or later), an `$unwind`, and a `$facet` that counts types, top and distinct values
+and the ranges in one pass; the histogram is a second aggregation over the same query with a
+`$group` by bin, since equal-width bins need the range first. The appended stages pass the same
+read-only check as a query's (`mongodb.stage_not_allowed` and the others).
+
+### Panel: `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution`
+
+The same for a stored target of a panel (`refId`), for whoever may read the dashboard, with the
+rules of the panel route below for variables and dashboards the caller cannot read. Body
+`PanelDistributionRequest`: `refId`, `timeRange`, optional `intervalMs`, `variables`, `path`,
+`top`, `bins`. An unknown panel or `refId` is `404 not_found`.
+
 ## A dashboard's stored queries
 
 Both routes run only what the dashboard's current version stores; the request adds the time
@@ -1433,6 +1498,16 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.self_dependency` | `name` | the options request sends the variable's own value |
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
 | `variables.not_a_frame` | | the variable's query does not answer a table (no `field`) |
+
+### Field distributions
+
+| Reason | Params | When |
+|---|---|---|
+| `distribution.path_length` | `max` | `422 validation`, `field: path`: not 1 to `max` steps |
+| `distribution.path_too_long` | `max` | `422 validation`, `field: path`: the keys hold more than `max` bytes together |
+| `distribution.path_invalid` | | `422 validation`, `field: path`: no key at all, or a key with a NUL character |
+| `distribution.size` | `max` | `422 validation`, `field: top` or `bins`: outside 1 to `max` |
+| `distribution.unsupported` | `kind` | `422 query_rejected`: the kind computes no distribution in the source; the UI counts the loaded documents |
 
 ### Analysis steps and expressions
 

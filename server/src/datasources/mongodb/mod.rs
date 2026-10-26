@@ -10,6 +10,7 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod distribution;
 pub mod documents;
 pub mod pipeline;
 pub mod relay;
@@ -558,6 +559,62 @@ struct FindPlan {
     skip: u64,
 }
 
+/// The query, bound and checked: a pipeline, or a `find`.
+fn plan(q: &Query, binder: &Binder) -> Result<Plan, SourceError> {
+    match &q.pipeline {
+        Some(text) => {
+            if q.filter.is_some() || q.projection.is_some() || q.sort.is_some() || q.limit.is_some() || q.skip.is_some()
+            {
+                return Err(SourceError::rejected(
+                    "mongodb.pipeline_and_find",
+                    "a query is either a pipeline or a find with filter, projection, sort, limit and skip",
+                ));
+            }
+            Ok(Plan::Aggregate(binder.pipeline(text)?))
+        }
+        None => {
+            let filter = pipeline::parse_document("filter", q.filter.as_deref())?.unwrap_or_default();
+            let projection = pipeline::parse_document("projection", q.projection.as_deref())?;
+            let sort = pipeline::parse_document("sort", q.sort.as_deref())?;
+            Ok(Plan::Find(Box::new(FindPlan {
+                filter: binder.query_document(filter)?,
+                projection: projection.map(|p| binder.projection(p)).transpose()?,
+                sort: sort.map(|s| binder.query_document(s)).transpose()?,
+                // As in MongoDB, a limit of 0 is no limit (the document limit still holds).
+                limit: q.limit.filter(|l| *l > 0),
+                skip: q.skip.unwrap_or(0),
+            })))
+        }
+    }
+}
+
+impl Plan {
+    /// The query as pipeline stages, for stages appended after it: a `find` becomes `$match`,
+    /// `$sort`, `$skip`, `$limit` and `$project`, in the order the server applies them.
+    fn into_stages(self) -> Vec<Document> {
+        match self {
+            Plan::Aggregate(stages) => stages,
+            Plan::Find(find) => {
+                let FindPlan { filter, projection, sort, limit, skip } = *find;
+                let mut stages = vec![doc! { "$match": filter }];
+                if let Some(s) = sort {
+                    stages.push(doc! { "$sort": s });
+                }
+                if skip > 0 {
+                    stages.push(doc! { "$skip": skip.min(i64::MAX as u64) as i64 });
+                }
+                if let Some(l) = limit {
+                    stages.push(doc! { "$limit": l.min(i64::MAX as u64) as i64 });
+                }
+                if let Some(p) = projection {
+                    stages.push(doc! { "$project": p });
+                }
+                stages
+            }
+        }
+    }
+}
+
 /// Ordered Extended JSON (relaxed) for the executed query.
 fn ext_json(value: &Bson) -> String {
     match value {
@@ -814,35 +871,7 @@ impl DataSourcePlugin for MongoDb {
             Binder { range: req.range, interval_ms: req.interval_ms, variables: &req.variables, max_documents: max };
         let fp = fingerprint(&req);
         let offset = cursor_offset(req.cursor.as_deref(), &fp)?;
-        let plan = match &q.pipeline {
-            Some(text) => {
-                if q.filter.is_some()
-                    || q.projection.is_some()
-                    || q.sort.is_some()
-                    || q.limit.is_some()
-                    || q.skip.is_some()
-                {
-                    return Err(SourceError::rejected(
-                        "mongodb.pipeline_and_find",
-                        "a query is either a pipeline or a find with filter, projection, sort, limit and skip",
-                    ));
-                }
-                Plan::Aggregate(binder.pipeline(text)?)
-            }
-            None => {
-                let filter = pipeline::parse_document("filter", q.filter.as_deref())?.unwrap_or_default();
-                let projection = pipeline::parse_document("projection", q.projection.as_deref())?;
-                let sort = pipeline::parse_document("sort", q.sort.as_deref())?;
-                Plan::Find(Box::new(FindPlan {
-                    filter: binder.query_document(filter)?,
-                    projection: projection.map(|p| binder.projection(p)).transpose()?,
-                    sort: sort.map(|s| binder.query_document(s)).transpose()?,
-                    // As in MongoDB, a limit of 0 is no limit (the document limit still holds).
-                    limit: q.limit.filter(|l| *l > 0),
-                    skip: q.skip.unwrap_or(0),
-                }))
-            }
-        };
+        let plan = plan(&q, &binder)?;
         // Everything is checked before Kalzit connects.
         let s: Settings = conn.settings_as()?;
         let shared = shared(conn).await?;
@@ -876,7 +905,12 @@ impl DataSourcePlugin for MongoDb {
                 let FindPlan { filter, projection, sort, limit, skip } = *find_plan;
                 if limit.is_some_and(|l| offset >= l) {
                     // Past the query's own limit: an empty page.
-                    let set = DocumentSet { documents: Vec::new(), schema: Vec::new(), ..Default::default() };
+                    let set = DocumentSet {
+                        documents: Vec::new(),
+                        schema: Vec::new(),
+                        distributable: true,
+                        ..Default::default()
+                    };
                     return Ok(QueryResult::Documents { documents: set });
                 }
                 let fetch = limit.map_or(max + 1, |l| (l - offset).min(max + 1));
@@ -950,8 +984,60 @@ impl DataSourcePlugin for MongoDb {
             truncated: cut.map(|r| Truncated { limit: count.min(u64::from(u32::MAX)) as u32, reason: Some(r.into()) }),
             notices,
             executed_query: Some(executed),
+            distributable: true,
         };
         Ok(QueryResult::Documents { documents: set })
+    }
+
+    async fn distribution(
+        &self,
+        conn: &Connection,
+        req: SourceQuery,
+        spec: &crate::datasources::distribution::DistributionSpec,
+    ) -> Result<crate::shapes::FieldDistribution, SourceError> {
+        let q: Query = req.parse()?;
+        pipeline::check_collection(&q.collection)?;
+        let max = req.limits.max_rows.max(1) as u64;
+        let binder =
+            Binder { range: req.range, interval_ms: req.interval_ms, variables: &req.variables, max_documents: max };
+        let base = plan(&q, &binder)?.into_stages();
+        let summary_stages = distribution::summary_stages(spec);
+        pipeline::check_built(&summary_stages)?;
+        // Everything is checked before Kalzit connects.
+        let shared = shared(conn).await?;
+        let timeout = req.limits.timeout;
+        let started = std::time::Instant::now();
+        let coll = shared.client.database(&shared.database).collection::<Document>(&q.collection);
+        // Both aggregations share the query's time limit.
+        let run = |appended: Vec<Document>| {
+            let mut stages = base.clone();
+            stages.extend(appended);
+            let left = timeout.saturating_sub(started.elapsed()).max(Duration::from_millis(1));
+            let coll = coll.clone();
+            let shared = shared.clone();
+            async move {
+                shared.guard()?;
+                let mark = shared.relay.mark();
+                let fail = |e: mongodb::error::Error| shared.fail(&e, mark, timeout);
+                let cursor = coll.aggregate(stages).max_time(left).await.map_err(fail)?;
+                let rows: Vec<Document> = cursor.try_collect().await.map_err(fail)?;
+                Ok::<_, SourceError>(rows)
+            }
+        };
+        let answer = run(summary_stages).await?;
+        let (mut out, range) =
+            distribution::read_summary(answer.first().unwrap_or(&Document::new()), &req.limits.budget);
+        if let Some(range) = range {
+            let rows = if range.lo < range.hi {
+                let stages = distribution::histogram_stages(spec, range.scale, range.lo, range.hi);
+                pipeline::check_built(&stages)?;
+                run(stages).await?
+            } else {
+                Vec::new()
+            };
+            out.bins = distribution::bins(range, spec.bins, &rows);
+        }
+        Ok(out)
     }
 }
 

@@ -1374,6 +1374,48 @@ async fn viewers_run_the_stored_queries_of_dashboards_they_may_read() {
     t.finish().await;
 }
 
+/// Field distributions take the rights of the query they describe: `datasources:query` for a free
+/// query, reading the dashboard for a stored one.
+#[tokio::test]
+async fn distributions_need_the_rights_of_their_query() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let dashboard = t.dashboard(&ds, None).await;
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let free = t.path("/query/distribution");
+    let body = json!({ "datasourceId": ds, "query": { "sql": "SELECT id FROM verkauf" }, "timeRange": range(),
+                       "path": ["id"] });
+
+    // Viewers cannot query the source freely, so it does not exist for them here either.
+    let r = t.send(Method::POST, &free, Some(body.clone()), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text);
+    // The owner may; a SQL source computes no distribution, and says so.
+    let r = t.send(Method::POST, &free, Some(body.clone()), Some(&t.owner)).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "query_rejected"), "{}", r.text);
+    assert_eq!(r.body["error"]["reason"], "distribution.unsupported", "{}", r.text);
+    let mut bad = body.clone();
+    bad["bins"] = json!(0);
+    let r = t.send(Method::POST, &free, Some(bad), Some(&t.owner)).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("bins")), "{}", r.text);
+
+    // A stored target: reading the dashboard is enough, and its variables are checked as for
+    // the panel's queries.
+    let stored = |panel: &str| t.path(&format!("/dashboards/{dashboard}/panels/{panel}/distribution"));
+    let target = |ref_id: &str| json!({ "refId": ref_id, "timeRange": range(), "variables": { "land": "Schweiz" }, "path": ["id"] });
+    let r = t.send(Method::POST, &stored("p1"), Some(target("A")), Some(&viewer)).await;
+    assert_eq!(r.body["error"]["reason"], "distribution.unsupported", "{}", r.text);
+    let mut unknown = target("A");
+    unknown["variables"] = json!({ "nix": 1 });
+    let r = t.send(Method::POST, &stored("p1"), Some(unknown), Some(&viewer)).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("variables")), "{}", r.text);
+    for (panel, ref_id) in [("p1", "Z"), ("p9", "A")] {
+        let r = t.send(Method::POST, &stored(panel), Some(target(ref_id)), Some(&viewer)).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{panel} {ref_id}: {}", r.text);
+    }
+    t.finish().await;
+}
+
 /// A dashboard stored before a panel option rule existed keeps working: its queries run, it saves
 /// while that panel stays as it is, and older versions restore. Changing the panel means fixing it.
 #[tokio::test]

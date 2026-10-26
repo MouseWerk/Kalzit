@@ -20,12 +20,14 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::dashboards::model::{self, DashboardModel, VariableType};
+use crate::datasources::distribution::DistributionSpec;
 use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::shapes::{
-    ErrorBody, FieldType, PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult,
-    VariableOption, VariableOptionsRequest, VariableOptionsResponse,
+    DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest, PanelQueryRequest,
+    QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption, VariableOptionsRequest,
+    VariableOptionsResponse,
 };
 
 pub fn routes() -> Vec<RouteDef> {
@@ -45,7 +47,83 @@ pub fn routes() -> Vec<RouteDef> {
             Access::OrgMember,
             variable_options,
         ),
+        // Field distributions: the same rights as running the query they describe.
+        route(Method::POST, "/orgs/{orgId}/query/distribution", Access::OrgMember, distribution),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution",
+            Access::OrgMember,
+            panel_distribution,
+        ),
     ]
+}
+
+/// How the values of a field path are spread over the whole result of a free query; needs
+/// `datasources:query` on the source (role or grant), as running it does.
+async fn distribution(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    JsonBody(req): JsonBody<DistributionRequest>,
+) -> ApiResult<Json<FieldDistribution>> {
+    check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
+    check_variables(&req.variables)?;
+    let spec = DistributionSpec::new(&req.path, req.top, req.bins)?;
+    check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(&req.datasource_id)).await?;
+    let d = crate::datasources::distribution::run(
+        &state,
+        &ctx,
+        &req.datasource_id,
+        req.query,
+        req.time_range,
+        req.interval_ms,
+        &req.variables,
+        None,
+        &spec,
+    )
+    .await?;
+    Ok(Json(d))
+}
+
+/// The same for a stored target of a panel, for whoever may read the dashboard (as its queries).
+async fn panel_distribution(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
+    JsonBody(req): JsonBody<PanelDistributionRequest>,
+) -> ApiResult<Json<FieldDistribution>> {
+    let model = readable_model(&state, &ctx, &dashboard_id).await?;
+    let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
+    let linked;
+    let panel = match &panel.library_panel_id {
+        Some(id) => {
+            let row =
+                crate::dashboards::library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
+            let content = crate::dashboards::library::stored_content(&row.model)?;
+            linked = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
+            &linked
+        }
+        None => panel,
+    };
+    let target = panel.targets.iter().find(|t| t.ref_id == req.ref_id).ok_or_else(ApiError::not_found)?;
+    check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
+    check_variables(&req.variables)?;
+    let spec = DistributionSpec::new(&req.path, req.top, req.bins)?;
+    let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
+    let d = crate::datasources::distribution::run(
+        &state,
+        &ctx,
+        &target.datasource_id,
+        target.query.clone(),
+        req.time_range,
+        req.interval_ms,
+        &variables,
+        Some(&identifiers),
+        &spec,
+    )
+    .await?;
+    Ok(Json(d))
 }
 
 /// Variables in one request, and the size of all their values together.

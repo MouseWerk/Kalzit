@@ -1,12 +1,13 @@
 import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
 import { asSteps, stepFrames } from "../../analysis/steps";
-import type { TimeRange } from "../../api/generated/shapes";
+import type { FieldDistribution, TimeRange } from "../../api/generated/shapes";
 import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
 import { BUSY_RETRY } from "../../api/retry";
-import { runQuery } from "../datasources/api";
+import type { DistributionAsk } from "../../panels/types";
+import { fetchDistribution, runQuery } from "../datasources/api";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { useSourceKinds } from "../datasources/useSourceKinds";
-import { runPanelQuery } from "./api";
+import { fetchPanelDistribution, runPanelQuery } from "./api";
 import {
   type PanelModel,
   storedQueryVariables,
@@ -122,6 +123,44 @@ export function usePanelResults(input: PanelQueryInput) {
         return outcomesOf(response, refIds);
       }, signal),
   });
+}
+
+/** The field distribution of a panel target `refId` over its whole result. */
+export type TargetDistribution = (
+  refId: string,
+  ask: DistributionAsk,
+  signal: AbortSignal,
+) => Promise<FieldDistribution>;
+
+/**
+ * Asks for field distributions the way the panel's queries run: a stored panel through the panel
+ * route (all a viewer may), a draft through the free route with the target being edited.
+ */
+export function panelDistribution(
+  input: Omit<PanelQueryInput, "run">,
+  kindOf: (datasourceId: string) => string | undefined,
+): TargetDistribution {
+  const { orgId, dashboardId, panel, range, source } = input;
+  const variables =
+    source === "stored"
+      ? storedQueryVariables(input.variables, input.saved ?? [])
+      : input.variables;
+  return (refId, ask, signal) => {
+    const common = { timeRange: range, intervalMs: intervalFor(range), variables, ...ask };
+    if (source === "stored") {
+      return fetchPanelDistribution(orgId, dashboardId, panel.id, { refId, ...common }, signal);
+    }
+    const target = panel.targets.find((t) => t.refId === refId);
+    if (target === undefined) {
+      return Promise.reject(new Error(`no query ${refId}`));
+    }
+    const query = normalizeQuery(target.query, kindOf(target.datasourceId));
+    return fetchDistribution(
+      orgId,
+      { datasourceId: target.datasourceId, query, ...common },
+      signal,
+    );
+  };
 }
 
 /** Whether a panel query key (`PANEL_DATA_KEY` first) is of the panel `[orgId, dashboardId, panelId, source]`. */

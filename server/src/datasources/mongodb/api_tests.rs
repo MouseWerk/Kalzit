@@ -545,3 +545,87 @@ async fn a_member_named_as_a_unix_socket_refuses_the_source() {
     assert_eq!(body["error"]["reason"], "mongodb.socket_member");
     t.finish().await;
 }
+
+/// The commands the fake received whose text contains `needle`, oldest first.
+fn sent_with(fake: &FakeMongo, needle: &str) -> Vec<Document> {
+    fake.commands.lock().unwrap().iter().filter(|c| c.to_string().contains(needle)).cloned().collect()
+}
+
+fn stage_names(command: &Document) -> Vec<String> {
+    command
+        .get_array("pipeline")
+        .unwrap()
+        .iter()
+        .map(|s| s.as_document().unwrap().keys().next().unwrap().clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn distributions_append_reading_stages_to_the_query() {
+    let fake = fake(Behaviour::default()).await;
+    let t = T::new().await;
+    let id = t.create_ok(settings(&fake)).await;
+    let r = t.query(&id, json!({ "collection": "orders", "filter": "{}" })).await;
+    assert_eq!(r["result"]["documents"]["distributable"], true, "{r}");
+
+    // From here the fake answers every aggregate with this summary.
+    fake.behaviour.lock().unwrap().documents = vec![doc! {
+        "docs": [{ "_id": null, "total": 5, "present": 4 }],
+        "types": [{ "_id": "int", "n": 4 }, { "_id": "null", "n": 1 }],
+        "top": [{ "_id": 3, "n": 2 }],
+        "distinct": [{ "n": 3 }],
+        "numbers": [{ "_id": null, "n": 4, "min": 1, "max": 9, "lo": 1.0, "hi": 9.0 }],
+        "dates": [],
+        "texts": [],
+    }];
+    let body = |query: Value, path: Value| {
+        json!({ "datasourceId": id, "query": query, "path": path, "top": 5,
+                "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 },
+                "variables": { "land": "Österreich" } })
+    };
+    let pipeline = json!({ "collection": "orders", "pipeline": r#"[{"$match": {"land": "${land}"}}]"# });
+    let path = json!(["items", null, "Größe.netto 🙂"]);
+    let (status, d) = t.send(Method::POST, "/query/distribution", Some(body(pipeline.clone(), path.clone()))).await;
+    assert_eq!(status, StatusCode::OK, "{d}");
+    assert_eq!([&d["total"], &d["documents"], &d["missing"]], [&json!(5), &json!(4), &json!(1)], "{d}");
+    assert_eq!([&d["values"], &d["nulls"], &d["distinct"]], [&json!(5), &json!(1), &json!(3)], "{d}");
+    assert_eq!(d["top"], json!([{ "value": 3, "count": 2 }]));
+    assert_eq!([&d["scale"], &d["min"], &d["max"]], [&json!("number"), &json!(1), &json!(9)], "{d}");
+    assert_eq!(d["bins"].as_array().unwrap().len(), 20, "{d}");
+
+    // What reached the server: the query's own stage with its bound variable, then the reading
+    // stages with the key as a literal; a time limit on both aggregations; nothing that writes.
+    let summary = sent_with(&fake, "$facet").pop().unwrap();
+    assert_eq!(stage_names(&summary), ["$match", "$project", "$unwind", "$facet"], "{summary}");
+    let stages = summary.get_array("pipeline").unwrap();
+    let m = stages[0].as_document().unwrap().get_document("$match").unwrap();
+    assert_eq!(m.get_str("land").unwrap(), "Österreich");
+    assert!(summary.to_string().contains("\"$literal\": \"Größe.netto 🙂\""), "{summary}");
+    let histogram = fake.last("aggregate").unwrap();
+    assert_eq!(stage_names(&histogram).last().map(String::as_str), Some("$group"), "{histogram}");
+    for c in [&summary, &histogram] {
+        assert!(c.get_i64("maxTimeMS").is_ok() || c.get_i32("maxTimeMS").is_ok(), "{c}");
+    }
+    for name in fake.command_names() {
+        assert!(!WRITE_COMMANDS.contains(&name.as_str()), "{name}");
+    }
+
+    // A find becomes stages in the order the server applies its parts.
+    let find = json!({ "collection": "orders", "filter": "{\"n\": {\"$gte\": 2}}", "sort": "{\"n\": 1}",
+                       "projection": "{\"n\": 1}", "skip": 1, "limit": 3 });
+    let (status, d) = t.send(Method::POST, "/query/distribution", Some(body(find, json!(["n"])))).await;
+    assert_eq!(status, StatusCode::OK, "{d}");
+    let sent = sent_with(&fake, "$facet").pop().unwrap();
+    assert_eq!(stage_names(&sent), ["$match", "$sort", "$skip", "$limit", "$project", "$project", "$unwind", "$facet"]);
+
+    // The query's checks still hold, and the path is checked; nothing is sent for either.
+    let before = sent_with(&fake, "$facet").len();
+    let write = json!({ "collection": "orders", "pipeline": r#"[{"$out": "kopie"}]"# });
+    let (status, e) = t.send(Method::POST, "/query/distribution", Some(body(write, path))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{e}");
+    assert_eq!(e["error"]["reason"], "mongodb.write_stage", "{e}");
+    let (status, e) = t.send(Method::POST, "/query/distribution", Some(body(pipeline, json!([null])))).await;
+    assert_eq!((status, e["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("path")), "{e}");
+    assert_eq!(sent_with(&fake, "$facet").len(), before);
+    t.finish().await;
+}
