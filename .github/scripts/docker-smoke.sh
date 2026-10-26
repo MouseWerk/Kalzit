@@ -4,8 +4,10 @@
 # 1. alone, with SQLite in a named volume: becomes healthy through `kalzit healthcheck`, runs as
 #    65532:65532, answers /readyz, the first-run page and /api/setup, prints the setup code with
 #    `kalzit setup-code`, falls back to a key file in the volume, and stops cleanly on SIGTERM;
-# 2. from deploy/docker/compose.postgres.yaml, with PostgreSQL and the secrets key as a Docker
-#    secret: becomes healthy and does not fall back to a key file.
+# 2. from deploy/docker/compose.postgres.yaml, with PostgreSQL and the secrets key, the database
+#    URL and the PostgreSQL password as Docker secrets: becomes healthy, does not fall back to a
+#    key file, uses the URL from the secret, and the password is neither in the log nor in the
+#    container's environment.
 #
 # Ports 18300 and 18301 on loopback; everything it creates is removed again.
 set -euo pipefail
@@ -78,12 +80,16 @@ echo "== $image from compose.postgres.yaml, PostgreSQL and a Docker secret"
 cp "$repo_root/deploy/docker/compose.postgres.yaml" "$repo_root/deploy/docker/compose.sqlite.yaml" "$work/"
 mkdir "$work/secrets"
 head -c 32 /dev/urandom | base64 > "$work/secrets/kalzit-secrets-key"
-chmod 0644 "$work/secrets/kalzit-secrets-key"
+# A password with characters that must be percent-encoded in the URL.
+password="pw/$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')+x"
+encoded=$(printf '%s' "$password" | sed -e 's|/|%2F|g' -e 's|+|%2B|g')
+printf '%s' "$password" > "$work/secrets/postgres-password"
+printf 'postgres://kalzit:%s@postgres:5432/kalzit\n' "$encoded" > "$work/secrets/kalzit-database-url"
+chmod 0644 "$work/secrets/"*
 {
   echo "KALZIT_IMAGE=${image%:*}"
   echo "KALZIT_VERSION=${image##*:}"
   echo "KALZIT_PORT=18301"
-  echo "KALZIT_DB_PASSWORD=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 } > "$work/.env"
 docker compose --project-directory "$work" -f "$work/compose.sqlite.yaml" config --quiet
 "${compose[@]}" config --quiet
@@ -97,6 +103,14 @@ curl -fsS http://127.0.0.1:18301/api/setup | grep -q '"needed":true' || fail "/a
 logs=$("${compose[@]}" logs kalzit 2>&1)
 if grep -q 'stored without OS protection' <<< "$logs"; then
   fail "the Docker secret kalzit-secrets-key was not used"
+fi
+grep -q 'postgres://kalzit:\*\*\*@postgres' <<< "$logs" || fail "Kalzit did not use the database URL from the secret"
+if grep -qF -e "$password" -e "$encoded" <<< "$logs"; then
+  fail "the database password appears in the log"
+fi
+if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$("${compose[@]}" ps -q kalzit)" \
+  | grep -q '^KALZIT_DATABASE_URL='; then
+  fail "the database URL is in the container's environment"
 fi
 "${compose[@]}" stop --timeout 30 kalzit > /dev/null
 echo "ok"

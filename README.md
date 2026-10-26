@@ -305,6 +305,7 @@ url = "postgres://kalzit@db.internal/kalzit"   # default: SQLite in the data dir
 | `KALZIT_CONFIG` | Path of the configuration file |
 | `KALZIT_<SECTION>_<KEY>` | Any configuration key, for example `KALZIT_SERVER_HTTP_ADDR`, `KALZIT_PATHS_DATA_DIR`, `KALZIT_DATABASE_URL`, `KALZIT_TLS_CERT_FILE` |
 | `KALZIT_SETTING_<KEY>` | Runtime settings, for example `KALZIT_SETTING_DATASOURCES_SQLITE_DIRS` |
+| `KALZIT_DATABASE_URL_FILE` | A file with the URL of Kalzit's own database (also the credential `kalzit-database-url`), so the password is in no variable |
 | `KALZIT_SECRETS_KEY` | Key for data source secrets (base64, 32 bytes) |
 | `KALZIT_SETUP_TOKEN` | A setup code of your own instead of a generated one |
 

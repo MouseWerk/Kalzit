@@ -12,16 +12,14 @@
 # the parallel compile jobs), KALZIT_BUILD_COMMIT and KALZIT_BUILD_DATE (shown in Settings, About;
 # the build context has no .git folder), VERSION, REVISION and CREATED (image labels).
 # Installation and runtime conventions: docs/guide/installation.md, "Docker".
+#
+# The base images are pinned by digest (multi-arch index); Dependabot proposes new digests.
 
-ARG RUST_IMAGE=rust:1-trixie
-ARG NODE_IMAGE=node:26-trixie-slim
-ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
-
-FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS node
+FROM --platform=$BUILDPLATFORM node:26-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS node
 
 # Rust and Node on the build platform, with a cross linker when the target differs. The license
 # list of the web interface needs cargo next to npm.
-FROM --platform=$BUILDPLATFORM ${RUST_IMAGE} AS base
+FROM --platform=$BUILDPLATFORM rust:1-trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS base
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && node --version && npm --version
@@ -48,19 +46,21 @@ WORKDIR /src
 
 # The web interface, with the license files of exactly the crates the target binary links.
 FROM base AS ui
+ARG TARGETARCH
 COPY ui/package.json ui/package-lock.json ui/
-RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci --prefix ui --no-audit --no-fund
+RUN --mount=type=cache,id=kalzit-npm-$TARGETARCH,target=/root/.npm,sharing=locked npm ci --prefix ui --no-audit --no-fund
 COPY Cargo.toml Cargo.lock ./
 COPY server server
 COPY release release
 COPY ui ui
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+RUN --mount=type=cache,id=kalzit-cargo-registry-$TARGETARCH,target=/usr/local/cargo/registry,sharing=locked \
     cargo fetch --locked \
     && cd ui \
     && KALZIT_LICENSES_STRICT=1 KALZIT_LICENSES_TARGET="$(cat /rust-target)" npm run build
 
 # The server binary with the web interface embedded.
 FROM base AS server
+ARG TARGETARCH
 COPY Cargo.toml Cargo.lock ./
 COPY server server
 COPY release release
@@ -71,8 +71,8 @@ ARG KALZIT_BUILD_COMMIT
 ARG KALZIT_BUILD_DATE
 # Public release keys trusted in addition to the compiled ones (docs/operations/updates.md).
 ARG KALZIT_UPDATE_PUBLIC_KEYS
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/src/target,sharing=locked \
+RUN --mount=type=cache,id=kalzit-cargo-registry-$TARGETARCH,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=kalzit-target-$TARGETARCH,target=/src/target,sharing=locked \
     set -eu; \
     for name in CARGO_BUILD_JOBS KALZIT_BUILD_COMMIT KALZIT_BUILD_DATE KALZIT_UPDATE_PUBLIC_KEYS; do \
       [ -n "$(printenv "$name" || true)" ] || unset "$name"; \
@@ -82,7 +82,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     install -D -m 0755 "target/$triple/$CARGO_PROFILE/kalzit" /out/usr/local/bin/kalzit; \
     install -d -m 0700 /out/data/kalzit
 
-FROM ${RUNTIME_IMAGE}
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
 ARG VERSION=dev
 ARG REVISION=
 ARG CREATED=

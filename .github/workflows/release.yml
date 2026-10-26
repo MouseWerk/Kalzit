@@ -199,10 +199,23 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
           tags="$image:$version"
+          # <major>.<minor> and latest move only forward: a fix release for an older line (0.2.4
+          # after 0.3.0) does not take them back.
           case "$version" in
             *-*) ;;
-            *) tags="$tags,$image:$(echo "$version" | cut -d. -f1,2),$image:latest" ;;
+            *)
+              git fetch --no-tags --force origin '+refs/tags/v*:refs/tags/v*'
+              stable=$(git tag --list 'v*' | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
+              line=$(echo "$version" | cut -d. -f1,2)
+              if [ "$(printf '%s\n' "$stable" "$version" | grep "^${line//./\\.}\." | sort -V | tail -n1)" = "$version" ]; then
+                tags="$tags,$image:$line"
+              fi
+              if [ "$(printf '%s\n' "$stable" "$version" | sort -V | tail -n1)" = "$version" ]; then
+                tags="$tags,$image:latest"
+              fi
+              ;;
           esac
+          echo "Tags: $tags"
           {
             echo "version=$version"
             echo "tags=$tags"
@@ -223,6 +236,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           sbom: true
+          provenance: mode=max
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             REVISION=${{ github.sha }}

@@ -51,7 +51,10 @@ Everything Kalzit keeps lives in `/var/lib/kalzit`, a volume: the SQLite databas
 code, the fallback key file and the update state. Keep it in a named volume (`kalzit-data`
 above); a new named volume takes over the right owner and mode from the image.
 
-- The container runs as the fixed user and group **65532:65532**, not as root.
+- The container runs as the fixed user and group **65532:65532**, not as root. Runtimes that
+  start containers with an arbitrary user ID (OpenShift, rootless Podman with user namespaces)
+  need a volume that user owns with mode 0700: give the pod an `fsGroup` or `chown` the volume to
+  the user it runs as.
 - Kalzit refuses a data directory that others may read: a bind mount must belong to 65532 and have
   mode 0700, for example `sudo install -d -o 65532 -g 65532 -m 0700 /srv/kalzit`, then
   `-v /srv/kalzit:/var/lib/kalzit`.
@@ -97,8 +100,41 @@ Create a key with `openssl rand -base64 32`. The key is never part of the image.
 it with your backups: without it the stored data source secrets cannot be decrypted. On Linux,
 the secret file must be readable by user 65532 inside the container (Compose mounts it as it is
 on the host): `sudo chown 65532 secrets/kalzit-secrets-key && sudo chmod 0400
-secrets/kalzit-secrets-key`. To change the key later, see `kalzit secrets rotate` in the
-[README](../../README.md#configuration).
+secrets/kalzit-secrets-key`.
+
+**Changing the key.** A Docker secret is read-only in the container, so Kalzit cannot replace it
+itself; `kalzit secrets rotate` re-encrypts the stored secrets with a new key you give it, and you
+swap the file afterwards. With Compose (add `-f` with the file you started, for example
+`-f compose.postgres.yaml`, to each `docker compose`):
+
+```sh
+openssl rand -base64 32 > secrets/kalzit-secrets-key.new
+docker compose stop kalzit
+docker compose run --rm -e KALZIT_SECRETS_NEW_KEY="$(cat secrets/kalzit-secrets-key.new)" \
+  kalzit secrets rotate
+mv secrets/kalzit-secrets-key secrets/kalzit-secrets-key.old
+mv secrets/kalzit-secrets-key.new secrets/kalzit-secrets-key   # same owner and mode as before
+docker compose up -d kalzit
+```
+
+Keep the old key as long as you keep backups taken before the change; they need it.
+
+### Database URL
+
+With PostgreSQL as Kalzit's own database, the URL holds the database password. Instead of
+`KALZIT_DATABASE_URL`, which `docker inspect` shows, give Kalzit the URL in a file, in this
+order:
+
+1. `KALZIT_DATABASE_URL`, when it is set and not empty;
+2. the file `KALZIT_DATABASE_URL_FILE` names;
+3. a **Docker secret** named `kalzit-database-url` (`/run/secrets/kalzit-database-url`);
+4. `database.url` in `kalzit.toml`.
+
+The file holds one line, `postgres://kalzit:<password>@postgres:5432/kalzit`. Characters with a
+meaning in a URL are percent-encoded in the password (`/` as `%2F`, `@` as `%40`, `+` as `%2B`);
+a password from `openssl rand -hex 24` needs none. The log shows the URL with `***` for the
+password, and SQLite data sources may not read the file. Like the key, the file must be readable
+by user 65532.
 
 ### Compose
 
@@ -111,23 +147,31 @@ secrets/kalzit-secrets-key`. To change the key later, see `kalzit secrets rotate
 
 ```sh
 cd deploy/docker
-cp example.env .env               # image, version, port; for PostgreSQL the database password
+cp example.env .env               # image, version and port
 mkdir -p secrets
 openssl rand -base64 32 > secrets/kalzit-secrets-key
+password=$(openssl rand -hex 24)  # PostgreSQL only
+printf '%s' "$password" > secrets/postgres-password
+printf 'postgres://kalzit:%s@postgres:5432/kalzit\n' "$password" > secrets/kalzit-database-url
+sudo chown 65532 secrets/kalzit-secrets-key secrets/kalzit-database-url   # Linux
+sudo chmod 0400 secrets/kalzit-secrets-key secrets/kalzit-database-url
 docker compose -f compose.postgres.yaml up -d
 docker compose -f compose.postgres.yaml exec kalzit kalzit setup-code
 ```
 
-Both files use the Docker secret `kalzit-secrets-key` from `secrets/kalzit-secrets-key`. The
-database password in `.env` takes letters and digits only (it becomes part of
-`KALZIT_DATABASE_URL`), for example from `openssl rand -hex 24`. `.env` and `secrets/` are not
-checked in. Kalzit cannot back PostgreSQL up for you: use `pg_dump`, and back the key up with it.
+Both files use the Docker secret `kalzit-secrets-key`. With PostgreSQL, the database password is
+in no environment variable: PostgreSQL reads it from the secret `postgres-password`
+(`POSTGRES_PASSWORD_FILE`), Kalzit reads the whole URL from the secret `kalzit-database-url`.
+`.env` and `secrets/` are not checked in. Kalzit cannot back PostgreSQL up for you: use
+`pg_dump`, and back the key up with it.
 
 ### Health check and stopping
 
 The image's health check runs `kalzit healthcheck`, which asks `/readyz` on the plain HTTP
 listener inside the container and passes when the database answers. `docker ps` shows the
-container as `healthy` a few seconds after the start. When you turn plain HTTP off
+container as `healthy` a few seconds after the start. It is a readiness check: while Kalzit's
+own database is unreachable the container turns `unhealthy`, and an orchestrator that restarts
+unhealthy containers restarts Kalzit. When you turn plain HTTP off
 (`server.http_addr = ""`), the health check fails; keep HTTP on (with
 `server.redirect_http_to_https`, `/healthz` and `/readyz` stay reachable over HTTP) or replace
 the health check in your Compose file.
