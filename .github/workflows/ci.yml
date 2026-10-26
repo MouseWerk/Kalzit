@@ -457,7 +457,7 @@ jobs:
         if: env.RUN_JOB == 'true'
         timeout-minutes: 15
         working-directory: ui
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: ${{ !success() }}
         with:
           name: e2e-${{ matrix.os }}
