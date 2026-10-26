@@ -218,6 +218,7 @@
   "admin.auditAction.setup.completed": "Setup completed",
   "admin.auditAction.auth.signed_in": "Signed in",
   "admin.auditAction.auth.sign_in_failed": "Sign-in failed",
+  "admin.auditAction.auth.signed_out": "Signed out",
   "admin.auditAction.member.added": "Member added",
   "admin.auditAction.member.role_changed": "Role of a member changed",
   "admin.auditAction.member.removed": "Member removed",

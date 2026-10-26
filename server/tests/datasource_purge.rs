@@ -353,6 +353,74 @@ async fn restoring_and_purging_at_once_end_in_one_state(t: TestApp) {
     }
 }
 
+/// Marks a trashed source as trashed longer ago than the retention.
+async fn age_in_trash(t: &TestApp, id: &str) {
+    let long_ago = t.clock.now_ms() - (kalzit::routes::datasources::TRASH_DAYS + 1) * 24 * 3600 * 1000;
+    sqlx::query("UPDATE datasources SET deleted_at = $1 WHERE id = $2")
+        .bind(long_ago)
+        .bind(id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+}
+
+/// The hourly retention purges with the same checks as a purge by hand: a source left in the
+/// trash for 30 days goes with its secrets, one still in use stays (and is tried again later),
+/// one trashed recently stays.
+async fn the_retention_skips_sources_in_use(t: TestApp) {
+    let unused = t.source("Alt").await;
+    let used = t.source("Benutzt").await;
+    let recent = t.source("Frisch").await;
+    t.dashboard_using("Betrieb", &used).await;
+    for id in [&unused, &used, &recent] {
+        t.trash(id).await;
+    }
+    age_in_trash(&t, &unused).await;
+    age_in_trash(&t, &used).await;
+
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 1);
+    assert_eq!(t.count("SELECT COUNT(*) FROM datasources WHERE id = $1", &unused).await, 0);
+    assert_eq!(t.count("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1", &unused).await, 0);
+    for kept in [&used, &recent] {
+        assert_eq!(t.count("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1", kept).await, 1);
+    }
+    let events: Vec<(Option<String>, String)> = sqlx::query_as(
+        "SELECT actor_user_id, summary FROM audit_events WHERE action = 'datasource.purged' AND resource_id = $1",
+    )
+    .bind(&unused)
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert!(events[0].0.is_none(), "the job has no actor");
+    let summary: Value = serde_json::from_str(&events[0].1).unwrap();
+    assert_eq!((summary["name"].as_str(), summary["kind"].as_str()), (Some("Alt"), Some("prometheus")));
+    // A second run changes nothing while the dashboard still uses the source.
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 0);
+}
+
+/// The retention and a restore at the same time: one wins, never both, and a restored source
+/// keeps its secrets.
+async fn the_retention_and_a_restore_end_in_one_state(t: TestApp) {
+    for round in 0..8 {
+        let id = t.source(&format!("Prom {round}")).await;
+        t.trash(&id).await;
+        age_in_trash(&t, &id).await;
+        let restore_path = format!("/datasources/{id}/restore");
+        let restore = t.post(&restore_path, json!({}), &t.owner);
+        let job = kalzit::routes::datasources::purge_expired(&t.state);
+        let (restored, purged) = tokio::join!(restore, job);
+        let purged = purged.unwrap();
+        let rows = t.count("SELECT COUNT(*) FROM datasources WHERE id = $1", &id).await;
+        let secrets = t.count("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1", &id).await;
+        match (restored.status, purged) {
+            (StatusCode::OK, 0) => assert_eq!((rows, secrets), (1, 1), "restored: it and its secret stay"),
+            (StatusCode::NOT_FOUND, 1) => assert_eq!((rows, secrets), (0, 0), "purged: nothing is left"),
+            other => panic!("round {round}: {other:?} {}", restored.body),
+        }
+    }
+}
+
 /// Every flow runs on SQLite, and on PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set (in a
 /// throwaway schema per flow, so the test database is left as it was).
 macro_rules! on_both_databases {
@@ -394,4 +462,6 @@ on_both_databases! {
     purging_is_limited_to_the_organization;
     purging_needs_the_right_to_move_targets;
     restoring_and_purging_at_once_end_in_one_state;
+    the_retention_skips_sources_in_use;
+    the_retention_and_a_restore_end_in_one_state;
 }
