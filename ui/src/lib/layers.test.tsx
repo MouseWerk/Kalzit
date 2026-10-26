@@ -72,6 +72,7 @@ describe("useEscapeLayer", () => {
 
   it("counts only blocking layers for the shortcuts, while Escape still closes the others", async () => {
     const user = userEvent.setup();
+    // biome-ignore lint/correctness/noComponentHookFactories: a host component local to this test
     function Selection() {
       const [selected, setSelected] = useState(false);
       useEscapeLayer(selected, () => setSelected(false), { blocking: false });

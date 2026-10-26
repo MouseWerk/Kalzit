@@ -278,7 +278,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       ? options.variable
       : null;
 
-  function describe(index: number): string {
+  function describeNode(index: number): string {
     const node = view.nodes[index];
     if (node === undefined) return "";
     if (node.node < 0) {
@@ -295,7 +295,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   function select(index: number | null) {
     const node = index === null ? undefined : view.nodes[index];
     setSelectedKey(node?.key ?? null);
-    setAnnouncement(index === null ? t("graph.announce.cleared") : describe(index));
+    setAnnouncement(index === null ? t("graph.announce.cleared") : describeNode(index));
     if (index !== null) canvasRef.current?.reveal(index);
   }
 

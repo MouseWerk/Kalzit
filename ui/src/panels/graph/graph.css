@@ -220,12 +220,12 @@
       grid-template-rows: minmax(0, 1fr) fit-content(50%);
     }
 
-    .panel-card .graph__details {
-      min-height: 0;
-    }
-
     .graph__details {
       width: auto;
+    }
+
+    .panel-card .graph__details {
+      min-height: 0;
     }
   }
 

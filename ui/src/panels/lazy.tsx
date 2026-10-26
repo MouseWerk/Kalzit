@@ -16,6 +16,7 @@ export function lazyPanel<P extends object>(
   load: () => Promise<ComponentType<P>>,
 ): (props: P) => ReactNode {
   const Lazy = lazy(() => load().then((component) => ({ default: component })));
+  // biome-ignore lint/correctness/noComponentHookFactories: the factory exists to create one lazy component per panel
   return function LazyPanel(props: P) {
     return (
       <Suspense fallback={<Loading />}>
