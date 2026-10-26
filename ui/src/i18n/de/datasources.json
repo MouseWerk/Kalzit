@@ -288,6 +288,7 @@
   "datasources.reason.datasource.not_in_trash": "Nur Datenquellen im Papierkorb lassen sich endgültig löschen.",
   "datasources.reason.datasource.purge_forbidden": "Eine Datenquelle endgültig zu löschen braucht das Recht, ihr Verbindungsziel zu ändern. Frag einen Admin der Datenquelle.",
   "datasources.reason.datasource.in_use": "{dashboards} Dashboards und {libraryPanels} Bibliothekspanels nutzen diese Datenquelle noch (Dashboards im Papierkorb zählen mit). Nimm sie dort zuerst heraus und lösche sie dann endgültig.",
+  "datasources.reason.analysis.in_use": "Dashboards zeigen diese Auswertung noch an ({dashboards} davon kannst du öffnen; Dashboards im Papierkorb zählen mit). Nimm sie dort zuerst heraus.",
   "datasources.reason.datasource.test_rate_limited": "Zu viele Verbindungstests. Du kannst {max} Mal pro Minute testen; warte einen Moment.",
   "datasources.reason.datasource.test_forbidden": "Eine neue Datenquelle zu testen braucht das Recht, Datenquellen anzulegen. Frag einen Admin.",
   "datasources.reason.datasource.kind_changed": "Die Art einer gespeicherten Datenquelle lässt sich nicht ändern.",

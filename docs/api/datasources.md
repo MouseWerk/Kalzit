@@ -1224,6 +1224,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `datasource.not_in_trash` | | `409 conflict`: only a source in the trash can be purged (also when it was restored while purging) |
 | `datasource.purge_forbidden` | | `403 forbidden`: purging needs the org-wide write or an `admin` grant on the source |
 | `datasource.in_use` | `dashboards`, `libraryPanels` | `409 conflict`: dashboards or library panels still use the source, so it is not purged |
+| `analysis.in_use` | `dashboards` | `409 conflict`: dashboards link the saved analysis (trashed ones count), so it is not trashed, purged, made team only or moved where a linking dashboard's readers may not see it, and a folder holding it is not trashed, purged, restricted or moved under another restricted folder while a dashboard outside links it; `dashboards` counts those the caller may read |
 | `datasource.test_rate_limited` | `max` | `429 rate_limited`: more than `max` tests of unsaved settings per minute |
 | `datasource.kind_changed` | | `422 validation` on `kind`: a stored source's kind cannot change |
 | `datasource.test_forbidden` | | `403 forbidden`: testing settings of a new source needs the org-wide `datasources:write` |
@@ -1502,7 +1503,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 
 | Reason | Params | When |
 |---|---|---|
-| `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes (a dashboard, or a library panel) has options or field options the server refuses: `panel` is its title (else its id, for a library panel its name), `detail` names the option |
+| `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes (a dashboard, or a library panel) or the visualization of a saved analysis has options or field options the server refuses: `panel` is its title (else its id, for a library panel its name, for an analysis its title), `detail` names the option |
 
 ### Sources and the server (`datasource_error` unless noted)
 

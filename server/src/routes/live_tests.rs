@@ -716,3 +716,38 @@ async fn mongodb_without_change_streams_is_polled() {
     drop(ws);
     t.finish().await;
 }
+
+#[tokio::test]
+async fn panels_linked_to_a_saved_analysis_follow_its_queries() {
+    let t = T::new().await;
+    let (ds, _) = t.sqlite_source().await;
+    let analysis = |sql: &str| {
+        json!({ "schemaVersion": 1, "title": "Zähler", "timeRange": null,
+                "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": sql } }],
+                "visualization": { "type": "table", "options": {} } })
+    };
+    let created = t.post("/analyses", json!({ "model": analysis("SELECT COUNT(*) AS n FROM zaehler") })).await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let dashboard = json!({ "schemaVersion": 2, "title": "Live", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "p1", "type": "table", "title": "Zähler", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                     "analysisId": id }] });
+    let dashboard = t.post("/dashboards", json!({ "model": dashboard })).await["id"].as_str().unwrap().to_string();
+    // A viewer of the dashboard follows the linked queries without access to the analysis.
+    let viewer = t.session(Some("viewer")).await;
+    let mut ws = t.connect(&viewer).await;
+    let panel = json!({ "dashboardId": dashboard, "panelId": "p1" });
+    let feed =
+        subscribe(&mut ws, json!({ "type": "subscribe", "id": "p", "panel": panel, "timeRange": range() })).await;
+    assert_eq!(count_of(&next_for(&mut ws, "result", &feed).await), 1);
+    // The analysis changes: the next check moves the subscription to its new queries.
+    let body = json!({ "model": analysis("SELECT COUNT(*) + 10 AS n FROM zaehler"), "version": created["version"] });
+    let (status, saved) =
+        t.send(Method::PUT, &format!("/api/orgs/{}/analyses/{id}", t.org), Some(body), Some(&t.owner)).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let moved = next_of(&mut ws, "subscribed").await;
+    assert_eq!(moved["id"], "p");
+    let new_feed = moved["feed"].as_str().unwrap().to_string();
+    assert_ne!(new_feed, feed);
+    assert_eq!(count_of(&next_for(&mut ws, "result", &new_feed).await), 11);
+    t.finish().await;
+}

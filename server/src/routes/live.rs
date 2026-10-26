@@ -7,7 +7,7 @@
 //! ends them. Results come from shared feeds (`crate::live`); a connection forwards each feed it
 //! follows once, however many of its subscriptions share it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Extension;
@@ -594,18 +594,8 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
     let refresh_ms = refresh_ms.clamp(min, (MAX_REFRESH.as_millis() as u64).max(min));
     let (items, variables, identifiers) = match (&sub.panel, &sub.queries) {
         (Some(panel), None) => {
-            let none = BTreeMap::new();
-            let PanelRun { items, variables, identifiers } = panel_run(
-                state,
-                ctx,
-                &panel.dashboard_id,
-                &panel.panel_id,
-                &sub.variables,
-                sub.limit,
-                &none,
-                || Ok(()),
-            )
-            .await?;
+            let PanelRun { items, variables, identifiers } =
+                panel_run(state, ctx, &panel.dashboard_id, &panel.panel_id, &sub.variables, sub.limit).await?;
             if !items.is_empty() {
                 check_items(&items)?;
             }

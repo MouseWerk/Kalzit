@@ -277,49 +277,43 @@ pub(crate) fn frames_read(transformations: &[Value]) -> BTreeSet<String> {
         .collect()
 }
 
-/// The stored queries of a panel, ready to run: what the caller may run of the dashboard they
-/// read, with the variable values checked against it.
+async fn panel_query(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
+    JsonBody(req): JsonBody<PanelQueryRequest>,
+) -> ApiResult<Json<QueryResponse>> {
+    let model = readable_model(&state, &ctx, &dashboard_id).await?;
+    let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
+    // A library panel's queries are its own; the dashboard showing it authorizes them as it does
+    // its own stored queries (dashboards::library).
+    let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
+    let panel = linked.as_ref().unwrap_or(panel);
+    Ok(Json(run_stored_panel(&state, &ctx, &model, panel, req).await?))
+}
+
+/// The stored queries of a panel, ready to run, with the variable values checked against what
+/// holds them.
 pub(crate) struct PanelRun {
     pub items: Vec<QueryItem>,
     pub variables: BTreeMap<String, Value>,
     pub identifiers: BTreeSet<String>,
 }
 
-/// The queries a panel of a readable dashboard runs (`readable_model`; unknown panels are
-/// `not_found`), with `variables` checked (`resolve_variables`). `cursors` continue document
-/// results by `refId`; `checks` of the rest of the request run once the panel is found.
-#[expect(clippy::too_many_arguments, reason = "the parts of one panel request, passed through")]
-pub(crate) async fn panel_run(
-    state: &AppState,
-    ctx: &OrgCtx,
-    dashboard_id: &str,
-    panel_id: &str,
+/// The queries `panel` of `model` runs, with `variables` checked (`resolve_variables`). Hidden
+/// targets stay with the panel but are not run, unless an analysis step reads them. `cursors`
+/// continue document results by `refId`.
+fn stored_items(
+    model: &DashboardModel,
+    panel: &model::Panel,
     variables: &BTreeMap<String, Value>,
     limit: Option<u32>,
     cursors: &BTreeMap<String, String>,
-    checks: impl FnOnce() -> ApiResult<()>,
 ) -> ApiResult<PanelRun> {
-    let model = readable_model(state, ctx, dashboard_id).await?;
-    let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
-    // A library panel's queries are its own; the dashboard showing it authorizes them as it does
-    // its own stored queries (dashboards::library).
-    let linked;
-    let panel = match &panel.library_panel_id {
-        Some(id) => {
-            let row =
-                crate::dashboards::library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
-            let content = crate::dashboards::library::stored_content(&row.model)?;
-            linked = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
-            &linked
-        }
-        None => panel,
-    };
-    checks()?;
     check_variables(variables)?;
-    let (variables, identifiers) = resolve_variables(&model, variables)?;
-    // Hidden targets stay with the panel but are not run, unless an analysis step reads them.
+    let (variables, identifiers) = resolve_variables(model, variables)?;
     let read = frames_read(&panel.transformations);
-    let items: Vec<QueryItem> = panel
+    let items = panel
         .targets
         .iter()
         .filter(|t| !t.hide || read.contains(&t.ref_id))
@@ -334,25 +328,46 @@ pub(crate) async fn panel_run(
     Ok(PanelRun { items, variables, identifiers })
 }
 
-async fn panel_query(
-    State(state): State<AppState>,
-    Extension(ctx): Extension<OrgCtx>,
-    Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
-    JsonBody(req): JsonBody<PanelQueryRequest>,
-) -> ApiResult<Json<QueryResponse>> {
-    let checks = || {
-        check_range(req.time_range)?;
-        check_interval(req.interval_ms)
-    };
+/// The queries a panel of a readable dashboard runs, as `panel_query` resolves them: the
+/// dashboard must be readable (`readable_model`; unknown panels are `not_found`), and a linked
+/// library panel or saved analysis brings its own queries (`dashboards::linked_content`), which
+/// the dashboard authorizes like its own. For live updates.
+pub(crate) async fn panel_run(
+    state: &AppState,
+    ctx: &OrgCtx,
+    dashboard_id: &str,
+    panel_id: &str,
+    variables: &BTreeMap<String, Value>,
+    limit: Option<u32>,
+) -> ApiResult<PanelRun> {
+    let model = readable_model(state, ctx, dashboard_id).await?;
+    let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
+    let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
+    let panel = linked.as_ref().unwrap_or(panel);
+    stored_items(&model, panel, variables, limit, &BTreeMap::new())
+}
+
+/// Runs the stored queries of `panel` in `model` (a dashboard's, or a saved analysis as a
+/// dashboard of one panel) with the request's time range, limits and variable values. The caller
+/// has decided that the caller may read what holds them.
+pub(crate) async fn run_stored_panel(
+    state: &AppState,
+    ctx: &OrgCtx,
+    model: &DashboardModel,
+    panel: &model::Panel,
+    req: PanelQueryRequest,
+) -> ApiResult<QueryResponse> {
+    check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
     let PanelRun { items, variables, identifiers } =
-        panel_run(&state, &ctx, &dashboard_id, &panel_id, &req.variables, req.limit, &req.cursors, checks).await?;
+        stored_items(model, panel, &req.variables, req.limit, &req.cursors)?;
     if items.is_empty() {
-        return Ok(Json(QueryResponse { results: BTreeMap::new() }));
+        return Ok(QueryResponse { results: BTreeMap::new() });
     }
     check_items(&items)?;
-    let response = run_queries_with(
-        &state,
-        &ctx,
+    Ok(run_queries_with(
+        state,
+        ctx,
         items,
         req.time_range,
         req.interval_ms,
@@ -360,8 +375,7 @@ async fn panel_query(
         &variables,
         Some(&identifiers),
     )
-    .await;
-    Ok(Json(response))
+    .await)
 }
 
 async fn variable_options(

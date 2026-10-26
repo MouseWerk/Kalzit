@@ -316,20 +316,10 @@ async fn make_panel(
 ) -> ApiResult<Made> {
     let model = readable_model(state, ctx, dashboard_id).await?;
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
-    // A panel linked to a library panel exports the library panel's queries and steps, which the
+    // A panel linked to a library panel or saved analysis exports its queries and steps, which the
     // dashboard showing it authorizes, as when the panel runs (`query::panel_query`).
-    let linked;
-    let panel = match &panel.library_panel_id {
-        Some(id) => {
-            let row =
-                crate::dashboards::library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
-            let content = crate::dashboards::library::stored_content(&row.model)?;
-            linked = crate::dashboards::model::library_panel_as_panel(&content)
-                .map_err(|e| ApiError::internal("library panels", e))?;
-            &linked
-        }
-        None => panel,
-    };
+    let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
+    let panel = linked.as_ref().unwrap_or(panel);
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;

@@ -26,6 +26,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders::{self, Tree};
 use crate::net::RequestInfo;
+use crate::saved_analyses;
 use crate::settings;
 use crate::shapes::Page;
 
@@ -126,6 +127,8 @@ pub struct Dashboard {
     created_by: Option<String>,
     /// The library panels the model references, by id; a deleted one is missing.
     library_panels: std::collections::BTreeMap<String, library::LinkedPanel>,
+    /// The saved analyses the model links (`analysisId`), by id; a purged one is missing.
+    analyses: std::collections::BTreeMap<String, saved_analyses::LinkedAnalysis>,
 }
 
 /// The folder as the caller sees it: `None` when it is hidden from them.
@@ -187,7 +190,7 @@ async fn authorize_place(state: &AppState, ctx: &OrgCtx, folder: Option<&str>) -
 /// Locks the organization (`authz::lock_org`, first statement of the transaction) and, for a
 /// folder, checks that it still exists and is not in the trash, so no live dashboard ends up in a
 /// trashed or purged folder.
-async fn lock_place(conn: &mut sqlx::AnyConnection, org_id: &str, folder: Option<&str>) -> ApiResult<()> {
+pub(super) async fn lock_place(conn: &mut sqlx::AnyConnection, org_id: &str, folder: Option<&str>) -> ApiResult<()> {
     authz::lock_org(conn, org_id).await?;
     let Some(folder) = folder else { return Ok(()) };
     let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT deleted_at FROM folders WHERE org_id = $1 AND id = $2")
@@ -237,7 +240,16 @@ async fn view(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, row: DashboardRow) -
     let ids: std::collections::BTreeSet<&str> =
         model["panels"].as_array().into_iter().flatten().filter_map(|p| p["libraryPanelId"].as_str()).collect();
     let library_panels = library::linked_panels(conn, &ctx.org_id, &ids).await?;
-    Ok(Dashboard { summary: DashboardSummary::new(&row, &index), model, created_by: row.created_by, library_panels })
+    let linked: std::collections::BTreeSet<&str> =
+        model["panels"].as_array().into_iter().flatten().filter_map(|p| p["analysisId"].as_str()).collect();
+    let analyses = saved_analyses::linked_analyses(conn, &ctx.org_id, &linked).await?;
+    Ok(Dashboard {
+        summary: DashboardSummary::new(&row, &index),
+        model,
+        created_by: row.created_by,
+        library_panels,
+        analyses,
+    })
 }
 
 /// `view` on a pooled connection, where no change is involved.
@@ -273,6 +285,18 @@ struct NewVersion<'a> {
     /// Library panels this version references and the stored one did not; checked again under
     /// the organization's lock, so a library panel deleted meanwhile is not referenced.
     added_library: std::collections::BTreeSet<&'a str>,
+    /// Saved analyses this version links and the stored one did not; checked again under the
+    /// organization's lock, so an analysis trashed meanwhile is not linked.
+    added_analyses: std::collections::BTreeSet<&'a str>,
+}
+
+/// The saved analyses `model` links that `previous` did not.
+fn added_analyses<'a>(
+    model: &'a model::DashboardModel,
+    previous: Option<&model::DashboardModel>,
+) -> std::collections::BTreeSet<&'a str> {
+    let known = previous.map(model::DashboardModel::analysis_ids).unwrap_or_default();
+    model.analysis_ids().into_iter().filter(|id| !known.contains(id)).collect()
 }
 
 /// The library panels `model` references that `previous` did not.
@@ -396,7 +420,7 @@ pub struct ListQuery {
 }
 
 /// `%`, `_` and `\` match themselves in a `LIKE ... ESCAPE '\'` pattern.
-fn like_contains(needle: &str) -> String {
+pub(super) fn like_contains(needle: &str) -> String {
     let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
     format!("%{escaped}%")
 }
@@ -496,6 +520,7 @@ async fn create(
     authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
     check_dashboard_sources(&state.db, &ctx, &model, None).await?;
     library::check_references(&state.db, &ctx, &model, None).await?;
+    saved_analyses::check_references(&state.db, &ctx, &model, None).await?;
 
     let id = new_id();
     let keep = version_retention(&state).await?;
@@ -519,14 +544,18 @@ async fn create(
     // is refused here rather than referenced.
     library::recheck_added(&mut tx, &ctx.org_id, &model.library_panel_ids()).await?;
     library::recheck_space_links(&mut tx, &ctx, body.folder_id.as_deref(), &model.library_panel_ids()).await?;
+    saved_analyses::recheck_added(&mut tx, &ctx.org_id, &model.analysis_ids()).await?;
+    saved_analyses::recheck_audience(&mut tx, &ctx, body.folder_id.as_deref(), &model.analysis_ids()).await?;
     let new = NewVersion {
         model: &model,
         message: &message,
         restored_from: None,
         added_library: added_library(&model, None),
+        added_analyses: added_analyses(&model, None),
     };
     insert_version(&mut tx, &id, 1, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &id, &model).await?;
+    saved_analyses::sync_uses(&mut tx, &ctx.org_id, &id, &model).await?;
     let summary = json!({ "folderId": body.folder_id, "version": 1 });
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.created", &id, summary, now)).await?;
     let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
@@ -588,12 +617,13 @@ async fn write_version(
     let mut tx = crate::db::begin(&state.db).await?;
     // New library panel references take the organization's lock first, as a library panel's
     // delete does, so a reference never outlives the panel it names.
-    if !moved && !new.added_library.is_empty() {
+    if !moved && (!new.added_library.is_empty() || !new.added_analyses.is_empty()) {
         authz::lock_org(&mut tx, &ctx.org_id).await?;
     }
     if moved {
         lock_place(&mut tx, &ctx.org_id, folder_id).await?;
-        moved_out = check_space_move(&mut tx, ctx, row, folder_id).await?;
+        moved_out =
+            check_space_move(&mut tx, ctx, row.folder_id.as_deref(), row.owner_team_id.as_deref(), folder_id).await?;
         // Leaving a restricted folder is remembered, so the purge still hides its old events.
         if let Some(old) = row.folder_id.as_deref()
             && folders::restricted_in(&mut tx, &ctx.org_id, old).await?
@@ -633,8 +663,12 @@ async fn write_version(
     // A move takes every library panel along; otherwise only the new ones need a look.
     let linked = if moved { new.model.library_panel_ids() } else { new.added_library.clone() };
     library::recheck_space_links(&mut tx, ctx, folder_id, &linked).await?;
+    saved_analyses::recheck_added(&mut tx, &ctx.org_id, &new.added_analyses).await?;
+    let linked = if moved { new.model.analysis_ids() } else { new.added_analyses.clone() };
+    saved_analyses::recheck_audience(&mut tx, ctx, folder_id, &linked).await?;
     insert_version(&mut tx, &row.id, next, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &row.id, new.model).await?;
+    saved_analyses::sync_uses(&mut tx, &ctx.org_id, &row.id, new.model).await?;
     let (action, summary) = match new.restored_from {
         Some(from) => ("dashboard.version_restored", json!({ "version": next, "restoredFrom": from })),
         None => ("dashboard.saved", json!({ "version": next, "moved": moved })),
@@ -699,35 +733,38 @@ async fn save(
     check_panels(&model, Some(&stored))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     library::check_references(&state.db, &ctx, &model, Some(&stored)).await?;
+    saved_analyses::check_references(&state.db, &ctx, &model, Some(&stored)).await?;
     let new = NewVersion {
         model: &model,
         message: &message,
         restored_from: None,
         added_library: added_library(&model, Some(&stored)),
+        added_analyses: added_analyses(&model, Some(&stored)),
     };
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
 }
 
-/// A move across team spaces, read through the move's transaction after the organization's lock.
-/// Out of a space (into the open tree or another space) only maintainers of the space's team and
-/// org admins move content; team editors move within the space. A dashboard another team owns
-/// needs the same right for that team, and goes into a team space of another team only through
-/// org admins. Answers the summary of the `team_space.moved_out` event, or `None` when the move
-/// leaves no space.
-async fn check_space_move(
+/// A move across team spaces of a dashboard or saved analysis in `from_folder` that `owner` owns,
+/// read through the move's transaction after the organization's lock. Out of a space (into the
+/// open tree or another space) only maintainers of the space's team and org admins move content;
+/// team editors move within the space. An item another team owns needs the same right for that
+/// team, and goes into a team space of another team only through org admins. Answers the summary
+/// of the `team_space.moved_out` event, or `None` when the move leaves no space.
+pub(super) async fn check_space_move(
     conn: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
-    row: &DashboardRow,
+    from_folder: Option<&str>,
+    owner: Option<&str>,
     to: Option<&str>,
 ) -> ApiResult<Option<Value>> {
     let tree = Tree::load(&mut *conn, ctx).await?;
-    let from = row.folder_id.as_deref().and_then(|f| tree.space_of(f));
+    let from = from_folder.and_then(|f| tree.space_of(f));
     let into = to.and_then(|f| tree.space_of(f));
     if from.map(|(s, _)| s) == into.map(|(s, _)| s) {
         return Ok(None);
     }
     let admin = authz::role_sees_restricted(&ctx.permissions);
-    if let (Some((_, team)), Some(owner)) = (into, row.owner_team_id.as_deref())
+    if let (Some((_, team)), Some(owner)) = (into, owner)
         && owner != team
         && !admin
     {
@@ -736,12 +773,12 @@ async fn check_space_move(
     let Some((space, team)) = from else { return Ok(None) };
     let index = AccessIndex::load(&mut *conn, ctx).await?;
     let may_take = |team: &str| admin || index.is_maintainer(team);
-    if !may_take(team) || row.owner_team_id.as_deref().is_some_and(|owner| !may_take(owner)) {
+    if !may_take(team) || owner.is_some_and(|owner| !may_take(owner)) {
         return Err(ApiError::forbidden(
             "only maintainers of the team and org admins move content out of its team space",
         ));
     }
-    Ok(Some(json!({ "spaceId": space, "teamId": team, "from": row.folder_id, "to": to })))
+    Ok(Some(json!({ "spaceId": space, "teamId": team, "from": from_folder, "to": to })))
 }
 
 async fn trash(
@@ -1062,11 +1099,13 @@ async fn restore_version(
     check_panels(&model, Some(&current))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&current)).await?;
     library::check_references(&state.db, &ctx, &model, Some(&current)).await?;
+    saved_analyses::check_references(&state.db, &ctx, &model, Some(&current)).await?;
     let new = NewVersion {
         model: &model,
         message: "",
         restored_from: Some(summary.version),
         added_library: added_library(&model, Some(&current)),
+        added_analyses: added_analyses(&model, Some(&current)),
     };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))
 }

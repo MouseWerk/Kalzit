@@ -231,15 +231,16 @@ pub async fn sync_references(
     Ok(())
 }
 
-/// Deletes what belongs to dashboards that are purged: their annotations, tags and library panel
-/// uses. `filter` is the SQL condition on `dashboards` (aliased `d`) with `$1` the organization.
+/// Deletes what belongs to dashboards that are purged: their annotations, tags, library panel uses
+/// and analysis links. `filter` is the SQL condition on `dashboards` (aliased `d`) with `$1` the
+/// organization.
 pub async fn purge_dashboard_rows(
     conn: &mut sqlx::AnyConnection,
     org_id: &str,
     filter: &str,
     arg: &str,
 ) -> ApiResult<()> {
-    for table in ["annotations", "dashboard_tags", "library_panel_uses"] {
+    for table in ["annotations", "dashboard_tags", "library_panel_uses", "analysis_uses"] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE dashboard_id IN (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND {filter})"
         )))

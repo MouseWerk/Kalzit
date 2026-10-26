@@ -24,6 +24,7 @@ pub mod http;
 pub mod live;
 pub mod net;
 pub mod routes;
+pub mod saved_analyses;
 pub mod secrets;
 pub mod server;
 pub mod settings;

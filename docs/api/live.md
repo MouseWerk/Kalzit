@@ -52,7 +52,10 @@ session, membership and permissions:
 
 - `panel`: the caller may read the dashboard (`dashboards:read`, by role or grant), as for
   `POST /dashboards/{id}/panels/{panelId}/query`; the variables are checked against the dashboard
-  the same way. Viewers run only these stored queries.
+  the same way. Viewers run only these stored queries. A panel linked to a library panel or a
+  saved analysis runs that one's current queries, authorized by the dashboard as for the REST
+  route; when the library panel or the analysis changes, the next check moves the subscription to
+  the new queries.
 - `queries`: `datasources:query` on every source the queries use (editor and up, or a grant).
   A source the caller cannot see answers `not_found`.
 
