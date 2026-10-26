@@ -111,7 +111,7 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
 
 /// The caller's membership in `org_id`. Non-members get `not_found`, so organization ids cannot
 /// be probed. Read through the read pool, so a queue of writers never holds up the check.
-async fn org_ctx(state: &AppState, user: SessionUser, org_id: String) -> Result<OrgCtx, ApiError> {
+pub(crate) async fn org_ctx(state: &AppState, user: SessionUser, org_id: String) -> Result<OrgCtx, ApiError> {
     let role: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&org_id)
         .bind(&user.id)
