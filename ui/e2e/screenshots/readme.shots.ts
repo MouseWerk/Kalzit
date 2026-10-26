@@ -768,7 +768,9 @@ test("saved analyses", async ({ browser }) => {
   await signIn(page);
   await page.goto("/explore/saved");
   await expect(page.getByRole("heading", { name: t("analyses.list.title") })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Average order per region", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Average order per region", exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Lea Hoffmann").first()).toBeVisible();
   await shoot(page, "analyses");
   await page.context().close();
@@ -878,7 +880,9 @@ test("explore, field distribution, dark", async ({ browser }) => {
     t("documents.summary.countMany", { count: MONGO_FIXTURE.documents }),
   );
   await page.getByLabel(t("explore.visualization"), { exact: true }).selectOption("distribution");
-  await page.getByLabel(t("documents.distribution.path"), { exact: true }).selectOption("customer.city");
+  await page
+    .getByLabel(t("documents.distribution.path"), { exact: true })
+    .selectOption("customer.city");
   await expect(
     result.getByText(t("documents.distribution.scope.all", { count: MONGO_FIXTURE.documents }), {
       exact: true,
