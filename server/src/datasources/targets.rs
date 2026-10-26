@@ -110,6 +110,11 @@ pub struct TargetPolicy {
     data_dir: PathBuf,
     /// Kalzit's own SQLite database when it lives outside the data directory.
     own_sqlite: Option<PathBuf>,
+    /// Kalzit's own files outside the data directory (`kalzit.toml`, the TLS key and
+    /// certificate), canonical.
+    protected_files: Vec<PathBuf>,
+    /// Directories of Kalzit's own secrets (systemd's `$CREDENTIALS_DIRECTORY`), canonical.
+    protected_dirs: Vec<PathBuf>,
     /// `datasources.sqlite_dirs`.
     sqlite_dirs: AllowedDirs,
     /// `datasources.file_dirs`: CSV and JSON files.
@@ -141,6 +146,8 @@ impl TargetPolicy {
         Self {
             data_dir,
             own_sqlite,
+            protected_files: Vec::new(),
+            protected_dirs: Vec::new(),
             sqlite_dirs: AllowedDirs::new("datasources.sqlite_dirs", sqlite_dirs),
             file_dirs: AllowedDirs::default(),
             allowed,
@@ -150,6 +157,14 @@ impl TargetPolicy {
     /// The directories CSV and JSON file sources may read (`datasources.file_dirs`).
     pub fn with_file_dirs(mut self, file_dirs: &[String]) -> Self {
         self.file_dirs = AllowedDirs::new("datasources.file_dirs", file_dirs);
+        self
+    }
+
+    /// Kalzit's own files and secret directories outside the data directory, which no SQLite or
+    /// file source may open even when an allowed directory holds them.
+    pub fn with_protected(mut self, files: &[PathBuf], dirs: &[PathBuf]) -> Self {
+        self.protected_files = files.iter().map(|f| canonical_or_absolute(f)).collect();
+        self.protected_dirs = dirs.iter().map(|d| canonical_or_absolute(d)).collect();
         self
     }
 
@@ -199,11 +214,16 @@ impl TargetPolicy {
             return Err(refused());
         }
         let canonical = std::fs::canonicalize(&lexical).map_err(|_| refused())?;
-        let own = self.own_sqlite.as_ref().is_some_and(|own| is_same_database_file(&canonical, own));
+        let own = self.own_sqlite.as_ref().is_some_and(|own| is_same_database_file(&canonical, own))
+            || self.protected_files.contains(&canonical)
+            || self.protected_dirs.iter().any(|dir| canonical.starts_with(dir));
         if canonical.starts_with(&self.data_dir)
             || own
             || !dirs.canonical.iter().any(|dir| canonical.starts_with(dir))
             || !canonical.is_file()
+            // A hard link has no path of its own to resolve: it may be a second name of the own
+            // database, a backup or a key. Files with more than one name are refused.
+            || link_count(&canonical) != Some(1)
         {
             return Err(refused());
         }
@@ -346,9 +366,10 @@ impl TargetPolicy {
     }
 }
 
-const SQLITE_REFUSED: &str =
-    "the SQLite file is not in a directory allowed in datasources.sqlite_dirs, or cannot be opened";
-const FILE_REFUSED: &str = "the file is not in a directory allowed in datasources.file_dirs, or cannot be opened";
+const SQLITE_REFUSED: &str = "the SQLite file is not in a directory allowed in datasources.sqlite_dirs, is one of \
+     Kalzit's own files (data, configuration, TLS key or certificate, credentials) or a hard link, or cannot be opened";
+const FILE_REFUSED: &str = "the file is not in a directory allowed in datasources.file_dirs, is one of Kalzit's own \
+     files (data, configuration, TLS key or certificate, credentials) or a hard link, or cannot be opened";
 
 /// `\\server\share`, `\\?\...`, `\\.\device` (and the same with forward slashes): paths
 /// that leave the local disks. Only Windows reads them that way.
@@ -527,6 +548,27 @@ fn is_same_database_file(candidate: &Path, own: &Path) -> bool {
     }
     let (Some(c), Some(o)) = (candidate.to_str(), own.to_str()) else { return false };
     ["-wal", "-shm", "-journal"].iter().any(|suffix| c.strip_suffix(suffix) == Some(o))
+}
+
+/// How many names (hard links) the file has; `None` when that cannot be read.
+#[cfg(unix)]
+fn link_count(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| m.nlink())
+}
+
+/// How many names (hard links) the file has; `None` when that cannot be read.
+#[cfg(windows)]
+fn link_count(path: &Path) -> Option<u64> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+    let file = std::fs::File::open(path).ok()?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle belongs to `file`, which outlives the call; `info` is a valid out
+    // pointer for its duration.
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }.ok()?;
+    Some(u64::from(info.nNumberOfLinks))
 }
 
 fn canonical_or_absolute(path: &Path) -> PathBuf {
@@ -832,6 +874,38 @@ mod tests {
         assert!(p.check_sqlite_path(shared.join("kalzit.db").to_str().unwrap()).is_err());
         assert!(p.check_sqlite_path(shared.join("kalzit.db-wal").to_str().unwrap()).is_err());
         assert!(p.check_sqlite_path(shared.join("andere.db").to_str().unwrap()).is_ok());
+    }
+
+    /// The configuration, the TLS key and the credentials directory are refused when an allowed
+    /// directory holds them, and so is a hard link (a second name of the own database).
+    #[test]
+    fn own_files_and_hard_links_in_allowed_directories_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let etc = root.path().join("etc");
+        let credentials = etc.join("credentials");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&credentials).unwrap();
+        for f in ["kalzit.toml", "key.pem", "andere.db", "credentials/kalzit-secrets-key"] {
+            std::fs::write(etc.join(f), b"").unwrap();
+        }
+        std::fs::write(data.join("kalzit.db"), b"").unwrap();
+        std::fs::hard_link(data.join("kalzit.db"), etc.join("zweitname.db")).unwrap();
+        let s = |p: &Path| p.to_string_lossy().to_string();
+        let own_url = crate::config::sqlite_url(&data.join("kalzit.db"));
+        let p = TargetPolicy::new(&data, &own_url, &[s(&etc)], &[])
+            .with_file_dirs(&[s(&etc)])
+            .with_protected(&[etc.join("kalzit.toml"), etc.join("key.pem")], std::slice::from_ref(&credentials));
+        for f in ["kalzit.toml", "key.pem", "credentials/kalzit-secrets-key", "zweitname.db"] {
+            let path = s(&etc.join(f));
+            let e = p.check_sqlite_path(&path).unwrap_err();
+            assert_eq!(e.0.message, SQLITE_REFUSED, "{f}");
+            assert_eq!(p.check_file_path(&path).unwrap_err().0.message, FILE_REFUSED, "{f}");
+        }
+        assert!(p.check_sqlite_path(&s(&etc.join("andere.db"))).is_ok());
+        // The same files, named through `..`, are the same canonical files.
+        let climb = etc.join("credentials").join("..").join("kalzit.toml");
+        assert!(p.check_file_path(&s(&climb)).is_err());
     }
 
     #[test]

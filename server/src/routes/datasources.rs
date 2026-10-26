@@ -807,77 +807,202 @@ async fn purge(
     }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    // Saves of dashboards and restores lock the organization too: what is counted here holds
-    // until the commit.
-    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
-    let still: Option<(Option<i64>,)> =
-        sqlx::query_as("SELECT deleted_at FROM datasources WHERE id = $1 AND org_id = $2")
-            .bind(&ds.id)
-            .bind(&ctx.org_id)
+    match purge_in(&mut tx, &ctx.org_id, &ds.id, None).await? {
+        Purge::Done { name, kind } => {
+            let summary = json!({ "name": name, "kind": kind });
+            record(&mut tx, &event(&ctx, &info, "datasource.purged", &ds.id, summary, now)).await?;
+        }
+        Purge::Gone => return Err(ApiError::not_found()),
+        Purge::NotTrashed { restored } => {
+            tx.rollback().await?;
+            return Err(if restored {
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "conflict",
+                    "the data source was restored in the meantime; it was not deleted",
+                )
+                .because("datasource.not_in_trash")
+            } else {
+                not_trashed()
+            });
+        }
+        Purge::InUse { dashboards, library_panels } => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                format!(
+                    "the data source is still used by {dashboards} dashboards and {library_panels} library panels; \
+                     remove it from them first"
+                ),
+            )
+            .because("datasource.in_use")
+            .param("dashboards", dashboards)
+            .param("libraryPanels", library_panels));
+        }
+    }
+    crate::db::commit(tx).await?;
+    state.datasources.forget(&ds.id);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What `purge_in` did.
+enum Purge {
+    /// Deleted, with what the audit entry names.
+    Done { name: String, kind: String },
+    /// No such source (any more).
+    Gone,
+    /// Not in the trash (or, for the retention, not long enough); `restored` when it was in the
+    /// trash when the delete started but not at the delete itself.
+    NotTrashed { restored: bool },
+    /// Still used by the current version of that many dashboards (the trash included) or by
+    /// library panels; nothing was changed.
+    InUse { dashboards: i64, library_panels: i64 },
+}
+
+/// Deletes a trashed data source for good inside the caller's transaction: its stored secrets, its
+/// grants and the Explore history of its queries go with it. Takes the organization's lock first
+/// (saves of dashboards and restores take it too), so what is counted holds until the commit.
+/// With `trashed_before`, only a source trashed before that time is deleted (the retention). The
+/// caller writes the audit entry and commits on `Done`, and rolls back otherwise.
+async fn purge_in(
+    tx: &mut sqlx::AnyConnection,
+    org_id: &str,
+    id: &str,
+    trashed_before: Option<i64>,
+) -> ApiResult<Purge> {
+    crate::authz::lock_org(tx, org_id).await?;
+    let row: Option<(String, String, Option<i64>)> =
+        sqlx::query_as("SELECT name, kind, deleted_at FROM datasources WHERE id = $1 AND org_id = $2")
+            .bind(id)
+            .bind(org_id)
             .fetch_optional(&mut *tx)
             .await?;
-    match still {
-        None => return Err(ApiError::not_found()),
-        Some((None,)) => return Err(not_trashed()),
-        Some((Some(_),)) => {}
-    }
+    let (name, kind) = match row {
+        None => return Ok(Purge::Gone),
+        Some((_, _, None)) => return Ok(Purge::NotTrashed { restored: false }),
+        Some((_, _, Some(at))) if trashed_before.is_some_and(|cutoff| at >= cutoff) => {
+            return Ok(Purge::NotTrashed { restored: false });
+        }
+        Some((name, kind, Some(_))) => (name, kind),
+    };
     // The ids are UUIDs, so the quoted id in a stored model is a reference and nothing else.
-    let needle = format!("%\"{}\"%", ds.id);
+    let needle = format!("%\"{id}\"%");
     let (dashboards,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM dashboards d JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
          WHERE d.org_id = $1 AND v.model LIKE $2",
     )
-    .bind(&ctx.org_id)
+    .bind(org_id)
     .bind(&needle)
     .fetch_one(&mut *tx)
     .await?;
     let (library_panels,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM library_panels WHERE org_id = $1 AND model LIKE $2")
-            .bind(&ctx.org_id)
+            .bind(org_id)
             .bind(&needle)
             .fetch_one(&mut *tx)
             .await?;
     if dashboards > 0 || library_panels > 0 {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "conflict",
-            format!(
-                "the data source is still used by {dashboards} dashboards and {library_panels} library panels; \
-                 remove it from them first"
-            ),
-        )
-        .because("datasource.in_use")
-        .param("dashboards", dashboards)
-        .param("libraryPanels", library_panels));
+        return Ok(Purge::InUse { dashboards, library_panels });
     }
-    sqlx::query("DELETE FROM datasource_secrets WHERE datasource_id = $1").bind(&ds.id).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM explore_history WHERE datasource_id = $1").bind(&ds.id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM datasource_secrets WHERE datasource_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM explore_history WHERE datasource_id = $1").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'datasource' AND resource_id = $2")
-        .bind(&ctx.org_id)
-        .bind(&ds.id)
+        .bind(org_id)
+        .bind(id)
         .execute(&mut *tx)
         .await?;
     let removed = sqlx::query("DELETE FROM datasources WHERE id = $1 AND org_id = $2 AND deleted_at IS NOT NULL")
-        .bind(&ds.id)
-        .bind(&ctx.org_id)
+        .bind(id)
+        .bind(org_id)
         .execute(&mut *tx)
         .await?
         .rows_affected();
     if removed != 1 {
-        // Restored in the meantime: nothing is deleted, not even its secrets.
-        tx.rollback().await?;
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "conflict",
-            "the data source was restored in the meantime; it was not deleted",
-        )
-        .because("datasource.not_in_trash"));
+        // Restored in the meantime: the caller rolls back, so not even its secrets go.
+        return Ok(Purge::NotTrashed { restored: true });
     }
-    let summary = json!({ "name": ds.name, "kind": ds.kind });
-    record(&mut tx, &event(&ctx, &info, "datasource.purged", &ds.id, summary, now)).await?;
-    crate::db::commit(tx).await?;
-    state.datasources.forget(&ds.id);
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Purge::Done { name, kind })
+}
+
+/// Days a deleted data source stays in the trash before it is purged with its secrets.
+pub const TRASH_DAYS: i64 = 30;
+const DAY_MS: i64 = 24 * 3600 * 1000;
+
+/// Purges the data sources that have been in the trash for longer than `TRASH_DAYS`, each in its
+/// own transaction with the same checks as a purge by hand (`purge_in`) and an audit entry
+/// without an actor. A source still in use is skipped with a warning and tried again on the next
+/// run. Answers the number purged.
+pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
+    purge_expired_in(state, &state.db).await
+}
+
+async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
+    let now = state.clock.now_ms();
+    let cutoff = now.saturating_sub(TRASH_DAYS * DAY_MS);
+    let expired: Vec<(String, String)> = sqlx::query_as(
+        "SELECT org_id, id FROM datasources WHERE deleted_at IS NOT NULL AND deleted_at < $1 ORDER BY deleted_at",
+    )
+    .bind(cutoff)
+    .fetch_all(db)
+    .await?;
+    let mut purged = 0;
+    for (org_id, id) in expired {
+        let mut tx = crate::db::begin(db).await?;
+        match purge_in(&mut tx, &org_id, &id, Some(cutoff)).await? {
+            Purge::Done { name, kind } => {
+                let event = AuditEvent {
+                    org_id: Some(&org_id),
+                    actor_user_id: None,
+                    actor_address: None,
+                    action: "datasource.purged",
+                    resource_type: Some("datasource"),
+                    resource_id: Some(&id),
+                    summary: json!({ "name": name, "kind": kind, "trashDays": TRASH_DAYS }),
+                    at_ms: now,
+                };
+                record(&mut tx, &event).await?;
+                crate::db::commit(tx).await?;
+                state.datasources.forget(&id);
+                purged += 1;
+            }
+            Purge::InUse { dashboards, library_panels } => {
+                tx.rollback().await?;
+                tracing::warn!(
+                    datasource = %id,
+                    "a data source in the trash for {TRASH_DAYS} days is still used by {dashboards} dashboards and \
+                     {library_panels} library panels; it stays in the trash"
+                );
+            }
+            // Restored or purged since the list was read: nothing to do.
+            Purge::Gone | Purge::NotTrashed { .. } => tx.rollback().await?,
+        }
+    }
+    Ok(purged)
+}
+
+/// Runs `purge_expired` every hour, like the audit retention.
+pub fn spawn_trash_purge(state: AppState) {
+    spawn_trash_purge_on(state, crate::db::Schedule::hourly());
+}
+
+/// `spawn_trash_purge` on another schedule (tests).
+pub fn spawn_trash_purge_on(state: AppState, schedule: crate::db::Schedule) {
+    use crate::db::JobError;
+    let background = state.background.clone();
+    crate::db::spawn_job(&background, "purging trashed data sources", schedule, move || {
+        let state = state.clone();
+        async move {
+            match purge_expired_in(&state, state.background.db()).await {
+                Ok(0) => Ok(()),
+                Ok(n) => {
+                    tracing::info!("purged {n} data sources that were in the trash for {TRASH_DAYS} days");
+                    Ok(())
+                }
+                Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),
+                Err(e) => Err(JobError::Failed(e.message)),
+            }
+        }
+    });
 }
 
 async fn health(

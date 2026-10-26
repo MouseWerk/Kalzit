@@ -67,7 +67,14 @@ async fn queries_with_library(
             model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))
         });
         match panel {
-            Ok(panel) => queries.extend(panel.targets.into_iter().map(|t| (t.datasource_id, t.query.to_string()))),
+            Ok(library) => {
+                // Keyed by every dashboard panel that shows it, like the dashboard's own targets.
+                for shown_in in model.panels.iter().filter(|p| p.library_panel_id.as_deref() == Some(id)) {
+                    queries.extend(
+                        library.targets.iter().map(|t| (t.datasource_id.clone(), library.target_key(&shown_in.id, t))),
+                    );
+                }
+            }
             Err(e) => tracing::warn!("library panel {id} cannot be read, its queries are left out: {}", e.message),
         }
     }

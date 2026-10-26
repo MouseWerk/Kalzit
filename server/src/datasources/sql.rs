@@ -145,6 +145,8 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "pg_sync_replication_slots",
     "pg_replication_slot_advance",
     "pg_logical_emit_message",
+    "pg_stat_statements_reset",
+    "pg_file_sync",
     "nextval",
     "setval",
     // SQL Server
@@ -154,6 +156,12 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "fn_get_audit_file",
     "fn_xe_file_target_read_file",
     "fn_trace_gettable",
+    // SQL Server: the server's file system
+    "dm_os_enumerate_filesystem",
+    "dm_os_file_exists",
+    "xp_dirtree",
+    "xp_fileexist",
+    "xp_subdirs",
     // SQLite
     "load_extension",
     "readfile",
@@ -781,9 +789,12 @@ fn last_name_part(name: &ObjectName) -> Option<String> {
     }
 }
 
-/// Families of functions refused by prefix: statistics resets, advisory locks, replication
+/// Families of functions refused by prefix: directory listings, statistics resets, advisory locks, replication
 /// slots and origins (creating, dropping, consuming changes), backups and WAL replay.
 const FORBIDDEN_PREFIXES: &[&str] = &[
+    // Directory listings: pg_ls_dir, pg_ls_logdir, pg_ls_waldir and those added later
+    // (pg_ls_replslotdir, pg_ls_logicalsnapdir, ...).
+    "pg_ls_",
     "pg_stat_reset",
     "pg_advisory",
     "pg_try_advisory",
@@ -1141,6 +1152,9 @@ mod tests {
                     "SELECT pg_terminate_backend(1)",
                     "SELECT set_config('x', 'y', false)",
                     "SELECT (SELECT PG_LS_DIR('.'))",
+                    "SELECT * FROM pg_ls_replslotdir('slot')",
+                    "SELECT pg_ls_logicalsnapdir()",
+                    "SELECT pg_stat_statements_reset()",
                     "COPY t TO '/tmp/x'",
                     "SET search_path = x",
                     "DO $$ BEGIN END $$",
@@ -1181,6 +1195,8 @@ mod tests {
                     "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Data Source=x').db.dbo.t",
                     "SELECT * FROM OPENQUERY(linked, 'SELECT 1')",
                     "SELECT * FROM sys.fn_get_audit_file('C:\\x\\*', DEFAULT, DEFAULT)",
+                    "SELECT * FROM sys.dm_os_enumerate_filesystem('C:\\', '*')",
+                    "SELECT file_exists FROM sys.dm_os_file_exists('C:\\Windows\\win.ini')",
                     "EXEC xp_cmdshell 'dir'",
                     "WITH c AS (SELECT 1 AS a) DELETE FROM t",
                 ],
