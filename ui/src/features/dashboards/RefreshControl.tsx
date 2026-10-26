@@ -1,8 +1,11 @@
 import { IconButton } from "../../components/IconButton";
-import { ToolbarMenu } from "../../components/ToolbarMenu";
+import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { intervalLabel, intervalShort, refreshIntervals } from "./refresh";
 import "./toolbar.css";
+
+/** Live updates of a dashboard: off, on, or paused by the person. */
+export type LiveChoice = "off" | "on" | "paused";
 
 interface RefreshControlProps {
   /** Runs the queries again now. */
@@ -12,22 +15,69 @@ interface RefreshControlProps {
   onSeconds?: (seconds: number) => void;
   /** The dashboard's own interval list. */
   intervals?: readonly number[] | undefined;
+  /** Live updates, offered in the interval menu when given. */
+  live?: LiveChoice | undefined;
+  onLive?: ((live: LiveChoice) => void) | undefined;
   /** The icon alone, without the word (the panel editor's bar). */
   compact?: boolean;
 }
 
 /**
  * Refresh as a split button: the icon runs the queries now, the part beside it chooses the
- * automatic refresh (showing the interval while one runs).
+ * automatic refresh (showing the interval while one runs) or live updates, which replace it.
  */
 export function RefreshControl({
   onRefresh,
   seconds,
   onSeconds,
   intervals,
+  live = "off",
+  onLive,
   compact = false,
 }: RefreshControlProps) {
   const { t } = useI18n();
+  const liveOn = onLive !== undefined && live !== "off";
+  let label = t("dashboards.refresh.auto");
+  let text: string | undefined;
+  if (liveOn) {
+    label = live === "paused" ? t("live.menu.labelPaused") : t("live.menu.label");
+    text = live === "paused" ? t("live.paused") : t("live.on");
+  } else if (seconds !== undefined && seconds > 0) {
+    label = t("toolbar.refresh.menuRunning", { interval: intervalLabel(t, seconds) });
+    text = intervalShort(seconds);
+  }
+  const entries: ToolbarMenuEntry[] =
+    seconds === undefined || onSeconds === undefined
+      ? []
+      : [0, ...refreshIntervals(intervals, seconds)].map((value) => ({
+          kind: "radio" as const,
+          key: String(value),
+          label: intervalLabel(t, value),
+          checked: !liveOn && value === seconds,
+          onSelect: () => {
+            onLive?.("off");
+            onSeconds(value);
+          },
+        }));
+  if (onLive !== undefined) {
+    entries.push(
+      { kind: "separator", key: "live-sep" },
+      {
+        kind: "radio",
+        key: "live",
+        label: t("live.menu.live"),
+        checked: liveOn,
+        onSelect: () => onLive(live === "paused" ? "paused" : "on"),
+      },
+    );
+    if (liveOn) {
+      entries.push(
+        live === "paused"
+          ? { key: "resume", label: t("live.menu.resume"), onSelect: () => onLive("on") }
+          : { key: "pause", label: t("live.menu.pause"), onSelect: () => onLive("paused") },
+      );
+    }
+  }
   return (
     // biome-ignore lint/a11y/useSemanticElements: a pair of buttons, not a set of form fields
     <div className="split-control" role="group" aria-label={t("dashboards.refresh")}>
@@ -41,23 +91,13 @@ export function RefreshControl({
         }
         onClick={onRefresh}
       />
-      {seconds === undefined || onSeconds === undefined ? null : (
+      {entries.length === 0 ? null : (
         <ToolbarMenu
           icon="chevronDown"
-          label={
-            seconds > 0
-              ? t("toolbar.refresh.menuRunning", { interval: intervalLabel(t, seconds) })
-              : t("dashboards.refresh.auto")
-          }
-          text={seconds > 0 ? intervalShort(seconds) : undefined}
+          label={label}
+          text={text}
           className="split-control__menu"
-          entries={[0, ...refreshIntervals(intervals, seconds)].map((value) => ({
-            kind: "radio" as const,
-            key: String(value),
-            label: intervalLabel(t, value),
-            checked: value === seconds,
-            onSelect: () => onSeconds(value),
-          }))}
+          entries={entries}
         />
       )}
     </div>
