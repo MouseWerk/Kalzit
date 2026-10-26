@@ -11,6 +11,7 @@ const TIME_SERIES = ["colors", "graphStyle", "thresholds", "overrides"] as const
 /** The editor with its config kept in state; `seen` holds every config it sent. */
 function setup(initial: FieldConfig = EMPTY_FIELD_CONFIG) {
   const seen: FieldConfig[] = [];
+  // biome-ignore lint/correctness/noComponentHookFactories: a host component local to this test
   function Host() {
     const [config, setConfig] = useState<FieldConfig>(initial);
     return (
@@ -127,6 +128,7 @@ describe("colours editor", () => {
 
 describe("free colour field", () => {
   it("follows a value changed elsewhere, as by undo", async () => {
+    // biome-ignore lint/correctness/noComponentHookFactories: a host component local to this test
     function Host() {
       const [config, setConfig] = useState<FieldConfig>({
         defaults: { colorScheme: "single", color: "#111111" },
