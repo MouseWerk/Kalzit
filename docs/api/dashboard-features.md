@@ -33,6 +33,7 @@ interface Panel {                                // in addition to version 1
   timeShift?: string;                            // 1 to 5 digits and a unit (s m h d w M y): "1d"
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
+  analysisId?: string;                           // shows that saved analysis (docs/api/analyses.md, "Linked panels"); targets must be empty
   description?: string;                          // 1 to 1000 characters, line breaks allowed, not only white space
   transparent?: boolean;                         // drawn without the card's surface and border; true or absent
 }
@@ -90,6 +91,7 @@ Rules:
 ```ts
 interface Dashboard {                            // in addition to settings-dashboards.md
   libraryPanels: Record<string, { id: string; name: string; version: number; model: LibraryPanelModel }>;
+  analyses: Record<string, { id: string; title: string; version: number; model: AnalysisModel }>;  // linked saved analyses
 }
 interface DashboardSummary {                     // in addition
   tags: string[];

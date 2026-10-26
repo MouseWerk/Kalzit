@@ -57,6 +57,7 @@ mod tests {
         "promql",
         "variables",
         "dashboards",
+        "analysis",
         "source",
         "sqlite",
         "mysql",
@@ -86,6 +87,13 @@ mod tests {
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // Audit actions of saved analyses.
+        "analysis.created",
+        "analysis.deleted",
+        "analysis.owner_changed",
+        "analysis.purged",
+        "analysis.restored",
+        "analysis.updated",
         // Settings keys, written like reasons.
         "dashboards.default_time_range",
         "dashboards.new_in_team_space",

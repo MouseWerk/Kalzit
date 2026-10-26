@@ -212,12 +212,13 @@ struct DeleteQuery {
 }
 
 /// Hands everything the team owns to `to` (`None`: the organization) inside the deletion's
-/// transaction. Answers how many folders and dashboards changed hands.
+/// transaction. Answers how many folders, dashboards and saved analyses changed hands.
 async fn hand_over(conn: &mut sqlx::AnyConnection, org_id: &str, team_id: &str, to: Option<&str>) -> ApiResult<u64> {
     let mut moved = 0;
     for sql in [
         "UPDATE folders SET owner_team_id = $1, version = version + 1 WHERE org_id = $2 AND owner_team_id = $3",
         "UPDATE dashboards SET owner_team_id = $1 WHERE org_id = $2 AND owner_team_id = $3",
+        "UPDATE analyses SET owner_team_id = $1 WHERE org_id = $2 AND owner_team_id = $3",
     ] {
         moved += sqlx::query(sql).bind(to).bind(org_id).bind(team_id).execute(&mut *conn).await?.rows_affected();
     }
@@ -244,7 +245,8 @@ async fn delete(
     // to the organization (where only org admins and grants reach team-only content).
     let (owned,): (i64,) = sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2) \
-         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2)",
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2) \
+         + (SELECT COUNT(*) FROM analyses WHERE org_id = $1 AND owner_team_id = $2)",
     )
     .bind(&ctx.org_id)
     .bind(&team_id)
@@ -268,16 +270,16 @@ async fn delete(
         }
     };
     if owned > 0 && q.transfer_to.is_none() {
-        return Err(
-            conflict("the team owns team spaces, folders or dashboards; hand them over first").with_field("transferTo")
-        );
+        return Err(conflict("the team owns team spaces, folders, dashboards or analyses; hand them over first")
+            .with_field("transferTo"));
     }
     // Team spaces and team-only content change hands only through org admins or maintainers of
     // both teams (of the one going, for a handover to the organization): `teams:write` alone
     // would let a custom role carry a team's hidden content to a team it maintains.
     let (restricted,): (i64,) = sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
-         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1) \
+         + (SELECT COUNT(*) FROM analyses WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
     )
     .bind(&ctx.org_id)
     .bind(&team_id)
@@ -425,7 +427,8 @@ async fn put_member(
     // admins, whose access to a team's content is audited.
     let (owned,): (i64,) = sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
-         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1) \
+         + (SELECT COUNT(*) FROM analyses WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
     )
     .bind(&ctx.org_id)
     .bind(&team_id)

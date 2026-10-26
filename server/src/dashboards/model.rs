@@ -20,11 +20,12 @@ use serde_json::Value;
 ///   library panel holds them (the slot rule in `validate`). The dashboard time options
 ///   (`timeZone` ... `sharedCursor`) joined version 2 later, optional and left out while unset; a
 ///   server from before them refuses a model that sets one (docs/api/settings-dashboards.md).
+///   Linked saved analyses (`analysisId` on a panel, the same slot rule) joined the same way.
 pub const SCHEMA_VERSION: u64 = 2;
 
 /// `STEPS[i]` turns a model of schemaVersion `i + 1` into `i + 2`; each step has its own test.
 /// A step changes only what its version changed and sets the new `schemaVersion`.
-type Step = fn(Value) -> Result<Value, String>;
+pub(crate) type Step = fn(Value) -> Result<Value, String>;
 const STEPS: &[Step] = &[v1_to_v2];
 
 /// Version 2 reads a panel's `transformations` as analysis steps. In version 1 the documents UI
@@ -363,6 +364,9 @@ pub struct Panel {
     /// The panel shows this library panel: queries, type and options come from there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_panel_id: Option<String>,
+    /// The panel shows this saved analysis: queries, steps and visualization come from there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis_id: Option<String>,
     /// What the panel shows, in a sentence or two; the header offers it as a hint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -440,6 +444,11 @@ impl DashboardModel {
     pub fn library_panel_ids(&self) -> BTreeSet<&str> {
         self.panels.iter().filter_map(|p| p.library_panel_id.as_deref()).collect()
     }
+
+    /// The saved analyses the dashboard shows.
+    pub fn analysis_ids(&self) -> BTreeSet<&str> {
+        self.panels.iter().filter_map(|p| p.analysis_id.as_deref()).collect()
+    }
 }
 
 /// Checks the options and field options of the panels a write adds or changes: every panel of a
@@ -483,7 +492,7 @@ pub fn migrate(raw: Value) -> Result<Value, String> {
     migrate_with(raw, STEPS, SCHEMA_VERSION)
 }
 
-fn migrate_with(mut model: Value, steps: &[Step], current: u64) -> Result<Value, String> {
+pub(crate) fn migrate_with(mut model: Value, steps: &[Step], current: u64) -> Result<Value, String> {
     let Some(mut version) = model.get("schemaVersion").and_then(Value::as_u64) else {
         return Err("model.schemaVersion must be a whole number".into());
     };
@@ -706,6 +715,19 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
                 return Err(format!("{at}.links must be empty: the library panel holds them"));
             }
         }
+        if let Some(analysis) = &p.analysis_id {
+            check_id(&format!("{at}.analysisId"), analysis)?;
+            if p.library_panel_id.is_some() {
+                return Err(format!("{at}.analysisId: a panel shows a library panel or an analysis, not both"));
+            }
+            // The slot holds the place only, as for a library panel.
+            if !p.targets.is_empty() {
+                return Err(format!("{at}.targets must be empty: the analysis holds the queries"));
+            }
+            if !p.transformations.is_empty() {
+                return Err(format!("{at}.transformations must be empty: the analysis holds them"));
+            }
+        }
         check_panel_time(&at, p.time_from.as_deref(), p.time_shift.as_deref())?;
         check_panel_links(&at, &p.links)?;
         check_id(&format!("{at}.type"), &p.kind)?;
@@ -888,6 +910,9 @@ pub fn parse_library_panel(raw: Value) -> Result<Value, String> {
     let Value::Object(mut fields) = raw else { return Err("model must be an object".into()) };
     if let Some(place) = LIBRARY_PLACE_FIELDS.iter().find(|f| fields.contains_key(**f)) {
         return Err(format!("model.{place}: the dashboard decides where a library panel goes"));
+    }
+    if fields.contains_key("analysisId") {
+        return Err("model.analysisId: a library panel holds its own queries".into());
     }
     let version = fields.remove("schemaVersion").ok_or("model.schemaVersion must be a whole number")?;
     fields.insert("id".into(), Value::from("library"));

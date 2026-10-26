@@ -229,6 +229,7 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
   "branding.": "admin.auditArea.branding",
   "folder.": "admin.auditArea.folder",
   "dashboard.": "admin.auditArea.dashboard",
+  "analysis.": "admin.auditArea.analysis",
   "datasource.": "admin.auditArea.datasource",
   "annotation.": "admin.auditArea.annotation",
   "library_panel.": "admin.auditArea.library_panel",

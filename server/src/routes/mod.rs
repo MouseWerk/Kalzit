@@ -2,6 +2,7 @@ pub mod about;
 pub mod admin_orgs;
 pub mod admin_settings;
 pub mod admin_users;
+pub mod analyses;
 pub mod annotations;
 pub mod audit;
 pub mod auth;
@@ -46,6 +47,7 @@ pub fn all() -> Vec<table::RouteDef> {
         audit::routes(),
         folders::routes(),
         dashboards::routes(),
+        analyses::routes(),
         annotations::routes(),
         library_panels::routes(),
         playlists::routes(),

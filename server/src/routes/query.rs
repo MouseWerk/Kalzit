@@ -287,21 +287,25 @@ async fn panel_query(
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
     // A library panel's queries are its own; the dashboard showing it authorizes them as it does
     // its own stored queries (dashboards::library).
-    let linked;
-    let panel = match &panel.library_panel_id {
-        Some(id) => {
-            let row =
-                crate::dashboards::library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
-            let content = crate::dashboards::library::stored_content(&row.model)?;
-            linked = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
-            &linked
-        }
-        None => panel,
-    };
+    let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
+    let panel = linked.as_ref().unwrap_or(panel);
+    Ok(Json(run_stored_panel(&state, &ctx, &model, panel, req).await?))
+}
+
+/// Runs the stored queries of `panel` in `model` (a dashboard's, or a saved analysis as a
+/// dashboard of one panel) with the request's time range, limits and variable values. The caller
+/// has decided that the caller may read what holds them.
+pub(crate) async fn run_stored_panel(
+    state: &AppState,
+    ctx: &OrgCtx,
+    model: &DashboardModel,
+    panel: &model::Panel,
+    req: PanelQueryRequest,
+) -> ApiResult<QueryResponse> {
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
-    let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
+    let (variables, identifiers) = resolve_variables(model, &req.variables)?;
     // Hidden targets stay with the panel but are not run, unless an analysis step reads them.
     let read = frames_read(&panel.transformations);
     let items: Vec<QueryItem> = panel
@@ -317,12 +321,12 @@ async fn panel_query(
         })
         .collect();
     if items.is_empty() {
-        return Ok(Json(QueryResponse { results: BTreeMap::new() }));
+        return Ok(QueryResponse { results: BTreeMap::new() });
     }
     check_items(&items)?;
-    let response = run_queries_with(
-        &state,
-        &ctx,
+    Ok(run_queries_with(
+        state,
+        ctx,
         items,
         req.time_range,
         req.interval_ms,
@@ -330,8 +334,7 @@ async fn panel_query(
         &variables,
         Some(&identifiers),
     )
-    .await;
-    Ok(Json(response))
+    .await)
 }
 
 async fn variable_options(

@@ -1,5 +1,5 @@
-//! Grants on folders, dashboards and data sources, and the "why can I do this" answer
-//! (docs/api/access.md, "Grants" and "Explain").
+//! Grants on folders, dashboards, saved analyses and data sources, and the "why can I do this"
+//! answer (docs/api/access.md, "Grants" and "Explain").
 
 use axum::extract::{Path, State};
 use axum::http::{Method, StatusCode};
@@ -20,9 +20,9 @@ use crate::net::RequestInfo;
 use crate::shapes::Page;
 
 pub fn routes() -> Vec<RouteDef> {
-    // The permission depends on the resource type (folders:permissions, dashboards:share,
-    // datasources:permissions) and may come from a grant on the resource, so the handlers check
-    // it per resource.
+    // The permission depends on the resource type (folders:permissions, dashboards:share for
+    // dashboards and analyses, datasources:permissions) and may come from a grant on the
+    // resource, so the handlers check it per resource.
     vec![
         route(Method::GET, "/orgs/{orgId}/grants", Access::OrgMember, list),
         route(Method::POST, "/orgs/{orgId}/grants", Access::OrgMember, create),
@@ -55,8 +55,9 @@ const GRANT_COLUMNS: &str = "SELECT g.id, g.subject_type, g.subject_id, \
      LEFT JOIN roles r ON g.subject_type = 'role' AND r.id = g.subject_id";
 
 fn parse_resource_type(raw: &str, field: &'static str) -> ApiResult<ResourceType> {
-    ResourceType::parse(raw)
-        .ok_or_else(|| ApiError::validation("resource type must be folder, dashboard or datasource").with_field(field))
+    ResourceType::parse(raw).ok_or_else(|| {
+        ApiError::validation("resource type must be folder, dashboard, analysis or datasource").with_field(field)
+    })
 }
 
 /// Ids are canonical UUIDs; anything else cannot exist and needs no lookup.
