@@ -104,10 +104,20 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
     if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
         return next.run(req).await;
     }
-    let Some(origin) = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
-        return next.run(req).await;
+    if let Err(e) = check_origin(&state, req.headers(), req.extensions().get::<RequestInfo>()) {
+        return e.into_response();
+    }
+    next.run(req).await
+}
+
+/// Refuses a request whose `Origin` is not this server; one without `Origin` passes (see
+/// `origin_check`). Also for WebSocket handshakes, which are GET requests that a page of any site
+/// could open with the user's cookies (`routes::live`).
+pub(crate) fn check_origin(state: &AppState, headers: &HeaderMap, info: Option<&RequestInfo>) -> Result<(), ApiError> {
+    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return Ok(());
     };
-    let host = req.extensions().get::<RequestInfo>().and_then(|i| i.host.as_deref());
+    let host = info.and_then(|i| i.host.as_deref());
     let allowed = match &state.config.server.public_url {
         Some(public) => matches!((parse_origin(origin), parse_origin(public)), (Some(a), Some(b)) if a == b),
         None => host.is_some_and(|h| origin_matches_host(origin, h)),
@@ -119,14 +129,13 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
             "rejected a cross-origin request; behind a reverse proxy, set server.public_url or security.trusted_proxies"
         );
         // Its own code, so the UI can tell the admin which setting to check instead of "no access".
-        return ApiError::new(
+        return Err(ApiError::new(
             axum::http::StatusCode::FORBIDDEN,
             "cross_origin",
             "cross-origin request rejected; behind a reverse proxy set server.public_url or security.trusted_proxies",
-        )
-        .into_response();
+        ));
     }
-    next.run(req).await
+    Ok(())
 }
 
 /// An origin as (scheme, host, port), lowercased and with the scheme's default port filled in,

@@ -1587,6 +1587,25 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
 | `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |
 
+### Live updates (docs/api/live.md)
+
+In `error` and `closing` messages of a live connection, and in `status` messages (`reason`).
+
+| Reason | Params | When |
+|---|---|---|
+| `live.invalid_message` | `detail` | `validation`: the message is not JSON, has an unknown `type` or fields, or a subscription lacks or doubles `panel`/`queries` or `timeRange`/`lastMs` |
+| `live.duplicate_id` | | `validation`: the connection has a subscription with this `id` already |
+| `live.too_many_subscriptions` | `max` | `validation`: the connection has `max` subscriptions already |
+| `live.forbidden` | | `forbidden` or `not_found`: access to the subscription's dashboard or source, or the membership in the organization, ended; the subscription or the connection (close code 4003) ends |
+| `live.unauthenticated` | | `unauthenticated`: the session ended; the connection closes (close code 4001) |
+| `live.too_many` | `max` | `rate_limited`: the user has `max` live connections open already (close code 4029) |
+| `live.server_busy` | `max` | `busy`: the server has `max` live connections open (close code 4029) |
+| `live.slow_client` | | `busy`: the client did not take its messages in time (close code 4009) |
+| `live.idle_timeout` | | `busy`: no subscription for a while, or the client stopped answering pings (close code 4008) |
+| `live.shutting_down` | | `busy`: the server stops (close code 1001) |
+| `live.source_unsupported` | | status: a source cannot report changes (a SQL source, a MongoDB server that is not a replica set, a pipeline that reads other collections), so the queries run every `refreshMs` |
+| `live.changes_unavailable` | | status: a source's change feed could not be opened or failed; the queries run every `refreshMs` until it works again |
+
 ### Updates (`422 validation` or `409 conflict`; also in the update status)
 
 The update routes (docs/api/updates.md) answer these, and the status reports them for a check,

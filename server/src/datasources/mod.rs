@@ -75,7 +75,28 @@ pub trait DataSourcePlugin: Send + Sync {
     async fn check_on_save(&self, _conn: &Connection) -> Result<(), (&'static str, SourceError)> {
         Ok(())
     }
+    /// Changes that may alter the result of `req`, for live updates (docs/api/live.md): each item
+    /// the feed yields is one change, with the token to continue after it. `Ok(None)` when the
+    /// kind or the deployment cannot report changes; live updates then poll. `resume` continues
+    /// an earlier feed of the same query.
+    async fn watch(
+        &self,
+        _conn: &Connection,
+        _req: SourceQuery,
+        _resume: Option<ResumeToken>,
+    ) -> Result<Option<ChangeFeed>, SourceError> {
+        Ok(None)
+    }
 }
+
+/// Where a change feed continues; opaque outside the kind that made it.
+#[derive(Clone)]
+pub struct ResumeToken(pub Arc<dyn Any + Send + Sync>);
+
+/// Changes reported by a source (`DataSourcePlugin::watch`). An item is one change and the token
+/// after it; an error ends the feed, as does its end (the watched collection was dropped, say).
+pub type ChangeFeed =
+    std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Option<ResumeToken>, SourceError>> + Send>>;
 
 /// A settings field that is not valid. `field` is the field's name in the kind's settings form.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1399,6 +1420,55 @@ async fn run_one(
             tracing::debug!(datasource = %ds.id, code = e.code(), reason = detail.reason, "query failed: {}", detail.message);
             outcome_error(e.code(), detail)
         }
+    }
+}
+
+/// Opens the change feed of one query for live updates (`DataSourcePlugin::watch`), with the
+/// same resolution, limits and target rules as running it. `Ok(None)` when the source cannot
+/// report changes. **The caller has already authorized the item**, as for `run_queries`.
+#[expect(clippy::too_many_arguments, reason = "the parts of one query request, passed through")]
+pub async fn watch_item(
+    state: &AppState,
+    ctx: &OrgCtx,
+    item: &QueryItem,
+    range: TimeRange,
+    interval_ms: Option<u64>,
+    max_data_points: Option<u32>,
+    variables: &BTreeMap<String, Value>,
+    identifier_variables: Option<&std::collections::BTreeSet<String>>,
+    resume: Option<ResumeToken>,
+) -> Result<Option<ChangeFeed>, Box<ErrorBody>> {
+    let registry = &state.datasources;
+    let ds =
+        resolve_in_org(&state.db, &ctx.org_id, &item.datasource_id).await.map_err(|e| Box::new(api_error_body(e)))?;
+    let Some(kind) = registry.kind(&ds.kind) else { return Ok(None) };
+    let budget = registry.response_budget(state).await.map_err(|e| Box::new(api_error_body(e)))?;
+    let mut limits = registry.limits(state, &ds, budget).await.map_err(|e| Box::new(api_error_body(e)))?;
+    if let Some(limit) = item.limit {
+        limits.max_rows = limits.max_rows.min(limit.max(1) as usize);
+    }
+    let timeout = limits.timeout;
+    let open = async {
+        let conn = registry.connection(state, &ds).await?;
+        let req = SourceQuery {
+            ref_id: item.ref_id.clone(),
+            query: item.query.clone(),
+            range,
+            interval_ms: sql::interval_ms(range, interval_ms, max_data_points),
+            max_data_points,
+            variables: variables.clone(),
+            identifier_variables: identifier_variables.cloned(),
+            limits,
+            cursor: None,
+        };
+        let feed = kind.plugin.watch(&conn, req, resume).await;
+        Ok::<_, SourceError>((conn, feed))
+    };
+    match tokio::time::timeout(timeout, open).await {
+        Err(_) => Err(Box::new(error_body("query_timeout", SourceError::Timeout(timeout.as_secs()).detail()))),
+        Ok(Err(e)) => Err(Box::new(error_body(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))))),
+        Ok(Ok((_, Ok(feed)))) => Ok(feed),
+        Ok(Ok((conn, Err(e)))) => Err(Box::new(error_body(e.code(), e.detail().scrubbed(|t| conn.scrub(t))))),
     }
 }
 

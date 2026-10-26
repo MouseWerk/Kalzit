@@ -780,5 +780,17 @@
   "datasources.reason.updates.mode_unsupported_platform": "Dieses System kann Updates nicht selbst installieren.",
   "datasources.reason.updates.channel_mismatch": "Das ist eine Vorschau-Version; stell den Kanal auf Vorschau, um sie zu installieren.",
   "datasources.reason.updates.disk_full": "Auf dem Laufwerk des Datenordners ist zu wenig Platz frei; {needed} Bytes werden gebraucht.",
-  "datasources.reason.updates.rollback_unsigned": "Zu Version {version} ist kein signiertes Manifest behalten, darum kann die Kommandozeile sie nicht prüfen. Kehre stattdessen über die Seite Updates zurück."
+  "datasources.reason.updates.rollback_unsigned": "Zu Version {version} ist kein signiertes Manifest behalten, darum kann die Kommandozeile sie nicht prüfen. Kehre stattdessen über die Seite Updates zurück.",
+  "datasources.reason.live.invalid_message": "Der Server hat eine Anfrage für Live-Updates nicht verstanden: {detail}",
+  "datasources.reason.live.duplicate_id": "Für diese Abfrage laufen schon Live-Updates.",
+  "datasources.reason.live.too_many_subscriptions": "Eine Verbindung hält höchstens {max} Abfragen live aktuell. Schließ ein paar Panels oder Tabs.",
+  "datasources.reason.live.forbidden": "Du hast keinen Zugriff mehr auf diese Daten, darum wurden ihre Live-Updates beendet.",
+  "datasources.reason.live.unauthenticated": "Deine Sitzung ist abgelaufen, darum wurden die Live-Updates beendet. Melde dich wieder an.",
+  "datasources.reason.live.too_many": "Du hast schon {max} Live-Verbindungen offen. Schließ einen Tab und versuche es noch einmal.",
+  "datasources.reason.live.server_busy": "Der Server hat so viele Live-Verbindungen offen, wie er zulässt ({max}). Versuche es gleich noch einmal.",
+  "datasources.reason.live.slow_client": "Die Live-Updates wurden beendet, weil dieser Browser nicht mitkam. Sie laufen weiter, sobald du neu verbindest.",
+  "datasources.reason.live.idle_timeout": "Die Live-Updates pausieren nach einer Weile ohne Aktivität.",
+  "datasources.reason.live.shutting_down": "Der Server startet neu. Die Live-Updates laufen weiter, sobald er wieder da ist.",
+  "datasources.reason.live.source_unsupported": "Diese Quelle kann keine Änderungen melden, darum laufen ihre Abfragen in einem festen Abstand neu.",
+  "datasources.reason.live.changes_unavailable": "Änderungsmeldungen dieser Quelle sind gerade nicht verfügbar, darum laufen ihre Abfragen in einem festen Abstand neu."
 }

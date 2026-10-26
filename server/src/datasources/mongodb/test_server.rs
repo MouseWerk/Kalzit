@@ -20,6 +20,13 @@ pub struct Behaviour {
     pub collections: Vec<Document>,
     /// Added to the handshake answer (a replica set name and members, say).
     pub hello_extra: Document,
+    /// Change streams are answered, as by a replica set; otherwise refused as by a standalone
+    /// server.
+    pub change_streams: bool,
+    /// Operation types of changes not yet sent; each change stream `getMore` takes them all.
+    pub changes: Vec<String>,
+    /// Change events sent so far, for their resume tokens.
+    pub changes_sent: u64,
 }
 
 pub struct FakeMongo {
@@ -70,6 +77,11 @@ impl FakeMongo {
             .collect()
     }
 
+    /// A change of `operation_type` for the open change streams.
+    pub fn change(&self, operation_type: &str) {
+        self.behaviour.lock().unwrap().changes.push(operation_type.to_string());
+    }
+
     pub fn last(&self, name: &str) -> Option<Document> {
         self.commands.lock().unwrap().iter().rev().find(|c| c.keys().next().map(String::as_str) == Some(name)).cloned()
     }
@@ -102,7 +114,16 @@ async fn serve(mut s: TcpStream, b: &Mutex<Behaviour>, seen: &Mutex<Vec<Document
             i += size;
         }
         seen.lock().unwrap().push(command.clone());
-        let reply = answer(&command, &b.lock().unwrap().clone());
+        let reply = if command.contains_key("getMore") {
+            // A change stream's getMore: what changed, or after a short wait nothing (a real
+            // server waits up to maxTimeMS).
+            if b.lock().unwrap().changes.is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            next_changes(&command, &mut b.lock().unwrap())
+        } else {
+            answer(&command, &b.lock().unwrap().clone())
+        };
         let mut doc_bytes = Vec::new();
         reply.to_writer(&mut doc_bytes).unwrap();
         let total = 16 + 4 + 1 + doc_bytes.len();
@@ -120,6 +141,30 @@ async fn serve(mut s: TcpStream, b: &Mutex<Behaviour>, seen: &Mutex<Vec<Document
 
 fn cursor(ns: &str, docs: Vec<Document>) -> Document {
     doc! { "cursor": { "id": 0_i64, "ns": ns, "firstBatch": docs.into_iter().map(Bson::Document).collect::<Vec<_>>() }, "ok": 1.0 }
+}
+
+/// The id of every change stream cursor.
+const CHANGE_CURSOR: i64 = 7;
+
+fn resume_token(n: u64) -> Document {
+    doc! { "_data": format!("{n:016X}") }
+}
+
+fn next_changes(c: &Document, b: &mut Behaviour) -> Document {
+    let ns = format!("db.{}", c.get_str("collection").unwrap_or("x"));
+    let mut batch = Vec::new();
+    for operation_type in std::mem::take(&mut b.changes) {
+        b.changes_sent += 1;
+        batch.push(Bson::Document(doc! {
+            "_id": resume_token(b.changes_sent),
+            "operationType": operation_type,
+            "ns": { "db": "db", "coll": c.get_str("collection").unwrap_or("x") },
+        }));
+    }
+    doc! {
+        "cursor": { "id": CHANGE_CURSOR, "ns": ns, "nextBatch": batch, "postBatchResumeToken": resume_token(b.changes_sent) },
+        "ok": 1.0
+    }
 }
 
 fn answer(c: &Document, b: &Behaviour) -> Document {
@@ -158,6 +203,17 @@ fn answer(c: &Document, b: &Behaviour) -> Document {
         ),
         "aggregate" => {
             let stages = c.get_array("pipeline").cloned().unwrap_or_default();
+            if stages.first().and_then(Bson::as_document).is_some_and(|s| s.contains_key("$changeStream")) {
+                if !b.change_streams {
+                    return doc! { "ok": 0.0, "errmsg": "The $changeStream stage is only supported on replica sets",
+                    "code": 40573, "codeName": "Location40573" };
+                }
+                let ns = format!("db.{}", c.get_str("aggregate").unwrap_or("x"));
+                return doc! {
+                    "cursor": { "id": CHANGE_CURSOR, "ns": ns, "firstBatch": [], "postBatchResumeToken": resume_token(b.changes_sent) },
+                    "ok": 1.0
+                };
+            }
             let mut docs = b.documents.clone();
             if stages.iter().any(|s| s.as_document().is_some_and(|d| d.contains_key("$sample"))) {
                 return cursor("db.x", docs);

@@ -277,13 +277,29 @@ pub(crate) fn frames_read(transformations: &[Value]) -> BTreeSet<String> {
         .collect()
 }
 
-async fn panel_query(
-    State(state): State<AppState>,
-    Extension(ctx): Extension<OrgCtx>,
-    Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
-    JsonBody(req): JsonBody<PanelQueryRequest>,
-) -> ApiResult<Json<QueryResponse>> {
-    let model = readable_model(&state, &ctx, &dashboard_id).await?;
+/// The stored queries of a panel, ready to run: what the caller may run of the dashboard they
+/// read, with the variable values checked against it.
+pub(crate) struct PanelRun {
+    pub items: Vec<QueryItem>,
+    pub variables: BTreeMap<String, Value>,
+    pub identifiers: BTreeSet<String>,
+}
+
+/// The queries a panel of a readable dashboard runs (`readable_model`; unknown panels are
+/// `not_found`), with `variables` checked (`resolve_variables`). `cursors` continue document
+/// results by `refId`; `checks` of the rest of the request run once the panel is found.
+#[expect(clippy::too_many_arguments, reason = "the parts of one panel request, passed through")]
+pub(crate) async fn panel_run(
+    state: &AppState,
+    ctx: &OrgCtx,
+    dashboard_id: &str,
+    panel_id: &str,
+    variables: &BTreeMap<String, Value>,
+    limit: Option<u32>,
+    cursors: &BTreeMap<String, String>,
+    checks: impl FnOnce() -> ApiResult<()>,
+) -> ApiResult<PanelRun> {
+    let model = readable_model(state, ctx, dashboard_id).await?;
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
     // A library panel's queries are its own; the dashboard showing it authorizes them as it does
     // its own stored queries (dashboards::library).
@@ -298,10 +314,9 @@ async fn panel_query(
         }
         None => panel,
     };
-    check_range(req.time_range)?;
-    check_interval(req.interval_ms)?;
-    check_variables(&req.variables)?;
-    let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
+    checks()?;
+    check_variables(variables)?;
+    let (variables, identifiers) = resolve_variables(&model, variables)?;
     // Hidden targets stay with the panel but are not run, unless an analysis step reads them.
     let read = frames_read(&panel.transformations);
     let items: Vec<QueryItem> = panel
@@ -312,10 +327,25 @@ async fn panel_query(
             ref_id: t.ref_id.clone(),
             datasource_id: t.datasource_id.clone(),
             query: t.query.clone(),
-            cursor: req.cursors.get(&t.ref_id).cloned(),
-            limit: req.limit,
+            cursor: cursors.get(&t.ref_id).cloned(),
+            limit,
         })
         .collect();
+    Ok(PanelRun { items, variables, identifiers })
+}
+
+async fn panel_query(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
+    JsonBody(req): JsonBody<PanelQueryRequest>,
+) -> ApiResult<Json<QueryResponse>> {
+    let checks = || {
+        check_range(req.time_range)?;
+        check_interval(req.interval_ms)
+    };
+    let PanelRun { items, variables, identifiers } =
+        panel_run(&state, &ctx, &dashboard_id, &panel_id, &req.variables, req.limit, &req.cursors, checks).await?;
     if items.is_empty() {
         return Ok(Json(QueryResponse { results: BTreeMap::new() }));
     }

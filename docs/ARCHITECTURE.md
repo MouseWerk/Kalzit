@@ -274,6 +274,14 @@ type QueryResult =
     never returns a secret, only `{"set": true}`.
   - Errors from sources (`datasource_error`), "Test connection" output and audit summaries are
     scrubbed of credentials before they leave the server.
+- **Live updates** (docs/api/live.md): a WebSocket per browser tab (`routes::live`) carries
+  subscriptions to a panel's stored queries or to free queries, authorized like their REST routes
+  on subscribe and again every 30 seconds. Equal subscriptions share one feed (`live`), a task
+  that runs the queries through `run_queries_with` (all query limits apply) and serializes the
+  result once for every subscriber. A kind reports changes through the optional
+  `DataSourcePlugin::watch` (MongoDB: change streams with resume tokens); without one, or for a
+  moving range, the feed polls. Slow clients are dropped instead of buffered; a stopping server
+  closes every connection with a reason.
 
 ## Dashboards
 

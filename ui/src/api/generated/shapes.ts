@@ -137,6 +137,33 @@ export type PanelQueryRequest = { timeRange: TimeRange,
  */
 cursors: { [key in string]: string }, limit?: number, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, };
 
+export type LiveSubscribe = { type: LiveSubscribeType, 
+/**
+ * The client's name for the subscription, 1 to 64 characters; messages about it carry it.
+ */
+id: string, panel?: LivePanel, queries?: Array<QueryItem>, timeRange?: TimeRange, lastMs?: number, intervalMs?: number, maxDataPoints?: number, 
+/**
+ * The panel's row limit (free queries carry their own `limit`).
+ */
+limit?: number, variables: Record<string, unknown>, 
+/**
+ * How often to run the queries when the source cannot report changes; the server's
+ * minimum applies.
+ */
+refreshMs?: number, };
+
+export type LiveSubscribeType = "subscribe";
+
+export type LivePanel = { dashboardId: string, panelId: string, };
+
+export type LiveUnsubscribe = { type: LiveUnsubscribeType, id: string, };
+
+export type LiveUnsubscribeType = "unsubscribe";
+
+export type LiveMode = "changes" | "poll";
+
+export type LiveMessage = { "type": "status", id: string, mode: LiveMode, refreshMs: number, reason?: string, } | { "type": "result", id: string, at: number, results: { [key in string]: QueryOutcome }, } | { "type": "error", id?: string, error: ErrorBody, } | { "type": "closing", error: ErrorBody, };
+
 export type VariableOptionsRequest = { timeRange: TimeRange, 
 /**
  * The other variables' current values; the variable's own name is refused.
