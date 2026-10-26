@@ -78,7 +78,7 @@ import {
 } from "./DashboardSettingsPage";
 import { DashboardToolbar } from "./DashboardToolbar";
 import { readDraft, writeDraft } from "./draftStore";
-import { buildExport, downloadJson } from "./exportImport";
+import { buildExport, downloadJson, missingAnalyses } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
 import {
@@ -1161,6 +1161,10 @@ function DashboardView({
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
     downloadJson(model.title, buildExport(model, library, sources, analyses));
+    const missing = missingAnalyses(model, analyses);
+    if (missing > 0) {
+      showToast({ message: t("analyses.export.missing", { count: missing }) });
+    }
   }
 
   // Panels may set a variable the dashboard defines (a node click setting $customerId).

@@ -131,7 +131,6 @@
   "analyses.row.open": "In Explore öffnen",
   "analyses.row.openShort": "Öffnen",
   "analyses.row.openNamed": "„{title}“ in Explore öffnen",
-  "analyses.row.openLocked": "Du darfst die Datenquelle „{source}“ nicht abfragen, deshalb lässt sich die Auswertung nicht in Explore öffnen.",
   "analyses.row.actions": "Aktionen für {title}",
   "analyses.row.addToDashboard": "Zu Dashboard hinzufügen…",
   "analyses.row.duplicate": "Duplizieren",
@@ -226,5 +225,19 @@
   "analyses.linked.remove": "Entfernen",
   "analyses.linked.note": "Abfrage und Schritte sind schreibgeschützt, solange das Panel verknüpft ist. Zum Ändern „In Explore bearbeiten“ oder „Verknüpfung lösen“.",
   "analyses.linked.stepsNote": "Die Schritte kommen aus der verknüpften Auswertung. Ändere sie in Explore, oder löse die Verknüpfung.",
-  "analyses.panel.badge": "Auswertung"
+  "analyses.panel.badge": "Auswertung",
+  "analyses.list.unknownPerson": "Unbekannt",
+  "analyses.row.view": "Ansehen und ausführen",
+  "analyses.row.openShortNamed": "„{title}“ öffnen",
+  "analyses.row.openReadOnly": "Öffnet die Auswertung zum Ansehen und Ausführen. Ändern kannst du sie nicht, weil du „{source}“ nicht abfragen darfst.",
+  "analyses.view.title": "Auswertung",
+  "analyses.view.place": "Liegt in {place}",
+  "analyses.view.run": "Erneut ausführen",
+  "analyses.view.readOnly": "Nur ansehen: Die Abfrage läuft so, wie sie gespeichert ist. Ändern kann sie, wer ihre Datenquelle abfragen darf.",
+  "analyses.navReaders": "Auswertungen",
+  "analyses.leave.title": "Änderungen verwerfen?",
+  "analyses.leave.text": "„{title}“ hat Änderungen, die noch nicht gespeichert sind. Verwirfst du sie, bleiben nur ausgeführte Abfragen im Explore-Verlauf.",
+  "analyses.leave.discard": "Verwerfen",
+  "analyses.leave.stay": "Bleiben",
+  "analyses.export.missing": "{count} Panels zeigen eine Auswertung, die du nicht lesen kannst. Diese Panels bleiben in der Datei verknüpft und laufen nur, wo es die Auswertung gibt."
 }

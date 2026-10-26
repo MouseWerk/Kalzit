@@ -112,9 +112,11 @@ docs/api/dashboard-features.md), as `libraryPanelId` shows a library panel. Star
 analysis, a panel stays linked unless it is added as a copy (then it holds the queries itself).
 
 - The panel is a slot: `targets` and `transformations` must be empty, and a panel links a library
-  panel or an analysis, not both (`422 validation` on `model`). The analysis's current queries,
-  steps and visualization are what the panel shows; a change of the analysis shows in every
-  dashboard that links it.
+  panel or an analysis, not both (`422 validation` on `model`). The analysis's current queries
+  and steps are what the panel runs; a change of them shows in every dashboard that links it.
+  The panel's `type`, options, field options, title and description are the panel's own: the UI
+  starts them from the analysis's visualization, title and description when it links it, and
+  the server never replaces them with the analysis's.
 - A new link (one the stored version did not have) needs `analyses:read` on the analysis, which
   must exist and be outside the trash (`422 validation` on `model`, "analysis ... does not
   exist"), and `datasources:query` on its sources: its queries count as the dashboard's own.

@@ -38,6 +38,11 @@ export interface NavItem {
   childrenLabel?: MessageKey;
   /** Pages under `to` that belong to an entry of their own (members under the administration). */
   outside?: readonly string[];
+  /**
+   * Shown in place of the entry when neither its permissions nor its grant hook show it, if its
+   * own `visible` allows (the saved analyses for viewers, who have no Explore).
+   */
+  fallback?: NavItem;
 }
 
 export const HOME_NAV: NavItem = { to: "/", label: "nav.home", icon: "home", exact: true };

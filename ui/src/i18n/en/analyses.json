@@ -131,7 +131,6 @@
   "analyses.row.open": "Open in Explore",
   "analyses.row.openShort": "Open",
   "analyses.row.openNamed": "Open {title} in Explore",
-  "analyses.row.openLocked": "You may not query the data source “{source}”, so the analysis cannot be opened in Explore.",
   "analyses.row.actions": "Actions for {title}",
   "analyses.row.addToDashboard": "Add to dashboard…",
   "analyses.row.duplicate": "Duplicate",
@@ -226,5 +225,19 @@
   "analyses.linked.remove": "Remove",
   "analyses.linked.note": "The query and steps are read-only while the panel is linked. To change them, use “Edit in Explore” or “Unlink”.",
   "analyses.linked.stepsNote": "The steps come from the linked analysis. Change them in Explore, or unlink the panel.",
-  "analyses.panel.badge": "Analysis"
+  "analyses.panel.badge": "Analysis",
+  "analyses.list.unknownPerson": "Unknown",
+  "analyses.row.view": "View and run",
+  "analyses.row.openShortNamed": "Open {title}",
+  "analyses.row.openReadOnly": "Opens the analysis to view and run it. You cannot change it, because you may not query “{source}”.",
+  "analyses.view.title": "Analysis",
+  "analyses.view.place": "In {place}",
+  "analyses.view.run": "Run again",
+  "analyses.view.readOnly": "View only: the query runs as saved. People who may query its data source can change it.",
+  "analyses.navReaders": "Analyses",
+  "analyses.leave.title": "Discard the changes?",
+  "analyses.leave.text": "“{title}” has changes that are not saved. If you discard them, only queries you ran stay in the Explore history.",
+  "analyses.leave.discard": "Discard",
+  "analyses.leave.stay": "Stay",
+  "analyses.export.missing": "{count} panels show an analysis you cannot read. They stay linked in the file and run only where that analysis exists."
 }

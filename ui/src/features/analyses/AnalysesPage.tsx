@@ -427,7 +427,11 @@ export function AnalysisList({
   const nameOf = (id: string | null) => {
     if (id === null) return "";
     if (id === meId) return t("analyses.list.you");
-    return members.data?.items.find((member) => member.userId === id)?.name ?? "";
+    // The list answers ids only; without the member list the name stays unknown.
+    return (
+      members.data?.items.find((member) => member.userId === id)?.name ??
+      t("analyses.list.unknownPerson")
+    );
   };
 
   if (list.isPending) {
@@ -503,13 +507,23 @@ export function AnalysisList({
 
   function entries(analysis: Analysis): ToolbarMenuEntry[] {
     const list: ToolbarMenuEntry[] = [
-      {
-        key: "open",
-        label: t("analyses.row.open"),
-        icon: "explore",
-        disabled: !analysis.mayQuery,
-        onSelect: () => void navigate({ to: "/explore", search: { analysis: analysis.id } }),
-      },
+      analysis.mayQuery
+        ? {
+            key: "open",
+            label: t("analyses.row.open"),
+            icon: "explore",
+            onSelect: () => void navigate({ to: "/explore", search: { analysis: analysis.id } }),
+          }
+        : {
+            key: "view",
+            label: t("analyses.row.view"),
+            icon: "eye",
+            onSelect: () =>
+              void navigate({
+                to: "/explore/saved/$analysisId",
+                params: { analysisId: analysis.id },
+              }),
+          },
     ];
     if (permissions.has("dashboards:write")) {
       list.push({
@@ -636,7 +650,13 @@ export function AnalysisList({
                         {item.title}
                       </Link>
                     ) : (
-                      <span className="analysis-row__name">{item.title}</span>
+                      <Link
+                        to="/explore/saved/$analysisId"
+                        params={{ analysisId: item.id }}
+                        className="analysis-row__name"
+                      >
+                        {item.title}
+                      </Link>
                     )}
                     <span className="analysis-row__detail">
                       {placeLabel(t, folders, item.folderId)}
@@ -709,23 +729,18 @@ export function AnalysisList({
                         {t("analyses.row.openShort")}
                       </Link>
                     ) : (
-                      <button
-                        type="button"
+                      // Without the query right: the analysis to look at and run, not to edit.
+                      <Link
+                        to="/explore/saved/$analysisId"
+                        params={{ analysisId: item.id }}
                         className="button button--secondary button--small"
-                        aria-disabled="true"
-                        title={t("analyses.row.openLocked", {
+                        aria-label={t("analyses.row.openShortNamed", { title: item.title })}
+                        title={t("analyses.row.openReadOnly", {
                           source: datasource?.name ?? t("analyses.list.sourceHidden"),
                         })}
-                        aria-label={t("analyses.row.openNamed", { title: item.title })}
-                        aria-describedby={`${item.id}-locked`}
                       >
                         {t("analyses.row.openShort")}
-                        <span id={`${item.id}-locked`} className="visually-hidden">
-                          {t("analyses.row.openLocked", {
-                            source: datasource?.name ?? t("analyses.list.sourceHidden"),
-                          })}
-                        </span>
-                      </button>
+                      </Link>
                     )}
                     <ToolbarMenu
                       label={t("analyses.row.actions", { title: item.title })}

@@ -49,6 +49,13 @@ const savedTrashRoute = createRoute({
   component: lazyRouteComponent(() => import("../analyses/AnalysesTrashPage"), "AnalysesTrashPage"),
 });
 
+// One analysis to look at and run, for its readers without the editor (viewers included).
+const savedViewRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/explore/saved/$analysisId",
+  component: lazyRouteComponent(() => import("../analyses/AnalysisViewPage"), "AnalysisViewPage"),
+});
+
 const savedVersionsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/explore/saved/$analysisId/versions",
@@ -62,5 +69,6 @@ export const exploreRoutes = [
   exploreRoute,
   savedRoute,
   savedTrashRoute,
+  savedViewRoute,
   savedVersionsRoute,
 ] as const;

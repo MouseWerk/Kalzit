@@ -182,6 +182,7 @@ export function SaveShortcuts({
   const save = useEffectEvent(onSave);
   const saveAs = useEffectEvent(onSaveAs);
   const open = useEffectEvent(() => onOpen?.());
+  const canOpen = useEffectEvent(() => onOpen !== undefined);
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.defaultPrevented) {
@@ -199,7 +200,8 @@ export function SaveShortcuts({
         } else {
           save();
         }
-      } else if (key === "o" && !event.shiftKey) {
+      } else if (key === "o" && !event.shiftKey && canOpen()) {
+        // Without the right to read analyses, Ctrl+O stays the browser's.
         event.preventDefault();
         open();
       }

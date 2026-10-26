@@ -71,13 +71,25 @@ export function inlineAnalyses(
       if (panel.analysisId === undefined) {
         return panel;
       }
-      const { analysisId: _id, ...rest } = panel;
       const linked = analyses[panel.analysisId];
-      return linked === undefined
-        ? rest
-        : { ...rest, targets: linked.model.targets, transformations: linked.model.steps };
+      if (linked === undefined) {
+        // Not readable here (purged, or hidden): the link stays, and the export says so.
+        return panel;
+      }
+      const { analysisId: _id, ...rest } = panel;
+      return { ...rest, targets: linked.model.targets, transformations: linked.model.steps };
     }),
   };
+}
+
+/** Panels linking an analysis the export could not write in (`inlineAnalyses` keeps them). */
+export function missingAnalyses(
+  model: DashboardModel,
+  analyses: Record<string, LinkedAnalysis>,
+): number {
+  return model.panels.filter(
+    (panel) => panel.analysisId !== undefined && analyses[panel.analysisId] === undefined,
+  ).length;
 }
 
 export function buildExport(

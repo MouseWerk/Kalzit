@@ -141,6 +141,8 @@ interface ConfirmDialogProps {
   error?: string | undefined;
   /** Off for a dialog a router blocker opens: Back must reach the blocker, not this dialog. */
   backGuard?: boolean;
+  /** The safe way out ("Stay"); "Cancel" when left out. */
+  cancelLabel?: string | undefined;
 }
 
 /** Confirmation for a destructive action. Focus starts on Cancel, so Enter does not confirm. */
@@ -153,6 +155,7 @@ export function ConfirmDialog({
   busy = false,
   error,
   backGuard = true,
+  cancelLabel,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
   const textId = useId();
@@ -170,7 +173,7 @@ export function ConfirmDialog({
             onClick={onCancel}
             data-autofocus
           >
-            {t("dashboards.dialog.cancel")}
+            {cancelLabel ?? t("dashboards.dialog.cancel")}
           </button>
           <button
             type="button"

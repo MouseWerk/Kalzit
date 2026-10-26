@@ -189,7 +189,7 @@ describe("the conflict on save", () => {
 });
 
 describe("the list of saved analyses", () => {
-  it("lists analyses with their source and locks Open without the query right", async () => {
+  it("lists analyses with their source and opens them read-only without the query right", async () => {
     const server = setup();
     addAnalysis(server.areas.analyses, {
       title: "Customers",
@@ -209,10 +209,12 @@ describe("the list of saved analyses", () => {
     expect(rows).toHaveLength(3);
     const open = within(table).getByRole("link", { name: "Open Customers in Explore" });
     expect(open.getAttribute("href")).toMatch(/\/explore\?analysis=/);
-    const lockedButton = within(table).getByRole("button", { name: "Open Payments in Explore" });
-    expect(lockedButton.getAttribute("aria-disabled")).toBe("true");
-    expect(lockedButton.title).toBe(
-      "You may not query the data source “Sales DB”, so the analysis cannot be opened in Explore.",
+    // Without the query right: no lock, the analysis opens to view and run.
+    const view = within(table).getByRole("link", { name: "Open Payments" });
+    expect(view.getAttribute("href")).toBe(`/explore/saved/${locked.id}`);
+    expect(view.title).toMatch(/You cannot change it, because you may not query “Sales DB”/);
+    expect(within(table).getByRole("link", { name: "Payments" }).getAttribute("href")).toBe(
+      `/explore/saved/${locked.id}`,
     );
     expect(within(table).getByText("no query access for you")).toBeTruthy();
     expect(within(table).getByRole("button", { name: "1 dashboard" })).toBeTruthy();

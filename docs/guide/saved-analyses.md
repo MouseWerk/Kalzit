@@ -49,8 +49,15 @@ sort (**Last changed** or **Name A to Z**). Each row shows the name and location
 who created it, the dashboards that use it (**Used in**) and when it was last changed. J and K move
 between rows, Enter opens.
 
-**Open** is locked when you may not query the analysis's data source; its tooltip says why. The
-row menu offers **Open in Explore**, **Add to dashboard...** (as a linked panel), **Duplicate**,
+**Open** and the name open the analysis in Explore when you may query its data source. Without
+that right (viewers, or a source not shared with you) they open it **to view and run**: the page
+shows its title, description, location, data source and time range (the kept one, or pick
+another), runs the stored queries as saved and draws the result with its steps and
+visualization; **Run again** runs it once more, **Versions and history** lists its saves. Only
+people who may query the source see **Edit in Explore**. Viewers find the list as **Analyses**
+in the sidebar, since they have no Explore.
+
+The row menu offers **Open in Explore** (or **View and run**), **Add to dashboard...** (as a linked panel), **Duplicate**,
 **Move...**, **Copy link**, **Versions** and **Move to trash**. An analysis that dashboards still
 show cannot go to the trash; the dialog lists those dashboards. The **Trash** link under the
 folders lists trashed analyses to restore or delete for good (deleting for good needs the admin

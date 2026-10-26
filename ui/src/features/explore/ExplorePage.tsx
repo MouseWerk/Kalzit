@@ -73,6 +73,7 @@ import {
 import { ConfirmDialog } from "../dashboards/ui/Dialog";
 import { errorBodyMessage, errorMessage } from "../dashboards/ui/errors";
 import { Inspect } from "../dashboards/ui/Inspect";
+import { useLeaveGuard } from "../dashboards/ui/useLeaveGuard";
 import { writeLiveResult } from "../dashboards/usePanelLive";
 import {
   type DatasourceSummary,
@@ -207,9 +208,15 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
   const [saved, setSaved] = useState<SavedState | null>(null);
   const [saveDialog, setSaveDialog] = useState<SaveMode | null>(null);
   const [opening, setOpening] = useState(false);
-  const [conflict, setConflict] = useState<{ newer: NewerVersion; compareOnly: boolean } | null>(
-    null,
-  );
+  // `retry` sends the refused save again over the newer version (a rename or a move); without
+  // it, overwriting saves the editor.
+  const [conflict, setConflict] = useState<{
+    newer: NewerVersion;
+    compareOnly: boolean;
+    retry?: ((version: number) => void) | undefined;
+  } | null>(null);
+  // Another analysis to open, waiting for "discard" while the editor has unsaved changes.
+  const [switchTo, setSwitchTo] = useState<Analysis | null>(null);
   const [confirmLoad, setConfirmLoad] = useState<Analysis | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const folders = useQuery({
@@ -251,8 +258,14 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
       setSaved(null);
     }
   }
+  // One save at a time: a second Ctrl+S while one is on its way does nothing, so the second
+  // cannot run into a conflict with the first.
+  const saving = useRef(false);
   const persist = useMutation({
     mutationFn: (job: () => Promise<Analysis>) => job(),
+    onSettled: () => {
+      saving.current = false;
+    },
   });
 
   // Only the sources the caller may query (the role or a grant).
@@ -598,7 +611,11 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
     }
   }
 
-  async function showConflict(current: Analysis, compareOnly: boolean) {
+  async function showConflict(
+    current: Analysis,
+    compareOnly: boolean,
+    retry?: (version: number) => void,
+  ) {
     const full = withModel(current);
     if (full === null) {
       return;
@@ -606,11 +623,11 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
     const authorName = await fetchVersions(orgId, full.id, { limit: 1 })
       .then((page) => page.items[0]?.authorName ?? null)
       .catch(() => null);
-    setConflict({ newer: { analysis: full, authorName }, compareOnly });
+    setConflict({ newer: { analysis: full, authorName }, compareOnly, retry });
   }
 
   function saveCurrent(version?: number) {
-    if (datasource === undefined || query === null) {
+    if (datasource === undefined || query === null || saving.current) {
       return;
     }
     if (saved === null) {
@@ -631,6 +648,7 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
       datasource,
       query,
     );
+    saving.current = true;
     persist.mutate(
       () =>
         saveAnalysis(orgId, saved.analysis.id, {
@@ -655,7 +673,7 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
   }
 
   function submitDialog(mode: SaveMode, values: SaveValues) {
-    if (datasource === undefined || query === null) {
+    if (datasource === undefined || query === null || saving.current) {
       return;
     }
     if (mode === "save" || mode === "saveAs") {
@@ -664,6 +682,7 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
         title: values.title,
         description: values.description === "" ? undefined : values.description,
       };
+      saving.current = true;
       persist.mutate(() => createAnalysis(orgId, { model, folderId: values.folderId }), {
         onSuccess: (analysis) => {
           setSaveDialog(null);
@@ -697,29 +716,41 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
             description: values.description === "" ? undefined : values.description,
           }
         : base;
-    persist.mutate(
-      () =>
-        saveAnalysis(orgId, saved.analysis.id, {
-          model,
-          version: saved.analysis.version,
-          ...(mode === "move" ? { folderId: values.folderId } : {}),
-        }),
-      {
-        onSuccess: (analysis) => {
-          setSaveDialog(null);
-          adopt(analysis, saved.baseline);
-          showToast({
-            message:
-              mode === "move"
-                ? t("analyses.list.moved", {
-                    title: analysis.title,
-                    place: placeLabel(t, allFolders, analysis.folderId),
-                  })
-                : t("analyses.explore.savedToast", { title: analysis.title }),
-          });
+    const send = (version: number) => {
+      saving.current = true;
+      persist.mutate(
+        () =>
+          saveAnalysis(orgId, saved.analysis.id, {
+            model,
+            version,
+            ...(mode === "move" ? { folderId: values.folderId } : {}),
+          }),
+        {
+          onSuccess: (analysis) => {
+            setSaveDialog(null);
+            adopt(analysis, saved.baseline);
+            showToast({
+              message:
+                mode === "move"
+                  ? t("analyses.list.moved", {
+                      title: analysis.title,
+                      place: placeLabel(t, allFolders, analysis.folderId),
+                    })
+                  : t("analyses.explore.savedToast", { title: analysis.title }),
+            });
+          },
+          // Saved elsewhere meanwhile: the same choice as for a save, then this change again.
+          onError: (error) => {
+            const current = analysisFromConflict(error);
+            if (current !== null) {
+              setSaveDialog(null);
+              void showConflict(current, false, send);
+            }
+          },
         },
-      },
-    );
+      );
+    };
+    send(saved.analysis.version);
   }
 
   const groups = placeGroups(t, allFolders, permissions.has("analyses:write"));
@@ -737,6 +768,7 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
         }}
         onOpen={permissions.has("analyses:read") ? () => setOpening(true) : undefined}
       />
+      <LeaveGuard dirty={dirty} title={saved?.analysis.title ?? ""} />
       {saved === null ? null : (
         <SavedHeading analysis={saved.analysis} folders={allFolders} dirty={dirty} />
       )}
@@ -1163,6 +1195,11 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
             if (analysis.id === saved?.analysis.id) {
               return;
             }
+            // Unsaved changes are not dropped by opening another analysis without asking.
+            if (dirty) {
+              setSwitchTo(analysis);
+              return;
+            }
             void navigate({ to: "/explore", search: { analysis: analysis.id } });
           }}
           onClose={() => setOpening(false)}
@@ -1206,7 +1243,14 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
           openedAt={saved.openedAt}
           compareOnly={conflict.compareOnly}
           busy={persist.isPending}
-          onOverwrite={() => saveCurrent(conflict.newer.analysis.version)}
+          onOverwrite={() => {
+            const version = conflict.newer.analysis.version;
+            if (conflict.retry === undefined) {
+              saveCurrent(version);
+            } else {
+              conflict.retry(version);
+            }
+          }}
           onLoad={() => {
             const target = conflict.newer.analysis;
             setConflict(null);
@@ -1223,6 +1267,21 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
           }}
           onClose={() => setConflict(null)}
         />
+      )}
+      {switchTo === null ? null : (
+        <ConfirmDialog
+          title={t("analyses.leave.title")}
+          confirmLabel={t("analyses.leave.discard")}
+          cancelLabel={t("analyses.leave.stay")}
+          onCancel={() => setSwitchTo(null)}
+          onConfirm={() => {
+            const target = switchTo;
+            setSwitchTo(null);
+            void navigate({ to: "/explore", search: { analysis: target.id } });
+          }}
+        >
+          {t("analyses.leave.text", { title: saved?.analysis.title ?? "" })}
+        </ConfirmDialog>
       )}
       {confirmLoad === null ? null : (
         <ConfirmDialog
@@ -1248,6 +1307,17 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
       )}
     </div>
   );
+}
+
+/** Asks before leaving Explore (a link, the browser's back button) with unsaved changes. */
+function LeaveGuard({ dirty, title }: { dirty: boolean; title: string }) {
+  const { t } = useI18n();
+  const leave = useLeaveGuard(dirty, t("analyses.leave.text", { title }), {
+    title: t("analyses.leave.title"),
+    confirm: t("analyses.leave.discard"),
+    cancel: t("analyses.leave.stay"),
+  });
+  return leave.dialog;
 }
 
 const TABS = ["result", "inspect"] as const;
