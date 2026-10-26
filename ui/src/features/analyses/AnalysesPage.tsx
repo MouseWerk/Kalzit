@@ -679,7 +679,9 @@ export function AnalysisList({
                 </td>
                 <td {...STACK_ROLES.cell} data-label={t("analyses.column.uses")}>
                   {item.uses === 0 ? (
-                    <span className="data-table__muted">{t("analyses.list.unused")}</span>
+                    <span className="data-table__muted analysis-row__nowrap">
+                      {t("analyses.list.unused")}
+                    </span>
                   ) : (
                     <button
                       type="button"

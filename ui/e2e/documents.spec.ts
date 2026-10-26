@@ -1,8 +1,8 @@
 import type { Page } from "@playwright/test";
-import { Api, unique } from "./support/api";
+import { Api, OWNER_DE, unique } from "./support/api";
 import { de } from "./support/i18n";
 import { MONGO_FIXTURE, serviceAddress } from "./support/services";
-import { expect, signInOwner, test } from "./support/test";
+import { expect, test } from "./support/test";
 
 /** Each step gets its own limit, so a failure names the step instead of the test's timeout. */
 const STEP_MS = 15_000;
@@ -30,7 +30,7 @@ const OST_PAID = 4;
 // In German, as the documents panels are written for German readers first: "über alle 9
 // Dokumente" is the line that tells the counts come from the whole result in the database.
 test("MongoDB in Explore: stages with a preview, the schema, the distribution over all documents and a filter as a visible stage", async ({
-  page,
+  pageAs,
 }) => {
   const hosts = serviceAddress("KALZIT_E2E_MONGODB");
   const name = unique("Bestellungen");
@@ -45,11 +45,11 @@ test("MongoDB in Explore: stages with a preview, the schema, the distribution ov
   } finally {
     await owner.dispose();
   }
+  const page = await pageAs(OWNER_DE.email, OWNER_DE.password, { locale: "de-DE" });
   const result = page.getByRole("region", { name: de("explore.result") });
   const run = page.getByRole("button", { name: de("explore.run") });
 
   await test.step("open the collection in Explore and run it without stages", async () => {
-    await signInOwner(page, "de");
     await page.goto("/explore", { timeout: STEP_MS });
     await page
       .getByLabel(de("explore.datasource"))
@@ -105,7 +105,7 @@ test("MongoDB in Explore: stages with a preview, the schema, the distribution ov
       .selectOption("distribution", { timeout: STEP_MS });
     await page
       .getByLabel(de("documents.distribution.path"), { exact: true })
-      .fill("status", { timeout: STEP_MS });
+      .selectOption("status", { timeout: STEP_MS });
     await expect(
       result.getByText(de("documents.distribution.scope.all", { count: OST }), { exact: true }),
     ).toBeVisible({ timeout: STEP_MS });

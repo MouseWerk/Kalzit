@@ -103,7 +103,9 @@ async function shoot(page: Page, name: string): Promise<void> {
   const nav = page.getByRole("navigation", { name: t("nav.label") });
   if ((await nav.count()) > 0) {
     // Explore appears once the data source list has loaded; the owner sees all five entries.
-    await expect(nav.getByRole("link", { name: t("explore.nav") })).toBeVisible();
+    // A viewer has the saved analyses there instead.
+    const entry = new RegExp(`^(${t("explore.nav")}|${t("analyses.navReaders")})$`);
+    await expect(nav.getByRole("link", { name: entry }).first()).toBeVisible();
   }
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
@@ -766,7 +768,7 @@ test("saved analyses", async ({ browser }) => {
   await signIn(page);
   await page.goto("/explore/saved");
   await expect(page.getByRole("heading", { name: t("analyses.list.title") })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Average order per region" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Average order per region", exact: true })).toBeVisible();
   await expect(page.getByText("Lea Hoffmann").first()).toBeVisible();
   await shoot(page, "analyses");
   await page.context().close();
@@ -794,7 +796,12 @@ test("dashboard, live, dark", async ({ browser }) => {
   const dashboardId = await owner.createDashboard({
     schemaVersion: 1,
     title: "Sales, live",
-    timeRange: { from: "now-6h", to: "now" },
+    // Live runs on the server, whose clock is not the pictures' fixed one: a fixed range around
+    // the screenshot moment, where the fixture data lies.
+    timeRange: {
+      from: new Date(SCREENSHOT_NOW - 6 * 3_600_000).toISOString(),
+      to: new Date(SCREENSHOT_NOW).toISOString(),
+    },
     // The interval live runs the queries at: SQLite cannot report changes.
     refreshSeconds: 30,
     variables: [],
@@ -871,7 +878,7 @@ test("explore, field distribution, dark", async ({ browser }) => {
     t("documents.summary.countMany", { count: MONGO_FIXTURE.documents }),
   );
   await page.getByLabel(t("explore.visualization"), { exact: true }).selectOption("distribution");
-  await page.getByLabel(t("documents.distribution.path"), { exact: true }).fill("customer.city");
+  await page.getByLabel(t("documents.distribution.path"), { exact: true }).selectOption("customer.city");
   await expect(
     result.getByText(t("documents.distribution.scope.all", { count: MONGO_FIXTURE.documents }), {
       exact: true,

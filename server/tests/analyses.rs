@@ -1061,9 +1061,14 @@ async fn answers_name_who_created_and_saved(t: TestApp) {
     let source = t.source("shop").await;
     let (eva_id, eva) = t.member("Eva", "editor").await;
     let id = id_of(t.create("Von Eva", &source, None, &eva).await);
-    let r = t.put(&format!("~/analyses/{id}"), json!({ "model": model("Von Eva", &source, SQL), "version": 1 }), &t.owner).await;
+    let r = t
+        .put(&format!("~/analyses/{id}"), json!({ "model": model("Von Eva", &source, SQL), "version": 1 }), &t.owner)
+        .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!((r.body["createdByName"].clone(), r.body["updatedByName"].clone()), (json!("Eva"), json!("Jörg Müller")));
+    assert_eq!(
+        (r.body["createdByName"].clone(), r.body["updatedByName"].clone()),
+        (json!("Eva"), json!("Jörg Müller"))
+    );
     let names = |reply: &Reply| {
         let item = reply.body["items"].as_array().unwrap().iter().find(|i| i["id"] == json!(id)).unwrap().clone();
         (item["createdBy"].clone(), item["createdByName"].clone(), item["updatedByName"].clone())
