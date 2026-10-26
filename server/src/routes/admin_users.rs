@@ -187,7 +187,7 @@ async fn update(
             .await?;
         // A new password ends the account's sessions, except the one of the admin setting their
         // own password here.
-        let keep = session::read_cookie(&headers).filter(|_| user_id == admin.id);
+        let keep = session::read_cookie(&headers, info.https).filter(|_| user_id == admin.id);
         session::delete_for_user(&mut *tx, &user_id, keep.as_deref()).await?;
         fields.push("password");
     }

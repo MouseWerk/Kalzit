@@ -400,11 +400,26 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+impl Panel {
+    /// What decides what a stored target shows, for the unchanged-query check: the query text,
+    /// the dashboard panel it is shown in (`panel_id`, also for a linked library panel's
+    /// targets), its reference id, and whether it runs (not hidden, or read by an enabled
+    /// analysis step). Moving a query to another panel or un-hiding it is a change.
+    pub fn target_key(&self, panel_id: &str, target: &Target) -> String {
+        let runs = !target.hide || crate::routes::query::frames_read(&self.transformations).contains(&target.ref_id);
+        serde_json::json!([panel_id, target.ref_id, runs, target.query]).to_string()
+    }
+}
+
 impl DashboardModel {
-    /// Every stored query as (data source, query text): panel targets and query variables.
+    /// Every stored query as (data source, what decides what it shows): panel targets (with the
+    /// panel, reference id and whether it runs, see `Panel::target_key`), query variables and
+    /// annotation queries.
     pub fn stored_queries(&self) -> BTreeSet<(&str, String)> {
-        let targets =
-            self.panels.iter().flat_map(|p| p.targets.iter().map(|t| (t.datasource_id.as_str(), t.query.to_string())));
+        let targets = self
+            .panels
+            .iter()
+            .flat_map(|p| p.targets.iter().map(|t| (t.datasource_id.as_str(), p.target_key(&p.id, t))));
         let variables = self.variables.iter().filter_map(|v| {
             v.datasource_id.as_deref().map(|id| (id, v.query.as_ref().map_or_else(String::new, |q| q.to_string())))
         });

@@ -21,7 +21,9 @@ pub struct ListenerTls(pub bool);
 #[derive(Clone, Debug)]
 pub struct RequestInfo {
     pub client_ip: IpAddr,
-    /// The user's connection is HTTPS (directly, or at a trusted proxy in front of us).
+    /// The user's connection is HTTPS (directly, or at a trusted proxy in front of us). The
+    /// session cookie is then `Secure` with the `__Host-` prefix; a browser would not send such a
+    /// cookie back over plain HTTP, so it follows the request's scheme, not `server.public_url`.
     pub https: bool,
     /// Host the user addressed, from `Host` or a trusted proxy's `X-Forwarded-Host`.
     pub host: Option<String>,

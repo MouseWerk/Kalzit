@@ -53,6 +53,10 @@ pub struct Config {
     /// Problems found while loading that do not stop the start; logged once logging is set up.
     #[serde(skip)]
     pub warnings: Vec<String>,
+    /// The configuration file this was read from (absolute), if any. Data sources may never
+    /// read it.
+    #[serde(skip)]
+    pub config_file: Option<PathBuf>,
 }
 
 /// The layer a configuration value came from.
@@ -337,6 +341,10 @@ impl Config {
             }
             config.paths.data_dir = base.join(dir);
         }
+        config.config_file = match file {
+            Some(f) => Some(std::path::absolute(f).context("resolving the configuration path")?),
+            None => None,
+        };
         Ok(config)
     }
 

@@ -66,7 +66,7 @@ pub async fn login(
         return Err(invalid_credentials());
     }
     let email_key = format!("email:{email}");
-    let ip_key = format!("ip:{}", info.client_ip);
+    let ip_key = crate::auth::ratelimit::address_key("login", info.client_ip);
     let limiter = &state.login_limiter;
     if !limiter.try_acquire(&[&email_key, &ip_key], now) {
         return Err(rate_limited());
@@ -127,7 +127,7 @@ pub async fn login(
         return Err(invalid_credentials());
     }
     // Signing in again replaces the session this browser had, instead of leaving it behind.
-    if let Some(old) = session::read_cookie(&headers) {
+    if let Some(old) = session::read_cookie(&headers, info.https) {
         session::delete(&mut *tx, &old).await?;
     }
     let token = session::create(&mut *tx, &state.config.sessions, now, &row.id).await?;
@@ -149,8 +149,28 @@ pub async fn logout(
     Extension(info): Extension<RequestInfo>,
     headers: HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
-    if let Some(token) = session::read_cookie(&headers) {
-        session::delete(&state.db, &token).await?;
+    if let Some(token) = session::read_cookie(&headers, info.https) {
+        let mut tx = crate::db::begin(&state.db).await?;
+        let user: Option<(String,)> = sqlx::query_as("SELECT user_id FROM sessions WHERE token_hash = $1")
+            .bind(session::hash_token(&token))
+            .fetch_optional(&mut *tx)
+            .await?;
+        session::delete(&mut *tx, &token).await?;
+        // Only a session that still existed is recorded; an old cookie signs out silently.
+        if let Some((user_id,)) = &user {
+            let event = crate::audit::AuditEvent {
+                org_id: None,
+                actor_user_id: Some(user_id),
+                actor_address: Some(info.client_ip.to_string()),
+                action: "auth.signed_out",
+                resource_type: Some("user"),
+                resource_id: Some(user_id),
+                summary: serde_json::json!({}),
+                at_ms: state.clock.now_ms(),
+            };
+            crate::audit::record(&mut tx, &event).await?;
+        }
+        crate::db::commit(tx).await?;
     }
     let mut out = HeaderMap::new();
     out.insert(header::SET_COOKIE, session::clear_cookie(info.https));

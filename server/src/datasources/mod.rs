@@ -891,6 +891,23 @@ struct Cached {
     conn: Arc<OnceCell<Arc<Connection>>>,
 }
 
+/// Kalzit's own files outside the data directory that no file or SQLite source may read: the
+/// configuration file and the TLS certificate and key; and the directories of its secrets
+/// (systemd's `$CREDENTIALS_DIRECTORY`).
+fn own_files(config: &Config) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+    let files = [config.config_file.as_ref(), config.tls.cert_file.as_ref(), config.tls.key_file.as_ref()]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    let dirs = std::env::var_os("CREDENTIALS_DIRECTORY")
+        .filter(|d| !d.is_empty())
+        .map(std::path::PathBuf::from)
+        .into_iter()
+        .collect();
+    (files, dirs)
+}
+
 /// The data source kinds and the live connections. One per server, in `AppState`.
 pub struct DataSources {
     kinds: Vec<Kind>,
@@ -898,6 +915,8 @@ pub struct DataSources {
     own: Arc<OwnDatabase>,
     data_dir: std::path::PathBuf,
     database_url: String,
+    /// Kalzit's own files and secret directories outside the data directory (`own_files`).
+    protected: (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>),
     connections: Mutex<HashMap<String, Cached>>,
     user_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
     /// Queries running at once on the whole server (`datasources.max_parallel_queries`), with the
@@ -940,6 +959,7 @@ impl DataSources {
             own: Arc::new(OwnDatabase::new(db, &database_url)),
             data_dir: config.paths.data_dir.clone(),
             database_url,
+            protected: own_files(config),
             connections: Mutex::new(HashMap::new()),
             user_slots: Mutex::new(HashMap::new()),
             running: Mutex::new((0, Arc::new(Semaphore::new(0)))),
@@ -1027,8 +1047,11 @@ impl DataSources {
         {
             return Ok(c.policy.clone());
         }
-        let policy =
-            Arc::new(TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed).with_file_dirs(&file_dirs));
+        let policy = Arc::new(
+            TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed)
+                .with_file_dirs(&file_dirs)
+                .with_protected(&self.protected.0, &self.protected.1),
+        );
         *cache = Some(CachedPolicy { dirs, allowed, file_dirs, built: Instant::now(), policy: policy.clone() });
         Ok(policy)
     }
@@ -1727,6 +1750,35 @@ pub fn naive_to_ms(t: chrono::NaiveDateTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TLS paths written relative in `kalzit.toml` are resolved against the file's folder before
+    /// they are compared, so the files the server serves are the ones refused.
+    #[test]
+    fn relative_tls_paths_from_the_configuration_are_protected() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("etc");
+        std::fs::create_dir_all(folder.join("certs")).unwrap();
+        for f in ["certs/cert.pem", "certs/key.pem"] {
+            std::fs::write(folder.join(f), b"").unwrap();
+        }
+        let file = folder.join("kalzit.toml");
+        std::fs::write(&file, "[tls]\ncert_file = \"certs/cert.pem\"\nkey_file = \"certs/key.pem\"\n").unwrap();
+        let config = Config::from_file(Some(&file), Vec::<(String, String)>::new()).unwrap();
+        let (files, _) = own_files(&config);
+        assert!(files.contains(&std::path::absolute(&file).unwrap()), "{files:?}");
+        assert!(files.contains(&folder.join("certs/key.pem")), "{files:?}");
+        assert!(files.contains(&folder.join("certs/cert.pem")), "{files:?}");
+        let allowed = folder.to_string_lossy().to_string();
+        let policy =
+            TargetPolicy::new(&dir.path().join("data"), "sqlite::memory:", std::slice::from_ref(&allowed), &[])
+                .with_file_dirs(&[allowed])
+                .with_protected(&files, &[]);
+        for f in ["kalzit.toml", "certs/key.pem", "certs/cert.pem"] {
+            let path = folder.join(f).to_string_lossy().to_string();
+            assert!(policy.check_sqlite_path(&path).is_err(), "{f}");
+            assert!(policy.check_file_path(&path).is_err(), "{f}");
+        }
+    }
 
     #[test]
     fn scrub_removes_secrets_in_every_form() {

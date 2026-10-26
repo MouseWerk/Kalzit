@@ -164,7 +164,7 @@ pub async fn complete(
     JsonBody(req): JsonBody<SetupRequest>,
 ) -> ApiResult<impl IntoResponse> {
     let now = state.clock.now_ms();
-    let limit_key = format!("setup-ip:{}", info.client_ip);
+    let limit_key = crate::auth::ratelimit::address_key("setup", info.client_ip);
     if !state.login_limiter.try_acquire(&[&limit_key], now) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,

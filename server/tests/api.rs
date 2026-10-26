@@ -244,6 +244,57 @@ async fn login_logout_and_me() {
     assert!(out.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap().contains("Max-Age=0"));
     let after = t.get("/api/me", Some(&cookie)).await;
     assert_eq!((after.status, after.code()), (StatusCode::UNAUTHORIZED, "unauthenticated"));
+    // Signing out is audited once; an ended session's cookie signs out without a second entry.
+    let again = t.send(Method::POST, "/api/auth/logout", None, &[("cookie", &cookie)]).await;
+    assert_eq!(again.status, StatusCode::NO_CONTENT);
+    let signed_out: Vec<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT actor_user_id, actor_address FROM audit_events WHERE action = 'auth.signed_out'")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(signed_out.len(), 1);
+    assert!(signed_out[0].0.is_some());
+    assert_eq!(signed_out[0].1.as_deref(), Some("127.0.0.1"));
+    t.finish().await;
+}
+
+/// The session cookie follows the scheme the request arrived with: over HTTPS (here reported by a
+/// trusted proxy) it is `Secure` with the `__Host-` prefix and only that name is read; over plain
+/// HTTP it stays a plain cookie even with an `https://` public URL, since a browser would not
+/// send a `Secure` cookie back over HTTP and the sign-in would be lost.
+#[tokio::test]
+async fn the_session_cookie_follows_the_request_scheme() {
+    let t = test_app("10.1.2.3:50000", |c| {
+        c.server.public_url = Some("https://kalzit.example.com".into());
+        c.security.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    t.setup().await;
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
+    let origin = ("origin", "https://kalzit.example.com");
+
+    let secure =
+        t.send(Method::POST, "/api/auth/login", Some(body.clone()), &[origin, ("x-forwarded-proto", "https")]).await;
+    assert_eq!(secure.status, StatusCode::OK, "{}", secure.body);
+    let set_cookie = secure.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(set_cookie.starts_with("__Host-kalzit_session="), "{set_cookie}");
+    assert!(set_cookie.contains("; Secure") && set_cookie.contains("Path=/") && !set_cookie.contains("Domain"));
+    let cookie = secure.session_cookie();
+    let over_https = |cookie: String| {
+        let t = &t;
+        async move {
+            t.send(Method::GET, "/api/me", None, &[("cookie", &cookie), ("x-forwarded-proto", "https")]).await.status
+        }
+    };
+    assert_eq!(over_https(cookie.clone()).await, StatusCode::OK);
+    let token = cookie.split_once('=').unwrap().1;
+    assert_eq!(over_https(format!("kalzit_session={token}")).await, StatusCode::UNAUTHORIZED);
+
+    let plain = t.send(Method::POST, "/api/auth/login", Some(body), &[origin]).await;
+    assert_eq!(plain.status, StatusCode::OK, "{}", plain.body);
+    let set_cookie = plain.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(set_cookie.starts_with("kalzit_session=") && !set_cookie.contains("Secure"), "{set_cookie}");
+    assert_eq!(t.get("/api/me", Some(&plain.session_cookie())).await.status, StatusCode::OK);
     t.finish().await;
 }
 
