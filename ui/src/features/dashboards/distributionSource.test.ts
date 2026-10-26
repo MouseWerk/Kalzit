@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PanelModel } from "./model";
 import { panelDistribution, windowIdentity } from "./usePanelResults";
 
@@ -44,5 +44,52 @@ describe("field distributions of a dashboard panel", () => {
       first.identity,
     );
     expect(windowIdentity({ from: 0, to: 1000 }, now)).toBe("0:1000");
+  });
+});
+
+describe("field distributions of a saved analysis", () => {
+  it("ask the analysis route, without variables", async () => {
+    const answer = {
+      total: 1,
+      documents: 1,
+      missing: 0,
+      values: 1,
+      nulls: 0,
+      distinct: 1,
+      distinctCapped: false,
+      types: [],
+      top: [],
+      bins: [],
+    };
+    const sent = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(answer), { status: 200 }));
+    try {
+      const now = Date.now();
+      const asked = panelDistribution(
+        {
+          orgId: "o1",
+          dashboardId: "",
+          panel,
+          range: { from: now - 3_600_000, to: now },
+          variables: { land: "AT" },
+          source: "stored",
+          manual: 0,
+          route: { kind: "analysis", analysisId: "a1" },
+        },
+        () => "mongodb",
+      );
+      const signal = new AbortController().signal;
+      expect(await asked.run("A", { path: ["status"] }, signal)).toEqual(answer);
+      const [url, init] = sent.mock.calls[0] ?? [];
+      expect(String(url)).toBe("/api/orgs/o1/analyses/a1/distribution");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        refId: "A",
+        path: ["status"],
+        variables: {},
+      });
+    } finally {
+      sent.mockRestore();
+    }
   });
 });

@@ -382,7 +382,7 @@ pub(crate) struct PanelRun {
 /// The queries `panel` of `model` runs, with `variables` checked (`resolve_variables`). Hidden
 /// targets stay with the panel but are not run, unless an analysis step reads them. `cursors`
 /// continue document results by `refId`.
-fn stored_items(
+pub(crate) fn stored_items(
     model: &DashboardModel,
     panel: &model::Panel,
     variables: &BTreeMap<String, Value>,

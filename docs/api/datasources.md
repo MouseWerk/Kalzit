@@ -1123,6 +1123,9 @@ links a library panel or a saved analysis answers for the linked queries. Body
 `top`, `bins`. An unknown panel or `refId`, and a hidden target that no analysis step reads (the
 panel route does not run it either), is `404 not_found`.
 
+A saved analysis has its own: `POST /orgs/{orgId}/analyses/{analysisId}/distribution`, with the
+rights of its query route (docs/api/analyses.md).
+
 ## A dashboard's stored queries
 
 Both routes run only what the dashboard's current version stores; the request adds the time
