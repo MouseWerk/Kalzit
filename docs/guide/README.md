@@ -8,6 +8,7 @@ written as the English interface shows them, with the German label in parenthese
 
 | Page | What it covers |
 |---|---|
+| [Installation](installation.md) | The container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates |
 | [Getting started](getting-started.md) | First setup and sign-in, your first data source, dashboard and Explore query |
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables, time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
 | [Panels](panels.md) | Every visualization with its options; colours, thresholds, units, value mappings, overrides |
@@ -22,8 +23,9 @@ The HTTP API behind every function is described in [docs/api](../api): [access](
 [settings and dashboards](../api/settings-dashboards.md),
 [dashboard features](../api/dashboard-features.md), [shell](../api/shell.md) and
 [updates](../api/updates.md). Words used in the interface are explained in the
-[glossary](../glossary.md); how to install and run a server is in the
-[README](../../README.md#quick-start) and [ARCHITECTURE](../ARCHITECTURE.md).
+[glossary](../glossary.md); how to install and run a server is in
+[Installation](installation.md), the [README](../../README.md#quick-start) and
+[ARCHITECTURE](../ARCHITECTURE.md).
 
 ## Finding your way
 

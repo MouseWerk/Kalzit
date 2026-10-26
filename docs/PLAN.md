@@ -349,7 +349,9 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Zeitreihe, Stat, Balken, Tabelle; Explore, berechnete Felder, Statistik, Export.
 3. **M2 MongoDB nativ**: Treiber, Pipeline-Editor mit Stufen-Vorschau, Schema-Sampling,
    Dokument-Explorer, Schema-Panel, Feldverteilung, Projektionen, Change Streams;
-   Elasticsearch/OpenSearch, CSV/JSON/HTTP-JSON; gespeicherte Auswertungen.
+   Elasticsearch/OpenSearch, CSV/JSON/HTTP-JSON; gespeicherte Auswertungen; Docker-Image
+   (linux/amd64 und linux/arm64 auf ghcr.io, Compose-Beispiele mit SQLite und PostgreSQL; auf
+   Wunsch des Owners aus M5 vorgezogen).
 4. **M3 Graph nativ**: Neo4j und Memgraph über Bolt mit Cypher-Editor, TigerGraph über GSQL mit
    GSQL-Editor und Auswahl installierter Abfragen (Knoten- und Kantenmengen aus `PRINT`-Blöcken
    werden zum `graph`, Knoten-ID ist Typ plus ID, Kanten-IDs werden abgeleitet; Kanten erscheinen
@@ -358,7 +360,7 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 5. **M4 Plugins**: externe Plugin-Prozesse, Manifest, Signaturen, Katalog, Rust-SDK, Beispiel-Plugins
    (eine Datenquelle, ein Panel).
 6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
-   Docker, Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse.
+   Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse.
 7. **M6 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
    (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase).

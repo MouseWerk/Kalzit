@@ -13,3 +13,4 @@ node_modules/
 /playwright-report/
 /.claude/
 /ui/e2e/.output/
+/deploy/docker/secrets/

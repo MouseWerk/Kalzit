@@ -3,7 +3,8 @@ name: Release
 # Builds the Windows and Linux binaries for a version tag (v0.2.0, v0.3.0-rc.1), writes the signed
 # update manifest and publishes everything as a GitHub Release, which running servers find through
 # their update check (docs/operations/updates.md). A tag with a pre-release part (-rc.1) becomes
-# a pre-release, offered only on the preview channel.
+# a pre-release, offered only on the preview channel. After that, the container image is pushed
+# to ghcr.io (job `image`).
 #
 # Hardening, because the publish job holds the release signing key:
 # - every action is pinned to a full commit SHA (the comment names the version it was);
@@ -168,3 +169,66 @@ jobs:
             --title "Kalzit $version" \
             --notes-file "docs/releases/v$version.md" \
             --verify-tag $prerelease
+
+  # The container image for linux/amd64 and linux/arm64, pushed to ghcr.io/mousewerk/kalzit once
+  # the release is published: tags <version>, and for a stable release also <major>.<minor> and
+  # latest. The server is cross-compiled in the Dockerfile, so no emulation is needed. This job
+  # holds only the workflow token (packages: write), never the signing key.
+  image:
+    name: container image
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag on main, tags and labels
+        id: meta
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME does not point at a commit of main"
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
+          tags="$image:$version"
+          case "$version" in
+            *-*) ;;
+            *) tags="$tags,$image:$(echo "$version" | cut -d. -f1,2),$image:latest" ;;
+          esac
+          {
+            echo "version=$version"
+            echo "tags=$tags"
+            echo "commit=$(git rev-parse --short=9 HEAD)"
+            echo "date=$(date -u -d "@$(git show -s --format=%ct HEAD)" +%F)"
+            echo "created=$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          sbom: true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.meta.outputs.created }}
+            KALZIT_BUILD_COMMIT=${{ steps.meta.outputs.commit }}
+            KALZIT_BUILD_DATE=${{ steps.meta.outputs.date }}
+            KALZIT_UPDATE_PUBLIC_KEYS=${{ vars.KALZIT_UPDATE_PUBLIC_KEYS }}
+          cache-from: type=gha,scope=kalzit-image-release
+          cache-to: type=gha,scope=kalzit-image-release,mode=max

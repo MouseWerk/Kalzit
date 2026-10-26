@@ -194,10 +194,25 @@ The images come from the real application with demo data (`npm run screenshots` 
 
 ## Quick start
 
-There are no release packages yet; build Kalzit from source. The result is one binary,
-`kalzit` (`kalzit.exe` on Windows), with the web interface embedded.
+Run the container image (below), or build Kalzit from source. The result of a build is one
+binary, `kalzit` (`kalzit.exe` on Windows), with the web interface embedded.
 
-### Prerequisites
+### Docker
+
+The image `ghcr.io/mousewerk/kalzit` runs on Linux (amd64 and arm64) and on Docker Desktop for
+Windows and macOS. It keeps its data in the volume `/var/lib/kalzit` and listens on port 3000:
+
+```sh
+docker run -d --name kalzit -p 3000:3000 -v kalzit-data:/var/lib/kalzit ghcr.io/mousewerk/kalzit
+docker exec kalzit kalzit setup-code     # the one-time setup code for the first start
+```
+
+Then open `http://localhost:3000`. Compose files for SQLite and for PostgreSQL as Kalzit's own
+database are in [deploy/docker](deploy/docker); configuration, the secrets key as a Docker secret,
+health checks and updates are described in
+[the installation guide](docs/guide/installation.md#docker).
+
+### Prerequisites for a build
 
 | Tool | Version |
 |---|---|
@@ -254,13 +269,13 @@ The binary lands in `target/release/kalzit` (`target\release\kalzit.exe`).
    `sudo install -d -o "$USER" -m 0700 /var/lib/kalzit`), or point it somewhere else with
    `KALZIT_PATHS_DATA_DIR`.
 2. Open `http://localhost:3000`. On the first start Kalzit asks for a one-time setup code, which
-   it writes to `setup-token.txt` in the data directory.
+   it writes to `setup-token.txt` in the data directory (`kalzit setup-code` prints it).
 3. Enter the code, then create the first organization and its owner.
 
 To run Kalzit as a systemd service or a Windows service with a virtual account, see
 "Running as a service" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#running-as-a-service).
-Backups are described under [Backups](docs/ARCHITECTURE.md#backups). Kalzit does not ship a
-Docker image or packages yet (planned for M5).
+Backups are described under [Backups](docs/ARCHITECTURE.md#backups). The container image is
+described under [Docker](#docker); deb and rpm packages are planned for M5.
 
 ## Configuration
 
@@ -305,7 +320,8 @@ Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, 
   and as a last resort a `secrets.key` file with mode 0600 in the data directory (with a warning in
   the log). Back up the key together with the database. `kalzit secrets rotate` re-encrypts all
   secrets with a new key.
-- **Health checks:** `/healthz` and `/readyz`.
+- **Health checks:** `/healthz` and `/readyz`; `kalzit healthcheck` asks `/readyz` of the
+  server on the same machine (exit code 0 when ready), for container health checks.
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (configuration, data directory, storage,
 backups) and [docs/api/settings-dashboards.md](docs/api/settings-dashboards.md) (every setting).
@@ -383,17 +399,17 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 |---|---|---|
 | M0 Foundation | Server with HTTP and HTTPS, own database with migrations, first-run setup, local sign-in, design tokens, i18n, CI on Windows and Linux | Done |
 | M1 Core | Organizations, teams, roles and permissions, administration, audit log, dashboards, SQL and Prometheus sources, Explore, analysis steps, export | Done |
-| M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON | Largely done; change streams and saved analyses are open |
+| M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, Docker image | Largely done; change streams and saved analyses are open |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels, explorer mode | Largely done |
 | M4 Plugins | External plugin processes, manifest, signatures, catalog, Rust SDK | Planned |
-| M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, Docker, InfluxDB, Loki, ClickHouse | Planned |
+| M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, InfluxDB, Loki, ClickHouse | Planned |
 | M6 Expansion | Alerting, public links, provisioning as code, further sources (Graphite, Redis, Oracle, traces) | Planned |
 
 ## Documentation
 
-- [docs/guide/](docs/guide/README.md): the user guide, one page per area: getting started,
-  dashboards, panels, Explore, calculated fields and statistics, export, data sources and the
-  administration.
+- [docs/guide/](docs/guide/README.md): the user guide, one page per area: installation, getting
+  started, dashboards, panels, Explore, calculated fields and statistics, export, data sources and
+  the administration.
 - [docs/PLAN.md](docs/PLAN.md): what Kalzit becomes (German).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): code layout, contracts, configuration, data
   directory, services, storage, backups and tests.

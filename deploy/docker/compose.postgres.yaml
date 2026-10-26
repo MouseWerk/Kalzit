@@ -1,0 +1,55 @@
+# Kalzit with its own database in PostgreSQL.
+#
+#   cp example.env .env                     # set KALZIT_DB_PASSWORD to a long random value
+#   mkdir -p secrets
+#   openssl rand -base64 32 > secrets/kalzit-secrets-key
+#   docker compose -f compose.postgres.yaml up -d
+#   docker compose -f compose.postgres.yaml exec kalzit kalzit setup-code
+#
+# Then open http://localhost:3000 and enter the setup code. Kalzit cannot back PostgreSQL up for
+# you: back the database up with pg_dump, and keep the secrets key with the backup. Details:
+# docs/guide/installation.md, "Docker".
+
+name: kalzit
+
+services:
+  kalzit:
+    image: ${KALZIT_IMAGE:-ghcr.io/mousewerk/kalzit}:${KALZIT_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${KALZIT_PORT:-3000}:3000"
+    volumes:
+      # Still needed with PostgreSQL: the setup code and the server's other files live here.
+      - kalzit-data:/var/lib/kalzit
+    environment:
+      KALZIT_DATABASE_URL: postgres://kalzit:${KALZIT_DB_PASSWORD:?set KALZIT_DB_PASSWORD in .env}@postgres:5432/kalzit
+    secrets:
+      - kalzit-secrets-key
+    stop_grace_period: 30s
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kalzit
+      POSTGRES_DB: kalzit
+      POSTGRES_PASSWORD: ${KALZIT_DB_PASSWORD:?set KALZIT_DB_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Not published: only Kalzit reaches the database, over the project network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kalzit -d kalzit"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  kalzit-data:
+  postgres-data:
+
+secrets:
+  kalzit-secrets-key:
+    file: ./secrets/kalzit-secrets-key

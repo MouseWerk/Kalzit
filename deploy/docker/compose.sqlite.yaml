@@ -1,0 +1,39 @@
+# Kalzit with its own database in SQLite, in a named volume.
+#
+#   cp example.env .env                     # adjust the version and port if needed
+#   mkdir -p secrets
+#   openssl rand -base64 32 > secrets/kalzit-secrets-key
+#   docker compose -f compose.sqlite.yaml up -d
+#   docker compose -f compose.sqlite.yaml exec kalzit kalzit setup-code
+#
+# Then open http://localhost:3000 and enter the setup code. Details: docs/guide/installation.md,
+# "Docker".
+
+name: kalzit
+
+services:
+  kalzit:
+    image: ${KALZIT_IMAGE:-ghcr.io/mousewerk/kalzit}:${KALZIT_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "${KALZIT_PORT:-3000}:3000"
+    volumes:
+      - kalzit-data:/var/lib/kalzit
+      # Optional: a configuration file instead of (or next to) KALZIT_* variables.
+      # - ./kalzit.toml:/etc/kalzit/kalzit.toml:ro
+    # KALZIT_<SECTION>_<KEY> variables win over the file; an empty one unsets the file's value.
+    # environment:
+    #   KALZIT_SERVER_PUBLIC_URL: https://kalzit.example.com
+    #   KALZIT_LOG_FORMAT: json
+    # Read as /run/secrets/kalzit-secrets-key: the key that encrypts data source passwords.
+    secrets:
+      - kalzit-secrets-key
+    # Open requests get 10 seconds after SIGTERM; the database is closed cleanly after that.
+    stop_grace_period: 30s
+
+volumes:
+  kalzit-data:
+
+secrets:
+  kalzit-secrets-key:
+    file: ./secrets/kalzit-secrets-key
