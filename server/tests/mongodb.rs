@@ -395,11 +395,11 @@ async fn mongodb_distributes_fields_over_the_whole_result() {
         .database(&f.db)
         .collection::<Document>("verteilung")
         .insert_many([
-            doc! { "n": 1, "preis.netto": 10, "Größe": "S", "🙂": true, "items": [{ "menge": 1 }, { "menge": 2 }], "ts": date(1) },
+            doc! { "n": 1, "preis.netto": 10, "Größe": "S", "\u{1F642}": true, "items": [{ "menge": 1 }, { "menge": 2 }], "ts": date(1) },
             doc! { "n": 2, "preis.netto": 20, "Größe": "M", "items": [{ "menge": 2 }], "ts": date(2) },
             doc! { "n": 3, "preis.netto": null, "Größe": "M", "items": [], "ts": date(3) },
             doc! { "n": 4, "preis.netto": "zehn", "Größe": "L", "items": [{ "menge": 3 }, { "andere": 1 }] },
-            doc! { "n": 5, "items": [{ "menge": 4.5 }], "🙂": false },
+            doc! { "n": 5, "items": [{ "menge": 4.5 }], "\u{1F642}": false },
             doc! { "n": 6, "preis": { "netto": 99 } },
         ])
         .await
@@ -478,7 +478,7 @@ async fn mongodb_distributes_fields_over_the_whole_result() {
     let d = distribution(sorted.clone(), json!(["Größe"])).await;
     assert_eq!([&d["min"], &d["max"], &d["top"][0]["value"]], [&json!("L"), &json!("S"), &json!("M")], "{d}");
     assert!(d.get("scale").is_none() && d["bins"] == json!([]), "{d}");
-    let d = distribution(sorted, json!(["🙂"])).await;
+    let d = distribution(sorted, json!(["\u{1F642}"])).await;
     assert_eq!((d["documents"].as_u64(), &d["types"]), (Some(2), &json!([{ "name": "bool", "count": 2 }])), "{d}");
 
     // Dates, over a find whose filter is part of the result.

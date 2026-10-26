@@ -180,6 +180,6 @@ mod tests {
         assert_eq!(reason(&long, None, None), "distribution.path_length");
         assert_eq!(reason(&[Some("a")], Some(0), None), "distribution.size");
         assert_eq!(reason(&[Some("a")], None, Some(MAX_BINS + 1)), "distribution.size");
-        assert!(DistributionSpec::new(&path(&[Some("Größe 🙂")]), Some(MAX_TOP), Some(1)).is_ok());
+        assert!(DistributionSpec::new(&path(&[Some("Größe \u{1F642}")]), Some(MAX_TOP), Some(1)).is_ok());
     }
 }

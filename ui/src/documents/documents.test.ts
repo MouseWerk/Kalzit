@@ -107,13 +107,13 @@ describe("paths", () => {
   it("finds the keys behind a schema path, also keys with dots, umlauts and emoji", () => {
     const stored = [
       { other: 1 },
-      { "preis.netto": 10, preis: { netto: 99 }, "Größe 🙂": "S" },
+      { "preis.netto": 10, preis: { netto: 99 }, "Größe \u{1F642}": "S" },
       { items: [{}, { "a.b": [{ c: 1 }] }] },
     ];
     // The longer key wins where both readings exist.
     expect(stepsOf(stored, "preis.netto")).toEqual(["preis.netto"]);
     expect(stepsOf([{ preis: { netto: 99 } }], "preis.netto")).toEqual(["preis", "netto"]);
-    expect(stepsOf(stored, "Größe 🙂")).toEqual(["Größe 🙂"]);
+    expect(stepsOf(stored, "Größe \u{1F642}")).toEqual(["Größe \u{1F642}"]);
     expect(stepsOf(stored, "items[].a.b[].c")).toEqual(["items", null, "a.b", null, "c"]);
     // A path no document has is split at its dots.
     expect(stepsOf(stored, "x.y[]")).toEqual(["x", "y", null]);

@@ -584,7 +584,7 @@ async fn distributions_append_reading_stages_to_the_query() {
                 "variables": { "land": "Österreich" } })
     };
     let pipeline = json!({ "collection": "orders", "pipeline": r#"[{"$match": {"land": "${land}"}}]"# });
-    let path = json!(["items", null, "Größe.netto 🙂"]);
+    let path = json!(["items", null, "Größe.netto \u{1F642}"]);
     let (status, d) = t.send(Method::POST, "/query/distribution", Some(body(pipeline.clone(), path.clone()))).await;
     assert_eq!(status, StatusCode::OK, "{d}");
     assert_eq!([&d["total"], &d["documents"], &d["missing"]], [&json!(5), &json!(4), &json!(1)], "{d}");
@@ -600,7 +600,7 @@ async fn distributions_append_reading_stages_to_the_query() {
     let stages = summary.get_array("pipeline").unwrap();
     let m = stages[0].as_document().unwrap().get_document("$match").unwrap();
     assert_eq!(m.get_str("land").unwrap(), "Österreich");
-    assert!(summary.to_string().contains("\"$literal\": \"Größe.netto 🙂\""), "{summary}");
+    assert!(summary.to_string().contains("\"$literal\": \"Größe.netto \u{1F642}\""), "{summary}");
     let histogram = fake.last("aggregate").unwrap();
     assert_eq!(stage_names(&histogram).last().map(String::as_str), Some("$group"), "{histogram}");
     for c in [&summary, &histogram] {

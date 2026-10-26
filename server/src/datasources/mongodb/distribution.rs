@@ -303,10 +303,10 @@ mod tests {
 
     #[test]
     fn keys_are_literals_whatever_they_hold() {
-        let expr = values_expr(&spec(&[Some("kunde.name"), Some("$preis"), Some("Größe 🙂")]).path);
+        let expr = values_expr(&spec(&[Some("kunde.name"), Some("$preis"), Some("Größe \u{1F642}")]).path);
         let text = expr.to_string();
         // Each key is a literal field name: never a dotted path or an operator.
-        for key in ["kunde.name", "$preis", "Größe 🙂"] {
+        for key in ["kunde.name", "$preis", "Größe \u{1F642}"] {
             assert!(text.contains(&format!("\"$literal\": \"{key}\"")), "{key}: {text}");
             assert!(!text.contains(&format!("\"${key}\"")), "{key} read as a field path: {text}");
         }
