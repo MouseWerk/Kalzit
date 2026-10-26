@@ -162,7 +162,7 @@ export type LiveUnsubscribeType = "unsubscribe";
 
 export type LiveMode = "changes" | "poll";
 
-export type LiveMessage = { "type": "status", id: string, mode: LiveMode, refreshMs: number, reason?: string, } | { "type": "result", id: string, at: number, results: { [key in string]: QueryOutcome }, } | { "type": "error", id?: string, error: ErrorBody, } | { "type": "closing", error: ErrorBody, };
+export type LiveMessage = { "type": "subscribed", id: string, feed: string, } | { "type": "status", feed: string, mode: LiveMode, refreshMs: number, reason?: string, } | { "type": "result", feed: string, at: number, results: { [key in string]: QueryOutcome }, } | { "type": "error", id?: string, error: ErrorBody, } | { "type": "closing", error: ErrorBody, };
 
 export type VariableOptionsRequest = { timeRange: TimeRange, 
 /**

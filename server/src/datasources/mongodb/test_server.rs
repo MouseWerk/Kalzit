@@ -27,6 +27,8 @@ pub struct Behaviour {
     pub changes: Vec<String>,
     /// Change events sent so far, for their resume tokens.
     pub changes_sent: u64,
+    /// A change stream opened with `startAfter` is refused: the token's history is gone.
+    pub history_lost: bool,
 }
 
 pub struct FakeMongo {
@@ -115,10 +117,12 @@ async fn serve(mut s: TcpStream, b: &Mutex<Behaviour>, seen: &Mutex<Vec<Document
         }
         seen.lock().unwrap().push(command.clone());
         let reply = if command.contains_key("getMore") {
-            // A change stream's getMore: what changed, or after a short wait nothing (a real
-            // server waits up to maxTimeMS).
-            if b.lock().unwrap().changes.is_empty() {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            // A change stream's getMore: what changed, or nothing once maxTimeMS passed (here at
+            // most 2 s). The connection is held meanwhile, as on a real server.
+            let wait = c_max_time(&command).min(2_000);
+            let until = tokio::time::Instant::now() + std::time::Duration::from_millis(wait);
+            while b.lock().unwrap().changes.is_empty() && tokio::time::Instant::now() < until {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
             next_changes(&command, &mut b.lock().unwrap())
         } else {
@@ -148,6 +152,16 @@ const CHANGE_CURSOR: i64 = 7;
 
 fn resume_token(n: u64) -> Document {
     doc! { "_data": format!("{n:016X}") }
+}
+
+/// `maxTimeMS` of a command, in milliseconds (50 when it has none).
+fn c_max_time(c: &Document) -> u64 {
+    match c.get("maxTimeMS") {
+        Some(Bson::Int32(n)) => *n as u64,
+        Some(Bson::Int64(n)) => *n as u64,
+        Some(Bson::Double(n)) => *n as u64,
+        _ => 50,
+    }
 }
 
 fn next_changes(c: &Document, b: &mut Behaviour) -> Document {
@@ -207,6 +221,14 @@ fn answer(c: &Document, b: &Behaviour) -> Document {
                 if !b.change_streams {
                     return doc! { "ok": 0.0, "errmsg": "The $changeStream stage is only supported on replica sets",
                     "code": 40573, "codeName": "Location40573" };
+                }
+                let resumes = stages[0]
+                    .as_document()
+                    .and_then(|s| s.get_document("$changeStream").ok())
+                    .is_some_and(|s| s.contains_key("startAfter") || s.contains_key("resumeAfter"));
+                if resumes && b.history_lost {
+                    return doc! { "ok": 0.0, "errmsg": "the resume point may no longer be in the oplog",
+                    "code": 286, "codeName": "ChangeStreamHistoryLost" };
                 }
                 let ns = format!("db.{}", c.get_str("aggregate").unwrap_or("x"));
                 return doc! {

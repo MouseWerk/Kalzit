@@ -4,7 +4,8 @@
 //! non-browser client). A subscription is a panel's stored queries, for whoever may read the
 //! dashboard, or free queries, which need `datasources:query` on each source; both are authorized
 //! when subscribing and again every `Limits::recheck`, so a revoked session, membership or right
-//! ends them. Results come from shared feeds (`crate::live`).
+//! ends them. Results come from shared feeds (`crate::live`); a connection forwards each feed it
+//! follows once, however many of its subscriptions share it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -26,7 +27,7 @@ use crate::auth::session;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::datasources::{api_error_body, check_interval, check_items, check_range};
 use crate::error::{ApiError, ApiResult};
-use crate::live::{Feed, FeedState, Limits, MAX_REFRESH, Published, RangeRule, Slot, Spec};
+use crate::live::{FeedState, Hold, Limits, MAX_REFRESH, RangeRule, Slot, Spec};
 use crate::net::RequestInfo;
 use crate::shapes::{ErrorBody, LiveMessage, LiveSubscribe, LiveUnsubscribe};
 
@@ -43,6 +44,7 @@ const MAX_ID_CHARS: usize = 64;
 
 /// Close codes, next to the reason in `closing` and in the close frame.
 const CLOSE_GOING_AWAY: u16 = 1001;
+const CLOSE_INTERNAL: u16 = 1011;
 const CLOSE_UNAUTHENTICATED: u16 = 4001;
 const CLOSE_FORBIDDEN: u16 = 4003;
 const CLOSE_IDLE: u16 = 4008;
@@ -97,6 +99,10 @@ fn no_longer_member() -> Close {
     )
 }
 
+fn check_failed() -> ApiError {
+    ApiError::busy().because("live.check_failed")
+}
+
 type Sink = futures_util::stream::SplitSink<WebSocket, Message>;
 
 /// Sends `closing` and the close frame; a client that does not take them in time is left.
@@ -113,12 +119,6 @@ async fn close(sink: &mut Sink, code: u16, error: ErrorBody, timeout: std::time:
 /// A text message of `msg`.
 fn text(msg: &LiveMessage) -> Message {
     Message::Text(serde_json::to_string(msg).unwrap_or_default().into())
-}
-
-/// A `result` message, from the results the feed serialized once for all its subscribers.
-fn result_text(id: &str, published: &Published) -> String {
-    let id = serde_json::to_string(id).unwrap_or_default();
-    format!(r#"{{"type":"result","id":{id},"at":{},"results":{}}}"#, published.at, published.json)
 }
 
 /// The outgoing queue of a connection; one message too many marks the client as slow.
@@ -142,18 +142,36 @@ impl Out {
     }
 }
 
-/// Sends a feed's status and results to one subscription until the feed or the queue is gone.
-async fn forward(id: String, refresh_ms: u64, mut rx: watch::Receiver<FeedState>, out: Out) {
+/// The `status` message of a feed state, once it has a mode.
+fn status_message(feed: &str, refresh_ms: u64, state: &FeedState) -> Option<Message> {
+    let mode = state.mode?;
+    let reason = state.reason.map(str::to_string);
+    Some(text(&LiveMessage::Status { feed: feed.to_string(), mode, refresh_ms, reason }))
+}
+
+/// Sends a feed's status and results to the connection until the feed ends (`ended` then names it
+/// with the error) or the queue is gone. The result message is the feed's own, shared by every
+/// connection.
+async fn forward(
+    feed: String,
+    refresh_ms: u64,
+    mut rx: watch::Receiver<FeedState>,
+    out: Out,
+    ended: mpsc::UnboundedSender<(String, ErrorBody)>,
+) {
     let mut sent_status = None;
     let mut sent_seq = 0;
     loop {
         let state = rx.borrow_and_update().clone();
-        if let Some(mode) = state.mode
-            && sent_status != Some((mode, state.reason))
-        {
-            sent_status = Some((mode, state.reason));
-            let reason = state.reason.map(str::to_string);
-            if !out.push(text(&LiveMessage::Status { id: id.clone(), mode, refresh_ms, reason })) {
+        if let Some(error) = state.failed {
+            let _ = ended.send((feed, error));
+            return;
+        }
+        if state.mode.is_some() && sent_status != Some((state.mode, state.reason)) {
+            sent_status = Some((state.mode, state.reason));
+            if let Some(msg) = status_message(&feed, refresh_ms, &state)
+                && !out.push(msg)
+            {
                 return;
             }
         }
@@ -161,7 +179,7 @@ async fn forward(id: String, refresh_ms: u64, mut rx: watch::Receiver<FeedState>
             && published.seq != sent_seq
         {
             sent_seq = published.seq;
-            if !out.push(Message::Text(result_text(&id, published).into())) {
+            if !out.push(Message::Text(published.message.clone())) {
                 return;
             }
         }
@@ -171,16 +189,23 @@ async fn forward(id: String, refresh_ms: u64, mut rx: watch::Receiver<FeedState>
     }
 }
 
-struct Subscription {
-    request: LiveSubscribe,
-    feed: Arc<Feed>,
+/// A feed this connection follows, forwarded once for all its subscriptions.
+struct Followed {
+    hold: Hold,
     forward: tokio::task::AbortHandle,
 }
 
-impl Drop for Subscription {
+impl Drop for Followed {
     fn drop(&mut self) {
         self.forward.abort();
     }
+}
+
+struct Subscription {
+    request: LiveSubscribe,
+    feed: String,
+    /// Checks in a row that could not be done.
+    failures: u32,
 }
 
 struct Connection {
@@ -190,6 +215,10 @@ struct Connection {
     user_id: String,
     limits: Limits,
     subscriptions: HashMap<String, Subscription>,
+    followed: HashMap<String, Followed>,
+    /// Checks of the session in a row that could not be done.
+    failures: u32,
+    ended_tx: mpsc::UnboundedSender<(String, ErrorBody)>,
     _slot: Slot,
 }
 
@@ -211,6 +240,9 @@ impl Connection {
             user_id: ctx.user.id,
             limits,
             subscriptions: HashMap::new(),
+            followed: HashMap::new(),
+            failures: 0,
+            ended_tx: mpsc::unbounded_channel().0,
             _slot: slot,
         }
     }
@@ -235,6 +267,8 @@ impl Connection {
         let (mut sink, mut stream) = socket.split();
         let (tx, mut rx) = mpsc::channel(self.limits.queue);
         let out = Out { tx, overflow: Arc::new(Notify::new()) };
+        let (ended_tx, mut ended_rx) = mpsc::unbounded_channel();
+        self.ended_tx = ended_tx;
         let mut stop = self.state.live.stopping();
         let start = Instant::now();
         let mut ping = tokio::time::interval_at(start + self.limits.ping, self.limits.ping);
@@ -262,6 +296,7 @@ impl Connection {
                         Err(_) => break Some(close_with(CLOSE_SLOW, ApiError::busy().because("live.slow_client"))),
                     }
                 }
+                Some((feed, error)) = ended_rx.recv() => self.feed_ended(&feed, error, &out),
                 incoming = stream.next() => {
                     let msg = match incoming {
                         Some(Ok(msg)) => msg,
@@ -301,8 +336,9 @@ impl Connection {
             }
             idle_since = if self.subscriptions.is_empty() { idle_since.or(Some(Instant::now())) } else { None };
         };
-        // The feeds of this connection stop unless others use them.
+        // The feeds of this connection stop unless others hold them.
         self.subscriptions.clear();
+        self.followed.clear();
         if let Some(Close(code, error)) = ended {
             close(&mut sink, code, *error, self.limits.send_timeout).await;
         }
@@ -327,9 +363,7 @@ impl Connection {
             },
             Some("unsubscribe") => {
                 match serde_json::from_value::<LiveUnsubscribe>(value) {
-                    Ok(un) => {
-                        self.subscriptions.remove(&un.id);
-                    }
+                    Ok(un) => self.remove(&un.id),
                     Err(e) => {
                         out.push(text(&LiveMessage::Error { id: message_id(raw), error: invalid(&e.to_string()) }));
                     }
@@ -374,47 +408,138 @@ impl Connection {
             Ok(spec) => spec,
             Err(e) => return refuse(api_error_body(e)),
         };
-        let subscription = self.start(&ctx, request, spec, out);
-        self.subscriptions.insert(id, subscription);
+        match self.follow(spec, out) {
+            Ok(feed) => {
+                out.push(text(&LiveMessage::Subscribed { id: id.clone(), feed: feed.clone() }));
+                self.subscriptions.insert(id, Subscription { request, feed: feed.clone(), failures: 0 });
+                self.resend(&feed, out);
+            }
+            Err(e) => return refuse(api_error_body(e)),
+        }
         None
     }
 
-    fn start(&self, ctx: &OrgCtx, request: LiveSubscribe, spec: Spec, out: &Out) -> Subscription {
-        let feed = self.state.live.feed(&self.state, ctx, spec);
-        let task = tokio::spawn(forward(request.id.clone(), feed.refresh_ms, feed.subscribe(), out.clone()));
-        Subscription { request, feed, forward: task.abort_handle() }
+    /// Follows the feed of `spec` (forwarding it once per connection); answers its id.
+    fn follow(&mut self, spec: Spec, out: &Out) -> Result<String, ApiError> {
+        let key = spec.key();
+        if let Some((id, _)) = self.followed.iter().find(|(_, f)| f.hold.feed.key == key) {
+            return Ok(id.clone());
+        }
+        let hold = self.state.live.hold(&self.state, &self.user_id, spec)?;
+        let feed = &hold.feed;
+        let task = tokio::spawn(forward(
+            feed.id.clone(),
+            feed.refresh_ms,
+            feed.subscribe(),
+            out.clone(),
+            self.ended_tx.clone(),
+        ));
+        let id = feed.id.clone();
+        self.followed.insert(id.clone(), Followed { hold, forward: task.abort_handle() });
+        Ok(id)
+    }
+
+    /// A subscription joining a feed this connection already forwards gets its current status
+    /// and result again.
+    fn resend(&self, feed: &str, out: &Out) {
+        let Some(followed) = self.followed.get(feed) else { return };
+        if self.subscriptions.values().filter(|s| s.feed == feed).count() < 2 {
+            return;
+        }
+        let state = followed.hold.feed.subscribe().borrow().clone();
+        if let Some(msg) = status_message(feed, followed.hold.feed.refresh_ms, &state) {
+            out.push(msg);
+        }
+        if let Some(published) = state.results {
+            out.push(Message::Text(published.message));
+        }
+    }
+
+    /// Ends a subscription, and the following of its feed when no other subscription uses it.
+    fn remove(&mut self, id: &str) {
+        let Some(sub) = self.subscriptions.remove(id) else { return };
+        if !self.subscriptions.values().any(|s| s.feed == sub.feed) {
+            self.followed.remove(&sub.feed);
+        }
+    }
+
+    /// A feed ended: its subscriptions end with its error.
+    fn feed_ended(&mut self, feed: &str, error: ErrorBody, out: &Out) {
+        let ids: Vec<String> =
+            self.subscriptions.iter().filter(|(_, s)| s.feed == feed).map(|(id, _)| id.clone()).collect();
+        for id in ids {
+            self.remove(&id);
+            out.push(text(&LiveMessage::Error { id: Some(id), error: error.clone() }));
+        }
+        self.followed.remove(feed);
+    }
+
+    /// Ends a subscription with `error`.
+    fn end(&mut self, id: String, error: ErrorBody, out: &Out) {
+        self.remove(&id);
+        out.push(text(&LiveMessage::Error { id: Some(id), error }));
     }
 
     /// Checks the session, the membership and every subscription again. A subscription the
     /// caller may no longer run ends with `live.forbidden`; one whose queries changed (the
-    /// dashboard was edited) moves to the new queries.
+    /// dashboard was edited) moves to the new queries. Checks that cannot be done (database
+    /// busy) end what they guard after `Limits::check_failures` in a row.
     async fn recheck(&mut self, out: &Out) -> Option<Close> {
         let ctx = match self.fresh_ctx().await {
-            Ok(ctx) => ctx,
+            Ok(ctx) => {
+                self.failures = 0;
+                ctx
+            }
             Err(CtxError::Ended(close)) => return Some(close),
             Err(CtxError::Failed(e)) => {
                 tracing::debug!("live: access not checked again: {}", e.message);
+                self.failures += 1;
+                if self.failures >= self.limits.check_failures {
+                    return Some(close_with(CLOSE_INTERNAL, check_failed()));
+                }
                 return None;
             }
         };
         let ids: Vec<String> = self.subscriptions.keys().cloned().collect();
         for id in ids {
             let Some(sub) = self.subscriptions.get(&id) else { continue };
-            match resolve(&self.state, &ctx, &sub.request, &self.limits).await {
-                Ok(spec) if spec.key() == sub.feed.key => {}
+            let request = sub.request.clone();
+            match resolve(&self.state, &ctx, &request, &self.limits).await {
                 Ok(spec) => {
-                    let request = sub.request.clone();
-                    let moved = self.start(&ctx, request, spec, out);
-                    self.subscriptions.insert(id, moved);
+                    let current = self.followed.get(&sub.feed).map(|f| f.hold.feed.key.clone());
+                    if current.as_deref() == Some(spec.key().as_str()) {
+                        if let Some(sub) = self.subscriptions.get_mut(&id) {
+                            sub.failures = 0;
+                        }
+                        continue;
+                    }
+                    // The queries changed: the subscription moves to their feed.
+                    self.remove(&id);
+                    match self.follow(spec, out) {
+                        Ok(feed) => {
+                            out.push(text(&LiveMessage::Subscribed { id: id.clone(), feed: feed.clone() }));
+                            self.subscriptions.insert(id, Subscription { request, feed: feed.clone(), failures: 0 });
+                            self.resend(&feed, out);
+                        }
+                        Err(e) => {
+                            out.push(text(&LiveMessage::Error { id: Some(id), error: api_error_body(e) }));
+                        }
+                    }
                 }
-                // Busy or failing database: the next check decides.
-                Err(e) if matches!(e.code, "busy" | "internal") => {}
+                Err(e) if matches!(e.code, "busy" | "internal") => {
+                    let failures = self.subscriptions.get_mut(&id).map(|s| {
+                        s.failures += 1;
+                        s.failures
+                    });
+                    if failures.unwrap_or(0) >= self.limits.check_failures {
+                        self.end(id, api_error_body(check_failed()), out);
+                    }
+                }
                 Err(e) => {
-                    self.subscriptions.remove(&id);
                     let mut error = api_error_body(e);
                     error.reason = Some("live.forbidden".into());
                     error.params = None;
-                    out.push(text(&LiveMessage::Error { id: Some(id), error }));
+                    self.end(id, error, out);
                 }
             }
         }
@@ -516,22 +641,4 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
         identifiers,
         refresh_ms,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shapes::QueryOutcome;
-
-    #[test]
-    fn result_messages_match_their_type() {
-        let published =
-            Published { seq: 1, at: 42, json: r#"{"A":{"error":{"code":"internal","message":"x"}}}"#.into() };
-        let raw = result_text("p\"1", &published);
-        let parsed: LiveMessage = serde_json::from_str(&raw).unwrap();
-        let LiveMessage::Result { id, at, results } = &parsed else { panic!("{raw}") };
-        assert_eq!((id.as_str(), *at), ("p\"1", 42));
-        assert!(matches!(results.get("A"), Some(QueryOutcome::Err { .. })));
-        assert_eq!(serde_json::to_value(&parsed).unwrap(), serde_json::from_str::<Value>(&raw).unwrap());
-    }
 }

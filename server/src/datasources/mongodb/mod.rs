@@ -22,6 +22,8 @@ use std::time::Duration;
 
 use bson::{Bson, Document, RawDocumentBuf, doc};
 use futures_util::TryStreamExt;
+use mongodb::change_stream::ChangeStream;
+use mongodb::change_stream::event::ResumeToken;
 use mongodb::event::EventHandler;
 use mongodb::event::sdam::SdamEvent;
 use mongodb::options::{ClientOptions, Credential, SelectionCriteria, ServerAddress, Socks5Proxy, Tls, TlsOptions};
@@ -213,6 +215,45 @@ struct Shared {
     socket_member: Arc<AtomicBool>,
     /// Whether the source has a login (then its privileges must be readable).
     has_user: bool,
+    watcher: Watcher,
+}
+
+/// At most this many change streams are open per source; more subscriptions are polled.
+const MAX_STREAMS: usize = 8;
+
+/// The client of a source's change streams, through the same relay and with the same login as
+/// the queries' client, but with its own pool of `MAX_STREAMS` connections.
+struct Watcher {
+    options: ClientOptions,
+    /// The CA certificate, written to a file again while the client is built.
+    ca_pem: Option<String>,
+    ca_dir: std::path::PathBuf,
+    client: tokio::sync::OnceCell<Client>,
+    /// One permit per open stream.
+    streams: Arc<tokio::sync::Semaphore>,
+}
+
+impl Watcher {
+    async fn client(&self) -> Result<&Client, SourceError> {
+        self.client
+            .get_or_try_init(|| async {
+                let mut options = self.options.clone();
+                let ca = match &self.ca_pem {
+                    Some(pem) => {
+                        let file = write_ca(&self.ca_dir, pem)?;
+                        let mut tls = TlsOptions::default();
+                        tls.ca_file_path = Some(file.0.clone());
+                        options.tls = Some(Tls::Enabled(tls));
+                        Some(file)
+                    }
+                    None => None,
+                };
+                let client = Client::with_options(options).map_err(|e| failed(&e, None, SERVER_SELECTION_TIMEOUT));
+                drop(ca);
+                client
+            })
+            .await
+    }
 }
 
 impl Shared {
@@ -441,11 +482,23 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
             .authentication((user, password))
             .build(),
     );
+    // Change streams get their own client, built when the first one opens: each open stream
+    // holds a connection in a waiting getMore, which must not take the queries' pool.
+    let mut watch_options = options.clone();
+    watch_options.max_pool_size = Some(MAX_STREAMS as u32);
     let client = Client::with_options(options).map_err(|e| failed(&e, relay.refusal_since(mark), selection_timeout))?;
     // The driver has read the certificate into its TLS configuration.
     drop(ca);
     let has_user = Settings::non_empty(&s.user).is_some();
-    let shared = Shared { client, relay, database: s.database.clone(), selection, socket_member, has_user };
+    let ca_pem = Settings::non_empty(&s.ca_cert).filter(|_| s.tls()).map(str::to_string);
+    let watcher = Watcher {
+        options: watch_options,
+        ca_pem,
+        ca_dir: conn.policy().data_dir().to_path_buf(),
+        client: tokio::sync::OnceCell::new(),
+        streams: Arc::new(tokio::sync::Semaphore::new(MAX_STREAMS)),
+    };
+    let shared = Shared { client, relay, database: s.database.clone(), selection, socket_member, has_user, watcher };
     check_read_only(&shared, selection_timeout).await?;
     shared.guard()?;
     Ok(shared)
@@ -596,7 +649,22 @@ const CHANGE_AWAIT: Duration = Duration::from_secs(10);
 /// stream, so such a pipeline is polled.
 const OTHER_COLLECTION_STAGES: &[&str] = &["$lookup", "$graphLookup", "$unionWith"];
 
-/// Server answers that mean "no change streams here": a standalone server (40573), a view (166),
+/// An open change stream of a live feed.
+struct WatchState {
+    stream: ChangeStream<Document>,
+    shared: Arc<Shared>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    /// The opening position was reported.
+    opened: bool,
+}
+
+/// Server answers that a resume token cannot continue: its history is gone (286), the stream
+/// cannot go on from there (280), or the token is not valid (260).
+fn history_lost(e: &mongodb::error::Error) -> bool {
+    matches!(&*e.kind, mongodb::error::ErrorKind::Command(c) if matches!(c.code, 286 | 280 | 260))
+}
+
+/// Server answers that mean "no change streams here":a standalone server (40573), a view (166),
 /// a server without the stage (40324), or without the command (115, 59).
 fn changes_unsupported(e: &mongodb::error::Error) -> bool {
     matches!(&*e.kind, mongodb::error::ErrorKind::Command(c) if matches!(c.code, 40573 | 166 | 40324 | 115 | 59))
@@ -922,33 +990,62 @@ impl DataSourcePlugin for MongoDb {
         let Some(stages) = change_pipeline(&plan) else { return Ok(None) };
         let shared = shared(conn).await?;
         shared.guard()?;
-        let coll = shared.client.database(&shared.database).collection::<Document>(&q.collection);
-        let token = resume.and_then(|t| t.0.downcast_ref::<mongodb::change_stream::event::ResumeToken>().cloned());
-        let mark = shared.relay.mark();
+        let Ok(permit) = shared.watcher.streams.clone().try_acquire_owned() else {
+            return Err(SourceError::failed(
+                "mongodb.streams_limit",
+                format!("{MAX_STREAMS} change streams of this source are open already; the query is polled"),
+            )
+            .with("max", MAX_STREAMS));
+        };
+        let client = shared.watcher.client().await?;
+        let coll = client.database(&shared.database).collection::<Document>(&q.collection);
+        let token = resume.and_then(|t| t.0.downcast_ref::<ResumeToken>().cloned());
         let timeout = req.limits.timeout;
-        let mut watch =
-            coll.watch().pipeline(stages).selection_criteria(shared.selection.clone()).max_await_time(CHANGE_AWAIT);
-        if let Some(token) = token {
-            watch = watch.start_after(token);
-        }
-        let opened = watch.await;
+        let open = |token: Option<ResumeToken>| {
+            let mut watch = coll
+                .watch()
+                .pipeline(stages.clone())
+                .selection_criteria(shared.selection.clone())
+                .max_await_time(CHANGE_AWAIT);
+            if let Some(token) = token {
+                watch = watch.start_after(token);
+            }
+            watch
+        };
+        let mark = shared.relay.mark();
+        let opened = match open(token.clone()).await {
+            // The token's history is gone (the oplog moved on): start from now. The caller runs the
+            // query after every open, so nothing in between is missed.
+            Err(e) if token.is_some() && history_lost(&e) => open(None).await,
+            other => other,
+        };
         let stream = match opened {
             Ok(stream) => stream.with_type::<Document>(),
             Err(e) if changes_unsupported(&e) => return Ok(None),
             Err(e) => return Err(shared.fail(&e, mark, timeout)),
         };
-        // The client and its relay stay alive as long as the feed.
-        let feed = futures_util::stream::unfold(Some((stream, shared)), move |state| async move {
-            let (mut stream, shared) = state?;
-            let mark = shared.relay.mark();
-            match stream.try_next().await {
+        // The client, its relay and the stream's permit stay as long as the feed. The first report
+        // is the position the stream opened at; waits without changes report newer positions.
+        let state = WatchState { stream, shared, _permit: permit, opened: false };
+        let feed = futures_util::stream::unfold(Some(state), move |state| async move {
+            let mut state = state?;
+            let token = |s: &WatchState| s.stream.resume_token().map(|t| super::ResumeToken(Arc::new(t)));
+            if !state.opened {
+                state.opened = true;
+                let change = super::Change { changed: false, token: token(&state) };
+                return Some((Ok(change), Some(state)));
+            }
+            if !state.stream.is_alive() {
+                return None;
+            }
+            let mark = state.shared.relay.mark();
+            match state.stream.next_if_any().await {
                 Ok(Some(event)) if event.get_str("operationType").ok() == Some("invalidate") => None,
-                Ok(Some(_)) => {
-                    let token = stream.resume_token().map(|t| super::ResumeToken(Arc::new(t)));
-                    Some((Ok(token), Some((stream, shared))))
+                Ok(event) => {
+                    let change = super::Change { changed: event.is_some(), token: token(&state) };
+                    Some((Ok(change), Some(state)))
                 }
-                Ok(None) => None,
-                Err(e) => Some((Err(shared.fail(&e, mark, timeout)), None)),
+                Err(e) => Some((Err(state.shared.fail(&e, mark, timeout)), None)),
             }
         });
         Ok(Some(Box::pin(feed)))

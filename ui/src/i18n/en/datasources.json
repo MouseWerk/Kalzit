@@ -792,5 +792,11 @@
   "datasources.reason.live.idle_timeout": "Live updates paused after a while without activity.",
   "datasources.reason.live.shutting_down": "The server is restarting. Live updates resume once it is back.",
   "datasources.reason.live.source_unsupported": "This source cannot report changes, so its queries run again at a fixed interval.",
-  "datasources.reason.live.changes_unavailable": "Change notifications from this source are not available right now, so its queries run again at a fixed interval."
+  "datasources.reason.live.changes_unavailable": "Change notifications from this source are not available right now, so its queries run again at a fixed interval.",
+  "datasources.reason.live.streams_limit": "This source already reports changes for as many queries as it allows, so this one runs again at a fixed interval.",
+  "datasources.reason.live.too_many_feeds": "You follow {max} different live queries already. Close a few panels or tabs.",
+  "datasources.reason.live.feeds_busy": "The server runs as many live queries as it allows ({max}). Try again shortly.",
+  "datasources.reason.live.memory_limit": "Live results would take more memory than the server allows, so these live updates stopped.",
+  "datasources.reason.live.check_failed": "Your access could not be checked again, so live updates stopped. Reconnect to resume them.",
+  "datasources.reason.mongodb.streams_limit": "{max} change streams of this source are open already, so further live queries run at a fixed interval."
 }

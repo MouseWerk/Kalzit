@@ -425,14 +425,25 @@ async fn change_streams_where_the_deployment_has_them() {
         assert!(feed.is_none(), "a standalone server has no change streams");
     } else {
         let mut feed = feed.expect("a replica set reports changes");
+        // The first report is the position the stream opened at.
+        let opened = tokio::time::timeout(Duration::from_secs(20), futures_util::StreamExt::next(&mut feed)).await;
+        assert!(matches!(opened, Ok(Some(Ok(ref c))) if !c.changed && c.token.is_some()), "the opening position");
         f.admin
             .database(&f.db)
             .collection::<Document>("orders")
             .insert_one(doc! { "n": 6, "land": "Schweiz" })
             .await
             .unwrap();
-        let change = tokio::time::timeout(Duration::from_secs(20), futures_util::StreamExt::next(&mut feed)).await;
-        assert!(matches!(change, Ok(Some(Ok(Some(_))))), "an insert is reported with a resume token");
+        let changed = tokio::time::timeout(Duration::from_secs(20), async {
+            while let Some(Ok(c)) = futures_util::StreamExt::next(&mut feed).await {
+                if c.changed {
+                    return c.token.is_some();
+                }
+            }
+            false
+        })
+        .await;
+        assert_eq!(changed, Ok(true), "an insert is reported with a resume token");
     }
     f.cleanup().await;
     t.finish().await;

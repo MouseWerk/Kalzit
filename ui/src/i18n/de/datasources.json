@@ -792,5 +792,11 @@
   "datasources.reason.live.idle_timeout": "Die Live-Updates pausieren nach einer Weile ohne Aktivität.",
   "datasources.reason.live.shutting_down": "Der Server startet neu. Die Live-Updates laufen weiter, sobald er wieder da ist.",
   "datasources.reason.live.source_unsupported": "Diese Quelle kann keine Änderungen melden, darum laufen ihre Abfragen in einem festen Abstand neu.",
-  "datasources.reason.live.changes_unavailable": "Änderungsmeldungen dieser Quelle sind gerade nicht verfügbar, darum laufen ihre Abfragen in einem festen Abstand neu."
+  "datasources.reason.live.changes_unavailable": "Änderungsmeldungen dieser Quelle sind gerade nicht verfügbar, darum laufen ihre Abfragen in einem festen Abstand neu.",
+  "datasources.reason.live.streams_limit": "Diese Quelle meldet schon für so viele Abfragen Änderungen, wie sie zulässt, darum läuft diese in einem festen Abstand neu.",
+  "datasources.reason.live.too_many_feeds": "Du folgst schon {max} verschiedenen Live-Abfragen. Schließ ein paar Panels oder Tabs.",
+  "datasources.reason.live.feeds_busy": "Der Server führt so viele Live-Abfragen aus, wie er zulässt ({max}). Versuche es gleich noch einmal.",
+  "datasources.reason.live.memory_limit": "Die Live-Ergebnisse bräuchten mehr Speicher, als der Server zulässt, darum wurden diese Live-Updates beendet.",
+  "datasources.reason.live.check_failed": "Dein Zugriff konnte nicht erneut geprüft werden, darum wurden die Live-Updates beendet. Verbinde neu, dann laufen sie weiter.",
+  "datasources.reason.mongodb.streams_limit": "Für diese Quelle sind schon {max} Änderungsströme offen, darum laufen weitere Live-Abfragen in einem festen Abstand neu."
 }

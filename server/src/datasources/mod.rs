@@ -75,10 +75,11 @@ pub trait DataSourcePlugin: Send + Sync {
     async fn check_on_save(&self, _conn: &Connection) -> Result<(), (&'static str, SourceError)> {
         Ok(())
     }
-    /// Changes that may alter the result of `req`, for live updates (docs/api/live.md): each item
-    /// the feed yields is one change, with the token to continue after it. `Ok(None)` when the
-    /// kind or the deployment cannot report changes; live updates then poll. `resume` continues
-    /// an earlier feed of the same query.
+    /// Changes that may alter the result of `req`, for live updates (docs/api/live.md), each with
+    /// the token to continue after it. `Ok(None)` when the kind or the deployment cannot report
+    /// changes; live updates then poll. `resume` continues an earlier feed of the same query;
+    /// a kind starts afresh when the token's history is gone. A feed must not hold connections
+    /// that queries need.
     async fn watch(
         &self,
         _conn: &Connection,
@@ -93,10 +94,17 @@ pub trait DataSourcePlugin: Send + Sync {
 #[derive(Clone)]
 pub struct ResumeToken(pub Arc<dyn Any + Send + Sync>);
 
-/// Changes reported by a source (`DataSourcePlugin::watch`). An item is one change and the token
-/// after it; an error ends the feed, as does its end (the watched collection was dropped, say).
-pub type ChangeFeed =
-    std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Option<ResumeToken>, SourceError>> + Send>>;
+/// One report of a change feed: a change, or (`changed: false`) only a newer position, as after
+/// a wait without changes.
+pub struct Change {
+    pub changed: bool,
+    /// Where the feed continues after this report.
+    pub token: Option<ResumeToken>,
+}
+
+/// Changes reported by a source (`DataSourcePlugin::watch`). An error ends the feed, as does its
+/// end (the watched collection was dropped, say).
+pub type ChangeFeed = std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Change, SourceError>> + Send>>;
 
 /// A settings field that is not valid. `field` is the field's name in the kind's settings form.
 #[derive(Clone, Debug, PartialEq, Eq)]

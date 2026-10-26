@@ -497,10 +497,14 @@ pub enum LiveMode {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum LiveMessage {
-    /// The subscription's mode, after subscribing and whenever it changes. `reason` says why a
-    /// subscription polls although it wanted changes (`live.source_unsupported`, ...).
+    /// The subscription `id` follows the feed `feed`: its `status` and `result` messages are the
+    /// subscription's. Sent after subscribing and when the subscription moves to another feed (its
+    /// panel was edited); subscriptions with the same queries share a feed.
+    Subscribed { id: String, feed: String },
+    /// The feed's mode, when it starts or changes. `reason` says why a feed polls although it
+    /// wanted changes (`live.source_unsupported`, ...).
     Status {
-        id: String,
+        feed: String,
         mode: LiveMode,
         refresh_ms: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -509,7 +513,7 @@ pub enum LiveMessage {
     },
     /// New results, as `POST /query` answers them; sent first after subscribing and then
     /// whenever they differ. `at` is when the queries ran (Unix milliseconds).
-    Result { id: String, at: i64, results: BTreeMap<String, QueryOutcome> },
+    Result { feed: String, at: i64, results: BTreeMap<String, QueryOutcome> },
     /// A refused subscription, or one that ended (access revoked). Without `id`, a message that
     /// was not understood.
     Error {

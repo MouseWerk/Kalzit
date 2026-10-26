@@ -1518,6 +1518,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `mongodb.access_control_off` | | the server checks no access rights (also `422 validation` when saving) |
 | `mongodb.no_server` | `detail` | no suitable MongoDB server answered in time |
 | `mongodb.srv_lookup` | `detail` | the SRV or TXT lookup failed |
+| `mongodb.streams_limit` | `max` | live updates: `max` change streams of this source are open; further subscriptions poll (`live.streams_limit`) |
 | `prometheus.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
 | `prometheus.error` | `status`, `detail` | Prometheus answered an error |
@@ -1611,6 +1612,11 @@ In `error` and `closing` messages of a live connection, and in `status` messages
 | `live.shutting_down` | | `busy`: the server stops (close code 1001) |
 | `live.source_unsupported` | | status: a source cannot report changes (a SQL source, a MongoDB server that is not a replica set, a pipeline that reads other collections), so the queries run every `refreshMs` |
 | `live.changes_unavailable` | | status: a source's change feed could not be opened or failed; the queries run every `refreshMs` until it works again |
+| `live.streams_limit` | | status: the source has as many change streams open as it allows; the queries run every `refreshMs` |
+| `live.too_many_feeds` | `max` | `rate_limited`: the user follows `max` different feeds already |
+| `live.feeds_busy` | `max` | `busy`: the server runs `max` feeds already |
+| `live.memory_limit` | `max` | `busy`: the latest results of all feeds would hold more than `max` bytes; the feed and its subscriptions end |
+| `live.check_failed` | | `busy`: access could not be checked again (the database is busy) twice in a row; the subscription or the connection (close code 1011) ends |
 
 ### Updates (`422 validation` or `409 conflict`; also in the update status)
 
