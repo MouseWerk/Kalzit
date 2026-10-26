@@ -49,6 +49,7 @@ test("an Explore query is saved, found in the list, opened again and linked into
 
     // A new panel starts from the saved analysis, linked.
     await page.goto(`/dashboards/${dashboardId}`);
+    await expect(page.getByRole("heading", { name: dashboardTitle })).toBeVisible();
     await startEditing(page);
     await addPanel(page);
     const editor = page.getByRole("region", { name: t("dashboards.editor.newTitle") });

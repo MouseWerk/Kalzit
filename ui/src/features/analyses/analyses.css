@@ -159,11 +159,18 @@
 
   /* The list */
 
+  /* A long data source name in a select must not widen the list column on a phone. */
   .analysis-filters {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .analysis-filters .select {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .analysis-filters__search {

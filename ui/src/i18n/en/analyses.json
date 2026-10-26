@@ -190,7 +190,7 @@
   "analyses.versions.restoreConflict": "Someone saved a newer version meanwhile. Look at the list again.",
   "analyses.start.label": "How should the panel begin?",
   "analyses.start.new": "New query",
-  "analyses.start.newHint": "Pick a data source and write it yourself",
+  "analyses.start.newHint": "Choose a source and write the query yourself",
   "analyses.start.analysis": "From saved analysis",
   "analyses.start.analysisHint": "Take its query, steps and visualization",
   "analyses.start.panel": "From another panel",

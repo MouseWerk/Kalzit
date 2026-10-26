@@ -190,7 +190,7 @@
   "analyses.versions.restoreConflict": "Inzwischen hat jemand eine neuere Version gespeichert. Sieh dir die Liste noch einmal an.",
   "analyses.start.label": "Wie soll das Panel beginnen?",
   "analyses.start.new": "Neue Abfrage",
-  "analyses.start.newHint": "Datenquelle wählen und selbst schreiben",
+  "analyses.start.newHint": "Quelle wählen und die Abfrage selbst schreiben",
   "analyses.start.analysis": "Aus gespeicherter Auswertung",
   "analyses.start.analysisHint": "Abfrage, Schritte und Darstellung übernehmen",
   "analyses.start.panel": "Aus anderem Panel",
