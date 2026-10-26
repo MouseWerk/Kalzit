@@ -101,6 +101,8 @@ interface FolderTreeProps {
   storageKey?: string | undefined;
   /** The active team of the team context: its spaces come first. */
   activeTeam?: string | undefined;
+  /** The name of the entry above every folder; "All dashboards" when left out. */
+  allLabel?: string | undefined;
 }
 
 /** The tree's own key for "All dashboards", which has no folder id. */
@@ -120,6 +122,7 @@ export function FolderTree({
   onSelect,
   storageKey,
   activeTeam,
+  allLabel,
 }: FolderTreeProps) {
   const { t } = useI18n();
   const ids = useId();
@@ -374,8 +377,8 @@ export function FolderTree({
         {item(
           ALL,
           1,
-          <span className="truncate" title={t("dashboards.folders.all")}>
-            {t("dashboards.folders.all")}
+          <span className="truncate" title={allLabel ?? t("dashboards.folders.all")}>
+            {allLabel ?? t("dashboards.folders.all")}
           </span>,
           "dashboards",
           { hasChildren: false, open: false },

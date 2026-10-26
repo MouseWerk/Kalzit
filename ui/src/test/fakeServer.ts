@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
+import { analysesFake } from "../features/analyses/test/fakeAnalyses";
 import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboardFeatures";
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
 import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
@@ -42,6 +43,7 @@ const EDIT_PERMISSIONS: Permission[] = [
   // Org-internal sharing is an editor right on the server (authz.rs).
   "dashboards:share",
   "folders:write",
+  "analyses:write",
   "datasources:query",
   "datasources:read",
   "data:export",
@@ -95,6 +97,7 @@ export interface FakeArea<State> {
 const AREA_FAKES = {
   datasources: datasourcesFake,
   exploreHistory: exploreHistoryFake,
+  analyses: analysesFake,
   // Before dashboards: it answers /dashboards/validate and the annotation routes.
   dashboardFeatures: dashboardFeaturesFake,
   dashboards: dashboardsFake,

@@ -16,6 +16,8 @@ export interface Toast {
   undo?: (() => void) | undefined;
   /** An error is announced assertively, drawn with the danger tint and stays until dismissed. */
   error?: boolean | undefined;
+  /** A way on from the message ("Show in the list"), offered as a button. */
+  action?: { label: string; run: () => void } | undefined;
 }
 
 export type ToastInput = Omit<Toast, "id">;

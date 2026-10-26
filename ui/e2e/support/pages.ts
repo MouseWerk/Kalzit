@@ -37,6 +37,7 @@ async function dashboardReady(page: Page, world: World): Promise<void> {
 export const MAIN_PAGES: readonly MainPage[] = [
   { name: "home", path: () => "/", ready: heading("home.welcome", { name: "Olga Owner" }) },
   { name: "dashboards", path: () => "/dashboards", ready: heading("dashboards.title") },
+  { name: "saved analyses", path: () => "/explore/saved", ready: heading("analyses.list.title") },
   { name: "dashboard", path: (w) => `/dashboards/${w.dashboardId}`, ready: dashboardReady },
   {
     name: "panel editor",

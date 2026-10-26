@@ -390,8 +390,12 @@ describe("flyout in the rail", () => {
     await user.tab();
     expect(document.activeElement).toBe(within(nav).getByRole("link", { name: "Dashboards" }));
     expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
-    await user.tab();
-    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Explore");
+    // Explore has sub-pages (the saved analyses), so it shows its flyout instead (below); a
+    // plain entry further down has its tooltip as Dashboards does.
+    act(() => within(nav).getByRole("link", { name: "Settings" }).focus());
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(within(nav).getByRole("link", { name: "Members" }));
+    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Members");
 
     // Escape hides it without taking the key from the page; the next focus shows one again.
     const seen: boolean[] = [];
@@ -405,19 +409,20 @@ describe("flyout in the rail", () => {
     expect(seen).toEqual([false]);
     expect(document.querySelector(".rail-tooltip")).toBeNull();
     await user.tab({ shift: true });
-    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
+    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Data sources");
     // It is placed once, so scrolling the rail hides it instead of leaving it behind.
     fireEvent.scroll(nav);
     expect(document.querySelector(".rail-tooltip")).toBeNull();
     await user.tab();
     await user.tab({ shift: true });
-    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
+    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Data sources");
     // A pointer gets the native title instead, never both.
     await user.hover(within(nav).getByRole("link", { name: "Dashboards" }));
     expect(document.querySelector(".rail-tooltip")).toBeNull();
     act(() => within(nav).getByRole("link", { name: "Dashboards" }).focus());
     await user.tab();
-    // Entries with sub-pages show their flyout instead.
+    // Entries with sub-pages show their flyout instead; Explore's flyout holds one link.
+    await user.tab();
     await user.tab();
     await user.tab();
     await user.tab();

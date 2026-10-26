@@ -22,5 +22,6 @@ titles and heights.
 | `DataSources.dc.html` | Data source list with team access drawer |
 | `DataSourceNew.dc.html` | Add and configure a data source, advanced options per type |
 | `DataChat.dc.html` | "Fragen", a planned data chat; not scheduled yet |
+| `SavedAnalyses.dc.html` | Saved analyses: save dialog and saved state in Explore, the list under Explore, the panel editor's "From saved analysis", and the conflict on save |
 
 The boards contain sample data only.

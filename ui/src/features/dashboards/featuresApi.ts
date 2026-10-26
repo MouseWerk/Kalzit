@@ -285,6 +285,8 @@ export function libraryContent(panel: PanelModel): Record<string, unknown> {
     rowId: _row,
     repeat: _repeat,
     libraryPanelId: _lib,
+    // A library panel holds its own queries: one made from a linked panel keeps a copy.
+    analysisId: _analysis,
     ...content
   } = panel;
   return { schemaVersion: SCHEMA_VERSION, ...content };

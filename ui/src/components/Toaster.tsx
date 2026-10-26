@@ -108,6 +108,11 @@ function ToastBody({ toast }: { toast: Toast }) {
         <span className="visually-hidden">{t("shell.toast.undoHint")}</span>
       )}
       <div className="toast__actions">
+        {toast.action === undefined ? null : (
+          <button type="button" className="toast__button" onClick={() => close(toast.action?.run)}>
+            {toast.action.label}
+          </button>
+        )}
         {toast.undo === undefined ? null : (
           <button type="button" className="toast__button" onClick={() => close(toast.undo)}>
             {t("common.undo")}

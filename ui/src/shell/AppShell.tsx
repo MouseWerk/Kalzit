@@ -55,7 +55,10 @@ export function AppShell() {
   const sections = NAV_SECTIONS.map((section) => ({
     ...section,
     items: section.items.filter(
-      (item) => (item.visible?.(permissions) ?? true) || item.useGranted !== undefined,
+      (item) =>
+        (item.visible?.(permissions) ?? true) ||
+        item.useGranted !== undefined ||
+        (item.fallback?.visible?.(permissions) ?? false),
     ),
   })).filter((section) => section.items.length > 0);
   const currentOrg = currentOrgOf(me);
@@ -305,7 +308,7 @@ function NavSection({
         aria-labelledby={heading === undefined ? undefined : headingId}
       >
         {items.map((item) =>
-          (item.visible?.(entry.permissions) ?? true) || item.useGranted === undefined ? (
+          (item.visible?.(entry.permissions) ?? true) ? (
             <NavEntry key={item.to} item={item} {...entry} />
           ) : (
             <GrantedNavEntry key={item.to} useGranted={item.useGranted} item={item} {...entry} />
@@ -316,11 +319,22 @@ function NavSection({
   );
 }
 
-/** An entry the permissions hide, shown when its area's hook finds a grant. */
+/**
+ * An entry the permissions hide, shown when its area's hook finds a grant; otherwise its
+ * fallback, when the permissions show that.
+ */
 function GrantedNavEntry({
-  useGranted,
+  useGranted = notGranted,
   ...entry
-}: ComponentProps<typeof NavEntry> & { useGranted: () => boolean }) {
+}: ComponentProps<typeof NavEntry> & { useGranted: (() => boolean) | undefined }) {
   const granted = useGranted();
-  return granted ? <NavEntry {...entry} /> : null;
+  if (granted) {
+    return <NavEntry {...entry} />;
+  }
+  const fallback = entry.item.fallback;
+  return fallback !== undefined && (fallback.visible?.(entry.permissions) ?? true) ? (
+    <NavEntry {...entry} item={fallback} />
+  ) : null;
 }
+
+const notGranted = () => false;

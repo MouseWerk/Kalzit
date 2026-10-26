@@ -58,6 +58,7 @@ import {
   deleteDashboard,
   fetchDashboard,
   foldersQuery,
+  type LinkedAnalysis,
   type LinkedPanel,
   restoreDashboard,
   saveDashboard,
@@ -77,7 +78,7 @@ import {
 } from "./DashboardSettingsPage";
 import { DashboardToolbar } from "./DashboardToolbar";
 import { readDraft, writeDraft } from "./draftStore";
-import { buildExport, downloadJson } from "./exportImport";
+import { buildExport, downloadJson, missingAnalyses } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
 import {
@@ -496,6 +497,10 @@ function DashboardView({
   // Library panels added or changed in this session, on top of those the dashboard answered.
   const [extraLibrary, setExtraLibrary] = useState<Record<string, LinkedPanel>>({});
   const library = { ...dashboard.libraryPanels, ...extraLibrary };
+  // Saved analyses linked in this session, on top of those the dashboard answered, so a new link
+  // draws before the dashboard is saved.
+  const [extraAnalyses, setExtraAnalyses] = useState<Record<string, LinkedAnalysis>>({});
+  const analyses = { ...dashboard.analyses, ...extraAnalyses };
   const [values, setValues] = useState<VariableValues>(() => {
     const start = initialVariables(dashboard.model.variables);
     const kept = Object.entries(picked.get(dashboard.id) ?? {}).filter(([name]) => name in start);
@@ -736,7 +741,7 @@ function DashboardView({
     // shows the annotations of the period it draws.
     ranges: resolved.ok
       ? annotationRanges(
-          model.panels.map((p) => resolvePanel(p, library)),
+          model.panels.map((p) => resolvePanel(p, library, analyses)),
           rows,
           (row) => (openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]),
           resolved.range,
@@ -883,7 +888,10 @@ function DashboardView({
     onDisplay({ editPanel: undefined });
   }
 
-  function applyPanel(panel: PanelModel, isNew: boolean) {
+  function applyPanel(applied: PanelModel, isNew: boolean) {
+    // A panel linking a saved analysis keeps no queries or steps of its own in the model.
+    const panel =
+      applied.analysisId === undefined ? applied : { ...applied, targets: [], transformations: [] };
     changeDraft((m) => {
       let panels = isNew
         ? [...m.panels, panel]
@@ -1152,7 +1160,11 @@ function DashboardView({
 
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
-    downloadJson(model.title, buildExport(model, library, sources));
+    downloadJson(model.title, buildExport(model, library, sources, analyses));
+    const missing = missingAnalyses(model, analyses);
+    if (missing > 0) {
+      showToast({ message: t("analyses.export.missing", { count: missing }) });
+    }
   }
 
   // Panels may set a variable the dashboard defines (a node click setting $customerId).
@@ -1283,9 +1295,9 @@ function DashboardView({
           panel={
             keptEditor !== undefined && keptEditor.key === editing
               ? keptEditor.panel
-              : resolvePanel(edited, library)
+              : resolvePanel(edited, library, analyses)
           }
-          original={isNewPanel ? undefined : resolvePanel(edited, library)}
+          original={isNewPanel ? undefined : resolvePanel(edited, library, analyses)}
           refresh={clock.run}
           toolbar={
             <>
@@ -1305,7 +1317,9 @@ function DashboardView({
           variables={editorValues(edited, rows, values)}
           stored={(() => {
             const saved = dashboard.model.panels.find((p) => p.id === edited.id);
-            return saved === undefined ? undefined : resolvePanel(saved, dashboard.libraryPanels);
+            return saved === undefined
+              ? undefined
+              : resolvePanel(saved, dashboard.libraryPanels, dashboard.analyses);
           })()}
           savedVariables={dashboard.model.variables}
           crumbs={editorTrail}
@@ -1323,6 +1337,14 @@ function DashboardView({
               : (library[edited.libraryPanelId]?.name ?? t("libraryPanels.missing"))
           }
           onMakeLibrary={(panel) => setDialog({ kind: "makeLibrary", panel })}
+          analyses={analyses}
+          onLinkAnalysis={(linked) =>
+            setExtraAnalyses((current) => ({ ...current, [linked.id]: linked }))
+          }
+          otherPanels={model.panels
+            .filter((p) => p.id !== edited.id)
+            .map((p) => resolvePanel(p, library, analyses))}
+          dashboardTeam={dashboard.ownerTeam}
           onApply={() => leaveEditor("apply")}
           onDiscard={() => {
             if (snapshot.current?.changed() === true) {
@@ -1604,7 +1626,7 @@ function DashboardView({
                 {/* Alone too, a panel may set variables (a node click) and explore. */}
                 <PanelHostContext value={host}>
                   <PanelCard
-                    panel={resolvePanel(alone, library)}
+                    panel={resolvePanel(alone, library, analyses)}
                     alone
                     query={{
                       orgId,
@@ -1656,6 +1678,7 @@ function DashboardView({
                         panels={model.panels}
                         rows={rows}
                         libraryPanels={library}
+                        analyses={analyses}
                         now={now}
                         query={gridQuery}
                         storedPanels={dashboard.model.panels}

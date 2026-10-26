@@ -52,6 +52,11 @@ export interface PanelModel {
   links?: PanelLink[];
   /** Shows this library panel: queries, type and options come from there. */
   libraryPanelId?: string;
+  /**
+   * Shows this saved analysis: its queries and steps come from there and follow its saves; the
+   * stored panel keeps no queries of its own (docs/api/analyses.md, "Linked panels").
+   */
+  analysisId?: string;
   /** What the panel shows, up to 1000 characters; the header offers it as a hint. */
   description?: string;
   /** Drawn without the card's surface and border. */
@@ -322,7 +327,14 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     options: value.options ?? {},
     fieldConfig: value.fieldConfig ?? {},
   };
-  for (const key of ["rowId", "timeFrom", "timeShift", "libraryPanelId", "description"] as const) {
+  for (const key of [
+    "rowId",
+    "timeFrom",
+    "timeShift",
+    "libraryPanelId",
+    "analysisId",
+    "description",
+  ] as const) {
     const text = value[key];
     if (typeof text === "string" && text !== "") {
       panel[key] = text;

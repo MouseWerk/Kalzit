@@ -26,4 +26,19 @@ export const exploreNav: NavItem = {
   icon: "explore",
   visible: (permissions) => permissions.has("datasources:query"),
   useGranted: useQueryGrant,
+  // Readers without Explore (viewers) still open and run saved analyses: the list instead.
+  fallback: {
+    to: "/explore/saved",
+    label: "analyses.navReaders",
+    icon: "explore",
+    visible: (permissions) => permissions.has("analyses:read"),
+  },
+  // The saved analyses: a list of their own under Explore (docs/api/analyses.md).
+  children: [
+    {
+      to: "/explore/saved",
+      label: "analyses.nav",
+      visible: (permissions) => permissions.has("analyses:read"),
+    },
+  ],
 };

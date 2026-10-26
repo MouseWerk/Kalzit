@@ -442,6 +442,9 @@ export function PanelCard({
           {panel.libraryPanelId === undefined ? null : (
             <span className="panel-card__badge">{t("libraryPanels.badge")}</span>
           )}
+          {panel.analysisId === undefined || edit === undefined ? null : (
+            <span className="panel-card__badge">{t("analyses.panel.badge")}</span>
+          )}
           {noteText === "" ? null : (
             <span className="panel-card__note" title={noteText}>
               {noteText}

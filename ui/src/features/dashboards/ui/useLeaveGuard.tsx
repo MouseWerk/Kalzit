@@ -9,7 +9,11 @@ import { ConfirmDialog } from "./Dialog";
  * the dialog to render (null while nothing is blocked) and `release`, for a move the page makes
  * on purpose right after a change (moving the item to the trash).
  */
-export function useLeaveGuard(dirty: boolean, text: string) {
+export function useLeaveGuard(
+  dirty: boolean,
+  text: string,
+  labels?: { title: string; confirm: string; cancel: string },
+) {
   const { t } = useI18n();
   // Read when a navigation starts, so a save that just cleared it lets the move through.
   const dirtyRef = useRef(dirty);
@@ -30,8 +34,9 @@ export function useLeaveGuard(dirty: boolean, text: string) {
   }
   const dialog = (
     <ConfirmDialog
-      title={t("dashboards.leave.title")}
-      confirmLabel={t("dashboards.leave.confirm")}
+      title={labels?.title ?? t("dashboards.leave.title")}
+      confirmLabel={labels?.confirm ?? t("dashboards.leave.confirm")}
+      cancelLabel={labels?.cancel}
       onCancel={() => blocker.reset()}
       onConfirm={() => blocker.proceed()}
     >

@@ -2,6 +2,7 @@
 // file. Keys are prefixed with their area (`admin.users.title`); the parity and guard tests run
 // over the combined catalogs.
 import deAdmin from "./de/admin.json";
+import deAnalyses from "./de/analyses.json";
 import deAnalysis from "./de/analysis.json";
 // ux/dashboards: annotations, playlists, library panels and the dashboard tools.
 import deAnnotations from "./de/annotations.json";
@@ -20,6 +21,7 @@ import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
 import deToolbar from "./de/toolbar.json";
 import enAdmin from "./en/admin.json";
+import enAnalyses from "./en/analyses.json";
 import enAnalysis from "./en/analysis.json";
 import enAnnotations from "./en/annotations.json";
 import enCore from "./en/core.json";
@@ -58,6 +60,7 @@ export const en = {
   ...enExplore,
   ...enDocuments,
   ...enAnalysis,
+  ...enAnalyses,
   ...enPanels,
   ...enGraph,
   ...enShell,
@@ -74,6 +77,7 @@ export const de = {
   ...deExplore,
   ...deDocuments,
   ...deAnalysis,
+  ...deAnalyses,
   ...dePanels,
   ...deGraph,
   ...deShell,

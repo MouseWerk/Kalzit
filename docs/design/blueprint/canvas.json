@@ -89,6 +89,14 @@
       "w": 1440,
       "x": 1520,
       "y": 7120
+    },
+    "SavedAnalyses.dc.html": {
+      "expand": "fill",
+      "h": 4720,
+      "title": "Saved analyses (M2)",
+      "w": 1440,
+      "x": 3040,
+      "y": 2360
     }
   },
   "createdOnFiles": {
@@ -120,7 +128,8 @@
     "Updates.dc.html",
     "DataSources.dc.html",
     "DataSourceNew.dc.html",
-    "DataChat.dc.html"
+    "DataChat.dc.html",
+    "SavedAnalyses.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

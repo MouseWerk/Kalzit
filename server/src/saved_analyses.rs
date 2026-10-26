@@ -8,8 +8,8 @@
 //! panel can show, and "Add to dashboard" needs no second set of rules.
 //!
 //! A dashboard panel can link an analysis (`analysisId`, like a library panel's
-//! `libraryPanelId`): the panel shows the analysis's current queries, steps and visualization,
-//! and reading the dashboard authorizes running them. Whoever adds a link must be able to read the
+//! `libraryPanelId`): the panel runs the analysis's current queries and steps with its own
+//! visualization and title, and reading the dashboard authorizes running them. Whoever adds a link must be able to read the
 //! analysis and query its sources (its queries count as the dashboard's own). An analysis that
 //! dashboards link cannot go to the trash (`409`, reason `analysis.in_use`).
 

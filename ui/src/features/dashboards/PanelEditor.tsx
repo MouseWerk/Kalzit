@@ -42,11 +42,20 @@ import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
+import { AnalysisPicker, type ApplyMode } from "../analyses/AnalysisPicker";
+import type { Analysis } from "../analyses/api";
+import {
+  LinkedQueryHeader,
+  PanelCopyPicker,
+  type PanelStart,
+  PanelStartChoice,
+} from "../analyses/PanelSources";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, familyOf, queryText } from "../datasources/queryKinds";
+import type { LinkedAnalysis } from "./api";
 import { type EditorLayout, readEditorLayout, writeEditorLayout } from "./editorLayout";
 import {
   nextRefId,
@@ -110,6 +119,20 @@ interface PanelEditorProps {
   libraryName?: string | undefined;
   /** Turns the edited panel into a library panel. */
   onMakeLibrary?: ((panel: PanelModel) => void) | undefined;
+  /** The saved analyses the dashboard links, by id. */
+  analyses?: Record<string, LinkedAnalysis> | undefined;
+  /** The dashboard's other panels, for "From another panel". */
+  otherPanels?: readonly PanelModel[] | undefined;
+  /** The dashboard's owner team, offered as a scope in the analysis picker. */
+  dashboardTeam?: { id: string; name: string } | null | undefined;
+  /** A saved analysis was linked here; the dashboard draws the panel from it until saved. */
+  onLinkAnalysis?: ((linked: LinkedAnalysis) => void) | undefined;
+}
+
+/** The panel without the link to a saved analysis. */
+function unlinked(panel: PanelModel): PanelModel {
+  const { analysisId: _analysisId, ...rest } = panel;
+  return rest;
 }
 
 type LowerTab = "queries" | "steps";
@@ -145,6 +168,10 @@ export function PanelEditor({
   dashboardVariables = [],
   libraryName,
   onMakeLibrary,
+  analyses,
+  otherPanels = [],
+  dashboardTeam,
+  onLinkAnalysis,
 }: PanelEditorProps) {
   const { t } = useI18n();
   const titleId = useId();
@@ -164,6 +191,14 @@ export function PanelEditor({
   const optionsByType = useRef<Record<string, unknown>>({});
   // The preview runs what was last run, not every keystroke.
   const [preview, setPreview] = useState({ targets: opened.targets, run: 0 });
+  // How a new panel begins; gone once a saved analysis or another panel was taken over.
+  const [start, setStart] = useState<PanelStart | null>(() =>
+    isNew && opened.targets.length === 0 && opened.analysisId === undefined ? "new" : null,
+  );
+  // The analysis linked in this editor, until the dashboard lists it after the save.
+  const [picked, setPicked] = useState<{ id: string; title: string; version: number } | null>(null);
+  // Bumped when queries are replaced at once, so their editors start over with the new text.
+  const [loads, setLoads] = useState(0);
   const [tab, setTab] = useState<LowerTab>("queries");
   const [problem, setProblem] = useState(false);
   // The page's heading takes focus when the editor opens, so a screen reader starts there.
@@ -511,6 +546,68 @@ export function PanelEditor({
   );
   const pending = firstLoad(results);
 
+  /** Takes over another panel's or an analysis's queries, steps and look, and runs them. */
+  function takeOver(next: PanelModel) {
+    const nextTargets = structuredClone(next.targets);
+    pendingText.current = {};
+    targetsRef.current = nextTargets;
+    setTargets(nextTargets);
+    setSteps(structuredClone(next.transformations));
+    setLook((p) => {
+      const taken: PanelModel = {
+        ...unlinked(p),
+        type: next.type,
+        title: next.title,
+        options: structuredClone(next.options),
+        fieldConfig: structuredClone(next.fieldConfig),
+      };
+      if (next.description !== undefined) taken.description = next.description;
+      if (next.analysisId !== undefined) taken.analysisId = next.analysisId;
+      return taken;
+    });
+    setStart(null);
+    setLoads((n) => n + 1);
+    setFilterError(null);
+    setPreview((current) => ({ targets: nextTargets, run: current.run + 1 }));
+  }
+
+  function applyAnalysis(analysis: Analysis, mode: ApplyMode) {
+    const model = analysis.model;
+    if (model === undefined) {
+      return;
+    }
+    takeOver({
+      ...look,
+      type: model.visualization.type,
+      title: analysis.title,
+      targets: model.targets,
+      transformations: model.steps,
+      options: model.visualization.options ?? {},
+      fieldConfig: model.visualization.fieldConfig ?? {},
+      ...(model.description === undefined ? {} : { description: model.description }),
+      ...(mode === "linked" ? { analysisId: analysis.id } : {}),
+    });
+    setPicked(
+      mode === "linked"
+        ? { id: analysis.id, title: analysis.title, version: analysis.version }
+        : null,
+    );
+    if (mode === "linked") {
+      onLinkAnalysis?.({
+        id: analysis.id,
+        title: analysis.title,
+        version: analysis.version,
+        model,
+      });
+    }
+  }
+
+  const linkedId = look.analysisId;
+  const linkedInfo =
+    linkedId === undefined
+      ? undefined
+      : (analyses?.[linkedId] ?? (picked?.id === linkedId ? picked : undefined));
+
   function back() {
     if (blocked || panelExtrasProblem(look) !== null) {
       setProblem(true);
@@ -548,36 +645,92 @@ export function PanelEditor({
       onTab={setTab}
       counts={{ queries: targets.length, steps: stepCount }}
       queries={
-        <TargetList
-          orgId={orgId}
-          targets={targets}
-          queryable={queryable}
-          mayQuery={mayQuery}
-          noSources={mayQuery && datasources.data?.length === 0}
-          canAdd={datasources.data !== undefined && queryable.length > 0}
-          onAdd={addTarget}
-          onChange={changeTarget}
-          onRemove={removeTarget}
-          onRun={run}
-          runBlocked={runBlocked}
-          onLeave={runIfChanged}
-          onDuplicate={duplicateTarget}
-          steps={steps}
-          fields={fieldsByRef}
-          onProjection={changeProjection}
-          onPendingText={markPending}
-          previewRun={previewRun}
-        />
+        linkedId !== undefined ? (
+          <LinkedQueryHeader
+            orgId={orgId}
+            analysisId={linkedId}
+            title={linkedInfo?.title ?? look.title}
+            version={linkedInfo?.version}
+            refIds={targets.map((target) => target.refId)}
+            datasourceId={targets[0]?.datasourceId}
+            onUnlink={() => {
+              // The queries and steps stay, now the panel's own.
+              setLook(unlinked);
+              setLoads((n) => n + 1);
+            }}
+            onRemove={() => {
+              setLook(unlinked);
+              targetsRef.current = [];
+              setTargets([]);
+              setSteps([]);
+              setLoads((n) => n + 1);
+              addTarget();
+              if (isNew) {
+                setStart("new");
+              }
+            }}
+          />
+        ) : (
+          <>
+            {start === null ? null : (
+              <PanelStartChoice
+                value={start}
+                onChange={setStart}
+                withPanels={otherPanels.length > 0}
+              />
+            )}
+            {start === "analysis" ? (
+              <AnalysisPicker
+                orgId={orgId}
+                meId={userId}
+                team={dashboardTeam}
+                range={range}
+                onApply={applyAnalysis}
+              />
+            ) : start === "panel" ? (
+              <PanelCopyPicker
+                panels={otherPanels}
+                onApply={(other) => takeOver({ ...other, id: look.id, grid: look.grid })}
+              />
+            ) : (
+              <TargetList
+                key={loads}
+                orgId={orgId}
+                targets={targets}
+                queryable={queryable}
+                mayQuery={mayQuery}
+                noSources={mayQuery && datasources.data?.length === 0}
+                canAdd={datasources.data !== undefined && queryable.length > 0}
+                onAdd={addTarget}
+                onChange={changeTarget}
+                onRemove={removeTarget}
+                onRun={run}
+                runBlocked={runBlocked}
+                onLeave={runIfChanged}
+                onDuplicate={duplicateTarget}
+                steps={steps}
+                fields={fieldsByRef}
+                onProjection={changeProjection}
+                onPendingText={markPending}
+                previewRun={previewRun}
+              />
+            )}
+          </>
+        )
       }
       steps={
-        <StepsTab
-          steps={steps}
-          onChange={changeSteps}
-          refIds={refIds}
-          hidden={hiddenKey}
-          inputs={inputs}
-          run={stepsRun}
-        />
+        linkedId !== undefined ? (
+          <p className="field__hint panel-editor__note">{t("analyses.linked.stepsNote")}</p>
+        ) : (
+          <StepsTab
+            steps={steps}
+            onChange={changeSteps}
+            refIds={refIds}
+            hidden={hiddenKey}
+            inputs={inputs}
+            run={stepsRun}
+          />
+        )
       }
     />
   );

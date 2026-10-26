@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../components/Icon";
 import { ORG_SECTIONS, SERVER_SECTIONS } from "../features/admin/sections";
+import { ANALYSES_KEY, fetchAnalyses } from "../features/analyses/api";
 import { NAV_ITEMS } from "../features/nav";
 import { LANGUAGES, type MessageKey, useI18n } from "../i18n/i18n";
 import { isComposingKey } from "../lib/ime";
@@ -45,6 +46,7 @@ const appRoute = getRouteApi("/_app");
 export const SEARCH_DELAY_MS = 150;
 const PAGE_SIZE = 20;
 const RECENT_LIMIT = 5;
+const ANALYSIS_LIMIT = 5;
 
 type Group = "recent" | "results" | "create" | "pages" | "appearance" | "language" | "help";
 
@@ -153,6 +155,12 @@ export function CommandPalette({
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     enabled: org !== undefined && query !== "",
   });
+  // Saved analyses are found through their own list route; the server's search leaves them out.
+  const analyses = useQuery({
+    queryKey: [ANALYSES_KEY, orgId, "palette", query],
+    queryFn: ({ signal }) => fetchAnalyses(orgId, { q: query, limit: ANALYSIS_LIMIT }, signal),
+    enabled: org !== undefined && query !== "" && permissions.has("analyses:read"),
+  });
 
   function go(run: () => void) {
     onClose();
@@ -224,6 +232,17 @@ export function CommandPalette({
       group: "pages",
       score: 0,
       run: goTo("/explore"),
+    });
+  }
+  if (org !== undefined && permissions.has("analyses:read")) {
+    pages.push({
+      key: "page:/explore/saved",
+      label: t("analyses.list.title"),
+      detail: t("explore.nav"),
+      icon: "explore",
+      group: "pages",
+      score: 0,
+      run: goTo("/explore/saved"),
     });
   }
   if (org !== undefined && permissions.has("datasources:write")) {
@@ -299,6 +318,20 @@ export function CommandPalette({
         run: hitTarget(hit),
       })),
     );
+    for (const analysis of analyses.data?.items ?? []) {
+      hits.push({
+        key: `analysis:${analysis.id}`,
+        label: analysis.title,
+        kind: t("shell.palette.kind.analysis"),
+        icon: "explore",
+        group: "results",
+        score: fuzzyScore(query, analysis.title) ?? 0,
+        run: () =>
+          void (analysis.mayQuery
+            ? navigate({ to: "/explore", search: { analysis: analysis.id } })
+            : navigate({ to: "/explore/saved", search: { q: analysis.title } })),
+      });
+    }
     const seen = new Set(hits.map((hit) => hit.key));
     const local = [...recentItems.filter((item) => !seen.has(item.key)), ...actions, ...pages]
       .map((item) => ({ ...item, score: fuzzyScore(query, item.label) ?? -1 }))

@@ -1,6 +1,14 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, useDeferredValue, useEffect, useId, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
+import {
+  type KeyboardEvent,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
 import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
@@ -26,6 +34,7 @@ import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { tabForKey } from "../../lib/tabKeys";
+import { showErrorToast, showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { type LiveSpec, liveClient } from "../../live/client";
 import { liveNote } from "../../live/text";
@@ -33,18 +42,38 @@ import { useLiveSubscription } from "../../live/useLive";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
+import {
+  ANALYSES_KEY,
+  ANALYSIS_SCHEMA_VERSION,
+  type Analysis,
+  type AnalysisModel,
+  analysisFromConflict,
+  analysisQuery,
+  createAnalysis,
+  fetchVersions,
+  saveAnalysis,
+} from "../analyses/api";
+import { ConflictDialog, ConflictNotice, type NewerVersion } from "../analyses/Conflict";
+import { SaveControls, SavedAgo, SavedHeading, SaveShortcuts } from "../analyses/ExploreSaved";
+import { OpenDialog } from "../analyses/OpenDialog";
+import { placeGroups, placeLabel } from "../analyses/places";
+import { SaveAnalysisDialog, type SaveMode, type SaveValues } from "../analyses/SaveAnalysisDialog";
+import { visualizationName } from "../analyses/visualization";
+import { foldersQuery } from "../dashboards/api";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
 import { appendPages, documentsOf, outcomesOf } from "../dashboards/results";
-import { TimeRangePicker } from "../dashboards/TimeRangePicker";
+import { rangeLabel, TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {
   intervalFor,
   MAX_DATA_POINTS,
   resolveRange,
   type TextRange,
 } from "../dashboards/timeRange";
+import { ConfirmDialog } from "../dashboards/ui/Dialog";
 import { errorBodyMessage, errorMessage } from "../dashboards/ui/errors";
 import { Inspect } from "../dashboards/ui/Inspect";
+import { useLeaveGuard } from "../dashboards/ui/useLeaveGuard";
 import { writeLiveResult } from "../dashboards/usePanelLive";
 import {
   type DatasourceSummary,
@@ -72,6 +101,30 @@ const REF_ID = "A";
 /** The cache key of Explore runs: `[EXPLORE_KEY, orgId, submitted]`. */
 const EXPLORE_KEY = "explore";
 
+const exploreRoute = getRouteApi("/_app/explore");
+const appRoute = getRouteApi("/_app");
+
+/** The saved analysis open in Explore, as last loaded or saved. */
+interface SavedState {
+  analysis: Analysis & { model: AnalysisModel };
+  /**
+   * The editor's queries, steps, look and kept range when it last matched the saved version;
+   * worked out on the first render after loading. "Changed" compares against it.
+   */
+  baseline: string | null;
+  /** When it was opened, for the conflict dialog. */
+  openedAt: number;
+}
+
+/** What "Changed" compares: everything but the name and description, which save on their own. */
+function editedPart(model: AnalysisModel): string {
+  return JSON.stringify([model.timeRange, model.targets, model.steps, model.visualization]);
+}
+
+function withModel(analysis: Analysis): (Analysis & { model: AnalysisModel }) | null {
+  return analysis.model === undefined ? null : { ...analysis, model: analysis.model };
+}
+
 interface Submitted {
   datasourceId: string;
   query: unknown;
@@ -95,8 +148,9 @@ export function ExplorePage() {
   });
   const granted = sources.data?.some((source) => source.access?.query === true) ?? false;
   let body = null;
+  const { analysis } = exploreRoute.useSearch();
   if (org !== undefined && (orgWide || granted)) {
-    body = <Explore orgId={org.id} />;
+    body = <Explore orgId={org.id} analysisId={analysis} />;
   } else if (permissions.loaded && (org === undefined || !sources.isPending)) {
     body = (
       <EmptyState icon="lock" title={t("explore.forbidden.title")}>
@@ -107,8 +161,10 @@ export function ExplorePage() {
   return <Page title={t("explore.title")}>{body}</Page>;
 }
 
-function Explore({ orgId }: { orgId: string }) {
-  const { t } = useI18n();
+function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | undefined }) {
+  const { t, language, timeZone } = useI18n();
+  const navigate = useNavigate();
+  const meId = appRoute.useRouteContext().me.id;
   const calendar = useAnalysisCalendar();
   const permissions = useOrgPermissions();
   const datasourceId = useId();
@@ -148,6 +204,69 @@ function Explore({ orgId }: { orgId: string }) {
   // The result and the steps editor share one run, a moment behind typing.
   const deferredSteps = useDeferredValue(steps);
   const tabsId = useId();
+  // The saved analysis this editor holds, with the dialogs around saving it.
+  const [saved, setSaved] = useState<SavedState | null>(null);
+  const [saveDialog, setSaveDialog] = useState<SaveMode | null>(null);
+  const [opening, setOpening] = useState(false);
+  // `retry` sends the refused save again over the newer version (a rename or a move); without
+  // it, overwriting saves the editor.
+  const [conflict, setConflict] = useState<{
+    newer: NewerVersion;
+    compareOnly: boolean;
+    retry?: ((version: number) => void) | undefined;
+  } | null>(null);
+  // Another analysis to open, waiting for "discard" while the editor has unsaved changes.
+  const [switchTo, setSwitchTo] = useState<Analysis | null>(null);
+  const [confirmLoad, setConfirmLoad] = useState<Analysis | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const folders = useQuery({
+    ...foldersQuery(orgId),
+    enabled: permissions.has("folders:read"),
+  });
+  // The analysis named in the address, loaded once into the editor.
+  const requested = useQuery({
+    ...analysisQuery(orgId, analysisId ?? ""),
+    enabled: analysisId !== undefined && saved?.analysis.id !== analysisId,
+  });
+  // The open analysis, read again now and then: a newer version saved elsewhere shows at once.
+  const watched = useQuery({
+    ...analysisQuery(orgId, saved?.analysis.id ?? ""),
+    enabled: saved !== null,
+    refetchInterval: 30_000,
+  });
+  const newer =
+    saved !== null &&
+    watched.data !== undefined &&
+    watched.data.id === saved.analysis.id &&
+    watched.data.version > saved.analysis.version
+      ? withModel(watched.data)
+      : null;
+  const newerAuthor = useQuery({
+    queryKey: [ANALYSES_KEY, orgId, "author", newer?.id ?? "", newer?.version ?? 0],
+    queryFn: async ({ signal }) => {
+      const page = await fetchVersions(orgId, newer?.id ?? "", { limit: 1 }, signal);
+      return page.items[0]?.authorName ?? null;
+    },
+    enabled: newer !== null,
+    retry: false,
+  });
+  // Leaving for Explore without an analysis in the address keeps the editor, now unsaved.
+  const [lastId, setLastId] = useState(analysisId);
+  if (lastId !== analysisId) {
+    setLastId(analysisId);
+    if (analysisId === undefined && saved !== null) {
+      setSaved(null);
+    }
+  }
+  // One save at a time: a second Ctrl+S while one is on its way does nothing, so the second
+  // cannot run into a conflict with the first.
+  const saving = useRef(false);
+  const persist = useMutation({
+    mutationFn: (job: () => Promise<Analysis>) => job(),
+    onSettled: () => {
+      saving.current = false;
+    },
+  });
 
   // Only the sources the caller may query (the role or a grant).
   const list = (datasources.data ?? []).filter(
@@ -253,6 +372,46 @@ function Explore({ orgId }: { orgId: string }) {
       run: (current?.run ?? 0) + 1,
     }));
   }
+
+  /** Puts a saved analysis into the editor and runs it. */
+  function load(analysis: Analysis) {
+    const full = withModel(analysis);
+    const target = full?.model.targets[0];
+    const source =
+      target === undefined ? undefined : list.find((d) => d.id === target.datasourceId);
+    if (full === null || target === undefined || source === undefined) {
+      setLoadError(t("analyses.explore.noSource"));
+      return;
+    }
+    setLoadError(null);
+    setChosen(source.id);
+    setQueries((current) => ({ ...current, [source.id]: target.query }));
+    setPendingText((current) => ({ ...current, [source.id]: false }));
+    setSteps(asSteps(full.model.steps));
+    setPanelType(full.model.visualization.type);
+    const nextRange = full.model.timeRange ?? range;
+    setRange(nextRange);
+    setFilterError(null);
+    setLoads((n) => n + 1);
+    setSaved({ analysis: full, baseline: null, openedAt: Date.now() });
+    setConflict(null);
+    client.setQueryData(analysisQuery(orgId, full.id).queryKey, full);
+    run(nextRange, target.query, source, true);
+  }
+  // The analysis from the address goes into the editor once both it and the sources are there.
+  const arrived =
+    requested.data !== undefined &&
+    requested.data.id === analysisId &&
+    saved?.analysis.id !== analysisId &&
+    datasources.data !== undefined
+      ? requested.data
+      : undefined;
+  const onArrived = useEffectEvent((analysis: Analysis) => load(analysis));
+  useEffect(() => {
+    if (arrived !== undefined) {
+      onArrived(arrived);
+    }
+  }, [arrived]);
 
   if (datasources.isPending) {
     return <p className="loading">{t("common.loading")}</p>;
@@ -366,6 +525,11 @@ function Explore({ orgId }: { orgId: string }) {
   const shapes: Shape[] = projected ? [...new Set<Shape>([...kindShapes, "frame"])] : kindShapes;
   const choices = panelsForShapes(shapes);
   const type = panelType ?? (results.length > 0 ? suggestPanel(results) : "table");
+  // A saved analysis keeps its visualization options while its type stays.
+  const savedLook =
+    saved !== null && saved.analysis.model.visualization.type === type
+      ? saved.analysis.model.visualization
+      : undefined;
   const panel: PanelModel = {
     id: "explore",
     type,
@@ -376,13 +540,257 @@ function Explore({ orgId }: { orgId: string }) {
         ? []
         : [{ refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query }],
     transformations: steps,
-    options: {},
-    fieldConfig: {},
+    options: savedLook?.options ?? {},
+    fieldConfig: savedLook?.fieldConfig ?? {},
   };
+
+  /** The editor as an analysis model; `base` gives the name and the queries beyond the first. */
+  function currentModel(
+    base: AnalysisModel | undefined,
+    keepRange: boolean,
+    target: DatasourceSummary,
+    text: unknown,
+  ): AnalysisModel {
+    const sameType = base?.visualization.type === type;
+    return {
+      schemaVersion: ANALYSIS_SCHEMA_VERSION,
+      title: base?.title ?? "",
+      description: base?.description,
+      timeRange: keepRange ? range : null,
+      targets: [
+        { refId: REF_ID, datasourceId: target.id, query: normalizeQuery(text, target.kind) },
+        ...(base?.targets.slice(1) ?? []),
+      ],
+      steps: storableTransformations(steps),
+      visualization: {
+        type,
+        options: sameType ? (base?.visualization.options ?? {}) : {},
+        fieldConfig: sameType ? (base?.visualization.fieldConfig ?? {}) : {},
+      },
+    };
+  }
+  const mine =
+    saved === null
+      ? null
+      : currentModel(
+          saved.analysis.model,
+          saved.analysis.model.timeRange !== null,
+          datasource,
+          query,
+        );
+  // The first render after loading is what "unchanged" means.
+  if (saved !== null && saved.baseline === null && mine !== null) {
+    setSaved({ ...saved, baseline: editedPart(mine) });
+  }
+  const dirty =
+    saved !== null &&
+    saved.baseline !== null &&
+    mine !== null &&
+    editedPart(mine) !== saved.baseline;
+  const allFolders = folders.data ?? [];
+  const mayWrite = saved?.analysis.access.write ?? false;
+  const mayCreate =
+    permissions.has("analyses:write") || allFolders.some((folder) => folder.access?.write === true);
+
+  /** A saved or created analysis becomes the open one; `baseline` is what it matched. */
+  function adopt(analysis: Analysis, baseline: string | null) {
+    const full = withModel(analysis);
+    if (full === null) {
+      return;
+    }
+    setSaved((current) => ({
+      analysis: full,
+      baseline,
+      openedAt: current?.analysis.id === full.id ? current.openedAt : Date.now(),
+    }));
+    setConflict(null);
+    client.setQueryData(analysisQuery(orgId, full.id).queryKey, full);
+    void client.invalidateQueries({ queryKey: [ANALYSES_KEY, orgId, "list"] });
+    if (analysisId !== full.id) {
+      void navigate({ to: "/explore", search: { analysis: full.id }, replace: true });
+    }
+  }
+
+  async function showConflict(
+    current: Analysis,
+    compareOnly: boolean,
+    retry?: (version: number) => void,
+  ) {
+    const full = withModel(current);
+    if (full === null) {
+      return;
+    }
+    const authorName = await fetchVersions(orgId, full.id, { limit: 1 })
+      .then((page) => page.items[0]?.authorName ?? null)
+      .catch(() => null);
+    setConflict({ newer: { analysis: full, authorName }, compareOnly, retry });
+  }
+
+  function saveCurrent(version?: number) {
+    if (datasource === undefined || query === null || saving.current) {
+      return;
+    }
+    if (saved === null) {
+      if (mayCreate) {
+        persist.reset();
+        setSaveDialog("save");
+      }
+      return;
+    }
+    if (!mayWrite) {
+      persist.reset();
+      setSaveDialog("saveAs");
+      return;
+    }
+    const model = currentModel(
+      saved.analysis.model,
+      saved.analysis.model.timeRange !== null,
+      datasource,
+      query,
+    );
+    saving.current = true;
+    persist.mutate(
+      () =>
+        saveAnalysis(orgId, saved.analysis.id, {
+          model,
+          version: version ?? saved.analysis.version,
+        }),
+      {
+        onSuccess: (analysis) => {
+          adopt(analysis, editedPart(model));
+          showToast({ message: t("analyses.explore.savedToast", { title: analysis.title }) });
+        },
+        onError: (error) => {
+          const current = analysisFromConflict(error);
+          if (current !== null) {
+            void showConflict(current, false);
+          } else {
+            showErrorToast(errorMessage(t, error));
+          }
+        },
+      },
+    );
+  }
+
+  function submitDialog(mode: SaveMode, values: SaveValues) {
+    if (datasource === undefined || query === null || saving.current) {
+      return;
+    }
+    if (mode === "save" || mode === "saveAs") {
+      const model = {
+        ...currentModel(saved?.analysis.model, values.keepRange, datasource, query),
+        title: values.title,
+        description: values.description === "" ? undefined : values.description,
+      };
+      saving.current = true;
+      persist.mutate(() => createAnalysis(orgId, { model, folderId: values.folderId }), {
+        onSuccess: (analysis) => {
+          setSaveDialog(null);
+          adopt(analysis, editedPart(model));
+          showToast({
+            message: t("analyses.explore.savedIn", {
+              place: placeLabel(t, allFolders, analysis.folderId),
+            }),
+            action: {
+              label: t("analyses.explore.showInList"),
+              run: () =>
+                void navigate({
+                  to: "/explore/saved",
+                  search: analysis.folderId === null ? {} : { folder: analysis.folderId },
+                }),
+            },
+          });
+        },
+      });
+      return;
+    }
+    if (saved === null) {
+      return;
+    }
+    const base = saved.analysis.model;
+    const model =
+      mode === "rename"
+        ? {
+            ...base,
+            title: values.title,
+            description: values.description === "" ? undefined : values.description,
+          }
+        : base;
+    const send = (version: number) => {
+      saving.current = true;
+      persist.mutate(
+        () =>
+          saveAnalysis(orgId, saved.analysis.id, {
+            model,
+            version,
+            ...(mode === "move" ? { folderId: values.folderId } : {}),
+          }),
+        {
+          onSuccess: (analysis) => {
+            setSaveDialog(null);
+            adopt(analysis, saved.baseline);
+            showToast({
+              message:
+                mode === "move"
+                  ? t("analyses.list.moved", {
+                      title: analysis.title,
+                      place: placeLabel(t, allFolders, analysis.folderId),
+                    })
+                  : t("analyses.explore.savedToast", { title: analysis.title }),
+            });
+          },
+          // Saved elsewhere meanwhile: the same choice as for a save, then this change again.
+          onError: (error) => {
+            const current = analysisFromConflict(error);
+            if (current !== null) {
+              setSaveDialog(null);
+              void showConflict(current, false, send);
+            }
+          },
+        },
+      );
+    };
+    send(saved.analysis.version);
+  }
+
+  const groups = placeGroups(t, allFolders, permissions.has("analyses:write"));
+  const firstPlace = groups[0]?.places[0]?.id ?? null;
 
   return (
     <div className="explore">
+      <SaveShortcuts
+        onSave={() => saveCurrent()}
+        onSaveAs={() => {
+          if (mayCreate) {
+            persist.reset();
+            setSaveDialog(saved === null ? "save" : "saveAs");
+          }
+        }}
+        onOpen={permissions.has("analyses:read") ? () => setOpening(true) : undefined}
+      />
+      <LeaveGuard dirty={dirty} title={saved?.analysis.title ?? ""} />
+      {saved === null ? null : (
+        <SavedHeading analysis={saved.analysis} folders={allFolders} dirty={dirty} />
+      )}
+      {loadError === null ? null : <FormAlert>{loadError}</FormAlert>}
+      {requested.isError ? <FormAlert>{errorMessage(t, requested.error)}</FormAlert> : null}
+      {newer !== null && conflict === null && saved !== null ? (
+        <ConflictNotice
+          newer={{ analysis: newer, authorName: newerAuthor.data ?? null }}
+          workingVersion={saved.analysis.version}
+          onCompare={() =>
+            setConflict({
+              newer: { analysis: newer, authorName: newerAuthor.data ?? null },
+              compareOnly: true,
+            })
+          }
+          onLoad={() => (dirty ? setConfirmLoad(newer) : load(newer))}
+        />
+      ) : null}
       <div className="explore__toolbar">
+        {saved === null ? (
+          <span className="explore-saved__untitled">{t("analyses.explore.untitled")}</span>
+        ) : null}
         <div className="preference">
           <label htmlFor={datasourceId}>{t("explore.datasource")}</label>
           <select
@@ -403,6 +811,19 @@ function Explore({ orgId }: { orgId: string }) {
           </select>
         </div>
         <div className="explore__run">
+          {saved === null ? null : <SavedAgo analysis={saved.analysis} meId={meId} />}
+          {permissions.has("analyses:read") ? (
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => setOpening(true)}
+              aria-keyshortcuts="Control+O"
+              title={t("analyses.keys.open")}
+            >
+              <Icon name="folder" />
+              {t("analyses.explore.open")}
+            </button>
+          ) : null}
           <button
             type="button"
             className="button button--secondary"
@@ -421,6 +842,42 @@ function Explore({ orgId }: { orgId: string }) {
               }
             }}
           />
+          {mayCreate || mayWrite ? (
+            <SaveControls
+              saved={saved?.analysis ?? null}
+              dirty={dirty}
+              mayWrite={mayWrite}
+              busy={persist.isPending}
+              actions={{
+                save: () => saveCurrent(),
+                saveAs: () => {
+                  persist.reset();
+                  setSaveDialog("saveAs");
+                },
+                rename: () => {
+                  persist.reset();
+                  setSaveDialog("rename");
+                },
+                move: () => {
+                  persist.reset();
+                  setSaveDialog("move");
+                },
+                versions: () => {
+                  if (saved !== null) {
+                    void navigate({
+                      to: "/explore/saved/$analysisId/versions",
+                      params: { analysisId: saved.analysis.id },
+                    });
+                  }
+                },
+                discard: () => {
+                  if (saved !== null) {
+                    setConfirmLoad(saved.analysis);
+                  }
+                },
+              }}
+            />
+          ) : null}
           <button
             type="button"
             className="button button--secondary"
@@ -450,6 +907,9 @@ function Explore({ orgId }: { orgId: string }) {
       </div>
       <div className="explore__body">
         <div className="explore__main">
+          {saved?.analysis.model.description === undefined ? null : (
+            <p className="explore-saved__description">{saved.analysis.model.description}</p>
+          )}
           {rangeError === null ? null : <FormAlert>{rangeError}</FormAlert>}
           {filterError === null ? null : <FormAlert>{filterError}</FormAlert>}
           <QueryEditor
@@ -707,17 +1167,157 @@ function Explore({ orgId }: { orgId: string }) {
       {adding && submitted !== null ? (
         <AddToDashboardDialog
           orgId={orgId}
-          panel={{
-            ...panel,
-            title: datasource.name,
-            transformations: storableTransformations(steps),
-          }}
+          panel={
+            // A saved analysis without changes goes in linked, so the panel follows its saves.
+            saved !== null && !dirty
+              ? {
+                  ...panel,
+                  title: saved.analysis.title,
+                  transformations: [],
+                  targets: [],
+                  analysisId: saved.analysis.id,
+                }
+              : {
+                  ...panel,
+                  title: saved?.analysis.title ?? datasource.name,
+                  transformations: storableTransformations(steps),
+                }
+          }
           range={submitted.range}
           onClose={() => setAdding(false)}
         />
       ) : null}
+      {opening ? (
+        <OpenDialog
+          orgId={orgId}
+          onOpen={(analysis) => {
+            setOpening(false);
+            if (analysis.id === saved?.analysis.id) {
+              return;
+            }
+            // Unsaved changes are not dropped by opening another analysis without asking.
+            if (dirty) {
+              setSwitchTo(analysis);
+              return;
+            }
+            void navigate({ to: "/explore", search: { analysis: analysis.id } });
+          }}
+          onClose={() => setOpening(false)}
+        />
+      ) : null}
+      {saveDialog === null ? null : (
+        <SaveAnalysisDialog
+          mode={saveDialog}
+          initial={{
+            title:
+              saved === null
+                ? ""
+                : saveDialog === "saveAs"
+                  ? t("analyses.list.copyOf", { title: saved.analysis.title })
+                  : saved.analysis.title,
+            description: saved?.analysis.model.description ?? "",
+            folderId: saved === null ? firstPlace : saved.analysis.folderId,
+            keepRange: saved !== null && saved.analysis.model.timeRange !== null,
+          }}
+          folders={allFolders}
+          canTop={permissions.has("analyses:write")}
+          summary={{
+            sourceName: datasource.name,
+            sourceKind: datasource.kind,
+            queries: saved?.analysis.model.targets.length ?? 1,
+            steps: asSteps(storableTransformations(steps)).length,
+            visualization: visualizationName(t, type),
+          }}
+          rangeLabel={rangeLabel(t, language, range, timeZone)}
+          busy={persist.isPending}
+          error={persist.isError ? errorMessage(t, persist.error) : undefined}
+          onSubmit={(values) => submitDialog(saveDialog, values)}
+          onClose={() => setSaveDialog(null)}
+        />
+      )}
+      {conflict === null || saved === null || mine === null ? null : (
+        <ConflictDialog
+          base={saved.analysis.model}
+          mine={mine}
+          newer={conflict.newer}
+          openedAt={saved.openedAt}
+          compareOnly={conflict.compareOnly}
+          busy={persist.isPending}
+          onOverwrite={() => {
+            const version = conflict.newer.analysis.version;
+            if (conflict.retry === undefined) {
+              saveCurrent(version);
+            } else {
+              conflict.retry(version);
+            }
+          }}
+          onLoad={() => {
+            const target = conflict.newer.analysis;
+            setConflict(null);
+            if (dirty) {
+              setConfirmLoad(target);
+            } else {
+              load(target);
+            }
+          }}
+          onSaveCopy={() => {
+            setConflict(null);
+            persist.reset();
+            setSaveDialog("saveAs");
+          }}
+          onClose={() => setConflict(null)}
+        />
+      )}
+      {switchTo === null ? null : (
+        <ConfirmDialog
+          title={t("analyses.leave.title")}
+          confirmLabel={t("analyses.leave.discard")}
+          cancelLabel={t("analyses.leave.stay")}
+          onCancel={() => setSwitchTo(null)}
+          onConfirm={() => {
+            const target = switchTo;
+            setSwitchTo(null);
+            void navigate({ to: "/explore", search: { analysis: target.id } });
+          }}
+        >
+          {t("analyses.leave.text", { title: saved?.analysis.title ?? "" })}
+        </ConfirmDialog>
+      )}
+      {confirmLoad === null ? null : (
+        <ConfirmDialog
+          title={
+            confirmLoad.version === saved?.analysis.version
+              ? t("analyses.discard.title")
+              : t("analyses.discard.loadTitle", { version: confirmLoad.version })
+          }
+          confirmLabel={
+            confirmLoad.version === saved?.analysis.version
+              ? t("analyses.discard.confirm")
+              : t("analyses.discard.loadConfirm", { version: confirmLoad.version })
+          }
+          onCancel={() => setConfirmLoad(null)}
+          onConfirm={() => {
+            const target = confirmLoad;
+            setConfirmLoad(null);
+            load(target);
+          }}
+        >
+          {t("analyses.discard.text")}
+        </ConfirmDialog>
+      )}
     </div>
   );
+}
+
+/** Asks before leaving Explore (a link, the browser's back button) with unsaved changes. */
+function LeaveGuard({ dirty, title }: { dirty: boolean; title: string }) {
+  const { t } = useI18n();
+  const leave = useLeaveGuard(dirty, t("analyses.leave.text", { title }), {
+    title: t("analyses.leave.title"),
+    confirm: t("analyses.leave.discard"),
+    cancel: t("analyses.leave.stay"),
+  });
+  return leave.dialog;
 }
 
 const TABS = ["result", "inspect"] as const;

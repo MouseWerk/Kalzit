@@ -364,7 +364,8 @@ pub struct Panel {
     /// The panel shows this library panel: queries, type and options come from there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_panel_id: Option<String>,
-    /// The panel shows this saved analysis: queries, steps and visualization come from there.
+    /// The panel shows this saved analysis: its queries and steps come from there; type, options
+    /// and title stay the panel's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis_id: Option<String>,
     /// What the panel shows, in a sentence or two; the header offers it as a hint.
