@@ -91,15 +91,16 @@ once, however many of its subscriptions share it.
   current `status` and `result` again right after.
 - `status`: when a feed starts and whenever its mode changes. `changes`: the sources report
   changes; `poll`: the queries run every `refreshMs`. `reason` says why a feed with a fixed range
-  polls (`live.source_unsupported`, `live.changes_unavailable`, `live.streams_limit`).
+  polls (`live.source_unsupported`, `live.changes_unavailable`, `live.streams_limit`), or why it
+  shows an older result (`live.memory_limit`).
 - `result`: first right after the feed's first run, then whenever the results differ from the
   last ones (identical results are not sent again). `results` is the `results` object of
   `POST /query`, one outcome per `refId`; a failing query answers its error there, as in
   `POST /query`. `at` is when the queries ran (Unix milliseconds).
 - `error`: a subscription that was refused or ended, with the `error` body of the REST API
   (`code`, `message`, `reason`, `params`). Without `id`: a message that was not understood
-  (`live.invalid_message`). A feed that ends (`live.memory_limit`, or an internal error) ends
-  every subscription following it with an `error` each.
+  (`live.invalid_message`). A feed that ends (its first result does not fit, `live.memory_limit`,
+  or an internal error) ends every subscription following it with an `error` each.
 - `closing`: the server closes the connection right after this; the close frame carries the same
   reason as its text.
 
@@ -140,11 +141,16 @@ All reasons and their texts are listed in docs/api/datasources.md, "Reasons".
 - Each run is an ordinary query run: the data source's timeout, row limit, response size limit
   and the server's budget for results in memory apply. Feeds run with their organization's live
   query slots (as many parallel queries as one user gets), within the server-wide limit, never
-  with a subscriber's own: a user who left does not pay for a feed, and many feeds cannot take
-  more than one user's share.
-- The latest result of every feed is kept once, for subscribers that join; all of them together
-  stay within 256 MiB (`live.memory_limit` ends a feed that would pass it). A feed ends with its
-  last subscriber.
+  with a subscriber's own: a user who left does not pay for a feed. A feed runs one query run at
+  a time (a run that is still waiting or running is never queued a second time), and of the
+  feeds one user started, at most 2 runs wait for or hold slots at once, so one user's many
+  feeds cannot hold up the feeds of others.
+- The latest result of every feed is kept once, for subscribers that join. It is charged to the
+  user who started the feed and to the organization: at most 8 MiB per result, 32 MiB per user,
+  128 MiB per organization and 256 MiB on the server. When a share is full, new feeds of that
+  user (or organization) are refused with `live.memory_limit`; running feeds keep their last
+  result that fit, and their `status` says `live.memory_limit` until a new result fits again.
+  Nobody's feed ends because of someone else's results. A feed ends with its last subscriber.
 
 ## Limits
 
@@ -155,7 +161,8 @@ All reasons and their texts are listed in docs/api/datasources.md, "Reasons".
 | Subscriptions per connection | 50 (`live.too_many_subscriptions`) |
 | Different feeds one user follows | 100 (`live.too_many_feeds`) |
 | Feeds on the server | 500 (`live.feeds_busy`) |
-| Latest results of all feeds | 256 MiB (`live.memory_limit`) |
+| Latest results kept | 8 MiB per result, 32 MiB per user, 128 MiB per organization, 256 MiB in all (`live.memory_limit`) |
+| Runs of one user's feeds waiting for or holding query slots | 2 |
 | Change streams per MongoDB source | 8 (`live.streams_limit`) |
 | Shortest `refreshMs`, and shortest time between runs after changes | 5 s |
 | Messages waiting for a slow client | 32; one more closes it (`live.slow_client`), as does a message that takes over 10 s to send |

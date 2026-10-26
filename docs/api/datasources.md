@@ -1616,7 +1616,7 @@ In `error` and `closing` messages of a live connection, and in `status` messages
 | `live.streams_limit` | | status: the source has as many change streams open as it allows; the queries run every `refreshMs` |
 | `live.too_many_feeds` | `max` | `rate_limited`: the user follows `max` different feeds already |
 | `live.feeds_busy` | `max` | `busy`: the server runs `max` feeds already |
-| `live.memory_limit` | `max` | `busy`: the latest results of all feeds would hold more than `max` bytes; the feed and its subscriptions end |
+| `live.memory_limit` | `max` | `busy`: the latest results would pass `max` bytes: those of the feeds one user started, of the organization, of the server, or one result. A new feed is refused (or ends with its first result); a running feed keeps its last result and says so in its `status` (without `max`) until a result fits again |
 | `live.check_failed` | | `busy`: access could not be checked again (the database is busy) twice in a row; the subscription or the connection (close code 1011) ends |
 
 ### Updates (`422 validation` or `409 conflict`; also in the update status)

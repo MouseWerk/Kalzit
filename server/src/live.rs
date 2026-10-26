@@ -14,7 +14,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::task::Poll;
 use std::time::Duration;
@@ -25,7 +24,7 @@ use futures_util::{FutureExt, StreamExt};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::Digest;
-use tokio::sync::{Notify, watch};
+use tokio::sync::{Notify, Semaphore, watch};
 use tokio::time::Instant;
 
 use crate::app::AppState;
@@ -46,8 +45,14 @@ pub struct Limits {
     /// Feeds running on the server, and distinct feeds one user follows.
     pub feeds: usize,
     pub feeds_per_user: usize,
-    /// Bytes the latest results of all feeds may hold together.
+    /// Bytes the latest results of all feeds may hold together, of the feeds one user started,
+    /// and of one organization's feeds; and the largest result one feed may hold.
     pub held_bytes: usize,
+    pub held_bytes_per_user: usize,
+    pub held_bytes_per_org: usize,
+    pub result_bytes: usize,
+    /// Runs of the feeds one user started that may wait for or hold query slots at once.
+    pub runs_per_user: usize,
     /// The shortest time between two runs of a feed, polled or after changes; also the shortest
     /// refresh a subscription may ask for.
     pub min_refresh: Duration,
@@ -84,6 +89,10 @@ impl Default for Limits {
             feeds: 500,
             feeds_per_user: 100,
             held_bytes: 256 * 1024 * 1024,
+            held_bytes_per_user: 32 * 1024 * 1024,
+            held_bytes_per_org: 128 * 1024 * 1024,
+            result_bytes: 8 * 1024 * 1024,
+            runs_per_user: 2,
             min_refresh: Duration::from_secs(5),
             default_refresh: Duration::from_secs(30),
             changes_refresh: Duration::from_secs(300),
@@ -126,8 +135,10 @@ pub struct Live {
     /// Notified when a connection ends, for `shutdown`.
     left: Notify,
     feeds: Mutex<Feeds>,
-    /// Bytes the feeds' latest results hold (`Limits::held_bytes`).
-    held: Arc<AtomicUsize>,
+    /// Bytes the feeds' latest results hold (`Limits::held_bytes` and friends).
+    held: Arc<Mutex<Budget>>,
+    /// Per user, the runs of the feeds they started (`Limits::runs_per_user`).
+    runs: Mutex<HashMap<String, Arc<Semaphore>>>,
     stop: watch::Sender<bool>,
 }
 
@@ -139,9 +150,19 @@ impl Default for Live {
             left: Notify::new(),
             feeds: Mutex::default(),
             held: Arc::default(),
+            runs: Mutex::default(),
             stop: watch::Sender::new(false),
         }
     }
+}
+
+/// Bytes held by the feeds' latest results: in all, per user who started a feed, per
+/// organization.
+#[derive(Debug, Default)]
+struct Budget {
+    total: usize,
+    users: HashMap<String, usize>,
+    orgs: HashMap<String, usize>,
 }
 
 /// An admitted connection; dropping it frees its place.
@@ -277,7 +298,10 @@ impl Live {
                 if feeds.by_key.len() >= limits.feeds {
                     return Err(ApiError::busy().because("live.feeds_busy").param("max", limits.feeds));
                 }
-                let feed = self.start(state, spec, key.clone());
+                // A user (or organization) whose feeds hold their share of the memory budget
+                // starts no new ones; running feeds, theirs and others', go on.
+                self.budget_left(user_id, &spec.org_id, &limits)?;
+                let feed = self.start(state, spec, key.clone(), user_id);
                 feeds.by_key.insert(key, Arc::downgrade(&feed));
                 feed
             }
@@ -286,20 +310,58 @@ impl Live {
         Ok(Hold { live: self.clone(), user_id: user_id.to_string(), feed })
     }
 
-    fn start(&self, state: &AppState, spec: Spec, key: String) -> Arc<Feed> {
+    /// Refuses a new feed of `user_id` in `org_id` when their feeds, the organization's or all
+    /// together hold their share of the memory budget.
+    fn budget_left(&self, user_id: &str, org_id: &str, limits: &Limits) -> Result<(), ApiError> {
+        let budget = self.held.lock().expect("live budget lock");
+        let full = [
+            (budget.users.get(user_id).copied().unwrap_or(0), limits.held_bytes_per_user),
+            (budget.orgs.get(org_id).copied().unwrap_or(0), limits.held_bytes_per_org),
+            (budget.total, limits.held_bytes),
+        ]
+        .into_iter()
+        .find(|(held, max)| held >= max);
+        match full {
+            Some((_, max)) => Err(ApiError::busy().because("live.memory_limit").param("max", max)),
+            None => Ok(()),
+        }
+    }
+
+    fn start(&self, state: &AppState, spec: Spec, key: String, owner: &str) -> Arc<Feed> {
         let id = uuid::Uuid::now_v7().to_string();
         let (tx, rx) = watch::channel(FeedState::default());
         let tx = Arc::new(tx);
         let refresh_ms = spec.refresh_ms;
-        let run = run_feed(state.clone(), id.clone(), spec, self.held.clone(), tx.clone());
+        let feed = FeedRef { id: id.clone(), key: key.clone(), owner: owner.to_string() };
+        let run = run_feed(state.clone(), feed.clone(), spec, self.held.clone(), tx.clone());
+        let live = state.live.clone();
         let task = tokio::spawn(async move {
             if AssertUnwindSafe(run).catch_unwind().await.is_err() {
                 tracing::error!("live: a feed stopped unexpectedly");
                 let error = api_error_body(ApiError::internal("live", "the feed stopped unexpectedly"));
+                live.forget(&feed);
                 tx.send_modify(|s| s.failed = Some(error));
             }
         });
         Arc::new(Feed { id, key, refresh_ms, state: rx, task: task.abort_handle() })
+    }
+
+    /// A feed that ended is no longer offered to new subscribers.
+    fn forget(&self, feed: &FeedRef) {
+        let mut feeds = self.feeds.lock().expect("live feeds lock");
+        let current = feeds.by_key.get(&feed.key).and_then(Weak::upgrade);
+        if current.is_some_and(|f| f.id == feed.id) {
+            feeds.by_key.remove(&feed.key);
+        }
+    }
+
+    /// The run permits of the feeds `owner` started. Waiting runs queue there, so many feeds of
+    /// one user cannot fill the organization's query slots ahead of everyone else's.
+    fn run_permits(&self, owner: &str, limits: &Limits) -> Arc<Semaphore> {
+        let mut runs = self.runs.lock().expect("live runs lock");
+        // Forget users without running feeds, so the map does not grow with every user seen.
+        runs.retain(|_, s| Arc::strong_count(s) > 1);
+        runs.entry(owner.to_string()).or_insert_with(|| Arc::new(Semaphore::new(limits.runs_per_user.max(1)))).clone()
     }
 
     /// Feeds running now.
@@ -309,8 +371,17 @@ impl Live {
 
     /// Bytes the feeds' latest results hold.
     pub fn held_bytes(&self) -> usize {
-        self.held.load(Ordering::SeqCst)
+        self.held.lock().expect("live budget lock").total
     }
+}
+
+/// Who a feed is: its id and key, and the user who started it (charged with its memory and
+/// runs).
+#[derive(Clone, Debug)]
+struct FeedRef {
+    id: String,
+    key: String,
+    owner: String,
 }
 
 pub fn shutting_down() -> ApiError {
@@ -354,29 +425,53 @@ impl Spec {
     }
 }
 
-/// Bytes counted in `Live::held` while a result is kept.
+/// Bytes counted in `Live::held` while a result is kept, charged to the user who started the
+/// feed and to its organization.
 #[derive(Debug)]
 struct HeldBytes {
-    pool: Arc<AtomicUsize>,
+    budget: Arc<Mutex<Budget>>,
+    user: String,
+    org: String,
     bytes: usize,
 }
 
 impl HeldBytes {
-    fn take(pool: &Arc<AtomicUsize>, bytes: usize, max: usize) -> Option<Self> {
-        let mut held = pool.load(Ordering::SeqCst);
-        loop {
-            let next = held.checked_add(bytes).filter(|n| *n <= max)?;
-            match pool.compare_exchange_weak(held, next, Ordering::SeqCst, Ordering::SeqCst) {
-                Ok(_) => return Some(Self { pool: pool.clone(), bytes }),
-                Err(now) => held = now,
+    /// Charges `bytes`, or answers the limit it would pass: the result's own, the user's, the
+    /// organization's or the server's.
+    fn take(budget: &Arc<Mutex<Budget>>, user: &str, org: &str, bytes: usize, limits: &Limits) -> Result<Self, usize> {
+        if bytes > limits.result_bytes {
+            return Err(limits.result_bytes);
+        }
+        let mut b = budget.lock().expect("live budget lock");
+        let mine = b.users.get(user).copied().unwrap_or(0);
+        let ours = b.orgs.get(org).copied().unwrap_or(0);
+        for (held, max) in
+            [(mine, limits.held_bytes_per_user), (ours, limits.held_bytes_per_org), (b.total, limits.held_bytes)]
+        {
+            if held + bytes > max {
+                return Err(max);
             }
         }
+        b.total += bytes;
+        *b.users.entry(user.to_string()).or_default() += bytes;
+        *b.orgs.entry(org.to_string()).or_default() += bytes;
+        Ok(Self { budget: budget.clone(), user: user.to_string(), org: org.to_string(), bytes })
     }
 }
 
 impl Drop for HeldBytes {
     fn drop(&mut self) {
-        self.pool.fetch_sub(self.bytes, Ordering::SeqCst);
+        let mut guard = self.budget.lock().expect("live budget lock");
+        let b = &mut *guard;
+        b.total -= self.bytes;
+        for (map, key) in [(&mut b.users, &self.user), (&mut b.orgs, &self.org)] {
+            if let Some(n) = map.get_mut(key) {
+                *n -= self.bytes;
+                if *n == 0 {
+                    map.remove(key);
+                }
+            }
+        }
     }
 }
 
@@ -559,8 +654,15 @@ fn result_message(feed: &str, at: i64, results: &str) -> String {
     format!(r#"{{"type":"result","feed":{feed},"at":{at},"results":{results}}}"#)
 }
 
-async fn run_feed(state: AppState, id: String, spec: Spec, held: Arc<AtomicUsize>, tx: Arc<watch::Sender<FeedState>>) {
+async fn run_feed(
+    state: AppState,
+    feed: FeedRef,
+    spec: Spec,
+    held: Arc<Mutex<Budget>>,
+    tx: Arc<watch::Sender<FeedState>>,
+) {
     let limits = state.live.limits();
+    let runs = state.live.run_permits(&feed.owner, &limits);
     let ctx = feed_ctx(&state, &spec.org_id);
     let refresh = Duration::from_millis(spec.refresh_ms).max(limits.min_refresh);
     // Change feeds only help with a fixed range; a moving one needs runs anyway.
@@ -577,7 +679,10 @@ async fn run_feed(state: AppState, id: String, spec: Spec, held: Arc<AtomicUsize
             }
         })
         .collect();
-    let mut last: Option<String> = None;
+    // The hash of the last results published, so unchanged results are not sent again.
+    let mut last: Option<[u8; 32]> = None;
+    // The latest results did not fit the memory budget; the last ones that did stay.
+    let mut held_back = false;
     let mut seq = 0;
     let mut turn = 0usize;
     loop {
@@ -595,12 +700,18 @@ async fn run_feed(state: AppState, id: String, spec: Spec, held: Arc<AtomicUsize
             Some("live.changes_unavailable")
         };
         let mode = if changes { LiveMode::Changes } else { LiveMode::Poll };
-        tx.send_if_modified(|s| {
-            let modified = s.mode != Some(mode) || s.reason != reason;
-            s.mode = Some(mode);
-            s.reason = reason;
-            modified
-        });
+        let set_status = |held_back: bool| {
+            let reason = if held_back { Some("live.memory_limit") } else { reason };
+            tx.send_if_modified(|s| {
+                let modified = s.mode != Some(mode) || s.reason != reason;
+                s.mode = Some(mode);
+                s.reason = reason;
+                modified
+            });
+        };
+        set_status(held_back);
+        // One run of this feed at a time, and at most `runs_per_user` of its owner's feeds.
+        let Ok(permit) = runs.clone().acquire_owned().await else { return };
         let at = state.clock.now_ms();
         let response = run_queries_with(
             &state,
@@ -621,18 +732,35 @@ async fn run_feed(state: AppState, id: String, spec: Spec, held: Arc<AtomicUsize
             }
         };
         drop(response);
-        if last.as_deref() != Some(json.as_str()) {
-            let message = result_message(&id, at, &json);
-            let Some(bytes) = HeldBytes::take(&held, message.len(), limits.held_bytes) else {
-                let max = limits.held_bytes;
-                let e = ApiError::busy().because("live.memory_limit").param("max", max);
-                tx.send_modify(|s| s.failed = Some(api_error_body(e)));
-                return;
-            };
-            seq += 1;
-            let published = Published { seq, message: message.into(), _held: Arc::new(bytes) };
-            tx.send_modify(|s| s.results = Some(published));
-            last = Some(json);
+        drop(permit);
+        let hash: [u8; 32] = sha2::Sha256::digest(json.as_bytes()).into();
+        if last != Some(hash) {
+            let message = result_message(&feed.id, at, &json);
+            drop(json);
+            match HeldBytes::take(&held, &feed.owner, &spec.org_id, message.len(), &limits) {
+                Ok(bytes) => {
+                    seq += 1;
+                    let published = Published { seq, message: message.into(), _held: Arc::new(bytes) };
+                    tx.send_modify(|s| s.results = Some(published));
+                    last = Some(hash);
+                    if held_back {
+                        held_back = false;
+                        set_status(false);
+                    }
+                }
+                // A new feed whose first result does not fit ends; a running one keeps its last
+                // result and says why it holds back, until a result fits again.
+                Err(max) if seq == 0 => {
+                    let e = ApiError::busy().because("live.memory_limit").param("max", max);
+                    state.live.forget(&feed);
+                    tx.send_modify(|s| s.failed = Some(api_error_body(e)));
+                    return;
+                }
+                Err(_) => {
+                    held_back = true;
+                    set_status(true);
+                }
+            }
         }
         let ran = Instant::now();
         let mut next_run = ran + if changes { limits.changes_refresh } else { refresh };
@@ -690,14 +818,26 @@ mod tests {
 
     #[test]
     fn held_results_stay_within_their_budget() {
-        let pool = Arc::new(AtomicUsize::new(0));
-        let a = HeldBytes::take(&pool, 60, 100).unwrap();
-        assert!(HeldBytes::take(&pool, 50, 100).is_none());
-        let b = HeldBytes::take(&pool, 40, 100).unwrap();
-        assert_eq!(pool.load(Ordering::SeqCst), 100);
-        drop(a);
-        drop(b);
-        assert_eq!(pool.load(Ordering::SeqCst), 0);
+        let limits = Limits {
+            held_bytes: 100,
+            held_bytes_per_user: 50,
+            held_bytes_per_org: 80,
+            result_bytes: 40,
+            ..Limits::default()
+        };
+        let budget = Arc::new(Mutex::new(Budget::default()));
+        let take = |user: &str, org: &str, bytes| HeldBytes::take(&budget, user, org, bytes, &limits);
+        assert_eq!(take("a", "o", 41).err(), Some(40), "larger than one result may be");
+        let a1 = take("a", "o", 30).unwrap();
+        assert_eq!(take("a", "o", 30).err(), Some(50), "the user's share");
+        let b1 = take("b", "o", 40).unwrap();
+        assert_eq!(take("c", "o", 20).err(), Some(80), "the organization's share");
+        let c1 = take("c", "p", 30).unwrap();
+        assert_eq!(take("d", "q", 1).err(), Some(100), "the server's budget");
+        assert_eq!(budget.lock().unwrap().total, 100);
+        drop((a1, b1, c1));
+        let b = budget.lock().unwrap();
+        assert_eq!((b.total, b.users.len(), b.orgs.len()), (0, 0, 0));
     }
 
     #[test]

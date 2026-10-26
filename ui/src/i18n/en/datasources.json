@@ -797,7 +797,7 @@
   "datasources.reason.live.streams_limit": "This source already reports changes for as many queries as it allows, so this one runs again at a fixed interval.",
   "datasources.reason.live.too_many_feeds": "You follow {max} different live queries already. Close a few panels or tabs.",
   "datasources.reason.live.feeds_busy": "The server runs as many live queries as it allows ({max}). Try again shortly.",
-  "datasources.reason.live.memory_limit": "Live results would take more memory than the server allows, so these live updates stopped.",
+  "datasources.reason.live.memory_limit": "Live results here would take more memory than the server allows for you. The last results that fit stay; new live queries start once there is room again.",
   "datasources.reason.live.check_failed": "Your access could not be checked again, so live updates stopped. Reconnect to resume them.",
   "datasources.reason.mongodb.streams_limit": "{max} change streams of this source are open already, so further live queries run at a fixed interval."
 }

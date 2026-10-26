@@ -229,8 +229,24 @@ struct Watcher {
     ca_pem: Option<String>,
     ca_dir: std::path::PathBuf,
     client: tokio::sync::OnceCell<Client>,
-    /// One permit per open stream.
+    /// One permit per open stream of the source (`stream_permits`).
     streams: Arc<tokio::sync::Semaphore>,
+}
+
+/// The stream permits of a data source, shared by every client built for it: after a settings
+/// change, streams of the old client still open (until their feeds reopen them) count against
+/// the same `MAX_STREAMS` as the new client's.
+fn stream_permits(datasource_id: &str) -> Arc<tokio::sync::Semaphore> {
+    static PERMITS: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let mut permits = PERMITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Forget sources without a client, so the map does not grow with every source ever seen.
+    permits.retain(|_, s| Arc::strong_count(s) > 1 || s.available_permits() < MAX_STREAMS);
+    permits
+        .entry(datasource_id.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(MAX_STREAMS)))
+        .clone()
 }
 
 impl Watcher {
@@ -496,7 +512,7 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
         ca_pem,
         ca_dir: conn.policy().data_dir().to_path_buf(),
         client: tokio::sync::OnceCell::new(),
-        streams: Arc::new(tokio::sync::Semaphore::new(MAX_STREAMS)),
+        streams: stream_permits(conn.datasource_id()),
     };
     let shared = Shared { client, relay, database: s.database.clone(), selection, socket_member, has_user, watcher };
     check_read_only(&shared, selection_timeout).await?;

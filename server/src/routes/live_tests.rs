@@ -751,3 +751,70 @@ async fn panels_linked_to_a_saved_analysis_follow_its_queries() {
     assert_eq!(count_of(&next_for(&mut ws, "result", &new_feed).await), 11);
     t.finish().await;
 }
+
+#[tokio::test]
+async fn one_user_cannot_end_or_starve_another_users_feed_by_memory() {
+    let t = T::new().await;
+    *t.state.live.limits.write().unwrap() = Limits { held_bytes_per_user: 1_000, held_bytes: 1_800, ..quick() };
+    let (ds, path) = t.sqlite_source().await;
+    let editor = t.session(Some("editor")).await;
+    let mut theirs = t.connect(&editor).await;
+    let feed_b = subscribe(&mut theirs, sub("b", count_query(&ds))).await;
+    assert_eq!(count_of(&next_for(&mut theirs, "result", &feed_b).await), 1);
+    // The owner's feed grows with every row: 300 characters each.
+    let mut mine = t.connect(&t.owner).await;
+    let wide = json!([{ "refId": "A", "datasourceId": ds,
+                        "query": { "sql": "SELECT group_concat(hex(zeroblob(150)), '') AS s FROM zaehler" } }]);
+    let feed_a = subscribe(&mut mine, sub("a", wide)).await;
+    next_for(&mut mine, "result", &feed_a).await;
+    insert(&path, 2).await;
+    insert(&path, 3).await;
+    // Its result no longer fits the owner's share: the feed keeps its last result and says why.
+    loop {
+        let status = next_for(&mut mine, "status", &feed_a).await;
+        if status["reason"] == "live.memory_limit" {
+            assert_eq!(status["mode"], "poll");
+            break;
+        }
+    }
+    // The other user's feed goes on.
+    while count_of(&next_for(&mut theirs, "result", &feed_b).await) != 3 {}
+    assert_eq!(t.state.live.feeds(), 2);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn many_feeds_of_one_user_do_not_hold_up_another_users_feed() {
+    let t = T::new().await;
+    let (ds, _) = t.sqlite_source().await;
+    let slow = |n: u64| {
+        json!([{ "refId": "A", "datasourceId": ds, "query": { "sql": format!(
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < {n}) SELECT COUNT(*) AS n FROM c"
+        ) } }])
+    };
+    // How long one slow query takes here.
+    let started = std::time::Instant::now();
+    let body = json!({ "queries": slow(1_000_000), "timeRange": range() });
+    let (status, r) = t.send(Method::POST, &format!("/api/orgs/{}/query", t.org), Some(body), Some(&t.owner)).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    let one = started.elapsed();
+    // The owner starts 32 slow feeds; without fairness they would fill the organization's slots
+    // and queue ahead of everyone else.
+    let mut mine = t.connect(&t.owner).await;
+    for n in 0..32 {
+        say(&mut mine, sub(&format!("s{n}"), slow(1_000_000 + n))).await;
+    }
+    let live = t.state.live.clone();
+    wait_until("the slow feeds run", || live.feeds() == 32).await;
+    tokio::time::sleep(one).await;
+    // Another user's feed gets its first result about as fast as one slow run.
+    let editor = t.session(Some("editor")).await;
+    let mut theirs = t.connect(&editor).await;
+    let started = std::time::Instant::now();
+    let feed = subscribe(&mut theirs, sub("b", count_query(&ds))).await;
+    next_for(&mut theirs, "result", &feed).await;
+    let waited = started.elapsed();
+    assert!(waited < one * 2 + Duration::from_millis(500), "waited {waited:?}, one slow run takes {one:?}");
+    drop(mine);
+    t.finish().await;
+}

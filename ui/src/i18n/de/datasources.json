@@ -797,7 +797,7 @@
   "datasources.reason.live.streams_limit": "Diese Quelle meldet schon für so viele Abfragen Änderungen, wie sie zulässt, darum läuft diese in einem festen Abstand neu.",
   "datasources.reason.live.too_many_feeds": "Du folgst schon {max} verschiedenen Live-Abfragen. Schließ ein paar Panels oder Tabs.",
   "datasources.reason.live.feeds_busy": "Der Server führt so viele Live-Abfragen aus, wie er zulässt ({max}). Versuche es gleich noch einmal.",
-  "datasources.reason.live.memory_limit": "Die Live-Ergebnisse bräuchten mehr Speicher, als der Server zulässt, darum wurden diese Live-Updates beendet.",
+  "datasources.reason.live.memory_limit": "Die Live-Ergebnisse bräuchten mehr Speicher, als der Server dir zugesteht. Die letzten passenden Ergebnisse bleiben; neue Live-Abfragen starten, sobald wieder Platz ist.",
   "datasources.reason.live.check_failed": "Dein Zugriff konnte nicht erneut geprüft werden, darum wurden die Live-Updates beendet. Verbinde neu, dann laufen sie weiter.",
   "datasources.reason.mongodb.streams_limit": "Für diese Quelle sind schon {max} Änderungsströme offen, darum laufen weitere Live-Abfragen in einem festen Abstand neu."
 }
