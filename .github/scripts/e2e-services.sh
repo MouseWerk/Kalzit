@@ -36,6 +36,20 @@ mongosh_root() {
   docker exec -i "$MONGO" mongosh --quiet -u root -p "$ROOT_PASSWORD" --authenticationDatabase admin "$@"
 }
 
+# The image first runs a temporary server for its init scripts and restarts afterwards, so a ping
+# can reach that one and the seed meet the restart; a few tries with a pause ride over it.
+seed() {
+  for attempt in 1 2 3 4 5; do
+    if mongosh_root < "$FIXTURE"; then
+      return 0
+    fi
+    echo "seeding MongoDB failed (attempt $attempt of 5), trying again" >&2
+    sleep 3
+  done
+  echo "seeding MongoDB failed" >&2
+  return 1
+}
+
 ready() {
   for _ in $(seq 1 120); do
     if [ "${mongo:-}" != ok ] && mongosh_root --eval 'db.runCommand({ ping: 1 }).ok' > /dev/null 2>&1; then
@@ -46,7 +60,7 @@ ready() {
       os=ok
     fi
     if [ "${mongo:-}" = ok ] && [ "${os:-}" = ok ]; then
-      mongosh_root < "$FIXTURE"
+      seed
       {
         echo "KALZIT_E2E_MONGODB=127.0.0.1:27017"
         echo "KALZIT_E2E_OPENSEARCH=http://127.0.0.1:9201"

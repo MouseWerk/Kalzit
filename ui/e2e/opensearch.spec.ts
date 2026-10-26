@@ -123,7 +123,11 @@ test("OpenSearch in Explore: a search answers hits as documents, an aggregation 
         timeout: STEP_MS,
       });
       await result.getByRole("tab", { name: t("explore.tab.inspect") }).click({ timeout: STEP_MS });
-      await expect(result).toContainText(/3 rows, \d+ fields/, { timeout: STEP_MS });
+      // Three buckets; the number of fields depends on the columns the engine adds.
+      const size = t("dashboards.inspect.size", { rows: 3, fields: "FIELDS" })
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace("FIELDS", "\\d+");
+      await expect(result).toContainText(new RegExp(size), { timeout: STEP_MS });
     });
   } finally {
     await cluster(base, "DELETE", `/${index}`);
