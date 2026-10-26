@@ -11,6 +11,7 @@ pub mod bolt;
 pub mod csv;
 pub mod cypher;
 pub mod detail;
+pub mod distribution;
 pub mod document_schema;
 pub mod elasticsearch;
 pub mod file;
@@ -65,6 +66,17 @@ pub trait DataSourcePlugin: Send + Sync {
     async fn health(&self, conn: &Connection) -> Health;
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError>;
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError>;
+    /// How the values of one field path are spread over the whole result of `req`, computed in
+    /// the source (`distribution::run`). Kinds that cannot answer `distribution.unsupported`; the
+    /// sets of those that can say so with `DocumentSet::distributable`.
+    async fn distribution(
+        &self,
+        _conn: &Connection,
+        _req: SourceQuery,
+        _spec: &distribution::DistributionSpec,
+    ) -> Result<crate::shapes::FieldDistribution, SourceError> {
+        Err(distribution::unsupported(self.kind()))
+    }
     /// Whether `check_on_save` needs the source (and its stored secrets) when it is saved.
     fn checks_on_save(&self) -> bool {
         false

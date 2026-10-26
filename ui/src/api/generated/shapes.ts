@@ -63,7 +63,12 @@ notices: Array<Notice>,
 /**
  * The query as sent, after macros and variables were bound (shown in the inspector).
  */
-executedQuery?: string, };
+executedQuery?: string, 
+/**
+ * The source computes field distributions over the whole result in the database
+ * (`POST /query/distribution`); without it, they count the loaded documents.
+ */
+distributable?: boolean, };
 
 export type FieldSchema = { 
 /**
@@ -250,3 +255,88 @@ timeZone?: string,
  * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
  */
 weekStart?: "monday" | "sunday" | "saturday", };
+
+export type DistributionRequest = { datasourceId: string, query: unknown, timeRange: TimeRange, intervalMs?: number, variables: Record<string, unknown>, 
+/**
+ * The field path as its keys, unescaped (a key may hold dots, `$` or any character); `null`
+ * stands for "every element of the array here", as `[]` in a schema path: `items[].price` is
+ * `["items", null, "price"]`.
+ */
+path: Array<string | null>, 
+/**
+ * Most common values to answer, 1 to 100 (10).
+ */
+top?: number, 
+/**
+ * Histogram bins for numbers and dates, 1 to 100 (20).
+ */
+bins?: number, };
+
+export type PanelDistributionRequest = { refId: string, timeRange: TimeRange, intervalMs?: number, variables: Record<string, unknown>, 
+/**
+ * As in `DistributionRequest`.
+ */
+path: Array<string | null>, top?: number, bins?: number, };
+
+export type FieldDistribution = { 
+/**
+ * Documents in the result.
+ */
+total: number, 
+/**
+ * Documents that contain the path.
+ */
+documents: number, 
+/**
+ * Documents without it.
+ */
+missing: number, 
+/**
+ * Values at the path, array elements one by one; objects and arrays are not counted.
+ */
+values: number, 
+/**
+ * Values that are `null`.
+ */
+nulls: number, 
+/**
+ * Distinct values, counted up to 100,000; `distinctCapped` says there are more.
+ */
+distinct: number, distinctCapped: boolean, 
+/**
+ * Every value found at the path by its type (objects and arrays included), most common first.
+ */
+types: Array<TypeCount>, 
+/**
+ * The most common values, typed as in documents.
+ */
+top: Array<ValueCount>, 
+/**
+ * Whether the histogram is of numbers or of dates (Unix milliseconds); none for other values.
+ */
+scale?: DistributionScale, 
+/**
+ * Smallest and largest value (numbers, dates or else texts), typed as in documents.
+ */
+min?: unknown, max?: unknown, 
+/**
+ * Equal-width bins from the smallest to the largest value of the scale.
+ */
+bins: Array<DistributionBin>, };
+
+export type DistributionScale = "number" | "date";
+
+export type TypeCount = { 
+/**
+ * The type's name, as in the schema (`int`, `string`, `date`, ...).
+ */
+name: string, count: number, };
+
+export type ValueCount = { value: unknown, count: number, 
+/**
+ * A text longer than `TEXT_CUT` characters, counted by its beginning: `value` is that
+ * beginning, so it cannot be filtered by.
+ */
+truncated?: boolean, };
+
+export type DistributionBin = { from: number, to: number, count: number, };

@@ -121,6 +121,7 @@ impl DocumentsBuilder {
             truncated,
             notices: self.notices,
             executed_query: self.executed_query,
+            distributable: false,
         }
     }
 }

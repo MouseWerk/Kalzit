@@ -516,6 +516,43 @@ fn check_key(key: &str) -> Result<(), SourceError> {
     Ok(())
 }
 
+/// Checks stages Kalzit appends itself (field distributions) as strictly as those of a query:
+/// reading stages only, also inside `$facet`, and the key and code scan.
+pub fn check_built(stages: &[Document]) -> Result<(), SourceError> {
+    for stage in stages {
+        let mut entries = stage.iter();
+        let (Some((name, body)), None) = (entries.next(), entries.next()) else {
+            return Err(reject("mongodb.stage_invalid", "every stage must be an object with one stage name"));
+        };
+        if !READING_STAGES.contains(&name.as_str()) {
+            return Err(
+                reject("mongodb.stage_not_allowed", format!("the stage {name} is not allowed")).with("stage", name)
+            );
+        }
+        if let ("$facet", Bson::Document(facets)) = (name.as_str(), body) {
+            for pipeline in facets.values() {
+                let Bson::Array(nested) = pipeline else {
+                    return Err(reject(
+                        "mongodb.pipeline_not_array",
+                        "a nested pipeline must be a JSON array of stages",
+                    ));
+                };
+                let nested = nested
+                    .iter()
+                    .map(|s| {
+                        s.as_document().cloned().ok_or_else(|| {
+                            reject("mongodb.stage_invalid", "every stage must be an object with one stage name")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                check_built(&nested)?;
+            }
+        }
+        scan_doc(stage)?;
+    }
+    Ok(())
+}
+
 fn scan_doc(doc: &Document) -> Result<(), SourceError> {
     for (k, v) in doc {
         check_key(k)?;

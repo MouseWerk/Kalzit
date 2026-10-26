@@ -1,17 +1,21 @@
-import { valuesAt } from "./paths";
+import type { FieldDistribution } from "../api/generated/shapes";
+import { type PathStep, valuesAlong, valuesAt } from "./paths";
 import { dateMs, isContainer, isTyped, numericValue, typeOf } from "./values";
 
 /**
  * How the values of one field path are distributed over a set of documents: counts, top values,
  * and for numbers and dates the range and a histogram. Paths inside arrays (`items[].price`)
- * count every element. Computed from the documents the result holds; heavy statistics over a
- * whole collection belong in the database as a `$group` stage.
+ * count every element. Sources that can (MongoDB) compute it over the whole result in the
+ * database (`POST /query/distribution`, `fromServer`); otherwise it is computed here from the
+ * documents the result holds, and the panel says which of the two it shows.
  */
 
 export interface TopValue {
   /** The value as it came, for filtering by it. */
   value: unknown;
   count: number;
+  /** A long text the server counted by its beginning: shown cut, not filterable. */
+  truncated?: boolean;
 }
 
 export interface Bin {
@@ -21,19 +25,47 @@ export interface Bin {
 }
 
 export interface Distribution {
+  /** Documents counted. */
+  total: number;
   /** Values found at the path, array elements counted one by one. */
   values: number;
   /** Documents that contain the path. */
   documents: number;
   /** Documents without it. */
   missing: number;
+  /** Values that are `null`. */
+  nulls: number;
   distinct: number;
+  /** More distinct values than the server counts. */
+  distinctCapped: boolean;
   top: TopValue[];
   /** Numbers (`number`), dates (`date`), or neither. */
   scale: "number" | "date" | null;
   min?: unknown;
   max?: unknown;
   bins: Bin[];
+}
+
+/** The server's answer in the panel's form. */
+export function fromServer(d: FieldDistribution): Distribution {
+  return {
+    total: d.total,
+    values: d.values,
+    documents: d.documents,
+    missing: d.missing,
+    nulls: d.nulls,
+    distinct: d.distinct,
+    distinctCapped: d.distinctCapped,
+    top: d.top.map((entry) => ({
+      value: entry.value,
+      count: entry.count,
+      ...(entry.truncated === true ? { truncated: true } : {}),
+    })),
+    scale: d.scale ?? null,
+    ...(d.min === undefined ? {} : { min: d.min }),
+    ...(d.max === undefined ? {} : { max: d.max }),
+    bins: d.bins,
+  };
 }
 
 /** A key per distinct value; typed values keep their type, so the ObjectId "1" is not the text "1". */
@@ -71,9 +103,13 @@ export function histogram(numbers: readonly number[], count: number): Bin[] {
   return bins;
 }
 
+/**
+ * The distribution at `path` over `documents`: a schema path (`items[].price`) or, unambiguous
+ * for keys with dots, its steps (`["items", null, "price"]`).
+ */
 export function distribution(
   documents: readonly unknown[],
-  path: string,
+  path: string | readonly PathStep[],
   options: { bins?: number; top?: number } = {},
 ): Distribution {
   const counts = new Map<string, TopValue>();
@@ -81,9 +117,10 @@ export function distribution(
   const dates: number[] = [];
   const texts: string[] = [];
   let values = 0;
+  let nulls = 0;
   let withPath = 0;
   for (const document of documents) {
-    const found = valuesAt(document, path);
+    const found = typeof path === "string" ? valuesAt(document, path) : valuesAlong(document, path);
     if (found.length > 0) {
       withPath++;
     }
@@ -93,6 +130,9 @@ export function distribution(
         continue;
       }
       values++;
+      if (value === null) {
+        nulls++;
+      }
       const key = keyOf(value);
       const entry = counts.get(key);
       if (entry === undefined) {
@@ -115,10 +155,13 @@ export function distribution(
   }
   const top = [...counts.values()].sort((a, b) => b.count - a.count).slice(0, options.top ?? 10);
   const result: Distribution = {
+    total: documents.length,
     values,
     documents: withPath,
     missing: documents.length - withPath,
+    nulls,
     distinct: counts.size,
+    distinctCapped: false,
     top,
     scale: null,
     bins: [],

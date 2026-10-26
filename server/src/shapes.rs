@@ -198,6 +198,11 @@ pub struct DocumentSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub executed_query: Option<String>,
+    /// The source computes field distributions over the whole result in the database
+    /// (`POST /query/distribution`); without it, they count the loaded documents.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub distributable: bool,
 }
 
 /// One JSON value kept as its text, so the key order survives (`serde_json::Map` sorts keys).
@@ -555,6 +560,135 @@ pub struct VariableOptionsResponse {
     pub truncated: bool,
 }
 
+/// `POST /api/orgs/{orgId}/query/distribution`: how the values of one field path are spread
+/// over the whole result of a free query, computed in the database. Needs `datasources:query` on
+/// the data source, as running the query does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DistributionRequest {
+    pub datasource_id: String,
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub query: Value,
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// The field path as its keys, unescaped (a key may hold dots, `$` or any character); `null`
+    /// stands for "every element of the array here", as `[]` in a schema path: `items[].price` is
+    /// `["items", null, "price"]`.
+    pub path: Vec<Option<String>>,
+    /// Most common values to answer, 1 to 100 (10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub top: Option<u32>,
+    /// Histogram bins for numbers and dates, 1 to 100 (20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub bins: Option<u32>,
+}
+
+/// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution`: the same for
+/// a stored target of a panel, for whoever may read the dashboard.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelDistributionRequest {
+    pub ref_id: String,
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// As in `DistributionRequest`.
+    pub path: Vec<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub top: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub bins: Option<u32>,
+}
+
+/// How the values of one field path are spread over all documents of a result.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct FieldDistribution {
+    /// Documents in the result.
+    pub total: u64,
+    /// Documents that contain the path.
+    pub documents: u64,
+    /// Documents without it.
+    pub missing: u64,
+    /// Values at the path, array elements one by one; objects and arrays are not counted.
+    pub values: u64,
+    /// Values that are `null`.
+    pub nulls: u64,
+    /// Distinct values, counted up to 100,000; `distinctCapped` says there are more.
+    pub distinct: u64,
+    pub distinct_capped: bool,
+    /// Every value found at the path by its type (objects and arrays included), most common first.
+    pub types: Vec<TypeCount>,
+    /// The most common values, typed as in documents.
+    pub top: Vec<ValueCount>,
+    /// Whether the histogram is of numbers or of dates (Unix milliseconds); none for other values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub scale: Option<DistributionScale>,
+    /// Smallest and largest value (numbers, dates or else texts), typed as in documents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "unknown"))]
+    pub min: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "unknown"))]
+    pub max: Option<Value>,
+    /// Equal-width bins from the smallest to the largest value of the scale.
+    pub bins: Vec<DistributionBin>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum DistributionScale {
+    Number,
+    Date,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct TypeCount {
+    /// The type's name, as in the schema (`int`, `string`, `date`, ...).
+    pub name: String,
+    pub count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ValueCount {
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub value: Value,
+    pub count: u64,
+    /// A text longer than `TEXT_CUT` characters, counted by its beginning: `value` is that
+    /// beginning, so it cannot be filtered by.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct DistributionBin {
+    pub from: f64,
+    pub to: f64,
+    pub count: u64,
+}
+
 /// Export file formats (docs/api/datasources.md, "Export"). Frames export as CSV, JSON or Excel; documents
 /// (NDJSON) and graphs (GraphML) follow with their milestones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -838,6 +972,13 @@ mod tests {
             ExportLanguage::decl(&cfg),
             ExportRequest::decl(&cfg),
             PanelExportRequest::decl(&cfg),
+            DistributionRequest::decl(&cfg),
+            PanelDistributionRequest::decl(&cfg),
+            FieldDistribution::decl(&cfg),
+            DistributionScale::decl(&cfg),
+            TypeCount::decl(&cfg),
+            ValueCount::decl(&cfg),
+            DistributionBin::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",

@@ -1,13 +1,15 @@
 import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isRecord } from "../../api/client";
 import type {
+  FieldDistribution,
   Page,
+  PanelDistributionRequest,
   PanelQueryRequest,
   QueryResponse,
   VariableOptionsRequest,
   VariableOptionsResponse,
 } from "../../api/generated/shapes";
-import { orgPath, send } from "../datasources/api";
+import { isFieldDistribution, orgPath, send } from "../datasources/api";
 import { type DashboardModel, type PanelModel, parseModel } from "./model";
 
 /*
@@ -477,6 +479,25 @@ export async function runPanelQuery(
 ): Promise<QueryResponse> {
   const path = orgPath(orgId, "dashboards", dashboardId, "panels", panelId, "query");
   return expectShape(await send("POST", path, body, signal), isQueryResponse, "panel query");
+}
+
+/**
+ * The field distribution of a stored target of a panel over its whole result, as viewers may
+ * ask for it. Aborting the signal cancels the request.
+ */
+export async function fetchPanelDistribution(
+  orgId: string,
+  dashboardId: string,
+  panelId: string,
+  body: PanelDistributionRequest,
+  signal?: AbortSignal,
+): Promise<FieldDistribution> {
+  const path = orgPath(orgId, "dashboards", dashboardId, "panels", panelId, "distribution");
+  return expectShape(
+    await send("POST", path, body, signal),
+    isFieldDistribution,
+    "panel field distribution",
+  );
 }
 
 function isVariableOptions(value: unknown): value is VariableOptionsResponse {

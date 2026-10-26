@@ -60,7 +60,7 @@ import {
 import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
 import { documentsOf } from "./results";
-import { firstLoad, usePanelResults } from "./usePanelResults";
+import { firstLoad, panelDistribution, usePanelResults } from "./usePanelResults";
 import "./panelEditor.css";
 
 /** What the dashboard reads from the open editor when it is left another way than Discard. */
@@ -344,6 +344,38 @@ export function PanelEditor({
     (id: string) => datasources.data?.find((d) => d.id === id)?.kind,
     [datasources.data],
   );
+  // Field distributions ask as the preview's queries run; kept while those stay the same, so
+  // typing elsewhere leaves the preview alone.
+  const distributionSource = unchanged ? "stored" : "draft";
+  const distributionRuns = preview.run + refresh;
+  const previewDistribution = useMemo(
+    () =>
+      panelDistribution(
+        {
+          orgId,
+          dashboardId,
+          panel: previewPanel,
+          range,
+          variables,
+          saved: savedVariables,
+          source: distributionSource,
+          // A run in the editor, or its Refresh, asks again.
+          manual: distributionRuns,
+        },
+        sourceKindOf,
+      ),
+    [
+      orgId,
+      dashboardId,
+      previewPanel,
+      range,
+      variables,
+      savedVariables,
+      distributionSource,
+      distributionRuns,
+      sourceKindOf,
+    ],
+  );
   // A new run, or another data source, leaves an old filter refusal behind.
   const run = useCallback(() => {
     if (blockedRef.current) {
@@ -566,6 +598,7 @@ export function PanelEditor({
       stepsRun={stepsRun}
       variables={texts}
       kindOf={sourceKindOf}
+      distribution={previewDistribution}
     />
   );
 

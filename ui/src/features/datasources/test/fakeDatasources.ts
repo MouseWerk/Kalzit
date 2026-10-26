@@ -1,4 +1,5 @@
 import type { QueryItem, QueryOutcome, TimeRange } from "../../../api/generated/shapes";
+import type { PathStep } from "../../../documents/paths";
 import {
   error,
   type FakeArea,
@@ -7,7 +8,7 @@ import {
   json,
 } from "../../../test/fakeServer";
 import { FAKE_GRAPH, FAKE_GRAPH_SCHEMA, graphOutcome, NEO4J_ID, TIGERGRAPH_ID } from "./fakeGraph";
-import { FAKE_MONGO_COLLECTIONS, mongoOutcome, parseMongo } from "./fakeMongo";
+import { FAKE_MONGO_COLLECTIONS, mongoDistribution, mongoOutcome, parseMongo } from "./fakeMongo";
 import { FAKE_SOURCE_SCHEMAS, sourceKindSources, sourceOutcome } from "./fakeSources";
 
 /**
@@ -302,6 +303,10 @@ export interface FakeDatasourcesState {
   queries: Record<string, unknown>[];
   /** Collections of MongoDB sources (one set for all of them), by name. */
   mongo: Record<string, Record<string, unknown>[]>;
+  /** Every request body of the free distribution route, in order. */
+  distributions: Record<string, unknown>[];
+  /** Awaited before a distribution answers, so a test can hold it (loading, cancelling). */
+  distributionGate?: (body: Record<string, unknown>) => Promise<void>;
 }
 
 export const PG_ID = "ds-pg";
@@ -679,6 +684,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
     sendAccess: true,
     queries: [],
     mongo: FAKE_MONGO_COLLECTIONS(),
+    distributions: [],
   };
 
   const live = () => state.datasources.filter((ds) => ds.deletedAt === undefined);
@@ -772,6 +778,33 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         }
       }
       return json(200, { results });
+    }
+    if (parts[0] === "query" && parts[1] === "distribution" && parts.length === 2) {
+      if (method !== "POST") {
+        return undefined;
+      }
+      const id = String(body.datasourceId ?? "");
+      if (!sees(id) || !may(id, "query")) {
+        return error(404, "not_found");
+      }
+      state.distributions.push(body);
+      await state.distributionGate?.(body);
+      const kind = state.datasources.find((ds) => ds.id === id)?.kind ?? "";
+      if (kind !== "mongodb") {
+        const message = `${kind} sources compute no field distribution`;
+        return json(422, {
+          error: {
+            code: "query_rejected",
+            message,
+            reason: "distribution.unsupported",
+            params: { kind },
+          },
+        });
+      }
+      const answer = mongoDistribution(body.query, body.path as PathStep[], state.mongo);
+      return "error" in answer
+        ? json(422, { error: answer.error })
+        : json(200, answer.distribution);
     }
     if (parts[0] !== "datasources") {
       return undefined;

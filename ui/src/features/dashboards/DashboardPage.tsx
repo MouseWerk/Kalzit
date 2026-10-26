@@ -1173,9 +1173,19 @@ function DashboardView({
       saved: dashboard.model.variables,
       source: "stored" as const,
       run: clock.run,
+      manual: clock.manual,
       live: liveOptions,
     }),
-    [orgId, dashboard.id, resolved, values, dashboard.model.variables, clock.run, liveOptions],
+    [
+      orgId,
+      dashboard.id,
+      resolved,
+      values,
+      dashboard.model.variables,
+      clock.run,
+      clock.manual,
+      liveOptions,
+    ],
   );
   // The rail hides the annotations and the filter bar for this view of the dashboard.
   const [annotationsShown, setAnnotationsShown] = useState(true);
@@ -1604,6 +1614,7 @@ function DashboardView({
                       saved: dashboard.model.variables,
                       source: "stored",
                       run: clock.run,
+                      manual: clock.manual,
                       live: liveOptions,
                     }}
                     view={{ ...viewActions, values: editorValues(alone, rows, values) }}

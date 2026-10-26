@@ -448,3 +448,133 @@ async fn change_streams_where_the_deployment_has_them() {
     f.cleanup().await;
     t.finish().await;
 }
+
+/// Field distributions run in the database over the whole result, also beyond the document limit,
+/// and read keys with dots, umlauts and emoji as they are stored.
+#[tokio::test]
+async fn mongodb_distributes_fields_over_the_whole_result() {
+    let Some(url) = env("KALZIT_TEST_MONGODB_URL") else { return };
+    let f = Fixture::new(&url).await;
+    let t = T::new().await;
+    let date = |s: i64| mongodb::bson::DateTime::from_millis(1_750_000_000_000 + s * 1000);
+    f.admin
+        .database(&f.db)
+        .collection::<Document>("verteilung")
+        .insert_many([
+            doc! { "n": 1, "preis.netto": 10, "Größe": "S", "\u{1F642}": true, "items": [{ "menge": 1 }, { "menge": 2 }], "ts": date(1) },
+            doc! { "n": 2, "preis.netto": 20, "Größe": "M", "items": [{ "menge": 2 }], "ts": date(2) },
+            doc! { "n": 3, "preis.netto": null, "Größe": "M", "items": [], "ts": date(3) },
+            doc! { "n": 4, "preis.netto": "zehn", "Größe": "L", "items": [{ "menge": 3 }, { "andere": 1 }] },
+            doc! { "n": 5, "items": [{ "menge": 4.5 }], "\u{1F642}": false },
+            doc! { "n": 6, "preis": { "netto": 99 } },
+        ])
+        .await
+        .unwrap();
+    let mut s = f.settings("leser");
+    // Two documents per page: the distribution still covers all six.
+    s["maxRows"] = json!(2);
+    let (status, body) = t
+        .send(
+            Method::POST,
+            "/datasources",
+            Some(
+                json!({ "name": "Leser", "kind": "mongodb", "settings": s, "secrets": { "password": "leser-pw-ci" } }),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["id"].as_str().unwrap().to_string();
+    let sorted = json!({ "collection": "verteilung", "pipeline": r#"[{"$sort": {"n": 1}}]"# });
+    let page = t.query(&id, sorted.clone()).await;
+    assert_eq!(page["result"]["documents"]["documents"].as_array().map(Vec::len), Some(2), "{page}");
+    assert_eq!(page["result"]["documents"]["distributable"], true, "{page}");
+
+    let distribution = |query: Value, path: Value| {
+        let t = &t;
+        let id = id.clone();
+        async move {
+            let body = json!({ "datasourceId": id, "query": query, "path": path, "top": 5,
+                               "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 } });
+            let (status, d) = t.send(Method::POST, "/query/distribution", Some(body)).await;
+            assert_eq!(status, StatusCode::OK, "{d}");
+            d
+        }
+    };
+    let counts = |d: &Value| -> Vec<u64> {
+        ["total", "documents", "missing", "values", "nulls", "distinct"]
+            .iter()
+            .map(|k| d[k].as_u64().unwrap())
+            .collect()
+    };
+
+    // A key with a dot is that key, not the path preis → netto; numbers win the scale.
+    let d = distribution(sorted.clone(), json!(["preis.netto"])).await;
+    assert_eq!(counts(&d), [6, 4, 2, 4, 1, 4], "{d}");
+    assert_eq!(
+        d["types"],
+        json!([{ "name": "int", "count": 2 }, { "name": "null", "count": 1 }, { "name": "string", "count": 1 }])
+    );
+    let top: Vec<Value> = d["top"].as_array().unwrap().iter().map(|v| v["value"].clone()).collect();
+    assert_eq!(top, [Value::Null, json!(10), json!(20), json!("zehn")], "{d}");
+    assert_eq!([&d["scale"], &d["min"], &d["max"]], [&json!("number"), &json!(10), &json!(20)], "{d}");
+    let bins = d["bins"].as_array().unwrap();
+    assert_eq!((bins.len(), &bins[0]["count"], &bins[19]["count"]), (20, &json!(1), &json!(1)), "{d}");
+    assert_eq!((&bins[0]["from"], &bins[19]["to"]), (&json!(10.0), &json!(20.0)));
+
+    // The nested path is another field.
+    let d = distribution(sorted.clone(), json!(["preis", "netto"])).await;
+    assert_eq!(counts(&d), [6, 1, 5, 1, 0, 1], "{d}");
+    assert_eq!(d["bins"], json!([{ "from": 99.0, "to": 99.0, "count": 1 }]));
+
+    // Array elements count one by one.
+    let d = distribution(sorted.clone(), json!(["items", null, "menge"])).await;
+    assert_eq!(counts(&d), [6, 4, 2, 5, 0, 4], "{d}");
+    assert_eq!(d["top"][0], json!({ "value": 2, "count": 2 }));
+    assert_eq!([&d["min"], &d["max"]], [&json!(1), &json!(4.5)], "{d}");
+    let filled: Vec<(usize, u64)> = d["bins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b["count"].as_u64().filter(|c| *c > 0).map(|c| (i, c)))
+        .collect();
+    assert_eq!(filled, [(0, 1), (5, 2), (11, 1), (19, 1)], "{d}");
+
+    // Texts give their range and no histogram; umlaut and emoji keys are read as stored.
+    let d = distribution(sorted.clone(), json!(["Größe"])).await;
+    assert_eq!([&d["min"], &d["max"], &d["top"][0]["value"]], [&json!("L"), &json!("S"), &json!("M")], "{d}");
+    assert!(d.get("scale").is_none() && d["bins"] == json!([]), "{d}");
+    let d = distribution(sorted, json!(["\u{1F642}"])).await;
+    assert_eq!((d["documents"].as_u64(), &d["types"]), (Some(2), &json!([{ "name": "bool", "count": 2 }])), "{d}");
+
+    // Dates, over a find whose filter is part of the result.
+    let find = json!({ "collection": "verteilung", "filter": "{\"ts\": {\"$exists\": true}}" });
+    let d = distribution(find, json!(["ts"])).await;
+    assert_eq!((d["total"].as_u64(), &d["scale"]), (Some(3), &json!("date")), "{d}");
+    assert_eq!(d["min"], json!({ "$type": "date", "value": "1750000001000" }));
+    assert_eq!(d["max"], json!({ "$type": "date", "value": "1750000003000" }));
+    assert_eq!(d["bins"][0]["from"], json!(1_750_000_001_000.0_f64));
+
+    // Three texts of 6 MB each: in full they would not fit one 16 MB answer; cut to their
+    // beginning they do, and say so.
+    let big = |end: char| format!("{}{end}", "x".repeat(6 * 1024 * 1024));
+    f.admin
+        .database(&f.db)
+        .collection::<Document>("lang")
+        .insert_many([doc! { "t": big('a') }, doc! { "t": big('b') }, doc! { "t": big('c') }, doc! { "t": "kurz" }])
+        .await
+        .unwrap();
+    let d = distribution(json!({ "collection": "lang", "pipeline": "[]" }), json!(["t"])).await;
+    assert_eq!((d["values"].as_u64(), d["distinct"].as_u64()), (Some(4), Some(4)), "{}", &d.to_string()[..300]);
+    let top = d["top"].as_array().unwrap();
+    // The long ones share their beginning, so they count as one cut entry.
+    assert_eq!(top[0]["count"], 3);
+    assert_eq!(top[0]["truncated"], true);
+    assert_eq!(top[0]["value"].as_str().map(|s| s.chars().count()), Some(256));
+    assert_eq!(top[1], json!({ "value": "kurz", "count": 1 }));
+    assert_eq!(d["min"], json!("kurz"));
+    assert_eq!(d["max"].as_str().map(|s| s.chars().count()), Some(257), "256 characters and an ellipsis");
+
+    f.cleanup().await;
+    t.finish().await;
+}

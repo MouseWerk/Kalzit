@@ -82,6 +82,7 @@ mod tests {
         "tigergraph",
         "mongodb",
         "documents",
+        "distribution",
         "updates",
         "live",
     ];

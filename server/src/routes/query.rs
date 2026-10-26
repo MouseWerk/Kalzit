@@ -20,12 +20,14 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::dashboards::model::{self, DashboardModel, VariableType};
+use crate::datasources::distribution::DistributionSpec;
 use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::shapes::{
-    ErrorBody, FieldType, PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult,
-    VariableOption, VariableOptionsRequest, VariableOptionsResponse,
+    DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest, PanelQueryRequest,
+    QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption, VariableOptionsRequest,
+    VariableOptionsResponse,
 };
 
 pub fn routes() -> Vec<RouteDef> {
@@ -45,7 +47,84 @@ pub fn routes() -> Vec<RouteDef> {
             Access::OrgMember,
             variable_options,
         ),
+        // Field distributions: the same rights as running the query they describe.
+        route(Method::POST, "/orgs/{orgId}/query/distribution", Access::OrgMember, distribution),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution",
+            Access::OrgMember,
+            panel_distribution,
+        ),
     ]
+}
+
+/// How the values of a field path are spread over the whole result of a free query; needs
+/// `datasources:query` on the source (role or grant), as running it does.
+async fn distribution(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    JsonBody(req): JsonBody<DistributionRequest>,
+) -> ApiResult<Json<FieldDistribution>> {
+    check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
+    check_variables(&req.variables)?;
+    let spec = DistributionSpec::new(&req.path, req.top, req.bins)?;
+    check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(&req.datasource_id)).await?;
+    let d = crate::datasources::distribution::run(
+        &state,
+        &ctx,
+        &req.datasource_id,
+        req.query,
+        req.time_range,
+        req.interval_ms,
+        &req.variables,
+        None,
+        &spec,
+    )
+    .await?;
+    Ok(Json(d))
+}
+
+/// The same for a stored target of a panel, for whoever may read the dashboard (as its queries).
+async fn panel_distribution(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
+    JsonBody(req): JsonBody<PanelDistributionRequest>,
+) -> ApiResult<Json<FieldDistribution>> {
+    check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
+    let spec = DistributionSpec::new(&req.path, req.top, req.bins)?;
+    // The queries the panel route runs, resolved and authorized the same way (`panel_run`).
+    let run = panel_run(&state, &ctx, &dashboard_id, &panel_id, &req.variables, None).await?;
+    Ok(Json(stored_distribution(&state, &ctx, run, &req.ref_id, req.time_range, req.interval_ms, &spec).await?))
+}
+
+/// The distribution of the stored query `ref_id` among `run`'s items (a query the panel does
+/// not run, such as a hidden one, is `not_found`), with the variable values `run` checked.
+pub(crate) async fn stored_distribution(
+    state: &AppState,
+    ctx: &OrgCtx,
+    run: PanelRun,
+    ref_id: &str,
+    range: crate::shapes::TimeRange,
+    interval_ms: Option<u64>,
+    spec: &DistributionSpec,
+) -> ApiResult<FieldDistribution> {
+    let PanelRun { items, variables, identifiers } = run;
+    let item = items.into_iter().find(|i| i.ref_id == ref_id).ok_or_else(ApiError::not_found)?;
+    crate::datasources::distribution::run(
+        state,
+        ctx,
+        &item.datasource_id,
+        item.query,
+        range,
+        interval_ms,
+        &variables,
+        Some(&identifiers),
+        spec,
+    )
+    .await
 }
 
 /// Variables in one request, and the size of all their values together.

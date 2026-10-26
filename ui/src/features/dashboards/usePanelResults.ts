@@ -3,10 +3,12 @@ import { asSteps, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
 import { BUSY_RETRY } from "../../api/retry";
-import { runQuery } from "../datasources/api";
+import { DISTRIBUTION_FRESH_MS } from "../../documents/distributionCache";
+import type { DistributionAsk, DistributionSource } from "../../panels/types";
+import { fetchDistribution, runQuery } from "../datasources/api";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { useSourceKinds } from "../datasources/useSourceKinds";
-import { runPanelQuery } from "./api";
+import { fetchPanelDistribution, runPanelQuery } from "./api";
 import {
   type PanelModel,
   storedQueryVariables,
@@ -35,6 +37,11 @@ export interface PanelQueryInput {
   source: "stored" | "draft";
   /** Bumped by "Refresh" so equal ranges run again. */
   run: number;
+  /**
+   * Bumped only by explicit refreshes (the Refresh button), not by auto refresh or live
+   * results: field distributions ask the database again at once for these. Absent: `run`.
+   */
+  manual?: number;
   /** Set while the dashboard is live: the stored panel follows its results (usePanelLive). */
   live?: PanelLiveOptions | undefined;
 }
@@ -147,6 +154,63 @@ export function panelRequest(
     run,
   ] as const;
   return { variables, targets, refIds, queryKey };
+}
+
+/** The field distribution of a panel target `refId` over its whole result. */
+export type TargetDistribution = DistributionSource<string>;
+
+/**
+ * The time window as asked: a window that ends within the last minutes is a relative one (`now`)
+ * and is known by its length, so the moments an auto refresh resolves it to keep one identity;
+ * any other window by its ends.
+ */
+export function windowIdentity(range: TimeRange, now = Date.now()): string {
+  return range.to > now - DISTRIBUTION_FRESH_MS
+    ? `last:${range.to - range.from}`
+    : `${range.from}:${range.to}`;
+}
+
+/**
+ * Asks for field distributions the way the panel's queries run: a stored panel through the panel
+ * route (all a viewer may), a draft through the free route with the target being edited.
+ * `manual` counts explicit refreshes (the Refresh button, a run in the editor).
+ */
+export function panelDistribution(
+  input: Omit<PanelQueryInput, "run"> & { manual: number },
+  kindOf: (datasourceId: string) => string | undefined,
+): TargetDistribution {
+  const { orgId, dashboardId, panel, range, source } = input;
+  const variables =
+    source === "stored"
+      ? storedQueryVariables(input.variables, input.saved ?? [])
+      : input.variables;
+  const identity = JSON.stringify([
+    orgId,
+    dashboardId,
+    panel.id,
+    source,
+    panel.targets,
+    variables,
+    windowIdentity(range),
+  ]);
+  return { identity, manual: input.manual, run: runPanelDistribution };
+
+  function runPanelDistribution(refId: string, ask: DistributionAsk, signal: AbortSignal) {
+    const common = { timeRange: range, intervalMs: intervalFor(range), variables, ...ask };
+    if (source === "stored") {
+      return fetchPanelDistribution(orgId, dashboardId, panel.id, { refId, ...common }, signal);
+    }
+    const target = panel.targets.find((t) => t.refId === refId);
+    if (target === undefined) {
+      return Promise.reject(new Error(`no query ${refId}`));
+    }
+    const query = normalizeQuery(target.query, kindOf(target.datasourceId));
+    return fetchDistribution(
+      orgId,
+      { datasourceId: target.datasourceId, query, ...common },
+      signal,
+    );
+  }
 }
 
 /** Whether a panel query key (`PANEL_DATA_KEY` first) is of the panel `[orgId, dashboardId, panelId, source]`. */

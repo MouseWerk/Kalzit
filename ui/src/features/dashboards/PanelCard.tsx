@@ -62,7 +62,13 @@ import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
 import { usePanelLive } from "./usePanelLive";
-import { firstLoad, type PanelQueryInput, usePanelResults } from "./usePanelResults";
+import {
+  firstLoad,
+  type PanelQueryInput,
+  panelDistribution,
+  type TargetDistribution,
+  usePanelResults,
+} from "./usePanelResults";
 
 /** The width at which dashboards.css switches to one column. */
 const SINGLE_COLUMN = "(max-width: 48rem)";
@@ -488,6 +494,10 @@ export function PanelCard({
               revision={results.dataUpdatedAt}
               variables={variableTexts(query.variables)}
               kindOf={kindOf}
+              distribution={panelDistribution(
+                { ...query, panel, manual: query.manual ?? query.run },
+                kindOf,
+              )}
             />
           </PanelAnnotationsContext.Provider>
         </div>
@@ -608,6 +618,11 @@ interface PanelBodyProps {
    * turn it into a `$match` stage; dashboards leave it out, so viewers only read.
    */
   onFilter?: ((refId: string, path: string, value: unknown) => void) | undefined;
+  /**
+   * The field distribution of the target `refId` over its whole result, from the server: the
+   * panel route for a stored panel, the free route for a draft or Explore.
+   */
+  distribution?: TargetDistribution | undefined;
   /** Changes with every new result: a run, or a page loaded after it. */
   revision?: string | number | undefined;
   /** The steps' run when the caller already has it (the panel editor shares it with its steps). */
@@ -633,6 +648,7 @@ export function PanelBody({
   error,
   outcomes,
   onFilter,
+  distribution,
   revision,
   stepsRun: given,
   variables,
@@ -792,6 +808,24 @@ export function PanelBody({
                       if (refId !== undefined) {
                         onFilter(refId, filter.path, filter.value);
                       }
+                    }
+              }
+              distribution={
+                distribution === undefined
+                  ? undefined
+                  : {
+                      // The set's target belongs to the question: sets keep their order.
+                      identity: JSON.stringify([
+                        distribution.identity,
+                        documents.map((d) => d.refId),
+                      ]),
+                      manual: distribution.manual,
+                      run: (index, ask, signal) => {
+                        const refId = documents[index]?.refId;
+                        return refId === undefined
+                          ? Promise.reject(new Error(`no document set ${index}`))
+                          : distribution.run(refId, ask, signal);
+                      },
                     }
               }
               options={options}

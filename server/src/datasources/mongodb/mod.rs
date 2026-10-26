@@ -10,6 +10,7 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod distribution;
 pub mod documents;
 pub mod pipeline;
 pub mod relay;
@@ -658,6 +659,33 @@ fn plan(req: &SourceQuery, q: &Query, max: u64) -> Result<Plan, SourceError> {
     })
 }
 
+impl Plan {
+    /// The query as pipeline stages, for stages appended after it: a `find` becomes `$match`,
+    /// `$sort`, `$skip`, `$limit` and `$project`, in the order the server applies them.
+    fn into_stages(self) -> Vec<Document> {
+        match self {
+            Plan::Aggregate(stages) => stages,
+            Plan::Find(find) => {
+                let FindPlan { filter, projection, sort, limit, skip } = *find;
+                let mut stages = vec![doc! { "$match": filter }];
+                if let Some(s) = sort {
+                    stages.push(doc! { "$sort": s });
+                }
+                if skip > 0 {
+                    stages.push(doc! { "$skip": skip.min(i64::MAX as u64) as i64 });
+                }
+                if let Some(l) = limit {
+                    stages.push(doc! { "$limit": l.min(i64::MAX as u64) as i64 });
+                }
+                if let Some(p) = projection {
+                    stages.push(doc! { "$project": p });
+                }
+                stages
+            }
+        }
+    }
+}
+
 /// How long the server holds a change stream's `getMore` open when nothing changed.
 const CHANGE_AWAIT: Duration = Duration::from_secs(10);
 
@@ -1107,7 +1135,12 @@ impl DataSourcePlugin for MongoDb {
                 let FindPlan { filter, projection, sort, limit, skip } = *find_plan;
                 if limit.is_some_and(|l| offset >= l) {
                     // Past the query's own limit: an empty page.
-                    let set = DocumentSet { documents: Vec::new(), schema: Vec::new(), ..Default::default() };
+                    let set = DocumentSet {
+                        documents: Vec::new(),
+                        schema: Vec::new(),
+                        distributable: true,
+                        ..Default::default()
+                    };
                     return Ok(QueryResult::Documents { documents: set });
                 }
                 let fetch = limit.map_or(max + 1, |l| (l - offset).min(max + 1));
@@ -1181,8 +1214,60 @@ impl DataSourcePlugin for MongoDb {
             truncated: cut.map(|r| Truncated { limit: count.min(u64::from(u32::MAX)) as u32, reason: Some(r.into()) }),
             notices,
             executed_query: Some(executed),
+            distributable: true,
         };
         Ok(QueryResult::Documents { documents: set })
+    }
+
+    async fn distribution(
+        &self,
+        conn: &Connection,
+        req: SourceQuery,
+        spec: &crate::datasources::distribution::DistributionSpec,
+    ) -> Result<crate::shapes::FieldDistribution, SourceError> {
+        let q: Query = req.parse()?;
+        pipeline::check_collection(&q.collection)?;
+        let max = req.limits.max_rows.max(1) as u64;
+        let base = plan(&req, &q, max)?.into_stages();
+        let summary_stages = distribution::summary_stages(spec);
+        pipeline::check_built(&summary_stages)?;
+        // Everything is checked before Kalzit connects.
+        let shared = shared(conn).await?;
+        let timeout = req.limits.timeout;
+        let started = std::time::Instant::now();
+        let coll = shared.client.database(&shared.database).collection::<Document>(&q.collection);
+        // Both aggregations share the query's time limit.
+        let run = |appended: Vec<Document>| {
+            let mut stages = base.clone();
+            stages.extend(appended);
+            let left = timeout.saturating_sub(started.elapsed()).max(Duration::from_millis(1));
+            let coll = coll.clone();
+            let shared = shared.clone();
+            async move {
+                shared.guard()?;
+                let mark = shared.relay.mark();
+                let fail = |e: mongodb::error::Error| shared.fail(&e, mark, timeout);
+                // Grouping a path with many distinct values may need more than the 100 MB a stage
+                // holds in memory; the server spills to disk then instead of failing.
+                let cursor = coll.aggregate(stages).max_time(left).allow_disk_use(true).await.map_err(fail)?;
+                let rows: Vec<Document> = cursor.try_collect().await.map_err(fail)?;
+                Ok::<_, SourceError>(rows)
+            }
+        };
+        let answer = run(summary_stages).await?;
+        let (mut out, range) =
+            distribution::read_summary(answer.first().unwrap_or(&Document::new()), &req.limits.budget);
+        if let Some(range) = range {
+            let rows = if range.lo < range.hi {
+                let stages = distribution::histogram_stages(spec, range.scale, range.lo, range.hi);
+                pipeline::check_built(&stages)?;
+                run(stages).await?
+            } else {
+                Vec::new()
+            };
+            out.bins = distribution::bins(range, spec.bins, &rows);
+        }
+        Ok(out)
     }
 }
 
