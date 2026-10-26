@@ -58,6 +58,7 @@ pub struct Running {
 impl Running {
     /// Stops accepting connections and gives open requests `SHUTDOWN_GRACE` to finish.
     pub fn shutdown(&self) {
+        self.state.live.begin_shutdown();
         for handle in &self.handles {
             handle.graceful_shutdown(Some(SHUTDOWN_GRACE));
         }
@@ -140,9 +141,11 @@ pub async fn run(config: Config, trial: Option<Trial>) -> Result<Outcome> {
     };
     let handles = running.handles.clone();
     let hard_deadline = running.hard_deadline.clone();
+    let live = running.state.live.clone();
     tokio::spawn(async move {
         let (grace, hard) = wait_for_stop_signal().await;
         tracing::info!("stop signal received, finishing open requests");
+        live.begin_shutdown();
         if hard {
             *hard_deadline.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now() + grace);
         }
@@ -154,9 +157,11 @@ pub async fn run(config: Config, trial: Option<Trial>) -> Result<Outcome> {
     let updates = state.updates.clone();
     let handles = running.handles.clone();
     let waiting = updates.clone();
+    let live = state.live.clone();
     tokio::spawn(async move {
         waiting.handover_requested().await;
         tracing::info!("stopping to hand over to another version");
+        live.begin_shutdown();
         for handle in handles {
             handle.graceful_shutdown(Some(SHUTDOWN_GRACE));
         }

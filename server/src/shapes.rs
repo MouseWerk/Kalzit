@@ -412,6 +412,125 @@ pub struct PanelQueryRequest {
     pub variables: BTreeMap<String, Value>,
 }
 
+/// Live updates (`GET /api/orgs/{orgId}/live`, a WebSocket; docs/api/live.md): subscribes to a
+/// panel's stored queries (`panel`) or to free queries (`queries`), exactly one of them, over a
+/// fixed `timeRange` or the last `lastMs` before each run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LiveSubscribe {
+    #[serde(rename = "type")]
+    pub kind: LiveSubscribeType,
+    /// The client's name for the subscription, 1 to 64 characters; messages about it carry it.
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub panel: Option<LivePanel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub queries: Option<Vec<QueryItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub time_range: Option<TimeRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub last_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    /// The panel's row limit (free queries carry their own `limit`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// How often to run the queries when the source cannot report changes; the server's
+    /// minimum applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub refresh_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum LiveSubscribeType {
+    Subscribe,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LivePanel {
+    pub dashboard_id: String,
+    pub panel_id: String,
+}
+
+/// Ends a subscription; an unknown `id` is ignored.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LiveUnsubscribe {
+    #[serde(rename = "type")]
+    pub kind: LiveUnsubscribeType,
+    pub id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum LiveUnsubscribeType {
+    Unsubscribe,
+}
+
+/// How a subscription learns of new data: the source reports changes, or the server runs the
+/// queries every `refreshMs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum LiveMode {
+    Changes,
+    Poll,
+}
+
+/// What the server sends on a live connection.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum LiveMessage {
+    /// The subscription `id` follows the feed `feed`: its `status` and `result` messages are the
+    /// subscription's. Sent after subscribing and when the subscription moves to another feed (its
+    /// panel was edited); subscriptions with the same queries share a feed.
+    Subscribed { id: String, feed: String },
+    /// The feed's mode, when it starts or changes. `reason` says why a feed polls although it
+    /// wanted changes (`live.source_unsupported`, ...).
+    Status {
+        feed: String,
+        mode: LiveMode,
+        refresh_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        reason: Option<String>,
+    },
+    /// New results, as `POST /query` answers them; sent first after subscribing and then
+    /// whenever they differ. `at` is when the queries ran (Unix milliseconds).
+    Result { feed: String, at: i64, results: BTreeMap<String, QueryOutcome> },
+    /// A refused subscription, or one that ended (access revoked). Without `id`, a message that
+    /// was not understood.
+    Error {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        id: Option<String>,
+        error: ErrorBody,
+    },
+    /// The server closes the connection right after this; `error.reason` says why.
+    Closing { error: ErrorBody },
+}
+
 /// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options`: runs the stored
 /// query of a query-type variable (same access as the panel route).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -832,6 +951,13 @@ mod tests {
             QueryRequest::decl(&cfg),
             QueryItem::decl(&cfg),
             PanelQueryRequest::decl(&cfg),
+            LiveSubscribe::decl(&cfg),
+            LiveSubscribeType::decl(&cfg),
+            LivePanel::decl(&cfg),
+            LiveUnsubscribe::decl(&cfg),
+            LiveUnsubscribeType::decl(&cfg),
+            LiveMode::decl(&cfg),
+            LiveMessage::decl(&cfg),
             VariableOptionsRequest::decl(&cfg),
             VariableOption::decl(&cfg),
             VariableOptionsResponse::decl(&cfg),

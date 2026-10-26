@@ -383,6 +383,72 @@ async fn mongodb_reads_with_a_read_only_login_and_refuses_more() {
     t.finish().await;
 }
 
+/// Live updates watch a replica set's change streams; a standalone server (as in CI) has none,
+/// and its subscriptions poll (docs/api/live.md).
+#[tokio::test]
+async fn change_streams_where_the_deployment_has_them() {
+    let Some(url) = env("KALZIT_TEST_MONGODB_URL") else { return };
+    let f = Fixture::new(&url).await;
+    let t = T::new().await;
+    let (status, body) = t
+        .send(
+            Method::POST,
+            "/datasources",
+            Some(json!({ "name": "Leser", "kind": "mongodb",
+            "settings": f.settings("leser"), "secrets": { "password": "leser-pw-ci" } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let item = kalzit::shapes::QueryItem {
+        ref_id: "A".into(),
+        datasource_id: body["id"].as_str().unwrap().to_string(),
+        query: json!({ "collection": "orders", "filter": "{\"land\": \"Schweiz\"}" }),
+        cursor: None,
+        limit: None,
+    };
+    let user =
+        kalzit::auth::SessionUser { id: "live".into(), email: String::new(), name: String::new(), is_server_admin: 0 };
+    let ctx = kalzit::authz::OrgCtx {
+        user,
+        org_id: t.org.clone(),
+        role: "owner".into(),
+        permissions: Default::default(),
+        at_ms: 0,
+    };
+    let range = kalzit::shapes::TimeRange { from: 1_700_000_000_000, to: 1_800_000_000_000 };
+    let vars = Default::default();
+    let feed = kalzit::datasources::watch_item(&t.state, &ctx, &item, range, None, None, &vars, None, None)
+        .await
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let hello = f.admin.database("admin").run_command(doc! { "hello": 1 }).await.unwrap();
+    if hello.get_str("setName").is_err() {
+        assert!(feed.is_none(), "a standalone server has no change streams");
+    } else {
+        let mut feed = feed.expect("a replica set reports changes");
+        // The first report is the position the stream opened at.
+        let opened = tokio::time::timeout(Duration::from_secs(20), futures_util::StreamExt::next(&mut feed)).await;
+        assert!(matches!(opened, Ok(Some(Ok(ref c))) if !c.changed && c.token.is_some()), "the opening position");
+        f.admin
+            .database(&f.db)
+            .collection::<Document>("orders")
+            .insert_one(doc! { "n": 6, "land": "Schweiz" })
+            .await
+            .unwrap();
+        let changed = tokio::time::timeout(Duration::from_secs(20), async {
+            while let Some(Ok(c)) = futures_util::StreamExt::next(&mut feed).await {
+                if c.changed {
+                    return c.token.is_some();
+                }
+            }
+            false
+        })
+        .await;
+        assert_eq!(changed, Ok(true), "an insert is reported with a resume token");
+    }
+    f.cleanup().await;
+    t.finish().await;
+}
+
 /// Field distributions run in the database over the whole result, also beyond the document limit,
 /// and read keys with dots, umlauts and emoji as they are stored.
 #[tokio::test]
