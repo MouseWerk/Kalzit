@@ -1882,7 +1882,7 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-server",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bson",
  "chrono",
  "chrono-tz",
@@ -1935,7 +1935,7 @@ dependencies = [
 name = "kalzit-release"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hex",

@@ -9,7 +9,7 @@ description = "The format of signed Kalzit releases, and the signing tool kalzit
 # Kept small on purpose: the release workflow builds this crate next to the signing key, so it
 # must not pull in the server's dependency tree.
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
 getrandom = { version = "0.3.4", features = ["std"] }
 hex = "0.4.3"
