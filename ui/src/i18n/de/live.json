@@ -1,0 +1,19 @@
+{
+  "live.on": "Live",
+  "live.every": "Live, alle {interval}",
+  "live.paused": "Live pausiert",
+  "live.stopped": "Live beendet",
+  "live.detail.connecting": "Wird verbunden…",
+  "live.detail.reconnecting": "Die Verbindung ist abgerissen. Gleich geht’s weiter…",
+  "live.detail.changes": "Aktualisiert sich, sobald sich die Daten ändern.",
+  "live.detail.poll": "Die Abfragen laufen alle {interval} erneut.",
+  "live.detail.hidden": "Pausiert, solange dieser Tab im Hintergrund ist. Läuft weiter, wenn du zurückkommst.",
+  "live.detail.paused": "Pausiert, und auch das automatische Aktualisieren ruht. Im Menü zum Aktualisieren setzt du es fort.",
+  "live.menu.live": "Live",
+  "live.menu.pause": "Live-Aktualisierung pausieren",
+  "live.menu.resume": "Live-Aktualisierung fortsetzen",
+  "live.menu.label": "Automatisch aktualisieren: live",
+  "live.menu.labelPaused": "Automatisch aktualisieren: live, pausiert",
+  "live.explore.toggle": "Live",
+  "live.explore.hint": "Diese Abfrage erneut ausführen, sobald sich ihre Daten ändern"
+}

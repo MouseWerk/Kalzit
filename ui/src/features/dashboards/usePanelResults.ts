@@ -38,10 +38,21 @@ export interface PanelQueryInput {
   /** Bumped by "Refresh" so equal ranges run again. */
   run: number;
   /**
-   * Bumped only by explicit refreshes (the Refresh button), not by auto refresh: field
-   * distributions ask the database again at once for these. Absent: `run`.
+   * Bumped only by explicit refreshes (the Refresh button), not by auto refresh or live
+   * results: field distributions ask the database again at once for these. Absent: `run`.
    */
   manual?: number;
+  /** Set while the dashboard is live: the stored panel follows its results (usePanelLive). */
+  live?: PanelLiveOptions | undefined;
+}
+
+export interface PanelLiveOptions {
+  /** The dashboard's range ends now, so each run looks back from its own moment. */
+  moving: boolean;
+  /** How often polled sources run again, in ms; the server's default when unset. */
+  refreshMs?: number | undefined;
+  /** Paused by the person: nothing is followed, the panels keep their last results. */
+  paused?: boolean | undefined;
 }
 
 /**
@@ -49,42 +60,12 @@ export interface PanelQueryInput {
  * a panel that unmounts cancels its query (TanStack Query aborts the signal it handed out).
  */
 export function usePanelResults(input: PanelQueryInput) {
-  const { orgId, dashboardId, panel, range, source, run } = input;
+  const { orgId, dashboardId, panel, range, source } = input;
   const client = useQueryClient();
   const kindOf = useSourceKinds(orgId);
-  const variables =
-    source === "stored"
-      ? storedQueryVariables(input.variables, input.saved ?? [])
-      : input.variables;
-  // The panel route runs every stored target, empty ones included, and answers each refId; a
-  // draft only sends the targets that can run.
-  // Hidden targets run in neither case (the server leaves them out of the panel route too),
-  // unless an enabled step reads them: the step needs their frame.
-  const read = new Set(
-    asSteps(panel.transformations).flatMap((s) => (s.disabled === true ? [] : stepFrames(s))),
-  );
-  const shown = panel.targets.filter((t) => t.hide !== true || read.has(t.refId));
-  const targets =
-    source === "stored"
-      ? shown
-      : shown
-          .filter((t) => t.datasourceId !== "" && hasQuery(t.query, kindOf(t.datasourceId)))
-          .map((t) => ({ ...t, query: normalizeQuery(t.query, kindOf(t.datasourceId)) }));
-  const refIds = targets.map((t) => t.refId);
+  const { variables, targets, refIds, queryKey } = panelRequest(input, kindOf);
   return useQuery<TargetOutcome[]>({
-    queryKey: [
-      PANEL_DATA_KEY,
-      orgId,
-      dashboardId,
-      panel.id,
-      source,
-      range.from,
-      range.to,
-      variables,
-      // The stored panel answers per shown query: hiding one (or the last) is another request.
-      source === "draft" ? targets : refIds,
-      run,
-    ],
+    queryKey,
     enabled: targets.length > 0,
     // Results belong to one time range; a newer range replaces them instead of serving them old.
     staleTime: Number.POSITIVE_INFINITY,
@@ -102,7 +83,7 @@ export function usePanelResults(input: PanelQueryInput) {
     // per panel stays (older ones are dropped when it arrives), and briefly once unshown.
     gcTime: RESULT_GC_MS,
     ...BUSY_RETRY,
-    queryFn: ({ signal, queryKey }): Promise<TargetOutcome[]> =>
+    queryFn: ({ signal }): Promise<TargetOutcome[]> =>
       panelQueries.run(async () => {
         const common = {
           timeRange: range,
@@ -129,6 +110,50 @@ export function usePanelResults(input: PanelQueryInput) {
         return outcomesOf(response, refIds);
       }, signal),
   });
+}
+
+/**
+ * What one panel runs: the variables the route may be sent, the targets, their refIds and the
+ * cache key of the answer. Live results (usePanelLive) land under the same key.
+ */
+export function panelRequest(
+  input: PanelQueryInput,
+  kindOf: (datasourceId: string) => string | undefined,
+) {
+  const { orgId, dashboardId, panel, range, source, run } = input;
+  const variables =
+    source === "stored"
+      ? storedQueryVariables(input.variables, input.saved ?? [])
+      : input.variables;
+  // The panel route runs every stored target, empty ones included, and answers each refId; a
+  // draft only sends the targets that can run.
+  // Hidden targets run in neither case (the server leaves them out of the panel route too),
+  // unless an enabled step reads them: the step needs their frame.
+  const read = new Set(
+    asSteps(panel.transformations).flatMap((s) => (s.disabled === true ? [] : stepFrames(s))),
+  );
+  const shown = panel.targets.filter((t) => t.hide !== true || read.has(t.refId));
+  const targets =
+    source === "stored"
+      ? shown
+      : shown
+          .filter((t) => t.datasourceId !== "" && hasQuery(t.query, kindOf(t.datasourceId)))
+          .map((t) => ({ ...t, query: normalizeQuery(t.query, kindOf(t.datasourceId)) }));
+  const refIds = targets.map((t) => t.refId);
+  const queryKey = [
+    PANEL_DATA_KEY,
+    orgId,
+    dashboardId,
+    panel.id,
+    source,
+    range.from,
+    range.to,
+    variables,
+    // The stored panel answers per shown query: hiding one (or the last) is another request.
+    source === "draft" ? targets : refIds,
+    run,
+  ] as const;
+  return { variables, targets, refIds, queryKey };
 }
 
 /** The field distribution of a panel target `refId` over its whole result. */

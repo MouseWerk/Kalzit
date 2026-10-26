@@ -23,6 +23,16 @@ for Explore; macros below pick it up. Variables and macros reach the database as
 never as text in the query. Writing queries are always refused, see
 [Data sources](data-sources.md#read-only).
 
+## Live
+
+**Live** beside **Run query** keeps the query you ran current: the server runs it again whenever
+its data changes (MongoDB with change streams) or at an interval (every other source, and every
+range that ends now), and the result updates by itself. A line above the result says how it
+stays current and, if the server refused or ended it, why. Press **Live** again to stop. Live in
+Explore needs the right to query the data source, as running the query does; the server checks
+it. Pages loaded with **Load more** are dropped when a new result arrives. API:
+[live updates](../api/live.md).
+
 ## Queries per source kind
 
 | Kind | Query | Result shape |

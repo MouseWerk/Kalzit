@@ -1,0 +1,22 @@
+# The image is built from the workspace manifests, the server, the release crate and the UI
+# sources; everything else stays out of the build context.
+*
+!Cargo.toml
+!Cargo.lock
+!server/
+!release/
+!ui/
+
+**/target/
+**/node_modules/
+ui/dist/
+ui/e2e/.output/
+ui/test-results/
+ui/playwright-report/
+ui/public/third-party-licenses.json
+ui/public/THIRD-PARTY-NOTICES.txt
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/.env
+**/.env.*

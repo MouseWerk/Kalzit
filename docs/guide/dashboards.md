@@ -142,7 +142,7 @@ The time range button opens the picker.
 - Buttons beside the range move it back and forward by its own length and zoom out to twice its
   length. Relative ranges stay relative where they can.
 - **Refresh** runs all queries now; its menu sets automatic refresh (every 5 seconds up to every
-  day, from the dashboard's list of intervals).
+  day, from the dashboard's list of intervals) or **Live**, see below.
 - **Share** > **Copy link with time range** copies a link that opens the dashboard with the range.
 
 Keyboard shortcuts (not in text fields): `t` then Left or Right moves the range, `t` then `z`
@@ -154,6 +154,37 @@ everyone who opens the dashboard (or each viewer's own), the month the **fiscal 
 a **now delay** that leaves out the newest, still incomplete data (such as `1m`), the **refresh
 intervals** to offer, and a **shared cursor** (off, crosshair, or crosshair and tooltip) that shows
 the pointer's time in every time series panel.
+
+## Live updates
+
+**Refresh** > **Live** (German: **Live**) lets the server push new results to the panels instead
+of the browser asking again and again. The button beside **Refresh** then reads **Live**, and the
+automatic refresh rests while live is on. API: [live updates](../api/live.md).
+
+- Only panels on screen follow live results; a panel scrolled out of view stops and starts again
+  when you scroll back. Each panel keeps its visualization: a table stays a table, documents stay
+  documents, a graph stays a graph.
+- A small text in each panel's title bar says how it stays current, with the details in its
+  tooltip: **Live** when the source reports changes (MongoDB with change streams), **Live, every
+  30s** when the queries run again at an interval (SQL, metrics, search, graph and file sources,
+  and every range that ends now). The interval is the refresh interval you chose before, at least
+  5 seconds, else 30 seconds. The tooltip also says why a MongoDB query polls, for example when
+  the source already watches as many queries as it allows, or when results would take more
+  memory than the server allows.
+- **Live stopped** (German: **Live beendet**) means the server ended the panel's live updates,
+  for example because you lost access to the data; the tooltip says why. Turn live off and on to
+  try again.
+- **Pause live updates** (German: **Live-Aktualisierung pausieren**) in the same menu holds the
+  panels on their last results, each saying **Live paused**; the automatic refresh stays off too.
+  **Resume live updates** goes on. Live also pauses by itself while the browser tab stays in the
+  background and resumes when you come back.
+- A panel scrolled out of view keeps its live updates for a moment, so scrolling past does not
+  stop and restart them.
+- When the server restarts or the connection drops, Kalzit reconnects by itself, waiting a little
+  longer after each failed attempt. When your session ends, live stops until you sign in again.
+
+A range that ends now (like the last 6 hours) moves with every run; a fixed range stays as it is.
+Live is a choice of this view of the dashboard and is not saved with it.
 
 ## Annotations
 

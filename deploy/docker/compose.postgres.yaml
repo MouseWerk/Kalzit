@@ -1,0 +1,66 @@
+# Kalzit with its own database in PostgreSQL. The database password is in no environment
+# variable: PostgreSQL reads it from the secret postgres-password, Kalzit reads the whole database
+# URL from the secret kalzit-database-url.
+#
+#   cp example.env .env                     # adjust the version and port if needed
+#   mkdir -p secrets
+#   openssl rand -base64 32 > secrets/kalzit-secrets-key
+#   password=$(openssl rand -hex 24)
+#   printf '%s' "$password" > secrets/postgres-password
+#   printf 'postgres://kalzit:%s@postgres:5432/kalzit\n' "$password" > secrets/kalzit-database-url
+#   docker compose -f compose.postgres.yaml up -d
+#   docker compose -f compose.postgres.yaml exec kalzit kalzit setup-code
+#
+# Then open http://localhost:3000 and enter the setup code. Kalzit cannot back PostgreSQL up for
+# you: back the database up with pg_dump, and keep the secrets key with the backup. Details
+# (also on file owners): docs/guide/installation.md, "Docker".
+
+name: kalzit
+
+services:
+  kalzit:
+    image: ${KALZIT_IMAGE:-ghcr.io/mousewerk/kalzit}:${KALZIT_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${KALZIT_PORT:-3000}:3000"
+    volumes:
+      # Still needed with PostgreSQL: the setup code and the server's other files live here.
+      - kalzit-data:/var/lib/kalzit
+    # Read as /run/secrets/kalzit-secrets-key and /run/secrets/kalzit-database-url.
+    secrets:
+      - kalzit-secrets-key
+      - kalzit-database-url
+    stop_grace_period: 30s
+
+  postgres:
+    image: postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kalzit
+      POSTGRES_DB: kalzit
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    secrets:
+      - postgres-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Not published: only Kalzit reaches the database, over the project network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kalzit -d kalzit"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  kalzit-data:
+  postgres-data:
+
+secrets:
+  kalzit-secrets-key:
+    file: ./secrets/kalzit-secrets-key
+  kalzit-database-url:
+    file: ./secrets/kalzit-database-url
+  postgres-password:
+    file: ./secrets/postgres-password

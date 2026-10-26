@@ -1,16 +1,18 @@
 # Getting started
 
 This page takes you from a fresh server to a first query on a dashboard. Installing and starting
-the server is described in the [README](../../README.md#quick-start); an operator also finds
-backups and services in [ARCHITECTURE](../ARCHITECTURE.md).
+the server is described in [Installation](installation.md) (the container image) and the
+[README](../../README.md#quick-start); an operator also finds backups and services in
+[ARCHITECTURE](../ARCHITECTURE.md).
 
 ## First setup
 
 On the first start Kalzit asks for a one-time **setup code**.
 
 1. Open the server's address, by default `http://localhost:3000`.
-2. Read the code from the file `setup-token.txt` in the data directory (or use the value of
-   `KALZIT_SETUP_TOKEN`, if one is set). The page has three steps:
+2. Read the code from the file `setup-token.txt` in the data directory, or print it with
+   `kalzit setup-code` (in a container: `docker exec kalzit kalzit setup-code`), or use the value
+   of `KALZIT_SETUP_TOKEN`, if one is set. The page has three steps:
    - **Confirm this server**: enter the **Setup code**.
    - **Name the organization**: the **Organization name**. More organizations can be added later.
    - **Create the owner account**: your name, email address and a password of at least the shown

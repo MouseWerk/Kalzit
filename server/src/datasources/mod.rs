@@ -933,14 +933,19 @@ struct Cached {
 }
 
 /// Kalzit's own files outside the data directory that no file or SQLite source may read: the
-/// configuration file and the TLS certificate and key; and the directories of its secrets
-/// (systemd's `$CREDENTIALS_DIRECTORY`).
+/// configuration file, the TLS certificate and key and the file of the database URL; and the
+/// directories of its secrets (systemd's `$CREDENTIALS_DIRECTORY`).
 fn own_files(config: &Config) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
-    let files = [config.config_file.as_ref(), config.tls.cert_file.as_ref(), config.tls.key_file.as_ref()]
-        .into_iter()
-        .flatten()
-        .cloned()
-        .collect();
+    let files = [
+        config.config_file.as_ref(),
+        config.tls.cert_file.as_ref(),
+        config.tls.key_file.as_ref(),
+        config.database_url_file.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .cloned()
+    .collect();
     let dirs = std::env::var_os("CREDENTIALS_DIRECTORY")
         .filter(|d| !d.is_empty())
         .map(std::path::PathBuf::from)
