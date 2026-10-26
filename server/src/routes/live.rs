@@ -238,6 +238,9 @@ impl Connection {
         let start = Instant::now();
         let mut ping = tokio::time::interval_at(start + self.limits.ping, self.limits.ping);
         let mut recheck = tokio::time::interval_at(start + self.limits.recheck, self.limits.recheck);
+        // A slow check or send is not made up for with a burst of ticks.
+        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut heard = start;
         let mut idle_since = Some(start);
         let ended = loop {
