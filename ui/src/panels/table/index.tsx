@@ -338,7 +338,7 @@ function PickCell({
   return (
     <td className={`vt__cell vt__cell--${field.type}`}>
       {/* The click reaches the row, which sets the variable. */}
-      <button type="button" className="value-pick truncate" aria-label={label}>
+      <button type="button" className="value-pick truncate" aria-label={label} title={text}>
         {text}
       </button>
     </td>
