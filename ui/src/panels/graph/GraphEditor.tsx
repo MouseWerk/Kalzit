@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { usePanelHost } from "../host";
+import { ClickVariableOptions } from "../variableClick";
 import type { PanelEditorProps } from "../types";
 import { MAX_EXPAND_LIMIT } from "./adapter";
 import { COMMUNITY_LIMIT } from "./metrics";
@@ -264,42 +265,27 @@ export function VariableOptions({
   onChange: (patch: { variable?: string; variableProperty?: string }) => void;
 }) {
   const { t } = useI18n();
-  const choices =
-    names.includes(options.variable) || options.variable === ""
-      ? names
-      : [options.variable, ...names];
   return (
-    <>
-      <div className="field">
-        <label className="field__label" htmlFor={id}>
-          {t("graph.options.variable")}
-        </label>
-        <p className="field__hint" id={`${id}-hint`}>
-          {names.length === 0 ? t("graph.options.variableNone") : t("graph.options.variableHint")}
-        </p>
-        <select
-          id={id}
-          className="select"
-          value={options.variable}
-          aria-describedby={`${id}-hint`}
-          onChange={(event) => onChange({ variable: event.currentTarget.value })}
-        >
-          <option value="">{t("graph.options.variableOff")}</option>
-          {choices.map((name) => (
-            <option key={name} value={name}>
-              ${name}
-            </option>
-          ))}
-        </select>
-      </div>
-      {options.variable === "" ? null : (
-        <TextOption
-          label={t("graph.options.variableProperty")}
-          hint={t("graph.options.variablePropertyHint")}
-          value={options.variableProperty}
-          onChange={(variableProperty) => onChange({ variableProperty })}
-        />
-      )}
-    </>
+    <ClickVariableOptions
+      id={id}
+      names={names}
+      variable={options.variable}
+      source={options.variableProperty}
+      texts={{
+        trigger: t("graph.options.variable"),
+        hint: t("graph.options.variableHint"),
+        none: t("graph.options.variableNone"),
+        off: t("graph.options.variableOff"),
+        source: t("graph.options.variableProperty"),
+        sourceHint: t("graph.options.variablePropertyHint"),
+      }}
+      onChange={(patch) =>
+        onChange(
+          patch.source === undefined
+            ? { variable: patch.variable ?? "" }
+            : { variableProperty: patch.source },
+        )
+      }
+    />
   );
 }

@@ -227,6 +227,46 @@ fn backtick(chars: &[char], start: usize) -> Result<(String, usize), Detail> {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Checked {
     pub params: BTreeSet<String>,
+    /// Parameters used as names rather than values: inside a dynamic label or relationship type
+    /// (`n:$($label)`, `$any($types)`, `$all(...)`, Neo4j 5.26 and later). They decide what the
+    /// query reads, like `${x:identifier}` in SQL, so the same rule applies to them (see
+    /// `neo4j::parameters`).
+    pub identifier_params: BTreeSet<String>,
+}
+
+/// Where a dynamic label or type opens, if at `i`: the index of its `(`. `$(` lexes as the
+/// symbol `$`, `$any(` and `$all(` as a parameter followed by `(` (never valid otherwise).
+fn dynamic_open(toks: &[Tok], i: usize) -> Option<usize> {
+    match (&toks[i], toks.get(i + 1)) {
+        (Tok::Sym('$'), Some(Tok::Sym('('))) => Some(i + 1),
+        (Tok::Param(p), Some(Tok::Sym('('))) if p.eq_ignore_ascii_case("any") || p.eq_ignore_ascii_case("all") => {
+            Some(i + 1)
+        }
+        _ => None,
+    }
+}
+
+/// For each token: whether it opens a dynamic label (`$any`), and whether it is inside one.
+fn dynamic_spans(toks: &[Tok]) -> (Vec<bool>, Vec<bool>) {
+    let marker: Vec<bool> = (0..toks.len()).map(|i| dynamic_open(toks, i).is_some()).collect();
+    let mut inside = vec![false; toks.len()];
+    for open in (0..toks.len()).filter_map(|i| dynamic_open(toks, i)) {
+        let mut depth = 0usize;
+        for (j, t) in toks.iter().enumerate().skip(open) {
+            inside[j] = true;
+            match t {
+                Tok::Sym('(') => depth += 1,
+                Tok::Sym(')') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (marker, inside)
 }
 
 /// The keyword at `i`, upper case, or `None` when the token is a name there.
@@ -274,9 +314,15 @@ pub fn check(q: &str) -> Result<Checked, Detail> {
         return Err(detail.with("keyword", word.unwrap_or_default()));
     }
     let mut checked = Checked::default();
+    let (marker, dynamic) = dynamic_spans(&toks);
     for i in 0..toks.len() {
-        if let Tok::Param(name) = &toks[i] {
+        if let Tok::Param(name) = &toks[i]
+            && !marker[i]
+        {
             checked.params.insert(name.clone());
+            if dynamic[i] {
+                checked.identifier_params.insert(name.clone());
+            }
         }
         let Some(k) = keyword(&toks, i) else { continue };
         match k.as_str() {
@@ -691,6 +737,19 @@ mod tests {
     fn parameters_are_collected() {
         let c = check("MATCH (n) WHERE n.id IN $ids AND n.t > $__timeFrom AND n.x = $`odd name` RETURN n").unwrap();
         assert_eq!(c.params, ["__timeFrom", "ids", "odd name"].map(String::from).into());
+        assert!(c.identifier_params.is_empty());
+    }
+
+    #[test]
+    fn parameters_in_dynamic_labels_are_identifiers() {
+        let c =
+            check("MATCH (n:$($label))-[r:$any($types)]->(m:$all(['A', $other])) WHERE n.id = $id RETURN n").unwrap();
+        assert_eq!(c.params, ["id", "label", "other", "types"].map(String::from).into());
+        assert_eq!(c.identifier_params, ["label", "other", "types"].map(String::from).into());
+        // A parameter that happens to be called any is a value where no `(` follows.
+        let c = check("MATCH (n) WHERE n.x = $any RETURN n").unwrap();
+        assert_eq!(c.params, ["any".to_string()].into());
+        assert!(c.identifier_params.is_empty());
     }
 
     #[test]

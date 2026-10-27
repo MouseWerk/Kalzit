@@ -3,7 +3,9 @@ import { type ReactNode, useEffect, useId, useState } from "react";
 import { ApiError, isApiError } from "../../api/client";
 import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
+import { valueAt } from "../../documents/paths";
 import { useI18n } from "../../i18n/i18n";
+import { variableText } from "../../panels/variableClick";
 import { runQuery } from "../datasources/api";
 import { fetchVariableOptions, type VariableOption } from "./api";
 import {
@@ -14,6 +16,7 @@ import {
   type VariableModel,
   type VariableValue,
   type VariableValues,
+  type ValuesFrom,
   valueList,
   valueText,
 } from "./model";
@@ -62,8 +65,15 @@ export function referencedNames(query: unknown): Set<string> {
   return new Set([...text.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? ""));
 }
 
-/** The first frame's first field as values, its second field (if any) as labels. */
-function optionsFromResponse(response: QueryResponse): VariableOption[] {
+/**
+ * The options of a query variable's result, as the server reads them (`options_from`): a frame's
+ * first field as values and its second (if any) as labels; a graph or documents result only
+ * through `valuesFrom`, the explicit projection. Another shape gives no options.
+ */
+export function optionsFromResponse(
+  response: QueryResponse,
+  valuesFrom?: ValuesFrom,
+): VariableOption[] {
   const outcome = Object.values(response.results)[0];
   if (outcome === undefined) {
     return [];
@@ -71,23 +81,53 @@ function optionsFromResponse(response: QueryResponse): VariableOption[] {
   if ("error" in outcome) {
     throw new ApiError(outcome.error.code, 200, outcome.error.message);
   }
-  if (outcome.result.shape !== "frame") {
-    return [];
-  }
-  const [values, labels] = outcome.result.frame.fields;
   const seen = new Set<string>();
   const options: VariableOption[] = [];
-  (values?.values ?? []).forEach((raw, row) => {
-    if (raw === null || raw === undefined) {
-      return;
-    }
-    const value = String(raw);
-    if (!seen.has(value)) {
+  const add = (value: string | null, label: string | null) => {
+    if (value !== null && !seen.has(value)) {
       seen.add(value);
-      const label = labels?.values[row];
-      options.push({ value, label: label === null || label === undefined ? value : String(label) });
+      options.push({ value, label: label ?? value });
     }
-  });
+  };
+  const result = outcome.result;
+  if (result.shape === "frame" && valuesFrom === undefined) {
+    const [values, labels] = result.frame.fields;
+    (values?.values ?? []).forEach((raw, row) => {
+      if (raw !== null && raw !== undefined) {
+        const label = labels?.values[row];
+        add(String(raw), label === null || label === undefined ? null : String(label));
+      }
+    });
+  } else if (
+    result.shape === "graph" &&
+    valuesFrom !== undefined &&
+    valuesFrom.from !== "documents"
+  ) {
+    const { label: wanted, value: key, text } = valuesFrom;
+    const elements =
+      valuesFrom.from === "nodes"
+        ? result.graph.nodes
+            .filter((n) => !wanted || n.labels.includes(wanted))
+            .map((n) => ({ id: n.id, properties: n.properties }))
+        : result.graph.edges
+            .filter((e) => !wanted || e.type === wanted)
+            .map((e) => ({ id: e.id, properties: e.properties }));
+    for (const element of elements) {
+      add(
+        key ? variableText(element.properties[key]) : element.id,
+        text ? variableText(element.properties[text]) : null,
+      );
+    }
+  } else if (result.shape === "documents" && valuesFrom?.from === "documents") {
+    const path = valuesFrom.value ?? "";
+    for (const document of result.documents.documents) {
+      const label = valuesFrom.text ? variableText(valueAt(document, valuesFrom.text)) : null;
+      const value = valueAt(document, path);
+      for (const item of Array.isArray(value) ? value : [value]) {
+        add(variableText(item), label);
+      }
+    }
+  }
   return options;
 }
 
@@ -211,7 +251,7 @@ function VariableControl({
         },
         signal,
       );
-      return { options: optionsFromResponse(response), truncated: false };
+      return { options: optionsFromResponse(response, variable.valuesFrom), truncated: false };
     },
     enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
     // Options belong to the stored range text; "Refresh" or a new range reads them again.

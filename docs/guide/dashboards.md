@@ -119,13 +119,37 @@ variable** in the dashboard settings or the Add menu. Kinds:
 
 - **Fixed values**: a comma-separated list.
 - **Free text**: a text box.
-- **Values from a query**: the first column of the result becomes the list.
+- **Values from a query**: the first column of the result becomes the list. For a graph or
+  document source, **Values from** says what becomes the list instead: **Nodes** or
+  **Relationships** (a property, optionally only those with a label or type; empty takes the id)
+  or **Documents** (a field path such as `customer.id`; a list gives one value per entry). A
+  **Shown name** names each entry. The result itself keeps its shape; this is the visible step
+  that turns it into values.
 
 Options: a **Label**, **Allow several values**, and a **Value when the dashboard opens**. Names
 use letters, digits and underscores. Queries use a variable as `$name` (MongoDB pipelines write
 `"${name}"`); it reaches the database as a parameter, never as text in the query. The
 variables appear as the filter bar in the toolbar. A multi-value variable is a list box where Ctrl
 or Shift with a click, or Space, picks more. Panels and rows can repeat per selected value.
+
+### Variables across result shapes
+
+A variable does not care which shape set it or which shape reads it. A click on a MongoDB
+document (document explorer or card), a table row or a graph node can set it (the panel's
+**Clicking ... sets** option), and every panel that uses it runs again: a Cypher panel reads it
+as `$customerId`, a TigerGraph query as its declared parameter of that name, SQL as a parameter.
+So a click on a customer document can show that customer's relationships in a graph panel:
+
+```
+MATCH (c:Customer {customerId: $customerId})-[r]-(m) RETURN c, r, m
+```
+
+Values always travel as parameters, never as text in a query, so text with quotes stays one
+value. A value set by a click is text; when a Cypher property holds numbers, compare with
+`toInteger($customerId)`. GSQL takes variables only as declared parameters: writing `$name` into
+GSQL code is refused with a hint. A dynamic label in Cypher (`n:$($label)`) takes only a
+**Fixed values** variable, whose values the dashboard lists. A click on a value that a fixed-values
+variable does not offer leaves it as it is and says so.
 
 ## Time range and time picker
 

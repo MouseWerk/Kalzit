@@ -178,10 +178,14 @@ impl T {
     }
 
     async fn query(&self, id: &str, query: Value) -> Value {
+        self.query_with(id, query, json!({ "land": "Österreich" })).await
+    }
+
+    async fn query_with(&self, id: &str, query: Value, variables: Value) -> Value {
         let body = json!({
             "queries": [{ "refId": "A", "datasourceId": id, "query": query }],
             "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 },
-            "variables": { "land": "Österreich" }
+            "variables": variables
         });
         let (status, body) = self.send(Method::POST, "/query", Some(body)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -739,6 +743,32 @@ async fn graph_reads(t: &T, id: &str) {
     assert_eq!(schema["kind"], "graph", "{schema}");
     assert!(schema["labels"].as_array().unwrap().contains(&json!("KalzitTest")), "{schema}");
     assert!(schema["edgeTypes"].as_array().unwrap().contains(&json!("KENNT")), "{schema}");
+    graph_variables(t, id).await;
+}
+
+/// Variables reach Cypher as Bolt parameters: a value, a list for a multi-value variable, and text
+/// written to break out of a string, which stays one value and matches nothing.
+async fn graph_variables(t: &T, id: &str) {
+    let names = |r: &Value| r["result"]["frame"]["fields"][0]["values"].clone();
+    let by_name = json!({ "cypher": "MATCH (n:KalzitTest) WHERE n.name = $kunde RETURN n.name AS name ORDER BY name" });
+    let r = t.query_with(id, by_name.clone(), json!({ "kunde": "Ana" })).await;
+    assert_eq!(names(&r), json!(["Ana"]), "{r}");
+    for attack in
+        ["Ana' OR 1=1 //", "Ana\" OR true //", "x'}) MATCH (m) DETACH DELETE m //", "Ana` OR true //", "$kunde"]
+    {
+        let r = t.query_with(id, by_name.clone(), json!({ "kunde": attack })).await;
+        assert!(r["result"].is_object(), "{attack}: {r}");
+        let rows = r["result"]["frame"]["fields"][0]["values"].as_array().map_or(0, Vec::len);
+        assert_eq!(rows, 0, "{attack} is one value: {r}");
+    }
+    let listed =
+        json!({ "cypher": "MATCH (n:KalzitTest) WHERE n.name IN $kunden RETURN n.name AS name ORDER BY name" });
+    let r = t.query_with(id, listed, json!({ "kunden": ["Bo", "Ana", "Ana' OR 1=1 //"] })).await;
+    assert_eq!(names(&r), json!(["Ana", "Bo"]), "{r}");
+    let missing = t.query_with(id, by_name, json!({})).await;
+    assert_eq!(missing["error"]["reason"], "cypher.variable_missing", "{missing}");
+    let count = t.query(id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN count(n) AS c" })).await;
+    assert_eq!(count["result"]["frame"]["fields"][0]["values"][0], "2", "nothing changed: {count}");
 }
 
 #[tokio::test]

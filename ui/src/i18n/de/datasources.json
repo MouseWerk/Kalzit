@@ -384,7 +384,7 @@
   "datasources.reason.variables.value_type": "Der Wert von {name} muss ein Wert oder eine Liste von Werten sein.",
   "datasources.reason.variables.self_dependency": "Die Optionen von {name} können nicht von {name} selbst abhängen.",
   "datasources.reason.variables.not_a_query": "{name} bezieht seine Werte aus keiner Abfrage.",
-  "datasources.reason.variables.not_a_frame": "Die Abfrage der Variable muss eine Tabelle liefern.",
+  "datasources.reason.variables.not_a_frame": "Die Abfrage der Variable muss eine Tabelle liefern, oder stelle „Werte aus“ ein, um einen Graph oder Dokumente zu lesen.",
   "datasources.reason.distribution.path_length": "Ein Feldpfad hat 1 bis {max} Schritte.",
   "datasources.reason.distribution.path_too_long": "Der Feldpfad ist zu lang (höchstens {max} Bytes).",
   "datasources.reason.distribution.path_invalid": "Der Feldpfad nennt kein Feld.",
@@ -804,5 +804,7 @@
   "datasources.reason.live.feeds_busy": "Der Server führt so viele Live-Abfragen aus, wie er zulässt ({max}). Versuche es gleich noch einmal.",
   "datasources.reason.live.memory_limit": "Die Live-Ergebnisse bräuchten mehr Speicher, als der Server dir zugesteht. Die letzten passenden Ergebnisse bleiben; neue Live-Abfragen starten, sobald wieder Platz ist.",
   "datasources.reason.live.check_failed": "Dein Zugriff konnte nicht erneut geprüft werden, darum wurden die Live-Updates beendet. Verbinde neu, dann laufen sie weiter.",
-  "datasources.reason.mongodb.streams_limit": "Für diese Quelle sind schon {max} Änderungsströme offen, darum laufen weitere Live-Abfragen in einem festen Abstand neu."
+  "datasources.reason.mongodb.streams_limit": "Für diese Quelle sind schon {max} Änderungsströme offen, darum laufen weitere Live-Abfragen in einem festen Abstand neu.",
+  "datasources.reason.cypher.variable_identifier": "${name} benennt hier ein Label oder einen Beziehungstyp. Das dürfen nur Variablen mit festen Werten und Konstanten, weil nur ihre Werte im Dashboard stehen.",
+  "datasources.reason.gsql.variable_text": "GSQL nimmt Variablen als Abfrageparameter: Deklariere einen Parameter {name} im Kopf der Abfrage, statt ${name} in ihren Text zu schreiben."
 }
