@@ -32,7 +32,7 @@ import {
 } from "./options";
 import { countText } from "./plural";
 import { type RefreshRequest, refreshVisibility } from "./refresh";
-import { layoutRequest } from "./useGraphLayout";
+import { labelWidth, layoutRequest } from "./useGraphLayout";
 import {
   allVisible,
   buildView,
@@ -317,6 +317,40 @@ describe("layout", () => {
     expect(y(0)).toBeGreaterThan(y(1));
     expect(y(1)).toBeGreaterThan(y(2));
     expect(y(3)).toBe(y(1));
+  });
+
+  it("spaces a layer's nodes by their size and label, so no label lies over a neighbour", () => {
+    // A root with three leaves of long and short names, as in a category tree.
+    const names = ["All products", "Office", "Seating", "Electronics"];
+    const sizes = Float32Array.from([14, 14, 4, 4]);
+    const labels = Float32Array.from(names, (name) => labelWidth(name));
+    const result = hierarchyLayout({
+      count: 4,
+      sources: Uint32Array.from([0, 0, 0]),
+      targets: Uint32Array.from([1, 2, 3]),
+      weights: new Float32Array(3).fill(1),
+      sizes,
+      labels,
+    });
+    const x = (i: number) => result.positions[2 * i] as number;
+    const row = [1, 2, 3].sort((a, b) => x(a) - x(b));
+    for (let k = 1; k < row.length; k++) {
+      const left = row[k - 1] as number;
+      const right = row[k] as number;
+      // The left node's circle and label end before the right node's circle starts.
+      const leftEnd = x(left) + (sizes[left] as number) + (labels[left] as number);
+      expect(x(right) - (sizes[right] as number)).toBeGreaterThan(leftEnd);
+    }
+    // The layer is centred under its root, label included.
+    const first = row[0] as number;
+    const last = row.at(-1) as number;
+    expect(x(first) + x(last) + (labels[last] as number)).toBeCloseTo(0, 3);
+  });
+
+  it("estimates label widths by length, capped for long names", () => {
+    expect(labelWidth("")).toBe(0);
+    expect(labelWidth("Office")).toBeLessThan(labelWidth("Electronics"));
+    expect(labelWidth("x".repeat(200))).toBe(labelWidth("x".repeat(24)));
   });
 
   it("moves nodes with the force layout and keeps positions finite", () => {

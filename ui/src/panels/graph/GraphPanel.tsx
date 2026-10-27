@@ -44,6 +44,7 @@ import { AUTO_CLUSTER_EDGES, AUTO_CLUSTER_NODES, type GraphPanelOptions } from "
 import { labelGroupOf, type PropertyPaint, propertyPaint } from "./paint";
 import { countText } from "./plural";
 import type { CanvasHandle } from "./SigmaCanvas";
+import { useShortPanel } from "./shortPanel";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
 import { useGraphLayout } from "./useGraphLayout";
 import {
@@ -83,6 +84,8 @@ const DRAWABLE = canDraw();
  * the panel offers the network instead (Graph board, frame 3).
  */
 export const HIERARCHY_LIMIT = 2_000;
+/** The smallest node of a hierarchy, in px: a leaf stays a node, not a dot. */
+export const HIERARCHY_MIN_NODE_SIZE = 7;
 
 interface GraphPanelProps extends PanelProps<GraphPanelOptions> {
   mode: LayoutMode;
@@ -141,10 +144,14 @@ function useGraph(
     [sets, options.nodeLimit, options.caption],
   );
   const parts = useMemo(() => components(model), [model]);
-  const sizes = useMemo(
-    () => nodeSizes(model, options.sizeBy, options.sizeMin, options.sizeMax),
-    [model, options.sizeBy, options.sizeMin, options.sizeMax],
-  );
+  // In a hierarchy most nodes are leaves of degree one: sized by degree they shrank to dots
+  // beside their parents, so the layers start at a size a leaf stays visible at.
+  const sizes = useMemo(() => {
+    const out = nodeSizes(model, options.sizeBy, options.sizeMin, options.sizeMax);
+    return mode === "hierarchy"
+      ? out.map((size) => Math.max(size, Math.min(HIERARCHY_MIN_NODE_SIZE, options.sizeMax)))
+      : out;
+  }, [model, options.sizeBy, options.sizeMin, options.sizeMax, mode]);
   const widths = useMemo(
     () => edgeWidths(model, options.edgeWidthBy),
     [model, options.edgeWidthBy],
@@ -230,6 +237,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   // Whether the focus is inside the panel; Escape clears the selection only then.
   const rootRef = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState(false);
+  const short = useShortPanel(rootRef);
   useEffect(() => {
     const root = rootRef.current;
     if (root === null) return;
@@ -897,6 +905,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           }
           onOpenQuery={openQuery}
           queryNote={queryNote}
+          compact={short}
         />
       ) : null}
       {graph.steps.length > 1 ? (

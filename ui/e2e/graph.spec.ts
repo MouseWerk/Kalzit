@@ -2,6 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { Api, unique } from "./support/api";
 import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
+import { findOverflow } from "./support/overflow";
 import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
@@ -343,6 +344,114 @@ test.describe("Neo4j", () => {
     expect(await seriousViolations(page)).toEqual([]);
   });
 });
+
+/** Whether two boxes share any area. */
+function overlaps(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): boolean {
+  return (
+    a.x < b.x + b.width - 0.5 &&
+    b.x < a.x + a.width - 0.5 &&
+    a.y < b.y + b.height - 0.5 &&
+    b.y < a.y + a.height - 0.5
+  );
+}
+
+/**
+ * An explorer panel eight grid rows tall: the steps stay on one line above the drawing and the
+ * table, never over them, and a row of the table takes a plain click. At a desktop width the
+ * details open beside the table, on a phone over it; either way inside the panel's body.
+ */
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test.describe(`Neo4j short explorer panel, ${viewport.width} px wide`, () => {
+    test.use({ viewport });
+
+    test("the steps leave the drawing and the table their room, and a row click lands", async ({
+      page,
+    }) => {
+      const address = serviceAddress("KALZIT_E2E_NEO4J");
+      const owner = await Api.owner();
+      let dashboardId = "";
+      try {
+        const sourceId = await owner.createSource(
+          unique("Shop graph (Neo4j, short)"),
+          "neo4j",
+          { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+          { password: GRAPH_FIXTURE.neo4jPassword },
+        );
+        const model = graphDashboard(unique("Shop graph short"), sourceId);
+        dashboardId = await owner.createDashboard({
+          ...model,
+          panels: model.panels
+            .filter((p) => p.id === "explorer")
+            .map((p) => ({ ...p, grid: { x: 0, y: 0, w: 12, h: 8 } })),
+        });
+      } finally {
+        await owner.dispose();
+      }
+      await signInOwner(page);
+      await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+      const around = page.getByRole("article", { name: PANELS.explorer, exact: true });
+      const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
+      await expect(steps).toBeVisible({ timeout: STEP_MS });
+      // The compact form: the settings of the next step wait behind their button.
+      await expect(
+        steps.getByRole("button", { name: t("graph.steps.next"), exact: true }),
+      ).toHaveAttribute("aria-expanded", "false");
+      const body = around.locator(".graph__body");
+      const minimum = await page.evaluate(
+        () => 6 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+      );
+
+      const noOverlap = async () => {
+        const bar = await steps.boundingBox();
+        const room = await body.boundingBox();
+        expect(bar).not.toBeNull();
+        expect(room).not.toBeNull();
+        if (bar === null || room === null) return;
+        expect(overlaps(bar, room)).toBe(false);
+        expect(room.height).toBeGreaterThanOrEqual(minimum - 1);
+      };
+      await noOverlap();
+
+      await showTables(around, PANELS.explorer);
+      await noOverlap();
+      const table = nodeTable(around, PANELS.explorer, 1);
+      // A plain click, no Enter: nothing lies over the row.
+      await table.getByRole("button", { name: "Ana", exact: true }).click({ timeout: STEP_MS });
+      await expect(nodeTable(around, PANELS.explorer, 2)).toBeVisible({ timeout: STEP_MS });
+      await expect(
+        steps.getByRole("button", {
+          name: t("graph.steps.stepOf", { name: "Ana", count: 1, total: 2 }),
+          exact: true,
+        }),
+      ).toBeVisible();
+      await noOverlap();
+
+      // The details of the clicked node stay inside the body, below the steps.
+      const sheet = around.getByRole("region", {
+        name: t("graph.details", { name: "Ana" }),
+        exact: true,
+      });
+      await expect(sheet).toBeVisible({ timeout: STEP_MS });
+      const sheetBox = await sheet.boundingBox();
+      const bar = await steps.boundingBox();
+      expect(sheetBox !== null && bar !== null && overlaps(sheetBox, bar)).toBe(false);
+      const room = await body.boundingBox();
+      if (sheetBox !== null && room !== null) {
+        expect(sheetBox.y).toBeGreaterThanOrEqual(room.y - 0.5);
+        expect(sheetBox.y + sheetBox.height).toBeLessThanOrEqual(room.y + room.height + 0.5);
+      }
+      const overflow = await findOverflow(page);
+      expect(overflow.offenders).toEqual([]);
+      expect(await seriousViolations(page)).toEqual([]);
+    });
+  });
+}
 
 /**
  * Where the drawing shows a node, from the canvas' test hook (SigmaCanvas.tsx), once the layout

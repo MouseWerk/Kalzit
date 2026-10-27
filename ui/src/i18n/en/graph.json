@@ -114,6 +114,7 @@
   "graph.steps.cancel": "Cancel",
   "graph.steps.undo": "Undo",
   "graph.steps.reset": "Start over",
+  "graph.steps.next": "Next step",
   "graph.steps.limit": "Neighbours per step",
   "graph.steps.types": "Edge types",
   "graph.steps.allTypes": "All ({count})",

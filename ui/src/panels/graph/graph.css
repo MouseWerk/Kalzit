@@ -37,12 +37,34 @@
     color: var(--danger-text);
   }
 
+  /*
+   * Everything above the body keeps its height; the body takes the rest, and its one row is that
+   * height, so the drawing, the table and the sheet each fill it and scroll inside it.
+   */
+  .graph > :not(.graph__body) {
+    flex: none;
+  }
+
   .graph__body {
     display: grid;
     flex: 1;
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr);
     gap: var(--space-2);
-    min-height: 0;
+    min-height: var(--size-graph-min);
+  }
+
+  /*
+   * In a dashboard panel the dashboard sets the height. Tools, notes and the explorer's steps
+   * stay in the flow above the body, never over it; when they leave the body less than its
+   * minimum, the panel scrolls instead of squeezing the drawing or the table to nothing.
+   */
+  .panel-card .graph {
+    overflow-y: auto;
+  }
+
+  .panel-card .graph__body {
+    min-height: var(--size-graph-min-panel);
   }
 
   .graph__stage {
@@ -55,9 +77,9 @@
   }
 
   /*
-   * In a dashboard panel the panel's own size decides: a drawing taller than the panel was cut off
-   * at its bottom edge (the lowest row of a hierarchy lost its labels). Explore and the editor keep
-   * the minimum above.
+   * In a dashboard panel the body's minimum decides (above): a drawing taller than the panel was
+   * cut off at its bottom edge (the lowest row of a hierarchy lost its labels). Explore and the
+   * editor keep the minimum here.
    */
   .panel-card .graph__stage {
     min-height: 0;
@@ -224,6 +246,11 @@
 
   .graph__state p {
     margin: 0;
+  }
+
+  .panel-card .graph__state {
+    min-height: 0;
+    overflow: auto;
   }
 
   /* The side sheet: one node, the selection, the pins. */
@@ -428,6 +455,41 @@
   .graph-steps__actions {
     display: flex;
     gap: var(--space-1);
+  }
+
+  .graph-steps__settings {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  /*
+   * A short panel: the steps on one line that scrolls sideways, the actions beside them, the
+   * settings of the next step only when asked for.
+   */
+  .graph-steps--compact {
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .graph-steps--compact .graph-steps__row {
+    flex-wrap: nowrap;
+  }
+
+  .graph-steps--compact .graph-steps__list {
+    flex: 1;
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    white-space: nowrap;
+  }
+
+  .graph-steps--compact .graph-steps__list > li {
+    flex: none;
+  }
+
+  .graph-steps--compact .graph-steps__actions {
+    flex: none;
   }
 
   .graph-steps__field {

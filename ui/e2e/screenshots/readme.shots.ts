@@ -904,19 +904,6 @@ test("explore, field distribution, dark", async ({ browser }) => {
 let graphDashboards: { overview: string; detail: string } | undefined;
 
 /**
- * Clicks a node's button in a graph panel's table; when the click cannot land, the log says why
- * and Enter on the focused button does the same.
- */
-async function activate(button: Locator): Promise<void> {
-  try {
-    await button.click({ timeout: 10_000 });
-  } catch (error) {
-    process.stderr.write(`click did not land, pressing Enter instead: ${String(error)}\n`);
-    await button.press("Enter");
-  }
-}
-
-/**
  * The graph panels on the shop graph of the graph spec: a network, the category tree as a
  * hierarchy, a shortest path and a network in explorer mode, and the network and the explorer
  * again at full width for the node details and explorer pictures. Needs the Neo4j of the graph spec
@@ -975,10 +962,10 @@ async function seedGraphDashboards(address: string): Promise<{ overview: string;
         "path",
         "path",
         "From Ana to the monitor arm",
-        { x: 0, y: 11, w: 12, h: 13 },
+        { x: 0, y: 11, w: 12, h: 8 },
         "MATCH p = shortestPath((c:Customer {name: 'Ana'})-[:PLACED|CONTAINS*..10]-(pr:Product {name: 'Monitor arm'})) RETURN p",
       ),
-      panel("explorer", "network", "Around Ben", { x: 12, y: 11, w: 12, h: 13 }, ben, {
+      panel("explorer", "network", "Around Ben", { x: 12, y: 11, w: 12, h: 8 }, ben, {
         explorer: true,
         expandLimit: 10,
       }),
@@ -1014,12 +1001,11 @@ async function exploreBen(around: Locator): Promise<void> {
   // The explorer is on once the panel knows the source may be queried; a click loads.
   const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
   await expect(steps).toBeVisible();
-  await activate(
-    around.getByRole("table", { name: /./ }).first().getByRole("button", {
-      name: "Ben",
-      exact: true,
-    }),
-  );
+  await around
+    .getByRole("table", { name: /./ })
+    .first()
+    .getByRole("button", { name: "Ben", exact: true })
+    .click();
   await expect(steps.getByRole("button", { name: /^Ben \+/ })).toBeVisible();
   await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
   await expect(around.getByRole("application", { name: "Around Ben", exact: true })).toBeVisible();
@@ -1030,7 +1016,7 @@ for (const scheme of ["light", "dark"] as const) {
     const address = process.env.KALZIT_E2E_NEO4J ?? "";
     test.skip(address === "", "KALZIT_E2E_NEO4J is not set; the picture needs the Neo4j fixture");
     const { overview } = await seedGraphDashboards(address);
-    const page = await openPage(browser, scheme, { width: 1440, height: 1240 });
+    const page = await openPage(browser, scheme, { width: 1440, height: 1000 });
     await signIn(page);
     await page.goto(`/dashboards/${overview}`);
     await expect(page.getByRole("heading", { name: "Shop graph" })).toBeVisible();
@@ -1074,7 +1060,7 @@ test("graph node details and explorer, dark", async ({ browser }) => {
   // Ana selected from the panel's table, then back to the drawing with her details open.
   const table = shop.getByRole("button", { name: t("graph.showTable"), exact: true });
   await table.click();
-  await activate(shop.getByRole("button", { name: "Ana", exact: true }).first());
+  await shop.getByRole("button", { name: "Ana", exact: true }).first().click();
   await table.click();
   await expect(
     shop.getByRole("region", { name: t("graph.details", { name: "Ana" }) }),

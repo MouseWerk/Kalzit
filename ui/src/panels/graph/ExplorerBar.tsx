@@ -24,6 +24,7 @@ export function ExplorerBar({
   onBack,
   onOpenQuery,
   queryNote,
+  compact = false,
 }: {
   explorer: Explorer;
   /** Nodes of the query's own result, for its entry. */
@@ -36,15 +37,18 @@ export function ExplorerBar({
   onOpenQuery: (() => void) | null;
   /** Why the exploration cannot open as a query (too many nodes), or null. */
   queryNote: string | null;
+  /**
+   * A short panel: the steps on one line that scrolls sideways, and the settings of the next
+   * step behind a button, so the bar never takes the height the drawing and the table need.
+   */
+  compact?: boolean;
 }) {
   const { t, language } = useI18n();
   const number = new Intl.NumberFormat(language);
-  const limitId = useId();
-  const directionId = useId();
+  const nextId = useId();
   const [confirm, setConfirm] = useState<number | null>(null);
-  const { steps, pending, settings } = explorer;
-  const [limitText, setLimitText] = useState(String(settings.limit));
-  const set = (patch: Partial<StepSettings>) => explorer.setSettings({ ...settings, ...patch });
+  const [nextOpen, setNextOpen] = useState(false);
+  const { steps, pending } = explorer;
 
   function backTo(count: number) {
     const removed = steps.length - count;
@@ -57,9 +61,11 @@ export function ExplorerBar({
     onBack(removed);
   }
 
-  const allTypes = settings.types.length === 0;
   return (
-    <section className="graph-steps" aria-label={t("graph.steps.title")}>
+    <section
+      className={compact ? "graph-steps graph-steps--compact" : "graph-steps"}
+      aria-label={t("graph.steps.title")}
+    >
       <div className="graph-steps__row">
         <ol className="graph-steps__list">
           <li>
@@ -128,8 +134,73 @@ export function ExplorerBar({
           >
             {t("graph.steps.reset")}
           </button>
+          {compact ? (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              aria-expanded={nextOpen}
+              aria-controls={nextOpen ? nextId : undefined}
+              onClick={() => setNextOpen(!nextOpen)}
+            >
+              {t("graph.steps.next")}
+            </button>
+          ) : null}
         </div>
       </div>
+      {compact && !nextOpen ? null : (
+        <NextStep
+          id={nextId}
+          explorer={explorer}
+          edgeTypes={edgeTypes}
+          onOpenQuery={onOpenQuery}
+          queryNote={queryNote}
+        />
+      )}
+      {confirm === null ? null : (
+        <ConfirmDialog
+          title={t("graph.steps.confirmTitle")}
+          confirmLabel={t("graph.steps.confirm", {
+            count: number.format(steps.length - confirm),
+          })}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => {
+            const removed = steps.length - confirm;
+            explorer.backTo(confirm);
+            setConfirm(null);
+            onBack(removed);
+          }}
+        >
+          {t("graph.steps.confirmText", { count: number.format(steps.length - confirm) })}
+        </ConfirmDialog>
+      )}
+    </section>
+  );
+}
+
+/** Limit, edge types and direction for the next step, with their hints. */
+function NextStep({
+  id,
+  explorer,
+  edgeTypes,
+  onOpenQuery,
+  queryNote,
+}: {
+  id: string;
+  explorer: Explorer;
+  edgeTypes: readonly string[];
+  onOpenQuery: (() => void) | null;
+  queryNote: string | null;
+}) {
+  const { t, language } = useI18n();
+  const number = new Intl.NumberFormat(language);
+  const limitId = useId();
+  const directionId = useId();
+  const { settings } = explorer;
+  const [limitText, setLimitText] = useState(String(settings.limit));
+  const set = (patch: Partial<StepSettings>) => explorer.setSettings({ ...settings, ...patch });
+  const allTypes = settings.types.length === 0;
+  return (
+    <div className="graph-steps__settings" id={id}>
       <div className="graph-steps__next">
         <div className="graph-steps__field">
           <label className="field__label" htmlFor={limitId}>
@@ -220,23 +291,6 @@ export function ExplorerBar({
           </button>
         </div>
       )}
-      {confirm === null ? null : (
-        <ConfirmDialog
-          title={t("graph.steps.confirmTitle")}
-          confirmLabel={t("graph.steps.confirm", {
-            count: number.format(steps.length - confirm),
-          })}
-          onCancel={() => setConfirm(null)}
-          onConfirm={() => {
-            const removed = steps.length - confirm;
-            explorer.backTo(confirm);
-            setConfirm(null);
-            onBack(removed);
-          }}
-        >
-          {t("graph.steps.confirmText", { count: number.format(steps.length - confirm) })}
-        </ConfirmDialog>
-      )}
-    </section>
+    </div>
   );
 }

@@ -508,10 +508,15 @@
   }
 }
 
-/* Graph panels: the smallest drawing area, so a graph stays usable in a short panel. */
+/*
+ * Graph panels: the smallest drawing area, so a graph stays usable in a short panel; in a
+ * dashboard panel, whose size the dashboard sets, the smallest the drawing or table shrinks to
+ * before the panel scrolls.
+ */
 @layer tokens {
   :root {
     --size-graph-min: 12rem;
+    --size-graph-min-panel: 6rem;
   }
 }
 
