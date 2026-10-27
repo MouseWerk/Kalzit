@@ -534,8 +534,9 @@ describe("help pages", () => {
     renderApp("/help/getting-started");
     expect(await screen.findByRole("heading", { level: 1, name: "Getting started" })).toBeTruthy();
     const body = document.querySelector(".help__body") as HTMLElement;
-    expect(within(body).getByRole("link", { name: "Installation" }).getAttribute("href")).toBe(
-      "/help/installation",
+    const links = within(body).getAllByRole("link", { name: "Installation" });
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(
+      links.map(() => "/help/installation"),
     );
     expect(document.querySelector(".help__body img")).toBeNull();
     expect(server.calls.map((call) => call.path)).not.toContain("/api/me");
