@@ -81,6 +81,12 @@ pub trait DataSourcePlugin: Send + Sync {
     fn checks_on_save(&self) -> bool {
         false
     }
+    /// The query that runs the graph step `step` on the result of `query` in the source itself
+    /// (`analysis::pushdown`), run with `query` as any query is; `None` when the kind or the
+    /// query cannot, and the server runs the step on the result instead.
+    fn pushdown(&self, _query: &Value, _step: &crate::analysis::StepKind) -> Option<Value> {
+        None
+    }
     /// Checks that need the source itself, run when its settings or secrets are saved (MongoDB:
     /// the login may only read). A refusal names the settings field at fault; a source that
     /// cannot be reached is not refused.
@@ -1349,7 +1355,25 @@ pub fn check_items(items: &[QueryItem]) -> ApiResult<()> {
                 .because("query.ref_id"));
         }
     }
+    for (i, item) in items.iter().enumerate() {
+        query_steps(item).map_err(|e| {
+            ApiError::validation(format!("queries[{i}].{e}"))
+                .with_field("queries")
+                .because("query.steps")
+                .param("detail", e)
+        })?;
+    }
     Ok(())
+}
+
+/// The graph steps of a query (`QueryItem::steps`): steps of that query, graph steps only.
+pub fn query_steps(item: &QueryItem) -> Result<Vec<crate::analysis::Step>, String> {
+    let refs = std::collections::BTreeSet::from([item.ref_id.as_str()]);
+    let steps = crate::analysis::check_steps(&item.steps, &refs, "steps")?;
+    if let Some(i) = steps.iter().position(|s| !s.kind.is_graph_step()) {
+        return Err(format!("steps[{i}]: only graph steps run with the query"));
+    }
+    Ok(steps)
 }
 
 /// Runs queries in parallel within the caller's concurrency limit and answers per `refId`. One
@@ -1438,30 +1462,56 @@ async fn run_one(
     }
     let timeout = limits.timeout;
     let started = Instant::now();
+    // Checked with the request (`check_items`); the first may run in the source.
+    let steps = query_steps(&item).unwrap_or_default();
+    let first = steps.iter().find(|s| !s.disabled);
+    let pushed = first.and_then(|s| kind.plugin.pushdown(&item.query, &s.kind));
     let run = async {
         // Waiting for a free slot counts against the query's own timeout.
         let _slots = registry.slots(state, &ctx.user.id).await?;
         let conn = registry.connection(state, &ds).await?;
-        let req = SourceQuery {
+        let request = |query: Value| SourceQuery {
             ref_id: item.ref_id.clone(),
-            query: item.query,
+            query,
             range,
             interval_ms,
             max_data_points,
             variables: variables.clone(),
             identifier_variables: identifier_variables.cloned(),
-            limits,
-            cursor: item.cursor,
+            limits: limits.clone(),
+            cursor: item.cursor.clone(),
         };
-        let result = kind.plugin.query(&conn, req).await;
+        if let (Some(query), Some(first)) = (pushed.clone(), first) {
+            // A source that cannot run the generated query (an older version, a missing
+            // function) still answers: the query runs as written and the server runs the step.
+            match kind.plugin.query(&conn, request(query)).await {
+                Ok(result) => match crate::analysis::pushdown::normalize(&first.kind, result) {
+                    Ok(result) => return Ok((conn, Ok((result, true)))),
+                    Err(d) => tracing::debug!(datasource = %ds.id, "graph step not run in the source: {}", d.message),
+                },
+                Err(e) => tracing::debug!(datasource = %ds.id, code = e.code(), "graph step not run in the source: {}", e.detail().scrubbed(|t| conn.scrub(t)).message),
+            }
+        }
+        let result = kind.plugin.query(&conn, request(item.query.clone())).await.map(|r| (r, false));
         Ok::<_, SourceError>((conn, result))
     };
-    match tokio::time::timeout(timeout, run).await {
+    let outcome = tokio::time::timeout(timeout, run).await;
+    match outcome {
         Err(_) => outcome_error("query_timeout", SourceError::Timeout(timeout.as_secs()).detail()),
         Ok(Err(e)) => outcome_error(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))),
-        Ok(Ok((_, Ok(result)))) => {
+        Ok(Ok((_, Ok((result, in_source))))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
-            QueryOutcome::Ok { result }
+            if steps.is_empty() {
+                return QueryOutcome::Ok { result, steps: None };
+            }
+            let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
+            let name = item.ref_id.clone();
+            let ran = tokio::task::spawn_blocking(move || graph_steps_on_server(&steps, &name, result, in_source, left))
+                .await;
+            match ran {
+                Ok((result, places)) => QueryOutcome::Ok { result, steps: Some(places) },
+                Err(e) => outcome_error("internal", Detail::new("steps.failed", e.to_string())),
+            }
         }
         Ok(Ok((conn, Err(e)))) => {
             let detail = e.detail().scrubbed(|t| conn.scrub(t));
@@ -1469,6 +1519,42 @@ async fn run_one(
             outcome_error(e.code(), detail)
         }
     }
+}
+
+/// The graph steps of one query after it answered: the first already ran in the source when
+/// `in_source`; the others run here one by one. A failing step keeps the result before it and
+/// says why; the steps after it do not run.
+fn graph_steps_on_server(
+    steps: &[crate::analysis::Step],
+    name: &str,
+    mut result: QueryResult,
+    in_source: bool,
+    timeout_secs: u64,
+) -> (QueryResult, Vec<crate::shapes::StepPlace>) {
+    use crate::shapes::{RanIn, StepPlace};
+    let control = crate::analysis::steps::Control::new(
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        timeout_secs,
+    );
+    let mut places = Vec::new();
+    let mut enabled = steps.iter().filter(|s| !s.disabled);
+    if in_source && let Some(first) = enabled.next() {
+        places.push(StepPlace { id: first.id.clone(), ran_in: RanIn::Database, error: None });
+    }
+    for step in enabled {
+        match crate::analysis::steps::run_graph_steps(std::slice::from_ref(step), name, result.clone(), &control) {
+            Ok(next) => {
+                result = next;
+                places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: None });
+            }
+            Err(failure) => {
+                let error = error_body("validation", failure.detail);
+                places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: Some(error) });
+                break;
+            }
+        }
+    }
+    (result, places)
 }
 
 /// Opens the change feed of one query for live updates (`DataSourcePlugin::watch`), with the

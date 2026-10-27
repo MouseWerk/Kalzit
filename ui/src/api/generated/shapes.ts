@@ -134,7 +134,13 @@ query: unknown,
 /**
  * Continues a `DocumentSet` from its `nextCursor`.
  */
-cursor?: string, limit?: number, };
+cursor?: string, limit?: number, 
+/**
+ * Graph steps on this query's result (`countLabels`, `topDegree`, ...; docs/api/datasources.md),
+ * all of this query, in order. The first runs in the database when the source can, the others
+ * on the server; the answer is the result after them, with `steps` saying where each ran.
+ */
+steps?: unknown[], };
 
 export type PanelQueryRequest = { timeRange: TimeRange, 
 /**
@@ -195,7 +201,11 @@ export type QueryResponse = {
  */
 results: { [key in string]: QueryOutcome }, };
 
-export type QueryOutcome = { result: QueryResult, } | { error: ErrorBody, };
+export type QueryOutcome = { result: QueryResult, 
+/**
+ * The graph steps the query ran, when it had any (`QueryItem::steps`).
+ */
+steps?: Array<StepPlace>, } | { error: ErrorBody, };
 
 export type ErrorEnvelope = { error: ErrorBody, };
 

@@ -1,4 +1,13 @@
-import type { DocumentSet, Field, FieldType, Frame, FrameMeta } from "../api/generated/shapes";
+import type {
+  DocumentSet,
+  ErrorBody,
+  Field,
+  FieldType,
+  Frame,
+  FrameMeta,
+  GraphSet,
+  RanIn,
+} from "../api/generated/shapes";
 import {
   addMonths,
   type Calendar,
@@ -16,6 +25,7 @@ import {
   toCell,
   UTC_CALENDAR,
 } from "./expr";
+import { applyGraphStep, type GraphRows, type GraphStepKind } from "./graphSteps";
 import { type ProjectionColumn, projectDocuments } from "./projection";
 import * as stats from "./stats";
 
@@ -91,9 +101,20 @@ export type StepKind =
   | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
   /**
    * The projection of the `documents` result of `frame` into a frame (docs/PLAN.md, section 1);
-   * the documents UI edits it, the steps after it work on the frame it makes.
+   * the documents UI edits it, the steps after it work on the frame it makes. With `rows`, the
+   * nodes or edges of a `graph` result ("In Tabelle umwandeln"), optionally only nodes with
+   * `label` or edges of `edgeType`.
    */
-  | { type: "toFrame"; frame: string; columns: ProjectionColumn[] };
+  | {
+      type: "toFrame";
+      frame: string;
+      columns: ProjectionColumn[];
+      rows?: GraphRows;
+      label?: string;
+      edgeType?: string;
+    }
+  /** Graph steps (graphSteps.ts): they read a graph and make a frame or a smaller graph. */
+  | GraphStepKind;
 
 export type StepType = StepKind["type"];
 export type Step = StepKind & { id: string; disabled?: boolean };
@@ -101,7 +122,28 @@ export type Step = StepKind & { id: string; disabled?: boolean };
 export type AnalysisStep = Step;
 export type ProjectionStep = Extract<Step, { type: "toFrame" }>;
 
-export const isProjection = (step: Step): step is ProjectionStep => step.type === "toFrame";
+/** A projection of documents; a projection of a graph (`rows`) is a graph step. */
+export const isProjection = (step: Step): step is ProjectionStep =>
+  step.type === "toFrame" && step.rows === undefined;
+
+export const GRAPH_STEP_TYPES = [
+  "countLabels",
+  "countEdgeTypes",
+  "degreeDistribution",
+  "topDegree",
+  "sharedNeighbours",
+] as const satisfies readonly StepType[];
+
+/**
+ * Whether the step reads a graph. Graph steps run with their query, in the database where the
+ * source can, else on the server (docs/api/datasources.md, "Graph steps").
+ */
+export function isGraphStep(step: StepKind): boolean {
+  return (
+    (GRAPH_STEP_TYPES as readonly string[]).includes(step.type) ||
+    (step.type === "toFrame" && step.rows !== undefined)
+  );
+}
 
 export const STEP_TYPES: readonly StepType[] = [
   "calculate",
@@ -158,8 +200,33 @@ export interface NamedFrame {
   frame: Frame;
 }
 
-/** A query's result as the steps read it: a frame, or documents a projection may turn into one. */
-export type NamedInput = NamedFrame | { name: string; documents: DocumentSet };
+export interface NamedGraph {
+  name: string;
+  graph: GraphSet;
+}
+
+/**
+ * A query's result as the steps read it: a frame, documents a projection may turn into one, or a
+ * graph the graph steps read.
+ */
+export type NamedInput = NamedFrame | { name: string; documents: DocumentSet } | NamedGraph;
+
+/** Where a graph step ran on the server's side, and why it failed there. */
+export interface ServerStep {
+  ranIn: RanIn;
+  error?: ErrorBody | undefined;
+}
+
+/**
+ * What the server did with the graph steps (`steps` of a query's answer): where each ran, by step
+ * id. `results` holds each query's result after them when the inputs are the queries' own
+ * results (Explore), taken at the last step the server ran; without it, the inputs already are
+ * those results and the steps pass.
+ */
+export interface ServerSteps {
+  ran: ReadonlyMap<string, ServerStep>;
+  results?: ReadonlyMap<string, NamedInput>;
+}
 
 /** The frames each step reads. */
 export function stepFrames(step: StepKind): string[] {
@@ -170,7 +237,10 @@ export function stepFrames(step: StepKind): string[] {
 export function asStep(value: unknown): Step | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  const known = STEP_TYPES.includes(v.type as StepType) || v.type === "toFrame";
+  const known =
+    STEP_TYPES.includes(v.type as StepType) ||
+    v.type === "toFrame" ||
+    (GRAPH_STEP_TYPES as readonly unknown[]).includes(v.type);
   if (typeof v.id !== "string" || !known) return null;
   return value as Step;
 }
@@ -192,6 +262,10 @@ export interface StepOutcome {
   id: string;
   /** The frames after this step; absent when it failed or was not reached. */
   frames?: NamedFrame[];
+  /** The graphs after this step, with the frames. */
+  graphs?: NamedGraph[];
+  /** Where a graph step ran on the server's side; absent: in the browser, as a preview. */
+  ranIn?: RanIn;
   error?: Detail;
   /** Disabled, or after a failed step. */
   skipped: boolean;
@@ -200,6 +274,8 @@ export interface StepOutcome {
 export interface StepsRun {
   /** The frames after the last step that ran; the error, if any, is in `failed`. */
   frames: NamedFrame[];
+  /** The graphs no step turned into a frame, as the last step that ran left them. */
+  graphs: NamedGraph[];
   steps: StepOutcome[];
   failed?: { index: number; error: Detail };
 }
@@ -207,7 +283,8 @@ export interface StepsRun {
 /**
  * Runs the enabled steps in order; the first failure stops the run. A projection turns the
  * documents of its query into a frame at that query's place; documents are no frame for any
- * other step (as the server runs them).
+ * other step (as the server runs them). Graph steps read the graph of their query; one that makes
+ * a frame puts it at that query's place. Steps the server ran (`server`) take its results.
  */
 export function runSteps(
   steps: readonly Step[],
@@ -216,16 +293,32 @@ export function runSteps(
    * The calendar calculated fields read times in (UTC and Monday when absent), and smaller
    * limits for tests; the default limits are the server's.
    */
-  options: { textBudget?: number; maxCells?: number; calendar?: Calendar } = {},
+  options: { textBudget?: number; maxCells?: number; calendar?: Calendar; server?: ServerSteps } = {},
 ): StepsRun {
   const budget: Budget = {
     textLeft: options.textBudget ?? MAX_RUN_TEXT_UNITS,
     maxCells: options.maxCells ?? MAX_CELLS,
     calendar: options.calendar ?? UTC_CALENDAR,
   };
+  const server = options.server;
   const order = inputs.map((i) => i.name);
   const documents = inputs.flatMap((i) => ("documents" in i ? [i] : []));
   let current: NamedFrame[] = inputs.flatMap((i) => ("frame" in i ? [i] : []));
+  let graphs: NamedGraph[] = inputs.flatMap((i) => ("graph" in i ? [i] : []));
+  // The last step the server ran per query: where its result for that query stands.
+  const lastRan = new Map<string, string>();
+  for (const step of steps) {
+    if (step.disabled !== true && isGraphStep(step) && server?.ran.has(step.id) === true) {
+      lastRan.set(step.frame, step.id);
+    }
+  }
+  /** `name`'s result is `input` now, at that query's place. */
+  const put = (name: string, input: NamedInput) => {
+    current = current.filter((f) => f.name !== name);
+    graphs = graphs.filter((g) => g.name !== name);
+    if ("frame" in input) current = placed(current, { name, frame: input.frame }, order);
+    else if ("graph" in input) graphs = [...graphs, { name, graph: input.graph }];
+  };
   const outcomes: StepOutcome[] = [];
   let failed: StepsRun["failed"];
   steps.forEach((step, index) => {
@@ -233,23 +326,94 @@ export function runSteps(
       outcomes.push({ id: step.id, skipped: true });
       return;
     }
+    const ran = isGraphStep(step) ? server?.ran.get(step.id) : undefined;
     try {
-      current = isProjection(step)
-        ? project(step, current, documents, order)
-        : apply(step, current, budget);
-      outcomes.push({ id: step.id, frames: current, skipped: false });
+      if (ran !== undefined) {
+        const result = server?.results?.get(step.frame);
+        if (result !== undefined && lastRan.get(step.frame) === step.id) {
+          put(step.frame, result);
+        } else if (result !== undefined && graphs.some((g) => g.name === step.frame)) {
+          // A step before the last one the server ran: a preview of it on the graph here.
+          ({ current, graphs } = graphStep(step, current, graphs, order, budget));
+        }
+        if (ran.error !== undefined) {
+          throw new DetailError({
+            reason: ran.error.reason ?? ran.error.code,
+            params: ran.error.params ?? {},
+            message: ran.error.message,
+          });
+        }
+      } else if (isGraphStep(step)) {
+        ({ current, graphs } = graphStep(step, current, graphs, order, budget));
+      } else {
+        current = isProjection(step)
+          ? project(step, current, documents, order)
+          : apply(step, current, budget);
+      }
+      outcomes.push({
+        id: step.id,
+        frames: current,
+        graphs,
+        skipped: false,
+        ...(ran === undefined ? {} : { ranIn: ran.ranIn }),
+      });
     } catch (e) {
       const error =
         e instanceof DetailError
           ? e.detail
           : { reason: "internal", params: {}, message: e instanceof Error ? e.message : String(e) };
       failed = { index, error };
-      outcomes.push({ id: step.id, error, skipped: false });
+      outcomes.push({
+        id: step.id,
+        error,
+        skipped: false,
+        ...(ran === undefined ? {} : { ranIn: ran.ranIn }),
+      });
     }
   });
   return failed === undefined
-    ? { frames: current, steps: outcomes }
-    : { frames: current, steps: outcomes, failed };
+    ? { frames: current, graphs, steps: outcomes }
+    : { frames: current, graphs, steps: outcomes, failed };
+}
+
+/** `frames` with `added` in the place of its query, so the order stays the queries' order. */
+function placed(frames: NamedFrame[], added: NamedFrame, order: readonly string[]): NamedFrame[] {
+  const rank = (name: string) => {
+    const i = order.indexOf(name);
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  let place = 0;
+  while (place < frames.length && rank((frames[place] as NamedFrame).name) < rank(added.name)) {
+    place++;
+  }
+  const next = [...frames];
+  next.splice(place, 0, added);
+  return next;
+}
+
+function graphStep(
+  step: Step,
+  frames: NamedFrame[],
+  graphs: NamedGraph[],
+  order: readonly string[],
+  budget: Budget,
+): { current: NamedFrame[]; graphs: NamedGraph[] } {
+  const name = stepFrames(step)[0] ?? "";
+  const at = graphs.findIndex((g) => g.name === name);
+  const input = graphs[at];
+  if (input === undefined) {
+    throw detail("steps.not_graph", `the result ${name} is no graph`, { frame: name });
+  }
+  const out = applyGraphStep(step as Parameters<typeof applyGraphStep>[0], input.graph, budget.maxCells);
+  if ("graph" in out) {
+    const next = [...graphs];
+    next[at] = { name, graph: out.graph };
+    return { current: frames, graphs: next };
+  }
+  return {
+    current: placed(frames, { name, frame: out.frame }, order),
+    graphs: graphs.filter((_, i) => i !== at),
+  };
 }
 
 function project(
@@ -268,17 +432,7 @@ function project(
     });
   }
   documents.splice(at, 1);
-  const rank = (name: string) => {
-    const i = order.indexOf(name);
-    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
-  };
-  let place = 0;
-  while (place < frames.length && rank((frames[place] as NamedFrame).name) < rank(set.name)) {
-    place++;
-  }
-  const next = [...frames];
-  next.splice(place, 0, { name: set.name, frame: projectDocuments(set.documents, step.columns) });
-  return next;
+  return placed(frames, { name: set.name, frame: projectDocuments(set.documents, step.columns) }, order);
 }
 
 // ---- helpers ----
@@ -485,8 +639,8 @@ function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedF
     case "pivot":
       result = pivot(frame, step.row, step.column, step.value, step.op, budget);
       break;
-    case "toFrame":
-      // Projections run in runSteps; an existing frame passes unchanged.
+    default:
+      // Projections and graph steps run in runSteps; an existing frame passes a projection.
       result = frame;
       break;
   }

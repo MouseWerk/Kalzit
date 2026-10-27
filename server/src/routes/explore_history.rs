@@ -72,7 +72,7 @@ async fn try_record(
     let kept: Vec<(&QueryItem, String, &QueryResult)> = ran
         .iter()
         .filter_map(|(item, outcome)| {
-            let QueryOutcome::Ok { result } = outcome else { return None };
+            let QueryOutcome::Ok { result, .. } = outcome else { return None };
             let text = serde_json::to_string(&item.query).ok()?;
             (text.len() <= MAX_QUERY_BYTES).then_some((*item, text, result))
         })

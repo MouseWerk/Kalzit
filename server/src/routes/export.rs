@@ -44,7 +44,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::query::{api_error, check_variables, readable_model, resolve_variables};
+use super::query::{api_error, check_variables, graph_steps_of, readable_model, resolve_variables};
 use super::table::{RouteDef, route};
 use crate::analysis::expr::Calendar;
 use crate::analysis::steps::{self, Control, Input};
@@ -276,9 +276,16 @@ async fn make_query(state: &AppState, ctx: &OrgCtx, req: ExportRequest, wanted: 
     }
     let slots = acquire(state, ctx)?;
     let order: Vec<String> = req.queries.iter().map(|q| q.ref_id.clone()).collect();
+    // The graph steps run with their query, as when Explore shows the result.
+    let mut queries = req.queries;
+    for q in &mut queries {
+        if q.steps.is_empty() {
+            q.steps = graph_steps_of(&req.steps, &q.ref_id);
+        }
+    }
+    check_items(&queries)?;
     let response =
-        run_queries(state, ctx, req.queries, req.time_range, req.interval_ms, req.max_data_points, &req.variables)
-            .await;
+        run_queries(state, ctx, queries, req.time_range, req.interval_ms, req.max_data_points, &req.variables).await;
     let title = req.title.unwrap_or_else(|| "kalzit-export".into());
     let stream = produce(state, response, &order, steps, wanted, slots).await?;
     Ok(Made { file: stream, title, summary: wanted.summary() })
@@ -345,6 +352,7 @@ async fn make_panel(
             query: t.query.clone(),
             cursor: None,
             limit: None,
+            steps: graph_steps_of(&panel.transformations, &t.ref_id),
         })
         .collect();
     check_items(&items)?;
@@ -427,18 +435,27 @@ async fn produce(
         .and_then(|v| v.as_u64())
         .unwrap_or(DEFAULT_TIMEOUT_SECS);
     let mut inputs = Vec::new();
-    // Results that are no frame: exported only after a projection made one of them.
+    // Results that are no frame: exported only after a projection or a graph step made one.
     let mut other_shapes = Vec::new();
+    // Graph steps that ran with their query (in the database or on the server); their results
+    // are the inputs here.
+    let mut done = BTreeSet::new();
     for ref_id in order {
         match response.results.remove(ref_id) {
-            Some(QueryOutcome::Ok { result: QueryResult::Frame { frame } }) => {
-                inputs.push((ref_id.clone(), Input::Frame(frame)))
+            Some(QueryOutcome::Ok { result, steps: ran }) => {
+                done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
+                match result {
+                    QueryResult::Frame { frame } => inputs.push((ref_id.clone(), Input::Frame(frame))),
+                    QueryResult::Documents { documents } => {
+                        other_shapes.push((ref_id.clone(), Shape::Documents));
+                        inputs.push((ref_id.clone(), Input::Documents(documents)));
+                    }
+                    QueryResult::Graph { graph } => {
+                        other_shapes.push((ref_id.clone(), Shape::Graph));
+                        inputs.push((ref_id.clone(), Input::Graph(graph)));
+                    }
+                }
             }
-            Some(QueryOutcome::Ok { result: QueryResult::Documents { documents } }) => {
-                other_shapes.push((ref_id.clone(), Shape::Documents));
-                inputs.push((ref_id.clone(), Input::Documents(documents)));
-            }
-            Some(QueryOutcome::Ok { result }) => other_shapes.push((ref_id.clone(), result.shape())),
             Some(QueryOutcome::Err { error }) => return Err(api_error(error)),
             None => return Err(ApiError::internal("export", format!("no outcome for {ref_id}"))),
         }
@@ -455,7 +472,7 @@ async fn produce(
         let permit = permit;
         #[cfg(test)]
         tests::hold_if_asked(&steps);
-        let frames = steps::run_inputs(&steps, inputs, &control).map_err(|f| {
+        let (frames, _) = steps::run_shapes(&steps, inputs, &control, &done).map_err(|f| {
             let message = format!("step {}: {}", f.index + 1, f.detail.message);
             step_error(message, f.detail)
         })?;

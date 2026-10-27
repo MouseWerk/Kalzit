@@ -3,7 +3,7 @@
 //! The UI runs the same steps in `ui/src/analysis/steps.ts`.
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -14,7 +14,7 @@ use super::expr::{self, DAY_MS, number_text};
 use super::stats;
 use super::{Agg, Aggregation, CompareOutput, JoinMode, JoinOn, Period, Stat, Step, StepKind, TrendOutput};
 use crate::datasources::detail::Detail;
-use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta};
+use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta, GraphSet, QueryResult};
 
 /// Rows a join may produce; many-to-many keys could otherwise multiply the result.
 pub const MAX_ROWS: usize = 500_000;
@@ -117,7 +117,7 @@ impl Control {
 impl Control {
     /// Refuses a result of `rows` times `fields` cells above the limit (`MAX_CELLS`), before it
     /// is built.
-    fn cells(&self, rows: usize, fields: usize) -> Result<(), Detail> {
+    pub(super) fn cells(&self, rows: usize, fields: usize) -> Result<(), Detail> {
         let max = self.max_cells;
         if rows.saturating_mul(fields) > max {
             return Err(
@@ -150,11 +150,13 @@ pub struct StepFailure {
     pub detail: Detail,
 }
 
-/// A query's result as steps see it: a frame, or documents a projection may turn into one.
+/// A query's result as steps see it: a frame, documents a projection may turn into one, or a
+/// graph the graph steps read.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     Frame(Frame),
     Documents(DocumentSet),
+    Graph(GraphSet),
 }
 
 /// Runs the enabled steps in order; the first failure stops the run.
@@ -165,44 +167,104 @@ pub fn run(steps: &[Step], frames: Vec<NamedFrame>) -> Result<Vec<NamedFrame>, S
 
 /// `run` over results of any shape the steps read. Steps run in order; a projection (`toFrame`)
 /// turns the documents of its query into a frame at the place of that query, and the steps after
-/// it work on that frame. Documents are no frame for any other step.
+/// it work on that frame. Documents are no frame for any other step. Graph steps read the graph
+/// of their query; one that makes a frame puts it at the place of that query too. Graphs left at
+/// the end are not among the frames.
 pub fn run_inputs(
     steps: &[Step],
     inputs: Vec<(String, Input)>,
     control: &Control,
 ) -> Result<Vec<NamedFrame>, StepFailure> {
+    run_shapes(steps, inputs, control, &BTreeSet::new()).map(|(frames, _)| frames)
+}
+
+/// The frames and the graphs after the steps; steps whose id is in `done` already ran where the
+/// query ran (`datasources::run_queries`), and their results are among the inputs.
+pub fn run_shapes(
+    steps: &[Step],
+    inputs: Vec<(String, Input)>,
+    control: &Control,
+    done: &BTreeSet<String>,
+) -> Result<(Vec<NamedFrame>, Vec<(String, GraphSet)>), StepFailure> {
     let order: Vec<String> = inputs.iter().map(|(name, _)| name.clone()).collect();
     let mut documents: Vec<(String, DocumentSet)> = Vec::new();
+    let mut graphs: Vec<(String, GraphSet)> = Vec::new();
     let mut frames: Vec<NamedFrame> = Vec::new();
     for (name, input) in inputs {
         match input {
             Input::Frame(frame) => frames.push(NamedFrame { name, frame }),
             Input::Documents(set) => documents.push((name, set)),
+            Input::Graph(graph) => graphs.push((name, graph)),
         }
     }
+    // In the place of its query among the frames, so the order stays the queries' order.
+    let insert = |frames: &mut Vec<NamedFrame>, name: String, frame: Frame| {
+        let rank = |n: &str| order.iter().position(|o| o == n).unwrap_or(usize::MAX);
+        let place = frames.iter().take_while(|f| rank(&f.name) < rank(&name)).count();
+        frames.insert(place, NamedFrame { name, frame });
+    };
     for (index, step) in steps.iter().enumerate() {
-        if step.disabled {
+        if step.disabled || done.contains(&step.id) {
             continue;
         }
         control.check().map_err(|detail| StepFailure { index, detail })?;
-        let StepKind::ToFrame { frame: name, columns } = &step.kind else {
+        if step.kind.is_graph_step() {
+            let name = step.kind.frames()[0];
+            let Some(at) = graphs.iter().position(|(n, _)| n == name) else {
+                let detail = detail("steps.not_graph", format!("the result {name} is no graph")).with("frame", name);
+                return Err(StepFailure { index, detail });
+            };
+            match super::graph::apply(&step.kind, &graphs[at].1, control).map_err(|detail| StepFailure { index, detail })? {
+                super::graph::GraphOut::Graph(graph) => graphs[at].1 = graph,
+                super::graph::GraphOut::Frame(frame) => {
+                    let (name, _) = graphs.remove(at);
+                    insert(&mut frames, name, frame);
+                }
+            }
+            continue;
+        }
+        let StepKind::ToFrame { frame: name, columns, .. } = &step.kind else {
             apply(&step.kind, &mut frames, control).map_err(|detail| StepFailure { index, detail })?;
             continue;
         };
         if let Some(at) = documents.iter().position(|(n, _)| n == name) {
             let (name, set) = documents.remove(at);
             let frame = super::projection::project(&set, columns);
-            // In the place of its query among the frames, so the order stays the queries' order.
-            let rank = |n: &str| order.iter().position(|o| o == n).unwrap_or(usize::MAX);
-            let place = frames.iter().take_while(|f| rank(&f.name) < rank(&name)).count();
-            frames.insert(place, NamedFrame { name, frame });
+            insert(&mut frames, name, frame);
         } else if !frames.iter().any(|f| &f.name == name) {
             let detail =
                 detail("steps.frame_missing", format!("there is no result {name} to project")).with("frame", name);
             return Err(StepFailure { index, detail });
         }
     }
-    Ok(frames)
+    Ok((frames, graphs))
+}
+
+/// The result of one query after its graph steps (all of them graph steps of that query), as the
+/// query route answers it: a frame once a step made one, else the graph.
+pub fn run_graph_steps(
+    steps: &[Step],
+    name: &str,
+    result: QueryResult,
+    control: &Control,
+) -> Result<QueryResult, StepFailure> {
+    let QueryResult::Graph { graph } = result else {
+        // Graph steps read graphs only; without an enabled one, the result stays as it is.
+        return match steps.iter().position(|s| !s.disabled) {
+            Some(index) => Err(StepFailure {
+                index,
+                detail: detail("steps.not_graph", format!("the result {name} is no graph")).with("frame", name),
+            }),
+            None => Ok(result),
+        };
+    };
+    let (mut frames, mut graphs) =
+        run_shapes(steps, vec![(name.to_string(), Input::Graph(graph))], control, &BTreeSet::new())?;
+    Ok(match (frames.pop(), graphs.pop()) {
+        (Some(f), _) => QueryResult::Frame { frame: f.frame },
+        (None, Some((_, graph))) => QueryResult::Graph { graph },
+        (None, None) => unreachable!("a graph stays a graph or becomes a frame"),
+    })
 }
 
 fn detail(reason: &'static str, message: String) -> Detail {
@@ -423,7 +485,13 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         }
         StepKind::Group { by, aggregations, .. } => group(frame, by, aggregations, control)?,
         StepKind::Pivot { row, column, value, op, .. } => pivot(frame, row, column, value, *op, control)?,
-        StepKind::Join { .. } | StepKind::ToFrame { .. } => unreachable!("joins above, projections in run_inputs"),
+        StepKind::Join { .. }
+        | StepKind::ToFrame { .. }
+        | StepKind::CountLabels { .. }
+        | StepKind::CountEdgeTypes { .. }
+        | StepKind::DegreeDistribution { .. }
+        | StepKind::TopDegree { .. }
+        | StepKind::SharedNeighbours { .. } => unreachable!("joins above, projections and graph steps in run_shapes"),
     };
     frames[index].frame = result;
     Ok(())

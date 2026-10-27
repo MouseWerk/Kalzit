@@ -419,6 +419,15 @@ impl DataSourcePlugin for GraphDb {
         &[Shape::Graph, Shape::Frame]
     }
 
+    fn pushdown(&self, query: &Value, step: &crate::analysis::StepKind) -> Option<Value> {
+        let q = CypherQuery::deserialize(query).ok()?;
+        let dialect = match self.0 {
+            Flavor::Neo4j => crate::analysis::pushdown::Dialect::Neo4j,
+            Flavor::Memgraph => crate::analysis::pushdown::Dialect::Memgraph,
+        };
+        crate::analysis::pushdown::cypher(&q.cypher, step, dialect).map(|cypher| json!({ "cypher": cypher }))
+    }
+
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
         let s = Settings::deserialize(settings)
             .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
