@@ -120,6 +120,28 @@
     font-size: var(--font-size-sm);
   }
 
+  /*
+   * A value in a panel that sets a dashboard variable when clicked (a table cell, a field of a
+   * document card): it reads as the value, with a dotted underline that says it can be clicked.
+   */
+  .value-pick {
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+    cursor: pointer;
+  }
+
+  .value-pick:hover {
+    background: var(--bg-hover);
+  }
+
   /* Forms */
 
   .form {

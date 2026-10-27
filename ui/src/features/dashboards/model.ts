@@ -132,6 +132,44 @@ export interface VariableModel {
   current?: unknown;
   /** Several values at once (custom and query variables); repeats need it. */
   multi?: boolean;
+  /**
+   * `query`: how options come from a graph or documents result (without it, from a table's first
+   * column). The explicit projection the server applies too (`routes/query.rs`, `options_from`).
+   */
+  valuesFrom?: ValuesFrom | undefined;
+}
+
+export const VALUES_SOURCES = ["nodes", "edges", "documents"] as const;
+export type ValuesSource = (typeof VALUES_SOURCES)[number];
+
+/**
+ * Each node, edge or document gives the value at `value` (a property, or a dotted path for
+ * documents; empty for nodes and edges takes the id) and the label at `text`. `label` keeps only
+ * nodes with that label or edges of that type.
+ */
+export interface ValuesFrom {
+  from: ValuesSource;
+  label?: string;
+  value?: string;
+  text?: string;
+}
+
+function parseValuesFrom(value: unknown): ValuesFrom | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const from = VALUES_SOURCES.find((s) => s === value.from);
+  if (from === undefined) {
+    return null;
+  }
+  const out: ValuesFrom = { from };
+  for (const key of ["label", "value", "text"] as const) {
+    const text = value[key];
+    if (typeof text === "string" && text !== "") {
+      out[key] = text;
+    }
+  }
+  return out;
 }
 
 const asText = (value: unknown): string | null =>
@@ -444,6 +482,10 @@ function parseVariable(value: unknown): VariableModel | null {
   if (value.multi === true) {
     variable.multi = true;
   }
+  const valuesFrom = parseValuesFrom(value.valuesFrom);
+  if (valuesFrom !== null) {
+    variable.valuesFrom = valuesFrom;
+  }
   return variable;
 }
 
@@ -462,6 +504,7 @@ export function cleanVariable(variable: VariableModel): VariableModel {
   if (clean.multi !== true || (clean.type !== "custom" && clean.type !== "query")) {
     delete clean.multi;
   }
+  if (clean.type !== "query" || clean.valuesFrom === undefined) delete clean.valuesFrom;
   return clean;
 }
 

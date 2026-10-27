@@ -368,5 +368,22 @@
   "panels.graph.comparison": "Comparison series: muted and dashed",
   "panels.checkingPattern": "Checking the pattern…",
   "panels.state.colorStateWords": "Color known state words",
-  "panels.state.colorStateWordsHint": "A value that is a state word takes its color: ok, up, healthy, success and passed good; warning, degraded and pending warning; down, error, failed, failure, critical and offline danger; unknown neutral. A value mapping, thresholds or a field color come first."
+  "panels.state.colorStateWordsHint": "A value that is a state word takes its color: ok, up, healthy, success and passed good; warning, degraded and pending warning; down, error, failed, failure, critical and offline danger; unknown neutral. A value mapping, thresholds or a field color come first.",
+  "panels.variable.triggerDocuments": "Clicking a document or value sets",
+  "panels.variable.triggerCard": "Clicking a value sets",
+  "panels.variable.triggerTable": "Clicking a row sets",
+  "panels.variable.hint": "A dashboard variable, so other panels follow the click, also those with another kind of result.",
+  "panels.variable.none": "The dashboard has no variables yet. Add one in the dashboard settings.",
+  "panels.variable.off": "No variable",
+  "panels.variable.path": "Field path for the variable (optional)",
+  "panels.variable.pathHintDocuments": "A path in the clicked document, for example customer.id. Empty uses the clicked value, or _id for a whole document.",
+  "panels.variable.pathHintCard": "A path in the shown document, for example customer.id. Empty uses the clicked value.",
+  "panels.variable.column": "Column for the variable (optional)",
+  "panels.variable.columnHint": "The column’s name as the header shows it, or its field name. Empty uses the first column.",
+  "panels.variable.noColumn": "No column is called {column}, so a click on a row sets nothing.",
+  "panels.variable.setAction": "Set ${name}",
+  "panels.variable.setTo": "Set ${name} to {value}",
+  "panels.variable.announce": "${name} is now {value}",
+  "panels.variable.refused": "${name} has no value {value}, so it stays as it is.",
+  "panels.variable.empty": "There is no value here, so ${name} stays as it is."
 }

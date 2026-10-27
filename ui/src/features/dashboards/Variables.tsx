@@ -3,7 +3,9 @@ import { type ReactNode, useEffect, useId, useState } from "react";
 import { ApiError, isApiError } from "../../api/client";
 import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
+import { valueAt } from "../../documents/paths";
 import { useI18n } from "../../i18n/i18n";
+import { variableText } from "../../panels/variableClick";
 import { runQuery } from "../datasources/api";
 import { fetchVariableOptions, type VariableOption } from "./api";
 import {
@@ -11,6 +13,7 @@ import {
   currentValues,
   optionChoices,
   storedQueryVariables,
+  type ValuesFrom,
   type VariableModel,
   type VariableValue,
   type VariableValues,
@@ -62,33 +65,89 @@ export function referencedNames(query: unknown): Set<string> {
   return new Set([...text.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? ""));
 }
 
-/** The first frame's first field as values, its second field (if any) as labels. */
-function optionsFromResponse(response: QueryResponse): VariableOption[] {
+/** The most options a query variable offers, as on the server (`MAX_OPTIONS`). */
+export const MAX_VARIABLE_OPTIONS = 10_000;
+
+/**
+ * The options of a query variable's result, as the server reads them (`options_from`): a frame's
+ * first field as values and its second (if any) as labels; a graph or documents result only
+ * through `valuesFrom`, the explicit projection. Another shape gives no options. Distinct by
+ * value, at most `MAX_VARIABLE_OPTIONS`; `truncated` when that cap or a limit of the result cut
+ * the list.
+ */
+export function optionsFromResponse(
+  response: QueryResponse,
+  valuesFrom?: ValuesFrom,
+): { options: VariableOption[]; truncated: boolean } {
   const outcome = Object.values(response.results)[0];
   if (outcome === undefined) {
-    return [];
+    return { options: [], truncated: false };
   }
   if ("error" in outcome) {
     throw new ApiError(outcome.error.code, 200, outcome.error.message);
   }
-  if (outcome.result.shape !== "frame") {
-    return [];
-  }
-  const [values, labels] = outcome.result.frame.fields;
   const seen = new Set<string>();
   const options: VariableOption[] = [];
-  (values?.values ?? []).forEach((raw, row) => {
-    if (raw === null || raw === undefined) {
+  let truncated = false;
+  const add = (value: string | null, label: string | null) => {
+    if (value === null || seen.has(value)) {
       return;
     }
-    const value = String(raw);
-    if (!seen.has(value)) {
-      seen.add(value);
-      const label = labels?.values[row];
-      options.push({ value, label: label === null || label === undefined ? value : String(label) });
+    if (options.length === MAX_VARIABLE_OPTIONS) {
+      truncated = true;
+      return;
     }
-  });
-  return options;
+    seen.add(value);
+    options.push({ value, label: label ?? value });
+  };
+  const result = outcome.result;
+  if (result.shape === "frame") {
+    truncated = result.frame.meta?.rowsTruncated === true;
+  } else if (result.shape === "graph") {
+    truncated = result.graph.truncated !== undefined;
+  } else {
+    truncated =
+      result.documents.truncated !== undefined || result.documents.nextCursor !== undefined;
+  }
+  if (result.shape === "frame" && valuesFrom === undefined) {
+    const [values, labels] = result.frame.fields;
+    (values?.values ?? []).forEach((raw, row) => {
+      if (raw !== null && raw !== undefined) {
+        const label = labels?.values[row];
+        add(String(raw), label === null || label === undefined ? null : String(label));
+      }
+    });
+  } else if (
+    result.shape === "graph" &&
+    valuesFrom !== undefined &&
+    valuesFrom.from !== "documents"
+  ) {
+    const { label: wanted, value: key, text } = valuesFrom;
+    const elements =
+      valuesFrom.from === "nodes"
+        ? result.graph.nodes
+            .filter((n) => !wanted || n.labels.includes(wanted))
+            .map((n) => ({ id: n.id, properties: n.properties }))
+        : result.graph.edges
+            .filter((e) => !wanted || e.type === wanted)
+            .map((e) => ({ id: e.id, properties: e.properties }));
+    for (const element of elements) {
+      add(
+        key ? variableText(element.properties[key]) : element.id,
+        text ? variableText(element.properties[text]) : null,
+      );
+    }
+  } else if (result.shape === "documents" && valuesFrom?.from === "documents") {
+    const path = valuesFrom.value ?? "";
+    for (const document of result.documents.documents) {
+      const label = valuesFrom.text ? variableText(valueAt(document, valuesFrom.text)) : null;
+      const value = valueAt(document, path);
+      for (const item of Array.isArray(value) ? value : [value]) {
+        add(variableText(item), label);
+      }
+    }
+  }
+  return { options, truncated };
 }
 
 /** One control per dashboard variable, above the panels. */
@@ -211,7 +270,7 @@ function VariableControl({
         },
         signal,
       );
-      return { options: optionsFromResponse(response), truncated: false };
+      return optionsFromResponse(response, variable.valuesFrom);
     },
     enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
     // Options belong to the stored range text; "Refresh" or a new range reads them again.

@@ -340,5 +340,19 @@
   "dashboards.variables.more": "+{count}",
   "dashboards.variables.count": "{count} Werte",
   "dashboards.variables.quick": "Schnellauswahl",
-  "dashboards.variables.picker": "{label}: {value}"
+  "dashboards.variables.picker": "{label}: {value}",
+  "dashboards.variables.valuesFrom": "Werte aus",
+  "dashboards.variables.valuesFromHint": "Ein Graph oder Dokumente behalten ihre Form; wähle, was zur Liste der Werte wird.",
+  "dashboards.variables.valuesFrom.frame": "Erste Spalte einer Tabelle",
+  "dashboards.variables.valuesFrom.nodes": "Knoten",
+  "dashboards.variables.valuesFrom.edges": "Beziehungen",
+  "dashboards.variables.valuesFrom.documents": "Dokumente",
+  "dashboards.variables.valuesFrom.nodeLabel": "Nur Knoten mit dem Label (optional)",
+  "dashboards.variables.valuesFrom.edgeType": "Nur Beziehungen vom Typ (optional)",
+  "dashboards.variables.valuesFrom.property": "Property für den Wert (optional)",
+  "dashboards.variables.valuesFrom.propertyHint": "Leer nimmt die ID.",
+  "dashboards.variables.valuesFrom.path": "Feldpfad für den Wert",
+  "dashboards.variables.valuesFrom.pathHint": "Zum Beispiel customer.id. Eine Liste ergibt einen Wert je Eintrag.",
+  "dashboards.variables.valuesFrom.text": "Angezeigter Name (optional)",
+  "dashboards.variables.valuesFrom.textHint": "Eine Property oder ein Feldpfad, dessen Wert jeden Eintrag benennt. Leer zeigt den Wert."
 }

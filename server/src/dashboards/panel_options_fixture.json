@@ -1241,7 +1241,9 @@
     "options": {
       "columnFilters": false,
       "pagination": false,
-      "pageSize": 50
+      "pageSize": 50,
+      "variable": "",
+      "variableColumn": ""
     },
     "fieldConfig": {
       "defaults": {},
@@ -1253,7 +1255,9 @@
     "options": {
       "columnFilters": false,
       "pagination": false,
-      "pageSize": 50
+      "pageSize": 50,
+      "variable": "",
+      "variableColumn": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -1305,7 +1309,9 @@
     "options": {
       "columnFilters": false,
       "pagination": false,
-      "pageSize": 50
+      "pageSize": 50,
+      "variable": "",
+      "variableColumn": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -1321,7 +1327,9 @@
     "options": {
       "columnFilters": false,
       "pagination": false,
-      "pageSize": 50
+      "pageSize": 50,
+      "variable": "",
+      "variableColumn": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -1396,7 +1404,9 @@
     "options": {
       "columnFilters": false,
       "pagination": false,
-      "pageSize": 50
+      "pageSize": 50,
+      "variable": "",
+      "variableColumn": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -1457,6 +1467,20 @@
           }
         }
       ]
+    }
+  },
+  {
+    "type": "table",
+    "options": {
+      "columnFilters": false,
+      "pagination": false,
+      "pageSize": 50,
+      "variable": "customer",
+      "variableColumn": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
     }
   },
   {
@@ -2809,7 +2833,10 @@
   },
   {
     "type": "documents",
-    "options": {},
+    "options": {
+      "variable": "",
+      "variablePath": ""
+    },
     "fieldConfig": {
       "defaults": {},
       "overrides": []
@@ -2817,7 +2844,10 @@
   },
   {
     "type": "documents",
-    "options": {},
+    "options": {
+      "variable": "",
+      "variablePath": ""
+    },
     "fieldConfig": {
       "defaults": {
         "colorScheme": "thresholds",
@@ -2865,7 +2895,10 @@
   },
   {
     "type": "documents",
-    "options": {},
+    "options": {
+      "variable": "",
+      "variablePath": ""
+    },
     "fieldConfig": {
       "defaults": {
         "colorScheme": "single",
@@ -2877,7 +2910,10 @@
   },
   {
     "type": "documents",
-    "options": {},
+    "options": {
+      "variable": "",
+      "variablePath": ""
+    },
     "fieldConfig": {
       "defaults": {
         "unit": "suffix:",
@@ -2948,7 +2984,10 @@
   },
   {
     "type": "documents",
-    "options": {},
+    "options": {
+      "variable": "",
+      "variablePath": ""
+    },
     "fieldConfig": {
       "defaults": {
         "drawStyle": "line",
@@ -3008,6 +3047,17 @@
           }
         }
       ]
+    }
+  },
+  {
+    "type": "documents",
+    "options": {
+      "variable": "customer",
+      "variablePath": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
     }
   },
   {
@@ -3429,7 +3479,9 @@
   {
     "type": "document",
     "options": {
-      "titlePath": ""
+      "titlePath": "",
+      "variable": "",
+      "variablePath": ""
     },
     "fieldConfig": {
       "defaults": {},
@@ -3439,7 +3491,9 @@
   {
     "type": "document",
     "options": {
-      "titlePath": ""
+      "titlePath": "",
+      "variable": "",
+      "variablePath": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -3489,7 +3543,9 @@
   {
     "type": "document",
     "options": {
-      "titlePath": ""
+      "titlePath": "",
+      "variable": "",
+      "variablePath": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -3503,7 +3559,9 @@
   {
     "type": "document",
     "options": {
-      "titlePath": ""
+      "titlePath": "",
+      "variable": "",
+      "variablePath": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -3576,7 +3634,9 @@
   {
     "type": "document",
     "options": {
-      "titlePath": ""
+      "titlePath": "",
+      "variable": "",
+      "variablePath": ""
     },
     "fieldConfig": {
       "defaults": {
@@ -3637,6 +3697,18 @@
           }
         }
       ]
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": "",
+      "variable": "customer",
+      "variablePath": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
     }
   },
   {

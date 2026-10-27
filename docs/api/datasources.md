@@ -799,15 +799,32 @@ impersonation), label-based (fine-grained) permissions, which can allow writes o
 and a privilege granted after the last check (at most a minute on a pooled connection). The query
 check refuses the statements behind all of them.
 
-Parameters: variables are bound as Cypher parameters (`$name`), never spliced into the text; a
-list becomes a list. Macros: `$__timeFrom`, `$__timeTo` (UTC DateTime values),
-`$__timeFromMs`, `$__timeToMs` and `$__interval_ms` (integers). `meta.executedQuery` of a frame is
-the query as sent.
+Parameters: variables are bound as Cypher parameters (`$name`), never spliced into the text, so
+a value such as `Ana' OR 1=1 //` stays one string and matches nothing. Types are kept: text stays
+a string, a JSON number an integer or float, `true`/`false` a boolean, and a multi-value
+variable (a list) a list, for `WHERE c.id IN $ids`. A value picked in the UI or set by a click is
+text; compare with `toInteger($id)` or `toString(c.id)` when the property holds numbers. A
+parameter without a value is refused (`cypher.variable_missing`), as is an object
+(`cypher.variable_type`).
+
+A parameter inside a dynamic label or relationship type (`n:$($label)`, `[r:$any($types)]`,
+`$all(...)`, Neo4j 5.26 and later) or a dynamic property key (`n[$key]`, also any subscript right
+after an expression, such as a list index `list[$i]` or slice) names what the query reads, like
+`${x:identifier}` in SQL, so the same rule applies: on a dashboard only `constant` and `custom` variables may be used there,
+since only their values are listed in the dashboard; any other variable, and a macro, answers
+`cypher.variable_identifier`. In Explore every variable is the caller's own and may be used.
+
+Macros: `$__timeFrom`, `$__timeTo` (UTC DateTime values), `$__timeFromMs`, `$__timeToMs` and
+`$__interval_ms` (integers). `meta.executedQuery` of a frame is the query as sent.
 
 ### TigerGraph: `{"gsql": "INTERPRET QUERY ..."}` or `{"installed": "name"}`
 
 Both take `params` (an object), and each declared parameter that has no value there takes the
-dashboard variable of the same name.
+dashboard variable of the same name. Variables never become GSQL text: a variable the query does
+not declare is not sent, and `$name` or `${name}` written into the GSQL code is refused
+(`gsql.variable_text`) with the hint to declare a parameter instead; inside a string it is plain
+text. A multi-value variable fills a `SET`, `BAG` or `LIST` parameter and is refused for a single
+value (`tigergraph.param_type`), before anything is sent.
 
 - Interpreted queries go to the GSQL server with the user and password: 4.x
   `POST /gsql/v1/queries/interpret?graph=<graph>`, 3.x `POST /gsqlserver/interpreted_query`. The
@@ -1168,6 +1185,10 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
 - Only `constant` and `custom` variables may be used as identifiers (`${x:identifier}`), since only
   their values are checked against the dashboard's own list; any other variable used that way
   answers `query_rejected` for that target. Identifiers must also be in the source's schema.
+- Graph sources take the same values: Cypher as Bolt parameters (a dynamic label or type only
+  from `constant` and `custom` variables), GSQL as typed REST++ parameters of the declared
+  parameters. So a click on a MongoDB document that sets `$customerId` reaches a Cypher panel as
+  `$customerId`, never as text in its query.
 
 Breaking a rule answers `422 validation` with `field: variables`. The same rules hold for
 Prometheus label matchers.
@@ -1191,10 +1212,32 @@ that is not of type `query` is `422 validation`.
 ```
 
 - `value` is the first field of the result, `label` the second field or the value again.
+- A `graph` or `documents` result keeps its shape and gives options only through the variable's
+  `valuesFrom`, the explicit projection stored with it (`valuesFrom` is only for query
+  variables):
+
+  ```json
+  { "name": "customerId", "type": "query", "datasourceId": "...",
+    "query": { "cypher": "MATCH (c:Customer) RETURN c" },
+    "valuesFrom": { "from": "nodes", "label": "Customer", "value": "customerId", "text": "name" } }
+  ```
+
+  `from` is `nodes`, `edges` or `documents`. For nodes and edges, `label` keeps only nodes with
+  that label or edges of that type (empty: all), `value` is the property whose value is the
+  option (empty: the element id) and `text` the property whose value labels it (empty: the
+  value). For documents, `value` is a required dotted field path (`customer.id`, `items.0.sku`;
+  a list gives one option per entry) and `text` a path for the label; `label` is refused. Typed
+  values (`int64`, object ids, dates) give their text; elements without the property are
+  skipped. Without `valuesFrom` such a result answers `variables.not_a_frame`, and so does a
+  `valuesFrom` that names another shape than the result's, or a frame with `valuesFrom`.
+  `truncated` is also true when the graph or document set was cut, or more documents follow.
 - Options are distinct by value, in the query's order; empty values are skipped. `int64` stays its
   decimal text, `time` becomes ISO 8601 in UTC (`2025-01-01T10:00:00.000Z`), numbers and booleans
   their JSON text.
 - At most 10,000 options; `truncated` is true when that limit or the query's row limit cut the list.
+  The query reads at most 10,000 rows, nodes or documents, not 10,000 distinct values: many
+  records with the same value give fewer options. Make the values distinct in the query
+  (`RETURN DISTINCT`, a `$group` stage) when a source has more records than that.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
 
@@ -1483,6 +1526,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `cypher.macro_unknown` | `name` | an unknown `$__` macro |
 | `cypher.variable_missing` | `name` | a parameter without a variable value |
 | `cypher.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
+| `cypher.variable_identifier` | `name` | a dynamic label, type or property key (`$(...)`, `$any(...)`, `$all(...)`, `n[$key]`) with a macro, or on a dashboard with a variable that is not `constant` or `custom` |
 | `gsql.empty` | | the GSQL query is empty |
 | `gsql.not_one_query` | | not exactly one `INTERPRET QUERY` (interpreted) or `CREATE QUERY` (installed text) |
 | `gsql.parse_error` | `detail` | the query cannot be read for the check |
@@ -1497,6 +1541,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `gsql.typedef_name` | `name` | a `TYPEDEF` named like a built-in, a query or a name used before it, or any `TYPEDEF` when the graph's query names cannot be read |
 | `gsql.string_escape` | | `\"` inside a string |
 | `gsql.unexpected_character` | `character` | a character outside ASCII, or `#`, outside strings and comments |
+| `gsql.variable_text` | `name` | `$name` or `${name}` written into the GSQL code; declare a query parameter instead |
 | `gsql.unclosed_quote`, `gsql.unclosed_comment` | | an unclosed string or comment |
 | `tigergraph.query_name` | `name` | `installed` is not a query name |
 | `tigergraph.query_text_unreadable` | `name` | the installed query's text cannot be read and the query is not approved |
@@ -1516,7 +1561,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.value_type` | `name` | not a value or a list of values |
 | `variables.self_dependency` | `name` | the options request sends the variable's own value |
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
-| `variables.not_a_frame` | | the variable's query does not answer a table (no `field`) |
+| `variables.not_a_frame` | | the variable's query does not answer a table and has no `valuesFrom` for its shape, or answers a table and has one (no `field`) |
 
 ### Field distributions
 
