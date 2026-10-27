@@ -851,6 +851,8 @@ What a real TigerGraph 4.2.5 (Community Edition) does, checked every night by
   writing ones too, for anyone who reaches it, and the reader user protects nothing there. Turn it
   on (`gadmin config set RESTPP.Factory.EnableAuth true`, `gadmin config apply -y`,
   `gadmin restart restpp -y`); with it, a call without a token answers 403.
+- TigerGraph's own HTTPS (`Nginx.SSL.Enable`) needs an Enterprise license; the Community Edition
+  refuses it. HTTPS with `caCert` is tested through a reverse proxy in front of it.
 - 3.x is not tested against a real server (no 3.x image is published for free use); its paths
   are tested against the fake only.
 
