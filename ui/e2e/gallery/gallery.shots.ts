@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
 import { Api, baseUrl, fixturesDir } from "../support/api";
@@ -46,10 +46,21 @@ interface Seeded {
   steps: string;
 }
 
-let seeded: Seeded;
+/**
+ * The ids of what the first scene seeded, kept in a file beside the fixtures: one worker runs the
+ * scenes in order, and after a failed scene it starts anew, so a module variable would be lost
+ * while the server and its data stay.
+ */
+function seededFile(): string {
+  return join(fixturesDir(), "gallery-seeded().json");
+}
 
-// One seeded server for all scenes: a failure stops the run instead of seeding again.
-test.describe.configure({ mode: "serial" });
+let cached: Seeded | undefined;
+
+function seeded(): Seeded {
+  cached ??= JSON.parse(readFileSync(seededFile(), "utf8")) as Seeded;
+  return cached;
+}
 
 function service(name: string): string {
   const value = process.env[name] ?? "";
@@ -168,7 +179,8 @@ function card(page: Page, title: string): Locator {
 async function noEmptyPanels(page: Page): Promise<void> {
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
   await expect(page.locator(".panel-empty")).toHaveCount(0);
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  // Alert regions stay on the page while empty; only one with a message counts.
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(0);
 }
 
 /** Waits until a graph panel has drawn and its layout has settled. */
@@ -288,7 +300,7 @@ function overviewDashboard(sql: string): Record<string, unknown> {
       {
         id: "inlet",
         type: "timeseries",
-        title: "Inlet temperature per row, $hall",
+        title: "Inlet temperature per row",
         grid: { x: 14, y: 4, w: 10, h: 8 },
         targets: sqlTarget(sql, INLET_PER_ROW),
         options: {},
@@ -297,14 +309,15 @@ function overviewDashboard(sql: string): Record<string, unknown> {
       {
         id: "rows",
         type: "bar",
-        title: "Average power per row, $hall",
+        title: "Average power per row",
         grid: { x: 0, y: 12, w: 7, h: 8 },
         targets: sqlTarget(
           sql,
-          "SELECT 'Row ' || row AS row, ROUND(AVG(total)) AS power FROM (SELECT ts, row, SUM(power_w) AS total FROM rack_metrics WHERE hall = $hall AND $__timeFilter(ts) GROUP BY ts, row) GROUP BY row ORDER BY row",
+          "SELECT 'Row ' || row AS row, ROUND(AVG(total) / 1000.0, 1) AS power FROM (SELECT ts, row, SUM(power_w) AS total FROM rack_metrics WHERE hall = $hall AND $__timeFilter(ts) GROUP BY ts, row) GROUP BY row ORDER BY row",
         ),
         options: { legend: { mode: "hidden", placement: "bottom", values: [] } },
-        fieldConfig: { defaults: { unit: "watt" }, overrides: [] },
+        // In kW with a custom suffix: the watt unit writes the axis' zero as "0 nW".
+        fieldConfig: { defaults: { unit: "suffix:kW" }, overrides: [] },
       },
       {
         id: "pue-halls",
@@ -731,7 +744,7 @@ test("setup, then the example data", async ({ browser }) => {
     await page.context().close();
   }
   await Api.setup({ token: process.env.KALZIT_E2E_SETUP_TOKEN ?? "", ...OWNER });
-  seeded = await seed();
+  writeFileSync(seededFile(), JSON.stringify(await seed()));
 });
 
 for (const scheme of SCHEMES) {
@@ -746,7 +759,7 @@ for (const scheme of SCHEMES) {
 }
 
 async function overviewReady(page: Page): Promise<void> {
-  await openDashboard(page, seeded.overview, OVERVIEW);
+  await openDashboard(page, seeded().overview, OVERVIEW);
   await expect(page.locator(".uplot")).toHaveCount(2);
   await expect(page.locator(".stat")).toHaveCount(4);
   await expect(card(page, "Racks with the highest power draw").getByRole("table")).toBeVisible();
@@ -767,7 +780,7 @@ for (const scheme of SCHEMES) {
   test(`overview dashboard, phone, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme, { width: 390, height: 844 });
     await signIn(page);
-    await openDashboard(page, seeded.overview, OVERVIEW);
+    await openDashboard(page, seeded().overview, OVERVIEW);
     await expect(page.locator(".stat").first()).toBeVisible();
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
     await shoot(page, `dashboard-phone-${scheme}`);
@@ -779,7 +792,7 @@ for (const scheme of SCHEMES) {
   test(`graph network with the node inspector, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
-    await openDashboard(page, seeded.topology, TOPOLOGY);
+    await openDashboard(page, seeded().topology, TOPOLOGY);
     const panel = card(page, TOPOLOGY_PANEL);
     await selectNode(panel, TOPOLOGY_PANEL, "srv-b1-01-1");
     await showDrawing(panel, TOPOLOGY_PANEL);
@@ -796,7 +809,7 @@ for (const scheme of SCHEMES) {
   test(`graph hierarchy, paths and explorer, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
-    await openDashboard(page, seeded.graphViews, GRAPH_VIEWS);
+    await openDashboard(page, seeded().graphViews, GRAPH_VIEWS);
     await graphDrawn(card(page, PANEL.hierarchy), PANEL.hierarchy);
     await expect(
       card(page, PANEL.network).getByRole("heading", {
@@ -839,7 +852,7 @@ for (const scheme of SCHEMES) {
   test(`MongoDB pipeline with a stage preview, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
-    await page.goto(`/explore?analysis=${seeded.pipeline}`);
+    await page.goto(`/explore?analysis=${seeded().pipeline}`);
     await expect(page.getByRole("heading", { name: PIPELINE })).toBeVisible();
     const result = page.getByRole("region", { name: t("explore.result") });
     await expect(result.getByRole("tree").first()).toBeVisible();
@@ -860,7 +873,7 @@ for (const scheme of SCHEMES) {
   test(`documents dashboard, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
-    await openDashboard(page, seeded.documents, DOCUMENTS);
+    await openDashboard(page, seeded().documents, DOCUMENTS);
     await expect(card(page, "Incidents, newest first").getByRole("tree").first()).toBeVisible();
     await expect(card(page, "Fields of the asset records")).toContainText("hardware");
     await noEmptyPanels(page);
@@ -873,7 +886,7 @@ for (const scheme of SCHEMES) {
   test(`explore, saved analysis with steps, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
-    await page.goto(`/explore?analysis=${seeded.steps}`);
+    await page.goto(`/explore?analysis=${seeded().steps}`);
     await expect(page.getByRole("heading", { name: STEPS })).toBeVisible();
     const result = page.getByRole("region", { name: t("explore.result") });
     await expect(result.locator(".uplot")).toBeVisible();
@@ -887,7 +900,7 @@ for (const scheme of SCHEMES) {
   test(`all sources dashboard, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
-    await openDashboard(page, seeded.allSources, ALL_SOURCES);
+    await openDashboard(page, seeded().allSources, ALL_SOURCES);
     await expect(page.locator(".uplot")).toHaveCount(1);
     await graphDrawn(
       card(page, "Power chain from grid to racks (Neo4j)"),
@@ -903,7 +916,7 @@ for (const scheme of SCHEMES) {
   test(`live dashboard, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
-    await openDashboard(page, seeded.live, LIVE);
+    await openDashboard(page, seeded().live, LIVE);
     await page
       .getByRole("button", {
         name: t("toolbar.refresh.menuRunning", {
