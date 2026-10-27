@@ -807,8 +807,8 @@ through `settings::get`; new registry entries are requested from the orchestrato
   seeds both from `ui/e2e/fixtures/graph-shop.cypher` and names them in `KALZIT_E2E_NEO4J` and
   `KALZIT_E2E_MEMGRAPH` (`host:port`), and `graph.spec.ts` skips on Windows with that reason.
   Neither community edition has read-only users, so the Neo4j source relies on Neo4j enforcing
-  Kalzit's read transactions and the Memgraph source has `allowWriteCapableUser` set. The HTTP JSON spec serves its fixture from a small server inside the test, on a free
-  loopback port.
+  Kalzit's read transactions and the Memgraph source has `allowWriteCapableUser` set. The HTTP
+  JSON spec serves its fixture from a small server inside the test, on a free loopback port.
   Run locally from `ui/`:
 
   ```

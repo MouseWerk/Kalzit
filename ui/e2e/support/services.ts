@@ -38,9 +38,10 @@ type Service =
 /**
  * The address of a database server some specs read beside the fixture files: MongoDB
  * (`host:port`, seeded with e2e/fixtures/mongo-orders.js), OpenSearch (a base URL), Neo4j and
- * Memgraph (`host:port`, seeded with e2e/fixtures/graph-shop.cypher). CI starts them on Linux (.github/scripts/e2e-services.sh). Windows runners cannot run Linux containers,
- * so there the spec is skipped with this reason and the Windows checklist of the release covers
- * these sources by hand. On Linux in CI a missing service fails instead of passing silently.
+ * Memgraph (`host:port`, seeded with e2e/fixtures/graph-shop.cypher). CI starts them on Linux
+ * (.github/scripts/e2e-services.sh). Windows runners cannot run Linux containers, so there the
+ * spec is skipped with this reason and the Windows checklist of the release covers these
+ * sources by hand. On Linux in CI a missing service fails instead of passing silently.
  * Call it inside a test or a hook.
  */
 export function serviceAddress(variable: Service): string {

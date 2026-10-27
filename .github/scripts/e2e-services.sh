@@ -41,8 +41,14 @@ start() {
     -e cluster.routing.allocation.disk.threshold_enabled=false \
     -e OPENSEARCH_JAVA_OPTS="-Xms512m -Xmx512m" \
     opensearchproject/opensearch:3.9.0 > /dev/null
-  docker run -d --name "$NEO4J" -p 127.0.0.1:7687:7687     -e NEO4J_AUTH="neo4j/$NEO4J_PASSWORD"     -e NEO4J_server_memory_heap_initial__size=256m -e NEO4J_server_memory_heap_max__size=512m     -e NEO4J_server_memory_pagecache_size=128m     neo4j:2026.10.0-community > /dev/null
-  docker run -d --name "$MEMGRAPH" -p 127.0.0.1:7688:7687 memgraph/memgraph:3.14.0 > /dev/null
+  docker run -d --name "$NEO4J" -p 127.0.0.1:7687:7687 \
+    -e NEO4J_AUTH="neo4j/$NEO4J_PASSWORD" \
+    -e NEO4J_server_memory_heap_initial__size=256m -e NEO4J_server_memory_heap_max__size=512m \
+    -e NEO4J_server_memory_pagecache_size=128m \
+    neo4j:2026.10.0-community > /dev/null
+  # Memgraph's limit is in MiB; the fixture needs a few.
+  docker run -d --name "$MEMGRAPH" -p 127.0.0.1:7688:7687 \
+    memgraph/memgraph:3.14.0 --memory-limit=512 > /dev/null
   echo "started $MONGO, $OPENSEARCH, $NEO4J and $MEMGRAPH"
 }
 
@@ -82,7 +88,8 @@ ready() {
     if [ "${mongo:-}" != ok ] && mongosh_root --eval 'db.runCommand({ ping: 1 }).ok' > /dev/null 2>&1; then
       mongo=ok
     fi
-    if [ "${os:-}" != ok ]       && curl -fs "http://127.0.0.1:9201/_cluster/health?wait_for_status=yellow&timeout=1s" > /dev/null; then
+    if [ "${os:-}" != ok ] \
+      && curl -fs "http://127.0.0.1:9201/_cluster/health?wait_for_status=yellow&timeout=1s" > /dev/null; then
       os=ok
     fi
     if [ "${neo4j:-}" != ok ] && echo 'RETURN 1;' | cypher_neo4j > /dev/null 2>&1; then
@@ -91,7 +98,8 @@ ready() {
     if [ "${memgraph:-}" != ok ] && echo 'RETURN 1;' | cypher_memgraph > /dev/null 2>&1; then
       memgraph=ok
     fi
-    if [ "${mongo:-}" = ok ] && [ "${os:-}" = ok ] && [ "${neo4j:-}" = ok ] && [ "${memgraph:-}" = ok ]; then
+    if [ "${mongo:-}" = ok ] && [ "${os:-}" = ok ] \
+      && [ "${neo4j:-}" = ok ] && [ "${memgraph:-}" = ok ]; then
       seed MongoDB mongosh_root "$FIXTURE"
       seed Neo4j cypher_neo4j "$GRAPH_FIXTURE"
       seed Memgraph cypher_memgraph "$GRAPH_FIXTURE"
@@ -106,7 +114,8 @@ ready() {
     fi
     sleep 2
   done
-  echo "MongoDB (${mongo:-not ready}), OpenSearch (${os:-not ready}), Neo4j (${neo4j:-not ready})"     "or Memgraph (${memgraph:-not ready}) did not become ready" >&2
+  echo "MongoDB (${mongo:-not ready}), OpenSearch (${os:-not ready}), Neo4j (${neo4j:-not ready})" \
+    "or Memgraph (${memgraph:-not ready}) did not become ready" >&2
   for container in "$MONGO" "$OPENSEARCH" "$NEO4J" "$MEMGRAPH"; do
     docker logs --tail 50 "$container" >&2 || true
   done
