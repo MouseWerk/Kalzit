@@ -200,4 +200,64 @@ mod tests {
             .unwrap_err();
         assert!(e.message.contains("ds-ann"), "{}", e.message);
     }
+
+    /// Graph steps run with their stored query in its data source: adding or changing one needs
+    /// the right to query that source, as changing the query does; table steps do not.
+    #[tokio::test]
+    async fn graph_steps_count_as_part_of_their_query() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)").execute(&db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+             VALUES ('ds-graph', 'o', 'G', 'neo4j', '{}', 0, 0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let with = |steps: serde_json::Value| {
+            model::parse(json!({
+                "schemaVersion": 2, "title": "T", "timeRange": { "from": "now-1h", "to": "now" },
+                "panels": [{ "id": "p", "type": "table", "title": "", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                             "targets": [{ "refId": "A", "datasourceId": "ds-graph",
+                                           "query": { "cypher": "MATCH (k)-[r]->(p) RETURN k, r, p" } }],
+                             "transformations": steps }]
+            }))
+            .unwrap()
+        };
+        let stored = with(json!([]));
+        let editor = ctx(&[Permission::DashboardsWrite]);
+        for step in [
+            json!({ "id": "t", "type": "topDegree", "frame": "A", "n": 5 }),
+            json!({ "id": "s", "type": "sharedNeighbours", "frame": "A", "label": "Kunde", "via": "Produkt",
+                    "min": 1, "limit": 10 }),
+        ] {
+            let e = check_dashboard_sources(&db, &editor, &with(json!([step])), Some(&stored)).await.unwrap_err();
+            assert_eq!(e.code, "forbidden", "{step}");
+            assert!(e.message.contains("ds-graph"), "{}", e.message);
+            // Changing a stored graph step is a change too; leaving it as it is is not.
+            let mut changed = step.clone();
+            changed["id"] = json!("other");
+            assert!(
+                check_dashboard_sources(&db, &editor, &with(json!([changed])), Some(&with(json!([step]))))
+                    .await
+                    .is_err()
+            );
+            assert!(
+                check_dashboard_sources(&db, &editor, &with(json!([step])), Some(&with(json!([step])))).await.is_ok()
+            );
+            assert!(
+                check_dashboard_sources(
+                    &db,
+                    &ctx(&[Permission::DatasourcesQuery]),
+                    &with(json!([step])),
+                    Some(&stored)
+                )
+                .await
+                .is_ok()
+            );
+        }
+        // A step that reads the table the query answers runs in the browser and on the server only.
+        let table = json!([{ "id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }]);
+        assert!(check_dashboard_sources(&db, &editor, &with(table), Some(&stored)).await.is_ok());
+    }
 }

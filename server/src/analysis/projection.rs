@@ -6,9 +6,9 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::ProjectionColumn;
 use super::expr::{days_from_civil, days_in_month, number_text};
-use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta};
+use super::{GraphRows, ProjectionColumn};
+use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta, GraphSet};
 
 /// A document as the browser reads it: objects keep their keys in the stored order (the server
 /// sends them so), so a container written out as text reads the same in both engines.
@@ -337,6 +337,69 @@ fn convert(value: Option<&J>, field_type: FieldType) -> Value {
 pub fn project(set: &DocumentSet, columns: &[ProjectionColumn]) -> Frame {
     // Read in the order stored; a document that does not parse (never, from the server) is empty.
     let docs: Vec<J> = set.documents.iter().map(|d| serde_json::from_str(d.get()).unwrap_or(J::Null)).collect();
+    // The source's notices and the query as it ran stay with the frame, as in the UI.
+    let meta = FrameMeta {
+        executed_query: set.executed_query.clone(),
+        rows_truncated: set.truncated.is_some(),
+        notices: set.notices.clone(),
+    };
+    project_docs(&docs, columns, meta)
+}
+
+/// The nodes (or edges) of a graph as a frame, read as documents: the properties, with `@id` and
+/// `@labels` (nodes), or `@id`, `@type`, `@from` and `@to` (edges), which win over properties of
+/// the same name. Only nodes with `label`, or edges of `edge_type`, when given.
+pub fn project_graph(
+    graph: &GraphSet,
+    rows: GraphRows,
+    label: Option<&str>,
+    edge_type: Option<&str>,
+    columns: &[ProjectionColumn],
+) -> Frame {
+    let read = |v: &Value| serde_json::from_value::<J>(v.clone()).unwrap_or(J::Null);
+    let doc = |own: Vec<(String, J)>, properties: &std::collections::BTreeMap<String, Value>| {
+        let mut entries: Vec<(String, J)> = properties
+            .iter()
+            .filter(|(k, _)| !own.iter().any(|(o, _)| o == *k))
+            .map(|(k, v)| (k.clone(), read(v)))
+            .collect();
+        entries.extend(own);
+        J::Obj(entries)
+    };
+    let docs: Vec<J> = match rows {
+        GraphRows::Nodes => graph
+            .nodes
+            .iter()
+            .filter(|n| label.is_none_or(|l| n.labels.iter().any(|x| x == l)))
+            .map(|n| {
+                let labels = J::Arr(n.labels.iter().map(|l| J::Str(l.clone())).collect());
+                doc(vec![("@id".into(), J::Str(n.id.clone())), ("@labels".into(), labels)], &n.properties)
+            })
+            .collect(),
+        GraphRows::Edges => graph
+            .edges
+            .iter()
+            .filter(|e| edge_type.is_none_or(|t| e.edge_type == t))
+            .map(|e| {
+                let own = vec![
+                    ("@id".into(), J::Str(e.id.clone())),
+                    ("@type".into(), J::Str(e.edge_type.clone())),
+                    ("@from".into(), J::Str(e.from.clone())),
+                    ("@to".into(), J::Str(e.to.clone())),
+                ];
+                doc(own, &e.properties)
+            })
+            .collect(),
+    };
+    let meta = FrameMeta {
+        executed_query: None,
+        rows_truncated: graph.truncated.is_some(),
+        notices: graph.notices.clone().unwrap_or_default(),
+    };
+    project_docs(&docs, columns, meta)
+}
+
+fn project_docs(docs: &[J], columns: &[ProjectionColumn], meta: FrameMeta) -> Frame {
     let fields: Vec<Field> = columns
         .iter()
         .filter(|c| !c.path.trim().is_empty())
@@ -353,12 +416,6 @@ pub fn project(set: &DocumentSet, columns: &[ProjectionColumn]) -> Frame {
             }
         })
         .collect();
-    // The source's notices and the query as it ran stay with the frame, as in the UI.
-    let meta = FrameMeta {
-        executed_query: set.executed_query.clone(),
-        rows_truncated: set.truncated.is_some(),
-        notices: set.notices.clone(),
-    };
     Frame::new(fields).expect("one value per document in every column").with_meta(meta)
 }
 

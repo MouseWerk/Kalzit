@@ -1,4 +1,5 @@
 import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
+import { graphStepsByQuery } from "../../analysis/panel";
 import { asSteps, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
@@ -63,7 +64,7 @@ export function usePanelResults(input: PanelQueryInput) {
   const { orgId, dashboardId, panel, range, source } = input;
   const client = useQueryClient();
   const kindOf = useSourceKinds(orgId);
-  const { variables, targets, refIds, queryKey } = panelRequest(input, kindOf);
+  const { variables, targets, refIds, queryKey, graphSteps } = panelRequest(input, kindOf);
   return useQuery<TargetOutcome[]>({
     queryKey,
     enabled: targets.length > 0,
@@ -102,6 +103,8 @@ export function usePanelResults(input: PanelQueryInput) {
                     refId: t.refId,
                     datasourceId: t.datasourceId,
                     query: t.query,
+                    // Graph steps run with their query, as the panel route runs the stored ones.
+                    ...(graphSteps.has(t.refId) ? { steps: graphSteps.get(t.refId) ?? [] } : {}),
                   })),
                 },
                 signal,
@@ -140,6 +143,8 @@ export function panelRequest(
           .filter((t) => t.datasourceId !== "" && hasQuery(t.query, kindOf(t.datasourceId)))
           .map((t) => ({ ...t, query: normalizeQuery(t.query, kindOf(t.datasourceId)) }));
   const refIds = targets.map((t) => t.refId);
+  // A draft sends its graph steps with the queries: another step is another request.
+  const graphSteps = graphStepsByQuery(asSteps(panel.transformations));
   const queryKey = [
     PANEL_DATA_KEY,
     orgId,
@@ -151,9 +156,10 @@ export function panelRequest(
     variables,
     // The stored panel answers per shown query: hiding one (or the last) is another request.
     source === "draft" ? targets : refIds,
+    source === "draft" ? [...graphSteps] : null,
     run,
   ] as const;
-  return { variables, targets, refIds, queryKey };
+  return { variables, targets, refIds, queryKey, graphSteps };
 }
 
 /** The field distribution of a panel target `refId` over its whole result. */

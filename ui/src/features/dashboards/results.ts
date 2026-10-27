@@ -4,12 +4,18 @@ import type {
   QueryResponse,
   QueryResult,
   Shape,
+  StepPlace,
 } from "../../api/generated/shapes";
 import type { PanelGraph } from "../../panels/types";
 
 /** One target's outcome, in target order, flattened from the response's map by refId. */
 export type TargetOutcome =
-  | { refId: string; result: QueryResult }
+  | {
+      refId: string;
+      result: QueryResult;
+      /** The query's graph steps the server ran, and where (the result is after them). */
+      steps?: StepPlace[];
+    }
   | {
       refId: string;
       error: { code: string; message: string; reason?: string; params?: Record<string, string> };
@@ -23,7 +29,9 @@ export function outcomesOf(response: QueryResponse, refIds: readonly string[]): 
   return refIds.map((refId) => {
     const outcome = response.results[refId];
     if (outcome !== undefined && "result" in outcome) {
-      return { refId, result: outcome.result };
+      return outcome.steps === undefined
+        ? { refId, result: outcome.result }
+        : { refId, result: outcome.result, steps: outcome.steps };
     }
     if (outcome !== undefined && "error" in outcome) {
       return { refId, error: outcome.error };

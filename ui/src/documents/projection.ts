@@ -128,7 +128,13 @@ export function projectionPaths(schema: readonly FieldSchema[]): string[] {
 
 /** Whether a stored transformation is the projection step of query `refId`. */
 function isStepFor(value: unknown, refId: string): value is Record<string, unknown> {
-  return isRecord(value) && value.type === PROJECTION_STEP && value.frame === refId;
+  // A projection of a graph (`rows`) is a graph step, edited in the steps, not here.
+  return (
+    isRecord(value) &&
+    value.type === PROJECTION_STEP &&
+    value.frame === refId &&
+    value.rows === undefined
+  );
 }
 
 /**

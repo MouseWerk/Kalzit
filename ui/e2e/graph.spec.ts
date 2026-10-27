@@ -275,6 +275,73 @@ test.describe("Neo4j", () => {
 
     expect(await seriousViolations(page)).toEqual([]);
   });
+
+  test("graph steps in Explore: counts per label and orders that share products", async ({
+    page,
+  }) => {
+    await signInOwner(page);
+    const result = await explore(page, sourceName, SHOP);
+    await expect(result).toContainText(
+      summary(GRAPH_FIXTURE.shop.nodes, GRAPH_FIXTURE.shop.edges),
+      { timeout: STEP_MS },
+    );
+    const steps = page.getByRole("complementary", { name: t("explore.aside") });
+    const kind = steps.getByLabel(t("analysis.steps.addType"), { exact: true });
+    const addStep = steps.getByRole("button", { name: t("analysis.steps.add"), exact: true });
+
+    // Graph steps are offered for a graph; table steps wait for a step that makes a table.
+    await kind.selectOption({ label: t("analysis.kind.countLabels") }, { timeout: STEP_MS });
+    await expect(kind.locator("option", { hasText: t("analysis.kind.group") })).toHaveCount(0);
+    await addStep.click({ timeout: STEP_MS });
+    const first = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
+    await expect(
+      first.getByText(
+        t("analysis.where.changes", {
+          where: t("analysis.where.database", { engine: "Neo4j" }),
+        }),
+        { exact: true },
+      ),
+    ).toBeVisible({ timeout: STEP_MS });
+    await expect(first.getByText(t("analysis.chain.frame", { rows: 3, fields: 3 }))).toBeVisible({
+      timeout: STEP_MS,
+    });
+    await first
+      .getByRole("button", { name: t("analysis.steps.previewNamed", { n: 1 }) })
+      .click({ timeout: STEP_MS });
+    const afterCount = steps.getByRole("region", { name: t("analysis.preview.after", { n: 1 }) });
+    // 8 orders, 5 customers, 4 products in orders: most first.
+    for (const [i, label] of ["Order", "Customer", "Product"].entries()) {
+      await expect(afterCount.getByRole("row").nth(i + 1)).toContainText(label, {
+        timeout: STEP_MS,
+      });
+    }
+    await expect(kind.locator("option", { hasText: t("analysis.kind.group") })).toHaveCount(1);
+
+    // Orders that share a product, named by their order number.
+    await steps
+      .getByRole("button", { name: t("analysis.steps.removeNamed", { n: 1 }) })
+      .click({ timeout: STEP_MS });
+    await kind.selectOption({ label: t("analysis.kind.sharedNeighbours") }, { timeout: STEP_MS });
+    await addStep.click({ timeout: STEP_MS });
+    const shared = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
+    await shared.getByLabel(t("analysis.graph.pairsOf")).selectOption("Order");
+    await shared.getByLabel(t("analysis.graph.via")).selectOption("Product");
+    await shared.getByLabel(t("analysis.graph.nameBy")).selectOption("name");
+    await expect(shared.getByText(t("analysis.chain.frame", { rows: 4, fields: 4 }))).toBeVisible({
+      timeout: STEP_MS,
+    });
+    await shared
+      .getByRole("button", { name: t("analysis.steps.previewNamed", { n: 1 }) })
+      .click({ timeout: STEP_MS });
+    const afterShared = steps.getByRole("region", {
+      name: t("analysis.preview.after", { n: 1 }),
+    });
+    // Ben's and Clara's orders both hold the monitor arm.
+    const pair = afterShared.getByRole("row").filter({ hasText: "A-1004" });
+    await expect(pair).toContainText("A-1005", { timeout: STEP_MS });
+    await expect(pair).toContainText("Monitor arm");
+    expect(await seriousViolations(page)).toEqual([]);
+  });
 });
 
 /**

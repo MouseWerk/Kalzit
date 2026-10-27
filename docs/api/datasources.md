@@ -886,6 +886,44 @@ Read-only rules:
   `approvedQueries`. Then only the reader user protects the data.
 - Kalzit never calls REST++ upsert, delete or loading endpoints.
 
+### Graph steps
+
+A query item may carry graph steps (`"steps": [...]`, the forms in docs/api/settings-dashboards.md,
+"Graph steps"): steps of that query only (their `frame` is its `refId`), graph steps only
+(`422 validation`, reason `query.steps`), at most 50. The answer is the result after them, and
+`steps` says where each ran:
+
+```json
+{ "refId": "A", "datasourceId": "...", "query": { "cypher": "MATCH (k:Kunde)-[r:KAUFTE]->(p) RETURN k, r, p" },
+  "steps": [{ "id": "s1", "type": "sharedNeighbours", "frame": "A", "label": "Kunde", "via": "Produkt", "min": 2, "limit": 10 }] }
+
+"A": { "result": { "shape": "frame", "frame": { ... } },
+       "steps": [{ "id": "s1", "ranIn": "database" }] }
+```
+
+- `database`: Neo4j and Memgraph run the first graph step themselves, over the whole result of
+  the query rather than the nodes Kalzit holds after its node limit. The query runs unchanged
+  inside `CALL { }`, followed by the step's aggregation; the generated Cypher passes the same
+  read-only check and parameter rules as any query, and `executedQuery` shows it. This works when
+  every column of the query's last `RETURN` is a variable or has `AS name`; `RETURN *`,
+  expressions without a name, `UNION`, `EXPLAIN`, `PROFILE` and a `CYPHER` prefix keep the step on
+  the server. The database reads the query's rows up to the same row limit as the server and
+  says when it cut them (`rowsTruncated`, or a cut graph, with the notice `graph.row_limit`).
+  Shared neighbours count their pairs first and are made in the database only within the
+  server's cell budget. The source gets half of the query timeout for the step; when it cannot
+  run the generated query in that time, or at all (an older version), the query runs as written
+  and the server runs the step, and that source is not asked again for that query for ten
+  minutes.
+- `server`: every other graph step, on the result as the query answered it.
+- A step that fails carries `error` (an error body, reason `steps.*`); the result is the one
+  before it, and the steps after it do not run. A stored step that no longer passes the checks
+  answers `steps.invalid` the same way; the panel still shows the result before it.
+
+A dashboard's stored queries carry their panel's enabled graph steps the same way; exports run
+them before the panel's other steps. Since they run in the data source with the query, adding or
+changing a graph step of a stored query (on a dashboard, a library panel or a saved analysis)
+needs `datasources:query` on its source, as changing the query does.
+
 ### Graph results
 
 Graph kinds answer `graph` when the result holds graph elements and `frame` otherwise:
@@ -1583,6 +1621,10 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | Reason | Params | When |
 |---|---|---|
 | `steps.invalid` | `detail` | the steps sent with an export are not valid steps |
+| `query.steps` | `detail` | the graph steps of a query item are not valid (`422 validation`, `field: queries`) |
+| `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
+| `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
+| `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
 | `steps.field_missing` | `field` | the table has no such field |
 | `steps.field_ambiguous` | `field` | several fields have this name |

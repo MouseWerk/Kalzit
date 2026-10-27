@@ -443,6 +443,7 @@ async fn run_annotation_query(
         query: query.query.clone(),
         cursor: None,
         limit: None,
+        steps: Vec::new(),
     };
     let response =
         run_queries_with(&state, &ctx, vec![item], req.time_range, None, None, &variables, Some(&identifiers)).await;

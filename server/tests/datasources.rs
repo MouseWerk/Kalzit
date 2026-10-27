@@ -876,6 +876,190 @@ async fn memgraph_refuses_users_who_may_write_unless_allowed() {
     graph_reads(&t, &id).await;
 }
 
+const STEPS_SETUP: &[&str] = &[
+    "MATCH (n:KalzitSteps) DETACH DELETE n",
+    "CREATE (k1:KalzitSteps:GsKunde {name: 'Anna'}), (k2:KalzitSteps:GsKunde {name: 'Ben'}), \
+     (k3:KalzitSteps:GsKunde {name: 'Cem'}), (p1:KalzitSteps:GsProdukt {name: 'Abo'}), \
+     (p2:KalzitSteps:GsProdukt {name: 'Dock'}), (p3:KalzitSteps:GsProdukt {nr: 3}), (x:KalzitSteps), \
+     (k1)-[:GS_KAUFTE]->(p1), (k1)-[:GS_KAUFTE]->(p2), (k2)-[:GS_KAUFTE]->(p1), (k2)-[:GS_KAUFTE]->(p2), \
+     (k3)-[:GS_KAUFTE]->(p1), (k3)-[:GS_KAUFTE]->(p3), (k1)-[:GS_KENNT]->(k2), (k3)-[:GS_MAG]->(k3)",
+];
+
+impl T {
+    /// One query with graph steps (`QueryItem.steps`), its outcome.
+    async fn query_steps(&self, id: &str, cypher: &str, steps: Value) -> Value {
+        self.query_steps_limited(id, cypher, steps, None).await
+    }
+
+    /// `query_steps` with the row limit `limit`.
+    async fn query_steps_limited(&self, id: &str, cypher: &str, steps: Value, limit: Option<u32>) -> Value {
+        let mut item = json!({ "refId": "A", "datasourceId": id, "query": { "cypher": cypher }, "steps": steps });
+        if let Some(limit) = limit {
+            item["limit"] = json!(limit);
+        }
+        let body = json!({
+            "queries": [item],
+            "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 },
+            "variables": {}
+        });
+        let (status, body) = self.send(Method::POST, "/query", Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["results"]["A"].clone()
+    }
+}
+
+/// Values agree; numbers as numbers (the database's counts arrive as 64-bit integers).
+fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same_value(a, b)),
+        _ => a == b,
+    }
+}
+
+/// The ids of a graph's nodes or edges, sorted.
+fn ids(graph: &Value, what: &str) -> Vec<String> {
+    let mut out: Vec<String> =
+        graph[what].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap().to_string()).collect();
+    out.sort();
+    out
+}
+
+/// Graph steps run in the database answer what the server's engine answers on the same graph:
+/// the query with named columns runs the step in Cypher, the same query with `RETURN *` or an
+/// unnamed expression (whose columns Kalzit does not name) runs it on the server. Also for a query
+/// that returns only relationships, whose end nodes both count as nodes without labels.
+async fn graph_steps(t: &T, id: &str) {
+    let named = "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN n, r, m";
+    let star = "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN *";
+    let rels = "MATCH (:GsKunde)-[r]->(:KalzitSteps) RETURN r";
+    let rels_unnamed = "MATCH (:GsKunde)-[r]->(:KalzitSteps) RETURN [r][0]";
+    let one = |step: Value| {
+        let mut s = step;
+        s["id"] = json!("s");
+        s["frame"] = json!("A");
+        json!([s])
+    };
+    for step in [
+        json!({ "type": "countLabels" }),
+        json!({ "type": "countEdgeTypes" }),
+        json!({ "type": "degreeDistribution" }),
+        json!({ "type": "degreeDistribution", "direction": "in" }),
+        json!({ "type": "topDegree", "n": 3 }),
+        json!({ "type": "topDegree", "n": 2, "label": "GsProdukt", "direction": "in" }),
+        json!({ "type": "sharedNeighbours", "label": "GsKunde", "via": "GsProdukt", "min": 1, "limit": 10, "name": "name" }),
+        json!({ "type": "sharedNeighbours", "label": "GsKunde", "via": "GsProdukt", "edgeType": "GS_KAUFTE",
+                "min": 2, "limit": 1 }),
+    ]
+    .into_iter()
+    .flat_map(|step| [(step.clone(), named, star), (step, rels, rels_unnamed)])
+    {
+        let (step, named, star) = step;
+        let db = t.query_steps(id, named, one(step.clone())).await;
+        if db["steps"][0]["ranIn"] != "database" {
+            // Why the database did not run it: the generated query run as a query says so.
+            let kind = kalzit::analysis::parse_step(&one(step.clone())[0]).unwrap().kind;
+            for dialect in [kalzit::analysis::pushdown::Dialect::Neo4j, kalzit::analysis::pushdown::Dialect::Memgraph] {
+                let q = kalzit::analysis::pushdown::cypher(named, &kind, dialect, 10_000).unwrap();
+                eprintln!("{dialect:?}:\n{q}\n=> {}", t.query(id, json!({ "cypher": q })).await);
+            }
+        }
+        let server = t.query_steps(id, star, one(step.clone())).await;
+        assert_eq!(db["steps"], json!([{ "id": "s", "ranIn": "database" }]), "{step}: {db}");
+        assert_eq!(server["steps"], json!([{ "id": "s", "ranIn": "server" }]), "{step}: {server}");
+        let (d, s) = (&db["result"], &server["result"]);
+        assert_eq!(d["shape"], s["shape"], "{step}: {db} {server}");
+        if d["shape"] == "graph" {
+            assert_eq!(ids(&d["graph"], "nodes"), ids(&s["graph"], "nodes"), "{step}: {db} {server}");
+            assert_eq!(ids(&d["graph"], "edges"), ids(&s["graph"], "edges"), "{step}: {db} {server}");
+            continue;
+        }
+        let (df, sf) = (d["frame"]["fields"].as_array().unwrap(), s["frame"]["fields"].as_array().unwrap());
+        assert_eq!(df.len(), sf.len(), "{step}: {db} {server}");
+        for (a, b) in df.iter().zip(sf) {
+            assert_eq!((&a["name"], &a["type"]), (&b["name"], &b["type"]), "{step}");
+            assert!(same_value(&a["values"], &b["values"]), "{step} {}: {} vs {}", a["name"], a["values"], b["values"]);
+        }
+        // The inspector shows the Cypher that ran.
+        assert!(d["frame"]["meta"]["executedQuery"].as_str().unwrap().contains("CALL"), "{db}");
+    }
+    let (named, star) = (
+        "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN n, r, m",
+        "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN *",
+    );
+    // The row limit holds in the database too, and a cut is said.
+    for query in [named, star] {
+        let r = t.query_steps_limited(id, query, one(json!({ "type": "countLabels" })), Some(3)).await;
+        assert_eq!(r["result"]["frame"]["meta"]["rowsTruncated"], true, "{query}: {r}");
+        let r = t.query_steps_limited(id, query, one(json!({ "type": "topDegree", "n": 2 })), Some(3)).await;
+        assert!(r["result"]["graph"]["truncated"].is_object(), "{query}: {r}");
+    }
+    let r = t.query_steps_limited(id, named, one(json!({ "type": "countLabels" })), Some(1000)).await;
+    assert_eq!(r["result"]["frame"]["meta"]["rowsTruncated"], false, "{r}");
+    // What the counts are: the loop counts twice, the lone node has no edge.
+    let r = t.query_steps(id, named, one(json!({ "type": "degreeDistribution" }))).await;
+    let fields = &r["result"]["frame"]["fields"];
+    assert!(same_value(&fields[0]["values"], &json!([0, 1, 2, 3, 4])), "{r}");
+    assert!(same_value(&fields[1]["values"], &json!([1, 1, 1, 3, 1])), "{r}");
+    let r = t.query_steps(id, named, one(json!({ "type": "countLabels" }))).await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["values"], json!(["KalzitSteps", "GsKunde", "GsProdukt"]), "{r}");
+
+    // A chain: the first step in the database, the next on the server.
+    let chain = json!([
+        { "id": "t", "type": "topDegree", "frame": "A", "n": 3 },
+        { "id": "c", "type": "countLabels", "frame": "A" },
+        { "id": "f", "type": "toFrame", "frame": "A", "rows": "nodes", "columns": [{ "path": "name" }], "disabled": true }
+    ]);
+    let r = t.query_steps(id, named, chain).await;
+    assert_eq!(r["steps"], json!([{ "id": "t", "ranIn": "database" }, { "id": "c", "ranIn": "server" }]), "{r}");
+    assert_eq!(r["result"]["shape"], "frame", "{r}");
+    // A step that fails keeps the result before it and says why.
+    let failing = json!([
+        { "id": "c", "type": "countLabels", "frame": "A" },
+        { "id": "d", "type": "countLabels", "frame": "A" }
+    ]);
+    let r = t.query_steps(id, named, failing).await;
+    assert_eq!(r["steps"][1]["error"]["reason"], "steps.not_graph", "{r}");
+    assert_eq!(r["result"]["frame"]["fields"][0]["name"], "label", "{r}");
+    // A query that writes stays refused, with or without its steps in the database.
+    let r = t
+        .query_steps(id, "MATCH (n:KalzitSteps) DETACH DELETE n RETURN n", one(json!({ "type": "countLabels" })))
+        .await;
+    assert_eq!(r["error"]["code"], "query_rejected", "{r}");
+    // Steps that are no graph steps, or of another query, are refused with the request.
+    let body = json!({
+        "queries": [{ "refId": "A", "datasourceId": id, "query": { "cypher": named },
+                      "steps": [{ "id": "x", "type": "calculate", "frame": "A", "name": "y", "expression": "1" }] }],
+        "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 },
+        "variables": {}
+    });
+    let (status, body) = t.send(Method::POST, "/query", Some(body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["reason"], "query.steps", "{body}");
+}
+
+#[tokio::test]
+async fn neo4j_runs_graph_steps_in_the_database() {
+    let Some(url) = env("KALZIT_TEST_NEO4J_URL") else { return };
+    bolt_setup(&url, STEPS_SETUP).await;
+    let t = T::new(None).await;
+    let (settings, secrets) = graph_settings(&url, json!({}));
+    let id = t.create("neo4j", settings, secrets).await;
+    graph_steps(&t, &id).await;
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn memgraph_runs_graph_steps_in_the_database() {
+    let Some(url) = env("KALZIT_TEST_MEMGRAPH_URL") else { return };
+    bolt_setup(&url, STEPS_SETUP).await;
+    let t = T::new(None).await;
+    let (settings, secrets) = graph_settings(&url, json!({ "allowWriteCapableUser": true }));
+    let id = t.create("memgraph", settings, secrets).await;
+    graph_steps(&t, &id).await;
+    t.finish().await;
+}
+
 /// Whether the server accepts `query` (planned with EXPLAIN, so nothing runs).
 async fn bolt_explains(url: &str, query: &str) -> bool {
     let (host, port, user, password, _) = parts(url);

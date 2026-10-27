@@ -445,10 +445,12 @@ impl Panel {
     /// What decides what a stored target shows, for the unchanged-query check: the query text,
     /// the dashboard panel it is shown in (`panel_id`, also for a linked library panel's
     /// targets), its reference id, and whether it runs (not hidden, or read by an enabled
-    /// analysis step). Moving a query to another panel or un-hiding it is a change.
+    /// analysis step), and the graph steps that run with it in its data source. Moving a query to
+    /// another panel, un-hiding it or adding or changing one of its graph steps is a change.
     pub fn target_key(&self, panel_id: &str, target: &Target) -> String {
         let runs = !target.hide || crate::routes::query::frames_read(&self.transformations).contains(&target.ref_id);
-        serde_json::json!([panel_id, target.ref_id, runs, target.query]).to_string()
+        let steps = crate::routes::query::graph_steps_of(&self.transformations, &target.ref_id);
+        serde_json::json!([panel_id, target.ref_id, runs, target.query, steps]).to_string()
     }
 }
 

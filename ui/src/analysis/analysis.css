@@ -116,6 +116,66 @@
     color: var(--danger-text);
   }
 
+  /* Where a step runs, and whether it changes the shape (graph steps). */
+  .step__where {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The shapes a step reads and makes, "Graph → Tabelle": a quiet tag, no color. */
+  .shape-chip {
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+  }
+
+  .steps__about {
+    flex-basis: 100%;
+  }
+
+  /* The chain of shapes over the steps of a graph query. */
+  .steps__chain {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .steps__chain-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .steps__chain-pair {
+    display: contents;
+  }
+
+  .steps__chain-node {
+    display: inline-flex;
+    flex-direction: column;
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .steps__chain-shape {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .steps__chain-size,
+  .steps__chain-step,
+  .steps__chain-off {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
   .steps__add,
   .steps__preview-bar {
     display: flex;

@@ -11,7 +11,12 @@ import {
 } from "react";
 import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
-import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
+import {
+  graphStepsByQuery,
+  namedInputs,
+  runPanelSteps,
+  useAnalysisCalendar,
+} from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, type Step } from "../../analysis/steps";
 import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
@@ -36,6 +41,7 @@ import { readPreference, writePreference } from "../../lib/storage";
 import { tabForKey } from "../../lib/tabKeys";
 import { showErrorToast, showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
+import { useSettled } from "../../lib/useSettled";
 import { type LiveSpec, liveClient } from "../../live/client";
 import { liveNote } from "../../live/text";
 import { useLiveSubscription } from "../../live/useLive";
@@ -101,6 +107,10 @@ preloadCodeEditor();
 const REF_ID = "A";
 /** The cache key of Explore runs: `[EXPLORE_KEY, orgId, submitted]`. */
 const EXPLORE_KEY = "explore";
+/** The cache key of the runs with graph steps (a key of their own, so a new run keeps them). */
+const EXPLORE_STEPS_KEY = "explore-steps";
+/** How long graph steps stay unchanged before they run in the database. */
+const GRAPH_STEPS_SETTLE_MS = 600;
 
 const exploreRoute = getRouteApi("/_app/explore");
 const appRoute = getRouteApi("/_app");
@@ -318,6 +328,44 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
       return outcomesOf(response, [REF_ID]);
     },
   });
+  // Graph steps run with the query, in the database where the source can: the result above stays
+  // the query's own (drawn as the graph); this run answers what the steps make of it.
+  // Settled for a moment first: a number being typed or a choice being tried asks the database
+  // once; the browser previews the steps meanwhile.
+  const graphSteps = useSettled(
+    graphStepsByQuery(deferredSteps).get(REF_ID),
+    GRAPH_STEPS_SETTLE_MS,
+  );
+  const stepped = useQuery({
+    queryKey: [EXPLORE_STEPS_KEY, orgId, submitted, graphSteps ?? null],
+    enabled: submitted !== null && graphSteps !== undefined && result.data !== undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: RESULT_GC_MS,
+    ...BUSY_RETRY,
+    queryFn: async ({ signal }) => {
+      const run = submitted as Submitted;
+      const timeRange = { from: run.from, to: run.to };
+      const response = await runQuery(
+        orgId,
+        {
+          queries: [
+            {
+              refId: REF_ID,
+              datasourceId: run.datasourceId,
+              query: run.query,
+              steps: graphSteps ?? [],
+            },
+          ],
+          timeRange,
+          maxDataPoints: MAX_DATA_POINTS,
+          intervalMs: intervalFor(timeRange),
+          variables: {},
+        },
+        signal,
+      );
+      return outcomesOf(response, [REF_ID]);
+    },
+  });
   // A range that ends now moves with each live run; any other stays as it was resolved.
   const moving = submitted !== null && submitted.range.to.trim() === "now";
   const length = submitted === null ? 0 : submitted.to - submitted.from;
@@ -522,7 +570,12 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
   const projected = projection !== undefined && projectionApplies(projection);
   // A projection step the server would refuse waits for a fix before it leaves the page.
   const blocked = hasProjectionProblems(steps);
-  const stepsRun = runPanelSteps(deferredSteps, outcomes, calendar);
+  const stepsRun = runPanelSteps(
+    deferredSteps,
+    outcomes,
+    calendar,
+    graphSteps === undefined ? undefined : stepped.data,
+  );
   // The suggestion follows what the panel will get: documents, or the frame of a projection.
   const results: QueryResult[] = [
     ...outcomes.flatMap((o) =>
@@ -1116,6 +1169,11 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
               refIds={[REF_ID]}
               inputs={namedInputs(outcomes)}
               run={stepsRun}
+              kindOf={() =>
+                submitted === null
+                  ? undefined
+                  : list.find((source) => source.id === submitted.datasourceId)?.kind
+              }
             />
             <div className="explore__aside-actions">
               {permissions.has("data:export") ? (
