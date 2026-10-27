@@ -588,3 +588,37 @@ fn rights_and_parameters() {
             .is_err()
     );
 }
+
+/// Dashboard variables reach GSQL only as typed REST++ parameters: text meant to break out of a
+/// string stays one URL-encoded value, the query text is sent as written, a multi-value variable
+/// fills a `SET` parameter, and a list for a single value is refused before anything is sent.
+#[tokio::test]
+async fn variables_stay_typed_parameters() {
+    let (addr, fake) = fake(false).await;
+    let conn = connection(addr, "leser", json!({})).await;
+    let text = "INTERPRET QUERY (STRING name, SET<STRING> tags) FOR GRAPH social { SumAccum<INT> @@total; \
+                S = {Person.*}; R = SELECT s FROM S:s WHERE s.name == name ACCUM @@total += 1; PRINT @@total; }";
+    let attack = "Ana\"; DELETE s FROM Person:s; PRINT \"";
+    let r = TigerGraph
+        .query(&conn, req(json!({ "gsql": text }), json!({ "name": attack, "tags": ["a&b", "c=d"], "fremd": "x" })))
+        .await;
+    assert!(r.is_ok(), "{:?}", r.err().map(|e| e.detail().reason));
+    assert_eq!(
+        fake.last_query.lock().unwrap().as_str(),
+        "graph=social&name=Ana%22%3B%20DELETE%20s%20FROM%20Person%3As%3B%20PRINT%20%22&tags=a%26b&tags=c%3Dd",
+        "a variable the query does not declare is not sent"
+    );
+    assert_eq!(fake.last_body.lock().unwrap().as_str(), text);
+
+    *fake.last_query.lock().unwrap() = String::new();
+    let r = TigerGraph.query(&conn, req(json!({ "gsql": text }), json!({ "name": ["Ana", "Bo"] }))).await;
+    assert_eq!(reason(r), "tigergraph.param_type");
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "", "nothing was sent");
+
+    // Installed queries take them the same way: the variable p fills the vertex parameter.
+    let r = TigerGraph
+        .query(&conn, req(json!({ "installed": "nachbarn" }), json!({ "p": "1&tiefe=99", "tiefe": 2 })))
+        .await;
+    assert!(r.is_ok());
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "p=1%26tiefe%3D99&tiefe=2");
+}

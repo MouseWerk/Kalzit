@@ -178,10 +178,14 @@ impl T {
     }
 
     async fn query(&self, id: &str, query: Value) -> Value {
+        self.query_with(id, query, json!({ "land": "Österreich" })).await
+    }
+
+    async fn query_with(&self, id: &str, query: Value, variables: Value) -> Value {
         let body = json!({
             "queries": [{ "refId": "A", "datasourceId": id, "query": query }],
             "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 },
-            "variables": { "land": "Österreich" }
+            "variables": variables
         });
         let (status, body) = self.send(Method::POST, "/query", Some(body)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -739,6 +743,87 @@ async fn graph_reads(t: &T, id: &str) {
     assert_eq!(schema["kind"], "graph", "{schema}");
     assert!(schema["labels"].as_array().unwrap().contains(&json!("KalzitTest")), "{schema}");
     assert!(schema["edgeTypes"].as_array().unwrap().contains(&json!("KENNT")), "{schema}");
+    graph_variables(t, id).await;
+}
+
+/// A dashboard on the graph source: a free (textbox) variable may not name a label or property,
+/// a custom one may; a query variable reads its options from the graph through `valuesFrom`.
+async fn graph_dashboard_variables(t: &T, id: &str) {
+    let panel = |pid: &str, cypher: &str| {
+        json!({
+            "id": pid, "type": "table", "title": pid, "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": id, "query": { "cypher": cypher } }],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        })
+    };
+    let model = json!({
+        "schemaVersion": 1, "title": "Graph-Variablen", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "frei", "type": "textbox" },
+            { "name": "label", "type": "custom", "options": ["KalzitTest", "Person"] },
+            { "name": "person", "type": "query", "datasourceId": id,
+              "query": { "cypher": "MATCH (n:KalzitTest) RETURN n ORDER BY n.name" },
+              "valuesFrom": { "from": "nodes", "label": "Person", "value": "name", "text": "name" } },
+            { "name": "flach", "type": "query", "datasourceId": id,
+              "query": { "cypher": "MATCH (n:KalzitTest) RETURN n" } }
+        ],
+        "panels": [
+            panel("frei_label", "MATCH (n:$($frei)) RETURN count(n) AS c"),
+            panel("frei_key", "MATCH (n:KalzitTest) RETURN n[$frei] AS v"),
+            panel("custom_label", "MATCH (n:$($label)) RETURN count(n) AS c")
+        ]
+    });
+    let (status, dashboard) = t.send(Method::POST, "/dashboards", Some(json!({ "model": model }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{dashboard}");
+    let dashboard = dashboard["id"].as_str().unwrap();
+    let range = json!({ "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 });
+    for (pid, variables) in [("frei_label", json!({ "frei": "KalzitTest" })), ("frei_key", json!({ "frei": "name" }))] {
+        let body = json!({ "timeRange": range, "variables": variables });
+        let (status, r) =
+            t.send(Method::POST, &format!("/dashboards/{dashboard}/panels/{pid}/query"), Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{r}");
+        assert_eq!(r["results"]["A"]["error"]["reason"], "cypher.variable_identifier", "{pid}: {r}");
+    }
+    let body = json!({ "timeRange": range, "variables": { "label": "KalzitTest" } });
+    let (status, r) =
+        t.send(Method::POST, &format!("/dashboards/{dashboard}/panels/custom_label/query"), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(r["results"]["A"]["result"]["frame"]["fields"][0]["values"][0], "2", "{r}");
+
+    let body = json!({ "timeRange": range, "variables": {} });
+    let (status, r) =
+        t.send(Method::POST, &format!("/dashboards/{dashboard}/variables/person/options"), Some(body.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(r["options"], json!([{ "value": "Ana", "label": "Ana" }, { "value": "Bo", "label": "Bo" }]), "{r}");
+    let (status, r) =
+        t.send(Method::POST, &format!("/dashboards/{dashboard}/variables/flach/options"), Some(body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{r}");
+    assert_eq!(r["error"]["reason"], "variables.not_a_frame", "{r}");
+}
+
+/// Variables reach Cypher as Bolt parameters: a value, a list for a multi-value variable, and text
+/// written to break out of a string, which stays one value and matches nothing.
+async fn graph_variables(t: &T, id: &str) {
+    let names = |r: &Value| r["result"]["frame"]["fields"][0]["values"].clone();
+    let by_name = json!({ "cypher": "MATCH (n:KalzitTest) WHERE n.name = $kunde RETURN n.name AS name ORDER BY name" });
+    let r = t.query_with(id, by_name.clone(), json!({ "kunde": "Ana" })).await;
+    assert_eq!(names(&r), json!(["Ana"]), "{r}");
+    for attack in
+        ["Ana' OR 1=1 //", "Ana\" OR true //", "x'}) MATCH (m) DETACH DELETE m //", "Ana` OR true //", "$kunde"]
+    {
+        let r = t.query_with(id, by_name.clone(), json!({ "kunde": attack })).await;
+        assert!(r["result"].is_object(), "{attack}: {r}");
+        let rows = r["result"]["frame"]["fields"][0]["values"].as_array().map_or(0, Vec::len);
+        assert_eq!(rows, 0, "{attack} is one value: {r}");
+    }
+    let listed =
+        json!({ "cypher": "MATCH (n:KalzitTest) WHERE n.name IN $kunden RETURN n.name AS name ORDER BY name" });
+    let r = t.query_with(id, listed, json!({ "kunden": ["Bo", "Ana", "Ana' OR 1=1 //"] })).await;
+    assert_eq!(names(&r), json!(["Ana", "Bo"]), "{r}");
+    let missing = t.query_with(id, by_name, json!({})).await;
+    assert_eq!(missing["error"]["reason"], "cypher.variable_missing", "{missing}");
+    let count = t.query(id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN count(n) AS c" })).await;
+    assert_eq!(count["result"]["frame"]["fields"][0]["values"][0], "2", "nothing changed: {count}");
 }
 
 #[tokio::test]
@@ -753,6 +838,7 @@ async fn neo4j_reads_graphs_in_read_transactions() {
     assert_eq!(h["reason"], "health.connected", "{h}");
     assert_eq!(h["params"]["engine"], "Neo4j", "{h}");
     graph_reads(&t, &id).await;
+    graph_dashboard_variables(&t, &id).await;
 
     // The node limit cuts the graph with a reason.
     let mut limited = settings;
