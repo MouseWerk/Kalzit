@@ -90,7 +90,7 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
   await page.getByRole("menuitem", { name: t("userMenu.signOut") }).click();
   await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
   await page.goto("/setup");
-  await expect(page.getByRole("heading", { name: t("access.setup.already.title") })).toBeVisible();
+  await expect(page.getByRole("heading", { name: t("access.setup.already.title", { product: "Kalzit" }) })).toBeVisible();
   await page.getByRole("link", { name: t("access.toLogin") }).click();
 
   // A wrong password is refused, the right one signs in.

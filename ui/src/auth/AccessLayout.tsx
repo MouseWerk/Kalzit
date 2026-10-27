@@ -66,18 +66,12 @@ export function AccessLayout({
     <div className="access">
       <Backdrop />
       <header className="access__top">
-        <Link to="/" className="access__brand" aria-label={brand.productName}>
+        <Link to="/" className="access__brand">
           <span className="access__mark">
             <BrandMark />
           </span>
-          <span className="access__product" aria-hidden="true">
-            {brand.productName}
-          </span>
-          {context === undefined ? null : (
-            <span className="access__context" aria-hidden="true">
-              {context}
-            </span>
-          )}
+          <span className="access__product">{brand.productName}</span>
+          {context === undefined ? null : <span className="access__context">{context}</span>}
         </Link>
         <div className="access__tools">
           <ToolbarMenu
