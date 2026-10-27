@@ -854,6 +854,14 @@ async fn graph_steps(t: &T, id: &str) {
                 "min": 2, "limit": 1 }),
     ] {
         let db = t.query_steps(id, named, one(step.clone())).await;
+        if db["steps"][0]["ranIn"] != "database" {
+            // Why the database did not run it: the generated query run as a query says so.
+            let kind = kalzit::analysis::parse_step(&one(step.clone())[0]).unwrap().kind;
+            for dialect in [kalzit::analysis::pushdown::Dialect::Neo4j, kalzit::analysis::pushdown::Dialect::Memgraph] {
+                let q = kalzit::analysis::pushdown::cypher(named, &kind, dialect).unwrap();
+                eprintln!("{dialect:?}:\n{q}\n=> {}", t.query(id, json!({ "cypher": q })).await);
+            }
+        }
         let server = t.query_steps(id, star, one(step.clone())).await;
         assert_eq!(db["steps"], json!([{ "id": "s", "ranIn": "database" }]), "{step}: {db}");
         assert_eq!(server["steps"], json!([{ "id": "s", "ranIn": "server" }]), "{step}: {server}");

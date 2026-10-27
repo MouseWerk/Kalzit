@@ -68,11 +68,30 @@ export function serverRan(outcomes: readonly TargetOutcome[]): Map<string, Serve
  */
 export function graphStepsByQuery(steps: readonly Step[]): Map<string, Step[]> {
   const out = new Map<string, Step[]>();
+  // A step still being filled in (the server would refuse it) ends its query's list there; the
+  // browser previews it until it is complete.
+  const unfinished = new Set<string>();
   for (const step of steps) {
-    if (step.disabled === true || !isGraphStep(step)) continue;
+    if (step.disabled === true || !isGraphStep(step) || unfinished.has(step.frame)) continue;
+    if (!complete(step)) {
+      unfinished.add(step.frame);
+      continue;
+    }
     out.set(step.frame, [...(out.get(step.frame) ?? []), step]);
   }
   return out;
+}
+
+/** Whether a graph step passes the server's checks of its form (server/src/analysis/mod.rs). */
+function complete(step: Step): boolean {
+  switch (step.type) {
+    case "sharedNeighbours":
+      return step.label !== "" && step.via !== "" && step.label !== step.via;
+    case "toFrame":
+      return step.columns.some((c) => c.path.trim() !== "");
+    default:
+      return true;
+  }
 }
 
 /**
