@@ -386,6 +386,34 @@ pub struct QueryItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub limit: Option<u32>,
+    /// Graph steps on this query's result (`countLabels`, `topDegree`, ...; docs/api/datasources.md),
+    /// all of this query, in order. The first runs in the database when the source can, the others
+    /// on the server; the answer is the result after them, with `steps` saying where each ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(type = "unknown[]", optional))]
+    pub steps: Vec<Value>,
+}
+
+/// Where a graph step of a query ran, and why it failed when it did (the result is then the one
+/// before it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct StepPlace {
+    pub id: String,
+    pub ran_in: RanIn,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub error: Option<ErrorBody>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum RanIn {
+    /// In the data source, as generated read-only Cypher around the query.
+    Database,
+    Server,
 }
 
 /// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`: runs the panel's
@@ -803,8 +831,16 @@ pub struct QueryResponse {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(untagged)]
 pub enum QueryOutcome {
-    Ok { result: QueryResult },
-    Err { error: ErrorBody },
+    Ok {
+        result: QueryResult,
+        /// The graph steps the query ran, when it had any (`QueryItem::steps`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        steps: Option<Vec<StepPlace>>,
+    },
+    Err {
+        error: ErrorBody,
+    },
 }
 
 /// What the caller may do on one data source, from their role and grants together; the routes
@@ -968,6 +1004,8 @@ mod tests {
             TimeRange::decl(&cfg),
             QueryResponse::decl(&cfg),
             QueryOutcome::decl(&cfg),
+            StepPlace::decl(&cfg),
+            RanIn::decl(&cfg),
             ErrorEnvelope::decl(&cfg),
             ErrorBody::decl(&cfg),
             Page::<()>::decl(&cfg),

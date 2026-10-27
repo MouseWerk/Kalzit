@@ -420,6 +420,15 @@ impl DataSourcePlugin for GraphDb {
         &[Shape::Graph, Shape::Frame]
     }
 
+    fn pushdown(&self, query: &Value, step: &crate::analysis::StepKind, max_rows: usize) -> Option<Value> {
+        let q = CypherQuery::deserialize(query).ok()?;
+        let dialect = match self.0 {
+            Flavor::Neo4j => crate::analysis::pushdown::Dialect::Neo4j,
+            Flavor::Memgraph => crate::analysis::pushdown::Dialect::Memgraph,
+        };
+        crate::analysis::pushdown::cypher(&q.cypher, step, dialect, max_rows).map(|cypher| json!({ "cypher": cypher }))
+    }
+
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
         let s = Settings::deserialize(settings)
             .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
@@ -498,7 +507,7 @@ impl DataSourcePlugin for GraphDb {
                     .with("engine", engine)
                     .with("version", &version)
                     .with("privileges", &write);
-                    Health { ok: true, code: None, detail }
+                    Health { ok: true, code: None, detail, warnings: Vec::new() }
                 };
                 if !edition.is_empty() {
                     health.detail = health.detail.with("edition", edition);
@@ -534,7 +543,13 @@ impl DataSourcePlugin for GraphDb {
         }
         lease.release();
         let [labels, edge_types, property_keys]: [Vec<String>; 3] = lists.try_into().expect("three lists");
-        Ok(SourceSchema::Graph { labels, edge_types, property_keys, queries: Vec::new() })
+        Ok(SourceSchema::Graph {
+            labels,
+            edge_types,
+            property_keys,
+            queries: Vec::new(),
+            query_params: BTreeMap::new(),
+        })
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
@@ -920,6 +935,14 @@ impl Collector {
         }
         self.graph_records += 1;
         for (i, v) in record.iter().enumerate() {
+            // A graph step run in the database says in this column that it cut the query's rows
+            // at the row limit (analysis/pushdown.rs).
+            if self.fields.get(i).is_some_and(|f| f == crate::analysis::pushdown::CUT) {
+                if *v == Bv::Bool(true) {
+                    self.graph.cut_at_rows(self.max_rows);
+                }
+                continue;
+            }
             match v {
                 Bv::Null => {}
                 v if is_graph(v) => {

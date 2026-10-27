@@ -172,6 +172,7 @@ async fn query(
     JsonBody(req): JsonBody<QueryRequest>,
 ) -> ApiResult<Json<QueryResponse>> {
     check_items(&req.queries)?;
+    crate::datasources::check_item_steps(&req.queries)?;
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
@@ -402,9 +403,23 @@ pub(crate) fn stored_items(
             query: t.query.clone(),
             cursor: cursors.get(&t.ref_id).cloned(),
             limit,
+            steps: graph_steps_of(&panel.transformations, &t.ref_id),
         })
         .collect();
     Ok(PanelRun { items, variables, identifiers })
+}
+
+/// The enabled graph steps among `transformations` that read the query `ref_id`, in order: they
+/// run with the query, in the database where the source can (`datasources::run_queries`).
+pub(crate) fn graph_steps_of(transformations: &[Value], ref_id: &str) -> Vec<Value> {
+    transformations
+        .iter()
+        .filter(|v| {
+            crate::analysis::parse_step(v)
+                .is_ok_and(|s| !s.disabled && s.kind.is_graph_step() && s.kind.frames() == [ref_id])
+        })
+        .cloned()
+        .collect()
 }
 
 /// The queries a panel of a readable dashboard runs, as `panel_query` resolves them: the
@@ -488,11 +503,12 @@ async fn variable_options(
         query: query.clone(),
         cursor: None,
         limit: Some(MAX_OPTIONS as u32),
+        steps: Vec::new(),
     };
     let mut response =
         run_queries_with(&state, &ctx, vec![item], req.time_range, None, None, &variables, Some(&identifiers)).await;
     match response.results.remove(OPTIONS_REF_ID) {
-        Some(QueryOutcome::Ok { result }) => Ok(Json(options_from(result, variable.values_from.as_ref())?)),
+        Some(QueryOutcome::Ok { result, .. }) => Ok(Json(options_from(result, variable.values_from.as_ref())?)),
         Some(QueryOutcome::Err { error }) => Err(api_error(error)),
         None => Err(ApiError::internal("variable options", "no outcome for the query")),
     }

@@ -266,6 +266,8 @@ export interface StoredDatasource {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+  /** The last connection test the server kept (`lastTest`), with its warnings. */
+  lastTest?: { ok: boolean; warnings: WireHealth["warnings"]; testedAt: number };
 }
 
 export interface WireHealth {
@@ -275,6 +277,7 @@ export interface WireHealth {
   message: string;
   latencyMs: number;
   code?: string;
+  warnings?: { reason: string; params?: Record<string, string>; message: string }[];
 }
 
 export interface FakeDatasourcesState {
@@ -523,7 +526,17 @@ export function addTigerGraphSource(state: FakeDatasourcesState): void {
     createdAt: created,
     updatedAt: created,
   });
-  state.schemas[TIGERGRAPH_ID] = { ...FAKE_GRAPH_SCHEMA, queries: ["neighbours", "top_customers"] };
+  state.schemas[TIGERGRAPH_ID] = {
+    ...FAKE_GRAPH_SCHEMA,
+    queries: ["neighbours", "top_customers"],
+    queryParams: {
+      neighbours: [],
+      top_customers: [
+        { name: "limit", type: "INT" },
+        { name: "regions", type: "SET<STRING>" },
+      ],
+    },
+  };
 }
 
 /** Adds the Neo4j source "Graph DB" (NEO4J_ID) with its schema, for the graph tests. */
@@ -554,6 +567,9 @@ function publicView(ds: StoredDatasource, access?: Record<string, boolean>) {
   };
   if (ds.deletedAt !== undefined) {
     view.deletedAt = ds.deletedAt;
+  }
+  if (ds.lastTest !== undefined) {
+    view.lastTest = ds.lastTest;
   }
   if (access !== undefined) {
     view.access = access;

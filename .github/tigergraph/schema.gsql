@@ -1,0 +1,6 @@
+CREATE VERTEX Person (PRIMARY_ID id STRING, name STRING, age INT, gross UINT, seit DATETIME) WITH primary_id_as_attribute="true"
+CREATE VERTEX Ort (PRIMARY_ID id INT, name STRING)
+CREATE UNDIRECTED EDGE Friend (FROM Person, TO Person, since INT)
+CREATE DIRECTED EDGE Lebt (FROM Person, TO Ort)
+CREATE GRAPH social (Person, Ort, Friend, Lebt)
+CREATE GRAPH andere (Person, Friend)

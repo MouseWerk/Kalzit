@@ -1267,6 +1267,7 @@ impl DataSourcePlugin for Elasticsearch {
                     Ok(Health {
                         ok: true,
                         code: None,
+                        warnings: Vec::new(),
                         detail: Detail::new(
                             "health.search_answered",
                             "the search API answered; the login may not read the cluster version",

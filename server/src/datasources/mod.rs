@@ -82,6 +82,12 @@ pub trait DataSourcePlugin: Send + Sync {
     fn checks_on_save(&self) -> bool {
         false
     }
+    /// The query that runs the graph step `step` on the result of `query` in the source itself
+    /// (`analysis::pushdown`), run with `query` as any query is; `None` when the kind or the
+    /// query cannot, and the server runs the step on the result instead.
+    fn pushdown(&self, _query: &Value, _step: &crate::analysis::StepKind, _max_rows: usize) -> Option<Value> {
+        None
+    }
     /// Checks that need the source itself, run when its settings or secrets are saved (MongoDB:
     /// the login may only read). A refusal names the settings field at fault; a source that
     /// cannot be reached is not refused.
@@ -151,9 +157,18 @@ pub struct Health {
     /// What to show: `health.connected` and friends with `engine` and `version`, or why it
     /// failed.
     pub detail: Detail,
+    /// What works but needs attention, such as a TigerGraph REST++ without authentication. A
+    /// warning never makes the test fail and never stops a save.
+    pub warnings: Vec<Detail>,
 }
 
 impl Health {
+    /// The same answer with one more warning.
+    pub fn with_warning(mut self, warning: Detail) -> Self {
+        self.warnings.push(warning);
+        self
+    }
+
     /// Connected: `engine` and `version` for the text; `admin_login` when the login has
     /// administrator rights (which the text advises against).
     pub fn connected(engine: &str, version: &str, admin_login: bool) -> Self {
@@ -165,11 +180,16 @@ impl Health {
         } else {
             Detail::new("health.connected", format!("{engine} {version}").trim().to_string())
         };
-        Self { ok: true, code: None, detail: detail.with("engine", engine).with("version", version) }
+        Self {
+            ok: true,
+            code: None,
+            detail: detail.with("engine", engine).with("version", version),
+            warnings: Vec::new(),
+        }
     }
 
     pub fn failed(e: &SourceError) -> Self {
-        Self { ok: false, code: Some(e.code()), detail: e.detail() }
+        Self { ok: false, code: Some(e.code()), detail: e.detail(), warnings: Vec::new() }
     }
 }
 
@@ -216,7 +236,20 @@ pub enum SourceSchema {
         property_keys: Vec<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         queries: Vec<String>,
+        /// The declared parameters of the queries whose parameters are known (TigerGraph: from
+        /// the query info), by query name.
+        #[serde(rename = "queryParams", skip_serializing_if = "BTreeMap::is_empty")]
+        query_params: BTreeMap<String, Vec<QueryParam>>,
     },
+}
+
+/// One declared parameter of an installed query: its name and its type as the query language
+/// writes it (`INT`, `SET<STRING>`, `VERTEX<Person>`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct QueryParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -426,6 +459,8 @@ pub struct Connection {
     policy: Arc<TargetPolicy>,
     own: Arc<OwnDatabase>,
     shared: OnceCell<Arc<dyn Any + Send + Sync>>,
+    /// Graph steps this source could not run itself (`with_pushdown`).
+    pushdown: PushdownMemo,
 }
 
 /// A connection nobody holds anymore closes its SQLite file, also one that was never cached or
@@ -448,7 +483,15 @@ impl Connection {
         policy: Arc<TargetPolicy>,
         own: Arc<OwnDatabase>,
     ) -> Self {
-        Self { datasource_id: datasource_id.into(), settings, secrets, policy, own, shared: OnceCell::new() }
+        Self {
+            datasource_id: datasource_id.into(),
+            settings,
+            secrets,
+            policy,
+            own,
+            shared: OnceCell::new(),
+            pushdown: PushdownMemo::default(),
+        }
     }
 
     pub fn datasource_id(&self) -> &str {
@@ -1355,6 +1398,128 @@ pub fn check_items(items: &[QueryItem]) -> ApiResult<()> {
     Ok(())
 }
 
+/// Refuses free queries whose graph steps (`QueryItem::steps`) are not valid: steps of that
+/// query, graph steps only. A dashboard's stored steps are not refused as a whole: a step that
+/// no longer passes answers its error at the step (`run_queries`).
+pub fn check_item_steps(items: &[QueryItem]) -> ApiResult<()> {
+    for (i, item) in items.iter().enumerate() {
+        query_steps(item).map_err(|e| {
+            ApiError::validation(format!("queries[{i}].{e}"))
+                .with_field("queries")
+                .because("query.steps")
+                .param("detail", e)
+        })?;
+    }
+    Ok(())
+}
+
+/// The graph steps of a query (`QueryItem::steps`): steps of that query, graph steps only.
+pub fn query_steps(item: &QueryItem) -> Result<Vec<crate::analysis::Step>, String> {
+    let refs = std::collections::BTreeSet::from([item.ref_id.as_str()]);
+    let steps = crate::analysis::check_steps(&item.steps, &refs, "steps")?;
+    if let Some(i) = steps.iter().position(|s| !s.kind.is_graph_step()) {
+        return Err(format!("steps[{i}]: only graph steps run with the query"));
+    }
+    Ok(steps)
+}
+
+/// The graph steps of a query up to the first one that is not valid, and that one's place with
+/// its error: the query still runs with the steps before it.
+fn valid_steps(item: &QueryItem) -> (Vec<crate::analysis::Step>, Option<crate::shapes::StepPlace>) {
+    let refs = std::collections::BTreeSet::from([item.ref_id.as_str()]);
+    let mut steps: Vec<crate::analysis::Step> = Vec::new();
+    for (i, raw) in item.steps.iter().enumerate() {
+        let checked = crate::analysis::check_steps(std::slice::from_ref(raw), &refs, &format!("steps[{i}]")).and_then(
+            |mut one| {
+                let step = one.remove(0);
+                if !step.kind.is_graph_step() {
+                    return Err(format!("steps[{i}]: only graph steps run with the query"));
+                }
+                if steps.iter().any(|s| s.id == step.id) {
+                    return Err(format!("steps[{i}].id {} is used twice", step.id));
+                }
+                Ok(step)
+            },
+        );
+        match checked {
+            Ok(step) => steps.push(step),
+            Err(e) => {
+                let id = raw.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                let detail = Detail::new("steps.invalid", format!("the step is not valid: {e}")).with("detail", e);
+                let place = crate::shapes::StepPlace {
+                    id,
+                    ran_in: crate::shapes::RanIn::Server,
+                    error: Some(error_body("validation", detail)),
+                };
+                return (steps, Some(place));
+            }
+        }
+    }
+    (steps, None)
+}
+
+/// Generated queries a source could not run, by their text, so a refresh does not try them again
+/// for a while (an older database without the needed Cypher, a step that is too large for it).
+#[derive(Default)]
+pub struct PushdownMemo(std::sync::Mutex<HashMap<String, Instant>>);
+
+impl PushdownMemo {
+    const FOR: Duration = Duration::from_secs(600);
+    const MAX: usize = 256;
+
+    fn refused(&self, query: &Value) -> bool {
+        let key = query.to_string();
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match map.get(&key) {
+            Some(at) if at.elapsed() < Self::FOR => true,
+            Some(_) => {
+                map.remove(&key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn remember(&self, query: &Value) {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() >= Self::MAX {
+            map.clear();
+        }
+        map.insert(query.to_string(), Instant::now());
+    }
+}
+
+/// Runs a graph step in the source (`pushed`, the generated query) within `share` of the query's
+/// time, and the query as written when the source cannot (an error, a timeout, an answer
+/// `accept` refuses); `true` when the step ran in the source. A generated query that failed is
+/// not tried again for a while (`memo`).
+pub(crate) async fn with_pushdown<Run, Fut>(
+    run: Run,
+    pushed: Option<Value>,
+    original: Value,
+    share: Duration,
+    accept: impl Fn(QueryResult) -> Result<QueryResult, Detail>,
+    memo: &PushdownMemo,
+) -> Result<(QueryResult, bool), SourceError>
+where
+    Run: Fn(Value) -> Fut,
+    Fut: Future<Output = Result<QueryResult, SourceError>>,
+{
+    if let Some(query) = pushed.filter(|q| !memo.refused(q)) {
+        let why = match tokio::time::timeout(share, run(query.clone())).await {
+            Ok(Ok(result)) => match accept(result) {
+                Ok(result) => return Ok((result, true)),
+                Err(d) => d.message,
+            },
+            Ok(Err(e)) => e.detail().message,
+            Err(_) => format!("no answer within {} s", share.as_secs()),
+        };
+        tracing::debug!("graph step not run in the source: {}", scrub(&why, std::iter::empty()));
+        memo.remember(&query);
+    }
+    run(original).await.map(|r| (r, false))
+}
+
 /// Runs queries in parallel within the caller's concurrency limit and answers per `refId`. One
 /// failing query does not fail the others. Data source ids are resolved within the caller's
 /// organization; **the caller has already authorized every item** (`datasources:query` for free
@@ -1441,30 +1606,67 @@ async fn run_one(
     }
     let timeout = limits.timeout;
     let started = Instant::now();
+    // The valid graph steps; the first may run in the source.
+    let (steps, invalid) = valid_steps(&item);
+    let first = steps.iter().find(|s| !s.disabled);
+    let max_rows = limits.max_rows;
+    let pushed = first.and_then(|s| kind.plugin.pushdown(&item.query, &s.kind, max_rows));
     let run = async {
         // Waiting for a free slot counts against the query's own timeout.
         let _slots = registry.slots(state, &ctx.user.id).await?;
         let conn = registry.connection(state, &ds).await?;
-        let req = SourceQuery {
+        let request = |query: Value| SourceQuery {
             ref_id: item.ref_id.clone(),
-            query: item.query,
+            query,
             range,
             interval_ms,
             max_data_points,
             variables: variables.clone(),
             identifier_variables: identifier_variables.cloned(),
-            limits,
-            cursor: item.cursor,
+            limits: limits.clone(),
+            cursor: item.cursor.clone(),
         };
-        let result = kind.plugin.query(&conn, req).await;
+        // The source gets half the time for a graph step, so the query as written still has time.
+        let result = with_pushdown(
+            |query| kind.plugin.query(&conn, request(query)),
+            pushed.clone(),
+            item.query.clone(),
+            timeout / 2,
+            |result| match first {
+                Some(step) => crate::analysis::pushdown::normalize(&step.kind, result, max_rows),
+                None => Ok(result),
+            },
+            &conn.pushdown,
+        )
+        .await;
         Ok::<_, SourceError>((conn, result))
     };
-    match tokio::time::timeout(timeout, run).await {
+    let outcome = tokio::time::timeout(timeout, run).await;
+    match outcome {
         Err(_) => outcome_error("query_timeout", SourceError::Timeout(timeout.as_secs()).detail()),
         Ok(Err(e)) => outcome_error(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))),
-        Ok(Ok((_, Ok(result)))) => {
+        Ok(Ok((_, Ok((result, in_source))))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
-            QueryOutcome::Ok { result }
+            if steps.is_empty() && invalid.is_none() {
+                return QueryOutcome::Ok { result, steps: None };
+            }
+            let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
+            let name = item.ref_id.clone();
+            let ran =
+                tokio::task::spawn_blocking(move || graph_steps_on_server(&steps, &name, result, in_source, left))
+                    .await;
+            match ran {
+                Ok((result, mut places)) => {
+                    // A stored step that is no longer valid says so; the steps before it ran.
+                    if let Some(place) = invalid
+                        && places.iter().all(|p| p.error.is_none())
+                    {
+                        places.push(place);
+                    }
+                    QueryOutcome::Ok { result, steps: Some(places) }
+                }
+                Err(e) => outcome_error("internal", Detail::new("steps.failed", e.to_string())),
+            }
         }
         Ok(Ok((conn, Err(e)))) => {
             let detail = e.detail().scrubbed(|t| conn.scrub(t));
@@ -1472,6 +1674,46 @@ async fn run_one(
             outcome_error(e.code(), detail)
         }
     }
+}
+
+/// The graph steps of one query after it answered: the first already ran in the source when
+/// `in_source`; the others run here one by one. A failing step keeps the result before it and
+/// says why; the steps after it do not run.
+fn graph_steps_on_server(
+    steps: &[crate::analysis::Step],
+    name: &str,
+    mut result: QueryResult,
+    in_source: bool,
+    timeout_secs: u64,
+) -> (QueryResult, Vec<crate::shapes::StepPlace>) {
+    use crate::shapes::{RanIn, StepPlace};
+    let control = crate::analysis::steps::Control::new(
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        timeout_secs,
+    );
+    let mut places = Vec::new();
+    let mut enabled = steps.iter().filter(|s| !s.disabled);
+    if in_source && let Some(first) = enabled.next() {
+        places.push(StepPlace { id: first.id.clone(), ran_in: RanIn::Database, error: None });
+    }
+    for step in enabled {
+        // Each step reads the graph as the one before left it; a failure keeps that graph.
+        let ran = match &result {
+            QueryResult::Graph { graph } => crate::analysis::graph::apply(&step.kind, graph, &control),
+            _ => Err(Detail::new("steps.not_graph", format!("the result {name} is no graph")).with("frame", name)),
+        };
+        match ran {
+            Ok(crate::analysis::graph::GraphOut::Graph(graph)) => result = QueryResult::Graph { graph },
+            Ok(crate::analysis::graph::GraphOut::Frame(frame)) => result = QueryResult::Frame { frame },
+            Err(detail) => {
+                let error = error_body("validation", detail);
+                places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: Some(error) });
+                break;
+            }
+        }
+        places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: None });
+    }
+    (result, places)
 }
 
 /// Opens the change feed of one query for live updates (`DataSourcePlugin::watch`), with the
@@ -1546,6 +1788,30 @@ pub struct HealthReport {
     pub latency_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<&'static str>,
+    /// What works but needs attention (`Health::warnings`); the test still passed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<HealthWarning>,
+}
+
+/// One warning of "Test connection": a `reason` code the UI translates with its `params`, and
+/// the English `message` as fallback.
+#[derive(Debug, Serialize)]
+pub struct HealthWarning {
+    pub reason: &'static str,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+    pub message: String,
+}
+
+fn health_warnings(health: &Health, conn: &Connection) -> Vec<HealthWarning> {
+    health
+        .warnings
+        .iter()
+        .map(|w| {
+            let w = w.clone().scrubbed(|t| conn.scrub(t));
+            HealthWarning { reason: w.reason, params: w.params, message: w.message }
+        })
+        .collect()
 }
 
 /// The target checks that need no network: the SQLite path, and the `host` or `url` setting
@@ -1630,6 +1896,66 @@ pub async fn check_on_save(
 
 /// "Test connection" with the cached connection, counted against the caller's query slots.
 pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
+    let report = run_health(state, user_id, ds).await?;
+    store_last_test(&state.db, &ds.id, &report, state.clock.now_ms()).await;
+    Ok(report)
+}
+
+/// The last "Test connection" of a stored data source, as `datasource_health` keeps it: whether
+/// it passed, its warnings and when it ran (Unix milliseconds).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastTest {
+    pub ok: bool,
+    /// `{reason, params?, message}` each, as in `HealthReport::warnings`.
+    pub warnings: Vec<Value>,
+    pub tested_at: i64,
+}
+
+/// Keeps a test's outcome for the data source page. A failure to write only loses the note (the
+/// source may have been deleted meanwhile), so it is logged, not answered.
+async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthReport, at: i64) {
+    let warnings = serde_json::to_string(&report.warnings).unwrap_or_else(|_| "[]".into());
+    let stored = sqlx::query(
+        "INSERT INTO datasource_health (datasource_id, ok, warnings, tested_at) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (datasource_id) DO UPDATE SET ok = excluded.ok, warnings = excluded.warnings, \
+         tested_at = excluded.tested_at",
+    )
+    .bind(datasource_id)
+    .bind(i64::from(report.ok))
+    .bind(warnings)
+    .bind(at)
+    .execute(db)
+    .await;
+    if let Err(e) = stored {
+        tracing::warn!("could not keep the connection test of data source {datasource_id}: {e}");
+    }
+}
+
+/// The stored last test of a data source, if one ran since its settings or secrets last changed.
+pub async fn last_test(conn: &mut sqlx::AnyConnection, datasource_id: &str) -> ApiResult<Option<LastTest>> {
+    let row: Option<(i64, String, i64)> =
+        sqlx::query_as("SELECT ok, warnings, tested_at FROM datasource_health WHERE datasource_id = $1")
+            .bind(datasource_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    Ok(row.map(|(ok, warnings, tested_at)| LastTest {
+        ok: ok != 0,
+        warnings: serde_json::from_str::<Vec<Value>>(&warnings).unwrap_or_default(),
+        tested_at,
+    }))
+}
+
+/// Drops the stored last test: after the settings or secrets changed it no longer applies.
+pub async fn forget_last_test(conn: &mut sqlx::AnyConnection, datasource_id: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM datasource_health WHERE datasource_id = $1")
+        .bind(datasource_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+async fn run_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let registry = &state.datasources;
     let kind =
         registry.kind(&ds.kind).ok_or_else(|| ApiError::internal("health", format!("unknown kind {}", ds.kind)))?;
@@ -1648,6 +1974,7 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
             message: detail.message,
             latency_ms: started.elapsed().as_millis() as u64,
             code: Some(e.code()),
+            warnings: Vec::new(),
         }
     };
     let policy = registry.policy(state).await?;
@@ -1671,6 +1998,7 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
         // The next query should not reuse a pool that just failed.
         registry.forget(&ds.id);
     }
+    let warnings = health_warnings(&health, &conn);
     let detail = health.detail.scrubbed(|t| conn.scrub(t));
     Ok(HealthReport {
         ok: health.ok,
@@ -1679,6 +2007,7 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
         message: detail.message,
         latency_ms: started.elapsed().as_millis() as u64,
         code: if health.ok { None } else { Some(health.code.unwrap_or("datasource_error")) },
+        warnings,
     })
 }
 
@@ -1709,6 +2038,7 @@ pub async fn check_unsaved(
         message: detail.message,
         latency_ms: started.elapsed().as_millis() as u64,
         code,
+        warnings: Vec::new(),
     };
     let policy = registry.policy(state).await?;
     if let Err((blocked, _)) = precheck_targets(&policy, kind, settings) {
@@ -1761,9 +2091,10 @@ pub async fn check_unsaved(
             return Ok(report(false, e.detail(), Some(e.code())));
         }
     };
+    let warnings = health_warnings(&health, &conn);
     let detail = health.detail.scrubbed(|t| conn.scrub(t));
     let code = if health.ok { None } else { Some(health.code.unwrap_or("datasource_error")) };
-    Ok(report(health.ok, detail, code))
+    Ok(HealthReport { warnings, ..report(health.ok, detail, code) })
 }
 
 /// The schema for query editors, counted against the caller's query slots.
@@ -1848,6 +2179,87 @@ pub fn naive_to_ms(t: chrono::NaiveDateTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame_of(label: &str) -> QueryResult {
+        let field = crate::shapes::Field {
+            name: "x".into(),
+            field_type: crate::shapes::FieldType::String,
+            unit: None,
+            values: vec![serde_json::json!(label)],
+            labels: None,
+        };
+        QueryResult::Frame { frame: crate::shapes::Frame::new(vec![field]).unwrap() }
+    }
+
+    /// A graph step the source does not answer in its share of the time runs on the server
+    /// instead, within the query's time; a source that failed is not asked again for a while.
+    #[tokio::test]
+    async fn a_slow_or_failing_pushdown_falls_back_and_is_remembered() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let memo = PushdownMemo::default();
+        let pushed_runs = AtomicUsize::new(0);
+        let run = |q: Value| {
+            let pushed = q == serde_json::json!("pushed");
+            if pushed {
+                pushed_runs.fetch_add(1, Ordering::SeqCst);
+            }
+            async move {
+                if pushed {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok(frame_of("database"))
+                } else {
+                    Ok(frame_of("as written"))
+                }
+            }
+        };
+        let started = Instant::now();
+        let pushed = Some(serde_json::json!("pushed"));
+        let original = serde_json::json!("original");
+        let share = Duration::from_millis(50);
+        let (result, in_source) = with_pushdown(run, pushed.clone(), original.clone(), share, Ok, &memo).await.unwrap();
+        assert!(!in_source);
+        assert_eq!(result, frame_of("as written"));
+        assert!(started.elapsed() < Duration::from_secs(2), "the fallback did not wait for the source");
+        // Not tried again: the next refresh runs the query as written at once.
+        let (_, in_source) = with_pushdown(run, pushed.clone(), original.clone(), share, Ok, &memo).await.unwrap();
+        assert!(!in_source);
+        assert_eq!(pushed_runs.load(Ordering::SeqCst), 1);
+        // An answer the step refuses (too many pairs) falls back too.
+        let memo = PushdownMemo::default();
+        let fast =
+            |q: Value| async move { Ok(frame_of(if q == serde_json::json!("pushed") { "db" } else { "as written" })) };
+        let refuse = |_: QueryResult| Err(Detail::new("steps.too_many_cells", "too many"));
+        let (result, in_source) =
+            with_pushdown(fast, pushed.clone(), original.clone(), share, refuse, &memo).await.unwrap();
+        assert_eq!((result, in_source), (frame_of("as written"), false));
+        let (result, in_source) =
+            with_pushdown(fast, pushed, original, share, Ok, &PushdownMemo::default()).await.unwrap();
+        assert_eq!((result, in_source), (frame_of("db"), true));
+    }
+
+    /// A stored step that no longer passes the checks does not refuse its query: the steps
+    /// before it run, and it answers its error.
+    #[test]
+    fn an_invalid_stored_step_stops_there() {
+        let item = QueryItem {
+            ref_id: "A".into(),
+            datasource_id: "d".into(),
+            query: serde_json::json!({}),
+            cursor: None,
+            limit: None,
+            steps: vec![
+                serde_json::json!({ "id": "a", "type": "countLabels", "frame": "A" }),
+                serde_json::json!({ "id": "b", "type": "topDegree", "frame": "A", "n": 0 }),
+                serde_json::json!({ "id": "c", "type": "countLabels", "frame": "A" }),
+            ],
+        };
+        let (steps, invalid) = valid_steps(&item);
+        assert_eq!(steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["a"]);
+        let invalid = invalid.unwrap();
+        assert_eq!(invalid.id, "b");
+        assert_eq!(invalid.error.unwrap().reason.as_deref(), Some("steps.invalid"));
+        assert!(query_steps(&item).is_err(), "a free query is refused as a whole");
+    }
 
     /// TLS paths written relative in `kalzit.toml` are resolved against the file's folder before
     /// they are compared, so the files the server serves are the ones refused.

@@ -11,17 +11,20 @@
 //!
 //! TigerGraph has no read transaction, so two things keep it read-only (docs/PLAN.md, section 5):
 //!
-//! 1. The user must be a reader: only `queryreader` (or a role with no more than `READ_SCHEMA`,
-//!    `READ_LOADINGJOB`, `EXECUTE_LOADINGJOB`, `READ_DATA`, `READ_QUERY` and, from 4.1, the
-//!    per-query `EXECUTE_QUERY`). Kalzit reads the user's roles and privileges when it sets up the
+//! 1. The user must be a reader: only `queryreader` (or a role with no more than
+//!    `READ_PRIVILEGES`). Kalzit reads the user's roles and privileges when it sets up the
 //!    connection (after every change of the source, and every ten minutes) and in Test connection,
 //!    and refuses the source when the user may do more. 4.x: `GET /gsql/v1/users/{name}`; when
 //!    that is not allowed, and on 3.x, the fixed command `SHOW USER`.
 //! 2. The query text is checked by `gsql.rs`. An installed query runs only when its text is
 //!    readable (4.x `GET /gsql/v1/queries/{name}?graph=g`, which needs `READ_QUERY`; 3.x has no
 //!    such endpoint) and passes the check, or, when the text cannot be read, when its name is in
-//!    the source's `approvedQueries`, which a data source admin keeps. Then only the reader user
-//!    protects the data.
+//!    the source's `approvedQueries`, which a data source admin keeps. An approved query that
+//!    TigerGraph marks as changing data (`graphUpdate` in `GET /gsql/v1/queries/info`) is still
+//!    refused; otherwise only the reader user protects the data, which needs REST++
+//!    authentication on (a fresh Community Edition has it off).
+//!
+//! `.github/workflows/tigergraph-nightly.yml` checks these rules against a real 4.2 server.
 //!
 //! Kalzit never calls REST++ upsert, delete or loading endpoints.
 //!
@@ -43,8 +46,8 @@ use super::frame::{Charge, Column, FrameBuilder};
 use super::graph::{GraphBuilder, GraphLimits, float_value, int_value};
 use super::gsql::{self, Form, ParamType};
 use super::{
-    Connection, DataSourcePlugin, FieldError, Health, Kind, SettingField, SettingType, SourceError, SourceQuery,
-    SourceSchema,
+    Connection, DataSourcePlugin, FieldError, Health, Kind, QueryParam, SettingField, SettingType, SourceError,
+    SourceQuery, SourceSchema,
 };
 use crate::http::{HttpClient, HttpError, HttpOptions};
 use crate::shapes::{Edge, FieldType, Node, NoticeSeverity, QueryResult, Shape};
@@ -72,11 +75,22 @@ const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 const TEXT_CACHE: Duration = Duration::from_secs(60);
 const MAX_SCHEMA_NAMES: usize = 10_000;
 
-/// Privileges a reader may hold. `EXECUTE_LOADINGJOB` belongs to the built-in `queryreader`
-/// role; Kalzit never runs loading jobs (the GSQL check refuses `RUN`, and REST++ loading
-/// endpoints are never called), but the docs advise a custom role without it.
-const READ_PRIVILEGES: &[&str] =
-    &["READ_SCHEMA", "READ_LOADINGJOB", "EXECUTE_LOADINGJOB", "READ_DATA", "READ_QUERY", "EXECUTE_QUERY"];
+/// Privileges a reader may hold. The built-in `queryreader` role of 4.2 holds `READ_SCHEMA`,
+/// `READ_LOADINGJOB`, `EXECUTE_LOADINGJOB`, `READ_DATA`, `APP_ACCESS_DATA` (reading data in
+/// TigerGraph's own apps) and `READ_POLICY` (reading access policies), as the nightly job checks
+/// against the real server. `EXECUTE_LOADINGJOB` is the only one that is more than reading;
+/// Kalzit never runs loading jobs (the GSQL check refuses `RUN`, and REST++ loading endpoints are
+/// never called), but the docs advise a custom role without it.
+const READ_PRIVILEGES: &[&str] = &[
+    "READ_SCHEMA",
+    "READ_LOADINGJOB",
+    "EXECUTE_LOADINGJOB",
+    "READ_DATA",
+    "APP_ACCESS_DATA",
+    "READ_POLICY",
+    "READ_QUERY",
+    "EXECUTE_QUERY",
+];
 
 pub fn kind() -> Kind {
     Kind {
@@ -138,6 +152,8 @@ struct Client {
     texts: Mutex<HashMap<String, CheckedText>>,
     /// The graph's query names (4.x), which a `TYPEDEF` may not take, with when they were read.
     query_names: Mutex<Option<(Instant, Option<Vec<String>>)>>,
+    /// REST++ answered without a token when the connection was set up (authentication off).
+    restpp_open: bool,
 }
 
 fn parse_url(raw: &str) -> Result<Url, Detail> {
@@ -167,6 +183,24 @@ fn with_slash(mut url: Url) -> Url {
 
 fn is_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// Sets the URL's query to `pairs`, with a space as `%20`: REST++ keeps a `+` in a value as a
+/// plus sign (`a+b` arrives as `a+b`), so the form encoding of `Url::query_pairs_mut` would change
+/// every value with a space. The form encoding writes a `+` in a value as `%2B`, so afterwards
+/// every `+` stands for a space.
+fn set_query<K: AsRef<str>, V: AsRef<str>>(url: &mut Url, pairs: &[(K, V)]) {
+    let mut out = String::new();
+    for (k, v) in pairs {
+        if !out.is_empty() {
+            out.push('&');
+        }
+        out.extend(url::form_urlencoded::byte_serialize(k.as_ref().as_bytes()));
+        out.push('=');
+        out.extend(url::form_urlencoded::byte_serialize(v.as_ref().as_bytes()));
+    }
+    let out = out.replace('+', "%20");
+    url.set_query((!out.is_empty()).then_some(out.as_str()));
 }
 
 fn approved_list(raw: Option<&str>) -> Vec<String> {
@@ -239,9 +273,11 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             token: Mutex::new(None),
             texts: Mutex::new(HashMap::new()),
             query_names: Mutex::new(None),
+            restpp_open: false,
         };
         c.api = c.detect_api().await?;
         c.check_reader().await?;
+        c.restpp_open = c.rest_answers_without_token().await;
         Ok(c)
     })
     .await
@@ -325,7 +361,7 @@ impl Client {
     async fn gsql_json(&self, method: Method, path: &str, query: &[(&str, &str)]) -> Result<Answer, SourceError> {
         let mut url = self.gsql.join(path).map_err(|e| SourceError::failed("internal", e.to_string()))?;
         if !query.is_empty() {
-            url.query_pairs_mut().extend_pairs(query);
+            set_query(&mut url, query);
         }
         let (status, bytes) = self.call(method, url, self.basic.clone(), None, &[], MAX_SMALL_RESPONSE, None).await?;
         Ok(Answer { status, body: self.parse(status, &bytes)? })
@@ -440,6 +476,19 @@ impl Client {
         }
     }
 
+    /// Whether REST++ answers a request without a token, i.e. runs without authentication (403 in
+    /// 4.2 when it is on). `call` follows no redirect, and a redirect or any error counts as a
+    /// refusal, so only a direct 2xx answer of `<restppUrl>/version` itself says "open".
+    async fn rest_answers_without_token(&self) -> bool {
+        match self.restpp.join("version") {
+            Ok(url) => self
+                .call(Method::GET, url, None, None, &[], MAX_SMALL_RESPONSE, None)
+                .await
+                .is_ok_and(|(s, _)| s.is_success()),
+            Err(_) => false,
+        }
+    }
+
     /// A REST++ token, fetched when there is none or it is about to expire. `None` when the user
     /// has no secret and the API cannot issue one from the password (3.x): REST++ then has to run
     /// without authentication.
@@ -490,14 +539,47 @@ impl Client {
             return names.clone();
         }
         let names = match self.api {
-            Api::V4 => match self.gsql_json(Method::GET, "gsql/v1/queries", &[("graph", &self.graph)]).await {
-                Ok(a) if a.status.is_success() => Some(query_names(a.body.get("results").unwrap_or(&a.body))),
-                _ => None,
-            },
+            Api::V4 => self.list_queries().await.map(|qs| qs.into_iter().map(|q| q.name).collect()),
             Api::V3 => None,
         };
         *self.query_names.lock().expect("names lock") = Some((Instant::now(), names.clone()));
         names
+    }
+
+    /// The graph's queries with their info (4.x): `GET /gsql/v1/queries/info?graph=g` answers a
+    /// `queryreader` with every query; `GET /gsql/v1/queries?graph=g` answers it with an empty list
+    /// (4.2, checked by the nightly job), so it is only asked, for names alone, when the first is
+    /// not available.
+    async fn list_queries(&self) -> Option<Vec<QueryInfo>> {
+        let graph = [("graph", self.graph.as_str())];
+        if let Ok(a) = self.gsql_json(Method::GET, "gsql/v1/queries/info", &graph).await
+            && a.status.is_success()
+            && a.body.get("error").and_then(Value::as_bool) != Some(true)
+        {
+            return Some(query_infos(a.body.get("results").unwrap_or(&a.body), &self.graph));
+        }
+        match self.gsql_json(Method::GET, "gsql/v1/queries", &graph).await {
+            Ok(a) if a.status.is_success() => Some(
+                query_names(a.body.get("results").unwrap_or(&a.body))
+                    .into_iter()
+                    .map(|name| QueryInfo { name, updates: None, params: None })
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// The info of one installed query (4.x), readable for a `queryreader`; `None` when it cannot
+    /// be read.
+    async fn query_info(&self, name: &str) -> Option<QueryInfo> {
+        let a = self
+            .gsql_json(Method::GET, "gsql/v1/queries/info", &[("graph", &self.graph), ("query", name)])
+            .await
+            .ok()?;
+        if !a.status.is_success() || a.body.get("error").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        query_infos(a.body.get("results").unwrap_or(&a.body), &self.graph).into_iter().find(|i| i.name == name)
     }
 
     /// The checked parameters of an installed query, or why it may not run.
@@ -518,7 +600,40 @@ impl Client {
         };
         let Some(text) = text else {
             if self.approved.iter().any(|a| a == name) {
-                return Ok(None);
+                // 3.x has no query info: the values go untyped and only the reader user
+                // protects the data.
+                if self.api == Api::V3 {
+                    return Ok(None);
+                }
+                // 4.x: the info tells whether the query changes data and its parameters with
+                // their types. Without it, or without `graphUpdate`, the query is refused (fail
+                // closed); one that changes data is refused even when approved (the reader user
+                // would refuse it too, but only when REST++ checks tokens).
+                let checked = match self.query_info(name).await {
+                    Some(QueryInfo { updates: Some(true), .. }) => Err(Detail::new(
+                        "tigergraph.query_writes",
+                        format!("{name} changes data, so Kalzit does not run it"),
+                    )
+                    .with("name", name)),
+                    Some(QueryInfo { updates: Some(false), params: Some(params), .. }) => Ok(params),
+                    _ => Err(Detail::new(
+                        "tigergraph.query_info_unreadable",
+                        format!(
+                            "TigerGraph does not say whether {name} changes data or which parameters it takes,                              so Kalzit does not run it"
+                        ),
+                    )
+                    .with("name", name)),
+                };
+                // The outcome is kept for a minute like a checked text, except a clean one while
+                // REST++ runs without authentication: then the info is the only guard, so it is
+                // read again for every run.
+                if checked.is_err() || !self.restpp_open {
+                    self.texts
+                        .lock()
+                        .expect("text cache lock")
+                        .insert(name.to_string(), (Instant::now(), checked.clone()));
+                }
+                return checked.map(Some).map_err(SourceError::Rejected);
             }
             return Err(SourceError::rejected(
                 "tigergraph.query_text_unreadable",
@@ -540,6 +655,18 @@ impl Client {
         });
         self.texts.lock().expect("text cache lock").insert(name.to_string(), (Instant::now(), checked.clone()));
         checked.map(Some).map_err(SourceError::Rejected)
+    }
+}
+
+/// Whether REST++ refused the token itself (not the query): 401, or 403 with `REST-10016`.
+/// A 403 for missing privileges (`REST-10018`) is final.
+fn token_refused(status: StatusCode, body: &[u8]) -> bool {
+    match status {
+        StatusCode::UNAUTHORIZED => true,
+        StatusCode::FORBIDDEN => serde_json::from_slice::<Value>(body)
+            .ok()
+            .is_some_and(|v| v.get("code").and_then(Value::as_str) == Some("REST-10016")),
+        _ => false,
     }
 }
 
@@ -681,17 +808,23 @@ fn typed_pairs(
     out: &mut Vec<(String, String)>,
 ) -> Result<(), SourceError> {
     let text = match ty {
-        ParamType::Int | ParamType::Uint => {
+        // INT is a 64-bit signed number in TigerGraph, UINT an unsigned one: a value outside the
+        // range is refused, never wrapped.
+        ParamType::Int => {
             let i = match v {
-                Value::Number(n) => n.as_i64().or_else(|| n.as_u64().map(|u| u as i64)),
+                Value::Number(n) => n.as_i64().or_else(|| n.as_u64().and_then(|u| i64::try_from(u).ok())),
                 Value::String(s) => s.trim().parse::<i64>().ok(),
                 _ => None,
             };
-            let expected = if *ty == ParamType::Uint { "a whole number of at least 0" } else { "a whole number" };
-            match i {
-                Some(i) if *ty == ParamType::Int || i >= 0 => i.to_string(),
-                _ => return Err(param_error(name, expected)),
-            }
+            i.ok_or_else(|| param_error(name, "a whole number"))?.to_string()
+        }
+        ParamType::Uint => {
+            let u = match v {
+                Value::Number(n) => n.as_u64(),
+                Value::String(s) => s.trim().parse::<u64>().ok(),
+                _ => None,
+            };
+            u.ok_or_else(|| param_error(name, "a whole number of at least 0"))?.to_string()
         }
         ParamType::Float => match v {
             Value::Number(n) => n.to_string(),
@@ -1051,13 +1184,25 @@ impl DataSourcePlugin for TigerGraph {
                 Api::V4 => "4",
                 Api::V3 => "3",
             };
-            Ok::<_, SourceError>((version.unwrap_or_else(|| fallback.to_string()), edition_from(&message)))
+            // The same request without a token: REST++ with authentication refuses it (403 in
+            // 4.2). When it answers, anyone who reaches REST++ can run every installed query,
+            // writing ones too, and the reader user protects nothing there.
+            let open = c.rest_answers_without_token().await;
+            Ok::<_, SourceError>((version.unwrap_or_else(|| fallback.to_string()), edition_from(&message), open))
         };
         match check.await {
-            Ok((version, edition)) => {
+            Ok((version, edition, open)) => {
                 let mut h = Health::connected("TigerGraph", &version, false);
                 if let Some(e) = edition {
                     h.detail = h.detail.with("edition", e);
+                }
+                if open {
+                    h = h.with_warning(Detail::new(
+                        "tigergraph.auth_disabled",
+                        "REST++ answers without a token, so anyone who reaches it can run every installed query, \
+                         also ones that write; turn on REST++ authentication (gadmin config set \
+                         RESTPP.Factory.EnableAuth true, gadmin config apply -y, gadmin restart restpp -y)",
+                    ));
                 }
                 h
             }
@@ -1094,13 +1239,19 @@ impl DataSourcePlugin for TigerGraph {
         keys.sort();
         keys.dedup();
         keys.truncate(MAX_SCHEMA_NAMES);
-        let mut queries = match c.api {
-            Api::V4 => match c.gsql_json(Method::GET, "gsql/v1/queries", &[("graph", &c.graph)]).await {
-                Ok(a) if a.status.is_success() => query_names(a.body.get("results").unwrap_or(&a.body)),
-                _ => Vec::new(),
-            },
+        let infos = match c.api {
+            Api::V4 => c.list_queries().await.unwrap_or_default(),
             Api::V3 => Vec::new(),
         };
+        let query_params: BTreeMap<String, Vec<QueryParam>> = infos
+            .iter()
+            .filter_map(|q| {
+                let params = q.params.as_ref()?;
+                let list = params.iter().map(|p| QueryParam { name: p.name.clone(), ty: type_label(&p.ty) }).collect();
+                Some((q.name.clone(), list))
+            })
+            .collect();
+        let mut queries: Vec<String> = infos.into_iter().map(|q| q.name).collect();
         for approved in &c.approved {
             if !queries.contains(approved) {
                 queries.push(approved.clone());
@@ -1112,6 +1263,7 @@ impl DataSourcePlugin for TigerGraph {
             edge_types: names("EdgeTypes"),
             property_keys: keys,
             queries,
+            query_params,
         })
     }
 
@@ -1135,13 +1287,12 @@ impl DataSourcePlugin for TigerGraph {
                     Api::V3 => c.gsql.join("gsqlserver/interpreted_query"),
                 }
                 .map_err(|e| SourceError::failed("internal", e.to_string()))?;
-                {
-                    let mut qp = url.query_pairs_mut();
-                    if c.api == Api::V4 {
-                        qp.append_pair("graph", &c.graph);
-                    }
-                    qp.extend_pairs(&pairs);
+                let mut all = Vec::with_capacity(pairs.len() + 1);
+                if c.api == Api::V4 {
+                    all.push(("graph".to_string(), c.graph.clone()));
                 }
+                all.extend(pairs);
+                set_query(&mut url, &all);
                 let body = Some((text.clone().into_bytes(), "text/plain"));
                 let headers = [("gsql-timeout", timeout_ms.clone())];
                 let (s, b) =
@@ -1159,7 +1310,7 @@ impl DataSourcePlugin for TigerGraph {
                     .restpp
                     .join(&format!("query/{}/{name}", c.graph))
                     .map_err(|e| SourceError::failed("internal", e.to_string()))?;
-                url.query_pairs_mut().extend_pairs(&pairs);
+                set_query(&mut url, &pairs);
                 let headers = [("gsql-timeout", timeout_ms.clone()), ("response-limit", max_bytes.max(1).to_string())];
                 let mut renew = false;
                 loop {
@@ -1168,8 +1319,9 @@ impl DataSourcePlugin for TigerGraph {
                     let auth = token.and_then(|t| HeaderValue::from_str(&format!("Bearer {t}")).ok());
                     let (s, b) =
                         c.call(Method::GET, url.clone(), auth, None, &headers, max_bytes, Some(&mut charge)).await?;
-                    // An expired or revoked token: fetch a new one once.
-                    if s == StatusCode::UNAUTHORIZED && !renew && had_token {
+                    // An expired or revoked token: fetch a new one once. 4.2 answers a token it
+                    // does not accept with 403 and the code REST-10016 (the nightly job checks it).
+                    if token_refused(s, &b) && !renew && had_token {
                         renew = true;
                         continue;
                     }
@@ -1193,6 +1345,102 @@ impl DataSourcePlugin for TigerGraph {
         // The raw answer is gone; only the result's own charge remains.
         drop(charge);
         Ok(result)
+    }
+}
+
+/// An installed query as `GET /gsql/v1/queries/info` describes it.
+#[derive(Clone, Debug, PartialEq)]
+struct QueryInfo {
+    name: String,
+    /// `graphUpdate`: whether the query changes data.
+    updates: Option<bool>,
+    /// The declared parameters in their order, `None` when the info has none to read.
+    params: Option<Vec<gsql::Param>>,
+}
+
+/// The queries in the `results` of `GET /gsql/v1/queries/info` (4.2): one object per query with
+/// `name`, `graphUpdate` and `endpoint.query.<graph>.<name>."GET/POST".parameters`.
+fn query_infos(results: &Value, graph: &str) -> Vec<QueryInfo> {
+    let items: Vec<&Value> = match results {
+        Value::Array(a) => a.iter().collect(),
+        other => vec![other],
+    };
+    let mut out: Vec<QueryInfo> = items
+        .into_iter()
+        .filter_map(|q| {
+            let name = q.get("name").and_then(Value::as_str).filter(|n| is_name(n))?.to_string();
+            let endpoint =
+                q.get("endpoint").and_then(|e| e.get("query")).and_then(|e| e.get(graph)).and_then(|e| e.get(&name));
+            let endpoint = endpoint.and_then(|e| e.get("GET/POST").or_else(|| e.as_object()?.values().next()));
+            let updates =
+                q.get("graphUpdate").or_else(|| endpoint.and_then(|e| e.get("graphUpdate"))).and_then(Value::as_bool);
+            let params = endpoint.and_then(|e| e.get("parameters")).and_then(Value::as_object).map(info_params);
+            Some(QueryInfo { name, updates, params })
+        })
+        .collect();
+    out.truncate(MAX_SCHEMA_NAMES);
+    out
+}
+
+/// The declared parameters from an info's `parameters`, in their `index` order. `query` (the
+/// endpoint's own, without an index) and the `<v>.type` companion of an untyped vertex are left
+/// out. A vertex is `is_id` with its `id_type` (`$<name>.type` when the type goes along), a list
+/// has `max_count`.
+fn info_params(params: &Map<String, Value>) -> Vec<gsql::Param> {
+    let mut indexed: Vec<(u64, gsql::Param)> = params
+        .iter()
+        .filter_map(|(name, p)| {
+            let index = p.get("index").and_then(Value::as_u64)?;
+            if let Some(base) = name.strip_suffix(".type")
+                && params.get(base).and_then(|b| b.get("id_type")).and_then(Value::as_str)
+                    == Some(format!("${name}").as_str())
+            {
+                return None;
+            }
+            let is_id = p.get("is_id").is_some_and(|v| v == "true" || v == true);
+            let ty = p.get("type").and_then(Value::as_str).unwrap_or("STRING").to_ascii_uppercase();
+            let one = if is_id {
+                match p.get("id_type").and_then(Value::as_str) {
+                    Some(t) if !t.starts_with('$') && !t.is_empty() => ParamType::Vertex(Some(t.to_string())),
+                    _ => ParamType::Vertex(None),
+                }
+            } else if ty.starts_with("UINT") {
+                ParamType::Uint
+            } else if ty.starts_with("INT") {
+                ParamType::Int
+            } else if ty == "FLOAT" || ty == "DOUBLE" {
+                ParamType::Float
+            } else if ty.starts_with("BOOL") {
+                ParamType::Bool
+            } else if ty == "DATETIME" {
+                ParamType::Datetime
+            } else {
+                ParamType::String
+            };
+            let ty = if p.get("max_count").and_then(Value::as_u64).is_some_and(|m| m > 1) {
+                ParamType::Many(Box::new(one))
+            } else {
+                one
+            };
+            Some((index, gsql::Param { name: name.clone(), ty }))
+        })
+        .collect();
+    indexed.sort_by_key(|(i, _)| *i);
+    indexed.into_iter().map(|(_, p)| p).collect()
+}
+
+/// A parameter type as GSQL writes it, for the query picker.
+fn type_label(ty: &ParamType) -> String {
+    match ty {
+        ParamType::Int => "INT".into(),
+        ParamType::Uint => "UINT".into(),
+        ParamType::Float => "FLOAT".into(),
+        ParamType::Bool => "BOOL".into(),
+        ParamType::String => "STRING".into(),
+        ParamType::Datetime => "DATETIME".into(),
+        ParamType::Vertex(Some(t)) => format!("VERTEX<{t}>"),
+        ParamType::Vertex(None) => "VERTEX".into(),
+        ParamType::Many(inner) => format!("SET<{}>", type_label(inner)),
     }
 }
 
