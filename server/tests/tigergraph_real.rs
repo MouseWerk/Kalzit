@@ -269,20 +269,24 @@ async fn installed_queries_with_parameters() {
     let r = t
         .query(
             &id,
-            json!({ "installed": "zahlen", "params": { "k": 3, "ab": "2024-01-01 00:00:00", "liste": [1, 2],
+            json!({ "installed": "zahlen", "params": { "k": 3, "name": "Ana", "ab": "2024-01-01 00:00:00", "liste": [1, 2],
                     "v": { "type": "Person", "id": "2" } } }),
         )
         .await;
     eprintln!("zahlen: {r}");
     assert_eq!(r["result"]["shape"], "frame", "{r}");
-    assert_eq!(field(&r, "@@treffer")["values"], json!(["1"]), "name came from the variable: {r}");
+    assert_eq!(field(&r, "@@treffer")["values"], json!(["1"]), "{r}");
     assert_eq!(field(&r, "name")["values"], json!(["Ana"]), "{r}");
     assert_eq!(field(&r, "liste")["values"], json!([[1, 2]]), "{r}");
     assert_eq!(field(&r, "v")["values"], json!(["2"]), "{r}");
 
     // Spaces, plus signs and ampersands arrive as written, in installed and interpreted queries.
     let odd = "a b+c&d=e Ö";
-    let r = t.query(&id, json!({ "installed": "zahlen", "params": { "name": odd } })).await;
+    // An approved query's parameters are unknown to Kalzit, so dashboard variables do not fill
+    // them: every value is given.
+    let params =
+        json!({ "k": 1, "name": odd, "ab": "2024-01-01 00:00:00", "liste": [5], "v": { "type": "Ort", "id": "7" } });
+    let r = t.query(&id, json!({ "installed": "zahlen", "params": params })).await;
     assert_eq!(field(&r, "name")["values"], json!([odd]), "{r}");
     let r = t
         .query(
