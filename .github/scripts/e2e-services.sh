@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # MongoDB, OpenSearch, Neo4j and Memgraph for the end-to-end specs of document, search and graph
 # sources (ui/e2e/documents.spec.ts, ui/e2e/opensearch.spec.ts, ui/e2e/graph.spec.ts), on Linux
-# runners only: Windows runners
-# have no Linux containers, so there those specs are skipped and the Windows checklist covers
-# them. Containers rather than job services, since services would also start on Windows.
+# runners only: Windows runners have no Linux containers, so there those specs are skipped and
+# the Windows checklist covers them. Containers rather than job services, since services would
+# also start on Windows.
 #
 #   e2e-services.sh start   pulls and starts the containers in the background (early in the job,
 #                           so they are up by the time the build is done)
 #   e2e-services.sh ready   waits for all of them, seeds MongoDB with
-#                           ui/e2e/fixtures/mongo-orders.js and Neo4j and Memgraph with ui/e2e/fixtures/graph-shop.cypher, and
-#                           writes KALZIT_E2E_MONGODB, KALZIT_E2E_OPENSEARCH, KALZIT_E2E_NEO4J and
+#                           ui/e2e/fixtures/mongo-orders.js and Neo4j and Memgraph with
+#                           ui/e2e/fixtures/graph-shop.cypher, and writes KALZIT_E2E_MONGODB, KALZIT_E2E_OPENSEARCH, KALZIT_E2E_NEO4J and
 #                           KALZIT_E2E_MEMGRAPH to $GITHUB_ENV
 #
 # The images are those of the server tests' services in ci.yml. The passwords belong to throwaway
