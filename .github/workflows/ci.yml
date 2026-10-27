@@ -361,10 +361,11 @@ jobs:
         run: echo "No server or UI change in this pull request; the end-to-end tests are skipped."
       - uses: actions/checkout@v7
         if: env.RUN_JOB == 'true'
-      # MongoDB and OpenSearch for the document and search specs, started first so they are up
-      # once the build is done. Linux only: Windows runners have no Linux containers, so those
-      # specs skip there with a reason, and the release's Windows checklist covers them.
-      - name: Start MongoDB and OpenSearch
+      # MongoDB, OpenSearch, Neo4j and Memgraph for the document, search and graph specs, started
+      # first so they are up once the build is done. Linux only: Windows runners have no Linux
+      # containers, so those specs skip there with a reason, and the release's Windows checklist
+      # covers them.
+      - name: Start MongoDB, OpenSearch, Neo4j and Memgraph
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh start
@@ -460,8 +461,9 @@ jobs:
         with:
           path: ~/.cache/kalzit-browser-debs
           key: ${{ steps.debs.outputs.cache-primary-key }}
-      # Seeds MongoDB (ui/e2e/fixtures/mongo-orders.js) and names both services for the specs.
-      - name: Wait for MongoDB and OpenSearch
+      # Seeds MongoDB (ui/e2e/fixtures/mongo-orders.js), Neo4j and Memgraph
+      # (ui/e2e/fixtures/graph-shop.cypher) and names the services for the specs.
+      - name: Wait for MongoDB, OpenSearch, Neo4j and Memgraph
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh ready
