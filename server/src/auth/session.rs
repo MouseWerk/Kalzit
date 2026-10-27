@@ -193,7 +193,11 @@ fn cookie_name(secure: bool) -> &'static str {
 /// The session token of the request. With `secure` (`RequestInfo::https`) only the
 /// `__Host-` cookie counts, so a plain cookie planted over HTTP or by a subdomain is ignored.
 pub fn read_cookie(headers: &HeaderMap, secure: bool) -> Option<String> {
-    let wanted = cookie_name(secure);
+    cookie_value(headers, cookie_name(secure))
+}
+
+/// The value of the cookie `wanted`, when the request has a non-empty one.
+pub fn cookie_value(headers: &HeaderMap, wanted: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -214,7 +218,7 @@ pub fn clear_cookie(secure: bool) -> HeaderValue {
     cookie_header(&format!("{}=; Max-Age=0", cookie_name(secure)), secure)
 }
 
-fn cookie_header(base: &str, secure: bool) -> HeaderValue {
+pub(crate) fn cookie_header(base: &str, secure: bool) -> HeaderValue {
     let secure = if secure { "; Secure" } else { "" };
     // The token is hex and the rest is static, so this is always a valid header value.
     HeaderValue::from_str(&format!("{base}; Path=/; HttpOnly; SameSite=Lax{secure}")).expect("cookie header is ASCII")

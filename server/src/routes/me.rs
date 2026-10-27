@@ -75,22 +75,22 @@ async fn change_password(
     if req.current.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(wrong_current());
     }
-    // Its own budget, and the account's failures from sign-ins and password checks together, so
-    // a session cannot add guesses to those of the sign-in page.
+    // Its own budget. A failure also counts for the account's sign-ins from all addresses
+    // (`AppState::account_limiter`), which does not refuse here: the caller has a session.
+    use crate::auth::ratelimit::{account_key, network_key};
+    let mono = state.clock.monotonic_ms();
     let limit_key = format!("password:{}", user.id);
-    let account_key = crate::auth::ratelimit::account_key(&user.email);
-    let refused = |wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait);
-    if let Some(wait) = state.account_limiter.wait(&account_key, now) {
-        return Err(refused(wait));
-    }
-    state.login_limiter.try_acquire(&[&limit_key], now).map_err(refused)?;
+    state
+        .password_limiter
+        .try_acquire(&limit_key, &limit_key, mono)
+        .map_err(|wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait))?;
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
     if !password::verify(req.current, stored.clone()).await {
-        state.account_limiter.record(&account_key, now);
+        state.account_limiter.record(&account_key(&user.email), &network_key(info.client_ip), mono);
         return Err(wrong_current());
     }
-    state.login_limiter.reset(&limit_key);
+    state.password_limiter.reset(&limit_key);
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
     let hash = password::hash(req.new).await.map_err(|e| ApiError::internal("hashing password", e))?;
 

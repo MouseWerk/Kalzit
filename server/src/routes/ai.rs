@@ -552,7 +552,7 @@ async fn test(state: &AppState, actor: Actor<'_>, id: &str) -> ApiResult<Json<Te
     org_providers_allowed(state, &actor).await?;
     let row = found(state, actor.org_id, id).await?;
     let user_key = format!("ai-test:user:{}", actor.user.id);
-    if let Err(wait) = state.probe_limiter.try_acquire(&[&user_key], state.clock.now_ms()) {
+    if let Err(wait) = state.probe_limiter.try_acquire(&user_key, &user_key, state.clock.monotonic_ms()) {
         return Err(ApiError::rate_limited("too many provider tests; wait a minute", wait)
             .because("ai.test_rate_limited")
             .param("max", super::datasources::PROBE_MAX));

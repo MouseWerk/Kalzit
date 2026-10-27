@@ -1142,30 +1142,42 @@ async fn ended_sessions_are_not_listed() {
 }
 
 #[tokio::test]
-async fn failed_sign_ins_and_password_checks_share_the_account_budget() {
-    let mut t = test_app(None).await;
+async fn password_checks_count_for_the_account_but_are_not_refused_by_it() {
+    let t = test_app(None).await;
     let (owner, _) = t.setup().await;
-    let own_app = t.app.clone();
     let limit = t.state.config.security.login_max_failures;
-    // Wrong passwords from many addresses use up the account's budget.
-    for i in 0..kalzit::app::ACCOUNT_FAILURES_FACTOR {
-        let peer: SocketAddr = format!("192.0.2.{}:1", i + 1).parse().unwrap();
-        t.app = router(t.state.clone()).layer(MockConnectInfo(peer));
-        for _ in 0..limit {
-            let r = t
-                .send(
-                    Method::POST,
-                    "/api/auth/login",
-                    Some(json!({ "email": "joerg@example.de", "password": "falsch falsch" })),
-                    None,
-                )
-                .await;
-            assert_eq!(r.status, StatusCode::UNAUTHORIZED);
-        }
+    let sign_in = |password: &'static str| {
+        t.send(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "email": "joerg@example.de", "password": password })),
+            None,
+        )
+    };
+    // Wrong passwords on the sign-in page use up the account's shared budget ...
+    for _ in 0..limit {
+        assert_eq!(sign_in("falsch falsch").await.status, StatusCode::UNAUTHORIZED);
     }
-    t.app = own_app;
+    // ... which does not refuse a password check of a session: it has its own budget.
     let r =
         t.post("/api/me/password", json!({ "current": PASSWORD, "new": "Ein neues langes Passwort" }), &owner).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    t.finish().await;
+
+    // Wrong current passwords of a session count for the account: a sign-in from a browser the
+    // account does not know is refused once they used it up.
+    let mut t = test_app(None).await;
+    let (owner, _) = t.setup().await;
+    for _ in 0..limit {
+        let r = t
+            .post("/api/me/password", json!({ "current": "falsch falsch", "new": "Ein neues langes Passwort" }), &owner)
+            .await;
+        assert_eq!(r.field(), "current");
+    }
+    t.app = router(t.state.clone()).layer(MockConnectInfo("192.0.2.1:1".parse::<SocketAddr>().unwrap()));
+    let r = t
+        .send(Method::POST, "/api/auth/login", Some(json!({ "email": "joerg@example.de", "password": PASSWORD })), None)
+        .await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
     t.finish().await;
 }

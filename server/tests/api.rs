@@ -760,78 +760,182 @@ async fn a_rate_limited_sign_in_names_the_wait() {
     t.finish().await;
 }
 
-/// Wrong passwords from elsewhere never lock the owner out: an attacker who used up the sign-ins
-/// of their own addresses, and the account's failures from all addresses together, leaves a
-/// clean address free to sign in with the right password.
+/// The value of the cookie `name` that a reply sets, as `name=value` for a `Cookie` header.
+fn set_cookie(reply: &Reply, name: &str) -> String {
+    reply
+        .headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with(&format!("{name}=")))
+        .and_then(|v| v.split(';').next())
+        .unwrap_or_else(|| panic!("no {name} cookie"))
+        .to_string()
+}
+
+impl TestApp {
+    async fn login_with(&self, email: &str, password: &str, cookie: &str) -> Reply {
+        let body = json!({ "email": email, "password": password });
+        self.send(Method::POST, "/api/auth/login", Some(body), &[("cookie", cookie)]).await
+    }
+}
+
+/// The account rule: wrong passwords from many networks, one each, so no address or account at
+/// an address is limited, use up the account's shared budget. A browser that signed in to the
+/// account before (its device cookie) still gets in, from any address; any other browser is
+/// refused, the right password included, with the whole window as the wait. A new password
+/// revokes the device cookies.
 #[tokio::test]
-async fn failed_sign_ins_elsewhere_do_not_lock_the_account() {
+async fn a_known_device_signs_in_while_the_account_is_under_attack() {
     let t = test_app("127.0.0.1:50000", |c| {
         c.security.login_max_failures = 3;
         c.security.login_window_secs = 600;
     })
     .await;
     t.setup().await;
-    // Three wrong passwords from each of five addresses: the account's 15 are used up too.
-    for i in 1..=5 {
-        let attacker = t.from(&format!("192.0.2.{i}:1"));
-        for _ in 0..3 {
-            assert_eq!(
-                attacker.login("joerg@example.de", "falsch falsch falsch").await.status,
-                StatusCode::UNAUTHORIZED
-            );
-        }
-        let r = attacker.login("joerg@example.de", PASSWORD).await;
-        assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
-    }
-    // The owner, from an address of their own, still gets in; also after mistyping twice.
-    assert_eq!(t.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
     let owner = t.from("198.51.100.7:1");
-    for _ in 0..2 {
-        assert_eq!(owner.login("joerg@example.de", "vertippt vertippt").await.status, StatusCode::UNAUTHORIZED);
+    let signed_in = owner.login("joerg@example.de", PASSWORD).await;
+    assert_eq!(signed_in.status, StatusCode::OK);
+    let device = set_cookie(&signed_in, "kalzit_device");
+    assert!(
+        signed_in.headers.get_all(header::SET_COOKIE).iter().any(|v| {
+            let v = v.to_str().unwrap();
+            v.starts_with("kalzit_device=") && v.contains("HttpOnly") && v.contains("Max-Age=7776000")
+        }),
+        "the device cookie is HttpOnly and lasts 90 days"
+    );
+
+    for i in 1..=3 {
+        let attacker = t.from(&format!("[2001:db8:{i:x}::1]:1"));
+        assert_eq!(attacker.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
     }
-    assert_eq!(owner.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
-    drop(owner);
+    for client in [t.from("203.0.113.9:1"), t.from("[2001:db8:ff::1]:1")] {
+        let r = client.login("joerg@example.de", PASSWORD).await;
+        assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+        assert_eq!(r.body["error"]["retryAfterSecs"], 600);
+    }
+    // A device cookie of another account, or a forged one, does not help.
+    let forged = device.replacen("kalzit_device=v1.", "kalzit_device=v1.x", 1);
+    assert_eq!(
+        t.from("203.0.113.9:1").login_with("joerg@example.de", PASSWORD, &forged).await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // The owner's browser gets in, at home and elsewhere.
+    let again = owner.login_with("joerg@example.de", PASSWORD, &device).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    let travelling = t.from("192.0.2.200:1");
+    assert_eq!(travelling.login_with("joerg@example.de", PASSWORD, &device).await.status, StatusCode::OK);
+
+    // A new password revokes the device cookies of the account.
+    let session = again.session_cookie();
+    let changed = owner
+        .send(
+            Method::POST,
+            "/api/me/password",
+            Some(json!({ "current": PASSWORD, "new": "Ein ganz neues Passwort 2026" })),
+            &[("cookie", &session)],
+        )
+        .await;
+    assert_eq!(changed.status, StatusCode::NO_CONTENT, "{}", changed.body);
+    let r = travelling.login_with("joerg@example.de", "Ein ganz neues Passwort 2026", &device).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    drop((owner, travelling));
     t.finish().await;
 }
 
-/// Guessing stays slow: once the account's failures from all addresses are used up, an address
-/// gets only a mistyping's worth of tries instead of its full budget, the right password
-/// included, and the wait named is the whole window, which tells nothing about the account.
+/// Guessing spread over many networks gets only the account's shared budget, not the budget of
+/// every address: after it, every guess is refused, the right one included.
 #[tokio::test]
-async fn an_account_under_attack_gives_each_address_only_a_few_tries() {
+async fn distributed_guessing_gets_only_the_account_budget() {
+    let t = test_app("127.0.0.1:50000", |c| c.security.login_max_failures = 3).await;
+    t.setup().await;
+    let (mut wrong, mut refused) = (0, 0);
+    for i in 0..20 {
+        let attacker = t.from(&format!("[2001:db8:{i:x}:{i:x}::1]:1"));
+        match attacker.login("joerg@example.de", "falsch falsch falsch").await.status {
+            StatusCode::UNAUTHORIZED => wrong += 1,
+            StatusCode::TOO_MANY_REQUESTS => refused += 1,
+            other => panic!("{other}"),
+        }
+    }
+    assert_eq!((wrong, refused), (3, 17));
+    assert_eq!(
+        t.from("[2001:db8:99::1]:1").login("joerg@example.de", PASSWORD).await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    t.finish().await;
+}
+
+/// An IPv6 site (/48) has a budget of failures for all accounts together. Used up, an address in
+/// it goes on only with accounts that are clean at that address; other sites are not affected.
+#[tokio::test]
+async fn an_ipv6_site_that_used_up_its_failures_goes_on_only_with_clean_accounts() {
     let t = test_app("127.0.0.1:50000", |c| {
         c.security.login_max_failures = 5;
         c.security.login_window_secs = 600;
     })
     .await;
     t.setup().await;
+    // Five addresses of one site, five wrong passwords each for different accounts: 25 for the
+    // site, which is its budget.
     for i in 1..=5 {
-        let attacker = t.from(&format!("192.0.2.{i}:1"));
+        let address = t.from(&format!("[2001:db8:1:{i}::1]:1"));
         for _ in 0..5 {
-            assert_eq!(
-                attacker.login("joerg@example.de", "falsch falsch falsch").await.status,
-                StatusCode::UNAUTHORIZED
-            );
+            let r = address.login(&format!("konto{i}@example.de"), "falsch falsch falsch").await;
+            assert_eq!(r.status, StatusCode::UNAUTHORIZED);
         }
     }
-    t.clock.advance_ms(100_000);
-    let next = t.from("192.0.2.6:1");
+    let sixth = t.from("[2001:db8:1:6::1]:1");
     for _ in 0..3 {
-        assert_eq!(next.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(sixth.login("y@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
     }
-    // Two tries of its own budget are left, but the account is under attack.
-    for password in ["falsch falsch falsch", PASSWORD] {
-        let r = next.login("joerg@example.de", password).await;
-        assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
-        assert_eq!(r.body["error"]["retryAfterSecs"], 600);
-        assert_eq!(r.headers.get(header::RETRY_AFTER).unwrap(), "600");
+    // Neither the address (3 of 5) nor the account (3 of 5) is used up; the site is.
+    let r = sixth.login("y@example.de", "falsch falsch falsch").await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    // An account clean at this address goes on, and so does the owner from it.
+    assert_eq!(sixth.login("z@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(sixth.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    // Another site is not affected.
+    assert_eq!(
+        t.from("[2001:db8:2::1]:1").login("y@example.de", "falsch falsch falsch").await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    drop(sixth);
+    t.finish().await;
+}
+
+/// Tables filled from attacker networks refuse those networks, while a client from another
+/// network still signs in, and the setup still completes.
+#[tokio::test]
+async fn full_rate_limit_tables_still_let_other_networks_in() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let now = t.clock.monotonic_ms();
+    let attacker = |i: u128| {
+        std::net::IpAddr::V6(std::net::Ipv6Addr::from(
+            (0x2001_0db8u128 << 96) | ((i / 100) << 80) | ((i % 100) << 64) | 1,
+        ))
+    };
+    use kalzit::auth::ratelimit::{address_key, network_key};
+    for i in 0..101_000u128 {
+        let ip = attacker(i);
+        let (key, net) = (address_key("login", ip), network_key(ip));
+        let _ = t.state.login_limiter.try_acquire(&key, &net, now);
+        let _ = t.state.pair_limiter.try_acquire(&format!("account:a{i}@example.de|{key}"), &net, now);
+        let _ = t.state.account_limiter.record(&format!("email:a{i}@example.de"), &net, now);
+        let _ = t.state.setup_limiter.try_acquire(&address_key("setup", ip), &net, now);
     }
-    // Other accounts are not affected.
-    assert_eq!(next.login("niemand@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
-    // Once the account's window is over, the address has its own budget again.
-    t.clock.advance_ms(500_000);
-    assert_eq!(next.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
-    drop(next);
+    // A new /64 in one of the flooding /48s.
+    let flooded_ip = std::net::Ipv6Addr::from((0x2001_0db8u128 << 96) | (5 << 80) | (200 << 64) | 1);
+    let flooded = t.from(&format!("[{flooded_ip}]:1"));
+    let r = flooded.post("/api/setup/check", json!({ "token": SETUP_CODE })).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    let done = t.setup().await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    let r = flooded.login("joerg@example.de", PASSWORD).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    let owner = t.from("198.51.100.7:1");
+    assert_eq!(owner.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    drop((flooded, owner));
     t.finish().await;
 }
 

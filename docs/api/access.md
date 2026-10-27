@@ -475,24 +475,42 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 
 `POST /auth/login` (`server/src/routes/auth.rs`) counts every attempt before the password is
 checked, and refuses it with `429 rate_limited` (with `Retry-After` and `retryAfterSecs`) when a
-budget is used up:
+budget is used up. `security.login_max_failures` per `security.login_window_secs` (default 10
+per 15 minutes) applies to each of:
 
-- per client address (IPv6 per /64): `security.login_max_failures` attempts per
-  `security.login_window_secs` (default 10 per 15 minutes), whatever the email;
-- per account at that address: the same numbers. Wrong passwords from other addresses never use
-  it up, so they cannot lock the owner out;
-- per account from all addresses together: 5 times `security.login_max_failures` failures per
-  window (failed sign-ins and failed `POST /me/password` checks). Used up, it refuses addresses
-  that already had more than 2 failures in their own window, the right password included, with
-  the whole window as the wait (it tells nothing about the account). An address with at most 2
-  failures still signs in with the right password. A guess spread over many addresses so gets
-  3 tries per address instead of the full budget.
+- the client address (IPv4 per address, IPv6 per /64), whatever the email;
+- the account at that address. Wrong passwords from other addresses never use it up;
+- the account from all addresses together (failed sign-ins and failed `POST /me/password`
+  checks). Used up, it refuses every sign-in of the account from a browser without a known
+  device cookie, the right password included, with the whole window as the wait (it tells
+  nothing about the account). A guess spread over many addresses so gets this one budget, not
+  the budget of every address.
+
+Known devices: a successful sign-in sets the cookie `kalzit_device` (`__Host-kalzit_device` over
+HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 90 days, renewed with every sign-in). It is signed
+with a key derived from the secrets key and bound to the account and its current password hash;
+it holds no session and signs nobody in. A sign-in that brings a valid device cookie of the
+account is not held to the account's shared budget (the budgets of the address and of the
+account at the address still apply), so an attacker who uses that budget up cannot lock the
+owner out of a browser they signed in with before. A new password, set by the user or an admin,
+revokes every device cookie of the account; so does a new secrets key.
+
+An IPv6 site (/48) also has a budget for all accounts together: 5 times
+`security.login_max_failures` failures per window. Used up, an address in it goes on only with
+accounts that are clean at that address (at most 2 failures there), so others' typos behind the
+same network never make the owner's account dirty.
 
 A successful sign-in gives the address its attempt back and clears the account's budget at that
-address. The counts live in memory and are bounded: only entries whose window has ended are
-dropped, and when the table is full of running windows (100 000 keys), attempts with new keys
-are refused until the oldest window ends, so a flood of addresses never resets a budget that is
-still counting.
+address; the account's shared budget runs until its window ends. Windows are measured on a
+monotonic clock, so a change of the system time neither ends nor stretches them.
+
+The counts live in memory, one bounded table per kind of key (addresses, accounts at an
+address, accounts, sites, setup codes), so a flood of one kind never crowds out another. Only
+entries whose window has ended are dropped. Beyond 100 000 entries, a new key is taken only
+while its network (IPv6 /48, IPv4 /24) holds fewer than 16 entries: the networks that filled the
+table are refused, a client from any other network is still counted. At 300 000 entries every new
+key is refused until the oldest window ends. An account the table cannot take is refused rather
+than left uncounted, and a running budget is never pushed out.
 
 ## Setup
 
@@ -573,10 +591,11 @@ interface SessionView {
 **`PATCH /me`** `{ "name" }`. Errors: `validation` `name`. Audit `user.updated`.
 
 **`POST /me/password`** `{ "current", "new" }`. Ends every other session of the account; this one
-stays. Attempts count against a budget of their own (`security.login_max_failures` per window),
-and failed checks add to the account's failures from sign-ins (see Sign-in rate limits); once
-either is used up the answer is `429 rate_limited`. A correct password resets the budget of its
-own. Of two changes at the same moment with the same
+stays. Attempts count against a budget of their own (`security.login_max_failures` per window);
+once it is used up the answer is `429 rate_limited`. Failed checks also count for the account's
+shared sign-in budget (see Sign-in rate limits), which does not refuse here, since the caller
+has a session. A correct password resets the budget of its own, and the new password revokes
+the account's device cookies. Of two changes at the same moment with the same
 current password, the second answers `validation` `current`. Errors: `validation` `current` (not correct), `validation` `new`
 (policy), `429 rate_limited`. Audit `user.password_changed`.
 

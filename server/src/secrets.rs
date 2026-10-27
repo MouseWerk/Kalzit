@@ -51,6 +51,8 @@ const AAD_PREFIX: &[u8] = b"kalzit:datasource-secret:v1\0";
 pub struct SecretKey {
     id: String,
     cipher: Aes256Gcm,
+    /// A key derived for signing (`Keyring::sign`), never used for encryption.
+    signing: Zeroizing<[u8; 32]>,
 }
 
 impl fmt::Debug for SecretKey {
@@ -66,7 +68,9 @@ impl SecretKey {
         }
         let digest = Sha256::new().chain_update(b"kalzit secrets key id\0").chain_update(bytes).finalize();
         let cipher = Aes256Gcm::new_from_slice(bytes).map_err(|_| anyhow::anyhow!("invalid key length"))?;
-        Ok(Self { id: hex::encode(&digest[..8]), cipher })
+        let signing =
+            Zeroizing::new(Sha256::new().chain_update(b"kalzit signing key\0").chain_update(bytes).finalize().into());
+        Ok(Self { id: hex::encode(&digest[..8]), cipher, signing })
     }
 
     /// A new random key; the raw bytes are returned for storing and wiped when dropped.
@@ -291,6 +295,32 @@ impl Keyring {
         let key = self.key(&blob.key_id).ok_or_else(|| SecretError::UnknownKey(blob.key_id.clone()))?;
         decrypt_with(key, datasource_id, field, blob)
     }
+
+    /// HMAC-SHA256 of `data` with the signing key derived from the current key.
+    pub fn sign(&self, data: &[u8]) -> [u8; 32] {
+        hmac_sha256(&self.current.signing, data)
+    }
+
+    /// Whether `mac` signs `data` with any loaded key (also one pending in a rotation), compared
+    /// in time that does not depend on where they differ.
+    pub fn verify(&self, data: &[u8], mac: &[u8]) -> bool {
+        std::iter::once(&self.current).chain(&self.others).any(|k| {
+            let expected = hmac_sha256(&k.signing, data);
+            mac.len() == expected.len() && expected.iter().zip(mac).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+        })
+    }
+}
+
+/// HMAC (RFC 2104) with SHA-256 and a 32-byte key.
+fn hmac_sha256(key: &[u8; 32], data: &[u8]) -> [u8; 32] {
+    let mut inner_pad = [0x36u8; 64];
+    let mut outer_pad = [0x5cu8; 64];
+    for (i, b) in key.iter().enumerate() {
+        inner_pad[i] ^= b;
+        outer_pad[i] ^= b;
+    }
+    let inner = Sha256::new().chain_update(inner_pad).chain_update(data).finalize();
+    Sha256::new().chain_update(outer_pad).chain_update(inner).finalize().into()
 }
 
 fn aad(datasource_id: &str, field: &str) -> Vec<u8> {
@@ -762,6 +792,22 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RFC 4231, test case 2 (a short key is padded with zeros, as here to 32 bytes).
+    #[test]
+    fn hmac_matches_the_rfc_vector() {
+        let mut key = [0u8; 32];
+        key[..4].copy_from_slice(b"Jefe");
+        assert_eq!(
+            hex::encode(hmac_sha256(&key, b"what do ya want for nothing?")),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        let ring = Keyring::from_key(SecretKey::generate().0);
+        let mac = ring.sign(b"data");
+        assert!(ring.verify(b"data", &mac));
+        assert!(!ring.verify(b"datb", &mac));
+        assert!(!Keyring::from_key(SecretKey::generate().0).verify(b"data", &mac));
+    }
 
     fn key() -> SecretKey {
         SecretKey::generate().0

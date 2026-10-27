@@ -108,9 +108,9 @@ pub struct SecurityConfig {
     pub hsts_max_age_secs: u64,
     /// Reverse proxies whose `X-Forwarded-*` headers are trusted. Everyone else's are ignored.
     pub trusted_proxies: Vec<IpNet>,
-    /// Sign-in attempts per client address, and per account at one address, before further
-    /// attempts are refused; an account from all addresses together has five times as many
-    /// (`app::ACCOUNT_FAILURES_FACTOR`).
+    /// Sign-in attempts per client address, per account at one address and per account from all
+    /// addresses (except from known devices) before further attempts are refused; an IPv6 /48
+    /// has five times as many for all accounts (`app::NETWORK_FAILURES_FACTOR`).
     pub login_max_failures: u32,
     /// The window in which failures are counted, in seconds.
     pub login_window_secs: u64,

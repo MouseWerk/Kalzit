@@ -248,11 +248,12 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
 /// budget, which keeps a fixed code from `KALZIT_SETUP_TOKEN` (16 characters at least) out of
 /// reach as well.
 fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<String> {
-    let key = crate::auth::ratelimit::address_key("setup", info.client_ip);
-    let now = state.clock.now_ms();
+    use crate::auth::ratelimit::{CLEAN_ADDRESS_FAILURES, address_key, network_key};
+    let key = address_key("setup", info.client_ip);
+    let now = state.clock.monotonic_ms();
     let refused = |wait| ApiError::rate_limited("too many setup code attempts, wait", wait);
-    let earlier = state.setup_limiter.try_acquire_counting(&[&key], now).map_err(refused)?;
-    if earlier[0] > crate::auth::ratelimit::CLEAN_ADDRESS_FAILURES
+    let earlier = state.setup_limiter.try_acquire(&key, &network_key(info.client_ip), now).map_err(refused)?;
+    if earlier > CLEAN_ADDRESS_FAILURES
         && let Some(wait) = state.setup_all_limiter.wait(ALL_ADDRESSES_KEY, now)
     {
         state.setup_limiter.refund(&key);
@@ -267,7 +268,7 @@ fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<String> {
 fn verify(state: &AppState, open: &OpenGate, token: &str, limit_key: &str) -> ApiResult<()> {
     let found = open.matches(token);
     if !matches!(found, CodeMatch::Current) {
-        state.setup_all_limiter.record(ALL_ADDRESSES_KEY, state.clock.now_ms());
+        state.setup_all_limiter.record(ALL_ADDRESSES_KEY, ALL_ADDRESSES_KEY, state.clock.monotonic_ms());
     }
     match found {
         CodeMatch::Current => {

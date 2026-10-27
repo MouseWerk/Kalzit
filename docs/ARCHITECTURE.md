@@ -58,11 +58,15 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   request is HTTPS (directly or at a trusted proxy), it is `__Host-kalzit_session` with `Secure`,
   and only that name is read, so a cookie planted over HTTP
   or by a sibling subdomain is ignored. Sign-in, failed sign-in and sign-out are audited.
-- Sign-in rate limit: per client address and per account at that address (IPv4 per address,
-  IPv6 per /64), plus a looser count per account from all addresses that refuses only addresses
-  with failures of their own, so guesses elsewhere never lock the owner out
-  (docs/api/access.md, "Sign-in rate limits"). Only expired entries are dropped; when the table
-  is full of running windows, new keys are refused until the oldest window ends.
+- Sign-in rate limit (docs/api/access.md, "Sign-in rate limits"): per client address (IPv4 per
+  address, IPv6 per /64), per account at that address, and per account from all addresses. The
+  shared account budget does not hold a browser with a known device cookie (`auth::device`: an
+  HMAC with a key derived from the secrets key over account, expiry and password hash), so an
+  attacker cannot lock the owner out of a known browser, while distributed guessing gets one
+  budget. An IPv6 /48 has a budget for all accounts that refuses only accounts not clean at the
+  address. One bounded table per key class, windows on a monotonic clock; only expired entries
+  are dropped, and a full table refuses new keys of the networks (/48, /24) that filled it while
+  other networks are still counted.
 - **Every query on an organization table filters by `ctx.org_id`.** Ids in the path or body
   (`datasourceId`, folder or dashboard ids) are resolved within the organization first; an id of
   another organization is `not_found`.

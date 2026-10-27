@@ -17,11 +17,11 @@ use crate::error::ApiError;
 use crate::routes::setup::SetupGate;
 use crate::routes::{self, health};
 use crate::secrets::Keyring;
-
-/// The failed sign-ins one account may collect from all addresses together, as a multiple of
-/// `security.login_max_failures` (the budget of one address).
-pub const ACCOUNT_FAILURES_FACTOR: u32 = 5;
 use crate::{db, net, web};
+
+/// The failed sign-ins one IPv6 /48 may collect for all accounts together, as a multiple of
+/// `security.login_max_failures` (the budget of one address).
+pub const NETWORK_FAILURES_FACTOR: u32 = 5;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,12 +31,20 @@ pub struct AppState {
     pub read_db: AnyPool,
     pub config: Arc<Config>,
     pub clock: Arc<dyn Clock>,
-    /// Sign-in attempts per client address and per account and address (`routes::auth`).
+    /// Sign-in attempts per client address (`routes::auth`). Each class of keys has its own
+    /// table, so a flood of one never crowds out another.
     pub login_limiter: Arc<RateLimiter>,
-    /// Failed sign-ins and password checks per account from all addresses together, with a
-    /// looser cap (`ACCOUNT_FAILURES_FACTOR`). Used up, it refuses only addresses that are not
-    /// clean (`ratelimit::CLEAN_ADDRESS_FAILURES`), so an attacker cannot lock the owner out.
+    /// Sign-in attempts per account at one client address.
+    pub pair_limiter: Arc<RateLimiter>,
+    /// Failed sign-ins per IPv6 /48 for all accounts together (`NETWORK_FAILURES_FACTOR`); used
+    /// up, it refuses attempts whose account at that address is not clean
+    /// (`ratelimit::CLEAN_ADDRESS_FAILURES`).
+    pub network_limiter: Arc<RateLimiter>,
+    /// Failed sign-ins and password checks per account from all addresses together. Used up, it
+    /// refuses every sign-in of the account without a known device (`auth::device`).
     pub account_limiter: Arc<RateLimiter>,
+    /// Checks of the current password per user (`POST /me/password`).
+    pub password_limiter: Arc<RateLimiter>,
     /// Setup code attempts per client address (`routes::setup`).
     pub setup_limiter: Arc<RateLimiter>,
     /// Wrong setup codes from all addresses together (`security.setup_*`).
@@ -71,12 +79,13 @@ impl AppState {
         let setup = SetupGate::init(&db, &config.paths.data_dir, setup_code).await?;
         crate::auth::password::prewarm().await;
         let sec = &config.security;
-        let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
-        let account_limiter =
-            RateLimiter::new(sec.login_max_failures.saturating_mul(ACCOUNT_FAILURES_FACTOR), sec.login_window_secs);
+        let (max_failures, window_secs) = (sec.login_max_failures, sec.login_window_secs);
+        let login = move || RateLimiter::new(max_failures, window_secs);
+        let network_limiter =
+            RateLimiter::new(sec.login_max_failures.saturating_mul(NETWORK_FAILURES_FACTOR), sec.login_window_secs);
         // Setup codes per client address count like sign-ins; wrong codes from all addresses
         // together have a budget of their own, which slows a guess spread over many addresses.
-        let setup_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
+        let setup_limiter = login();
         let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
@@ -92,8 +101,11 @@ impl AppState {
             read_db,
             config: Arc::new(config),
             clock,
-            login_limiter: Arc::new(login_limiter),
-            account_limiter: Arc::new(account_limiter),
+            login_limiter: Arc::new(login()),
+            pair_limiter: Arc::new(login()),
+            network_limiter: Arc::new(network_limiter),
+            account_limiter: Arc::new(login()),
+            password_limiter: Arc::new(login()),
             setup_limiter: Arc::new(setup_limiter),
             setup_all_limiter: Arc::new(setup_all_limiter),
             probe_limiter: Arc::new(RateLimiter::new(

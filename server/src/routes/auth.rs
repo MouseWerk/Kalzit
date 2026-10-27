@@ -65,22 +65,32 @@ pub async fn login(
     if email.chars().count() > MAX_EMAIL_CHARS || req.password.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(invalid_credentials());
     }
-    use crate::auth::ratelimit::{CLEAN_ADDRESS_FAILURES, account_key, address_key};
+    use crate::auth::ratelimit::{CLEAN_ADDRESS_FAILURES, account_key, address_key, network_key};
+    let mono = state.clock.monotonic_ms();
     let ip_key = address_key("login", info.client_ip);
-    // The account's budget at this address: guesses from elsewhere never use it up, so they
-    // cannot lock the owner out of the account.
+    let network = network_key(info.client_ip);
+    // The account's budget at this address: guesses from elsewhere never use it up.
     let pair_key = format!("account:{email}|{ip_key}");
     let account_key = account_key(&email);
-    let limiter = &state.login_limiter;
-    let earlier = limiter.try_acquire_counting(&[&ip_key, &pair_key], now).map_err(rate_limited)?;
-    // The account's failures from all addresses together: used up, they refuse every address
-    // that failed more than a mistyping's worth, while a clean address still gets in. The wait
-    // named is the whole window, so it tells nothing about the account.
-    let address_failures = earlier.iter().copied().max().unwrap_or(0);
-    if address_failures > CLEAN_ADDRESS_FAILURES && state.account_limiter.wait(&account_key, now).is_some() {
-        limiter.refund(&ip_key);
-        limiter.refund(&pair_key);
-        return Err(rate_limited(limiter.window()));
+    state.login_limiter.try_acquire(&ip_key, &network, mono).map_err(rate_limited)?;
+    let refuse = |wait| {
+        state.login_limiter.refund(&ip_key);
+        rate_limited(wait)
+    };
+    let pair_failures = state.pair_limiter.try_acquire(&pair_key, &network, mono).map_err(refuse)?;
+    // Refused after both counted: neither attempt counts.
+    let refuse = |wait| {
+        state.pair_limiter.refund(&pair_key);
+        refuse(wait)
+    };
+    // The waits named below are the whole window, so they tell nothing about the account or
+    // the network.
+    let window = state.login_limiter.window();
+    // An IPv6 site (/48) whose failures for all accounts are used up: only attempts whose
+    // account at this address is clean go on, so others' typos never make the owner dirty.
+    let ipv6 = info.client_ip.to_canonical().is_ipv6();
+    if ipv6 && pair_failures > CLEAN_ADDRESS_FAILURES && state.network_limiter.wait(&network, mono).is_some() {
+        return Err(refuse(window));
     }
 
     let row: Option<LoginRow> =
@@ -88,6 +98,15 @@ pub async fn login(
             .bind(&email)
             .fetch_optional(&state.read_db)
             .await?;
+    // A browser this account signed in with before is not held to the account's shared budget;
+    // everyone else is, and an account the full table cannot count is refused (fail closed).
+    let device = crate::auth::device::read_cookie(&headers, info.https);
+    let known_device = row.as_ref().zip(device.as_deref()).is_some_and(|(r, value)| {
+        crate::auth::device::is_known(&state.secrets, value, &r.id, r.password_hash.as_deref(), now)
+    });
+    if !known_device && state.account_limiter.check(&account_key, &network, mono).is_err() {
+        return Err(refuse(window));
+    }
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
     let ok = password::verify(req.password, stored).await;
     let audit = |action: &'static str, user_id: Option<String>| crate::audit::AuditEvent {
@@ -106,7 +125,10 @@ pub async fn login(
     let known_id = row.as_ref().map(|r| r.id.clone());
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
-        state.account_limiter.record(&account_key, now);
+        state.account_limiter.record(&account_key, &network, mono);
+        if ipv6 {
+            state.network_limiter.record(&network, &network, mono);
+        }
         // The id of an existing account is recorded, never the email that was typed.
         // A failed sign-in answers the same whatever happens to its audit entry: a busy database
         // must not turn it into "try again", which would invite repeated password guesses past
@@ -120,8 +142,8 @@ pub async fn login(
         }
         return Err(invalid_credentials());
     };
-    limiter.reset(&pair_key);
-    limiter.refund(&ip_key);
+    state.pair_limiter.reset(&pair_key);
+    state.login_limiter.refund(&ip_key);
 
     let mut tx = crate::db::begin(&state.db).await?;
     // Lock the user row and confirm it still holds the hash we verified and is still enabled. A
@@ -148,11 +170,14 @@ pub async fn login(
     event.resource_id = Some(&row.id);
     crate::audit::record(&mut tx, &event).await?;
     // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
+    let device = crate::auth::device::issue(&state.secrets, &row.id, row.password_hash.as_deref(), now);
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
     let answer = me(&mut *tx, user).await?;
     crate::db::commit(tx).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
+    // This browser is now a known device of the account (renewed with every sign-in).
+    headers.append(header::SET_COOKIE, crate::auth::device::set_cookie(&device, info.https));
     Ok((headers, Json(answer)))
 }
 

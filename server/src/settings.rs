@@ -498,7 +498,7 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!(10),
         ui_editable: false,
-        description: "Failed sign-ins per address and per account at one address before further attempts are refused.",
+        description: "Failed sign-ins per address, per account at one address and per account before further attempts are refused.",
     },
     SettingDef {
         key: "security.login_window_secs",
