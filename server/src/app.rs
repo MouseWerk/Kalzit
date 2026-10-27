@@ -47,6 +47,9 @@ pub struct AppState {
     /// The same budget for emails without an account, so a refusal looks the same for both; a
     /// bounded table, since anyone can make up emails.
     pub unknown_account_limiter: Arc<RateLimiter>,
+    /// The same budget for such emails while that table is full, in a fixed set of buckets
+    /// (`routes::auth::overflow_bucket`).
+    pub overflow_limiter: Arc<RateLimiter>,
     /// Successful sign-ins of known devices per account (`ratelimit::MAX_SIGN_INS`).
     pub sign_in_account_limiter: Arc<RateLimiter>,
     /// Successful sign-ins of known devices per client address.
@@ -119,6 +122,8 @@ impl AppState {
             network_limiter: Arc::new(network_limiter),
             account_limiter: Arc::new(login(Capacity::UNBOUNDED)),
             unknown_account_limiter: Arc::new(login(Capacity::LARGE)),
+            // At most `OVERFLOW_BUCKETS` keys.
+            overflow_limiter: Arc::new(login(Capacity::UNBOUNDED)),
             sign_in_account_limiter: Arc::new(RateLimiter::new(
                 crate::auth::ratelimit::MAX_SIGN_INS,
                 window_secs,

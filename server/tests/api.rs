@@ -1039,6 +1039,31 @@ async fn a_full_table_of_unknown_emails_answers_like_an_account() {
     let known = t.from("[2001:db8:2::1]:1").login("joerg@example.de", "falsch falsch falsch").await;
     assert_eq!(unknown.status, StatusCode::UNAUTHORIZED, "{}", unknown.body);
     assert_eq!((known.status, &known.body), (unknown.status, &unknown.body));
+    // Repeated from fresh addresses, both reach the refusal at the same count: the unknown email
+    // counts in an overflow bucket with the same budget.
+    let mut next = 0x100;
+    let mut refused_at = |email: &'static str| {
+        let attempts: Vec<_> = (0..4)
+            .map(|_| {
+                next += 1;
+                t.from(&format!("[2001:db8:{next:x}::1]:1"))
+            })
+            .collect();
+        async move {
+            for (n, client) in attempts.iter().enumerate() {
+                let r = client.login(email, "falsch falsch falsch").await;
+                if r.status == StatusCode::TOO_MANY_REQUESTS {
+                    return Some(n);
+                }
+                assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+            }
+            None
+        }
+    };
+    let unknown_at = refused_at("niemand@example.de").await;
+    let known_at = refused_at("joerg@example.de").await;
+    assert_eq!(unknown_at, Some(1), "two failures in all, then refused");
+    assert_eq!(known_at, unknown_at);
     t.finish().await;
 }
 

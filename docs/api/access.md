@@ -488,7 +488,9 @@ applies to each of:
   about the account). A guess spread over many addresses so gets this one budget, not the
   budget of every address. An email without an account has the same budget, answered the same
   way, so a refusal does not tell whether the account exists. While the table of such emails is
-  full, a new one is not counted rather than refused, so its answer stays that of an account.
+  full, a new one counts in one of 4096 overflow buckets with the same budget, chosen by an HMAC
+  of the email with a key derived from the secrets key; it reaches its refusal after about as
+  many failures as an account does.
 
 Only an attempt that passed its budgets takes a check slot: at most 2 password checks of one
 account run at the same moment; more wait up to 2 seconds for a slot, then are refused with

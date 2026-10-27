@@ -45,6 +45,16 @@ pub fn routes() -> Vec<super::table::RouteDef> {
 /// How long a sign-in waits for a password check slot of its account (`ratelimit::InFlight`).
 const CHECK_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Overflow buckets for emails without an account while their table is full.
+pub const OVERFLOW_BUCKETS: u16 = 4096;
+
+/// The overflow bucket of `email`: an HMAC with the key derived from the secrets key, so the
+/// bucket of an email cannot be known or aimed at from outside.
+pub fn overflow_bucket(state: &AppState, email: &str) -> String {
+    let mac = state.secrets.sign(format!("kalzit-login-overflow\0{email}").as_bytes());
+    format!("overflow:{}", u16::from_be_bytes([mac[0], mac[1]]) % OVERFLOW_BUCKETS)
+}
+
 fn rate_limited(wait: std::time::Duration) -> ApiError {
     ApiError::rate_limited("too many failed sign-ins, wait a few minutes", wait)
 }
@@ -124,14 +134,24 @@ pub async fn login(
     let accounts = if row.is_some() { &state.account_limiter } else { &state.unknown_account_limiter };
     // A full table of emails without an account leaves the email uncounted rather than refused,
     // since the table of accounts always takes one; the answer stays the same for both.
-    let account_counted = if known_device {
-        accounts.record(&account_key, &network, mono)
+    // Such an email then counts in one of a fixed set of overflow buckets instead (chosen by a
+    // keyed hash of the email, so nobody can aim at a bucket), with the same budget: it still
+    // reaches its refusal after about as many failures as an account does.
+    let counted_in = if known_device {
+        accounts.record(&account_key, &network, mono).map(|c| (accounts, account_key.clone(), c))
     } else {
-        accounts.try_count(&account_key, &network, mono).map_err(|_| refuse(window))?
+        match accounts.try_count(&account_key, &network, mono).map_err(|_| refuse(window))? {
+            Some(c) => Some((accounts, account_key.clone(), c)),
+            None => {
+                let bucket = overflow_bucket(&state, &email);
+                let c = state.overflow_limiter.try_acquire(&bucket, &bucket, mono).map_err(|_| refuse(window))?;
+                Some((&state.overflow_limiter, bucket, c))
+            }
+        }
     };
     let refuse = |wait| {
-        if let Some(counted) = &account_counted {
-            accounts.refund(&account_key, counted);
+        if let Some((limiter, key, counted)) = &counted_in {
+            limiter.refund(key, counted);
         }
         refuse(wait)
     };
@@ -198,8 +218,8 @@ pub async fn login(
     if let Some(counted) = &site_counted {
         state.network_limiter.refund(&network, counted);
     }
-    if let Some(counted) = &account_counted {
-        accounts.refund(&account_key, counted);
+    if let Some((limiter, key, counted)) = &counted_in {
+        limiter.refund(key, counted);
     }
 
     let mut tx = crate::db::begin(&state.db).await?;
