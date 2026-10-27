@@ -991,14 +991,16 @@ for (const scheme of ["light", "dark"] as const) {
     // Explorer mode: Ben's orders, loaded from the node in the panel's table.
     const around = page.getByRole("article", { name: "Around Ben", exact: true });
     await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
-    await around.getByRole("button", { name: "Ben", exact: true }).click();
-    const load = around.getByRole("button", { name: t("graph.explorer.expand"), exact: true });
-    await expect(load).toBeVisible();
-    if (await load.isEnabled()) await load.click();
-    await expect(
-      around.getByRole("button", { name: t("graph.explorer.undo", { name: "Ben" }), exact: true }),
-    ).toBeVisible();
-    await around.getByRole("button", { name: t("graph.showDrawing"), exact: true }).click();
+    // The explorer is on once the panel knows the source may be queried; a click loads.
+    const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
+    await expect(steps).toBeVisible();
+    await around
+      .getByRole("table", { name: /./ })
+      .first()
+      .getByRole("button", { name: "Ben", exact: true })
+      .click();
+    await expect(steps.getByRole("button", { name: /^Ben \+/ })).toBeVisible();
+    await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
     await expect(page.getByRole("application")).toHaveCount(4);
     await expect(page.getByText(t("graph.layout.settling"))).toHaveCount(0);
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);

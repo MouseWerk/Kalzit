@@ -264,6 +264,7 @@ on_both_databases! {
     time_options_are_stored_and_checked,
     colour_options_are_stored_and_checked,
     pins_keep_their_order_limit_and_access,
+    panel_view_state_is_personal_and_follows_the_dashboard_access,
     panel_descriptions_and_transparency_are_stored_and_checked,
 }
 
@@ -821,6 +822,96 @@ async fn pins_keep_their_order_limit_and_access(t: TestApp) {
     assert_eq!(t.put(&pin(&boards[10]), json!({}), &viewer).await.status, StatusCode::NO_CONTENT);
     let extra = t.dashboard(None, plain("Noch eine"), &t.owner).await;
     assert_eq!(t.put(&pin(&extra), json!({}), &viewer).await.code(), "validation");
+}
+
+async fn panel_view_state_is_personal_and_follows_the_dashboard_access(t: TestApp) {
+    let viewer = t.member("Vera", "viewer").await;
+    let editor = t.member("Emil", "editor").await;
+    let board = t.dashboard(None, model("Kundengraph"), &t.owner).await;
+    let path = |board: &str, panel: &str| format!("~/dashboards/{board}/panels/{panel}/view-state");
+    let state = json!({ "pinned": ["4:abc:1042", "17"], "selected": ["17"] });
+
+    // Nothing kept yet: empty lists.
+    let empty = t.get(&path(&board, "p1"), &viewer).await;
+    assert_eq!(empty.status, StatusCode::OK, "{}", empty.body);
+    assert_eq!(empty.body, json!({ "pinned": [], "selected": [] }));
+
+    // A viewer keeps their own state; another user sees none of it.
+    let saved = t.put(&path(&board, "p1"), state.clone(), &viewer).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert_eq!(t.get(&path(&board, "p1"), &viewer).await.body, state);
+    assert_eq!(t.get(&path(&board, "p1"), &editor).await.body, json!({ "pinned": [], "selected": [] }));
+    // Writing again replaces it.
+    let next = json!({ "pinned": [], "selected": ["4:abc:1042"] });
+    assert_eq!(t.put(&path(&board, "p1"), next.clone(), &viewer).await.status, StatusCode::OK);
+    assert_eq!(t.get(&path(&board, "p1"), &viewer).await.body, next);
+
+    // Ids are bounded and named once; unknown fields are refused.
+    for (bad, field) in [
+        (json!({ "pinned": ["a", "a"] }), "pinned"),
+        (json!({ "selected": [""] }), "selected"),
+        (json!({ "selected": ["a\nb"] }), "selected"),
+        (json!({ "pinned": (0..=200).map(|i| i.to_string()).collect::<Vec<_>>() }), "pinned"),
+    ] {
+        let refused = t.put(&path(&board, "p1"), bad, &viewer).await;
+        assert_eq!((refused.code(), refused.field()), ("validation", field), "{}", refused.body);
+    }
+    assert_eq!(t.put(&path(&board, "p1"), json!({ "properties": {} }), &viewer).await.code(), "validation");
+
+    // A panel the dashboard does not have, and a dashboard in a restricted folder, are not found.
+    assert_eq!(t.get(&path(&board, "nope"), &viewer).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.put(&path(&board, "nope"), state.clone(), &viewer).await.status, StatusCode::NOT_FOUND);
+    let folder = t.folder("Geheim", true).await;
+    let hidden = t.dashboard(Some(&folder), model("Geheim"), &t.owner).await;
+    assert_eq!(t.get(&path(&hidden, "p1"), &viewer).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.put(&path(&hidden, "p1"), state.clone(), &viewer).await.status, StatusCode::NOT_FOUND);
+    // A grant makes it readable; losing the grant hides the state again without deleting it.
+    t.grant("Vera", "dashboard", &hidden, "view").await;
+    assert_eq!(t.put(&path(&hidden, "p1"), state.clone(), &viewer).await.status, StatusCode::OK);
+    sqlx::query("DELETE FROM resource_grants WHERE resource_id = $1").bind(&hidden).execute(&t.state.db).await.unwrap();
+    assert_eq!(t.get(&path(&hidden, "p1"), &viewer).await.status, StatusCode::NOT_FOUND);
+
+    // A trashed dashboard is not found; deleting the state is quiet either way.
+    assert_eq!(t.delete(&format!("~/dashboards/{board}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.get(&path(&board, "p1"), &viewer).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.delete(&path(&board, "p1"), &viewer).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE dashboard_id = $1", &board).await, 0);
+    // Empty lists remove the row instead of keeping an empty one.
+    let other = t.dashboard(None, model("Leer"), &t.owner).await;
+    assert_eq!(t.put(&path(&other, "p1"), state.clone(), &viewer).await.status, StatusCode::OK);
+    assert_eq!(t.put(&path(&other, "p1"), json!({}), &viewer).await.status, StatusCode::OK);
+    assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE dashboard_id = $1", &other).await, 0);
+
+    // A panel removed by a save takes the viewers' state with it, and is not found afterwards.
+    assert_eq!(t.put(&path(&other, "p1"), state.clone(), &viewer).await.status, StatusCode::OK);
+    let saved =
+        t.put(&format!("~/dashboards/{other}"), json!({ "model": plain("Leer"), "version": 1 }), &t.owner).await;
+    assert!(saved.status.is_success(), "{}", saved.body);
+    assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE dashboard_id = $1", &other).await, 0);
+    assert_eq!(t.get(&path(&other, "p1"), &viewer).await.status, StatusCode::NOT_FOUND);
+
+    // Another organization's path does not reach this dashboard, even for its server admin.
+    let third = t.dashboard(None, model("Dritte"), &t.owner).await;
+    let (owner_id,): (String,) = sqlx::query_as("SELECT user_id FROM org_members WHERE org_id = $1 AND role = 'owner'")
+        .bind(&t.org)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    let created = t.post("/admin/orgs", json!({ "name": "Zweite GmbH", "ownerUserId": owner_id }), &t.owner).await;
+    let second = created.id();
+    let foreign = format!("/orgs/{second}/dashboards/{third}/panels/p1/view-state");
+    assert_eq!(t.get(&foreign, &t.owner).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.put(&foreign, state.clone(), &t.owner).await.status, StatusCode::NOT_FOUND);
+    // A member of only the first organization is not a member of the second one.
+    assert!(t.get(&foreign, &viewer).await.status.is_client_error());
+
+    // A member who leaves the organization leaves their state behind with it.
+    assert_eq!(t.put(&path(&third, "p1"), state, &viewer).await.status, StatusCode::OK);
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE name = $1").bind("Vera").fetch_one(&t.state.db).await.unwrap();
+    let removed = t.delete(&format!("~/members/{vera}"), &t.owner).await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.body);
+    assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE user_id = $1", &vera).await, 0);
 }
 
 async fn annotations_follow_the_dashboard_access(t: TestApp) {

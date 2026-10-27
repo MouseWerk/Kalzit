@@ -41,6 +41,13 @@ pub const MAX_GRAPH_TEXT_CHARS: usize = 100;
 pub const MAX_NODE_LIMIT: u32 = 20_000;
 /// Neighbours one expand step of the explorer adds at most (`MAX_EXPAND_LIMIT` in the UI).
 pub const MAX_EXPAND_LIMIT: u32 = 200;
+/// Node sizes of the graph panels on screen, in px (`MIN_SIZE`, `MAX_SIZE` in the UI).
+pub const MIN_NODE_SIZE: u32 = 2;
+pub const MAX_NODE_SIZE: u32 = 40;
+/// The largest nodes a graph panel always labels (`MAX_LABEL_TOP` in the UI).
+pub const MAX_LABEL_TOP: u32 = 200;
+/// Labels with a color of their own (`MAX_LABEL_COLORS` in the UI).
+pub const MAX_LABEL_COLORS: usize = 50;
 
 /// The panel types whose options this module checks.
 pub const PANEL_TYPES: &[&str] = &[
@@ -280,7 +287,12 @@ choice!(NamePlacement { Left = "left", Top = "top", Hidden = "hidden" });
 choice!(HeatmapMode { Calculate = "calculate", Buckets = "buckets" });
 choice!(HeatmapScale { Linear = "linear", Sqrt = "sqrt" });
 choice!(TextFormat { Markdown = "markdown", Plain = "plain" });
-choice!(ColorBy { Label = "label", Community = "community", Component = "component" });
+choice!(ColorBy { Label = "label", Property = "property", Community = "community", Component = "component" });
+choice!(NodeColorScheme { Blues = "blues", Gyr = "gyr", Grays = "grays", Values = "values" });
+choice!(ColorRange { Auto = "auto", Fixed = "fixed" });
+choice!(ShowWhen { Selection = "selection", Always = "always", Never = "never" });
+choice!(LabelMode { Zoom = "zoom", Always = "always", Selection = "selection" });
+choice!(ClickAction { Details = "details", Variable = "variable", Expand = "expand" });
 choice!(ClusterMode { Auto = "auto", Label = "label", Off = "off" });
 choice!(DrawStyle { Line = "line", Bars = "bars", Points = "points" });
 choice!(Interpolation { Linear = "linear", Smooth = "smooth", StepBefore = "stepBefore", StepAfter = "stepAfter" });
@@ -474,13 +486,28 @@ struct DistributionOptions {
 struct GraphOptions {
     caption: Option<String>,
     color_by: Option<ColorBy>,
+    color_property: Option<String>,
+    color_scheme: Option<NodeColorScheme>,
+    color_range: Option<ColorRange>,
+    color_min: Option<f64>,
+    color_max: Option<f64>,
+    /// A palette tone per node label.
+    label_colors: Option<std::collections::BTreeMap<String, Tone>>,
     size_by: Option<String>,
+    size_min: Option<u32>,
+    size_max: Option<u32>,
     edge_width_by: Option<String>,
+    arrows: Option<ShowWhen>,
+    edge_labels: Option<ShowWhen>,
+    labels: Option<LabelMode>,
+    label_top: Option<u32>,
     node_limit: Option<u32>,
     cluster: Option<ClusterMode>,
     time_property: Option<String>,
     explorer: Option<bool>,
     expand_limit: Option<u32>,
+    click_action: Option<ClickAction>,
+    click_details: Option<bool>,
     variable: Option<String>,
     variable_property: Option<String>,
 }
@@ -810,6 +837,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             let o: GraphOptions = parse("options", options)?;
             check_graph_texts(&[
                 ("caption", &o.caption),
+                ("colorProperty", &o.color_property),
                 ("sizeBy", &o.size_by),
                 ("edgeWidthBy", &o.edge_width_by),
                 ("timeProperty", &o.time_property),
@@ -817,7 +845,29 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 ("variableProperty", &o.variable_property),
             ])?;
             check_range("options.nodeLimit", o.node_limit, 1, MAX_NODE_LIMIT)?;
-            check_range("options.expandLimit", o.expand_limit, 1, MAX_EXPAND_LIMIT)
+            check_range("options.expandLimit", o.expand_limit, 1, MAX_EXPAND_LIMIT)?;
+            check_range("options.sizeMin", o.size_min, MIN_NODE_SIZE, MAX_NODE_SIZE)?;
+            check_range("options.sizeMax", o.size_max, MIN_NODE_SIZE, MAX_NODE_SIZE)?;
+            if let (Some(min), Some(max)) = (o.size_min, o.size_max)
+                && min > max
+            {
+                return Err("options.sizeMin must not be above options.sizeMax".into());
+            }
+            check_range("options.labelTop", o.label_top, 0, MAX_LABEL_TOP)?;
+            if let (Some(min), Some(max)) = (o.color_min, o.color_max)
+                && min >= max
+            {
+                return Err("options.colorMin must be below options.colorMax".into());
+            }
+            if let Some(colors) = &o.label_colors {
+                if colors.len() > MAX_LABEL_COLORS {
+                    return Err(format!("options.labelColors takes at most {MAX_LABEL_COLORS} labels"));
+                }
+                for label in colors.keys() {
+                    check_text("options.labelColors", label, MAX_GRAPH_TEXT_CHARS, false)?;
+                }
+            }
+            Ok(())
         }
         "path" => {
             let o: PathOptions = parse("options", options)?;
@@ -898,6 +948,15 @@ mod tests {
                 }),
             ),
             ("network", json!({ "sizeBy": "", "nodeLimit": 1, "expandLimit": 1, "cluster": "off" })),
+            (
+                "network",
+                json!({
+                    "colorBy": "property", "colorProperty": "umsatz", "colorScheme": "gyr", "colorRange": "fixed",
+                    "colorMin": 0, "colorMax": 24800.5, "labelColors": { "Kunde": "chart-3", "Händler": "chart-8" },
+                    "sizeMin": MIN_NODE_SIZE, "sizeMax": MAX_NODE_SIZE, "arrows": "selection", "edgeLabels": "always",
+                    "labels": "selection", "labelTop": MAX_LABEL_TOP, "clickAction": "expand", "clickDetails": false
+                }),
+            ),
             ("hierarchy", json!({ "colorBy": "component", "cluster": "auto", "caption": "x".repeat(100) })),
             ("hierarchy", json!({})),
             ("path", json!({ "caption": "title", "variable": "", "variableProperty": "" })),
@@ -965,6 +1024,17 @@ mod tests {
             ("network", json!({ "variable": long }), "options.variable"),
             ("network", json!({ "variableProperty": long }), "options.variableProperty"),
             ("hierarchy", json!({ "layout": "radial" }), "unknown field"),
+            ("network", json!({ "sizeMin": 1 }), "options.sizeMin"),
+            ("network", json!({ "sizeMax": MAX_NODE_SIZE + 1 }), "options.sizeMax"),
+            ("network", json!({ "sizeMin": 20, "sizeMax": 10 }), "options.sizeMin"),
+            ("network", json!({ "labelTop": MAX_LABEL_TOP + 1 }), "options.labelTop"),
+            ("network", json!({ "colorMin": 5, "colorMax": 5 }), "options.colorMin"),
+            ("network", json!({ "colorScheme": "rainbow" }), "options"),
+            ("network", json!({ "arrows": "sometimes" }), "options"),
+            ("network", json!({ "clickAction": "delete" }), "options"),
+            ("network", json!({ "labelColors": { "Kunde": "#ff0000" } }), "options"),
+            ("network", json!({ "labelColors": { long.clone(): "chart-1" } }), "options.labelColors"),
+            ("network", json!({ "colorProperty": long }), "options.colorProperty"),
             ("path", json!({ "caption": long }), "options.caption"),
             ("path", json!({ "variable": long }), "options.variable"),
             ("path", json!({ "variableProperty": "a\nb" }), "control characters"),

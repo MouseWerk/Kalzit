@@ -194,11 +194,47 @@ For `graph` results (see [Explore](explore.md#graphs)): **Network** (nodes and e
 layout, WebGL; groups and an explorer), **Hierarchy** (directed structures in layers) and **Paths**
 (paths as sequences of nodes and edges, for example from `shortestPath`).
 
-Options include **Node name property**, **Color by** (Label, Community, Component), **Node size**,
-**Edge width property**, **Node limit**, **Group nodes by label** (for large graphs, always,
-never) and a **Time property of edges** that adds a time slider. **Explorer mode** loads a clicked
-node's neighbours step by step (**Neighbours per step**), each step undoable, and **Clicking a node
-sets** a dashboard variable so other panels follow the node. Browsers without WebGL 2 show the
-graph as a table; **Show as table** is also available on demand.
+The options are grouped as in the panel editor:
+
+- **Nodes**: **Node name property**; **Color by** Label (with **Color per label** from the palette),
+  Property (a number along a **Color scheme**: blue, green-yellow-red or gray ramp, with an
+  automatic or fixed **Range**; or **By value (text)**, a palette color per value; nodes without
+  the property are gray), Community or Component; **Node size** by edges, a property or all the
+  same, with the smallest and largest size in px.
+- **Edges**: **Edge width property**, **Arrows for the direction** and **Edge type labels**, each
+  always, at the selection or never.
+- **Labels on the drawing**: by zoom level (with **Always label the largest** N), always, or only
+  the selection.
+- **Click on a node**: the **Action** (details, set the variable, load neighbours), the dashboard
+  variable a click sets with the node property it takes, and **Open the details too**.
+- **Explorer**, **Limits and groups** (**Node limit**, **Group nodes by label**) and **Time**
+  (an edge property with a timestamp adds a time slider).
+
+Selecting a node opens its details beside the drawing (over it in narrow panels): labels, typed
+properties, edges and component, and its neighbours grouped by edge type and direction, with
+**Load neighbours** and **Set $variable**. The selection is shown quietly: the node's name in bold
+on a neutral tint, everything else dimmed. Shift+click (or Space on the keyboard) adds nodes to the
+selection; **Show only the selection** (S) hides the rest, and a multi-value variable takes the
+values of all selected nodes (**Set $customers (2 values)**). **Pin** (P) keeps a node when you take
+back explorer steps. Your pins and selection are kept for you on that dashboard panel, on the
+server; they change neither the panel nor its query. The legend under the drawing hides and shows
+labels, and **Layout** switches between forces and layers for this view.
+
+The **Explorer** (on in the toolbar, on from the start with the panel option) loads a node's
+neighbours step by step: each step appears in the **Steps** line, a click on an earlier step takes
+back all later ones (asking first from three on), a step still loading can be cancelled, and
+**Undo** (Ctrl+Z) and **Start over** take steps back. **Neighbours per step** (at most 200, the best
+connected first), **Edge types** and **Direction** apply to the next step; **Load N more** continues
+with a node's next neighbours. **Open as a query in Explore** turns what is shown into a read-only
+Cypher query in Explore's editor. Loading neighbours needs query access to the data source; the
+explorer is not available for TigerGraph sources.
+
+A **Hierarchy** lays out at most 2,000 nodes; a larger result offers **Show as a network**. Edges
+that close a cycle are noted. **Paths** shows the first path open and the others folded with their
+chain of nodes; each edge shows its type, direction and properties, each node its labels and first
+two properties; at most 50 paths, with a note when there are more, and **Show as table**.
+Browsers without WebGL 2 show every graph as a table; **Show as table** is also available on
+demand. Keyboard: Tab into the drawing, arrow keys move to the nearest node, Enter loads
+neighbours or opens a group, Escape clears the selection.
 
 ![Graph styles in the dark theme](../screenshots/graph-styles-dark.png)

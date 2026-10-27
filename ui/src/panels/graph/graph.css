@@ -128,6 +128,490 @@
     color: var(--bg-raised);
   }
 
+  .graph__probe--active {
+    color: var(--bg-active);
+  }
+
+  .graph__probe--blues-1 {
+    color: var(--ramp-blues-1);
+  }
+
+  .graph__probe--blues-2 {
+    color: var(--ramp-blues-2);
+  }
+
+  .graph__probe--blues-3 {
+    color: var(--ramp-blues-3);
+  }
+
+  .graph__probe--blues-4 {
+    color: var(--ramp-blues-4);
+  }
+
+  .graph__probe--blues-5 {
+    color: var(--ramp-blues-5);
+  }
+
+  .graph__probe--gyr-1 {
+    color: var(--ramp-gyr-1);
+  }
+
+  .graph__probe--gyr-2 {
+    color: var(--ramp-gyr-2);
+  }
+
+  .graph__probe--gyr-3 {
+    color: var(--ramp-gyr-3);
+  }
+
+  .graph__probe--gyr-4 {
+    color: var(--ramp-gyr-4);
+  }
+
+  .graph__probe--gyr-5 {
+    color: var(--ramp-gyr-5);
+  }
+
+  .graph__probe--grays-1 {
+    color: var(--ramp-grays-1);
+  }
+
+  .graph__probe--grays-2 {
+    color: var(--ramp-grays-2);
+  }
+
+  .graph__probe--grays-3 {
+    color: var(--ramp-grays-3);
+  }
+
+  .graph__probe--grays-4 {
+    color: var(--ramp-grays-4);
+  }
+
+  .graph__probe--grays-5 {
+    color: var(--ramp-grays-5);
+  }
+
+  /* The toolbar's layout choice: a label and a compact select on the buttons' line. */
+  .graph__layout {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph__layout-label {
+    color: var(--text-muted);
+  }
+
+  .graph__layout-select {
+    width: auto;
+  }
+
+  /* A state instead of the drawing: the hierarchy too large to lay out. */
+  .graph__state {
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: var(--space-2);
+    min-height: var(--size-graph-min);
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .graph__state p {
+    margin: 0;
+  }
+
+  /* The side sheet: one node, the selection, the pins. */
+  .graph-sheet__section {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .graph-sheet__section + .graph-sheet__section {
+    padding-top: var(--space-2);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .graph-sheet__heading {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .graph-sheet__labels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .graph-sheet__chip {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-sheet__id {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+
+  .graph-sheet__key,
+  .graph-sheet__muted,
+  .graph-sheet__type {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-sheet__properties {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-sheet__properties > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+    gap: var(--space-2);
+  }
+
+  .graph-sheet__properties dt {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .graph-sheet__properties dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .graph-sheet__groups,
+  .graph-sheet__list {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-sheet__group {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .graph-sheet__type-name {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .graph-sheet__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .graph-sheet__link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .graph-sheet__link:hover {
+    text-decoration: underline;
+  }
+
+  .graph-sheet__link[aria-current="true"] {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-sheet__link:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* A pressed toggle is shown by a quiet tint, never an accent. */
+  .graph .button[aria-pressed="true"] {
+    background: var(--bg-active);
+  }
+
+  /* The explorer's steps and the settings of the next one. */
+  .graph-steps {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-steps__row,
+  .graph-steps__next {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .graph-steps__row {
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .graph-steps__list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .graph-steps__list > li + li::before {
+    content: "›";
+    margin-inline-end: var(--space-1);
+    color: var(--text-muted);
+  }
+
+  .graph-steps__step {
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .graph-steps__step:hover {
+    background: var(--bg-hover);
+  }
+
+  .graph-steps__step[aria-current="step"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-steps__step:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* The step still loading, set apart by a dashed neutral line, not a color. */
+  .graph-steps__pending {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+    border: var(--border-width) dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+  }
+
+  .graph-steps__actions {
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .graph-steps__field {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .graph-steps__limit {
+    width: 6ch;
+  }
+
+  .graph-steps__types {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .graph-steps__type {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  /* The legend: labels with color and count; a hidden label is struck through, not recolored. */
+  .graph-legend {
+    display: grid;
+    gap: var(--space-1);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-legend__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .graph-legend__item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .graph-legend__item:hover {
+    background: var(--bg-hover);
+  }
+
+  .graph-legend__item[aria-pressed="false"] {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+
+  .graph-legend__item:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .graph-legend__swatch {
+    width: var(--space-2);
+    height: var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--text-muted);
+  }
+
+  .graph-legend__swatch--1 {
+    background: var(--chart-1);
+  }
+
+  .graph-legend__swatch--2 {
+    background: var(--chart-2);
+  }
+
+  .graph-legend__swatch--3 {
+    background: var(--chart-3);
+  }
+
+  .graph-legend__swatch--4 {
+    background: var(--chart-4);
+  }
+
+  .graph-legend__swatch--5 {
+    background: var(--chart-5);
+  }
+
+  .graph-legend__swatch--6 {
+    background: var(--chart-6);
+  }
+
+  .graph-legend__swatch--7 {
+    background: var(--chart-7);
+  }
+
+  .graph-legend__swatch--8 {
+    background: var(--chart-8);
+  }
+
+  .graph-legend__count,
+  .graph-legend__range {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .graph-legend__ramp {
+    display: inline-block;
+    width: calc(var(--space-3) * 4);
+    height: var(--space-2);
+    border-radius: var(--radius-sm);
+    vertical-align: middle;
+  }
+
+  .graph-legend__ramp--blues {
+    background: linear-gradient(to right, var(--ramp-blues-1), var(--ramp-blues-5));
+  }
+
+  .graph-legend__ramp--gyr {
+    background: linear-gradient(to right, var(--ramp-gyr-1), var(--ramp-gyr-3), var(--ramp-gyr-5));
+  }
+
+  .graph-legend__ramp--grays {
+    background: linear-gradient(to right, var(--ramp-grays-1), var(--ramp-grays-5));
+  }
+
+  /* The panel editor's groups of graph options. */
+  .graph-options__group {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .graph-options__group + .graph-options__group {
+    padding-top: var(--space-3);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .graph-options__legend {
+    margin-bottom: var(--space-2);
+    padding: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .graph-options__pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+  }
+
+  .graph-options__labels {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .graph-options__label-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .graph-options__label-name {
+    overflow-wrap: anywhere;
+  }
+
+  .graph-options__label-count {
+    color: var(--text-muted);
+  }
   .graph__gesture,
   .graph__overlay-note {
     position: absolute;
@@ -209,23 +693,20 @@
     font-variant-numeric: tabular-nums;
   }
 
-  @container (max-width: 36rem) {
+  /* Below 640 px of panel width the sheet lies over the drawing instead of beside it. */
+  @container (max-width: 40rem) {
     .graph__body {
+      position: relative;
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(var(--size-graph-min), 1fr) auto;
-    }
-
-    /* The details take at most half the panel and scroll, so the drawing never shrinks away. */
-    .panel-card .graph__body {
-      grid-template-rows: minmax(0, 1fr) fit-content(50%);
     }
 
     .graph__details {
-      width: auto;
-    }
-
-    .panel-card .graph__details {
-      min-height: 0;
+      position: absolute;
+      inset-block: 0;
+      inset-inline-end: 0;
+      z-index: var(--z-sticky);
+      width: min(var(--size-column), 100%);
+      box-shadow: var(--shadow-menu);
     }
   }
 
@@ -288,6 +769,11 @@
     font-weight: var(--font-weight-semibold);
   }
 
+  /* A selected row is tinted, quietly. */
+  .graph-table__table tr:has(.graph-table__select[aria-pressed="true"]) {
+    background: var(--bg-active);
+  }
+
   .graph-table__select:focus-visible {
     outline: var(--focus-outline);
     outline-offset: var(--focus-ring-offset);
@@ -307,11 +793,45 @@
     font-size: var(--font-size-sm);
   }
 
+  .paths__summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin-bottom: var(--space-1);
+    cursor: pointer;
+  }
+
+  .paths__summary:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
   .paths__title {
-    margin: 0 0 var(--space-1);
+    display: inline;
+    margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-regular);
+  }
+
+  .paths__chain {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* An open path shows its steps; the chain is for the folded ones. */
+  .paths__path[open] .paths__chain {
+    display: none;
+  }
+
+  .path__details {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .path__caption {
+    font-weight: var(--font-weight-medium);
   }
 
   .path {

@@ -9,6 +9,7 @@ import { type PanelHost, PanelHostContext } from "../host";
 import { pathSteps } from "../path/PathPanel";
 import { getPanel, suggestPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
+import { HIERARCHY_LIMIT } from "./GraphPanel";
 import { buildGraphModel } from "./model";
 
 const RANGE = { from: 0, to: 1 };
@@ -189,7 +190,63 @@ describe("network panel", () => {
   });
 });
 
+describe("node sheet and keyboard", () => {
+  it("shows typed properties and neighbours by edge type, and selects a neighbour", async () => {
+    const user = userEvent.setup();
+    await renderGraph("network", FAKE_GRAPH);
+    await user.click(screen.getByRole("button", { name: "Ada" }));
+    const details = screen.getByRole("region", { name: "Details of Ada" });
+    expect(within(details).getByText("Customer")).toBeTruthy();
+    expect(within(details).getAllByText("Text").length).toBeGreaterThan(0);
+    expect(within(details).getByText("Neighbours 2")).toBeTruthy();
+    await user.click(within(details).getByRole("button", { name: "Lamp" }));
+    expect(screen.getByRole("region", { name: "Details of Lamp" })).toBeTruthy();
+  });
+
+  it("adds nodes with Shift, shows only the selection, and pins with the button", async () => {
+    const user = userEvent.setup();
+    await renderGraph("network", FAKE_GRAPH);
+    await user.click(screen.getByRole("button", { name: "Ada" }));
+    await user.keyboard("{Shift>}");
+    await user.click(
+      within(screen.getByRole("table", { name: /^Nodes of/ })).getByRole("button", {
+        name: "Lamp",
+      }),
+    );
+    await user.keyboard("{/Shift}");
+    expect(screen.getByRole("status").textContent).toBe("Lamp added, 2 selected");
+    await user.click(screen.getByRole("button", { name: "Show only the selection" }));
+    expect(screen.getByRole("table", { name: "Nodes of Shop: 2" })).toBeTruthy();
+    expect(screen.getByRole("table", { name: "Edges of Shop: 1" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    expect(screen.getByRole("table", { name: "Nodes of Shop: 4" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Pin" }));
+    const pinned = screen.getByRole("region", { name: "Pinned" });
+    expect(within(pinned).getByText("query result")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByRole("region", { name: "Selection" })).toBeNull();
+  });
+
+  it("hides a label from the legend", async () => {
+    const user = userEvent.setup();
+    await renderGraph("network", FAKE_GRAPH);
+    await user.click(screen.getByRole("button", { name: /^Product/ }));
+    expect(screen.getByRole("table", { name: "Nodes of Shop: 2" })).toBeTruthy();
+  });
+});
+
 describe("hierarchy panel", () => {
+  it("offers the network instead of a hierarchy above its limit", async () => {
+    const nodes = Array.from({ length: HIERARCHY_LIMIT + 1 }, (_, i) => ({
+      id: `n${i}`,
+      labels: ["L"],
+      properties: {},
+    }));
+    // Shown where the browser can draw; jsdom cannot, so the tables stay the fallback.
+    await renderGraph("hierarchy", { ...FAKE_GRAPH, nodes, edges: [] });
+    expect(screen.getByRole("table", { name: "Nodes of Shop: 2,001" })).toBeTruthy();
+  });
+
   it("never groups nodes", async () => {
     const plugin = getPanel("hierarchy") as AnyPanelPlugin;
     expect(plugin.options({ cluster: "label" }).cluster).toBe("off");
@@ -227,6 +284,22 @@ describe("path panel", () => {
     expect(within(list).getAllByText("leads to")).toHaveLength(2);
   });
 
+  it("folds every path but the first, with its chain, and shows paths as a table", async () => {
+    const user = userEvent.setup();
+    const two: GraphSet = {
+      ...withPath,
+      paths: [...(withPath.paths ?? []), { nodes: [ID.ada, ID.lamp], edges: [ID.b1] }],
+    };
+    await renderGraph("path", two);
+    const details = document.querySelectorAll("details");
+    expect([...details].map((d) => d.open)).toEqual([true, false]);
+    expect(details[1]?.querySelector(".paths__chain")?.textContent).toBe("Ada → Lamp");
+    // Edge properties are listed with the edge.
+    expect(screen.getAllByText(/quantity 5/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Show as table" }));
+    expect(screen.getByRole("table", { name: "Paths of Shop: 2" })).toBeTruthy();
+  });
+
   it("says when the result has no paths", async () => {
     await renderGraph("path", FAKE_GRAPH);
     expect(screen.getByText(/The result has no paths/)).toBeTruthy();
@@ -241,7 +314,9 @@ describe("path panel", () => {
       { variable: "customerId" },
       { variables: { names: ["customerId"], accepts: () => true, set } },
     );
-    await user.click(screen.getAllByRole("button", { name: "Ada" })[0] as HTMLElement);
+    await user.click(
+      screen.getAllByRole("button", { name: "Set $customerId to Ada" })[0] as HTMLElement,
+    );
     expect(set).toHaveBeenCalledWith("customerId", ID.ada);
     // Announced, as the network panel does.
     expect(screen.getByRole("status").textContent).toBe(`$customerId is now ${ID.ada}`);
@@ -288,6 +363,32 @@ describe("option texts", () => {
       variable: "",
       variableProperty: "",
     });
+  });
+});
+
+describe("graph panel editor", () => {
+  it("offers colors per label, color by property and the click action", async () => {
+    const user = userEvent.setup();
+    const plugin = getPanel("network") as AnyPanelPlugin;
+    const { Editor } = plugin;
+    const onChange = vi.fn();
+    const view = render(
+      <Editor
+        options={plugin.options({})}
+        onChange={onChange}
+        graphLabels={[{ label: "Customer", count: 2 }]}
+      />,
+    );
+    await user.selectOptions(await screen.findByRole("combobox", { name: /^Customer/ }), "chart-4");
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ labelColors: { Customer: "chart-4" } }),
+    );
+    await user.selectOptions(screen.getByRole("combobox", { name: "Action" }), "expand");
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ clickAction: "expand" }));
+    view.rerender(<Editor options={plugin.options({ colorBy: "property" })} onChange={onChange} />);
+    expect(screen.getByRole("combobox", { name: "Color scheme" })).toBeTruthy();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Range" }), "fixed");
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ colorRange: "fixed" }));
   });
 });
 

@@ -1,6 +1,7 @@
 import {
   type KeyboardEvent,
   type PointerEvent,
+  type ReactNode,
   startTransition,
   useCallback,
   useEffect,
@@ -28,6 +29,7 @@ import { getPanel } from "../../panels/registry";
 import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
 import { type PanelAnnotations, PanelAnnotationsContext } from "../../panels/annotations";
+import { PanelHostContext, usePanelHost } from "../../panels/host";
 import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
@@ -111,6 +113,28 @@ interface PanelCardProps {
   edit?: PanelEditActions | undefined;
   /** Full screen: the panel fills the view and has no arrange controls. */
   alone?: boolean;
+}
+
+/**
+ * Tells the panel which dashboard panel it is drawn for, so a viewer's own state of it (a graph
+ * panel's pins and selection) is kept on the server. Repeat copies and panels not yet saved
+ * keep none (`panelId` null).
+ */
+function PanelViewHost({
+  dashboardId,
+  panelId,
+  children,
+}: {
+  dashboardId: string;
+  panelId: string | null;
+  children: ReactNode;
+}) {
+  const host = usePanelHost();
+  const value = useMemo(
+    () => (panelId === null ? host : { ...host, view: { dashboardId, panelId } }),
+    [host, dashboardId, panelId],
+  );
+  return <PanelHostContext value={value}>{children}</PanelHostContext>;
 }
 
 /** One panel in the grid: title bar, its own query state, and the visualization. */
@@ -487,21 +511,26 @@ export function PanelCard({
         </header>
         <div className="panel-card__body">
           <PanelAnnotationsContext.Provider value={annotations}>
-            <PanelBody
-              panel={panel}
-              title={title}
-              range={range}
-              pending={firstLoad(results)}
-              error={results.error}
-              outcomes={outcomes}
-              revision={results.dataUpdatedAt}
-              variables={variableTexts(query.variables)}
-              kindOf={kindOf}
-              distribution={panelDistribution(
-                { ...query, panel, manual: query.manual ?? query.run },
-                kindOf,
-              )}
-            />
+            <PanelViewHost
+              dashboardId={query.dashboardId}
+              panelId={repeatValue === undefined && edit === undefined ? panel.id : null}
+            >
+              <PanelBody
+                panel={panel}
+                title={title}
+                range={range}
+                pending={firstLoad(results)}
+                error={results.error}
+                outcomes={outcomes}
+                revision={results.dataUpdatedAt}
+                variables={variableTexts(query.variables)}
+                kindOf={kindOf}
+                distribution={panelDistribution(
+                  { ...query, panel, manual: query.manual ?? query.run },
+                  kindOf,
+                )}
+              />
+            </PanelViewHost>
           </PanelAnnotationsContext.Provider>
         </div>
         {edit === undefined || alone ? null : (

@@ -14,7 +14,10 @@ export interface ViewNode {
   /** Label index the cluster stands for; -1 for a single node. */
   cluster: number;
   caption: string;
-  /** Palette index, -1 for the neutral color. */
+  /**
+   * Palette index, -1 for the neutral color, or a step of the panel's ramp (`rampGroup`) when
+   * nodes are colored by a number property.
+   */
   group: number;
   size: number;
   /** Nodes a cluster stands for (1 for a node). */
@@ -31,6 +34,8 @@ export interface ViewEdge {
   edge: number;
   /** Model edges this one stands for. */
   count: number;
+  /** The edge's type, for its label; "" for edges merged between clusters. */
+  type: string;
 }
 
 export interface GraphView {
@@ -56,6 +61,18 @@ export interface ViewInput {
   clusterCaption: (label: string, members: number) => string;
   /** The name of nodes without a label. */
   unlabelled: string;
+  /** The palette group of a cluster, by its label index (default: the label index). */
+  labelGroup?: (label: number) => number;
+}
+
+/** The group of a ramp step (0 to 4): below -1, so it is neither a palette index nor neutral. */
+export function rampGroup(step: number): number {
+  return -2 - step;
+}
+
+/** The ramp step of a group, or null when the group is a palette index or neutral. */
+export function rampStep(group: number): number | null {
+  return group <= -2 ? -2 - group : null;
 }
 
 export function buildView(model: GraphModel, input: ViewInput): GraphView {
@@ -89,7 +106,7 @@ export function buildView(model: GraphModel, input: ViewInput): GraphView {
         node: -1,
         cluster: node.label,
         caption: "",
-        group: node.label < 0 ? -1 : node.label,
+        group: node.label < 0 ? -1 : (input.labelGroup?.(node.label) ?? node.label),
         size: MIN_NODE_SIZE,
         members: 0,
       });
@@ -131,6 +148,7 @@ export function buildView(model: GraphModel, input: ViewInput): GraphView {
         width: input.widths[i] ?? 1,
         edge: i,
         count: 1,
+        type: edge.type,
       });
       return;
     }
@@ -143,7 +161,7 @@ export function buildView(model: GraphModel, input: ViewInput): GraphView {
     if (at === undefined) {
       at = edges.length;
       merged.set(key, at);
-      edges.push({ key, source, target, width: 1, edge: -1, count: 0 });
+      edges.push({ key, source, target, width: 1, edge: -1, count: 0, type: "" });
     }
     edgeOf[i] = at;
     (edges[at] as ViewEdge).count++;

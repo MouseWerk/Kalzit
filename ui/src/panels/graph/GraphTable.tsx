@@ -12,8 +12,10 @@ interface GraphTableProps {
   model: GraphModel;
   view: GraphView;
   visibility: Visibility;
-  selected: number | null;
-  onSelect: (node: number) => void;
+  /** Selected view indexes. */
+  selected: ReadonlySet<number>;
+  /** A row's button: selects the node, or with Shift adds it to the selection. */
+  onSelect: (node: number, additive: boolean) => void;
   /** Accessible name prefix: the panel title. */
   title: string;
 }
@@ -63,8 +65,10 @@ export function GraphTable({
                   <button
                     type="button"
                     className="graph-table__select"
-                    aria-pressed={selected === i}
-                    onClick={() => onSelect(i)}
+                    aria-pressed={selected.has(i)}
+                    onClick={(event) =>
+                      onSelect(i, event.shiftKey || event.ctrlKey || event.metaKey)
+                    }
                   >
                     {node.caption}
                   </button>

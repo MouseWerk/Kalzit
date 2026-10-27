@@ -95,6 +95,7 @@ import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQue
 import { emptyQuery, familyOf, hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import { HistoryPanel } from "./HistoryPanel";
+import { clearExploreHandoff, peekExploreHandoff } from "./handoff";
 import { HISTORY_KEY, type HistoryEntry } from "./history";
 import { LAST_DATASOURCE_KEY } from "./lastSource";
 import "./explore.css";
@@ -193,10 +194,15 @@ function Explore({
   // Bumped when a history entry is loaded, so the editor starts over with its query.
   const [loads, setLoads] = useState(0);
   const kinds = useQuery(kindsQuery(orgId));
+  // A query another page handed over (a graph panel's exploration) opens in the editor, unrun.
+  const [handoff] = useState(peekExploreHandoff);
+  useEffect(() => clearExploreHandoff(), []);
   const [chosen, setChosen] = useState<string | null>(
-    () => startSource ?? readPreference(LAST_DATASOURCE_KEY),
+    () => handoff?.datasourceId ?? startSource ?? readPreference(LAST_DATASOURCE_KEY),
   );
-  const [queries, setQueries] = useState<Record<string, unknown>>({});
+  const [queries, setQueries] = useState<Record<string, unknown>>(() =>
+    handoff === null ? {} : { [handoff.datasourceId]: handoff.query },
+  );
   // Pages loaded after the first one through `nextCursor`, for the run they belong to.
   const [more, setMore] = useState<{
     of: Submitted | null;

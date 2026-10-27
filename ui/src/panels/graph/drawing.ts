@@ -1,6 +1,7 @@
-import type { NodeDisplayData } from "sigma/types";
-import type { GraphPalette } from "./colors";
-import { type GraphView, labelAllowed, type Visibility } from "./view";
+import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
+import type { GraphPalette, RampName } from "./colors";
+import type { LabelMode, ShowWhen } from "./options";
+import { type GraphView, labelAllowed, rampStep, type Visibility } from "./view";
 
 /**
  * What the renderer draws, as pure functions of the panel's state, so they are tested without
@@ -9,20 +10,63 @@ import { type GraphView, labelAllowed, type Visibility } from "./view";
 
 export type Direction = "left" | "right" | "up" | "down";
 
+/** How the panel draws: arrows, edge type labels, node labels (GraphPanelOptions). */
+export interface DrawStyle {
+  arrows: ShowWhen;
+  edgeLabels: ShowWhen;
+  labels: LabelMode;
+  /** The largest nodes always labelled; 0 for none. */
+  labelTop: number;
+  /** The ramp of nodes colored by a number property. */
+  ramp: RampName;
+}
+
+export const DEFAULT_STYLE: DrawStyle = {
+  arrows: "always",
+  edgeLabels: "never",
+  labels: "zoom",
+  labelTop: 0,
+  ramp: "blues",
+};
+
 export interface DrawState {
   view: GraphView;
   palette: GraphPalette;
   visibility: Visibility;
   ranks: Int32Array;
-  selected: number | null;
+  /** The selected nodes (view indexes); empty when nothing is selected. */
+  selected: ReadonlySet<number>;
   /** Neighbours of the selection (view indexes), kept undimmed. */
   neighbours: ReadonlySet<number>;
+  drawStyle: DrawStyle;
 }
 
 /** Space around a label's text on its background, in px. */
 const LABEL_BACKGROUND_PADDING = 2;
 
-/** What the renderer draws for one node, from the panel's state. */
+function nodeColor(
+  group: number,
+  lit: boolean,
+  p: Pick<DrawState, "palette" | "drawStyle">,
+): string {
+  const step = rampStep(group);
+  if (step !== null) {
+    return (
+      (lit ? p.palette.ramps : p.palette.dimmedRamps)[p.drawStyle.ramp][step] ?? p.palette.neutral
+    );
+  }
+  if (group < 0) return lit ? p.palette.neutral : p.palette.neutralDimmed;
+  return (
+    (lit ? p.palette.series : p.palette.dimmed)[group % p.palette.series.length] ??
+    p.palette.neutral
+  );
+}
+
+/**
+ * What the renderer draws for one node, from the panel's state. A selected node is shown quietly:
+ * its label always, in the bold weight, on the neutral selection tint; everything that is neither
+ * selected nor a neighbour is dimmed. No ring, glow or accent color.
+ */
 export function nodeDisplay(
   index: number,
   data: NodeDisplayData,
@@ -33,30 +77,32 @@ export function nodeDisplay(
   if (node === undefined || p.visibility.nodes[index] === 0) {
     return { ...data, visibility: "hidden" };
   }
-  const isSelected = p.selected === index;
-  const lit = p.selected === null || isSelected || p.neighbours.has(index);
-  const group = node.group;
-  const color =
-    group < 0
-      ? lit
-        ? p.palette.neutral
-        : p.palette.neutralDimmed
-      : ((lit ? p.palette.series : p.palette.dimmed)[group % p.palette.series.length] ??
-        p.palette.neutral);
-  const allowed = labelAllowed(p.ranks[index] ?? 0, ratio, node.cluster >= 0);
+  const isSelected = p.selected.has(index);
+  const selecting = p.selected.size > 0;
+  const lit = !selecting || isSelected || p.neighbours.has(index);
+  const color = nodeColor(node.group, lit, p);
+  const rank = p.ranks[index] ?? 0;
+  const mode = p.drawStyle.labels;
+  const allowed =
+    mode === "always" ||
+    (mode === "zoom" &&
+      (rank < p.drawStyle.labelTop || labelAllowed(rank, ratio, node.cluster >= 0)));
   const labelVisibility = isSelected
     ? "visible"
-    : p.selected !== null && !lit
+    : selecting && !lit
       ? "hidden"
-      : allowed
-        ? "auto"
-        : "hidden";
+      : mode === "always"
+        ? "visible"
+        : allowed
+          ? "auto"
+          : "hidden";
   return {
     ...data,
     color,
     labelColor: p.palette.text,
-    // A label on the canvas color stays readable where it crosses edges or a neighbour node.
-    labelBackgroundColor: p.palette.background,
+    // A label on the canvas color stays readable where it crosses edges or a neighbour node; a
+    // selected node's label sits on the selection tint.
+    labelBackgroundColor: isSelected ? p.palette.selection : p.palette.background,
     labelBackgroundPadding: LABEL_BACKGROUND_PADDING,
     size: isSelected ? data.size * 1.4 : data.size,
     labelVisibility,
@@ -79,17 +125,39 @@ export function dimsEdges(view: GraphView): boolean {
   return view.edges.length <= DIM_EDGES_UP_TO;
 }
 
+function touches(edge: { source: number; target: number }, selected: ReadonlySet<number>) {
+  return selected.has(edge.source) || selected.has(edge.target);
+}
+
 /** An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). */
 export function edgeColor(
   edge: { source: number; target: number },
   p: Pick<DrawState, "view" | "palette" | "selected">,
 ): string {
-  const lit =
-    p.selected === null ||
-    edge.source === p.selected ||
-    edge.target === p.selected ||
-    !dimsEdges(p.view);
+  const lit = p.selected.size === 0 || touches(edge, p.selected) || !dimsEdges(p.view);
   return lit ? p.palette.edge : p.palette.edgeDimmed;
+}
+
+/** What the renderer draws for one edge: color, arrow and type label by the panel's style. */
+export function edgeDisplay(
+  index: number,
+  data: EdgeDisplayData,
+  p: DrawState,
+): Partial<EdgeDisplayData> {
+  const edge = p.view.edges[index];
+  if (edge === undefined || p.visibility.edges[index] === 0) {
+    return { ...data, visibility: "hidden" };
+  }
+  const near = touches(edge, p.selected);
+  const shows = (when: ShowWhen) => when === "always" || (when === "selection" && near);
+  return {
+    ...data,
+    color: edgeColor(edge, p),
+    ...(shows(p.drawStyle.arrows) ? { head: "arrow" } : {}),
+    label: shows(p.drawStyle.edgeLabels) && edge.type !== "" ? edge.type : null,
+    labelColor: p.palette.text,
+    labelBackgroundColor: p.palette.background,
+  };
 }
 
 /**

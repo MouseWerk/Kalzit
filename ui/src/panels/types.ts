@@ -139,4 +139,9 @@ export interface DocumentFilter {
 export interface PanelEditorProps<Options> {
   options: Options;
   onChange: (options: Options) => void;
+  /**
+   * The node labels of the preview's graph results with their counts, for options set per label
+   * (a graph panel's colors). Absent where there is no preview.
+   */
+  graphLabels?: readonly { label: string; count: number }[];
 }
