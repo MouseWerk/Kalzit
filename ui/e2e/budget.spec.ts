@@ -8,7 +8,7 @@ import { panelAction } from "./support/ui";
 /**
  * Performance budgets for editing (docs/design/feel.md section 10, fix 5), in Chromium with the
  * CPU slowed down four times: typing 40 keys into a panel's query stays under 50 ms p95 Event
- * Timing per key, and its longest main-thread task stays under 34 ms (the modal editor's were
+ * Timing per key (58 ms on Windows runners, see `TYPING_P95_MS`), and its longest main-thread task stays under 34 ms (the modal editor's were
  * 38 to 45 ms, this page's 27 to 30 ms, on the machine the numbers were taken on); dragging a
  * panel across the grid makes no long task over 50 ms.
  *
@@ -28,6 +28,16 @@ const THROTTLE = 4;
 const KEYS = 40;
 const ROUNDS = 3;
 const BUDGET_MS = 50;
+/**
+ * Event Timing's step: durations come rounded to 8 ms and include the wait for the next frame.
+ * On the Windows runners the same page reads one step more than on the Linux ones at the same
+ * calibration: over 38 runs (October 2026) the best round was 24 to 48 ms on Windows (48 in 17
+ * of them) and 32 to 40 ms on Linux, and Windows runs failed at 56 ms with calibrations of 188
+ * and 204 ms, where Linux reads 40. The typing budget there is one step more; a regression of
+ * two steps still fails on both.
+ */
+const EVENT_TIMING_STEP_MS = 8;
+const TYPING_P95_MS = BUDGET_MS + (process.platform === "win32" ? EVENT_TIMING_STEP_MS : 0);
 /** The longest task while typing, on the reference machine. */
 const TYPING_TASK_MS = 34;
 /** The calibration script's time at 4x on the reference machine. */
@@ -290,7 +300,7 @@ test("typing in a panel's query stays under 50 ms p95 at 4x CPU throttling", asy
     })) / KEYS;
   process.stdout.write(`budget: typing draws ${perKey.toFixed(1)} components per key\n`);
   await expect(query).toContainText(SQL.byRegion.slice(0, 20));
-  expect(Math.min(...rounds)).toBeLessThan(BUDGET_MS);
+  expect(Math.min(...rounds)).toBeLessThan(TYPING_P95_MS);
   expect(Math.min(...tasks)).toBeLessThan(taskBudget);
   expect(perKey).toBeLessThan(RENDERS_PER_KEY);
 });
@@ -306,7 +316,11 @@ test("dragging a panel makes no long task over 50 ms at 4x CPU throttling", asyn
   const card = page.getByRole("article", { name: "Sales", exact: true });
   // Each round drags the first panel by its title (the actions next to it do not drag) across
   // to the other half and half a panel down, there and back: 120 moves, one drop.
-  for (let round = 0; round < ROUNDS; round++) {
+  // The first drag of a page is a warm-up and not counted: it made a long task (55 to 207 ms) in
+  // 73 of 75 CI runs on Linux and Windows (October 2026), the code paths of dragging running for
+  // the first time; the best-round rule left it out anyway, so only two rounds were measured, and
+  // a Windows runner failed once with 53 and 50 ms in those two.
+  for (let round = -1; round < ROUNDS; round++) {
     const heading = await card.locator(".panel-card__title").boundingBox();
     const box = await card.boundingBox();
     const grid = await page.locator(".dash-grid").first().boundingBox();
@@ -333,9 +347,11 @@ test("dragging a panel makes no long task over 50 ms at 4x CPU throttling", asyn
     const { long } = await recorded(page);
     await throttle(1);
     const worst = Math.max(0, ...long);
-    rounds.push(worst);
+    if (round >= 0) {
+      rounds.push(worst);
+    }
     process.stdout.write(
-      `budget: dragging a panel at ${THROTTLE}x, round ${round + 1}: ${long.length} long tasks, longest ${worst.toFixed(0)} ms\n`,
+      `budget: dragging a panel at ${THROTTLE}x, ${round < 0 ? "warm-up" : `round ${round + 1}`}: ${long.length} long tasks, longest ${worst.toFixed(0)} ms\n`,
     );
     // The drop moved the panel to the other half.
     await expect

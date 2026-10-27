@@ -26,7 +26,16 @@ test("refuses a file that is not an update package and makes a backup on request
   const history = page.getByRole("region", { name: t("admin.updates.history.title") });
   await expect(history.getByText(t("admin.updates.history.aborted")).first()).toBeVisible();
 
+  // A backup copies the whole database (VACUUM INTO); on a busy Windows runner that has taken
+  // over ten seconds while the other worker writes. The list is checked once the server answered,
+  // within the test's own time limit, instead of within one expect's.
+  const made = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/admin/updates/backups",
+  );
   await page.getByRole("button", { name: t("admin.updates.backups.now") }).click();
+  expect((await made).ok()).toBe(true);
   const backups = page.getByRole("list", { name: t("admin.updates.backups.title") });
   await expect(backups.getByText(t("admin.updates.backups.manual")).first()).toBeVisible();
 });

@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -101,6 +101,8 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
   const me = appRoute.useRouteContext().me;
   const search = listRoute.useSearch();
   const navigate = listRoute.useNavigate();
+  const router = useRouter();
+  const listPath = listRoute.useMatch({ select: (match) => match.pathname });
   const searchId = useId();
   const teams = useTeamContext();
   const folders = useQuery({
@@ -112,7 +114,9 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      if (query !== (search.q ?? "")) {
+      // An analysis opened within the pause leaves the list while it still shows (its page is
+      // loading); the search must not take the person back to the list then.
+      if (query !== (search.q ?? "") && router.latestLocation.pathname === listPath) {
         void navigate({
           search: (prev) => ({ ...prev, q: query === "" ? undefined : query }),
           replace: true,
@@ -120,7 +124,7 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
       }
     }, SEARCH_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [query, search.q, navigate]);
+  }, [query, search.q, navigate, router, listPath]);
   // "/" jumps to the search, as in the other lists.
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {

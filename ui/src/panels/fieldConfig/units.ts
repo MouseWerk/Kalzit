@@ -82,14 +82,19 @@ export function formatNumber(
 
 /**
  * Picks the largest step not above the value, so 1536 bytes reads "1.5 KiB". Values below the
- * first step keep it (0.5 B, not 512 mB).
+ * first step keep it (0.5 B, not 512 mB). Zero has no size to pick a step by: it takes the step
+ * of factor `home` (the unit itself, 0 W, not 0 nW), or the first step when there is none.
  */
-function scaled(steps: readonly [factor: number, symbol: string][]) {
+function scaled(steps: readonly [factor: number, symbol: string][], home = 1) {
+  const zeroIndex = Math.max(
+    0,
+    steps.findIndex(([factor]) => factor === home),
+  );
   return (value: number, decimals: number | undefined, language: string): Formatted => {
     const abs = Math.abs(value);
-    let index = 0;
+    let index = abs === 0 ? zeroIndex : 0;
     steps.forEach((step, i) => {
-      if (abs >= step[0]) index = i;
+      if (abs !== 0 && abs >= step[0]) index = i;
     });
     // The step is picked after rounding: 1,048,575 B rounds to 1024 KiB, which reads 1 MiB.
     while (index + 1 < steps.length) {
@@ -153,9 +158,12 @@ const DURATION_STEPS: [number, string][] = [
   [365 * 86_400_000 * MS, "y"],
 ];
 
-/** A duration given in `factor` milliseconds, written in the largest fitting unit. */
+/**
+ * A duration given in `factor` milliseconds, written in the largest fitting unit; zero in the
+ * field's own unit (0 s for seconds, not 0 ns).
+ */
 function duration(factor: number) {
-  const inMs = scaled(DURATION_STEPS);
+  const inMs = scaled(DURATION_STEPS, factor);
   return (value: number, decimals: number | undefined, language: string): Formatted =>
     inMs(value * factor, decimals, language);
 }

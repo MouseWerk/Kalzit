@@ -95,6 +95,43 @@ describe("units", () => {
     expect(shown(1500, "reqps", "en")).toBe(`1.5k${NBSP}req/s`);
   });
 
+  it("writes zero in the unit itself, never with the smallest prefix", () => {
+    for (const [unit, symbol] of [
+      ["watt", "W"],
+      ["watthour", "Wh"],
+      ["volt", "V"],
+      ["ampere", "A"],
+      ["hertz", "Hz"],
+      ["bytes", "B"],
+      ["decbytes", "B"],
+      ["bits", "b"],
+      ["bytesps", "B/s"],
+      ["bitsps", "b/s"],
+      ["ns", "ns"],
+      ["us", "µs"],
+      ["ms", "ms"],
+      ["s", "s"],
+      ["m", "min"],
+      ["h", "h"],
+      ["d", "d"],
+    ]) {
+      expect(shown(0, unit as string, "en"), unit).toBe(`0${NBSP}${symbol}`);
+      expect(shown(0, unit as string, "de", 1), unit).toBe(`0,0${NBSP}${symbol}`);
+    }
+    expect(shown(0, "reqps", "en")).toBe(`0${NBSP}req/s`);
+    // The axis of a watt panel starting at zero (the gallery's energy panel).
+    const ticks = [0, 500, 1000, 1500];
+    expect(ticks.map(axisTickFormat(ticks, "watt", undefined, "en"))).toEqual([
+      `0${NBSP}W`,
+      `500${NBSP}W`,
+      `1${NBSP}kW`,
+      `1.5${NBSP}kW`,
+    ]);
+    // Small values keep their prefix.
+    expect(shown(0.000_002, "watt", "en")).toBe(`2${NBSP}µW`);
+    expect(shown(0.000_5, "s", "en")).toBe(`500${NBSP}µs`);
+  });
+
   it("writes times and relative times in the language", () => {
     const now = Date.UTC(2026, 9, 22, 12);
     expect(fromNow(now - 3 * 3_600_000, "en", now)).toBe("3 hours ago");

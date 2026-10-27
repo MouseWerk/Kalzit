@@ -261,6 +261,26 @@ async fn next_for(ws: &mut Ws, kind: &str, feed: &str) -> Value {
     }
 }
 
+/// Follows `feed` until its result counts `n`. The feed polls while another connection writes
+/// the file; a poll that meets the write can answer with an error (seen on Windows runners, which
+/// lock files more strictly), and the next poll answers `n`. A result
+/// without a count that is no error, and a feed that never gets to `n` (`next` waits 10 s per
+/// message), still fail.
+async fn follow_until(ws: &mut Ws, feed: &str, n: i64) {
+    loop {
+        let result = next_for(ws, "result", feed).await;
+        let count = count_of(&result);
+        if count == n {
+            return;
+        }
+        let failed = result["results"]["A"]["error"].is_object();
+        assert!(count != -1 || failed, "neither a count nor an error: {result}");
+        if failed {
+            eprintln!("follow_until: a poll during the write failed: {}", result["results"]["A"]["error"]);
+        }
+    }
+}
+
 async fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(10), async {
         while !ok() {
@@ -288,7 +308,7 @@ async fn free_queries_poll_and_push_new_results() {
     );
     assert_eq!(count_of(&next_for(&mut ws, "result", &feed).await), 1);
     insert(&path, 2).await;
-    assert_eq!(count_of(&next_for(&mut ws, "result", &feed).await), 2);
+    follow_until(&mut ws, &feed, 2).await;
     // A second subscription with the same queries on the same connection follows the same feed
     // and gets its current result at once.
     assert_eq!(subscribe(&mut ws, sub("q2", count_query(&ds))).await, feed);
@@ -426,7 +446,7 @@ async fn viewers_follow_panels_they_may_read_and_lose_them_with_access() {
     assert_ne!(new_feed, feed);
     assert_eq!(count_of(&next_for(&mut ws, "result", &new_feed).await), 101);
     insert(&path, 2).await;
-    assert_eq!(count_of(&next_for(&mut ws, "result", &new_feed).await), 102);
+    follow_until(&mut ws, &new_feed, 102).await;
     // The dashboard goes to the trash: the next check ends the subscription.
     sqlx::query("UPDATE dashboards SET deleted_at = 1 WHERE id = $1")
         .bind(&dashboard)
@@ -454,7 +474,7 @@ async fn a_shared_feed_ends_only_for_who_lost_the_right() {
     assert_eq!(e["error"]["reason"], "live.forbidden");
     // The owner's subscription goes on with the same feed.
     insert(&path, 2).await;
-    while count_of(&next_for(&mut owner_ws, "result", &feed).await) != 2 {}
+    follow_until(&mut owner_ws, &feed, 2).await;
     assert_eq!(t.state.live.feeds(), 1);
     // Leaving the organization closes the connection.
     sqlx::query("DELETE FROM org_members WHERE role = 'viewer'").execute(&t.state.db).await.unwrap();

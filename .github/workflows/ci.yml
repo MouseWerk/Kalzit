@@ -467,10 +467,20 @@ jobs:
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh ready
+      # Windows: the TCP connections during the run (dynamic port range, TIME_WAIT), printed after
+      # it, for failures such as net::ERR_NO_BUFFER_SPACE.
+      - name: Watch TCP connections
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/tcp-watch.ps1 start
       - run: npm run e2e
         if: env.RUN_JOB == 'true'
         timeout-minutes: 15
         working-directory: ui
+      - name: TCP connections during the run
+        if: ${{ !cancelled() && env.RUN_JOB == 'true' && runner.os == 'Windows' }}
+        shell: pwsh
+        run: .github/scripts/tcp-watch.ps1 report
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !success() }}
         with:
