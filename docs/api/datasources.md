@@ -1571,6 +1571,8 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.invalid` | `detail` | the steps sent with an export are not valid steps |
 | `query.steps` | `detail` | the graph steps of a query item are not valid (`422 validation`, `field: queries`) |
 | `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
+| `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
+| `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
 | `steps.field_missing` | `field` | the table has no such field |
 | `steps.field_ambiguous` | `field` | several fields have this name |

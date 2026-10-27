@@ -394,6 +394,7 @@
   "datasources.reason.steps.frame_missing": "There is no table from query {frame}. The query answered no table, or a join before this step used it.",
   "datasources.reason.steps.not_graph": "Query {frame} answered no graph. Graph steps read graphs; use them on a graph query.",
   "datasources.reason.steps.pushdown_shape": "The database answered the graph step in an unexpected form.",
+  "datasources.reason.steps.failed": "The graph steps stopped unexpectedly on the server. Try again.",
   "datasources.reason.query.steps": "The graph steps of a query are not valid: {detail}",
   "datasources.reason.steps.field_missing": "The table has no field “{field}”.",
   "datasources.reason.steps.field_ambiguous": "Several fields are named “{field}”. Rename them in the query.",

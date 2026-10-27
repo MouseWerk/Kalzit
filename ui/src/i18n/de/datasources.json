@@ -394,6 +394,7 @@
   "datasources.reason.steps.frame_missing": "Es gibt keine Tabelle aus Abfrage {frame}. Die Abfrage hat keine Tabelle geliefert, oder eine Verknüpfung vor diesem Schritt hat sie verbraucht.",
   "datasources.reason.steps.not_graph": "Abfrage {frame} hat keinen Graphen geliefert. Graph-Schritte lesen Graphen; nutze sie bei einer Graph-Abfrage.",
   "datasources.reason.steps.pushdown_shape": "Die Datenbank hat den Graph-Schritt in einer unerwarteten Form beantwortet.",
+  "datasources.reason.steps.failed": "Die Graph-Schritte sind im Server unerwartet abgebrochen. Versuch es noch einmal.",
   "datasources.reason.query.steps": "Die Graph-Schritte einer Abfrage sind nicht gültig: {detail}",
   "datasources.reason.steps.field_missing": "Die Tabelle hat kein Feld „{field}“.",
   "datasources.reason.steps.field_ambiguous": "Mehrere Felder heißen „{field}“. Benenne sie in der Abfrage um.",
