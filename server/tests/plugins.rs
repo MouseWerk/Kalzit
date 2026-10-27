@@ -191,6 +191,13 @@ async fn test_app() -> TestApp {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     t.org = r.body["body"]["orgs"][0]["id"].as_str().unwrap().to_string();
     t.cookie = r.body["cookie"].as_str().unwrap().to_string();
+    // Without Landlock plugins are refused on Linux; where the runner lacks it, the tests allow
+    // it (and the sandbox test checks the layers it gets).
+    if cfg!(target_os = "linux") && !kalzit::plugins::sandbox::landlock_available() {
+        eprintln!("Landlock is not available here; plugins are allowed without it");
+        let r = t.send(Method::PATCH, "/admin/plugin-host", Some(json!({ "allowWithoutLandlock": true }))).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
     t
 }
 
@@ -382,15 +389,26 @@ async fn packages_signatures_and_updates_are_checked() {
     assert_eq!((r.body["version"].clone(), r.body["pending"].clone()), (json!("1.2.0"), Value::Null), "{}", r.body);
     assert_eq!(r.body["running"], true);
 
-    // Removing the trusted key stops its plugins, after confirmation.
+    // A fixed target that the target rules refuse is refused at install.
+    let metadata = "[[permissions.network]]\nhost = \"169.254.169.254\"\nport = 80\n";
+    let r = t.install(&Pkg { version: "1.2.5", key: Some(&other), extra: metadata, ..Default::default() }).await;
+    assert_eq!(r.reason(), "plugin.target_refused", "{}", r.body);
+
+    // Removing the trusted key stops the plugins whose installed version it signed and drops
+    // updates it signed, after confirmation. Here both: 1.2.0 runs, 1.3.0 waits.
+    let more = "[[permissions.network]]\nsetting = \"host\"\nform = \"host\"\ndefault_port = 6380\n";
+    let r = t.install(&Pkg { version: "1.3.0", key: Some(&other), extra: more, ..Default::default() }).await;
+    assert_eq!(r.body["pending"]["version"], "1.3.0", "{}", r.body);
     let key_id = kalzit_plugin_api::signing::key_id(&other.verifying_key());
     let r = t.send(Method::DELETE, &format!("/admin/plugin-keys/{key_id}"), None).await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.key_in_use"));
     assert_eq!(r.body["error"]["params"]["plugins"], ID);
+    assert_eq!(r.body["error"]["params"]["pending"], ID);
     let r = t.send(Method::DELETE, &format!("/admin/plugin-keys/{key_id}?confirm=true"), None).await;
     assert_eq!(r.body["stopped"], json!([ID]), "{}", r.body);
     let p = t.plugin(ID).await;
     assert_eq!((p["trusted"].clone(), p["running"].clone()), (json!(false), json!(false)), "{p}");
+    assert_eq!(p["pending"], Value::Null, "the update signed with the key is dropped: {p}");
 
     let actions = t.audit_actions().await;
     for action in [
@@ -403,6 +421,7 @@ async fn packages_signatures_and_updates_are_checked() {
         "plugins.enabled",
         "plugins.update_pending",
         "plugins.key_removed",
+        "plugins.install_refused",
     ] {
         assert!(actions.iter().any(|a| a == action), "{action} is missing from {actions:?}");
     }
@@ -623,6 +642,11 @@ async fn the_sandbox_holds() {
     assert_eq!(r["ok"], true, "{r}");
     let status = t.plugin(ID).await["process"].clone();
     let layers: Vec<&str> = status["sandbox"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect();
+    // Kalzit's process cannot be opened for reading (its memory and environment hold secrets).
+    let r = first(t.query(&ds, json!({ "do": "open_host" })).await);
+    if cfg!(windows) || layers.contains(&"landlock") {
+        assert_eq!(r["ok"], false, "the plugin opened Kalzit's process: {r} ({layers:?})");
+    }
     let outside = t.dir.path().join("written-by-plugin.txt");
     let r = first(t.query(&ds, json!({ "do": "write", "path": outside })).await);
     if cfg!(windows) || layers.contains(&"landlock") {
@@ -638,6 +662,10 @@ async fn the_sandbox_holds() {
     #[cfg(target_os = "linux")]
     {
         assert!(layers.contains(&"no_new_privs") && layers.contains(&"seccomp"), "{layers:?}");
+        if layers.contains(&"signals") {
+            let r = first(t.query(&ds, json!({ "do": "signal_host" })).await);
+            assert_eq!(r["ok"], false, "the plugin may signal Kalzit: {r}");
+        }
         let r = first(t.query(&ds, json!({ "do": "ptrace" })).await);
         assert_eq!((r["ok"].clone(), r["errno"].clone()), (json!(false), json!(1)), "ptrace is refused: {r}");
     }
@@ -649,6 +677,17 @@ async fn the_sandbox_holds() {
         // The process limit of the job.
         let r = first(t.query(&ds, json!({ "do": "spawn_many", "n": 40 })).await);
         assert!(r["failed"].as_u64().unwrap() > 0 && r["started"].as_u64().unwrap() < 40, "{r}");
+    }
+
+    // Another plugin's process is out of reach as well.
+    let other = "dev.example.otherplugin";
+    t.ready(&Pkg { id: other, ..Default::default() }).await;
+    let ds2 = t.datasource(other, 10).await;
+    t.query(&ds2, json!({ "do": "frame" })).await;
+    let other_pid = t.plugin(other).await["process"]["pid"].as_u64().unwrap();
+    let r = first(t.query(&ds, json!({ "do": "open_pid", "pid": other_pid })).await);
+    if cfg!(windows) || layers.contains(&"landlock") {
+        assert_eq!(r["ok"], false, "the plugin opened another plugin's process: {r}");
     }
 
     // A child of the plugin ends with it.

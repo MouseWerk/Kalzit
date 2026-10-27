@@ -256,19 +256,33 @@ pub async fn set_block(
     Ok(n.rows_affected() > 0)
 }
 
-pub async fn allow_unsigned<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E) -> ApiResult<bool> {
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT allow_unsigned FROM plugin_host WHERE id = 'server'").fetch_optional(db).await?;
-    Ok(row.is_some_and(|(v,)| v != 0))
+/// The host's switches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostSwitches {
+    pub allow_unsigned: bool,
+    pub allow_without_landlock: bool,
 }
 
-pub async fn set_allow_unsigned(conn: &mut AnyConnection, allow: bool, by: &str, at: i64) -> ApiResult<()> {
+pub async fn switches<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E) -> ApiResult<HostSwitches> {
+    let row: Option<(i64, i64)> =
+        sqlx::query_as("SELECT allow_unsigned, allow_without_landlock FROM plugin_host WHERE id = 'server'")
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map_or_else(HostSwitches::default, |(a, b)| HostSwitches {
+        allow_unsigned: a != 0,
+        allow_without_landlock: b != 0,
+    }))
+}
+
+pub async fn set_switches(conn: &mut AnyConnection, s: HostSwitches, by: &str, at: i64) -> ApiResult<()> {
     sqlx::query(
-        "INSERT INTO plugin_host (id, allow_unsigned, updated_at, updated_by) VALUES ('server', $1, $2, $3) \
-         ON CONFLICT (id) DO UPDATE SET allow_unsigned = excluded.allow_unsigned, updated_at = excluded.updated_at, \
+        "INSERT INTO plugin_host (id, allow_unsigned, allow_without_landlock, updated_at, updated_by) \
+         VALUES ('server', $1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET allow_unsigned = excluded.allow_unsigned, \
+         allow_without_landlock = excluded.allow_without_landlock, updated_at = excluded.updated_at, \
          updated_by = excluded.updated_by",
     )
-    .bind(i64::from(allow))
+    .bind(i64::from(s.allow_unsigned))
+    .bind(i64::from(s.allow_without_landlock))
     .bind(at)
     .bind(by)
     .execute(&mut *conn)

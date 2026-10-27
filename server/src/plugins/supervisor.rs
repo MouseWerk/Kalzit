@@ -79,6 +79,8 @@ pub struct Launch {
     pub package_dir: PathBuf,
     /// Where each start gets its private run directory.
     pub run_root: PathBuf,
+    /// The administrator allows plugins on a Linux host without Landlock.
+    pub allow_without_landlock: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// What the plugin page shows about the process.
@@ -206,7 +208,7 @@ async fn read_lines(mut reader: impl AsyncRead + Unpin, mut line: impl FnMut(Str
         };
         for &b in &chunk[..n] {
             if b == b'\n' {
-                let mut text = String::from_utf8_lossy(&buf).trim_end_matches('\r').to_string();
+                let mut text = clean_line(&String::from_utf8_lossy(&buf));
                 if cut {
                     text.push_str(" [cut]");
                 }
@@ -221,8 +223,48 @@ async fn read_lines(mut reader: impl AsyncRead + Unpin, mut line: impl FnMut(Str
         }
     }
     if !buf.is_empty() {
-        line(String::from_utf8_lossy(&buf).to_string());
+        line(clean_line(&String::from_utf8_lossy(&buf)));
     }
+}
+
+/// A line of a plugin's output without terminal escape sequences and control characters (a
+/// tab stays) or bidirectional overrides, so it cannot forge or hide lines of Kalzit's log or a
+/// terminal.
+fn clean_line(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // CSI (ESC [ ... final byte) or OSC (ESC ] ... BEL or ESC \); other escapes: one char.
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    chars.next();
+                }
+            }
+        } else if c == '\t'
+            || !(c.is_control()
+                || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}'))
+        {
+            out.push(c);
+        }
+    }
+    out
 }
 
 struct Running {
@@ -468,6 +510,12 @@ impl Supervisor {
     }
 
     async fn start(self: &Arc<Self>) -> Result<Arc<Running>, HostError> {
+        if super::sandbox::runs_as_root() {
+            return Err(HostError::new(
+                "plugin.root_refused",
+                "plugins do not run while Kalzit runs as root; run Kalzit as its own account",
+            ));
+        }
         let random = random_hex(16);
         let run_dir = self.launch.run_root.join(&random[..12]);
         private_dir(&run_dir, PluginAccess::Modify)?;
@@ -497,6 +545,17 @@ impl Supervisor {
             s.sandbox = child.layers.clone();
             s.sandbox_missing = child.missing.clone();
         });
+        if cfg!(target_os = "linux")
+            && !child.layers.contains(&"landlock")
+            && !self.launch.allow_without_landlock.load(Ordering::SeqCst)
+        {
+            child.control.kill();
+            cleanup(child.exited.clone(), &run_dir).await;
+            return Err(HostError::new(
+                "plugin.landlock_missing",
+                "this host offers no Landlock, so the plugin's file system access cannot be limited; an administrator can allow plugins without it",
+            ));
+        }
         tracing::info!(plugin = %self.id, pid = child.pid, sandbox = ?child.layers, missing = ?child.missing, "plugin process started");
 
         // Output: the handshake on stdout, everything else into the plugin's log.
@@ -738,6 +797,13 @@ mod tests {
         assert_eq!(lines[1], "zwei");
         assert!(lines[2].ends_with(" [cut]") && lines[2].len() == MAX_LINE_BYTES + 6);
         assert_eq!(lines[3], "drei");
+    }
+
+    #[test]
+    fn escape_sequences_and_control_characters_are_removed() {
+        assert_eq!(clean_line("\u{1b}[31mrot\u{1b}[0m\tok\r"), "rot\tok");
+        assert_eq!(clean_line("a\u{1b}]0;title\u{7}b\u{8}c"), "abc");
+        assert_eq!(clean_line("fake\nline\u{202e}"), "fakeline");
     }
 
     #[test]

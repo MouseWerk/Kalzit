@@ -217,18 +217,40 @@ impl Remote {
         pb::Connection { datasource_id: conn.datasource_id().to_string(), revision, settings_json, secrets }
     }
 
-    /// The target rules for the targets the manifest takes from the settings, before the plugin
-    /// connects: a host or URL that is refused (Kalzit's own database and metadata addresses,
-    /// `datasources.allowed_targets`) fails the call here. The plugin connects on its own, so
-    /// this is a check of the configured target, not of the connection it makes.
-    async fn check_targets(&self, conn: &Connection) -> Result<(), SourceError> {
+    /// The target rules for every target of the manifest, before the plugin connects: the
+    /// hosts and URLs it takes from the settings and its fixed hosts. A refused target (Kalzit's
+    /// own database and metadata addresses, `datasources.allowed_targets`) fails the call here,
+    /// and so does a target setting that is not text, a URL that does not parse or has no host,
+    /// and an empty host; the error names the settings field. The plugin connects on its own,
+    /// so this checks the configured targets, not the connections it makes.
+    async fn check_targets(&self, conn: &Connection) -> Result<(), (&'static str, SourceError)> {
         for target in &self.manifest.permissions.network {
+            if let Some(host) = &target.host {
+                let port = target.port.unwrap_or(0);
+                conn.policy().resolve_all(host, port).await.map_err(|e| ("settings", e.into()))?;
+                continue;
+            }
             let Some(setting) = &target.setting else { continue };
-            let Some(value) = conn.settings().get(setting).and_then(Value::as_str) else { continue };
+            let field = self.field(setting);
+            let refused = |reason: &'static str, message: &str| {
+                (field, SourceError::Rejected(Detail::new(reason, message).with("field", field)))
+            };
+            let value = match conn.settings().get(setting) {
+                None | Some(Value::Null) => continue,
+                Some(Value::String(s)) => s.trim(),
+                Some(_) => return Err(refused("settings.expected_text", "the target setting is not text")),
+            };
+            if value.is_empty() {
+                return Err(refused("settings.host_invalid", "the target setting is empty"));
+            }
             let (host, port) = match target.form.as_deref() {
                 Some("url") => {
-                    let Ok(url) = url::Url::parse(value) else { continue };
-                    let Some(host) = url.host_str().map(|h| h.trim_matches(['[', ']']).to_string()) else { continue };
+                    let Ok(url) = url::Url::parse(value) else {
+                        return Err(refused("settings.url_invalid", "the URL cannot be parsed"));
+                    };
+                    let Some(host) = url.host_str().map(|h| h.trim_matches(['[', ']']).to_string()) else {
+                        return Err(refused("settings.url_no_host", "the URL has no host"));
+                    };
                     (host, url.port_or_known_default().unwrap_or(443))
                 }
                 _ => {
@@ -243,7 +265,7 @@ impl Remote {
                     (value.to_string(), port)
                 }
             };
-            conn.policy().resolve_all(&host, port).await?;
+            conn.policy().resolve_all(&host, port).await.map_err(|e| (field, e.into()))?;
         }
         Ok(())
     }
@@ -319,7 +341,7 @@ impl DataSourcePlugin for Remote {
     }
 
     async fn health(&self, conn: &Connection) -> Health {
-        if let Err(e) = self.check_targets(conn).await {
+        if let Err((_, e)) = self.check_targets(conn).await {
             return Health::failed(&e);
         }
         let mut client = match self.client().await {
@@ -352,7 +374,7 @@ impl DataSourcePlugin for Remote {
 
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         use pb::schema_response::Result as Answer;
-        self.check_targets(conn).await?;
+        self.check_targets(conn).await.map_err(|(_, e)| e)?;
         let mut client = self.client().await?;
         let request = pb::SchemaRequest {
             connection: Some(self.connection(conn)),
@@ -379,7 +401,7 @@ impl DataSourcePlugin for Remote {
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
-        self.check_targets(conn).await?;
+        self.check_targets(conn).await.map_err(|(_, e)| e)?;
         let mut client = self.client().await?;
         let timeout = req.limits.timeout;
         let limits = wire::Limits::for_query(&req.limits);
@@ -410,6 +432,8 @@ impl DataSourcePlugin for Remote {
         if !self.capabilities.contains(&Capability::CheckOnSave) {
             return Ok(());
         }
+        // The targets first: the connection with its secrets goes only to an allowed target.
+        self.check_targets(conn).await?;
         let mut client = self.client().await.map_err(|e| ("settings", e))?;
         let request = pb::CheckOnSaveRequest {
             connection: Some(self.connection(conn)),
@@ -439,7 +463,7 @@ impl DataSourcePlugin for Remote {
         if !self.capabilities.contains(&Capability::Watch) {
             return Ok(None);
         }
-        self.check_targets(conn).await?;
+        self.check_targets(conn).await.map_err(|(_, e)| e)?;
         let mut client = self.client().await?;
         let timeout = req.limits.timeout;
         let resume_token = resume.and_then(|t| t.0.downcast_ref::<Vec<u8>>().cloned());

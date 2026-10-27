@@ -14,9 +14,10 @@ still in use, nothing to approve), `404 not_found` for a plugin or key that does
 Every change is written to the audit log with `resourceType: "plugin"` and the plugin id (or the
 key id, or `server`) as `resourceId`: `plugins.installed`, `plugins.updated`,
 `plugins.update_pending`, `plugins.approved`, `plugins.enabled`, `plugins.disabled`,
-`plugins.restarted`, `plugins.removed`, `plugins.key_added`, `plugins.key_removed` (with the
-plugins it stopped), `plugins.handover_added`, `plugins.unsigned_allowed`,
-`plugins.unsigned_refused`, and in the organization's log `plugins.blocked` and
+`plugins.restarted`, `plugins.removed`, `plugins.install_refused` (with the reason),
+`plugins.key_added`, `plugins.key_removed` (with the plugins it stopped and the updates it
+dropped), `plugins.handover_added`, `plugins.unsigned_allowed`, `plugins.unsigned_refused`,
+`plugins.landlock_optional`, `plugins.landlock_required`, and in the organization's log `plugins.blocked` and
 `plugins.unblocked`. Summaries carry versions, key ids and the approved network targets, never
 secrets.
 
@@ -35,6 +36,10 @@ manifest pins every file by SHA-256.
 
 What the host checks, in this order, before anything runs:
 
+0. First the manifest and the signature, read from the archive without unpacking anything:
+   steps 3 to 5 run on them, and the manifest's fixed hosts must pass the data source target
+   rules (`plugin.target_refused`). Only then is anything written; a refused package is recorded
+   as `plugins.install_refused`.
 1. The archive: at most 256 MiB, at most 1 GiB unpacked (counted while unpacking, not from the
    archive's sizes), at most 8192 entries. Every entry path must be a valid package path (relative,
    `/` between parts, no `..`, no Windows device names, no part ending in a dot or space, no
@@ -45,7 +50,8 @@ What the host checks, in this order, before anything runs:
    `RESTRICTED` group of plugin processes; Linux: mode 0700). The entries there are listed
    without following links, hashed, and compared with the manifest (`Manifest::check_package`):
    unlisted files, missing files, other hashes, links, junctions, reparse points and files with
-   more than one hard link are refused. The plugin later runs from this directory.
+   more than one hard link are refused, and so is a manifest other than the one checked first.
+   The binary is made executable only after that. The plugin later runs from this directory.
 3. The manifest: valid, `kind = "datasource"`, `min_kalzit` not newer than this Kalzit, a binary
    for this server's platform.
 4. The signature, against the trusted keys: Kalzit's own plugin key and the publisher keys an
@@ -77,6 +83,8 @@ What the host checks, in this order, before anything runs:
     "approved": true,               // the permissions of this version are approved
     "enabled": true,                // the administrator's switch
     "running": true,                // its kind is registered (approved, enabled, trusted, runnable here)
+    "sandboxWarning": "landlock_missing",  // Linux without Landlock: the plugin is refused there
+                                    // (landlock_missing_allowed: it runs anyway); absent otherwise
     "permissions": [                // the network targets, as approved
       { "setting": "host", "form": "host", "portSetting": "port", "defaultPort": "6379", "protocol": "tls" },
       { "host": "license.example.dev", "port": "443", "protocol": "tls" }
@@ -98,6 +106,8 @@ What the host checks, in this order, before anything runs:
     "updatedAt": 1800000000000
   }],
   "allowUnsigned": false,
+  "allowWithoutLandlock": false,
+  "landlockAvailable": true,
   "platform": "linux-x64"
 }
 ```
@@ -142,7 +152,8 @@ stay and answer `datasource.kind_unavailable`; blocks of organizations stay for 
 { "lines": [{ "at": 1800000000000, "stream": "stderr", "text": "..." }], "dropped": 0 }
 ```
 
-The plugin's stdout (after the handshake) and stderr, also written to Kalzit's log with the plugin
+The plugin's stdout (after the handshake) and stderr, without terminal escape sequences, control
+characters and bidirectional overrides, also written to Kalzit's log with the plugin
 id. Kept: the last 2000 lines and at most 512 KiB, lines cut at 4 KiB (marked ` [cut]`), at most
 200 lines per second; more are dropped and counted (`dropped`, and a `host` line saying how many).
 Empty while the plugin is not registered.
@@ -160,9 +171,12 @@ Empty while the plugin is not registered.
 A key that is trusted already is refused (`plugin.key_exists`); a weak or malformed key too
 (`plugin.key_invalid`). Plugins signed with the key run again when it is added back.
 
-`DELETE` of a key that signed installed plugins (or a pending update) answers `409` with
-`plugin.key_in_use` and the plugin ids in `params.plugins`; `DELETE ...?confirm=true` removes it
-and stops them (`{ "stopped": ["dev.example.redis"] }`). Their rows stay with `trusted: false`.
+`DELETE` of a key that signed the installed version of plugins, or updates that wait for
+approval, answers `409` with `plugin.key_in_use`: the plugins that would stop in
+`params.plugins`, those whose waiting update would be dropped in `params.pending`.
+`DELETE ...?confirm=true` removes the key, stops the first (`{ "stopped": ["dev.example.redis"] }`;
+their rows stay with `trusted: false`) and drops the updates (the installed version keeps
+running). After a restart the same holds.
 
 Kalzit's own plugin keys are compiled in (`KALZIT_PLUGIN_PUBLIC_KEYS` at build time) and are never
 listed here; release keys are never trusted for plugins.
@@ -178,11 +192,17 @@ The old key's signature over `kalzit-plugin-handover-v1\n` followed by
 not verify is refused (`plugin.handover_invalid`). Kept with the plugin id: updates from
 `fromVersion` on may be signed by the new key (chains are followed).
 
-### Unsigned plugins: `GET|PATCH /admin/plugin-host`
+### Host switches: `GET|PATCH /admin/plugin-host`
 
-`{ "allowUnsigned": false }`, off by default. An invalid signature is refused either way;
-unsigned plugins are marked `signer: "unsigned"`. Plugins installed while the switch was on keep
-running when it is turned off.
+`{ "allowUnsigned": false, "allowWithoutLandlock": false, "landlockAvailable": true }`; `PATCH`
+takes either switch, each change is recorded on its own.
+
+- `allowUnsigned`, off by default: unsigned packages may be installed. An invalid signature is
+  refused either way; unsigned plugins are marked `signer: "unsigned"`, and those installed while
+  the switch was on keep running when it is turned off.
+- `allowWithoutLandlock`, off by default: on a Linux host without Landlock, plugins start anyway.
+  Without the switch they are refused there (`plugin.landlock_missing`): nothing would keep them
+  from reading Kalzit's files. `landlockAvailable` says whether this host has Landlock.
 
 ## Organizations
 
@@ -203,10 +223,14 @@ sources of the kind answer `datasource.kind_unavailable`.
   their own translation.
 - The manifest's form rules are checked like a built-in kind's; the plugin's own `CheckSettings`
   follows. A plugin that cannot be started or reached does not refuse the settings.
-- Before every call the host checks the targets the manifest takes from the settings (`setting`
-  with `form` `host` or `url`) against the data source target rules: Kalzit's own database (by
-  address), metadata addresses and `datasources.allowed_targets`. The plugin then connects on its
-  own (see "Sandbox"), so this checks the configured target, not the connection.
+- Before every call, `CheckOnSave` included (a connection with its secrets goes only to allowed
+  targets), the host checks every target of the manifest against the data source target rules
+  (Kalzit's own database by address, metadata addresses, `datasources.allowed_targets`): the hosts
+  and URLs it takes from the settings and its fixed hosts. A target setting that is not text
+  (`settings.expected_text`), a URL that does not parse (`settings.url_invalid`) or has no host
+  (`settings.url_no_host`), and an empty host (`settings.host_invalid`) are refused. The plugin
+  then connects on its own (see "Sandbox"), so this checks the configured targets, not the
+  connections it makes.
 - Results pass `plugins::wire::Assembler` with the query's limits: rows, documents and graph
   elements beyond the limit and parts beyond the response budget are cut with the notices of
   built-in sources; parts out of order, of another shape, values that do not fit their field type
@@ -243,7 +267,8 @@ sources of the kind answer `datasource.kind_unavailable`.
 ## Sandbox
 
 What a plugin process gets. The layers in force are listed in `process.sandbox`, the missing ones
-in `process.sandboxMissing`; none is required to run.
+in `process.sandboxMissing`. On Linux Landlock is required unless `allowWithoutLandlock`; plugins
+do not run at all while Kalzit runs as root (`plugin.root_refused`).
 
 **Linux**
 
@@ -253,16 +278,24 @@ in `process.sandboxMissing`; none is required to run.
   process needs it: `/usr`, `/lib*`, `/bin`, `/sbin`, `/proc`, `/sys`, the certificate
   directories and a few files of `/etc` (name lookup, time zone, users), the device files `null`,
   `zero`, `full`, `random`, `urandom`, its package (read and run) and its private run directory
-  (read and write: the socket and `tmp`). Kalzit's data directory, configuration and secrets are
-  out of reach.
-- `seccomp`: refused with `EPERM` are `ptrace`, `process_vm_readv/writev`, `pidfd_getfd`, mounts
-  (old and new API), `pivot_root`, `setns`, `unshare`, swap, reboot, `kexec`, kernel modules,
-  `bpf`, `perf_event_open`, `userfaultfd`, the keyrings, `open_by_handle_at`, `acct`,
-  `quotactl`, `lookup_dcookie`, `iopl` and `ioperm`; other architectures than the server's (and
-  the x32 ABI) are killed.
+  (read and write, not run: the socket and `tmp`). Kalzit's data directory, configuration and
+  secrets are out of reach, and so are other processes' `/proc` entries (Kalzit's environment and
+  memory included).
+- `seccomp`: refused with `EPERM` are `ptrace`, `process_vm_readv/writev`, `pidfd_getfd`,
+  `pidfd_send_signal`, `tkill`, mounts (old and new API), `pivot_root`, `setns`, `unshare`,
+  `clone` with any `CLONE_NEW*` flag, swap, reboot, `kexec`, kernel modules, `bpf`,
+  `perf_event_open`, `userfaultfd`, `io_uring_*`, the keyrings, `open_by_handle_at`,
+  `name_to_handle_at`, `acct`, `quotactl`, `lookup_dcookie`, `iopl` and `ioperm`, and
+  `truncate`/`ftruncate` where Landlock is older than ABI 3 (which guards truncation itself);
+  `clone3` answers `ENOSYS` (its flags are out of a filter's reach; the C library falls back to
+  `clone`); other architectures than the server's (and the x32 ABI) are killed.
+- `signals`: the plugin may signal only itself and its process group (`kill(0)`, `kill(-pid)`,
+  its own threads): Landlock's signal scope where the kernel has ABI 6, else a seccomp filter on
+  `kill`, `tgkill` and `rt_(tg)sigqueueinfo`. With the filter it cannot signal its children one
+  by one (only the whole group).
 - `user_namespace` and `ipc_namespace`: the account mapped to itself (no capabilities after the
-  start); not when Kalzit runs as root, and not where the host forbids unprivileged user
-  namespaces (some distributions, most containers).
+  start); not where the host forbids unprivileged user namespaces (some distributions, most
+  containers).
 - `memory_limit`: the data segment (`RLIMIT_DATA`, 2 GiB).
 - **Not limited**: the network (no network namespace: Kalzit's connector, through which a plugin
   would reach only its declared targets, is not built yet; a plugin can open connections to any
@@ -271,25 +304,36 @@ in `process.sandboxMissing`; none is required to run.
 **Windows**
 
 - `restricted_token`: no privileges except bypass traverse checking, Administrators for deny
-  only, and the restricting SIDs Everyone, Users, `RESTRICTED` and the logon session: the plugin
-  can open only what one of these may open, so not Kalzit's data directory (which grants only
-  SYSTEM, Administrators and Kalzit's account) and not the account's profile; its package (read
-  and run) and its run directory (read and write) grant `RESTRICTED`. A plugin creates its pipe
-  instances with a DACL for Kalzit's account and `RESTRICTED` (the restricting SIDs could not
-  create the next instance otherwise).
+  only, and the restricting SIDs Everyone, Users, `RESTRICTED` and a SID of this start (not the
+  logon session, which Kalzit's own process grants read access): the plugin opens only what one
+  of these may open. Kalzit's data directory (SYSTEM, Administrators and Kalzit's account only)
+  and the account's profile are out of reach; its package (read and run) and its run directory
+  (read and write, not run) grant `RESTRICTED`. Its default DACL grants only Kalzit's account,
+  SYSTEM and the SID of this start, so other plugins cannot open its process or objects. A plugin
+  creates its pipe instances with a DACL for Kalzit's account and `RESTRICTED` (the restricting
+  SIDs could not create the next instance otherwise).
+- `low_integrity`: the plugin runs at low integrity. It cannot open Kalzit's process (or any
+  process above low) for reading or writing its memory, and it can write only objects labelled
+  low: its run directory carries that label; files and directories that only Everyone or Users may
+  write (such as parts of `ProgramData`) stay closed to it unless they are labelled low as well
+  (the account's own `LocalLow` folder is, but the restricting SIDs keep the plugin out of the
+  profile).
 - `job_object`, `kill_on_close`, `memory_limit` (2 GiB for the whole job), `process_limit`
   (16 processes), `ui_restrictions` (no desktop, clipboard, global atoms, display or system
   settings), no breakaway: the plugin and everything it starts end with the job, also when Kalzit
   crashes. A CPU cap can be set (`cpu_limit`), none by default.
-- `image_load_policy`: DLLs from System32 first, none from remote shares or with a low label, and
-  only the listed files in the package directory.
+- `image_load_policy`: DLLs from System32 first, none from remote shares or with a low label (so
+  none from its run directory), and only the listed files in the package directory.
+- Its pipe ends are inheritable only while it is created, and only they are in its handle list.
 - **Not limited**: the network. A restricted token does not stop a process from opening sockets;
   holding a plugin to its declared targets needs an AppContainer without network capabilities or
   a Windows Filtering Platform rule per process, which are not built yet.
 
 On both systems the network rule of the manifest therefore rests on the signature and the
-administrator's approval of the declared targets, plus the host's check of the configured target
-before each call.
+administrator's approval of the declared targets, plus the host's check of every target before
+each call. The contract tests check per system that a plugin cannot open Kalzit's process or
+another plugin's, cannot write or read Kalzit's data directory, sees nothing of Kalzit's
+environment, and (Linux) cannot `ptrace` or signal Kalzit.
 
 ## Not here yet
 
@@ -321,6 +365,7 @@ before each call.
 | `plugin.downgrade` | | the package is older than the installed version (`409`) |
 | `plugin.key_changed` | | the update is not signed by the installed version's key or a key it was handed over to, or it is unsigned (`409`) |
 | `plugin.kind_taken` | | another kind has this id (`422`) |
+| `plugin.target_refused` | `host` | a fixed network target of the manifest is refused by the data source target rules (`422`) |
 | `plugin.io` | `detail` | a file of the host could not be written or read (`422`) |
 | `plugin.upload_incomplete` | | the upload broke off (`422`) |
 | `plugin.not_installed` | | no such plugin (`404`) |
@@ -335,6 +380,8 @@ before each call.
 | `plugin.key_in_use` | `plugins` (comma-separated) | removing the key stops these plugins; repeat with `confirm=true` (`409`) |
 | `plugin.handover_invalid` | | the hand-over does not verify (`422`) |
 | `plugin.start_failed` | `detail` | the process could not be started (`datasource_error`) |
+| `plugin.root_refused` | | Kalzit runs as root on Linux; plugins do not start (`datasource_error`) |
+| `plugin.landlock_missing` | | this Linux host offers no Landlock and plugins without it are not allowed (`datasource_error`) |
 | `plugin.exited` | `exit` | the process ended before it was ready (`datasource_error`) |
 | `plugin.start_timeout` | | the process was not ready within the start time (`datasource_error`) |
 | `plugin.handshake_invalid` | `line` | the first stdout line is not `kalzit-plugin <version> ready` (`datasource_error`) |

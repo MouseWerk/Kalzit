@@ -64,10 +64,12 @@ CREATE TABLE plugin_org_blocks (
 );
 
 -- The host's switches, one row (`id` = 'server'): whether unsigned plugins may be installed
--- (off by default; an invalid signature is refused either way).
+-- (off by default; an invalid signature is refused either way), and whether plugins may run on a
+-- Linux host without Landlock (off by default: they are refused there).
 CREATE TABLE plugin_host (
-    id              TEXT PRIMARY KEY,
-    allow_unsigned  BIGINT NOT NULL,
+    id                      TEXT PRIMARY KEY,
+    allow_unsigned          BIGINT NOT NULL,
+    allow_without_landlock  BIGINT NOT NULL,
     updated_at      BIGINT NOT NULL,
     updated_by      TEXT
 );

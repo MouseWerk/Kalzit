@@ -33,6 +33,8 @@ type Parts<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 struct Plugin {
     kind: String,
     wrong_kind: bool,
+    /// Kalzit's process id.
+    host: u32,
 }
 
 fn chunk(part: pb::query_chunk::Part) -> Result<pb::QueryChunk, Status> {
@@ -108,6 +110,43 @@ fn sleeping_child() -> std::io::Result<std::process::Child> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
+}
+
+/// Whether this process can open Kalzit's process (or another one) to read its memory.
+#[cfg(windows)]
+fn open_host(host: u32) -> Value {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ};
+    // SAFETY: an open attempt; a handle that opened is closed at once.
+    match unsafe { OpenProcess(PROCESS_VM_READ, false, host) } {
+        Ok(h) => {
+            // SAFETY: the handle was just opened.
+            let _ = unsafe { CloseHandle(h) };
+            json!({ "ok": true })
+        }
+        Err(e) => json!({ "ok": false, "error": e.to_string() }),
+    }
+}
+
+/// Whether this process can read Kalzit's environment or memory through `/proc`.
+#[cfg(unix)]
+fn open_host(host: u32) -> Value {
+    let environ = std::fs::read(format!("/proc/{host}/environ")).is_ok();
+    let mem = std::fs::File::open(format!("/proc/{host}/mem")).is_ok();
+    json!({ "ok": environ || mem, "environ": environ, "mem": mem })
+}
+
+/// Whether this process may send a signal to Kalzit (signal 0 only checks).
+#[cfg(unix)]
+fn signal_host(host: u32) -> Value {
+    // SAFETY: signal 0 delivers nothing.
+    let r = unsafe { libc::kill(host as libc::pid_t, 0) };
+    json!({ "ok": r == 0, "errno": if r == 0 { 0 } else { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } })
+}
+
+#[cfg(not(unix))]
+fn signal_host(_host: u32) -> Value {
+    json!({ "ok": false })
 }
 
 #[cfg(target_os = "linux")]
@@ -268,6 +307,9 @@ impl DataSource for Plugin {
                 documents(vec![json!({ "names": names })])
             }
             "ptrace" => documents(vec![ptrace_traceme()]),
+            "open_host" => documents(vec![open_host(self.host)]),
+            "signal_host" => documents(vec![signal_host(self.host)]),
+            "open_pid" => documents(vec![open_host(query["pid"].as_u64().unwrap_or(0) as u32)]),
             other => return Err(Status::invalid_argument(format!("unknown behaviour {other}"))),
         };
         Ok(Response::new(Box::pin(stream::iter(parts))))
@@ -499,7 +541,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .expect("KALZIT_PLUGIN_HOST_PID is set");
     let incoming = listen::incoming(&address, host).expect("the plugin listens");
-    let plugin = Plugin { kind, wrong_kind: mode == "wrong_kind" };
+    let plugin = Plugin { kind, wrong_kind: mode == "wrong_kind", host };
     // Every call must carry the token of this start.
     let check =
         move |request: Request<()>| match request.metadata().get("kalzit-plugin-token").and_then(|v| v.to_str().ok()) {

@@ -102,6 +102,11 @@ struct PluginView {
     /// Its kind is registered: approved, enabled, trusted and able to run here.
     running: bool,
     permissions: Vec<PermissionLine>,
+    /// What the administrator should know before approving: `landlock_missing` when this Linux
+    /// host offers no Landlock (the plugin then does not start unless `allowWithoutLandlock`),
+    /// `landlock_missing_allowed` when it runs without anyway.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox_warning: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pending: Option<PendingView>,
     /// The process, while the plugin runs.
@@ -139,6 +144,15 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
         None => None,
     };
     let trusted = state.plugins.trust_state(state, &row).await?;
+    let sandbox_warning = if cfg!(target_os = "linux") && !crate::plugins::sandbox::landlock_available() {
+        if store::switches(&state.db).await?.allow_without_landlock {
+            Some("landlock_missing_allowed")
+        } else {
+            Some("landlock_missing")
+        }
+    } else {
+        None
+    };
     let process = state.plugins.status(&row.id);
     Ok(PluginView {
         id: row.id,
@@ -158,6 +172,7 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
         enabled: row.enabled,
         running: process.is_some(),
         permissions: package::permission_lines(&m),
+        sandbox_warning,
         pending,
         process,
         installed_at: row.installed_at,
@@ -170,19 +185,26 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
 struct PluginList {
     items: Vec<PluginView>,
     allow_unsigned: bool,
+    /// Plugins may run on a Linux host without Landlock.
+    allow_without_landlock: bool,
+    /// This host offers Landlock (always false on Windows).
+    landlock_available: bool,
     /// This server's platform as manifests name it (`windows-x64`, `linux-x64`, `linux-arm64`).
     #[serde(skip_serializing_if = "Option::is_none")]
     platform: Option<&'static str>,
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<PluginList>> {
+    let switches = store::switches(&state.db).await?;
     let mut items = Vec::new();
     for row in store::all(&state.db).await? {
         items.push(view(&state, row).await?);
     }
     Ok(Json(PluginList {
         items,
-        allow_unsigned: store::allow_unsigned(&state.db).await?,
+        allow_unsigned: switches.allow_unsigned,
+        allow_without_landlock: switches.allow_without_landlock,
+        landlock_available: crate::plugins::sandbox::landlock_available(),
         platform: crate::plugins::platform(),
     }))
 }
@@ -432,25 +454,45 @@ async fn remove_key(
     Ok(Json(Stopped { stopped }))
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct HostSettings {
     /// Unsigned plugins may be installed (off by default). An invalid signature is refused
     /// either way.
     allow_unsigned: bool,
+    /// Plugins may run on a Linux host without Landlock (off by default).
+    allow_without_landlock: bool,
+    landlock_available: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostSettingsPatch {
+    allow_unsigned: Option<bool>,
+    allow_without_landlock: Option<bool>,
 }
 
 async fn host_settings(State(state): State<AppState>) -> ApiResult<Json<HostSettings>> {
-    Ok(Json(HostSettings { allow_unsigned: store::allow_unsigned(&state.db).await? }))
+    let s = store::switches(&state.db).await?;
+    Ok(Json(HostSettings {
+        allow_unsigned: s.allow_unsigned,
+        allow_without_landlock: s.allow_without_landlock,
+        landlock_available: crate::plugins::sandbox::landlock_available(),
+    }))
 }
 
 async fn patch_host_settings(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
-    JsonBody(body): JsonBody<HostSettings>,
+    JsonBody(body): JsonBody<HostSettingsPatch>,
 ) -> ApiResult<Json<HostSettings>> {
-    state.plugins.set_allow_unsigned(&state, body.allow_unsigned, &actor(&user, &info, None)).await?;
+    let old = store::switches(&state.db).await?;
+    let new = store::HostSwitches {
+        allow_unsigned: body.allow_unsigned.unwrap_or(old.allow_unsigned),
+        allow_without_landlock: body.allow_without_landlock.unwrap_or(old.allow_without_landlock),
+    };
+    state.plugins.set_switches(&state, new, &actor(&user, &info, None)).await?;
     host_settings(State(state)).await
 }
 

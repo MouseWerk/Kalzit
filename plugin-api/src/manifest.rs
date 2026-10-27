@@ -742,13 +742,17 @@ fn valid_setting_name(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-/// A name Windows reserves for a device in any directory and with any extension (`nul.txt`).
+/// A name Windows reserves for a device in any directory and with any extension (`nul.txt`),
+/// also `COM¹` to `COM³` and `LPT¹` to `LPT³` with superscript digits.
 fn windows_reserved(part: &str) -> bool {
     let stem = part.split('.').next().unwrap_or_default().trim_end().to_ascii_uppercase();
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit())
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|rest| {
+            let mut chars = rest.chars();
+            matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_digit() || matches!(c, '\u{b9}' | '\u{b2}' | '\u{b3}'))
+        })
+    };
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT")
 }
 
 /// Whether `path` is a valid path inside a package (relative, `/` between parts, portable). The
@@ -996,6 +1000,8 @@ api = 1
             "bin/CON",
             "nul.txt",
             "bin/com1.dll",
+            "COM\u{b9}.txt",
+            "lpt\u{b3}",
             "LPT9",
             "dir./x",
             "x ",

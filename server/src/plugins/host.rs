@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -116,6 +117,8 @@ pub struct PluginHost {
     running: Mutex<HashMap<String, Arc<Supervisor>>>,
     /// Serializes the administrator's changes.
     changes: tokio::sync::Mutex<()>,
+    /// Plugins may run on a Linux host without Landlock (`allowWithoutLandlock`).
+    without_landlock: Arc<AtomicBool>,
 }
 
 impl PluginHost {
@@ -127,6 +130,7 @@ impl PluginHost {
             kalzit_keys: RwLock::new(package::kalzit_keys()),
             running: Mutex::default(),
             changes: tokio::sync::Mutex::new(()),
+            without_landlock: Arc::default(),
         }
     }
 
@@ -169,6 +173,7 @@ impl PluginHost {
     /// at start. A plugin that cannot run is logged and left out.
     pub async fn load(&self, db: &sqlx::AnyPool, datasources: &DataSources) -> ApiResult<()> {
         datasources.set_blocks(store::blocks(db).await?);
+        self.without_landlock.store(store::switches(db).await?.allow_without_landlock, Ordering::SeqCst);
         let rows = store::all(db).await?;
         if rows.is_empty() {
             return Ok(());
@@ -227,8 +232,13 @@ impl PluginHost {
         manifest.runs_on(env!("CARGO_PKG_VERSION")).map_err(|i| HostError::new("plugin.kalzit_too_old", i.message))?;
         let package_dir = self.dir("packages").join(&row.dir);
         let program = package::binary(&manifest, &package_dir)?;
-        let launch =
-            super::supervisor::Launch { manifest: Arc::new(manifest), program, package_dir, run_root: self.dir("run") };
+        let launch = super::supervisor::Launch {
+            manifest: Arc::new(manifest),
+            program,
+            package_dir,
+            run_root: self.dir("run"),
+            allow_without_landlock: self.without_landlock.clone(),
+        };
         let options = self.options.read().unwrap_or_else(|e| e.into_inner()).clone();
         let supervisor = Supervisor::new(launch, options);
         let m = supervisor.manifest().clone();
@@ -319,6 +329,7 @@ impl PluginHost {
             Ok(c) => c,
             Err(e) => {
                 remove_dir(&dir);
+                self.record_refusal(state, actor, &e).await;
                 return Err(e);
             }
         };
@@ -392,29 +403,47 @@ impl PluginHost {
         Ok(row)
     }
 
-    /// Unpacks into `dir` and runs every check; the installed plugin of the same id, if any.
+    /// A refused package in the audit log, with the reason (a failure to write it is logged).
+    async fn record_refusal(&self, state: &AppState, actor: &Actor<'_>, e: &ApiError) {
+        let reason = e.reason.as_ref().map(|r| r.code.clone()).unwrap_or_else(|| e.code.to_string());
+        let summary = json!({ "reason": reason });
+        let recorded = async {
+            let mut tx = crate::db::begin(&state.db).await?;
+            self.record(&mut tx, actor, "plugins.install_refused", "package", summary, state.clock.now_ms()).await?;
+            crate::db::commit(tx).await?;
+            Ok::<_, ApiError>(())
+        };
+        if let Err(err) = recorded.await {
+            tracing::warn!("the refused plugin package could not be recorded: {}", err.message);
+        }
+    }
+
+    /// Every check, in this order: the manifest and the signature read from the archive (trust,
+    /// reserved ids, the update rules, fixed targets), and only then the archive unpacked into
+    /// `dir` and compared with the manifest; the binary is made executable last. Answers the
+    /// installed plugin of the same id, if any.
     async fn check_package(
         &self,
         state: &AppState,
         archive: &Path,
         dir: &Path,
     ) -> ApiResult<(package::Unpacked, Verified, Option<PluginRow>)> {
-        let (archive, into) = (archive.to_path_buf(), dir.to_path_buf());
-        let unpacked = tokio::task::spawn_blocking(move || package::unpack(&archive, &into))
+        let path = archive.to_path_buf();
+        let signed = tokio::task::spawn_blocking(move || package::read_from_zip(&path))
             .await
-            .map_err(|e| ApiError::internal("plugin unpack", e))?
+            .map_err(|e| ApiError::internal("plugin package", e))?
             .map_err(HostError::api)?;
-        let m = &unpacked.manifest;
+        let m = &signed.manifest;
         if m.plugin_kind() != manifest::PluginKind::DataSource {
             return Err(HostError::new("plugin.kind_unsupported", "panel plugins cannot be installed yet").api());
         }
         m.runs_on(env!("CARGO_PKG_VERSION"))
             .map_err(|i| HostError::new("plugin.kalzit_too_old", i.message).with("minKalzit", &m.min_kalzit).api())?;
         let program = package::binary(m, dir).map_err(HostError::api)?;
-        package::make_executable(&program).map_err(|e| HostError::from(e).api())?;
         let keys = store::keys(&state.db).await?;
-        let allow_unsigned = store::allow_unsigned(&state.db).await?;
-        let verified = package::verify(&unpacked, &self.trusted(&keys), allow_unsigned).map_err(HostError::api)?;
+        let switches = store::switches(&state.db).await?;
+        let verified =
+            package::verify(&signed, &self.trusted(&keys), switches.allow_unsigned).map_err(HostError::api)?;
         let existing = store::get(&state.db, &m.id).await?;
         if let Some(old) = &existing {
             let old_manifest = manifest::parse(&old.manifest).map_err(|e| ApiError::internal("plugin manifest", e))?;
@@ -425,6 +454,30 @@ impl PluginHost {
         } else if datasources_has_kind(&state.datasources, &m.id) {
             return Err(HostError::new("plugin.kind_taken", format!("the data source kind {} is taken", m.id)).api());
         }
+        let policy = state.datasources.policy(state).await?;
+        for target in &m.permissions.network {
+            if let Some(host) = &target.host {
+                policy.precheck_host(host).map_err(|b| {
+                    HostError::new(
+                        "plugin.target_refused",
+                        format!("the fixed target {host} is refused: {}", b.0.message),
+                    )
+                    .with("host", host)
+                    .api()
+                })?;
+            }
+        }
+        let (archive, into) = (archive.to_path_buf(), dir.to_path_buf());
+        let unpacked = tokio::task::spawn_blocking(move || package::unpack(&archive, &into))
+            .await
+            .map_err(|e| ApiError::internal("plugin unpack", e))?
+            .map_err(HostError::api)?;
+        if unpacked.manifest_text != signed.manifest_text {
+            return Err(HostError::new("plugin.package_invalid", "the manifest differs from the one checked")
+                .with("issues", "manifest")
+                .api());
+        }
+        package::make_executable(&program).map_err(|e| HostError::from(e).api())?;
         Ok((unpacked, verified, existing))
     }
 
@@ -539,6 +592,7 @@ impl PluginHost {
 
     /// Starts a stopped plugin again with a fresh count of failures (its next call starts it).
     pub async fn restart(&self, state: &AppState, id: &str, actor: &Actor<'_>) -> ApiResult<()> {
+        let _changes = self.changes.lock().await;
         let row = self.row(state, id).await?;
         let Some(supervisor) = self.supervisor(id) else {
             return Err(HostError::new("plugin.not_running", "the plugin is not enabled or cannot run").api());
@@ -630,8 +684,11 @@ impl PluginHost {
         Ok((key, plugins))
     }
 
-    /// Removes a trusted key. The plugins signed with it stop; with any, the administrator must
-    /// confirm (`confirm`), else `plugin.key_in_use` lists them.
+    /// Removes a trusted key. The plugins whose installed version it signed stop; updates it
+    /// signed that wait for approval are dropped (their installed version keeps running). With
+    /// either, the administrator must confirm (`confirm`), else `plugin.key_in_use` lists them.
+    /// After a restart the same holds: a stopped plugin's key is no longer trusted, and the
+    /// dropped updates are gone.
     pub async fn remove_key(
         &self,
         state: &AppState,
@@ -640,25 +697,54 @@ impl PluginHost {
         actor: &Actor<'_>,
     ) -> ApiResult<Vec<String>> {
         let _changes = self.changes.lock().await;
-        let (key, plugins) = self.signed_with(state, key_id).await?;
-        if !plugins.is_empty() && !confirm {
+        let (key, _) = self.signed_with(state, key_id).await?;
+        let rows = store::all(&state.db).await?;
+        let signed_by = |signer: &str, public_key: Option<&str>| {
+            signer == "publisher" && public_key == Some(key.public_key.as_str())
+        };
+        let stopped: Vec<String> =
+            rows.iter().filter(|p| signed_by(&p.signer, p.public_key.as_deref())).map(|p| p.id.clone()).collect();
+        let dropped: Vec<&PluginRow> = rows
+            .iter()
+            .filter(|p| p.pending.as_ref().is_some_and(|x| signed_by(&x.signer, x.public_key.as_deref())))
+            .collect();
+        let dropped_ids: Vec<String> = dropped.iter().map(|p| p.id.clone()).collect();
+        if (!stopped.is_empty() || !dropped.is_empty()) && !confirm {
             return Err(HostError::new(
                 "plugin.key_in_use",
-                format!("plugins signed with this key stop when it is removed: {}", plugins.join(", ")),
+                format!(
+                    "plugins signed with this key stop when it is removed: {}; updates dropped: {}",
+                    stopped.join(", "),
+                    dropped_ids.join(", ")
+                ),
             )
-            .with("plugins", plugins.join(","))
+            .with("plugins", stopped.join(","))
+            .with("pending", dropped_ids.join(","))
             .api());
         }
         let now = state.clock.now_ms();
         let mut tx = crate::db::begin(&state.db).await?;
         store::remove_key(&mut tx, key_id).await?;
-        let summary = json!({ "keyId": key.key_id, "name": key.name, "stopped": plugins });
+        let mut dirs = Vec::new();
+        for p in &dropped {
+            let mut row = (*p).clone();
+            if let Some(pending) = row.pending.take() {
+                dirs.push(pending.dir);
+            }
+            row.updated_at = now;
+            store::put(&mut tx, &row, actor.user_id).await?;
+        }
+        let summary =
+            json!({ "keyId": key.key_id, "name": key.name, "stopped": stopped, "droppedUpdates": dropped_ids });
         self.record(&mut tx, actor, "plugins.key_removed", key_id, summary, now).await?;
         crate::db::commit(tx).await?;
-        for id in &plugins {
+        for id in &stopped {
             self.unregister(id, &state.datasources).await;
         }
-        Ok(plugins)
+        for dir in dirs {
+            remove_dir(&self.dir("packages").join(dir));
+        }
+        Ok(stopped)
     }
 
     /// Keeps a hand-over of `id` from one key to another, after checking its signature.
@@ -691,19 +777,32 @@ impl PluginHost {
         Ok(())
     }
 
-    /// The switch for unsigned plugins.
-    pub async fn set_allow_unsigned(&self, state: &AppState, allow: bool, actor: &Actor<'_>) -> ApiResult<()> {
+    /// The host's switches: unsigned plugins, and plugins on a Linux host without Landlock.
+    /// Each change is recorded on its own.
+    pub async fn set_switches(&self, state: &AppState, new: store::HostSwitches, actor: &Actor<'_>) -> ApiResult<()> {
+        let _changes = self.changes.lock().await;
+        let old = store::switches(&state.db).await?;
         let now = state.clock.now_ms();
         let mut tx = crate::db::begin(&state.db).await?;
-        store::set_allow_unsigned(&mut tx, allow, actor.user_id, now).await?;
-        let action = if allow { "plugins.unsigned_allowed" } else { "plugins.unsigned_refused" };
-        self.record(&mut tx, actor, action, "server", json!({ "allowUnsigned": allow }), now).await?;
+        store::set_switches(&mut tx, new, actor.user_id, now).await?;
+        if old.allow_unsigned != new.allow_unsigned {
+            let action = if new.allow_unsigned { "plugins.unsigned_allowed" } else { "plugins.unsigned_refused" };
+            self.record(&mut tx, actor, action, "server", json!({ "allowUnsigned": new.allow_unsigned }), now).await?;
+        }
+        if old.allow_without_landlock != new.allow_without_landlock {
+            let action =
+                if new.allow_without_landlock { "plugins.landlock_optional" } else { "plugins.landlock_required" };
+            let summary = json!({ "allowWithoutLandlock": new.allow_without_landlock });
+            self.record(&mut tx, actor, action, "server", summary, now).await?;
+        }
         crate::db::commit(tx).await?;
+        self.without_landlock.store(new.allow_without_landlock, Ordering::SeqCst);
         Ok(())
     }
 
     /// Blocks or unblocks an installed plugin for one organization.
     pub async fn set_blocked(&self, state: &AppState, id: &str, blocked: bool, actor: &Actor<'_>) -> ApiResult<bool> {
+        let _changes = self.changes.lock().await;
         let org_id = actor.org_id.ok_or_else(|| ApiError::internal("plugin block", "no organization"))?;
         self.row(state, id).await?;
         let now = state.clock.now_ms();

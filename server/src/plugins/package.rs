@@ -55,7 +55,12 @@ pub fn private_dir(dir: &Path, access: PluginAccess) -> std::io::Result<()> {
     }
     #[cfg(windows)]
     {
-        crate::data_dir::acl::create_dir(dir, &access.sddl()?)
+        crate::data_dir::acl::create_dir(dir, &access.sddl()?)?;
+        // Plugins run at low integrity: they write only where the label says they may.
+        if access == PluginAccess::Modify {
+            super::sandbox::label_low(dir)?;
+        }
+        Ok(())
     }
 }
 
@@ -66,7 +71,7 @@ pub enum PluginAccess {
     None,
     /// Read and run: a package.
     ReadExecute,
-    /// Read, write and delete: a plugin's private temporary directory.
+    /// Read, write and delete, but not run: a plugin's private run directory.
     Modify,
 }
 
@@ -82,7 +87,7 @@ impl PluginAccess {
         Ok(match self {
             PluginAccess::None => crate::data_dir::acl::DIR_SDDL.to_string(),
             PluginAccess::ReadExecute => format!("{base}(A;OICI;0x1200a9;;;RC)"),
-            PluginAccess::Modify => format!("{base}(A;OICI;0x1301bf;;;RC)"),
+            PluginAccess::Modify => format!("{base}(A;OICI;0x13019f;;;RC)"),
         })
     }
 }
@@ -158,6 +163,52 @@ pub fn unpack(archive: &Path, into: &Path) -> Result<Unpacked, HostError> {
         out.flush()?;
     }
     read_unpacked(into)
+}
+
+/// The manifest and the signature as the archive holds them, read without unpacking anything:
+/// the signature and the trust are checked before a file is written.
+pub fn read_from_zip(archive: &Path) -> Result<Unpacked, HostError> {
+    let file = std::fs::File::open(archive)?;
+    if file.metadata()?.len() > MAX_PACKAGE_BYTES {
+        return Err(HostError::new("plugin.package_too_large", "the plugin package is too large")
+            .with("maxBytes", MAX_PACKAGE_BYTES));
+    }
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| HostError::new("plugin.package_unreadable", format!("the file is not a zip archive: {e}")))?;
+    let mut read = |name: &str, limit: u64| -> Result<Option<Vec<u8>>, HostError> {
+        let entry = match zip.by_name(name) {
+            Ok(entry) => entry,
+            Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+            Err(e) => return Err(HostError::new("plugin.package_unreadable", format!("{name} cannot be read: {e}"))),
+        };
+        let mut bytes = Vec::new();
+        entry
+            .take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| HostError::new("plugin.package_unreadable", format!("{name} cannot be read: {e}")))?;
+        if bytes.len() as u64 > limit {
+            return Err(HostError::new("plugin.manifest_invalid", format!("{name} is too large")));
+        }
+        Ok(Some(bytes))
+    };
+    let manifest_bytes = read(MANIFEST_FILE, manifest::MAX_MANIFEST_BYTES as u64)?.ok_or_else(|| {
+        HostError::new("plugin.manifest_missing", format!("the package has no readable {MANIFEST_FILE}"))
+    })?;
+    let signature = read(SIGNATURE_FILE, MAX_SIGNATURE_BYTES)?;
+    let manifest_text = String::from_utf8(manifest_bytes)
+        .map_err(|_| HostError::new("plugin.manifest_invalid", format!("{MANIFEST_FILE} is not UTF-8")))?;
+    let manifest = manifest::parse(&manifest_text).map_err(|e| {
+        let issues: Vec<String> = e.0.iter().map(|i| format!("{} ({})", i, i.code)).collect();
+        HostError::new("plugin.manifest_invalid", e.to_string()).with("issues", issues.join("; "))
+    })?;
+    let signature = signature
+        .map(|bytes| {
+            serde_json::from_slice::<kalzit_release::DetachedSignature>(&bytes).map_err(|e| {
+                HostError::new("plugin.signature_invalid", format!("{SIGNATURE_FILE} is not a signature: {e}"))
+            })
+        })
+        .transpose()?;
+    Ok(Unpacked { manifest, manifest_text, signature })
 }
 
 /// Whether an archive entry's Unix mode names anything but a plain file or a directory (a link,

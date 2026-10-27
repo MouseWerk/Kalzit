@@ -590,27 +590,35 @@ manifest and signature) always works, also offline, and runs the same checks.
 
 ### Sandbox
 
-What a plugin process gets (``plugins::sandbox``). Every layer is applied where the system offers
-it; the ones in force and the missing ones are in the plugin's status and in the log, none is
-required to run.
+What a plugin process gets (`plugins::sandbox`; details and the exact lists in
+docs/api/plugins.md, "Sandbox"). The layers in force and the missing ones are in the plugin's
+status and in the log. On Linux Landlock is required unless an administrator allows plugins
+without it (`allowWithoutLandlock`, shown on the plugin before approval), and plugins do not run
+while Kalzit runs as root.
 
 - Windows: a restricted token without privileges (except bypass traverse checking), with
-  Administrators for deny only and the restricting SIDs Everyone, Users, ``RESTRICTED`` and the
-  logon session, so the plugin opens only what one of these may open: not Kalzit's data
-  directory (SYSTEM, Administrators and Kalzit's account only) or the account's profile; its
-  package (read and run) and its run directory (read and write) grant ``RESTRICTED``, and the
-  token's default DACL lets it open its own objects. A job object, assigned before the process
-  runs (it starts suspended): killed with Kalzit, no breakaway, 2 GiB of memory and 16 processes
-  for the whole job, no desktop, clipboard, global atoms or system settings, an optional CPU
-  cap. Image load policy: System32 first, no images from remote shares or with a low label.
-- Linux: ``no_new_privs``; Landlock: the file system read-only and visible only where a process
-  needs it (system libraries, ``/proc``, ``/sys``, certificates and a few files of ``/etc``, five
-  device files), its package to read and run, its run directory to write; seccomp: no
-  ``ptrace``, no other process's memory, no mounts or namespaces, no kernel modules, ``kexec``,
-  ``bpf``, ``perf_event_open``, ``userfaultfd`` or keyrings, other architectures killed; a user
-  and an IPC namespace with the account mapped to itself (not as root, not where unprivileged
-  user namespaces are forbidden); a limit on the data segment; no core dumps; its own process
-  group, killed as a whole, and killed when Kalzit ends.
+  Administrators for deny only and the restricting SIDs Everyone, Users, `RESTRICTED` and a SID
+  of this start (not the logon session: Kalzit's process grants it read access), at low
+  integrity, with a default DACL for Kalzit's account, SYSTEM and that SID only. So the plugin
+  cannot open Kalzit's process or another plugin's (tested), cannot read or write Kalzit's data
+  directory (tested) and writes only where the low label allows: its run directory. Its package
+  is read and run, its run directory read and write but not run. A job object, assigned before
+  the process runs (it starts suspended): killed with Kalzit, no breakaway, 2 GiB of memory and
+  16 processes for the whole job, no desktop, clipboard, global atoms or system settings, an
+  optional CPU cap. Image load policy: System32 first, no images from remote shares or with a low
+  label. Its pipe ends are inheritable only while it is created, under a lock, and only they are
+  in its handle list.
+- Linux: `no_new_privs`; Landlock: the file system read-only and visible only where a process
+  needs it (system libraries, `/proc`, `/sys`, certificates and a few files of `/etc`, five device
+  files), its package to read and run, its run directory to write (not to run), other processes'
+  `/proc` entries out of reach; seccomp: no `ptrace`, no other process's memory, no mounts, no
+  namespaces (also `clone` with `CLONE_NEW*`; `clone3` answers `ENOSYS`), no `io_uring`, kernel
+  modules, `kexec`, `bpf`, `perf_event_open`, `userfaultfd` or keyrings, `truncate` refused where
+  Landlock cannot guard it (ABI below 3), other architectures killed; signals only to itself and
+  its group (Landlock signal scope from ABI 6, else a seccomp filter that knows its process id);
+  a user and an IPC namespace with the account mapped to itself (where unprivileged user
+  namespaces are allowed); a limit on the data segment; no core dumps; its own process group,
+  killed as a whole, and killed when Kalzit ends.
 - Network, both systems: **not limited yet.** Kalzit's connector (the plugin asks Kalzit for a
   connection, Kalzit checks the target against the manifest and the target rules and connects)
   is not built; without it a network namespace (Linux) or an AppContainer without network

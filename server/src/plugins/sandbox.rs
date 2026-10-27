@@ -21,9 +21,31 @@
 //! to the declared targets needs an AppContainer or a filtering rule, which are not built yet.
 
 #[cfg(target_os = "linux")]
+pub use linux::landlock_available;
+#[cfg(target_os = "linux")]
 pub use linux::spawn;
 #[cfg(windows)]
-pub use windows::spawn;
+pub use windows::{label_low, spawn};
+
+/// Whether Kalzit runs as root (Linux): plugins are refused then, as a sandboxed process of root
+/// would still be root.
+pub fn runs_as_root() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: geteuid cannot fail.
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Whether this kernel offers Landlock (Linux only).
+#[cfg(not(target_os = "linux"))]
+pub fn landlock_available() -> bool {
+    false
+}
 
 /// Plugins run on Windows and Linux only.
 #[cfg(not(any(windows, target_os = "linux")))]
@@ -56,9 +78,16 @@ mod linux {
     const TRUNCATE: u64 = 1 << 14;
     const IOCTL_DEV: u64 = 1 << 15;
 
+    /// ABI 6: signals and abstract Unix sockets only within the sandbox.
+    const SCOPE_ABSTRACT_UNIX_SOCKET: u64 = 1 << 0;
+    const SCOPE_SIGNAL: u64 = 1 << 1;
+
+    /// `landlock_ruleset_attr`; older kernels get only its first field (`size`), ABI 6 all.
     #[repr(C)]
     struct RulesetAttr {
         handled_access_fs: u64,
+        handled_access_net: u64,
+        scoped: u64,
     }
 
     #[repr(C, packed)]
@@ -77,6 +106,18 @@ mod linux {
     #[cfg(target_arch = "aarch64")]
     const AUDIT_ARCH: u32 = 0xC000_00B7;
     const EPERM: u32 = 1;
+    const ENOSYS: u32 = 38;
+    /// `seccomp_data`: the number at 0, the architecture at 4, the first argument's low half at 16.
+    const ARG0: u32 = 16;
+    /// The `CLONE_NEW*` flags: a new namespace of any kind.
+    const CLONE_NAMESPACES: u32 = 0x0002_0000 // NEWNS
+        | 0x0200_0000 // NEWCGROUP
+        | 0x0400_0000 // NEWUTS
+        | 0x0800_0000 // NEWIPC
+        | 0x1000_0000 // NEWUSER
+        | 0x2000_0000 // NEWPID
+        | 0x4000_0000 // NEWNET
+        | 0x0000_0080; // NEWTIME
 
     // `prctl` reads its arguments as `unsigned long`.
     const ZERO: libc::c_ulong = 0;
@@ -89,13 +130,15 @@ mod linux {
     const LANDLOCK: u8 = 8;
     const SECCOMP: u8 = 16;
     const MEMORY_LIMIT: u8 = 32;
-    const NAMES: [(u8, &str); 6] = [
+    const SIGNALS: u8 = 64;
+    const NAMES: [(u8, &str); 7] = [
         (NO_NEW_PRIVS, "no_new_privs"),
         (USER_NAMESPACE, "user_namespace"),
         (IPC_NAMESPACE, "ipc_namespace"),
         (LANDLOCK, "landlock"),
         (SECCOMP, "seccomp"),
         (MEMORY_LIMIT, "memory_limit"),
+        (SIGNALS, "signals"),
     ];
 
     /// The system calls the filter refuses with `EPERM`.
@@ -135,13 +178,23 @@ mod linux {
             libc::SYS_acct,
             libc::SYS_quotactl,
             libc::SYS_lookup_dcookie,
+            libc::SYS_io_uring_setup,
+            libc::SYS_io_uring_enter,
+            libc::SYS_io_uring_register,
+            libc::SYS_pidfd_send_signal,
+            libc::SYS_tkill,
+            libc::SYS_name_to_handle_at,
         ];
         #[cfg(target_arch = "x86_64")]
         calls.extend([libc::SYS_iopl, libc::SYS_ioperm]);
         calls
     }
 
-    fn filter() -> Vec<libc::sock_filter> {
+    /// The filter: other architectures killed; `denied` with `EPERM`; `truncate` and
+    /// `ftruncate` too where Landlock cannot hold them (ABI below 3); `clone3` with `ENOSYS`
+    /// (its flags are out of reach of a filter; the C library falls back to `clone`); `clone`
+    /// with any `CLONE_NEW*` flag with `EPERM`; the rest allowed.
+    fn filter(truncate_unguarded: bool) -> Vec<libc::sock_filter> {
         let op = |code: u16, jt: u8, jf: u8, k: u32| libc::sock_filter { code, jt, jf, k };
         let errno = libc::SECCOMP_RET_ERRNO | EPERM;
         let mut f = vec![
@@ -155,12 +208,52 @@ mod linux {
             f.push(op(BPF_JMP_JSET_K, 0, 1, 0x4000_0000));
             f.push(op(BPF_RET_K, 0, 0, errno));
         }
-        for nr in denied() {
+        let mut calls = denied();
+        if truncate_unguarded {
+            calls.extend([libc::SYS_truncate, libc::SYS_ftruncate]);
+        }
+        for nr in calls {
             f.push(op(BPF_JMP_JEQ_K, 0, 1, nr as u32));
             f.push(op(BPF_RET_K, 0, 0, errno));
         }
+        f.push(op(BPF_JMP_JEQ_K, 0, 1, libc::SYS_clone3 as u32));
+        f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | ENOSYS));
+        // clone: the flags are the first argument (x86_64 and aarch64 alike).
+        f.push(op(BPF_JMP_JEQ_K, 0, 3, libc::SYS_clone as u32));
+        f.push(op(BPF_LD_W_ABS, 0, 0, ARG0));
+        f.push(op(BPF_JMP_JSET_K, 0, 1, CLONE_NAMESPACES));
+        f.push(op(BPF_RET_K, 0, 0, errno));
         f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW));
         f
+    }
+
+    /// Signals only to the plugin itself and its process group (`kill(0)`, `kill(-pid)`,
+    /// threads of its own process): Kalzit and other processes of the account are out of reach.
+    /// Built in the child, which knows its own process id, on the stack.
+    fn signal_filter(pid: u32) -> [libc::sock_filter; 15] {
+        let op = |code: u16, jt: u8, jf: u8, k: u32| libc::sock_filter { code, jt, jf, k };
+        [
+            op(BPF_LD_W_ABS, 0, 0, 4),
+            op(BPF_JMP_JEQ_K, 1, 0, AUDIT_ARCH),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_KILL_PROCESS),
+            op(BPF_LD_W_ABS, 0, 0, 0),
+            op(BPF_JMP_JEQ_K, 4, 0, libc::SYS_kill as u32),
+            op(BPF_JMP_JEQ_K, 3, 0, libc::SYS_tgkill as u32),
+            op(BPF_JMP_JEQ_K, 2, 0, libc::SYS_rt_sigqueueinfo as u32),
+            op(BPF_JMP_JEQ_K, 1, 0, libc::SYS_rt_tgsigqueueinfo as u32),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW),
+            op(BPF_LD_W_ABS, 0, 0, ARG0),
+            op(BPF_JMP_JEQ_K, 3, 0, 0),
+            op(BPF_JMP_JEQ_K, 2, 0, pid),
+            op(BPF_JMP_JEQ_K, 1, 0, pid.wrapping_neg()),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | EPERM),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW),
+        ]
+    }
+
+    /// Whether this kernel offers Landlock.
+    pub fn landlock_available() -> bool {
+        landlock_abi() > 0
     }
 
     /// The Landlock ABI of the running kernel; 0 without Landlock.
@@ -229,6 +322,7 @@ mod linux {
     /// Everything the child does between fork and exec, prepared beforehand: the child only
     /// makes system calls with what is here (no allocation after the fork).
     struct Plan {
+        abi: libc::c_long,
         handled: u64,
         rules: Vec<(OwnedFd, u64)>,
         filter: Vec<libc::sock_filter>,
@@ -257,7 +351,8 @@ mod linux {
 
     impl Plan {
         fn new(spec: &Spec, status: RawFd) -> Self {
-            let handled = handled(landlock_abi());
+            let abi = landlock_abi();
+            let handled = handled(abi);
             let mut rules = Vec::new();
             let file_rights = EXECUTE | READ_FILE;
             let mut add = |path: &Path, dir_rights: u64, file_only: u64| {
@@ -273,13 +368,15 @@ mod linux {
                 add(Path::new(p), 0, READ_FILE | WRITE_FILE | TRUNCATE | IOCTL_DEV);
             }
             add(&spec.package_dir, EXECUTE | READ_FILE | READ_DIR, file_rights);
-            add(&spec.run_dir, handled & !(MAKE_CHAR | MAKE_BLOCK), READ_FILE | WRITE_FILE | TRUNCATE);
+            // Write, but neither run nor make devices.
+            add(&spec.run_dir, handled & !(EXECUTE | MAKE_CHAR | MAKE_BLOCK), READ_FILE | WRITE_FILE | TRUNCATE);
             // SAFETY: getuid and getgid cannot fail.
             let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
             Plan {
+                abi,
                 handled,
                 rules,
-                filter: filter(),
+                filter: filter(abi < 3),
                 uid,
                 uid_map: format!("{uid} {uid} 1\n").into_bytes(),
                 gid_map: format!("{gid} {gid} 1\n").into_bytes(),
@@ -334,14 +431,16 @@ mod linux {
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, ONE, ZERO, ZERO, ZERO) == 0 {
                     layers |= NO_NEW_PRIVS;
                 }
+                let scoped = self.abi >= 6;
+                let mut signals_scoped = false;
                 if self.handled != 0 && layers & NO_NEW_PRIVS != 0 {
-                    let attr = RulesetAttr { handled_access_fs: self.handled };
-                    let ruleset = libc::syscall(
-                        libc::SYS_landlock_create_ruleset,
-                        &raw const attr,
-                        std::mem::size_of::<RulesetAttr>(),
-                        0u32,
-                    );
+                    let attr = RulesetAttr {
+                        handled_access_fs: self.handled,
+                        handled_access_net: 0,
+                        scoped: if scoped { SCOPE_ABSTRACT_UNIX_SOCKET | SCOPE_SIGNAL } else { 0 },
+                    };
+                    let size = if scoped { std::mem::size_of::<RulesetAttr>() } else { std::mem::size_of::<u64>() };
+                    let ruleset = libc::syscall(libc::SYS_landlock_create_ruleset, &raw const attr, size, 0u32);
                     if ruleset >= 0 {
                         let ruleset = ruleset as libc::c_int;
                         let mut all = true;
@@ -361,6 +460,7 @@ mod linux {
                         }
                         if all && libc::syscall(libc::SYS_landlock_restrict_self, ruleset, 0u32) == 0 {
                             layers |= LANDLOCK;
+                            signals_scoped = scoped;
                         }
                         libc::close(ruleset);
                     }
@@ -371,6 +471,16 @@ mod linux {
                     let mode = libc::SECCOMP_MODE_FILTER as libc::c_ulong;
                     if libc::prctl(libc::PR_SET_SECCOMP, mode, &raw const program, ZERO, ZERO) == 0 {
                         layers |= SECCOMP;
+                    }
+                    if signals_scoped {
+                        layers |= SIGNALS;
+                    } else {
+                        let signals = signal_filter(libc::getpid() as u32);
+                        let program =
+                            libc::sock_fprog { len: signals.len() as u16, filter: signals.as_ptr().cast_mut() };
+                        if libc::prctl(libc::PR_SET_SECCOMP, mode, &raw const program, ZERO, ZERO) == 0 {
+                            layers |= SIGNALS;
+                        }
                     }
                 }
                 libc::write(self.status, (&raw const layers).cast(), 1);
@@ -461,7 +571,12 @@ mod linux {
 
         #[test]
         fn the_filter_checks_the_architecture_first_and_allows_the_rest() {
-            let f = filter();
+            let f = filter(true);
+            assert!(f.iter().any(|i| i.k == libc::SYS_truncate as u32));
+            assert!(!filter(false).iter().any(|i| i.k == libc::SYS_truncate as u32));
+            let s = signal_filter(4242);
+            assert_eq!(s[11].k, 4242);
+            assert_eq!(s[12].k, (-4242i32) as u32);
             assert_eq!((f[0].code, f[0].k), (BPF_LD_W_ABS, 4));
             assert_eq!((f[1].code, f[1].k), (BPF_JMP_JEQ_K, AUDIT_ARCH));
             assert_eq!(f.last().unwrap().k, libc::SECCOMP_RET_ALLOW);
@@ -488,16 +603,17 @@ mod windows {
 
     use tokio::sync::watch;
     use windows::Win32::Foundation::{
-        CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, HLOCAL, LocalFree, SetHandleInformation,
+        CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, LocalFree, SetHandleInformation,
     };
     use windows::Win32::Security::Authorization::{
         ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW, SDDL_REVISION_1,
     };
+    use windows::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
     use windows::Win32::Security::{
-        ACL, CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, GetSecurityDescriptorDacl, GetTokenInformation,
-        PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, SetTokenInformation, TOKEN_ADJUST_DEFAULT,
-        TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_QUERY, TokenDefaultDacl,
-        TokenGroups,
+        ACL, CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, GetLengthSid, GetSecurityDescriptorDacl,
+        GetSecurityDescriptorSacl, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SID_AND_ATTRIBUTES,
+        SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenDefaultDacl, TokenIntegrityLevel,
     };
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
@@ -519,8 +635,14 @@ mod windows {
 
     use super::super::process::{Child, Control, Spec};
 
-    /// `SE_GROUP_LOGON_ID`: the group of the logon session.
-    const SE_GROUP_LOGON_ID: u32 = 0xC000_0000;
+    /// `SE_GROUP_INTEGRITY`: the attribute of an integrity label in a token.
+    const SE_GROUP_INTEGRITY: u32 = 0x20;
+    /// The low integrity level.
+    const LOW_INTEGRITY: &str = "S-1-16-4096";
+
+    /// Serializes making the plugin's pipe ends inheritable and creating the process, so no
+    /// other process this server starts at the same moment inherits them.
+    static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
     /// Image load policy: no images from remote shares, none with a low label, system32 first.
     const IMAGE_LOAD_POLICY: u64 = (1 << 52) | (1 << 56) | (1 << 60);
     /// Every UI restriction of a job: desktop, display settings, exit, global atoms, handles,
@@ -608,21 +730,14 @@ mod windows {
         }
     }
 
-    /// The logon SID of a token, as bytes (empty when the token has none).
-    fn logon_sid(token: HANDLE) -> std::io::Result<Vec<u64>> {
-        let mut needed = 0u32;
-        // SAFETY: a size query; it fails with "insufficient buffer" by design.
-        let _ = unsafe { GetTokenInformation(token, TokenGroups, None, 0, &mut needed) };
-        let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
-        // SAFETY: `buffer` holds `needed` bytes, aligned for TOKEN_GROUPS.
-        unsafe { GetTokenInformation(token, TokenGroups, Some(buffer.as_mut_ptr().cast()), needed, &mut needed) }
-            .map_err(os)?;
-        Ok(buffer)
-    }
-
     /// A primary token like Kalzit's, without privileges (but bypass traverse checking), with
-    /// Administrators for deny only, restricted to Everyone, Users, `RESTRICTED` and the logon
-    /// session, and a default DACL that lets the plugin open its own objects.
+    /// Administrators for deny only, restricted to Everyone, Users and `RESTRICTED`, at low
+    /// integrity, and a default DACL that only Kalzit's account, SYSTEM and a SID of this start
+    /// pass. Not the logon
+    /// session: Kalzit's own process grants it read access, and with it a plugin could read
+    /// Kalzit's memory. The low label keeps it from opening Kalzit's process for reading (no read
+    /// up on processes) and from writing anything not labelled low; the default DACL keeps other
+    /// plugins (restricted tokens all) out of this plugin's process and objects.
     fn restricted_token() -> std::io::Result<Owned> {
         let mut current = HANDLE::default();
         // SAFETY: the pseudo handle of this process; `current` receives a handle owned below.
@@ -636,18 +751,19 @@ mod windows {
         .map_err(os)?;
         let current = Owned(current);
         let disable = [Sid::parse("S-1-5-32-544")?, Sid::parse("S-1-5-114")?];
-        let restrict = [Sid::parse("S-1-1-0")?, Sid::parse("S-1-5-32-545")?, Sid::parse("S-1-5-12")?];
-        let groups = logon_sid(current.0)?;
-        let mut restricting: Vec<SID_AND_ATTRIBUTES> =
+        // A SID of this start only: the default DACL grants it, so the plugin opens its own
+        // process and objects, and no other plugin (whose token lacks it) can.
+        let own = format!(
+            "S-1-9-{}-{}-{}-{}",
+            rand::random::<u32>(),
+            rand::random::<u32>(),
+            rand::random::<u32>(),
+            rand::random::<u32>()
+        );
+        let restrict =
+            [Sid::parse("S-1-1-0")?, Sid::parse("S-1-5-32-545")?, Sid::parse("S-1-5-12")?, Sid::parse(&own)?];
+        let restricting: Vec<SID_AND_ATTRIBUTES> =
             restrict.iter().map(|s| SID_AND_ATTRIBUTES { Sid: s.0, Attributes: 0 }).collect();
-        // SAFETY: `groups` holds a TOKEN_GROUPS with `GroupCount` entries whose SIDs point into it.
-        unsafe {
-            let list = &*groups.as_ptr().cast::<TOKEN_GROUPS>();
-            let entries = std::slice::from_raw_parts(list.Groups.as_ptr(), list.GroupCount as usize);
-            if let Some(logon) = entries.iter().find(|g| g.Attributes & SE_GROUP_LOGON_ID == SE_GROUP_LOGON_ID) {
-                restricting.push(SID_AND_ATTRIBUTES { Sid: logon.Sid, Attributes: 0 });
-            }
-        }
         let disabling: Vec<SID_AND_ATTRIBUTES> =
             disable.iter().map(|s| SID_AND_ATTRIBUTES { Sid: s.0, Attributes: 0 }).collect();
         let mut token = HANDLE::default();
@@ -665,7 +781,7 @@ mod windows {
         .map_err(os)?;
         let token = Owned(token);
         let user = crate::data_dir::acl::current_user()?;
-        let descriptor = Descriptor::parse(&format!("D:(A;;GA;;;{user})(A;;GA;;;SY)(A;;GA;;;RC)"))?;
+        let descriptor = Descriptor::parse(&format!("D:(A;;GA;;;{user})(A;;GA;;;SY)(A;;GA;;;{own})"))?;
         let default = TOKEN_DEFAULT_DACL { DefaultDacl: descriptor.dacl()? };
         // SAFETY: `default` points into `descriptor`, alive for the call.
         unsafe {
@@ -677,7 +793,43 @@ mod windows {
             )
         }
         .map_err(os)?;
+        let low = Sid::parse(LOW_INTEGRITY)?;
+        let label = TOKEN_MANDATORY_LABEL { Label: SID_AND_ATTRIBUTES { Sid: low.0, Attributes: SE_GROUP_INTEGRITY } };
+        // SAFETY: `label` points at `low`, alive for the call; the size covers the SID.
+        unsafe {
+            SetTokenInformation(
+                token.0,
+                TokenIntegrityLevel,
+                (&raw const label).cast(),
+                std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32 + GetLengthSid(low.0),
+            )
+        }
+        .map_err(os)?;
         Ok(token)
+    }
+
+    /// Gives a directory (and what is created in it) the low integrity label, so a plugin at low
+    /// integrity may write there; anything without the label it may not write.
+    pub fn label_low(path: &std::path::Path) -> std::io::Result<()> {
+        let descriptor = Descriptor::parse("S:(ML;OICI;NW;;;LW)")?;
+        let mut present = windows::core::BOOL::default();
+        let mut defaulted = windows::core::BOOL::default();
+        let mut sacl: *mut ACL = std::ptr::null_mut();
+        // SAFETY: the descriptor is valid; `sacl` points into it while it lives.
+        unsafe { GetSecurityDescriptorSacl(descriptor.0, &mut present, &mut sacl, &mut defaulted) }.map_err(os)?;
+        // SAFETY: `sacl` points into `descriptor`, alive for the call.
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                &HSTRING::from(path.as_os_str()),
+                SE_FILE_OBJECT,
+                LABEL_SECURITY_INFORMATION,
+                None,
+                None,
+                None,
+                Some(sacl.cast_const()),
+            )
+        };
+        if status.0 == 0 { Ok(()) } else { Err(std::io::Error::from_raw_os_error(status.0 as i32)) }
     }
 
     /// A job that kills everything in it when its last handle closes, with the limits, and the
@@ -738,21 +890,19 @@ mod windows {
         Ok((job, layers))
     }
 
-    /// A pipe whose `child` end the plugin inherits and whose other end stays here.
+    /// A pipe with the plugin's end and ours, neither inheritable; the plugin's end becomes
+    /// inheritable only while the process is created (`SPAWN`), and only it is in the handle list.
     fn pipe(child_reads: bool) -> std::io::Result<(Owned, Owned)> {
-        let sa = SECURITY_ATTRIBUTES {
-            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: std::ptr::null_mut(),
-            bInheritHandle: true.into(),
-        };
         let (mut read, mut write) = (HANDLE::default(), HANDLE::default());
-        // SAFETY: both out pointers are valid.
-        unsafe { CreatePipe(&mut read, &mut write, Some(&sa), 0) }.map_err(os)?;
+        // SAFETY: both out pointers are valid; no security attributes, so not inheritable.
+        unsafe { CreatePipe(&mut read, &mut write, None, 0) }.map_err(os)?;
         let (read, write) = (Owned(read), Owned(write));
-        let (child, ours) = if child_reads { (read, write) } else { (write, read) };
-        // SAFETY: our end must not reach the plugin.
-        unsafe { SetHandleInformation(ours.0, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) }.map_err(os)?;
-        Ok((child, ours))
+        Ok(if child_reads { (read, write) } else { (write, read) })
+    }
+
+    fn inheritable(handle: &Owned) -> std::io::Result<()> {
+        // SAFETY: the handle is owned and open.
+        unsafe { SetHandleInformation(handle.0, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }.map_err(os)
     }
 
     /// The program, quoted, then the arguments (none have quotes or spaces: plugins get none,
@@ -812,6 +962,7 @@ mod windows {
         let token = restricted_token()?;
         let (job, mut layers) = job(&spec.limits)?;
         layers.insert(0, "restricted_token");
+        layers.insert(1, "low_integrity");
         let (stdin_child, stdin_ours) = pipe(true)?;
         drop(stdin_ours);
         let (stdout_child, stdout_ours) = pipe(false)?;
@@ -865,6 +1016,10 @@ mod windows {
         let mut line = command_line(&spec.program, &spec.args);
         let env = environment_block(&spec.env);
         let mut created = PROCESS_INFORMATION::default();
+        let spawning = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+        for handle in [&stdin_child, &stdout_child, &stderr_child] {
+            inheritable(handle)?;
+        }
         // SAFETY: every pointer refers to data alive for the call; the process starts suspended,
         // so it runs no code before it is in the job.
         unsafe {
@@ -895,6 +1050,7 @@ mod windows {
         unsafe { ResumeThread(thread.0) };
         drop(thread);
         drop((stdin_child, stdout_child, stderr_child));
+        drop(spawning);
         // SAFETY: our pipe ends are owned; the files take them over and close them.
         let (stdout, stderr) = unsafe {
             let out = std::fs::File::from_raw_handle(stdout_ours.0.0);
