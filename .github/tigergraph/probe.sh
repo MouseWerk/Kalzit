@@ -25,19 +25,22 @@ show "token for the reader" -u "$reader" -H 'Content-Type: application/json' \
 token=$(curl -sS -u "$reader" -H 'Content-Type: application/json' -d '{"graph": "social", "lifetime": "3600"}' \
   "$base/gsql/v1/tokens" | jq -r '.token // .results.token // empty')
 show "installed nachbarn without a token" "$base/restpp/query/social/nachbarn?p=1"
-show "installed nachbarn" -H "Authorization: Bearer $token" "$base/restpp/query/social/nachbarn?p=1&tiefe=2&stichworte=a+b&stichworte=c%26d"
+show "installed nachbarn" -H "Authorization: Bearer $token" "$base/restpp/query/social/nachbarn?p=1&tiefe=2&stichworte=a+b&stichworte=a%20b&stichworte=c%26d"
 show "installed zahlen" -H "Authorization: Bearer $token" \
   "$base/restpp/query/social/zahlen?k=3&name=Ana&ab=2024-01-01+00%3A00%3A00&liste=1&liste=2&v=1&v.type=Person"
 show "installed loescht (refused, or Opfer is gone)" -H "Authorization: Bearer $token" "$base/restpp/query/social/loescht"
 show "interpreted" -u "$reader" -H 'Content-Type: text/plain' \
   --data-binary 'INTERPRET QUERY (STRING name) FOR GRAPH social { S = {Person.*}; R = SELECT s FROM S:s WHERE s.name == name; PRINT R; }' \
   "$base/gsql/v1/queries/interpret?graph=social&name=Ana"
+show "interpreted, + and %20 in a parameter" -u "$reader" -H 'Content-Type: text/plain' --data-binary 'INTERPRET QUERY (STRING a, STRING b) FOR GRAPH social { PRINT a, b; }' "$base/gsql/v1/queries/interpret?graph=social&a=x+y&b=x%20y"
 show "interpreted, edges" -u "$reader" -H 'Content-Type: text/plain' \
   --data-binary 'INTERPRET QUERY () FOR GRAPH social { SetAccum<EDGE> @@e; S = {Person.*}; R = SELECT t FROM S:s -(Friend|Lebt>:e)- :t ACCUM @@e += e; PRINT R; PRINT @@e; }' \
   "$base/gsql/v1/queries/interpret?graph=social"
 show "interpreted delete as reader" -u "$reader" -H 'Content-Type: text/plain' \
   --data-binary 'INTERPRET QUERY () FOR GRAPH social { S = {Person.*}; DELETE s FROM S:s WHERE s.name == "niemand"; PRINT 1; }' \
   "$base/gsql/v1/queries/interpret?graph=social"
+show "role queryreader" -u tigergraph:tigergraph -H 'Content-Type: text/plain' --data-binary 'SHOW PRIVILEGE ON ROLE queryreader' "$base/gsql/v1/statements"
+show "SHOW USER as the writer" -u kalzit_schreiber:schreiber-Passwort1 -H 'Content-Type: text/plain' --data-binary 'SHOW USER' "$base/gsql/v1/statements"
 show "writer's own record" -u kalzit_schreiber:schreiber-Passwort1 "$base/gsql/v1/users/kalzit_schreiber"
 show "superuser record" -u tigergraph:tigergraph "$base/gsql/v1/users/tigergraph"
 show "SHOW USER as superuser" -u tigergraph:tigergraph -H 'Content-Type: text/plain' --data-binary 'SHOW USER' "$base/gsql/v1/statements"

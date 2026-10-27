@@ -270,6 +270,17 @@ async fn installed_queries_with_parameters() {
     assert_eq!(r["result"]["shape"], "frame", "{r}");
     assert_eq!(field(&r, "@@treffer")["values"], json!(["1"]), "name came from the variable: {r}");
     assert_eq!(field(&r, "name")["values"], json!(["Ana"]), "{r}");
+    assert_eq!(field(&r, "liste")["values"], json!([[1, 2]]), "{r}");
+    assert_eq!(field(&r, "v")["values"], json!(["2"]), "{r}");
+
+    // Spaces, plus signs and ampersands arrive as written, in installed and interpreted queries.
+    let odd = "a b+c&d=e Ö";
+    let r = t.query(&id, json!({ "installed": "zahlen", "params": { "name": odd } })).await;
+    assert_eq!(field(&r, "name")["values"], json!([odd]), "{r}");
+    let r = t
+        .query(&id, json!({ "gsql": "INTERPRET QUERY (STRING s) FOR GRAPH social { PRINT s; }", "params": { "s": odd } }))
+        .await;
+    assert_eq!(field(&r, "s")["values"], json!([odd]), "{r}");
     t.finish().await;
 }
 

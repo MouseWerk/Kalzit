@@ -24,6 +24,9 @@ for i in $(seq 1 3); do
   sleep 20
 done
 
+echo "== REST++ authentication on (the Community Edition starts without it)"
+tg "gadmin config set RESTPP.Factory.EnableAuth true && gadmin config apply -y && gadmin restart restpp -y"
+
 echo "== waiting for the GSQL server and REST++"
 for i in $(seq 1 180); do
   if curl -fs -u "$admin" "$base/gsql/v1/schema/graphs" > /dev/null 2>&1 \
@@ -59,13 +62,25 @@ echo "== queries (installing takes a few minutes)"
 gsql_file "$here/queries.gsql"
 
 echo "== users"
+# Prints the answer; fails on an HTTP error or {"error": true}.
+call() {
+  local body code
+  body=$(curl -sS -o - -w '\n%{http_code}' "$@")
+  code=$(tail -n 1 <<< "$body")
+  body=$(sed '$d' <<< "$body")
+  echo "$body [HTTP $code]"
+  [ "${code:0:1}" = 2 ] && ! grep -q '"error": *true' <<< "$body"
+}
 for u in kalzit_leser:leser-Passwort1:queryreader kalzit_schreiber:schreiber-Passwort1:querywriter; do
   IFS=: read -r name password role <<< "$u"
-  curl -fsS -u "$admin" -H 'Content-Type: application/json' \
-    -d "{\"name\": \"$name\", \"password\": \"$password\"}" "$base/gsql/v1/users"
-  echo
-  curl -fsS -u "$admin" -H 'Content-Type: text/plain' \
+  user="{\"name\": \"$name\", \"password\": \"$password\"}"
+  call -u "$admin" -H 'Content-Type: application/json' -d "$user" "$base/gsql/v1/users" \
+    || call -u "$admin" -H 'Content-Type: application/json' -d "[$user]" "$base/gsql/v1/users" \
+    || call -u "$admin" -H 'Content-Type: application/json' \
+         -d "{\"username\": \"$name\", \"password\": \"$password\"}" "$base/gsql/v1/users" \
+    || call -u "$admin" -H 'Content-Type: text/plain' \
+         --data-binary "CREATE USER $name WITH PASSWORD \"$password\"" "$base/gsql/v1/statements"
+  call -u "$admin" -H 'Content-Type: text/plain' \
     --data-binary "GRANT ROLE $role ON GRAPH social TO $name" "$base/gsql/v1/statements"
-  echo
 done
 echo "== done"
