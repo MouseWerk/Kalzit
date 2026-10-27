@@ -888,7 +888,7 @@ for (const scheme of SCHEMES) {
     await signIn(page);
     await page.goto(`/explore?analysis=${seeded().steps}`);
     await expect(page.getByRole("heading", { name: STEPS })).toBeVisible();
-    const result = page.getByRole("region", { name: t("explore.result") });
+    const result = page.getByRole("region", { name: t("explore.result") }).first();
     await expect(result.locator(".uplot")).toBeVisible();
     await expect(result).toHaveAttribute("aria-busy", "false");
     await shoot(page, `explore-steps-${scheme}`);
