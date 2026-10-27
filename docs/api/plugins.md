@@ -267,13 +267,17 @@ sources of the kind answer `datasource.kind_unavailable`.
 ## Sandbox
 
 What a plugin process gets. The layers in force are listed in `process.sandbox`, the missing ones
-in `process.sandboxMissing`. On Linux Landlock is required unless `allowWithoutLandlock`; plugins
-do not run at all while Kalzit runs as root (`plugin.root_refused`).
+in `process.sandboxMissing`. On Linux Landlock is required unless `allowWithoutLandlock`: a host
+without it is refused before anything starts, and a plugin whose Landlock does not take never
+runs (the start fails before its program is loaded). Plugins do not run at all while Kalzit runs
+as root (`plugin.root_refused`).
 
 **Linux**
 
-- `no_new_privs`; its own process group (killed as a whole); killed when Kalzit ends
-  (`PR_SET_PDEATHSIG`); no core dumps.
+- `no_new_privs`; its own session and process group (`setsid`, killed as a whole), outside
+  Kalzit's, and it may not change either (`setpgid` and `setsid` refused): `kill(0)` reaches
+  only the plugin's own group (tested); killed when Kalzit ends (`PR_SET_PDEATHSIG`); no core
+  dumps.
 - `landlock` (kernel 5.13 and later): the file system is read-only and visible only where a
   process needs it: `/usr`, `/lib*`, `/bin`, `/sbin`, `/proc`, `/sys`, the certificate
   directories and a few files of `/etc` (name lookup, time zone, users), the device files `null`,
@@ -285,7 +289,7 @@ do not run at all while Kalzit runs as root (`plugin.root_refused`).
   `pidfd_send_signal`, `tkill`, mounts (old and new API), `pivot_root`, `setns`, `unshare`,
   `clone` with any `CLONE_NEW*` flag, swap, reboot, `kexec`, kernel modules, `bpf`,
   `perf_event_open`, `userfaultfd`, `io_uring_*`, the keyrings, `open_by_handle_at`,
-  `name_to_handle_at`, `acct`, `quotactl`, `lookup_dcookie`, `iopl` and `ioperm`, and
+  `name_to_handle_at`, `setpgid`, `setsid`, `acct`, `quotactl`, `lookup_dcookie`, `iopl` and `ioperm`, and
   `truncate`/`ftruncate` where Landlock is older than ABI 3 (which guards truncation itself);
   `clone3` answers `ENOSYS` (its flags are out of a filter's reach; the C library falls back to
   `clone`); other architectures than the server's (and the x32 ABI) are killed.
@@ -304,12 +308,14 @@ do not run at all while Kalzit runs as root (`plugin.root_refused`).
 **Windows**
 
 - `restricted_token`: no privileges except bypass traverse checking, Administrators for deny
-  only, and the restricting SIDs Everyone, Users, `RESTRICTED` and a SID of this start (not the
-  logon session, which Kalzit's own process grants read access): the plugin opens only what one
-  of these may open. Kalzit's data directory (SYSTEM, Administrators and Kalzit's account only)
-  and the account's profile are out of reach; its package (read and run) and its run directory
-  (read and write, not run) grant `RESTRICTED`. Its default DACL grants only Kalzit's account,
-  SYSTEM and the SID of this start, so other plugins cannot open its process or objects. A plugin
+  only, and the restricting SIDs Everyone, Users, `RESTRICTED`, a SID of the plugin (from its
+  id) and a SID of this start (not the logon session, which Kalzit's own process grants read
+  access): the plugin opens only what one of these may open. Kalzit's data directory (SYSTEM,
+  Administrators and Kalzit's account only) and the account's profile are out of reach. Its
+  package grants read and run to the plugin's SID only, its run directory read and write (not
+  run) to the start's SID only, so plugins cannot reach each other's packages or run
+  directories (tested). Its default DACL grants only Kalzit's account, SYSTEM and the start's
+  SID, so other plugins cannot open its process or objects (tested). A plugin
   creates its pipe instances with a DACL for Kalzit's account and `RESTRICTED` (the restricting
   SIDs could not create the next instance otherwise).
 - `low_integrity`: the plugin runs at low integrity. It cannot open Kalzit's process (or any

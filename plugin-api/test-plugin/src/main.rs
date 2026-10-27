@@ -144,6 +144,25 @@ fn signal_host(host: u32) -> Value {
     json!({ "ok": r == 0, "errno": if r == 0 { 0 } else { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } })
 }
 
+/// Whether this process can move into Kalzit's process group (where `kill(0)` would reach
+/// Kalzit). Only signal 0 is sent, should it succeed.
+#[cfg(unix)]
+fn join_host_group(host: u32) -> Value {
+    // SAFETY: plain process group calls; signal 0 delivers nothing.
+    unsafe {
+        let group = libc::getpgid(host as libc::pid_t);
+        let joined = libc::setpgid(0, group) == 0;
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let reached = joined && libc::kill(0, 0) == 0;
+        json!({ "ok": joined, "reached": reached, "errno": if joined { 0 } else { errno } })
+    }
+}
+
+#[cfg(not(unix))]
+fn join_host_group(_host: u32) -> Value {
+    json!({ "ok": false })
+}
+
 #[cfg(not(unix))]
 fn signal_host(_host: u32) -> Value {
     json!({ "ok": false })
@@ -309,6 +328,8 @@ impl DataSource for Plugin {
             "ptrace" => documents(vec![ptrace_traceme()]),
             "open_host" => documents(vec![open_host(self.host)]),
             "signal_host" => documents(vec![signal_host(self.host)]),
+            "join_host_group" => documents(vec![join_host_group(self.host)]),
+            "tmpdir" => documents(vec![json!({ "path": std::env::temp_dir() })]),
             "open_pid" => documents(vec![open_host(query["pid"].as_u64().unwrap_or(0) as u32)]),
             other => return Err(Status::invalid_argument(format!("unknown behaviour {other}"))),
         };

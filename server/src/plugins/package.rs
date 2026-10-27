@@ -44,9 +44,9 @@ fn invalid(issues: Vec<String>) -> HostError {
 }
 
 /// Creates `dir` so that only Kalzit's account (and SYSTEM and Administrators on Windows) may
-/// write it. With `readable_by_plugins`, sandboxed plugin processes may read and run what is
-/// inside (Windows: the `RESTRICTED` group of their restricted token; Linux: the same account).
-pub fn private_dir(dir: &Path, access: PluginAccess) -> std::io::Result<()> {
+/// write it, and on Windows grants plugin processes what `access` says, by a SID of their
+/// restricted token (Linux: the same account, 0700; Landlock decides what the plugin reaches).
+pub fn private_dir(dir: &Path, access: &PluginAccess) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         let _ = access;
@@ -57,37 +57,59 @@ pub fn private_dir(dir: &Path, access: PluginAccess) -> std::io::Result<()> {
     {
         crate::data_dir::acl::create_dir(dir, &access.sddl()?)?;
         // Plugins run at low integrity: they write only where the label says they may.
-        if access == PluginAccess::Modify {
+        if matches!(access, PluginAccess::Modify(_)) {
             super::sandbox::label_low(dir)?;
         }
         Ok(())
     }
 }
 
-/// What sandboxed plugin processes may do in a directory Kalzit creates for them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What sandboxed plugin processes may do in a directory Kalzit creates for them, and by which
+/// SID of their token (Windows).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginAccess {
     /// Nothing: the host's own files (uploads, the package root).
     None,
-    /// Read and run: a package.
-    ReadExecute,
-    /// Read, write and delete, but not run: a plugin's private run directory.
-    Modify,
+    /// Read and run, for the plugin's SID (`plugin_sid`): its package. Other plugins cannot.
+    ReadExecute(String),
+    /// Read, write and delete, but not run, for the SID of one start: its run directory. Other
+    /// plugins and other starts cannot.
+    Modify(String),
+}
+
+/// The SID that names one plugin in its processes' tokens (Windows): from its id, so the
+/// package directory made at install and every start agree. `S-1-9` is the resource manager
+/// authority, which no account or group uses.
+pub fn plugin_sid(id: &str) -> String {
+    let digest = Sha256::digest(format!("kalzit-plugin-sid\n{id}").as_bytes());
+    let part = |i: usize| u32::from_be_bytes(digest[i * 4..i * 4 + 4].try_into().expect("4 bytes"));
+    format!("S-1-9-{}-{}-{}-{}", part(0), part(1), part(2), part(3))
+}
+
+/// A SID for one start of a plugin (Windows), random.
+pub fn start_sid() -> String {
+    format!(
+        "S-1-9-{}-{}-{}-{}",
+        rand::random::<u32>(),
+        rand::random::<u32>(),
+        rand::random::<u32>(),
+        rand::random::<u32>()
+    )
 }
 
 #[cfg(windows)]
 impl PluginAccess {
-    /// SYSTEM, Administrators and Kalzit's account full, inherited; `RC` is the `RESTRICTED`
-    /// group every plugin token carries as a restricting SID. Kalzit's account is named by its
-    /// SID, not as the owner: when Kalzit runs elevated, Administrators own what it creates, and
-    /// the plugin's token holds Administrators for deny only.
-    fn sddl(self) -> std::io::Result<String> {
+    /// SYSTEM, Administrators and Kalzit's account full, inherited, plus the plugin's or the
+    /// start's SID. Kalzit's account is named by its SID, not as the owner: when Kalzit runs
+    /// elevated, Administrators own what it creates, and the plugin's token holds Administrators
+    /// for deny only.
+    fn sddl(&self) -> std::io::Result<String> {
         let user = crate::data_dir::acl::current_user()?;
         let base = format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)(A;OICI;FA;;;{user})");
         Ok(match self {
             PluginAccess::None => crate::data_dir::acl::DIR_SDDL.to_string(),
-            PluginAccess::ReadExecute => format!("{base}(A;OICI;0x1200a9;;;RC)"),
-            PluginAccess::Modify => format!("{base}(A;OICI;0x13019f;;;RC)"),
+            PluginAccess::ReadExecute(sid) => format!("{base}(A;OICI;0x1200a9;;;{sid})"),
+            PluginAccess::Modify(sid) => format!("{base}(A;OICI;0x13019f;;;{sid})"),
         })
     }
 }

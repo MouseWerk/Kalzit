@@ -597,12 +597,13 @@ without it (`allowWithoutLandlock`, shown on the plugin before approval), and pl
 while Kalzit runs as root.
 
 - Windows: a restricted token without privileges (except bypass traverse checking), with
-  Administrators for deny only and the restricting SIDs Everyone, Users, `RESTRICTED` and a SID
-  of this start (not the logon session: Kalzit's process grants it read access), at low
+  Administrators for deny only and the restricting SIDs Everyone, Users, `RESTRICTED`, a SID of
+  the plugin and a SID of this start (not the logon session: Kalzit's process grants it read access), at low
   integrity, with a default DACL for Kalzit's account, SYSTEM and that SID only. So the plugin
   cannot open Kalzit's process or another plugin's (tested), cannot read or write Kalzit's data
   directory (tested) and writes only where the low label allows: its run directory. Its package
-  is read and run, its run directory read and write but not run. A job object, assigned before
+  is read and run for the plugin's SID only, its run directory read and write (not run) for the
+  start's SID only. A job object, assigned before
   the process runs (it starts suspended): killed with Kalzit, no breakaway, 2 GiB of memory and
   16 processes for the whole job, no desktop, clipboard, global atoms or system settings, an
   optional CPU cap. Image load policy: System32 first, no images from remote shares or with a low
@@ -619,6 +620,10 @@ while Kalzit runs as root.
   a user and an IPC namespace with the account mapped to itself (where unprivileged user
   namespaces are allowed); a limit on the data segment; no core dumps; its own process group,
   killed as a whole, and killed when Kalzit ends.
+  The plugin gets its own session and process group (`setsid` before exec), outside Kalzit's,
+  and `setpgid`/`setsid` are refused after that. Without Landlock (unless allowed) nothing
+  starts: the host checks before spawning, and the child fails the spawn when Landlock does not
+  take.
 - Network, both systems: **not limited yet.** Kalzit's connector (the plugin asks Kalzit for a
   connection, Kalzit checks the target against the manifest and the target rules and connects)
   is not built; without it a network namespace (Linux) or an AppContainer without network

@@ -516,11 +516,23 @@ impl Supervisor {
                 "plugins do not run while Kalzit runs as root; run Kalzit as its own account",
             ));
         }
+        let require_landlock = cfg!(target_os = "linux") && !self.launch.allow_without_landlock.load(Ordering::SeqCst);
+        let landlock_missing = || {
+            HostError::new(
+                "plugin.landlock_missing",
+                "this host offers no Landlock, so the plugin's file system access cannot be limited; an administrator can allow plugins without it",
+            )
+        };
+        if require_landlock && !super::sandbox::landlock_available() {
+            return Err(landlock_missing());
+        }
         let random = random_hex(16);
         let run_dir = self.launch.run_root.join(&random[..12]);
-        private_dir(&run_dir, PluginAccess::Modify)?;
+        let start_sid = super::package::start_sid();
+        let access = PluginAccess::Modify(start_sid.clone());
+        private_dir(&run_dir, &access)?;
         let tmp = run_dir.join("tmp");
-        private_dir(&tmp, PluginAccess::Modify)?;
+        private_dir(&tmp, &access)?;
         let address = process::address(&run_dir, &random);
         let token = random_hex(32);
         let spec = process::Spec {
@@ -531,11 +543,18 @@ impl Supervisor {
             tmp_dir: tmp.clone(),
             env: process::environment(&address, &token, &tmp),
             limits: self.options.limits.clone(),
+            plugin_sid: super::package::plugin_sid(&self.id),
+            start_sid,
+            require_landlock,
         };
         let mut child = match process::spawn(&spec) {
             Ok(child) => child,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&run_dir);
+                #[cfg(target_os = "linux")]
+                if e.raw_os_error() == Some(super::sandbox::LANDLOCK_REFUSED) && require_landlock {
+                    return Err(landlock_missing());
+                }
                 return Err(HostError::new("plugin.start_failed", format!("the plugin could not be started: {e}"))
                     .with("detail", e));
             }
@@ -545,16 +564,11 @@ impl Supervisor {
             s.sandbox = child.layers.clone();
             s.sandbox_missing = child.missing.clone();
         });
-        if cfg!(target_os = "linux")
-            && !child.layers.contains(&"landlock")
-            && !self.launch.allow_without_landlock.load(Ordering::SeqCst)
-        {
+        // The child refuses to run without it already; this holds should it report otherwise.
+        if require_landlock && !child.layers.contains(&"landlock") {
             child.control.kill();
             cleanup(child.exited.clone(), &run_dir).await;
-            return Err(HostError::new(
-                "plugin.landlock_missing",
-                "this host offers no Landlock, so the plugin's file system access cannot be limited; an administrator can allow plugins without it",
-            ));
+            return Err(landlock_missing());
         }
         tracing::info!(plugin = %self.id, pid = child.pid, sandbox = ?child.layers, missing = ?child.missing, "plugin process started");
 

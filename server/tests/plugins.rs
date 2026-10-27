@@ -662,6 +662,8 @@ async fn the_sandbox_holds() {
     #[cfg(target_os = "linux")]
     {
         assert!(layers.contains(&"no_new_privs") && layers.contains(&"seccomp"), "{layers:?}");
+        let r = first(t.query(&ds, json!({ "do": "join_host_group" })).await);
+        assert_eq!(r["ok"], false, "the plugin moved into Kalzit's process group: {r}");
         if layers.contains(&"signals") {
             let r = first(t.query(&ds, json!({ "do": "signal_host" })).await);
             assert_eq!(r["ok"], false, "the plugin may signal Kalzit: {r}");
@@ -688,6 +690,16 @@ async fn the_sandbox_holds() {
     let r = first(t.query(&ds, json!({ "do": "open_pid", "pid": other_pid })).await);
     if cfg!(windows) || layers.contains(&"landlock") {
         assert_eq!(r["ok"], false, "the plugin opened another plugin's process: {r}");
+    }
+
+    // Nor its run directory.
+    let mine = first(t.query(&ds, json!({ "do": "tmpdir" })).await)["path"].as_str().unwrap().to_string();
+    let theirs = first(t.query(&ds2, json!({ "do": "tmpdir" })).await)["path"].as_str().unwrap().to_string();
+    assert_ne!(mine, theirs);
+    let target = std::path::Path::new(&theirs).join("from-the-other-plugin.txt");
+    let r = first(t.query(&ds, json!({ "do": "write", "path": target })).await);
+    if cfg!(windows) || layers.contains(&"landlock") {
+        assert_eq!(r["ok"], false, "the plugin wrote into another plugin's run directory: {r}");
     }
 
     // A child of the plugin ends with it.

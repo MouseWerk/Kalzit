@@ -21,9 +21,9 @@
 //! to the declared targets needs an AppContainer or a filtering rule, which are not built yet.
 
 #[cfg(target_os = "linux")]
-pub use linux::landlock_available;
-#[cfg(target_os = "linux")]
 pub use linux::spawn;
+#[cfg(target_os = "linux")]
+pub use linux::{LANDLOCK_REFUSED, landlock_available};
 #[cfg(windows)]
 pub use windows::{label_low, spawn};
 
@@ -119,6 +119,9 @@ mod linux {
         | 0x4000_0000 // NEWNET
         | 0x0000_0080; // NEWTIME
 
+    /// The error `spawn` answers when Landlock is required but did not take (`ENOTSUP`).
+    pub const LANDLOCK_REFUSED: i32 = libc::ENOTSUP;
+
     // `prctl` reads its arguments as `unsigned long`.
     const ZERO: libc::c_ulong = 0;
     const ONE: libc::c_ulong = 1;
@@ -184,6 +187,10 @@ mod linux {
             libc::SYS_pidfd_send_signal,
             libc::SYS_tkill,
             libc::SYS_name_to_handle_at,
+            // After its own `setsid` the plugin leads a session of its own; it may not move
+            // into another process group (Kalzit's) to reach it with `kill(0)`.
+            libc::SYS_setpgid,
+            libc::SYS_setsid,
         ];
         #[cfg(target_arch = "x86_64")]
         calls.extend([libc::SYS_iopl, libc::SYS_ioperm]);
@@ -334,6 +341,8 @@ mod linux {
         setgroups_path: CString,
         memory: u64,
         status: RawFd,
+        /// Landlock must take, or the plugin does not start.
+        require_landlock: bool,
     }
 
     fn open_path(path: &Path) -> Option<(OwnedFd, bool)> {
@@ -385,6 +394,7 @@ mod linux {
                 setgroups_path: CString::new("/proc/self/setgroups").expect("no NUL"),
                 memory: spec.limits.memory_bytes,
                 status,
+                require_landlock: spec.require_landlock,
             }
         }
 
@@ -408,6 +418,11 @@ mod linux {
             let mut layers = 0u8;
             // SAFETY: only system calls on data prepared before the fork.
             unsafe {
+                // A session and process group of its own, outside Kalzit's: the plugin's group
+                // is killed as a whole, and `kill(0)` reaches only it.
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, ZERO, ZERO, ZERO);
                 let no_core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
                 libc::setrlimit(libc::RLIMIT_CORE, &no_core);
@@ -484,6 +499,10 @@ mod linux {
                     }
                 }
                 libc::write(self.status, (&raw const layers).cast(), 1);
+                if self.require_landlock && layers & LANDLOCK == 0 {
+                    // `spawn` fails with this error; nothing of the plugin runs.
+                    return Err(std::io::Error::from_raw_os_error(LANDLOCK_REFUSED));
+                }
             }
             Ok(())
         }
@@ -521,7 +540,6 @@ mod linux {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .process_group(0)
             .kill_on_drop(true);
         let hook = plan.clone();
         // SAFETY: the hook only makes system calls on data prepared above (`Plan::apply`).
@@ -738,7 +756,7 @@ mod windows {
     /// Kalzit's memory. The low label keeps it from opening Kalzit's process for reading (no read
     /// up on processes) and from writing anything not labelled low; the default DACL keeps other
     /// plugins (restricted tokens all) out of this plugin's process and objects.
-    fn restricted_token() -> std::io::Result<Owned> {
+    fn restricted_token(plugin_sid: &str, own: &str) -> std::io::Result<Owned> {
         let mut current = HANDLE::default();
         // SAFETY: the pseudo handle of this process; `current` receives a handle owned below.
         unsafe {
@@ -751,17 +769,15 @@ mod windows {
         .map_err(os)?;
         let current = Owned(current);
         let disable = [Sid::parse("S-1-5-32-544")?, Sid::parse("S-1-5-114")?];
-        // A SID of this start only: the default DACL grants it, so the plugin opens its own
-        // process and objects, and no other plugin (whose token lacks it) can.
-        let own = format!(
-            "S-1-9-{}-{}-{}-{}",
-            rand::random::<u32>(),
-            rand::random::<u32>(),
-            rand::random::<u32>(),
-            rand::random::<u32>()
-        );
-        let restrict =
-            [Sid::parse("S-1-1-0")?, Sid::parse("S-1-5-32-545")?, Sid::parse("S-1-5-12")?, Sid::parse(&own)?];
+        // `RESTRICTED` stays for the plugin's pipe instances; files grant the plugin's or the
+        // start's SID instead, so plugins do not reach each other's files.
+        let restrict = [
+            Sid::parse("S-1-1-0")?,
+            Sid::parse("S-1-5-32-545")?,
+            Sid::parse("S-1-5-12")?,
+            Sid::parse(plugin_sid)?,
+            Sid::parse(own)?,
+        ];
         let restricting: Vec<SID_AND_ATTRIBUTES> =
             restrict.iter().map(|s| SID_AND_ATTRIBUTES { Sid: s.0, Attributes: 0 }).collect();
         let disabling: Vec<SID_AND_ATTRIBUTES> =
@@ -959,7 +975,7 @@ mod windows {
     }
 
     pub fn spawn(spec: &Spec) -> std::io::Result<Child> {
-        let token = restricted_token()?;
+        let token = restricted_token(&spec.plugin_sid, &spec.start_sid)?;
         let (job, mut layers) = job(&spec.limits)?;
         layers.insert(0, "restricted_token");
         layers.insert(1, "low_integrity");
@@ -1098,7 +1114,11 @@ mod windows {
 
         #[test]
         fn a_restricted_token_can_be_made() {
-            restricted_token().unwrap();
+            restricted_token(
+                &crate::plugins::package::plugin_sid("dev.example.t"),
+                &crate::plugins::package::start_sid(),
+            )
+            .unwrap();
         }
     }
 }

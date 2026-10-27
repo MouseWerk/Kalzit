@@ -157,7 +157,7 @@ impl PluginHost {
             (self.dir("uploads"), PluginAccess::None),
         ] {
             if !dir.exists() {
-                package::private_dir(&dir, access)?;
+                package::private_dir(&dir, &access)?;
             }
         }
         Ok(())
@@ -323,7 +323,6 @@ impl PluginHost {
         self.prepare().map_err(|e| HostError::from(e).api())?;
         let dir_name = format!("{}", uuid::Uuid::now_v7().simple());
         let dir = self.dir("packages").join(&dir_name);
-        package::private_dir(&dir, PluginAccess::ReadExecute).map_err(|e| HostError::from(e).api())?;
         let checked = self.check_package(state, archive, &dir).await;
         let (unpacked, verified, existing) = match checked {
             Ok(c) => c,
@@ -467,6 +466,9 @@ impl PluginHost {
                 })?;
             }
         }
+        // Only the plugin itself (its SID) may read and run its package.
+        package::private_dir(dir, &PluginAccess::ReadExecute(package::plugin_sid(&m.id)))
+            .map_err(|e| HostError::from(e).api())?;
         let (archive, into) = (archive.to_path_buf(), dir.to_path_buf());
         let unpacked = tokio::task::spawn_blocking(move || package::unpack(&archive, &into))
             .await

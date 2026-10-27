@@ -48,6 +48,12 @@ pub struct Spec {
     /// The whole environment of the plugin; nothing of Kalzit's own is passed on.
     pub env: Vec<(String, String)>,
     pub limits: Limits,
+    /// Windows: the plugin's SID (its package grants it) and this start's (its run directory and
+    /// default DACL grant it), both restricting SIDs of its token.
+    pub plugin_sid: String,
+    pub start_sid: String,
+    /// Linux: refuse to start when Landlock does not take.
+    pub require_landlock: bool,
 }
 
 /// A started plugin process.
