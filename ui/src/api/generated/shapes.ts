@@ -207,6 +207,10 @@ export type QueryOutcome = { result: QueryResult,
  */
 steps?: Array<StepPlace>, } | { error: ErrorBody, };
 
+export type StepPlace = { id: string, ranIn: RanIn, error?: ErrorBody, };
+
+export type RanIn = "database" | "server";
+
 export type ErrorEnvelope = { error: ErrorBody, };
 
 export type ErrorBody = { code: ErrorCode, message: string, field?: string, 

@@ -372,7 +372,8 @@ mod tests {
     /// user's parameters, and holds no writing clause.
     #[test]
     fn generated_queries_pass_the_read_only_check() {
-        let user = "MATCH (k:Kunde)-[r:KAUFTE]->(p:Produkt) WHERE r.am >= $__timeFrom AND k.land = $land RETURN k, r, p";
+        let user =
+            "MATCH (k:Kunde)-[r:KAUFTE]->(p:Produkt) WHERE r.am >= $__timeFrom AND k.land = $land RETURN k, r, p";
         for dialect in [Dialect::Neo4j, Dialect::Memgraph] {
             for s in all_steps() {
                 let q = cypher(user, &s, dialect).unwrap();
@@ -432,9 +433,27 @@ mod tests {
     #[test]
     fn answers_take_the_form_of_the_server_step() {
         let frame = Frame::new(vec![
-            Field { name: "label".into(), field_type: FieldType::String, unit: None, values: vec![json!("Kunde")], labels: None },
-            Field { name: "nodes".into(), field_type: FieldType::Int64, unit: None, values: vec![json!("3")], labels: None },
-            Field { name: "share".into(), field_type: FieldType::Number, unit: None, values: vec![json!(0.75)], labels: None },
+            Field {
+                name: "label".into(),
+                field_type: FieldType::String,
+                unit: None,
+                values: vec![json!("Kunde")],
+                labels: None,
+            },
+            Field {
+                name: "nodes".into(),
+                field_type: FieldType::Int64,
+                unit: None,
+                values: vec![json!("3")],
+                labels: None,
+            },
+            Field {
+                name: "share".into(),
+                field_type: FieldType::Number,
+                unit: None,
+                values: vec![json!(0.75)],
+                labels: None,
+            },
         ])
         .unwrap();
         let out = normalize(&all_steps()[0], QueryResult::Frame { frame }).unwrap();

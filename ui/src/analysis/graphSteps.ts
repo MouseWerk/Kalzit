@@ -80,7 +80,15 @@ function frameOf(graph: GraphSet, fields: Field[]): Frame {
 
 /** Runs one graph step on `graph`. */
 export function applyGraphStep(
-  step: GraphStepKind | { type: "toFrame"; rows: GraphRows; label?: string; edgeType?: string; columns: Parameters<typeof projectGraph>[4] },
+  step:
+    | GraphStepKind
+    | {
+        type: "toFrame";
+        rows: GraphRows;
+        label?: string;
+        edgeType?: string;
+        columns: Parameters<typeof projectGraph>[4];
+      },
   graph: GraphSet,
   maxCells: number,
 ): GraphOut {
@@ -133,7 +141,10 @@ function labelText(n: Node | undefined): string | null {
 
 function countEdgeTypes(graph: GraphSet): Frame {
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
-  const counts = new Map<string, { type: string; from: string | null; to: string | null; n: number }>();
+  const counts = new Map<
+    string,
+    { type: string; from: string | null; to: string | null; n: number }
+  >();
   for (const e of graph.edges) {
     const from = labelText(nodes.get(e.from));
     const to = labelText(nodes.get(e.to));

@@ -138,7 +138,11 @@ export const GRAPH_STEP_TYPES = [
  * Whether the step reads a graph. Graph steps run with their query, in the database where the
  * source can, else on the server (docs/api/datasources.md, "Graph steps").
  */
-export function isGraphStep(step: StepKind): boolean {
+export type GraphStepOf =
+  | GraphStepKind
+  | (Extract<StepKind, { type: "toFrame" }> & { rows: GraphRows });
+
+export function isGraphStep(step: StepKind): step is GraphStepOf {
   return (
     (GRAPH_STEP_TYPES as readonly string[]).includes(step.type) ||
     (step.type === "toFrame" && step.rows !== undefined)
@@ -293,7 +297,12 @@ export function runSteps(
    * The calendar calculated fields read times in (UTC and Monday when absent), and smaller
    * limits for tests; the default limits are the server's.
    */
-  options: { textBudget?: number; maxCells?: number; calendar?: Calendar; server?: ServerSteps } = {},
+  options: {
+    textBudget?: number;
+    maxCells?: number;
+    calendar?: Calendar;
+    server?: ServerSteps;
+  } = {},
 ): StepsRun {
   const budget: Budget = {
     textLeft: options.textBudget ?? MAX_RUN_TEXT_UNITS,
@@ -327,12 +336,13 @@ export function runSteps(
       return;
     }
     const ran = isGraphStep(step) ? server?.ran.get(step.id) : undefined;
+    const target = stepFrames(step)[0] ?? "";
     try {
       if (ran !== undefined) {
-        const result = server?.results?.get(step.frame);
-        if (result !== undefined && lastRan.get(step.frame) === step.id) {
-          put(step.frame, result);
-        } else if (result !== undefined && graphs.some((g) => g.name === step.frame)) {
+        const result = server?.results?.get(target);
+        if (result !== undefined && lastRan.get(target) === step.id) {
+          put(target, result);
+        } else if (result !== undefined && graphs.some((g) => g.name === target)) {
           // A step before the last one the server ran: a preview of it on the graph here.
           ({ current, graphs } = graphStep(step, current, graphs, order, budget));
         }
@@ -404,7 +414,11 @@ function graphStep(
   if (input === undefined) {
     throw detail("steps.not_graph", `the result ${name} is no graph`, { frame: name });
   }
-  const out = applyGraphStep(step as Parameters<typeof applyGraphStep>[0], input.graph, budget.maxCells);
+  const out = applyGraphStep(
+    step as Parameters<typeof applyGraphStep>[0],
+    input.graph,
+    budget.maxCells,
+  );
   if ("graph" in out) {
     const next = [...graphs];
     next[at] = { name, graph: out.graph };
@@ -432,7 +446,11 @@ function project(
     });
   }
   documents.splice(at, 1);
-  return placed(frames, { name: set.name, frame: projectDocuments(set.documents, step.columns) }, order);
+  return placed(
+    frames,
+    { name: set.name, frame: projectDocuments(set.documents, step.columns) },
+    order,
+  );
 }
 
 // ---- helpers ----

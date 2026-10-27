@@ -661,7 +661,8 @@ mod tests {
             let ran = steps::run_shapes(&list, inputs, &steps::Control::unbounded(), &BTreeSet::new());
             match (ran, case.get("error")) {
                 (Ok((out, graphs)), None) => {
-                    for (graph_name, want) in case.get("expectGraphs").and_then(Value::as_object).into_iter().flatten() {
+                    for (graph_name, want) in case.get("expectGraphs").and_then(Value::as_object).into_iter().flatten()
+                    {
                         let got = &graphs.iter().find(|(n, _)| n == graph_name).unwrap().1;
                         let ids = |v: Vec<&str>| json!(v);
                         assert_eq!(ids(got.nodes.iter().map(|n| n.id.as_str()).collect()), want["nodes"], "{name}");

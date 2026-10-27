@@ -358,8 +358,11 @@ pub fn project_graph(
 ) -> Frame {
     let read = |v: &Value| serde_json::from_value::<J>(v.clone()).unwrap_or(J::Null);
     let doc = |own: Vec<(String, J)>, properties: &std::collections::BTreeMap<String, Value>| {
-        let mut entries: Vec<(String, J)> =
-            properties.iter().filter(|(k, _)| !own.iter().any(|(o, _)| o == *k)).map(|(k, v)| (k.clone(), read(v))).collect();
+        let mut entries: Vec<(String, J)> = properties
+            .iter()
+            .filter(|(k, _)| !own.iter().any(|(o, _)| o == *k))
+            .map(|(k, v)| (k.clone(), read(v)))
+            .collect();
         entries.extend(own);
         J::Obj(entries)
     };

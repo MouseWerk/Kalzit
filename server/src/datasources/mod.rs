@@ -1489,7 +1489,9 @@ async fn run_one(
                     Ok(result) => return Ok((conn, Ok((result, true)))),
                     Err(d) => tracing::debug!(datasource = %ds.id, "graph step not run in the source: {}", d.message),
                 },
-                Err(e) => tracing::debug!(datasource = %ds.id, code = e.code(), "graph step not run in the source: {}", e.detail().scrubbed(|t| conn.scrub(t)).message),
+                Err(e) => {
+                    tracing::debug!(datasource = %ds.id, code = e.code(), "graph step not run in the source: {}", e.detail().scrubbed(|t| conn.scrub(t)).message)
+                }
             }
         }
         let result = kind.plugin.query(&conn, request(item.query.clone())).await.map(|r| (r, false));
@@ -1506,8 +1508,9 @@ async fn run_one(
             }
             let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
             let name = item.ref_id.clone();
-            let ran = tokio::task::spawn_blocking(move || graph_steps_on_server(&steps, &name, result, in_source, left))
-                .await;
+            let ran =
+                tokio::task::spawn_blocking(move || graph_steps_on_server(&steps, &name, result, in_source, left))
+                    .await;
             match ran {
                 Ok((result, places)) => QueryOutcome::Ok { result, steps: Some(places) },
                 Err(e) => outcome_error("internal", Detail::new("steps.failed", e.to_string())),

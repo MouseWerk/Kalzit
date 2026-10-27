@@ -178,6 +178,9 @@ pub fn run_inputs(
     run_shapes(steps, inputs, control, &BTreeSet::new()).map(|(frames, _)| frames)
 }
 
+/// The frames, and the graphs no step made a frame of, by reference id.
+pub type Shapes = (Vec<NamedFrame>, Vec<(String, GraphSet)>);
+
 /// The frames and the graphs after the steps; steps whose id is in `done` already ran where the
 /// query ran (`datasources::run_queries`), and their results are among the inputs.
 pub fn run_shapes(
@@ -185,7 +188,7 @@ pub fn run_shapes(
     inputs: Vec<(String, Input)>,
     control: &Control,
     done: &BTreeSet<String>,
-) -> Result<(Vec<NamedFrame>, Vec<(String, GraphSet)>), StepFailure> {
+) -> Result<Shapes, StepFailure> {
     let order: Vec<String> = inputs.iter().map(|(name, _)| name.clone()).collect();
     let mut documents: Vec<(String, DocumentSet)> = Vec::new();
     let mut graphs: Vec<(String, GraphSet)> = Vec::new();
@@ -214,7 +217,9 @@ pub fn run_shapes(
                 let detail = detail("steps.not_graph", format!("the result {name} is no graph")).with("frame", name);
                 return Err(StepFailure { index, detail });
             };
-            match super::graph::apply(&step.kind, &graphs[at].1, control).map_err(|detail| StepFailure { index, detail })? {
+            match super::graph::apply(&step.kind, &graphs[at].1, control)
+                .map_err(|detail| StepFailure { index, detail })?
+            {
                 super::graph::GraphOut::Graph(graph) => graphs[at].1 = graph,
                 super::graph::GraphOut::Frame(frame) => {
                     let (name, _) = graphs.remove(at);

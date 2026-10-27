@@ -66,18 +66,20 @@ pub fn apply(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<Gra
         StepKind::TopDegree { n, label, direction, .. } => {
             GraphOut::Graph(top_degree(graph, *n as usize, label.as_deref(), *direction))
         }
-        StepKind::SharedNeighbours { label, via, edge_type, min, limit, name, .. } => GraphOut::Frame(shared_neighbours(
-            graph,
-            &SharedSpec {
-                label,
-                via,
-                edge_type: edge_type.as_deref(),
-                min: *min as usize,
-                limit: *limit as usize,
-                name: name.as_deref(),
-            },
-            control,
-        )?),
+        StepKind::SharedNeighbours { label, via, edge_type, min, limit, name, .. } => {
+            GraphOut::Frame(shared_neighbours(
+                graph,
+                &SharedSpec {
+                    label,
+                    via,
+                    edge_type: edge_type.as_deref(),
+                    min: *min as usize,
+                    limit: *limit as usize,
+                    name: name.as_deref(),
+                },
+                control,
+            )?)
+        }
         StepKind::ToFrame { columns, rows: Some(rows), label, edge_type, .. } => GraphOut::Frame(
             super::projection::project_graph(graph, *rows, label.as_deref(), edge_type.as_deref(), columns),
         ),
@@ -103,7 +105,11 @@ fn count_labels(graph: &GraphSet) -> Frame {
         vec![
             field("label", FieldType::String, rows.iter().map(|(l, _)| Value::from(*l)).collect()),
             field("nodes", FieldType::Number, rows.iter().map(|(_, c)| count(*c)).collect()),
-            field("share", FieldType::Number, rows.iter().map(|(_, c)| super::expr::to_json(super::expr::V::Num(*c as f64 / total))).collect()),
+            field(
+                "share",
+                FieldType::Number,
+                rows.iter().map(|(_, c)| super::expr::to_json(super::expr::V::Num(*c as f64 / total))).collect(),
+            ),
         ],
     )
 }
@@ -117,11 +123,7 @@ fn count_edge_types(graph: &GraphSet) -> Frame {
     let nodes: HashMap<&str, &Node> = graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     let mut counts: HashMap<(String, Option<String>, Option<String>), usize> = HashMap::new();
     for e in &graph.edges {
-        let key = (
-            e.edge_type.clone(),
-            label_text(nodes.get(e.from.as_str())),
-            label_text(nodes.get(e.to.as_str())),
-        );
+        let key = (e.edge_type.clone(), label_text(nodes.get(e.from.as_str())), label_text(nodes.get(e.to.as_str())));
         *counts.entry(key).or_default() += 1;
     }
     let mut rows: Vec<_> = counts.into_iter().collect();

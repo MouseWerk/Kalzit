@@ -104,7 +104,7 @@ export function usePanelResults(input: PanelQueryInput) {
                     datasourceId: t.datasourceId,
                     query: t.query,
                     // Graph steps run with their query, as the panel route runs the stored ones.
-                    ...(graphSteps.has(t.refId) ? { steps: graphSteps.get(t.refId) } : {}),
+                    ...(graphSteps.has(t.refId) ? { steps: graphSteps.get(t.refId) ?? [] } : {}),
                   })),
                 },
                 signal,

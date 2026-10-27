@@ -838,7 +838,9 @@ pub enum QueryOutcome {
         #[cfg_attr(test, ts(optional))]
         steps: Option<Vec<StepPlace>>,
     },
-    Err { error: ErrorBody },
+    Err {
+        error: ErrorBody,
+    },
 }
 
 /// What the caller may do on one data source, from their role and grants together; the routes
@@ -998,6 +1000,8 @@ mod tests {
             TimeRange::decl(&cfg),
             QueryResponse::decl(&cfg),
             QueryOutcome::decl(&cfg),
+            StepPlace::decl(&cfg),
+            RanIn::decl(&cfg),
             ErrorEnvelope::decl(&cfg),
             ErrorBody::decl(&cfg),
             Page::<()>::decl(&cfg),
