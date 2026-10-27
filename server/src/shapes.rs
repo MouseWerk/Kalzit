@@ -856,6 +856,10 @@ pub struct ErrorBody {
     #[serde(default, rename = "requestId", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub request_id: Option<String>,
+    /// For `rate_limited`: seconds until another attempt can succeed (also `Retry-After`).
+    #[serde(default, rename = "retryAfterSecs", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub retry_after_secs: Option<u64>,
 }
 
 /// Every list answer. `nextCursor` is opaque; order is stable (newest first unless a route says

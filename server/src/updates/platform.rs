@@ -61,7 +61,7 @@ pub fn detect_mode(exe: &Path) -> Mode {
     if !cfg!(target_os = "linux") {
         return Mode::Manual("updates.mode_unsupported_platform");
     }
-    if Path::new("/.dockerenv").exists() || Path::new("/run/.containerenv").exists() {
+    if in_container() {
         return Mode::Manual("updates.mode_container");
     }
     // systemd sets INVOCATION_ID for every service it starts.
@@ -72,6 +72,12 @@ pub fn detect_mode(exe: &Path) -> Mode {
         return Mode::Manual("updates.mode_binary_not_writable");
     }
     Mode::Automatic
+}
+
+/// Whether the server runs in a container: Docker leaves `/.dockerenv`, Podman
+/// `/run/.containerenv`.
+pub fn in_container() -> bool {
+    cfg!(target_os = "linux") && (Path::new("/.dockerenv").exists() || Path::new("/run/.containerenv").exists())
 }
 
 /// Whether a file can be created next to `exe` and `exe` itself is not read-only.

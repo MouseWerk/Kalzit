@@ -151,7 +151,7 @@ async fn setup_is_refused_once_another_server_claimed_it() {
 #[tokio::test]
 async fn setup_creates_owner_once() {
     let t = test_app("127.0.0.1:50000", |_| {}).await;
-    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true }));
+    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true, "codeHint": "fixed" }));
 
     let r = t.setup().await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
@@ -205,7 +205,7 @@ async fn setup_rejects_wrong_code_and_weak_password() {
     ] {
         assert_eq!(t.post("/api/setup", body).await.body["error"]["field"], field);
     }
-    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true }));
+    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true, "codeHint": "fixed" }));
     t.finish().await;
 }
 
@@ -716,4 +716,177 @@ async fn postgres_setup_and_login() {
     t.finish().await;
 
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
+}
+
+/// A rate-limited sign-in says how long to wait, as `Retry-After` and `retryAfterSecs`, and the
+/// wait counts down with the clock.
+#[tokio::test]
+async fn a_rate_limited_sign_in_names_the_wait() {
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 3;
+        c.security.login_window_secs = 600;
+    })
+    .await;
+    t.setup().await;
+    for _ in 0..3 {
+        assert_eq!(t.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+    }
+    let wait = |r: &Reply| {
+        assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+        let header = r.headers.get(header::RETRY_AFTER).expect("Retry-After").to_str().unwrap().to_string();
+        let secs = r.body["error"]["retryAfterSecs"].as_u64().expect("retryAfterSecs");
+        assert_eq!(header, secs.to_string());
+        secs
+    };
+    assert_eq!(wait(&t.login("joerg@example.de", PASSWORD).await), 600);
+    // 349.5 seconds left are 350.
+    t.clock.advance_ms(250_500);
+    assert_eq!(wait(&t.login("joerg@example.de", PASSWORD).await), 350);
+    t.clock.advance_ms(349_000);
+    assert_eq!(wait(&t.login("joerg@example.de", PASSWORD).await), 1);
+    t.clock.advance_ms(500);
+    assert_eq!(t.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn the_setup_code_can_be_checked_on_its_own() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let ok = t.post("/api/setup/check", json!({ "token": SETUP_CODE.to_uppercase() })).await;
+    assert_eq!((ok.status, ok.body.clone()), (StatusCode::OK, json!({ "valid": true })));
+    let wrong = t.post("/api/setup/check", json!({ "token": "falsch-falsch" })).await;
+    assert_eq!((wrong.status, wrong.code()), (StatusCode::FORBIDDEN, "invalid_setup_token"));
+    // The answer never repeats the code.
+    assert!(!wrong.body.to_string().contains("falsch-falsch"));
+    let unknown = t.post("/api/setup/check", json!({ "token": SETUP_CODE, "orgName": "A" })).await;
+    assert_eq!(unknown.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", unknown.body);
+    // A fixed code has no previous one.
+    assert_eq!(t.get("/api/setup", None).await.body["codeHint"], "fixed");
+
+    assert_eq!(t.setup().await.status, StatusCode::OK);
+    let done = t.post("/api/setup/check", json!({ "token": SETUP_CODE })).await;
+    assert_eq!((done.status, done.code()), (StatusCode::CONFLICT, "setup_done"));
+    t.finish().await;
+}
+
+/// Five wrong codes per minute and address, for the check and setup together; a correct code
+/// gives its attempt back.
+#[tokio::test]
+async fn setup_codes_are_rate_limited_per_address() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    for _ in 0..4 {
+        assert_eq!(t.post("/api/setup/check", json!({ "token": "falsch" })).await.status, StatusCode::FORBIDDEN);
+    }
+    for _ in 0..10 {
+        assert_eq!(t.post("/api/setup/check", json!({ "token": SETUP_CODE })).await.status, StatusCode::OK);
+    }
+    let wrong_setup = t
+        .post(
+            "/api/setup",
+            json!({ "token": "falsch", "orgName": "A", "name": "B", "email": "b@example.de", "password": PASSWORD }),
+        )
+        .await;
+    assert_eq!(wrong_setup.code(), "invalid_setup_token");
+    let blocked = t.post("/api/setup/check", json!({ "token": SETUP_CODE })).await;
+    assert_eq!((blocked.status, blocked.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", blocked.body);
+    assert_eq!(blocked.headers.get(header::RETRY_AFTER).unwrap(), "60");
+    assert_eq!(blocked.body["error"]["retryAfterSecs"], 60);
+    assert_eq!(t.setup().await.code(), "rate_limited");
+    t.clock.advance_ms(30_000);
+    assert_eq!(t.post("/api/setup/check", json!({ "token": SETUP_CODE })).await.body["error"]["retryAfterSecs"], 30);
+    t.clock.advance_ms(30_000);
+    assert_eq!(t.setup().await.status, StatusCode::OK);
+    t.finish().await;
+}
+
+/// After a restart the generated code is new; the code of the previous start is answered as
+/// expired, never accepted.
+#[tokio::test]
+async fn the_code_of_the_previous_start_is_expired() {
+    let t = build(tempfile::tempdir().unwrap(), None, "127.0.0.1:50000", None, |_| {}).await;
+    let file = t.dir.path().join("setup-token.txt");
+    let old = std::fs::read_to_string(&file).unwrap().trim().to_string();
+    let hint = if kalzit::updates::platform::in_container() { "docker" } else { "file" };
+    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true, "codeHint": hint }));
+    // A server without a file from before has no previous code.
+    let other = t.post("/api/setup/check", json!({ "token": "0000-0000-0000-0000-0000-0000" })).await;
+    assert_eq!(other.code(), "invalid_setup_token");
+
+    // The restart: a new state on the same data directory and database.
+    let restarted = AppState::new((*t.state.config).clone(), t.state.db.clone(), t.clock.clone(), None).await.unwrap();
+    let new = std::fs::read_to_string(&file).unwrap().trim().to_string();
+    assert_ne!(old, new);
+    let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    let r = TestApp {
+        app: router(restarted.clone()).layer(MockConnectInfo(peer)),
+        clock: t.clock.clone(),
+        state: restarted.clone(),
+        dir: t.dir.clone(),
+    };
+    let expired = r.post("/api/setup/check", json!({ "token": old })).await;
+    assert_eq!((expired.status, expired.code()), (StatusCode::FORBIDDEN, "setup_token_expired"), "{}", expired.body);
+    assert!(!expired.body.to_string().contains(&old));
+    let setup = |token: &str| json!({ "token": token, "orgName": "A", "name": "B", "email": "b@example.de", "password": PASSWORD });
+    let refused = r.post("/api/setup", setup(&old)).await;
+    assert_eq!((refused.status, refused.code()), (StatusCode::FORBIDDEN, "setup_token_expired"));
+    assert_eq!(r.post("/api/setup/check", json!({ "token": new })).await.status, StatusCode::OK);
+    assert_eq!(r.post("/api/setup", setup(&new)).await.status, StatusCode::OK);
+    drop(r);
+    restarted.close().await;
+    drop(restarted);
+    t.finish().await;
+}
+
+/// Language and theme become the server defaults, the time zone the new organization's, in the
+/// setup transaction and recorded like any settings change. Left out, nothing is stored.
+#[tokio::test]
+async fn setup_stores_the_chosen_language_theme_and_time_zone() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let body = |extra: Value| {
+        let mut b = json!({ "token": SETUP_CODE, "orgName": "A", "name": "B", "email": "b@example.de",
+                            "password": PASSWORD });
+        b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        b
+    };
+    for (extra, field) in [
+        (json!({ "language": "fr" }), "language"),
+        (json!({ "theme": "pink" }), "theme"),
+        (json!({ "timeZone": "Europe/../etc" }), "timeZone"),
+    ] {
+        let r = t.post("/api/setup", body(extra)).await;
+        assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", r.body);
+        assert_eq!(r.body["error"]["field"], field);
+    }
+    assert_eq!(t.get("/api/setup", None).await.body["needed"], true, "a refused setup changes nothing");
+
+    let r = t.post("/api/setup", body(json!({ "language": "en", "theme": "dark", "timeZone": "Europe/Berlin" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let org = r.body["orgs"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(kalzit::settings::get(&t.state, "appearance.default_language").await.unwrap(), "en");
+    assert_eq!(kalzit::settings::get(&t.state, "appearance.default_theme").await.unwrap(), "dark");
+    assert_eq!(kalzit::settings::get_org(&t.state, &org, "appearance.time_zone").await.unwrap(), "Europe/Berlin");
+    let audited: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT resource_id, org_id FROM audit_events WHERE action = 'settings.updated' ORDER BY resource_id",
+    )
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        audited,
+        [
+            ("appearance.default_language".to_string(), None),
+            ("appearance.default_theme".to_string(), None),
+            ("appearance.time_zone".to_string(), Some(org.clone())),
+        ]
+    );
+    t.finish().await;
+
+    // Left out: the defaults stay and nothing is stored.
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    assert_eq!(t.setup().await.status, StatusCode::OK);
+    assert_eq!(kalzit::settings::get(&t.state, "appearance.default_language").await.unwrap(), "de");
+    let (stored,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM server_settings").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(stored, 0);
+    t.finish().await;
 }

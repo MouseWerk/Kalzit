@@ -1,5 +1,8 @@
 //! Counts sign-in attempts per key (email, client address) in a fixed window.
 //!
+//! A refused attempt learns how long to wait; the API sends it as `Retry-After` and
+//! `retryAfterSecs` (`ApiError::rate_limited`).
+//!
 //! An attempt is counted before the password is checked and refunded when it succeeds. Checking
 //! and counting happen under one lock, so parallel requests cannot all pass the check before the
 //! first failure is recorded.
@@ -10,6 +13,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -62,15 +66,21 @@ impl RateLimiter {
         Self { max_attempts, window_ms: window_secs as i64 * 1000, entries: Mutex::new(HashMap::new()) }
     }
 
-    /// Counts one attempt for every key, or none when any key has used up its attempts.
-    pub fn try_acquire(&self, keys: &[&str], now_ms: i64) -> bool {
+    /// Counts one attempt for every key, or none when any key has used up its attempts. Then the
+    /// error is the wait until all blocked keys have a new window: the longest remaining window,
+    /// in whole seconds (rounded up, at least one).
+    pub fn try_acquire(&self, keys: &[&str], now_ms: i64) -> Result<(), Duration> {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let digests: Vec<(KeyDigest, bool)> = keys.iter().map(|k| (digest(k), k.starts_with(ADDRESS_PREFIX))).collect();
-        let blocked = digests.iter().any(|(d, _)| {
-            entries.get(d).is_some_and(|e| now_ms - e.window_start < self.window_ms && e.count >= self.max_attempts)
-        });
-        if blocked {
-            return false;
+        let wait_ms = digests
+            .iter()
+            .filter_map(|(d, _)| entries.get(d))
+            .filter(|e| now_ms - e.window_start < self.window_ms && e.count >= self.max_attempts)
+            .map(|e| e.window_start + self.window_ms - now_ms)
+            .max();
+        if let Some(wait_ms) = wait_ms {
+            let secs = (wait_ms.max(1) as u64).div_ceil(1000);
+            return Err(Duration::from_secs(secs));
         }
         if entries.len() + digests.len() > MAX_ENTRIES {
             self.make_room(&mut entries, now_ms, digests.len());
@@ -82,7 +92,7 @@ impl RateLimiter {
             }
             entry.count += 1;
         }
-        true
+        Ok(())
     }
 
     /// Gives back the attempt counted for `key` (the sign-in succeeded).
@@ -125,29 +135,48 @@ mod tests {
     fn blocks_after_max_attempts_until_window_passes() {
         let rl = RateLimiter::new(3, 60);
         for _ in 0..3 {
-            assert!(rl.try_acquire(&["a"], 0));
+            assert!(rl.try_acquire(&["a"], 0).is_ok());
         }
-        assert!(!rl.try_acquire(&["a"], 59_999));
-        assert!(rl.try_acquire(&["a"], 60_000));
-        assert!(rl.try_acquire(&["b"], 0));
+        assert!(rl.try_acquire(&["a"], 59_999).is_err());
+        assert!(rl.try_acquire(&["a"], 60_000).is_ok());
+        assert!(rl.try_acquire(&["b"], 0).is_ok());
+    }
+
+    #[test]
+    fn a_blocked_attempt_names_the_wait_in_whole_seconds() {
+        let rl = RateLimiter::new(1, 60);
+        assert!(rl.try_acquire(&["a"], 0).is_ok());
+        assert_eq!(rl.try_acquire(&["a"], 0), Err(Duration::from_secs(60)));
+        // Rounded up: 30.5 seconds left are 31.
+        assert_eq!(rl.try_acquire(&["a"], 29_500), Err(Duration::from_secs(31)));
+        // At least one second, even in the last millisecond of the window.
+        assert_eq!(rl.try_acquire(&["a"], 59_999), Err(Duration::from_secs(1)));
+        assert!(rl.try_acquire(&["a"], 60_000).is_ok());
+
+        // Of several blocked keys, the one whose window ends last decides.
+        let rl = RateLimiter::new(1, 60);
+        assert!(rl.try_acquire(&["early"], 0).is_ok());
+        assert!(rl.try_acquire(&["late"], 20_000).is_ok());
+        assert_eq!(rl.try_acquire(&["early", "late", "free"], 30_000), Err(Duration::from_secs(50)));
+        assert_eq!(rl.try_acquire(&["early", "free"], 30_000), Err(Duration::from_secs(30)));
     }
 
     #[test]
     fn a_blocked_key_counts_nothing_for_the_others() {
         let rl = RateLimiter::new(1, 60);
-        assert!(rl.try_acquire(&["email"], 0));
-        assert!(!rl.try_acquire(&["email", "ip"], 0));
-        assert!(rl.try_acquire(&["ip"], 0), "the refused attempt must not have counted for ip");
+        assert!(rl.try_acquire(&["email"], 0).is_ok());
+        assert!(rl.try_acquire(&["email", "ip"], 0).is_err());
+        assert!(rl.try_acquire(&["ip"], 0).is_ok(), "the refused attempt must not have counted for ip");
     }
 
     #[test]
     fn refund_and_reset() {
         let rl = RateLimiter::new(1, 60);
-        assert!(rl.try_acquire(&["a"], 0));
+        assert!(rl.try_acquire(&["a"], 0).is_ok());
         rl.refund("a");
-        assert!(rl.try_acquire(&["a"], 0));
+        assert!(rl.try_acquire(&["a"], 0).is_ok());
         rl.reset("a");
-        assert!(rl.try_acquire(&["a"], 0));
+        assert!(rl.try_acquire(&["a"], 0).is_ok());
     }
 
     #[test]
@@ -156,7 +185,7 @@ mod tests {
         let granted: usize = (0..40)
             .map(|_| {
                 let rl = rl.clone();
-                std::thread::spawn(move || rl.try_acquire(&["a"], 0) as usize)
+                std::thread::spawn(move || rl.try_acquire(&["a"], 0).is_ok() as usize)
             })
             .collect::<Vec<_>>()
             .into_iter()
@@ -178,28 +207,28 @@ mod tests {
         let rl = RateLimiter::new(2, 60);
         let a = address_key("login", ip("2001:db8::1"));
         let b = address_key("login", ip("2001:db8::abcd:1"));
-        assert!(rl.try_acquire(&[&a], 0) && rl.try_acquire(&[&b], 0));
-        assert!(!rl.try_acquire(&[&a], 0), "the whole /64 shares one budget");
+        assert!(rl.try_acquire(&[&a], 0).is_ok() && rl.try_acquire(&[&b], 0).is_ok());
+        assert!(rl.try_acquire(&[&a], 0).is_err(), "the whole /64 shares one budget");
     }
 
     #[test]
     fn a_flood_of_addresses_never_resets_an_account_budget() {
         let rl = RateLimiter::new(2, 60);
-        assert!(rl.try_acquire(&["email:opfer@example.de"], 0));
-        assert!(rl.try_acquire(&["email:opfer@example.de"], 0));
+        assert!(rl.try_acquire(&["email:opfer@example.de"], 0).is_ok());
+        assert!(rl.try_acquire(&["email:opfer@example.de"], 0).is_ok());
         for i in 0..(MAX_ENTRIES as u32 + 10) {
             let ip = IpAddr::V6(Ipv6Addr::from(u128::from(i) << 64));
-            rl.try_acquire(&[&address_key("login", ip)], 1);
+            let _ = rl.try_acquire(&[&address_key("login", ip)], 1);
         }
         assert!(rl.len() <= MAX_ENTRIES);
-        assert!(!rl.try_acquire(&["email:opfer@example.de"], 2), "the account's used-up budget must stay");
+        assert!(rl.try_acquire(&["email:opfer@example.de"], 2).is_err(), "the account's used-up budget must stay");
     }
 
     #[test]
     fn memory_is_bounded() {
         let rl = RateLimiter::new(5, 60);
         for i in 0..(MAX_ENTRIES + 500) {
-            rl.try_acquire(&[&format!("k{i}")], i as i64);
+            let _ = rl.try_acquire(&[&format!("k{i}")], i as i64);
         }
         assert!(rl.len() <= MAX_ENTRIES);
     }

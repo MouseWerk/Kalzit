@@ -28,6 +28,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub clock: Arc<dyn Clock>,
     pub login_limiter: Arc<RateLimiter>,
+    /// Setup code attempts per client address (`routes::setup`).
+    pub setup_limiter: Arc<RateLimiter>,
     /// Connection tests of unsaved data source settings (`routes::datasources`).
     pub probe_limiter: Arc<RateLimiter>,
     pub setup: Arc<SetupGate>,
@@ -72,6 +74,10 @@ impl AppState {
             config: Arc::new(config),
             clock,
             login_limiter: Arc::new(login_limiter),
+            setup_limiter: Arc::new(RateLimiter::new(
+                crate::routes::setup::SETUP_MAX_FAILURES,
+                crate::routes::setup::SETUP_WINDOW_SECS,
+            )),
             probe_limiter: Arc::new(RateLimiter::new(
                 crate::routes::datasources::PROBE_MAX,
                 crate::routes::datasources::PROBE_WINDOW_SECS,

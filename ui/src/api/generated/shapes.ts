@@ -1,6 +1,6 @@
 // Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.
 
-export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "setup_done" | "invalid_setup_token" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "busy" | "internal";
+export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "setup_done" | "invalid_setup_token" | "setup_token_expired" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "busy" | "internal";
 
 export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
 
@@ -212,7 +212,11 @@ params?: { [key in string]: string },
 /**
  * For `internal`: the request id that the server log names next to the cause.
  */
-requestId?: string, };
+requestId?: string, 
+/**
+ * For `rate_limited`: seconds until another attempt can succeed (also `Retry-After`).
+ */
+retryAfterSecs?: number, };
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 

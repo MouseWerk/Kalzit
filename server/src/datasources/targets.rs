@@ -2,7 +2,9 @@
 //!
 //! Private networks and localhost are allowed: self-hosted databases live there. Always refused
 //! are Kalzit's own data directory and database, link-local and cloud metadata addresses, and
-//! SQLite files outside the directories a server admin allowed. An admin may further restrict
+//! SQLite files outside the directories a server admin allowed. The one exception in the data
+//! directory is its `samples` directory, which holds the built-in sample database
+//! (`datasources::sample`): SQLite sources may open files there, file sources may not. An admin may further restrict
 //! sources to a list of hosts and networks (`datasources.allowed_targets`).
 //!
 //! A host name is resolved once per connect, the resolved address is checked, and the caller
@@ -108,6 +110,11 @@ impl AllowedDirs {
 pub struct TargetPolicy {
     /// Canonical, so a symlink or junction into it is still recognized.
     data_dir: PathBuf,
+    /// `<data_dir>/samples` below the canonical data directory: a file whose canonical path lies
+    /// in it is a sample. A `samples` that is itself a link resolves elsewhere and is no sample.
+    samples_dir: PathBuf,
+    /// The samples directory as configured and as canonical, for the check by name.
+    samples_lexical: Vec<PathBuf>,
     /// Kalzit's own SQLite database when it lives outside the data directory.
     own_sqlite: Option<PathBuf>,
     /// Kalzit's own files outside the data directory (`kalzit.toml`, the TLS key and
@@ -129,7 +136,15 @@ impl TargetPolicy {
     /// skipped with a warning (which only narrows what is allowed). File directories are added
     /// with `with_file_dirs`; without them no CSV or JSON file is allowed.
     pub fn new(data_dir: &Path, own_db_url: &str, sqlite_dirs: &[String], allowed_targets: &[String]) -> Self {
+        let samples_lexical = [
+            std::path::absolute(data_dir).ok().and_then(|d| normalize_lexically(&d.join(SAMPLES_DIR))),
+            Some(strip_verbatim(canonical_or_absolute(data_dir).join(SAMPLES_DIR))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         let data_dir = canonical_or_absolute(data_dir);
+        let samples_dir = data_dir.join(SAMPLES_DIR);
         let own_sqlite = own_sqlite_path(own_db_url).map(|p| canonical_or_absolute(&p));
         let allowed = (!allowed_targets.is_empty()).then(|| {
             allowed_targets
@@ -145,6 +160,8 @@ impl TargetPolicy {
         });
         Self {
             data_dir,
+            samples_dir,
+            samples_lexical,
             own_sqlite,
             protected_files: Vec::new(),
             protected_dirs: Vec::new(),
@@ -181,10 +198,13 @@ impl TargetPolicy {
     /// Then it is canonicalized (symlinks and junctions resolved) and checked again; the caller
     /// opens the canonical path. Every refusal has the same message, so the answer does not tell
     /// whether a file exists.
+    ///
+    /// Files in the samples directory of the data directory are allowed too, whatever
+    /// `datasources.sqlite_dirs` says; every other rule holds for them as well.
     pub fn check_sqlite_path(&self, raw: &str) -> Result<PathBuf, Blocked> {
         let refused = || Blocked::new("target.sqlite_path_refused", SQLITE_REFUSED);
         let relative = || Blocked::new("target.sqlite_path_relative", "the SQLite path must be absolute");
-        self.check_path(&self.sqlite_dirs, raw, refused, relative)
+        self.check_path(&self.sqlite_dirs, true, raw, refused, relative)
     }
 
     /// The canonical CSV or JSON file a file source may read: the same rules as for SQLite
@@ -192,12 +212,14 @@ impl TargetPolicy {
     pub fn check_file_path(&self, raw: &str) -> Result<PathBuf, Blocked> {
         let refused = || Blocked::new("target.file_path_refused", FILE_REFUSED);
         let relative = || Blocked::new("target.file_path_relative", "the file path must be absolute");
-        self.check_path(&self.file_dirs, raw, refused, relative)
+        self.check_path(&self.file_dirs, false, raw, refused, relative)
     }
 
+    /// `samples`: whether files in the samples directory are allowed.
     fn check_path(
         &self,
         dirs: &AllowedDirs,
+        samples: bool,
         raw: &str,
         refused: impl Fn() -> Blocked,
         relative: impl Fn() -> Blocked,
@@ -210,16 +232,20 @@ impl TargetPolicy {
             return Err(refused());
         }
         let lexical = normalize_lexically(path).ok_or_else(&refused)?;
-        if !dirs.lexical.iter().any(|dir| within(&lexical, dir)) {
+        let named_sample = samples && self.samples_lexical.iter().any(|dir| within(&lexical, dir));
+        if !named_sample && !dirs.lexical.iter().any(|dir| within(&lexical, dir)) {
             return Err(refused());
         }
         let canonical = std::fs::canonicalize(&lexical).map_err(|_| refused())?;
         let own = self.own_sqlite.as_ref().is_some_and(|own| is_same_database_file(&canonical, own))
             || self.protected_files.contains(&canonical)
             || self.protected_dirs.iter().any(|dir| canonical.starts_with(dir));
-        if canonical.starts_with(&self.data_dir)
+        // Decided by the canonical path: a link in the samples directory to the own database (or
+        // anything else in the data directory) is not a sample.
+        let sample = samples && canonical.starts_with(&self.samples_dir);
+        if (canonical.starts_with(&self.data_dir) && !sample)
             || own
-            || !dirs.canonical.iter().any(|dir| canonical.starts_with(dir))
+            || (!sample && !dirs.canonical.iter().any(|dir| canonical.starts_with(dir)))
             || !canonical.is_file()
             // A hard link has no path of its own to resolve: it may be a second name of the own
             // database, a backup or a key. Files with more than one name are refused.
@@ -365,6 +391,9 @@ impl TargetPolicy {
         })
     }
 }
+
+/// The directory in the data directory that holds the built-in sample database.
+pub const SAMPLES_DIR: &str = "samples";
 
 const SQLITE_REFUSED: &str = "the SQLite file is not in a directory allowed in datasources.sqlite_dirs, is one of \
      Kalzit's own files (data, configuration, TLS key or certificate, credentials) or a hard link, or cannot be opened";
@@ -803,6 +832,70 @@ mod tests {
         // Nothing is allowed until an admin lists a directory.
         let none = TargetPolicy::new(&data, &own_url, &[], &[]);
         assert!(none.check_sqlite_path(allowed.join("umsatz.db").to_str().unwrap()).is_err());
+    }
+
+    /// The samples directory opens for SQLite sources only, with no allowed directory listed;
+    /// the rest of the data directory stays refused.
+    #[test]
+    fn the_samples_directory_is_allowed_for_sqlite_only() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let samples = data.join(SAMPLES_DIR);
+        std::fs::create_dir_all(&samples).unwrap();
+        std::fs::write(data.join("kalzit.db"), b"").unwrap();
+        std::fs::write(data.join("anderes.db"), b"").unwrap();
+        std::fs::write(samples.join("kalzit-sample.sqlite"), b"").unwrap();
+        let s = |p: &Path| p.to_string_lossy().to_string();
+        let own_url = crate::config::sqlite_url(&data.join("kalzit.db"));
+        let p = TargetPolicy::new(&data, &own_url, &[], &[]).with_file_dirs(&[s(&data)]);
+
+        let ok = p.check_sqlite_path(&s(&samples.join("kalzit-sample.sqlite"))).unwrap();
+        assert!(ok.ends_with("kalzit-sample.sqlite"));
+        assert!(!ok.to_string_lossy().starts_with(r"\\?\"));
+        // The canonical answer passes again (it is what a source stores).
+        assert!(p.check_sqlite_path(&s(&ok)).is_ok());
+        // Everything else in the data directory stays refused, by name and by climbing out.
+        for other in [data.join("kalzit.db"), data.join("anderes.db"), samples.join("..").join("anderes.db")] {
+            assert_eq!(p.check_sqlite_path(&s(&other)).unwrap_err().0.message, SQLITE_REFUSED, "{}", other.display());
+        }
+        assert!(p.check_sqlite_path(&s(&samples.join("fehlt.sqlite"))).is_err());
+        assert!(p.check_sqlite_path(&s(&samples)).is_err(), "a directory is not a database");
+        // File sources never read the samples directory, even with the data directory listed.
+        let e = p.check_file_path(&s(&samples.join("kalzit-sample.sqlite"))).unwrap_err();
+        assert_eq!(e.0.message, FILE_REFUSED);
+        // A hard link in the samples directory is refused like anywhere else.
+        std::fs::hard_link(data.join("anderes.db"), samples.join("zweitname.sqlite")).unwrap();
+        assert!(p.check_sqlite_path(&s(&samples.join("zweitname.sqlite"))).is_err());
+    }
+
+    /// A link in the samples directory that leads to the own database or elsewhere in the data
+    /// directory is not a sample: the canonical path decides.
+    #[cfg(unix)]
+    #[test]
+    fn links_in_the_samples_directory_are_not_samples() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let samples = data.join(SAMPLES_DIR);
+        std::fs::create_dir_all(&samples).unwrap();
+        std::fs::write(data.join("kalzit.db"), b"").unwrap();
+        std::fs::write(data.join("anderes.db"), b"").unwrap();
+        std::os::unix::fs::symlink(data.join("kalzit.db"), samples.join("own.sqlite")).unwrap();
+        std::os::unix::fs::symlink(data.join("anderes.db"), samples.join("other.sqlite")).unwrap();
+        let own_url = crate::config::sqlite_url(&data.join("kalzit.db"));
+        let p = TargetPolicy::new(&data, &own_url, &[], &[]);
+        for f in ["own.sqlite", "other.sqlite"] {
+            let e = p.check_sqlite_path(samples.join(f).to_str().unwrap()).unwrap_err();
+            assert_eq!(e.0.message, SQLITE_REFUSED, "{f}");
+        }
+        // A samples directory that is itself a link out of the data directory is no sample.
+        let elsewhere = root.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("x.sqlite"), b"").unwrap();
+        let data2 = root.path().join("data2");
+        std::fs::create_dir_all(&data2).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, data2.join(SAMPLES_DIR)).unwrap();
+        let p2 = TargetPolicy::new(&data2, "sqlite::memory:", &[], &[]);
+        assert!(p2.check_sqlite_path(data2.join(SAMPLES_DIR).join("x.sqlite").to_str().unwrap()).is_err());
     }
 
     #[test]
