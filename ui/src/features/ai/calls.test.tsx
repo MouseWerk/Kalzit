@@ -6,13 +6,14 @@ import { renderApp } from "../../test/renderApp";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { PG_ID } from "../datasources/test/fakeDatasources";
-import { lastSentence } from "./AiAnswer";
+import { nextAnnouncement } from "./AiAnswer";
 import { aiLimitReason } from "./calls";
 import { aiEvents } from "./test/fakeAiAdmin";
 
 const USABLE = {
   enabled: true,
   usable: true,
+  orgProvidersAllowed: true,
   noticeAcknowledged: true,
   provider: {
     id: "p1",
@@ -61,9 +62,19 @@ describe("AI calls: parts", () => {
     expect(second.rest).toBe("");
   });
 
-  it("announces the newest finished sentence only", () => {
-    expect(lastSentence("Die Abfrage summiert")).toBe("");
-    expect(lastSentence("Erster Satz. Zweiter Satz. Und ein dritter")).toBe("Zweiter Satz.");
+  it("announces every finished sentence once, and the rest when the answer is whole", () => {
+    expect(nextAnnouncement("Die Abfrage summiert", 0, false)).toEqual({ say: "", upTo: 0 });
+    const text = "Erster Satz. Zweiter Satz. Und ein dritter";
+    const first = nextAnnouncement(text, 0, false);
+    expect(first).toEqual({ say: "Erster Satz. Zweiter Satz.", upTo: 26 });
+    expect(nextAnnouncement(text, first.upTo, false).say).toBe("");
+    expect(nextAnnouncement(`${text} Satz! Noch`, first.upTo, false).say).toBe(
+      "Und ein dritter Satz!",
+    );
+    expect(nextAnnouncement(text, first.upTo, true)).toEqual({
+      say: "Und ein dritter",
+      upTo: text.length,
+    });
   });
 
   it("knows a used-up limit from the status", () => {
@@ -154,6 +165,21 @@ describe("AI in Explore", () => {
     );
     expect(screen.queryByRole("region", { name: "Draft" })).toBeNull();
     expect(server.areas.datasources.queries.length).toBe(runsBefore);
+  });
+
+  it("reads the answer out from outside the busy card, the last sentence too", async () => {
+    const { server, user } = open(USABLE);
+    server.areas.aiAdmin.callAnswer = { events: aiEvents("Erster Satz. Zweiter ohne Punkt") };
+    await typeSql("SELECT 1");
+    await user.click(await screen.findByRole("button", { name: "Explain" }));
+    const answer = await screen.findByRole("region", { name: "Explanation" });
+    await within(answer).findByRole("button", { name: "Copy" });
+    const live = answer.parentElement?.querySelector("[aria-live=polite]");
+    expect(live).toBeTruthy();
+    expect(answer.contains(live as Node)).toBe(false);
+    expect(live?.closest("[aria-busy]")).toBeNull();
+    // Whatever arrived together is read together; the unpunctuated end is read at the end.
+    await waitFor(() => expect(live?.textContent).toMatch(/Zweiter ohne Punkt$/));
   });
 
   it("disables the buttons with the reason when the daily limit is used up", async () => {

@@ -148,6 +148,37 @@ describe("AI, server section", () => {
     expect(within(card).getByText("Ready")).toBeTruthy();
   });
 
+  it("leaves no provider behind when a failed test is followed by Cancel", async () => {
+    const { user, server } = await openAdmin("/settings/ai", {
+      isServerAdmin: true,
+      setup: addAiSettings,
+    });
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add provider" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Lokal");
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Base URL" }),
+      "http://llm.intern/v1",
+    );
+    await user.type(within(dialog).getByRole("textbox", { name: "Model" }), "m");
+    server.areas.aiAdmin.testAnswers.p10 = {
+      ok: false,
+      latencyMs: 30,
+      reason: "ai.provider_unreachable",
+      params: { detail: "connection refused" },
+      message: "the provider cannot be reached",
+    };
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    expect(await within(dialog).findByText(/cannot be reached: connection refused/)).toBeTruthy();
+    expect(server.areas.aiAdmin.serverProviders).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(server.areas.aiAdmin.serverProviders).toHaveLength(0));
+    expect(
+      calls(server, "/api/admin/ai/providers/p10").some((call) => call.method === "DELETE"),
+    ).toBe(true);
+  });
+
   it("asks for the key again when the address of a provider with a key changes", async () => {
     const { user, server } = await openAdmin("/settings/ai", {
       isServerAdmin: true,
@@ -186,13 +217,11 @@ describe("AI, server section", () => {
 });
 
 describe("AI, organization section", () => {
-  it("offers no Add while the server does not allow own providers", async () => {
+  it("offers no Add while the server does not allow own providers, as the status says", async () => {
     await openAdmin("/settings/org-ai", {
-      isServerAdmin: true,
-      setup: (admin) => {
-        addAiSettings(admin);
-        const allow = admin.serverSettings.find((s) => s.key === "ai.allow_org_providers");
-        if (allow !== undefined) allow.value = false;
+      setup: addAiSettings,
+      setupServer: (s) => {
+        s.areas.aiAdmin.status = { enabled: false, usable: false, orgProvidersAllowed: false };
       },
     });
     expect(

@@ -9,7 +9,7 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
 
 - AI is off by default. `ai.enabled` (server setting) turns all of it on or off; an organization
   can turn it off for its members (`ai.org_enabled`, organization setting). Off, the status answers
-  only `{"enabled": false, "usable": false}` and every AI call is refused with
+  only `{"enabled": false, "usable": false, "orgProvidersAllowed": true}` and every AI call is refused with
   `409 ai_unavailable` (`ai.disabled`, `ai.org_disabled`); the UI shows no AI button, menu entry or
   hint, not even greyed out.
 - AI can only be switched on (`ai.enabled` on the server, `ai.org_enabled` back on in an
@@ -51,6 +51,7 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
 {
   "enabled": true,
   "usable": true,
+  "orgProvidersAllowed": true,
   "noticeAcknowledged": false,
   "provider": { "id": "0192f0c1-...", "name": "Lokal", "kind": "openai", "model": "example-model",
                 "host": "llm.intern", "scope": "server" },
@@ -65,7 +66,8 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
 goes (the host of the base URL, never the whole URL); `provider.scope` is `org` when the
 organization's own provider is in effect. `usage` holds the caller's calls and tokens today (UTC)
 in this organization and the organization's tokens this calendar month; a limit of 0 means none.
-`noticeText` is the administrators' own paragraph for the first-use notice (`ai.notice_text`, left
+`orgProvidersAllowed` is `ai.allow_org_providers`, sent also while AI is off, so an organization's
+AI page offers its own provider only when the server allows it. `noticeText` is the administrators' own paragraph for the first-use notice (`ai.notice_text`, left
 out while empty) and `maxRowsToModel` the row limit the notice names. The UI asks this once per
 organization and renders AI only when `enabled` and `usable` are both true (`ui/src/features/ai`,
 `AiGate`).
@@ -285,8 +287,16 @@ audit as `ai.called` with `purpose` and `promptVersion`) with the caller's right
   needs `datasources:query`; a panel: the panel's stored queries with the dashboard's variables,
   as `.../panels/{panelId}/query` runs them, so viewers can summarize panels they can read). Every
   source involved must be open to AI, else `409 ai_unavailable` (`ai.datasource_not_readable`)
-  before anything runs. The results go through `ai::redact` (excluded values replaced, cut to
-  `ai.max_rows_to_model`), with the panel's title, the queries and the time range.
+  before anything runs; its `name` and `datasourceId` are named only to someone who may read the
+  source, so a viewer of a panel learns only that one of its sources is closed. The results go
+  through `ai::redact` (excluded values replaced, cut to `ai.max_rows_to_model`), with the panel's
+  title, the queries and the time range.
+- A panel is summarized as it shows its data: its enabled steps (transformations) run on the
+  server as for its export, and queries it hides are left out (a hidden one a step reads goes in
+  only through that step's result). A frame the steps made may combine sources, so it is redacted
+  with the excluded fields of all of them and the smallest row limit. Explore's steps run in the
+  browser; its summary is of the query's own result.
+- Reference ids appear outside the data blocks only reduced to letters, digits, `_` and `-`.
 - The switch, the provider, the notice and the daily and monthly limits are checked before a
   query runs or a schema is read; a refusal is an ordinary JSON error (`409`, `429`, `403`).
 - `language` (`de` or `en`, default `en`) is the language of the answer.
@@ -317,7 +327,7 @@ data: {"usage":{"inputTokens":812,"outputTokens":95},"draft":{"sql":"SELECT ..."
 
 Prompts (`server/src/ai/prompts.rs`) are versioned per feature. Everything from a source or typed
 by a person goes into the user message inside `<kalzit:...>` blocks that cannot be closed from
-inside; the system prompt says the blocks are data whose instructions are never followed. The
+inside (every `<`, also as fullwidth or small form, becomes `&lt;` and `&` becomes `&amp;`); the system prompt says the blocks are data whose instructions are never followed. The
 answer is shown as text; nothing in it is run.
 
 ## Errors

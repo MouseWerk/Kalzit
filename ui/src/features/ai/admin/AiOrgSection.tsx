@@ -6,7 +6,6 @@ import {
   adminKeys,
   listMembers,
   listOrgSettings,
-  listServerSettings,
   MAX_PAGE_SIZE,
   type Setting,
   updateOrgSetting,
@@ -23,6 +22,7 @@ import { useSettingsAccess } from "../../settings/SettingsLayout";
 import { rowId, type SectionDef } from "../../settings/sections";
 import { aiAdminKeys, fetchAiReadableSources } from "../adminApi";
 import { aiErrorText } from "../reasons";
+import { useAiStatusFor } from "../useAiStatus";
 import { ProvidersCard } from "./ProvidersCard";
 import { UsageCard } from "./UsageCard";
 import "./ai-admin.css";
@@ -54,13 +54,9 @@ export function AiOrgSection({ section }: { section: SectionDef }) {
     queryFn: () => listOrgSettings(orgId),
     enabled: orgId !== "",
   });
-  // Only server administrators can read whether own providers are allowed; for the others the
-  // server's refusal of a change says so.
-  const server = useQuery({
-    queryKey: adminKeys.serverSettings,
-    queryFn: listServerSettings,
-    enabled: access.permissions.isServerAdmin,
-  });
+  // Whether the server allows own providers comes with the AI status, also while AI is off; a
+  // refusal of a change (the setting changed meanwhile) says so too.
+  const { status } = useAiStatusFor(orgId === "" ? undefined : orgId);
   const [refused, setRefused] = useState(false);
   const changes = useSettingChanges({
     queryKey,
@@ -79,8 +75,7 @@ export function AiOrgSection({ section }: { section: SectionDef }) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
   }
   const byKey = new Map(settings.data.map((setting) => [setting.key, setting]));
-  const serverAllows = server.data?.find((s) => s.key === "ai.allow_org_providers")?.value;
-  const allowed = !refused && serverAllows !== false;
+  const allowed = !refused && status?.orgProvidersAllowed !== false;
   const memberNames = new Map(
     (members.data?.items ?? []).map((member) => [member.userId, member.name || member.email]),
   );

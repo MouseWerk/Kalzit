@@ -360,7 +360,7 @@ export function handleAiAdminRoute(
 
 export function aiAdminFake(_areas: FakeAreaStates): FakeArea<FakeAiState> {
   const state: FakeAiState = {
-    status: { enabled: false, usable: false },
+    status: { enabled: false, usable: false, orgProvidersAllowed: true },
     serverProviders: [],
     orgProviders: [],
     allowOrgProviders: true,

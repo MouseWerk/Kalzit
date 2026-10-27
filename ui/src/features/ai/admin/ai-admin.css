@@ -21,7 +21,7 @@
 
   .ai-card__title {
     display: grid;
-    flex: 1 1 18rem;
+    flex: 1 1 var(--size-ai-request);
     gap: var(--space-1);
     min-width: 0;
   }
@@ -92,7 +92,7 @@
   /* Status strip below the switch while AI is on. */
   .ai-status {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-ai-tile), 100%), 1fr));
     overflow: hidden;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
@@ -200,7 +200,7 @@
   }
 
   .ai-table th.ai-table__label {
-    width: 10rem;
+    width: var(--size-ai-label);
     color: var(--text);
     font-weight: var(--font-weight-medium);
     vertical-align: top;
@@ -296,7 +296,7 @@
 
   .ai-dialog__pair {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
     gap: var(--space-3);
   }
 
@@ -364,7 +364,7 @@
 
   .ai-chips__input {
     flex: 1;
-    min-width: 8rem;
+    min-width: var(--size-ai-chip-input);
     padding: 0;
     border: 0;
     background: transparent;

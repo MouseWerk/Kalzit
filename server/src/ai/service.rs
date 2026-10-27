@@ -710,10 +710,14 @@ pub async fn stream(
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AiStatus {
-    /// `ai.enabled` of the server and the organization. Off, nothing else is sent.
+    /// `ai.enabled` of the server and the organization. Off, nothing else is sent but
+    /// `orgProvidersAllowed`.
     pub enabled: bool,
     /// AI can be used here: on, and a provider is in effect for the organization.
     pub usable: bool,
+    /// Whether the server lets organizations use a provider of their own
+    /// (`ai.allow_org_providers`), so an organization's AI page knows before AI is on.
+    pub org_providers_allowed: bool,
     /// Whether the caller acknowledged the first-use notice for the provider in effect; the UI
     /// shows the notice before the first call otherwise (`POST .../ai/notice`).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -771,10 +775,11 @@ pub struct AiStatusUsage {
 }
 
 impl AiStatus {
-    fn off() -> Self {
+    fn off(org_providers_allowed: bool) -> Self {
         Self {
             enabled: false,
             usable: false,
+            org_providers_allowed,
             notice_acknowledged: None,
             reason: None,
             provider: None,
@@ -786,11 +791,12 @@ impl AiStatus {
 }
 
 pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<AiStatus> {
+    let allowed = org_providers_allowed(state).await?;
     if !enabled(state).await? || !enabled_in_org(state, org_id).await? {
-        return Ok(AiStatus::off());
+        return Ok(AiStatus::off(allowed));
     }
     let Some(row) = in_effect(state, org_id).await? else {
-        return Ok(AiStatus { enabled: true, reason: Some("ai.no_provider".into()), ..AiStatus::off() });
+        return Ok(AiStatus { enabled: true, reason: Some("ai.no_provider".into()), ..AiStatus::off(allowed) });
     };
     let (user, _) = today(state, org_id, user_id).await?;
     let month = month_tokens(state, org_id).await?;
@@ -808,6 +814,7 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
     Ok(AiStatus {
         enabled: true,
         usable: true,
+        org_providers_allowed: allowed,
         notice_acknowledged: Some(acknowledged),
         reason: None,
         provider: Some(AiStatusProvider {

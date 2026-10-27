@@ -33,7 +33,7 @@
   }
 
   .ai-tools__request {
-    flex: 1 1 18rem;
+    flex: 1 1 var(--size-ai-request);
     min-width: 0;
     resize: vertical;
   }

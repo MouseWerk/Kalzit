@@ -10,9 +10,11 @@
 //! refusal before the call starts (rights, AI off, notice, limits) is an ordinary JSON error. The
 //! client cancels by closing the request; the call is then stopped, counted and audited.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Extension;
 use axum::extract::{Path, State};
@@ -29,13 +31,15 @@ use crate::ai::prompts::{self, Language, Prompt, ResultPart};
 use crate::ai::service::{self, Caller};
 use crate::ai::store::ProviderRow;
 use crate::ai::{ChatEvent, ChatRequest, Usage, redact};
+use crate::analysis::steps::{Control, Input, run_shapes};
+use crate::analysis::{Step, check_steps};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::datasources::{Datasource, check_interval, check_items, check_range, find_in_org, run_queries_with};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
-use crate::shapes::{QueryItem, QueryOutcome, QueryResponse, TimeRange};
+use crate::shapes::{QueryItem, QueryOutcome, QueryResponse, QueryResult, TimeRange};
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
@@ -224,6 +228,8 @@ async fn summarize(
         variables: body.variables,
         identifiers: None,
         language: body.language,
+        steps: Vec::new(),
+        hidden: BTreeSet::new(),
     };
     summarize_run(&state, &ctx, &caller, request).await
 }
@@ -242,7 +248,9 @@ struct PanelSummarizeBody {
     language: Language,
 }
 
-/// A panel of a dashboard the caller may read: its stored queries only, as the panel runs them.
+/// A panel of a dashboard the caller may read: its stored queries only, as the panel runs them,
+/// and the result as the panel shows it: after its own steps (transformations), without hidden
+/// queries that only feed a step.
 async fn summarize_panel(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -262,6 +270,11 @@ async fn summarize_panel(
         return Err(ApiError::validation("the panel has no query to summarize").because("ai.query_empty"));
     }
     check_items(&run.items)?;
+    let refs: BTreeSet<&str> = panel.targets.iter().map(|t| t.ref_id.as_str()).collect();
+    // Checked when the dashboard was saved; failing here means the stored model is broken.
+    let steps = check_steps(&panel.transformations, &refs, "transformations")
+        .map_err(|e| ApiError::internal("ai", format!("stored steps of panel {panel_id}: {e}")))?;
+    let hidden = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.clone()).collect();
     let caller = caller(&ctx, &info, &prompts::SUMMARIZE);
     let request = SummaryRun {
         title: Some(title),
@@ -272,6 +285,8 @@ async fn summarize_panel(
         variables: run.variables,
         identifiers: Some(run.identifiers),
         language: body.language,
+        steps: steps.into_iter().filter(|s| !s.disabled).collect(),
+        hidden,
     };
     summarize_run(&state, &ctx, &caller, request).await
 }
@@ -283,12 +298,41 @@ struct SummaryRun {
     interval_ms: Option<u64>,
     max_data_points: Option<u32>,
     variables: BTreeMap<String, Value>,
-    identifiers: Option<std::collections::BTreeSet<String>>,
+    identifiers: Option<BTreeSet<String>>,
     language: Language,
+    /// The panel's enabled steps; the summary reads their frames. Empty in Explore, whose steps
+    /// run in the browser: there the query's own result is summarized.
+    steps: Vec<Step>,
+    /// Queries the panel does not show (they only feed a step).
+    hidden: BTreeSet<String>,
+}
+
+/// Refuses a source closed to AI. Its name and id are said only to someone who may read the
+/// source; a viewer of a panel learns only that a source of the panel is closed.
+async fn closed(state: &AppState, ctx: &OrgCtx, ds: &Datasource) -> ApiError {
+    let named = check_resource(&state.db, ctx, Permission::DatasourcesRead, Resource::Datasource(&ds.id)).await.is_ok();
+    if named {
+        ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "ai_unavailable",
+            format!("the data source {} is not open to AI", ds.name),
+        )
+        .because("ai.datasource_not_readable")
+        .param("name", &ds.name)
+        .param("datasourceId", &ds.id)
+    } else {
+        ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "ai_unavailable",
+            "a data source of this panel is not open to AI",
+        )
+        .because("ai.datasource_not_readable")
+    }
 }
 
 /// Checks that every source is open to AI and AI would answer, runs the queries as the caller,
-/// passes the results through `ai::redact` and streams the summary.
+/// runs a panel's steps on the server as its export does, passes the results through
+/// `ai::redact` and streams the summary.
 async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: SummaryRun) -> ApiResult<Response> {
     let mut policies = BTreeMap::new();
     let mut kinds = BTreeMap::new();
@@ -299,22 +343,16 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
         let ds = find_in_org(&state.db, &ctx.org_id, &item.datasource_id, false).await?;
         let policy = redact::policy(state, &ds.id).await?;
         if !policy.readable {
-            return Err(ApiError::new(
-                axum::http::StatusCode::CONFLICT,
-                "ai_unavailable",
-                format!("the data source {} is not open to AI", ds.name),
-            )
-            .because("ai.datasource_not_readable")
-            .param("name", &ds.name)
-            .param("datasourceId", &ds.id));
+            return Err(closed(state, ctx, &ds).await);
         }
         kinds.insert(ds.id.clone(), ds.kind.clone());
         policies.insert(ds.id, policy);
     }
     let row = service::precheck(state, caller).await?;
+    let order: Vec<String> = run.items.iter().map(|i| i.ref_id.clone()).collect();
     let queries: BTreeMap<String, (String, Value)> =
         run.items.iter().map(|i| (i.ref_id.clone(), (i.datasource_id.clone(), i.query.clone()))).collect();
-    let QueryResponse { results } = run_queries_with(
+    let QueryResponse { mut results } = run_queries_with(
         state,
         ctx,
         run.items,
@@ -325,34 +363,94 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
         run.identifiers.as_ref(),
     )
     .await;
-    let mut parts = Vec::new();
+    // What the summary reads: (name, the query it is the result of, the result).
+    let mut shown: Vec<(String, Option<String>, QueryResult)> = Vec::new();
     let mut first_error = None;
-    let mut sent = Vec::new();
-    for (ref_id, outcome) in results {
-        let Some((datasource_id, query)) = queries.get(&ref_id) else { continue };
-        match outcome {
-            QueryOutcome::Ok { result, .. } => {
-                let policy = &policies[datasource_id];
-                let for_model = redact::result_for_model(policy, &result)?;
-                sent.push(json!({
-                    "refId": ref_id,
-                    "rows": for_model.rows,
-                    "truncated": for_model.truncated,
-                    "excludedValues": for_model.excluded_values,
-                }));
-                parts.push(ResultPart {
-                    ref_id,
-                    kind: kinds[datasource_id].clone(),
-                    query: query.clone(),
-                    data: for_model.value,
-                    rows: for_model.rows,
-                    truncated: for_model.truncated,
-                });
-            }
-            QueryOutcome::Err { error } => {
-                first_error.get_or_insert(error);
+    let with_steps = !run.steps.is_empty();
+    if !with_steps {
+        for ref_id in &order {
+            match results.remove(ref_id) {
+                Some(QueryOutcome::Ok { result, .. }) if !run.hidden.contains(ref_id) => {
+                    shown.push((ref_id.clone(), Some(ref_id.clone()), result));
+                }
+                Some(QueryOutcome::Err { error }) => {
+                    first_error.get_or_insert(error);
+                }
+                _ => {}
             }
         }
+    } else {
+        // The steps read every query, as the panel's do: one that failed fails the summary.
+        let mut inputs = Vec::new();
+        let mut done = BTreeSet::new();
+        for ref_id in &order {
+            match results.remove(ref_id) {
+                Some(QueryOutcome::Ok { result, steps: ran }) => {
+                    done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
+                    inputs.push((
+                        ref_id.clone(),
+                        match result {
+                            QueryResult::Frame { frame } => Input::Frame(frame),
+                            QueryResult::Documents { documents } => Input::Documents(documents),
+                            QueryResult::Graph { graph } => Input::Graph(graph),
+                        },
+                    ));
+                }
+                Some(QueryOutcome::Err { error }) => return Err(super::query::api_error(error)),
+                None => return Err(ApiError::internal("ai", format!("no outcome for {ref_id}"))),
+            }
+        }
+        let timeout = crate::settings::get(state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
+        let steps = run.steps;
+        // Steps take CPU time; they run off the request threads, stopped when the request goes.
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        let _stop = StopOnDrop(cancelled);
+        let (frames, graphs) =
+            tokio::task::spawn_blocking(move || run_shapes(&steps, inputs, &Control::new(flag, timeout), &done))
+                .await
+                .map_err(|e| ApiError::internal("ai", e))?
+                .map_err(|f| {
+                    ApiError::validation(format!("step {}: {}", f.index + 1, f.detail.message))
+                        .with_reason(f.detail.reason, f.detail.params)
+                })?;
+        for frame in frames {
+            if !run.hidden.contains(&frame.name) {
+                let query = queries.contains_key(&frame.name).then(|| frame.name.clone());
+                shown.push((frame.name, query, QueryResult::Frame { frame: frame.frame }));
+            }
+        }
+        for (name, graph) in graphs {
+            if !run.hidden.contains(&name) {
+                let query = queries.contains_key(&name).then(|| name.clone());
+                shown.push((name, query, QueryResult::Graph { graph }));
+            }
+        }
+    }
+    // A frame the steps made may combine several sources: the rules of all of them apply.
+    let all = redact::DataPolicy::merged(policies.values());
+    let mut parts = Vec::new();
+    let mut sent = Vec::new();
+    for (name, query, result) in shown {
+        let source = query.as_ref().and_then(|q| queries.get(q));
+        let policy = match source {
+            Some((datasource_id, _)) if !with_steps => &policies[datasource_id],
+            _ => &all,
+        };
+        let for_model = redact::result_for_model(policy, &result)?;
+        sent.push(json!({
+            "refId": prompts::identifier(&name),
+            "rows": for_model.rows,
+            "truncated": for_model.truncated,
+            "excludedValues": for_model.excluded_values,
+        }));
+        parts.push(ResultPart {
+            ref_id: name,
+            query: source.map(|(datasource_id, q)| (kinds[datasource_id].clone(), q.clone())),
+            data: for_model.value,
+            rows: for_model.rows,
+            truncated: for_model.truncated,
+        });
     }
     if parts.is_empty() {
         return Err(match first_error {
@@ -365,6 +463,15 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
     let request = prompts::SUMMARIZE.request(run.language, message);
     let meta = json!({ "provider": provider_meta(&row), "results": sent, "title": run.title.is_some() });
     respond(state, caller, &request, meta, Finish::Text).await
+}
+
+/// Sets the flag when dropped: steps still running for a request that went away stop.
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 fn iso(ms: i64) -> String {
@@ -411,7 +518,10 @@ async fn respond(
     meta: Value,
     finish: Finish,
 ) -> ApiResult<Response> {
-    // The request's own token: the call stops when the stream is dropped (the client went away).
+    // Cancelling relies on dropping: when the client closes the request, axum drops the body and
+    // with it this stream, which drops the service's stream; its task then cancels the provider
+    // call and settles and audits it as `cancelled` (`ai::service::stream`). The token here is
+    // never fired itself.
     let events = service::stream(state, caller, request, &CancellationToken::new()).await?;
     let run = Run { phase: Phase::Meta(meta), events: Box::pin(events), text: String::new(), usage: None, finish };
     let stream = futures_util::stream::unfold(run, |mut run| async move {

@@ -481,11 +481,64 @@ async fn summaries_need_the_opt_in_and_get_redacted_capped_results() {
     assert_eq!(r.status, StatusCode::OK);
     let r = t.post(&panel, json!({ "timeRange": range() }), &viewer).await;
     assert_eq!(r.reason(), "ai.datasource_not_readable", "{}", r.body);
+    // A viewer who may not read the source does not learn its name or id.
+    assert!(r.body["error"].get("params").is_none(), "{}", r.body);
+    assert!(!r.body.to_string().contains("Kunden") && !r.body.to_string().contains(&ds), "{}", r.body);
+    let r = t.post(&summarize, body.clone(), &editor).await;
+    assert_eq!(r.body["error"]["params"]["name"], "Kunden", "who may read the source is told which: {}", r.body);
 
     let calls = t.calls().await;
     assert_eq!(calls.len(), 2);
     assert!(calls.iter().all(|c| c["purpose"] == "summarize_result"));
     assert!(calls.iter().all(|c| !c.to_string().contains("Ana")), "no result data in the audit");
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panel_summary_reads_the_result_after_its_steps_without_hidden_queries() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let ds = t.source(&owner, &org).await;
+    let mock = mock().await;
+    t.enable(&owner, &mock).await;
+    t.ack(&org, &viewer).await;
+    t.open_source(&org, &ds, &["email"], &owner).await;
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "title": "Kunden",
+        "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [
+            { "id": "p1", "type": "table", "title": "Umsatz",
+              "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+              "targets": [
+                  { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT name, umsatz FROM kunden ORDER BY name" } },
+                  { "refId": "B", "datasourceId": ds, "hide": true,
+                    "query": { "sql": "SELECT 'VERSTECKT' AS geheim" } }
+              ],
+              "transformations": [
+                  { "id": "1", "type": "calculate", "frame": "A", "name": "Doppelt", "expression": "umsatz * 2" }
+              ] }
+        ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let r = t
+        .post(
+            &format!("/api/orgs/{org}/dashboards/{dashboard}/panels/p1/ai/summarize"),
+            json!({ "timeRange": range() }),
+            &viewer,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(
+        r.event("meta")["results"],
+        json!([{ "refId": "A", "rows": 3, "truncated": false, "excludedValues": 0 }])
+    );
+    let (_, user) = mock.last_prompt();
+    assert!(user.contains("Doppelt") && user.contains("60"), "the panel's step ran: {user}");
+    assert!(!user.contains("VERSTECKT"), "a hidden query nobody reads is not sent: {user}");
     t.finish().await;
 }
 

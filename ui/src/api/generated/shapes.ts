@@ -361,13 +361,19 @@ export type DistributionBin = { from: number, to: number, count: number, };
 
 export type AiStatus = { 
 /**
- * `ai.enabled` of the server and the organization. Off, nothing else is sent.
+ * `ai.enabled` of the server and the organization. Off, nothing else is sent but
+ * `orgProvidersAllowed`.
  */
 enabled: boolean, 
 /**
  * AI can be used here: on, and a provider is in effect for the organization.
  */
 usable: boolean, 
+/**
+ * Whether the server lets organizations use a provider of their own
+ * (`ai.allow_org_providers`), so an organization's AI page knows before AI is on.
+ */
+orgProvidersAllowed: boolean, 
 /**
  * Whether the caller acknowledged the first-use notice for the provider in effect; the UI
  * shows the notice before the first call otherwise (`POST .../ai/notice`).

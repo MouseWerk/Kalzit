@@ -355,13 +355,20 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
 
     let r = t.get(&status, &viewer).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert_eq!(r.body, json!({ "enabled": false, "usable": false }), "off: no reason, provider or usage");
+    assert_eq!(
+        r.body,
+        json!({ "enabled": false, "usable": false, "orgProvidersAllowed": true }),
+        "off: no reason, provider or usage"
+    );
 
     // A provider alone does not turn AI on.
     let server_mock = openai(Mode::Ok).await;
     let r = t.post("/api/admin/ai/providers", provider_body("openai", server_mock.url("/v1"), None), &owner).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
-    assert_eq!(t.get(&status, &viewer).await.body, json!({ "enabled": false, "usable": false }));
+    assert_eq!(
+        t.get(&status, &viewer).await.body,
+        json!({ "enabled": false, "usable": false, "orgProvidersAllowed": true })
+    );
 
     let server_id = r.body["id"].as_str().unwrap().to_string();
     t.enable(&owner).await;
@@ -403,7 +410,10 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
     t.org_setting(&org, "ai.chat_retention_days", json!(7), &owner).await;
     assert_eq!(service::chat_retention_days(&t.state, &org).await.unwrap(), 7);
     t.org_setting(&org, "ai.org_enabled", json!(false), &owner).await;
-    assert_eq!(t.get(&status, &viewer).await.body, json!({ "enabled": false, "usable": false }));
+    assert_eq!(
+        t.get(&status, &viewer).await.body,
+        json!({ "enabled": false, "usable": false, "orgProvidersAllowed": true })
+    );
     let e = service::complete(&t.state, &caller, &hello(), &CancellationToken::new()).await.unwrap_err();
     assert_eq!(e.reason.unwrap().code, "ai.org_disabled");
     t.org_setting(&org, "ai.org_enabled", json!(true), &owner).await;
@@ -440,7 +450,10 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
         }
     }
     let r = t.get(&status, &viewer).await;
-    assert_eq!(r.body, json!({ "enabled": true, "usable": false, "reason": "ai.no_provider" }));
+    assert_eq!(
+        r.body,
+        json!({ "enabled": true, "usable": false, "orgProvidersAllowed": true, "reason": "ai.no_provider" })
+    );
     let e =
         service::complete(&t.state, &t.caller(&org, &viewer), &hello(), &CancellationToken::new()).await.unwrap_err();
     assert_eq!((e.code, e.reason.unwrap().code.as_str()), ("ai_unavailable", "ai.no_provider"));

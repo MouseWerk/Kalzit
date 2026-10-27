@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
@@ -13,17 +13,51 @@ import "./ai-calls.css";
 export const SLOW_AFTER_MS = 2000;
 
 /**
- * The newest finished sentence of a text, for the screen reader: the answer is announced one
- * sentence at a time as it streams, never per token.
+ * What of an answer is ready to be read out after the first `announced` characters: every
+ * sentence finished since then (several, when they arrived together), or, once the answer is
+ * whole, all the rest, also a last sentence without end punctuation. `upTo` is where the next
+ * announcement starts. The screen reader hears the answer sentence by sentence, never per token.
  */
-export function lastSentence(text: string): string {
-  const ends = [...text.matchAll(/[.!?:](?=\s|$)/g)].map((m) => (m.index ?? 0) + 1);
-  const end = ends.at(-1);
-  if (end === undefined) {
-    return "";
+export function nextAnnouncement(
+  text: string,
+  announced: number,
+  whole: boolean,
+): { say: string; upTo: number } {
+  if (whole) {
+    return { say: text.slice(announced).trim(), upTo: text.length };
   }
-  const start = ends.at(-2) ?? 0;
-  return text.slice(start, end).trim();
+  let end = announced;
+  for (const match of text.slice(announced).matchAll(/[.!?:](?=\s)/g)) {
+    end = announced + (match.index ?? 0) + 1;
+  }
+  return { say: text.slice(announced, end).trim(), upTo: end };
+}
+
+/**
+ * The text of the polite live region of an answer: each batch of finished sentences in turn,
+ * the rest when the answer is whole, or, for code, only that the draft is ready.
+ */
+function useAnnouncement(text: string, phase: string, code: boolean, ready: string): string {
+  const [said, setSaid] = useState("");
+  const announced = useRef(0);
+  useEffect(() => {
+    if (phase === "waiting" || phase === "idle") {
+      announced.current = 0;
+      setSaid("");
+      return;
+    }
+    if (code) {
+      setSaid(phase === "done" ? ready : "");
+      return;
+    }
+    const whole = phase === "done" || phase === "stopped";
+    const { say, upTo } = nextAnnouncement(text, announced.current, whole);
+    announced.current = upTo;
+    if (say !== "") {
+      setSaid(say);
+    }
+  }, [text, phase, code, ready]);
+  return said;
 }
 
 /** Text in paragraphs, with fenced code blocks as code. Never HTML: the answer stays text. */
@@ -94,6 +128,7 @@ export function AiAnswer({
   const [slow, setSlow] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const running = state.phase === "waiting" || state.phase === "streaming";
+  const said = useAnnouncement(state.text, state.phase, code, t("ai.call.draftReady"));
 
   useEffect(() => {
     setSlow(false);
@@ -202,87 +237,83 @@ export function AiAnswer({
   }
 
   return (
-    <section
-      className="ai-answer"
-      aria-labelledby={titleId}
-      aria-busy={running}
-      onKeyDown={onKeyDown}
-    >
-      <header className="ai-answer__head">
-        <Icon name="sparkle" className="ai-answer__mark" />
-        <h3 id={titleId} className="ai-answer__title">
-          {title}
-        </h3>
-        {who === null ? null : <span className="ai-answer__who">{who}</span>}
-        <span className="ai-answer__state">
-          {running
-            ? t("ai.call.writing")
-            : state.phase === "stopped"
-              ? t("ai.call.stopped")
-              : seconds === undefined
-                ? null
-                : seconds}
-        </span>
-      </header>
-      <div className="ai-answer__body">
-        {state.phase === "waiting" ? (
-          <p className="ai-answer__waiting">
-            {t("ai.call.waiting")}
-            {slow ? <span className="ai-answer__hint"> {t("ai.call.slow")}</span> : null}
-          </p>
-        ) : (
-          (body ?? <AnswerText text={state.text} />)
-        )}
-        {footnote === undefined ? null : <p className="ai-answer__footnote">{footnote}</p>}
-      </div>
-      {/* Read out per finished sentence, not per token; code only once it is whole. */}
+    <>
+      <section
+        className="ai-answer"
+        aria-labelledby={titleId}
+        aria-busy={running}
+        onKeyDown={onKeyDown}
+      >
+        <header className="ai-answer__head">
+          <Icon name="sparkle" className="ai-answer__mark" />
+          <h3 id={titleId} className="ai-answer__title">
+            {title}
+          </h3>
+          {who === null ? null : <span className="ai-answer__who">{who}</span>}
+          <span className="ai-answer__state">
+            {running
+              ? t("ai.call.writing")
+              : state.phase === "stopped"
+                ? t("ai.call.stopped")
+                : seconds === undefined
+                  ? null
+                  : seconds}
+          </span>
+        </header>
+        <div className="ai-answer__body">
+          {state.phase === "waiting" ? (
+            <p className="ai-answer__waiting">
+              {t("ai.call.waiting")}
+              {slow ? <span className="ai-answer__hint"> {t("ai.call.slow")}</span> : null}
+            </p>
+          ) : (
+            (body ?? <AnswerText text={state.text} />)
+          )}
+          {footnote === undefined ? null : <p className="ai-answer__footnote">{footnote}</p>}
+        </div>
+        <footer className="ai-answer__actions">
+          {running ? (
+            <button
+              type="button"
+              className="button button--secondary button--small"
+              onClick={call.stop}
+              aria-keyshortcuts="Escape"
+            >
+              {t("ai.call.stop")}
+            </button>
+          ) : (
+            <>
+              {actions}
+              {code || state.text === "" ? null : (
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onClick={() => void copy()}
+                >
+                  <Icon name="copy" />
+                  {t("ai.call.copy")}
+                </button>
+              )}
+              {onClose === undefined ? null : (
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onClick={onClose}
+                >
+                  {t("ai.call.close")}
+                </button>
+              )}
+            </>
+          )}
+          <span className="visually-hidden" role="status">
+            {copied}
+          </span>
+        </footer>
+      </section>
+      {/* Outside the busy card, so it is read while the answer is still being written. */}
       <p className="visually-hidden" aria-live="polite">
-        {code
-          ? state.phase === "done"
-            ? t("ai.call.draftReady")
-            : ""
-          : running || state.phase === "done"
-            ? lastSentence(state.text)
-            : ""}
+        {said}
       </p>
-      <footer className="ai-answer__actions">
-        {running ? (
-          <button
-            type="button"
-            className="button button--secondary button--small"
-            onClick={call.stop}
-            aria-keyshortcuts="Escape"
-          >
-            {t("ai.call.stop")}
-          </button>
-        ) : (
-          <>
-            {actions}
-            {code || state.text === "" ? null : (
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onClick={() => void copy()}
-              >
-                <Icon name="copy" />
-                {t("ai.call.copy")}
-              </button>
-            )}
-            {onClose === undefined ? null : (
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onClick={onClose}
-              >
-                {t("ai.call.close")}
-              </button>
-            )}
-          </>
-        )}
-        <span className="visually-hidden" role="status">
-          {copied}
-        </span>
-      </footer>
-    </section>
+    </>
   );
 }
