@@ -116,9 +116,7 @@ pub fn unpack(archive: &Path, into: &Path) -> Result<Unpacked, HostError> {
         };
         let is_dir = entry.is_dir();
         let path = if is_dir { name.trim_end_matches('/').to_string() } else { name.clone() };
-        // Unix file type bits: only plain files (or none, from Windows tools) and directories.
-        let file_type = entry.unix_mode().map(|m| m & 0o170_000).unwrap_or(0);
-        let special = entry.is_symlink() || !matches!(file_type, 0 | 0o100_000 | 0o040_000);
+        let special = entry.is_symlink() || is_special_mode(entry.unix_mode());
         if !manifest::is_package_path(&path) {
             issues.push(format!("{name}: not a valid package path"));
         } else if special {
@@ -160,6 +158,13 @@ pub fn unpack(archive: &Path, into: &Path) -> Result<Unpacked, HostError> {
         out.flush()?;
     }
     read_unpacked(into)
+}
+
+/// Whether an archive entry's Unix mode names anything but a plain file or a directory (a link,
+/// a device, a FIFO, a socket). Entries without a mode (Windows tools) count as plain.
+fn is_special_mode(mode: Option<u32>) -> bool {
+    let file_type = mode.map_or(0, |m| m & 0o170_000);
+    !matches!(file_type, 0 | 0o100_000 | 0o040_000)
 }
 
 /// Reads and checks an unpacked package in `dir`: the manifest, the signature file and every
@@ -536,18 +541,14 @@ mod tests {
         assert!(reason(result).1.contains("appears twice"));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn device_entries_are_refused() {
-        let manifest = manifest_for(&[(binary_path(), BINARY)]);
-        let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        out.start_file(MANIFEST_FILE, SimpleFileOptions::default()).unwrap();
-        out.write_all(manifest.as_bytes()).unwrap();
-        // A FIFO, as its Unix mode bits say.
-        out.start_file("bin/fifo", SimpleFileOptions::default().unix_permissions(0o010_644)).unwrap();
-        let bytes = out.finish().unwrap().into_inner();
-        let (_root, result) = unpack_bytes(&bytes);
-        assert!(reason(result).1.contains("links and special files"));
+    fn device_and_fifo_modes_are_special() {
+        for mode in [0o010_644, 0o020_644, 0o060_644, 0o140_755, 0o120_777] {
+            assert!(is_special_mode(Some(mode)), "{mode:o}");
+        }
+        for mode in [None, Some(0o100_644), Some(0o040_755), Some(0o644)] {
+            assert!(!is_special_mode(mode), "{mode:?}");
+        }
     }
 
     /// Links in an unpacked directory are reported, whatever put them there.
