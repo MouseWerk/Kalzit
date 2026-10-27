@@ -24,6 +24,7 @@ const SERVER_ERROR_CODE_SET: Record<ServerErrorCode, true> = {
   invalid_credentials: true,
   setup_done: true,
   invalid_setup_token: true,
+  setup_token_expired: true,
   datasource_error: true,
   datasource_target_blocked: true,
   query_timeout: true,
@@ -57,7 +58,8 @@ export class ApiError extends Error {
   readonly body: unknown;
   /**
    * How long the server asked to wait before trying again (`Retry-After`, in milliseconds), sent
-   * with `busy`: the request changed nothing and may be repeated.
+   * with `busy` (the request changed nothing and may be repeated) and with `rate_limited` (the
+   * time until another attempt is counted).
    */
   readonly retryAfterMs: number | undefined;
 
@@ -143,13 +145,20 @@ export function errorFromResponse(
     const code = error.code;
     const message = typeof error.message === "string" ? error.message : "";
     const field = typeof error.field === "string" ? error.field : undefined;
+    // A rate limit names the wait in its body too, for clients behind a proxy that drops the
+    // header.
+    const waitSecs = error.retryAfterSecs;
+    const bodyWaitMs =
+      typeof waitSecs === "number" && Number.isFinite(waitSecs) && waitSecs > 0
+        ? Math.ceil(waitSecs) * 1000
+        : undefined;
     return new ApiError(
       isServerErrorCode(code) ? code : codeForStatus(status),
       status,
       message,
       field,
       body,
-      retryAfterMs,
+      retryAfterMs ?? bodyWaitMs,
     );
   }
   return new ApiError(

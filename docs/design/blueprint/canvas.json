@@ -105,6 +105,14 @@
       "w": 1440,
       "x": 6080,
       "y": 0
+    },
+    "Access.dc.html": {
+      "expand": "fill",
+      "h": 12200,
+      "title": "Sign in and first-run setup",
+      "w": 1440,
+      "x": 4560,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -138,7 +146,8 @@
     "DataSourceNew.dc.html",
     "DataChat.dc.html",
     "SavedAnalyses.dc.html",
-    "Graph.dc.html"
+    "Graph.dc.html",
+    "Access.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

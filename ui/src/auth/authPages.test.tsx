@@ -93,7 +93,7 @@ describe("sign-in page", () => {
   it("confirms a sign-out until the next attempt", async () => {
     installFakeServer();
     const { user } = renderApp("/login?signedOut=true");
-    const notice = await screen.findByText("You signed out.");
+    const notice = await screen.findByText("You have signed out.");
     // Inside a status region that was there before the text, so it is announced.
     expect(notice.closest('[role="status"]')).toBeTruthy();
 
@@ -102,41 +102,14 @@ describe("sign-in page", () => {
     await user.click(screen.getByLabelText("Password"));
     await user.paste("wrong password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    await screen.findByText("Email address or password is incorrect.");
-    expect(screen.queryByText("You signed out.")).toBeNull();
+    await screen.findByText("Email address or password is not correct.");
+    expect(screen.queryByText("You have signed out.")).toBeNull();
   });
 
   it("shows no sign-out confirmation on a plain visit", async () => {
     installFakeServer();
     renderApp("/login");
     await screen.findByLabelText("Password");
-    expect(screen.queryByText("You signed out.")).toBeNull();
-  });
-});
-
-describe("setup page", () => {
-  it("groups the fields in three named steps", async () => {
-    installFakeServer({ setupNeeded: true });
-    renderApp("/setup");
-    expect(await screen.findByRole("group", { name: "Confirm this server" })).toBeTruthy();
-    expect(screen.getByRole("group", { name: "Name the organization" })).toBeTruthy();
-    expect(screen.getByRole("group", { name: "Create the owner account" })).toBeTruthy();
-  });
-
-  it("rates the new password while it is typed, next to the rule", async () => {
-    installFakeServer({ setupNeeded: true });
-    const { user } = renderApp("/setup");
-    const password = await screen.findByLabelText("Password");
-    expect(password.getAttribute("autocomplete")).toBe("new-password");
-    expect(describedText(password)).toEqual(["At least 12 characters."]);
-
-    await user.type(password, "abcde");
-    expect(describedText(password)).toContain("Too short: 5 of 12 characters.");
-    await user.type(password, "fghijkl");
-    expect(describedText(password)).toContain(
-      "Good length. A mix of upper and lower case, digits and symbols makes it stronger.",
-    );
-    await user.type(password, "MNO-9");
-    expect(describedText(password)).toContain("Good length and a mix of characters.");
+    expect(screen.queryByText("You have signed out.")).toBeNull();
   });
 });

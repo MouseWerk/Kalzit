@@ -1,6 +1,7 @@
 // One catalog file per area and language, so work on different areas does not touch the same
 // file. Keys are prefixed with their area (`admin.users.title`); the parity and guard tests run
 // over the combined catalogs.
+import deAccess from "./de/access.json";
 import deAdmin from "./de/admin.json";
 import deAnalyses from "./de/analyses.json";
 import deAnalysis from "./de/analysis.json";
@@ -20,6 +21,7 @@ import dePlaylists from "./de/playlists.json";
 import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
 import deToolbar from "./de/toolbar.json";
+import enAccess from "./en/access.json";
 import enAdmin from "./en/admin.json";
 import enAnalyses from "./en/analyses.json";
 import enAnalysis from "./en/analysis.json";
@@ -68,6 +70,7 @@ export const en = {
   ...enDashboardFeatures,
   ...enToolbar,
   ...enLive,
+  ...enAccess,
 };
 export const de = {
   ...deCore,
@@ -85,4 +88,5 @@ export const de = {
   ...deDashboardFeatures,
   ...deToolbar,
   ...deLive,
+  ...deAccess,
 };

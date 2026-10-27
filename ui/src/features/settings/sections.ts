@@ -127,6 +127,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "security.hsts_max_age_secs",
       "security.login_max_failures",
       "security.login_window_secs",
+      "security.setup_max_failures",
+      "security.setup_window_secs",
     ],
     visible: serverAdmin,
   },

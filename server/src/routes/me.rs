@@ -79,13 +79,10 @@ async fn change_password(
     // no more guesses than sign-ins alone.
     let limit_key = format!("password:{}", user.id);
     let email_key = format!("email:{}", user.email);
-    if !state.login_limiter.try_acquire(&[&limit_key, &email_key], now) {
-        return Err(ApiError::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "rate_limited",
-            "too many attempts, wait a few minutes",
-        ));
-    }
+    state
+        .login_limiter
+        .try_acquire(&[&limit_key, &email_key], now)
+        .map_err(|wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait))?;
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
     if !password::verify(req.current, stored.clone()).await {

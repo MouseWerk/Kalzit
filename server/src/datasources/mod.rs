@@ -26,6 +26,7 @@ pub mod mysql;
 pub mod neo4j;
 pub mod postgres;
 pub mod prometheus;
+pub mod sample;
 pub mod sql;
 pub mod sqlite;
 pub mod targets;
@@ -1315,6 +1316,7 @@ pub fn error_body(code: &str, detail: Detail) -> ErrorBody {
         reason: Some(detail.reason.to_string()),
         params: (!detail.params.is_empty()).then_some(detail.params),
         request_id: None,
+        retry_after_secs: None,
     }
 }
 
@@ -1332,6 +1334,7 @@ pub fn api_error_body(e: ApiError) -> ErrorBody {
         reason,
         params,
         request_id: e.request_id.map(String::from),
+        retry_after_secs: e.retry_after_secs.map(|s| u64::from(s.get())),
     }
 }
 

@@ -1177,6 +1177,8 @@ async fn guessing_the_current_password_is_rate_limited() {
     let r =
         t.post("/api/me/password", json!({ "current": PASSWORD, "new": "Ein neues langes Passwort" }), &owner).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    let wait = r.body["error"]["retryAfterSecs"].as_u64().expect("retryAfterSecs");
+    assert_eq!(r.headers.get(header::RETRY_AFTER).unwrap().to_str().unwrap(), wait.to_string());
     t.finish().await;
 }
 

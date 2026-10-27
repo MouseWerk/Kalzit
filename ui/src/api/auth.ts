@@ -21,8 +21,12 @@ export interface Me {
   orgs: OrgMembership[];
 }
 
+/** Where the setup code can be found on this server; sent only while setup is needed. */
+export type SetupCodeHint = "file" | "docker" | "fixed";
+
 export interface SetupStatus {
   needed: boolean;
+  codeHint?: SetupCodeHint | undefined;
 }
 
 export interface SetupInput {
@@ -31,6 +35,10 @@ export interface SetupInput {
   name: string;
   email: string;
   password: string;
+  /** Defaults for everyone: the server's language and theme, the organization's time zone. */
+  language?: string;
+  theme?: string;
+  timeZone?: string;
 }
 
 export interface LoginInput {
@@ -60,12 +68,24 @@ export function isMe(value: unknown): value is Me {
   );
 }
 
+const CODE_HINTS: readonly string[] = ["file", "docker", "fixed"];
+
 function isSetupStatus(value: unknown): value is SetupStatus {
-  return isRecord(value) && typeof value.needed === "boolean";
+  return (
+    isRecord(value) &&
+    typeof value.needed === "boolean" &&
+    (value.codeHint === undefined ||
+      (typeof value.codeHint === "string" && CODE_HINTS.includes(value.codeHint)))
+  );
 }
 
 export async function fetchSetupStatus(): Promise<SetupStatus> {
   return expectShape(await request("GET", "/api/setup"), isSetupStatus, "setup status");
+}
+
+/** Checks the setup code on its own; resolves when it is the current one. */
+export async function checkSetupCode(token: string): Promise<void> {
+  await request("POST", "/api/setup/check", { token });
 }
 
 export async function completeSetup(input: SetupInput): Promise<Me> {

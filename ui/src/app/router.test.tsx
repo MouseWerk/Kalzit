@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { request } from "../api/client";
 import { expectConsoleOutput } from "../test/console";
-import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
+import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { parseLoginSearch } from "./router";
 
@@ -18,22 +18,32 @@ describe("route guards", () => {
   it("sends every page to setup while setup is needed", async () => {
     installFakeServer({ setupNeeded: true });
     const { location } = renderApp("/dashboards");
-    expect(await screen.findByRole("heading", { name: "Set up Kalzit" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Confirm this server" })).toBeTruthy();
     expect(location().pathname).toBe("/setup");
   });
 
   it("sends the login page to setup while setup is needed", async () => {
     installFakeServer({ setupNeeded: true });
     const { location } = renderApp("/login");
-    await screen.findByRole("heading", { name: "Set up Kalzit" });
+    await screen.findByRole("heading", { name: "Confirm this server" });
     expect(location().pathname).toBe("/setup");
   });
 
-  it("closes the setup page once setup is done", async () => {
+  it("closes the setup page once setup is done: it only says so, with the way to sign in", async () => {
     installFakeServer({ setupNeeded: false });
+    const { user, location } = renderApp("/setup");
+    await screen.findByRole("heading", { name: "Kalzit is already set up" });
+    expect(location().pathname).toBe("/setup");
+    expect(screen.queryByRole("navigation", { name: "Setup steps" })).toBeNull();
+    expect(screen.queryByLabelText("Setup code")).toBeNull();
+    await user.click(screen.getByRole("link", { name: "Go to sign-in" }));
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+  });
+
+  it("sends someone signed in from the closed setup page to Start", async () => {
+    installFakeServer({ setupNeeded: false, signedIn: true });
     const { location } = renderApp("/setup");
-    await screen.findByRole("heading", { name: "Sign in" });
-    expect(location().pathname).toBe("/login");
+    await waitFor(() => expect(location().pathname).toBe("/"));
   });
 
   it("sends a signed-out user to sign in and back to the requested page afterwards", async () => {
@@ -124,7 +134,10 @@ describe("route guards", () => {
       .catch(() => undefined);
 
     await waitFor(() => expect(location().pathname).toBe("/login"));
-    expect(location().search).toEqual({ redirect: "/dashboards" });
+    expect(location().search).toEqual({ redirect: "/dashboards", expired: true });
+    // The sign-in page says why, in a status region.
+    const why = await screen.findByText("Your session has expired.");
+    expect(why.closest('[role="status"]')).toBeTruthy();
   });
 
   it("notices a session that ended on the server at the next navigation", async () => {
@@ -178,7 +191,7 @@ describe("route guards", () => {
   it("asks only for the setup status while setup is needed", async () => {
     const server = installFakeServer({ setupNeeded: true });
     renderApp("/dashboards");
-    await screen.findByRole("heading", { name: "Set up Kalzit" });
+    await screen.findByRole("heading", { name: "Confirm this server" });
     expect(server.calls.map((call) => call.path)).not.toContain("/api/me");
   });
 
@@ -203,159 +216,11 @@ describe("parseLoginSearch", () => {
 
   it("overrides absolute, protocol-relative and non-string targets with undefined", () => {
     // The key must be present: the router merges this result over the raw search.
-    const dropped = { redirect: undefined, signedOut: undefined };
+    const dropped = { redirect: undefined, signedOut: undefined, expired: undefined };
     expect(parseLoginSearch({ redirect: "https://evil.example/" })).toStrictEqual(dropped);
     expect(parseLoginSearch({ redirect: "//evil.example/" })).toStrictEqual(dropped);
     expect(parseLoginSearch({ redirect: 42 })).toStrictEqual(dropped);
     expect(parseLoginSearch({})).toStrictEqual(dropped);
-  });
-});
-
-describe("setup", () => {
-  it("creates the organization and account, then opens the home page", async () => {
-    const server = installFakeServer({ setupNeeded: true });
-    const { user, location } = renderApp("/setup");
-
-    await user.click(await screen.findByLabelText("Setup code"));
-    await user.paste(`  ${TEST_SETUP_TOKEN}  `);
-    await user.click(screen.getByLabelText("Organization name"));
-    await user.paste("Müller & Söhne");
-    await user.click(screen.getByLabelText("Your name"));
-    await user.paste("Zoë Ångström");
-    await user.click(screen.getByLabelText("Email address"));
-    await user.paste("zoe@example.com");
-    await user.click(screen.getByLabelText("Password"));
-    await user.paste("twelve chars");
-    await user.click(screen.getByRole("button", { name: "Set up" }));
-
-    expect(await screen.findByRole("heading", { name: "Welcome, Zoë Ångström" })).toBeTruthy();
-    expect(location().pathname).toBe("/");
-    expect(server.calls.find((call) => call.method === "POST")?.body).toEqual({
-      token: TEST_SETUP_TOKEN,
-      orgName: "Müller & Söhne",
-      name: "Zoë Ångström",
-      email: "zoe@example.com",
-      password: "twelve chars",
-    });
-  });
-
-  it("shows the password rule before the first attempt", async () => {
-    installFakeServer({ setupNeeded: true });
-    renderApp("/setup");
-    const password = await screen.findByLabelText("Password");
-    expect(password.getAttribute("aria-describedby")).toBeTruthy();
-    expect(screen.getByText("At least 12 characters.")).toBeTruthy();
-  });
-
-  it("validates locally, focuses the first problem and does not call the server", async () => {
-    const server = installFakeServer({ setupNeeded: true });
-    const { user } = renderApp("/setup");
-    await user.click(await screen.findByRole("button", { name: "Set up" }));
-
-    const token = screen.getByLabelText("Setup code");
-    expect(document.activeElement).toBe(token);
-    expect(token.getAttribute("aria-invalid")).toBe("true");
-    const describedBy = token.getAttribute("aria-describedby") ?? "";
-    const messages = describedBy.split(" ").map((id) => document.getElementById(id)?.textContent);
-    expect(messages).toContain("Enter the setup code.");
-    expect(screen.getByText("Enter a name for the organization.")).toBeTruthy();
-    expect(screen.getByText("Enter your name.")).toBeTruthy();
-    expect(screen.getByText("Enter your email address.")).toBeTruthy();
-    expect(screen.getByText("Enter your password.")).toBeTruthy();
-    expect(server.calls.filter((call) => call.method === "POST")).toHaveLength(0);
-  });
-
-  it("clears a field's error as soon as it is edited", async () => {
-    installFakeServer({ setupNeeded: true });
-    const { user } = renderApp("/setup");
-    await user.click(await screen.findByRole("button", { name: "Set up" }));
-    await user.type(screen.getByLabelText("Setup code"), "x");
-    expect(screen.queryByText("Enter the setup code.")).toBeNull();
-    expect(screen.getByText("Enter your name.")).toBeTruthy();
-  });
-
-  it("puts a wrong setup code on its field", async () => {
-    installFakeServer({ setupNeeded: true });
-    const { user } = renderApp("/setup");
-    await user.click(await screen.findByLabelText("Setup code"));
-    await user.paste("wrong");
-    await user.click(screen.getByLabelText("Organization name"));
-    await user.paste("Org");
-    await user.click(screen.getByLabelText("Your name"));
-    await user.paste("Ada");
-    await user.click(screen.getByLabelText("Email address"));
-    await user.paste("ada@example.com");
-    await user.click(screen.getByLabelText("Password"));
-    await user.paste("long enough password");
-    await user.click(screen.getByRole("button", { name: "Set up" }));
-
-    expect(
-      await screen.findByText(
-        "The setup code is not correct. Copy it again from “setup-token.txt”.",
-      ),
-    ).toBeTruthy();
-    expect(document.activeElement).toBe(screen.getByLabelText("Setup code"));
-  });
-
-  it("marks the setup field a server validation error names", async () => {
-    const server = installFakeServer({ setupNeeded: true });
-    server.failNext("/api/setup", 400, "validation", "POST", "name");
-    const { user } = renderApp("/setup");
-    await user.click(await screen.findByLabelText("Setup code"));
-    await user.paste(TEST_SETUP_TOKEN);
-    await user.click(screen.getByLabelText("Organization name"));
-    await user.paste("Org");
-    await user.click(screen.getByLabelText("Your name"));
-    await user.paste("Ada");
-    await user.click(screen.getByLabelText("Email address"));
-    await user.paste("ada@example.com");
-    await user.click(screen.getByLabelText("Password"));
-    await user.paste("long enough password");
-    await user.click(screen.getByRole("button", { name: "Set up" }));
-    const name = screen.getByLabelText("Your name");
-    await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
-    expect(document.activeElement).toBe(name);
-  });
-
-  it("explains a cross-origin rejection of the setup request", async () => {
-    const server = installFakeServer({ setupNeeded: true });
-    server.failNext("/api/setup", 403, "cross_origin", "POST");
-    const { user } = renderApp("/setup");
-    await user.click(await screen.findByLabelText("Setup code"));
-    await user.paste(TEST_SETUP_TOKEN);
-    await user.click(screen.getByLabelText("Organization name"));
-    await user.paste("Org");
-    await user.click(screen.getByLabelText("Your name"));
-    await user.paste("Ada");
-    await user.click(screen.getByLabelText("Email address"));
-    await user.paste("ada@example.com");
-    await user.click(screen.getByLabelText("Password"));
-    await user.paste("long enough password");
-    await user.click(screen.getByRole("button", { name: "Set up" }));
-    const message = await screen.findByText(/set server\.public_url or security\.trusted_proxies/);
-    expect(message.closest('[role="alert"]')).toBeTruthy();
-  });
-
-  it("offers the way to sign in when someone else finished setup first", async () => {
-    const server = installFakeServer({ setupNeeded: true });
-    const { user } = renderApp("/setup");
-    await user.click(await screen.findByLabelText("Setup code"));
-    await user.paste(TEST_SETUP_TOKEN);
-    await user.click(screen.getByLabelText("Organization name"));
-    await user.paste("Org");
-    await user.click(screen.getByLabelText("Your name"));
-    await user.paste("Ada");
-    await user.click(screen.getByLabelText("Email address"));
-    await user.paste("ada@example.com");
-    await user.click(screen.getByLabelText("Password"));
-    await user.paste("long enough password");
-    server.state.setupNeeded = false;
-    await user.click(screen.getByRole("button", { name: "Set up" }));
-
-    const message = await screen.findByText("Kalzit is already set up. Sign in with your account.");
-    expect(message.closest('[role="alert"]')).toBeTruthy();
-    await user.click(screen.getByRole("link", { name: "Go to sign in" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
   });
 });
 
@@ -364,7 +229,7 @@ describe("login", () => {
     installFakeServer();
     const { user } = renderApp("/login");
     await signIn(user, "wrong password");
-    const alert = await screen.findByText("Email address or password is incorrect.");
+    const alert = await screen.findByText("Email address or password is not correct.");
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(document.activeElement).toBe(screen.getByLabelText("Password"));
   });
@@ -374,9 +239,7 @@ describe("login", () => {
     server.failNext("/api/auth/login", 429, "rate_limited");
     const { user } = renderApp("/login");
     await signIn(user);
-    expect(
-      await screen.findByText("Too many failed sign-ins. Wait a few minutes, then try again."),
-    ).toBeTruthy();
+    expect(await screen.findByText("Too many failed sign-ins.")).toBeTruthy();
     expect(screen.queryByText(/server message/)).toBeNull();
   });
 

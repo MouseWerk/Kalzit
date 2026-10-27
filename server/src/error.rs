@@ -23,6 +23,7 @@ pub const ERROR_CODES: &[&str] = &[
     "invalid_credentials",
     "setup_done",
     "invalid_setup_token",
+    "setup_token_expired",
     "datasource_error",
     "datasource_target_blocked",
     "query_timeout",
@@ -47,6 +48,9 @@ pub struct ApiError {
     /// For `internal`: the id of the request that failed. It is in the server log next to the
     /// cause, and the UI shows it, so the line can be found.
     pub request_id: Option<Box<str>>,
+    /// For `rate_limited`: the seconds until another attempt can succeed, sent as `Retry-After`
+    /// and next to `code` as `retryAfterSecs`. Never zero; 32 bits keep `ApiError` small.
+    pub retry_after_secs: Option<std::num::NonZeroU32>,
 }
 
 #[derive(Debug, Default)]
@@ -83,13 +87,30 @@ pub async fn assign_request_id(req: axum::extract::Request, next: axum::middlewa
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         debug_assert!(ERROR_CODES.contains(&code), "error code {code} is missing from ERROR_CODES");
-        Self { status, code, message: message.into(), field: None, current: None, reason: None, request_id: None }
+        Self {
+            status,
+            code,
+            message: message.into(),
+            field: None,
+            current: None,
+            reason: None,
+            request_id: None,
+            retry_after_secs: None,
+        }
     }
 
     /// The caller edited an older version; `current` is the stored resource to merge with.
     pub fn version_conflict(current: serde_json::Value) -> Self {
         let mut e = Self::new(StatusCode::CONFLICT, "version_conflict", "a newer version was saved in the meantime");
         e.current = Some(current);
+        e
+    }
+
+    /// Too many attempts; `wait` is what the rate limiter answered (`RateLimiter::try_acquire`).
+    pub fn rate_limited(message: impl Into<String>, wait: std::time::Duration) -> Self {
+        let mut e = Self::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited", message);
+        let secs = u32::try_from(wait.as_secs()).unwrap_or(u32::MAX);
+        e.retry_after_secs = Some(std::num::NonZeroU32::new(secs).unwrap_or(std::num::NonZeroU32::MIN));
         e
     }
 
@@ -235,6 +256,9 @@ impl IntoResponse for ApiError {
         if let Some(id) = self.request_id {
             error["requestId"] = json!(id);
         }
+        if let Some(secs) = self.retry_after_secs {
+            error["retryAfterSecs"] = json!(secs.get());
+        }
         if let Some(reason) = self.reason {
             error["reason"] = json!(reason.code);
             if !reason.params.is_empty() {
@@ -249,6 +273,9 @@ impl IntoResponse for ApiError {
         if self.code == "busy" {
             // Locks are held for milliseconds; a second is plenty before trying again.
             res.headers_mut().insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("1"));
+        }
+        if let Some(secs) = self.retry_after_secs {
+            res.headers_mut().insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from(secs.get()));
         }
         res
     }
@@ -332,6 +359,21 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["error"]["requestId"], header.as_str());
         assert_eq!(header.len(), 12);
+    }
+
+    #[tokio::test]
+    async fn rate_limited_answers_carry_the_wait() {
+        let res = ApiError::rate_limited("too many", std::time::Duration::from_secs(42)).into_response();
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(res.headers().get(axum::http::header::RETRY_AFTER).unwrap(), "42");
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            (body["error"]["code"].as_str(), body["error"]["retryAfterSecs"].as_u64()),
+            (Some("rate_limited"), Some(42))
+        );
+        // Never zero: "try again in 0 seconds" would invite a busy loop.
+        assert_eq!(ApiError::rate_limited("x", std::time::Duration::ZERO).retry_after_secs.map(|s| s.get()), Some(1));
     }
 
     #[test]

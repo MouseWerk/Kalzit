@@ -179,7 +179,6 @@
     --brand-elasticsearch: #005571;
     --brand-opensearch: #005eb8;
     --brand-neo4j: #4581c3;
-    --auth-card-width: 26rem;
     --control-height: 2rem;
     --icon-size: 1rem;
     --avatar-size: 1.5rem;
@@ -463,20 +462,40 @@
 }
 
 /*
- * The pages before the app (sign-in, setup): the wider column of the setup form, the drawing in
- * the brand panel and the step numbers of the setup groups.
+ * The pages before the app (sign-in, setup, help): the column widths, the step marks and the calm
+ * backdrop, a fine grid and the edge of a calcite crystal under a soft light that drifts slowly.
+ * The light and the lit grid are translucent, so they sit on any surface of the theme.
  */
 @layer tokens {
   :root {
-    --auth-card-width-wide: 32rem;
-    --size-auth-art: 28rem;
+    --size-access-column: 25rem;
+    --size-access-column-wide: 35rem;
+    --size-access-column-done: 47.5rem;
+    --size-access-top: 3.75rem;
     --size-auth-step: 1.25rem;
-    /* Strokes of the drawing: grid and dim edges, thin marks, the strong path, the main series. */
-    --stroke-hairline: 1;
-    --stroke-thin: 1.25;
-    --stroke-path: 1.5;
-    --stroke-series: 1.75;
-    --dash-compare: 4 4;
+    --size-access-tile: 1.875rem;
+    --size-access-preview: 2.75rem;
+    --size-access-cell: 4.5rem;
+    --size-access-crystal: 38rem;
+    --size-access-lamp: 45rem;
+    --size-access-drift: 20rem;
+    --size-access-meter: 1.375rem;
+    --size-access-os: 3.25rem;
+    --duration-drift: 30s;
+    --access-grid: light-dark(oklch(21% 0.006 286 / 0.07), oklch(100% 0 0 / 0.045));
+    --access-grid-lit: light-dark(oklch(21% 0.006 286 / 0.17), oklch(100% 0 0 / 0.15));
+    --access-lamp: light-dark(oklch(100% 0 0 / 0.8), oklch(100% 0 0 / 0.055));
+    /* The opaque end of a mask gradient: only its alpha counts. */
+    --mask-opaque: oklch(0% 0 0);
+    /* The small pictures of the four themes in the setup's theme choice. */
+    --preview-light-bg: oklch(95.8% 0.002 286);
+    --preview-light-raised: oklch(100% 0 0);
+    --preview-light-line: oklch(83% 0.006 286);
+    --preview-dark-bg: oklch(16.9% 0.003 286);
+    --preview-dark-raised: oklch(22.8% 0.006 286);
+    --preview-dark-line: oklch(40% 0.008 286);
+    --preview-contrast-bg: oklch(0% 0 0);
+    --preview-contrast-line: oklch(100% 0 0);
     --duration-spin: 0.8s;
   }
 }

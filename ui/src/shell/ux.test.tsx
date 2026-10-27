@@ -18,6 +18,16 @@ import { fuzzyScore } from "./fuzzy";
 import { SETUP_DISMISSED_KEY } from "./setupSteps";
 import { SIDEBAR_STORAGE_KEY } from "./sidebarState";
 
+/** Picks a language or theme from the top bar of the sign-in page. */
+async function chooseBeforeSignIn(
+  user: ReturnType<typeof renderApp>["user"],
+  menu: RegExp,
+  option: string,
+) {
+  await user.click(await screen.findByRole("button", { name: menu }));
+  await user.click(screen.getByRole("menuitemradio", { name: option }));
+}
+
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
 }
@@ -587,8 +597,8 @@ describe("language and theme chosen before signing in", () => {
     server.state.preferences.language = null;
     server.state.preferences.defaults.language = "en";
     const { user } = renderApp("/login");
-    await user.selectOptions(await screen.findByLabelText("Language"), "de");
-    await user.selectOptions(screen.getByLabelText("Darstellung"), "dark");
+    await chooseBeforeSignIn(user, /^Language:/, "Deutsch");
+    await chooseBeforeSignIn(user, /^Darstellung:/, "Dunkel");
     await user.click(screen.getByLabelText("E-Mail-Adresse"));
     await user.paste(TEST_USER.email);
     await user.click(screen.getByLabelText("Passwort"));
@@ -837,7 +847,7 @@ describe("sessions that end and accounts that follow", () => {
     // Bob chooses English on the sign-in page; he has no preferences, the default is German.
     server.state.user = BOB;
     server.state.preferences = noPreferences("de");
-    await user.selectOptions(screen.getByLabelText("Sprache"), "en");
+    await chooseBeforeSignIn(user, /^Sprache:/, "English");
     const before = server.calls.length;
     await signInHere(user, BOB.email, false);
     await waitFor(() => expect(server.state.preferences.language).toBe("en"));
@@ -855,7 +865,7 @@ describe("sessions that end and accounts that follow", () => {
     server.state.signedIn = false;
     server.state.preferences = noPreferences("en");
     const { user } = renderApp("/login");
-    await user.selectOptions(await screen.findByLabelText("Language"), "de");
+    await chooseBeforeSignIn(user, /^Language:/, "Deutsch");
     server.failNext("/api/me/preferences", 503, "busy", "PATCH");
     await signInHere(user, TEST_USER.email, true);
     await screen.findByRole("navigation", { name: "Hauptnavigation" });
