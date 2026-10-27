@@ -6,6 +6,7 @@ const NOUNS = {
   edge: { one: "graph.count.edge.one", other: "graph.count.edge.other" },
   component: { one: "graph.count.component.one", other: "graph.count.component.other" },
   community: { one: "graph.count.community.one", other: "graph.count.community.other" },
+  step: { one: "graph.count.step.one", other: "graph.count.step.other" },
 } as const satisfies Record<string, Record<"one" | "other", MessageKey>>;
 
 export type CountedNoun = keyof typeof NOUNS;

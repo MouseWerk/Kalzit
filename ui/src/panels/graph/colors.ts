@@ -19,9 +19,18 @@ export interface GraphPalette {
   edgeDimmed: string;
   text: string;
   background: string;
+  /** `--bg-active`: the quiet tint behind the label of a selected node. */
+  selection: string;
+  /** Five steps per scheme (`--ramp-*`), for colors by a number property; and dimmed. */
+  ramps: Record<RampName, string[]>;
+  dimmedRamps: Record<RampName, string[]>;
   font: string;
   boldWeight: string;
 }
+
+export const RAMPS = ["blues", "gyr", "grays"] as const;
+export type RampName = (typeof RAMPS)[number];
+export const RAMP_STEPS = 5;
 
 /** How far a dimmed color moves toward the background. */
 const DIM = 0.78;
@@ -76,6 +85,12 @@ export function readPalette(root: HTMLElement): GraphPalette {
   const neutral = rgb("neutral", [120, 120, 120]);
   const edge = rgb("edge", [170, 170, 170]);
   const style = getComputedStyle(root);
+  const ramp = (name: RampName) =>
+    Array.from({ length: RAMP_STEPS }, (_, i) => rgb(`${name}-${i + 1}`, [120, 120, 120]));
+  const ramps = Object.fromEntries(RAMPS.map((name) => [name, ramp(name)])) as Record<
+    RampName,
+    [number, number, number][]
+  >;
   return {
     series: series.map(hex),
     dimmed: series.map((c) => hex(mix(c, background, DIM))),
@@ -85,6 +100,14 @@ export function readPalette(root: HTMLElement): GraphPalette {
     edgeDimmed: hex(mix(edge, background, DIM)),
     text: hex(rgb("text", [0, 0, 0])),
     background: hex(background),
+    selection: hex(rgb("active", [230, 230, 230])),
+    ramps: Object.fromEntries(RAMPS.map((n) => [n, ramps[n].map(hex)])) as Record<
+      RampName,
+      string[]
+    >,
+    dimmedRamps: Object.fromEntries(
+      RAMPS.map((n) => [n, ramps[n].map((c) => hex(mix(c, background, DIM)))]),
+    ) as Record<RampName, string[]>,
     font: style.fontFamily || "sans-serif",
     boldWeight: style.getPropertyValue("--font-weight-semibold").trim() || "600",
   };

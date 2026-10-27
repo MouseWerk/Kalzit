@@ -51,6 +51,8 @@ export interface FakeDashboardFeaturesState {
   annotationQueryRequests: { queryId: string; body: Record<string, unknown> }[];
   /** The range of every page of the annotation list that was read. */
   annotationListRequests: { from: number; to: number }[];
+  /** A viewer's state of a panel, by `dashboardId/panelId` (one user in the tests). */
+  viewStates: Record<string, { pinned: string[]; selected: string[] }>;
 }
 
 function unknownField(body: Record<string, unknown>, allowed: string[]): string | undefined {
@@ -69,6 +71,7 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
     libraryPanels: [],
     annotationQueryRequests: [],
     annotationListRequests: [],
+    viewStates: {},
   };
 
   /** Restricted here or above, as fakeDashboards decides it. */
@@ -97,6 +100,36 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
       const problem = modelProblem(body.model);
       if (problem !== null) return validation("model", problem);
       return json(200, { model: { ...(body.model as object), schemaVersion: 2 } });
+    }
+
+    if (parts[0] === "dashboards" && parts[2] === "panels" && parts[4] === "view-state") {
+      const dashboard = visibleDashboard(decodeURIComponent(parts[1] ?? ""));
+      const panelId = decodeURIComponent(parts[3] ?? "");
+      if (
+        dashboard === undefined ||
+        !can("dashboards:read") ||
+        !latest(dashboard).model.panels.some((p) => p.id === panelId)
+      ) {
+        return method === "DELETE" ? new Response(null, { status: 204 }) : error(404, "not_found");
+      }
+      const key = `${dashboard.id}/${panelId}`;
+      if (method === "GET") {
+        return json(200, state.viewStates[key] ?? { pinned: [], selected: [] });
+      }
+      if (method === "PUT") {
+        const extra = unknownField(body, ["pinned", "selected"]);
+        if (extra !== undefined) return validation(extra);
+        const list = (value: unknown) =>
+          Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+        const kept = { pinned: list(body.pinned), selected: list(body.selected) };
+        if (kept.pinned.length === 0 && kept.selected.length === 0) delete state.viewStates[key];
+        else state.viewStates[key] = kept;
+        return json(200, kept);
+      }
+      if (method === "DELETE") {
+        delete state.viewStates[key];
+        return new Response(null, { status: 204 });
+      }
     }
 
     if (

@@ -23,13 +23,11 @@ const ORDERS_OF_CUSTOMER =
 
 /**
  * What Chromium's software WebGL (SwiftShader, as on the CI runners) reports while Sigma draws:
- * its picking pass draws into two color buffers with programs that write only the first
- * ("missing fragment shader outputs"), and reading the picking buffer back stalls the software
- * GPU. Both come from the renderer library, not from Kalzit's code, and concern the hidden
- * picking pass, not the visible drawing; everything else on the console still fails the test.
+ * reading the picking buffer back stalls the software GPU. A performance note of the driver, not
+ * an error; everything else on the console still fails the test. (The label programs' picking
+ * pass that Chromium refused, "missing fragment shader outputs", is dropped by labelPicking.ts.)
  */
 const SIGMA_WEBGL_NOTICES = [
-  /^warning: \[\.WebGL-0x[0-9a-f]+\] GL_INVALID_OPERATION: glDrawArraysInstanced: Active draw buffers with missing fragment shader outputs\./,
   /^warning: \[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels/,
 ];
 
@@ -227,22 +225,34 @@ test.describe("Neo4j", () => {
       ]);
     });
 
-    await test.step("explorer mode loads neighbours up to its limit, and undo removes them", async () => {
+    await test.step("explorer mode loads neighbours step by step, and the steps go back", async () => {
       const around = card(PANELS.explorer);
       await showTables(around, PANELS.explorer);
       await expect(nodeTable(around, PANELS.explorer, 1)).toBeVisible();
-      await around.getByRole("button", { name: "Ana", exact: true }).click({ timeout: STEP_MS });
-      // The click loads the neighbours at once once the panel knows the source may be queried;
-      // a click before that only selects, and the details offer the same action.
-      const load = around.getByRole("button", { name: t("graph.explorer.expand"), exact: true });
-      await expect(load).toBeVisible({ timeout: STEP_MS });
-      if (await load.isEnabled()) {
-        await load.click({ timeout: STEP_MS });
-      }
-      // Ana has two orders; the panel loads one neighbour per step.
+      // The explorer is on once the panel knows the source may be queried.
+      const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
+      await expect(steps).toBeVisible({ timeout: STEP_MS });
+      const table = nodeTable(around, PANELS.explorer, 1);
+      await table.getByRole("button", { name: "Ana", exact: true }).click({ timeout: STEP_MS });
+      // Ana has two orders; the panel loads one neighbour per step, and says how many there are.
       await expect(nodeTable(around, PANELS.explorer, 2)).toBeVisible({ timeout: STEP_MS });
+      await expect(
+        steps.getByRole("button", {
+          name: t("graph.steps.stepOf", { name: "Ana", count: 1, total: 2 }),
+          exact: true,
+        }),
+      ).toBeVisible();
+      // The next one, with the button the details offer.
       await around
-        .getByRole("button", { name: t("graph.explorer.undo", { name: "Ana" }), exact: true })
+        .getByRole("button", { name: t("graph.explorer.more", { count: 1 }), exact: true })
+        .click({ timeout: STEP_MS });
+      await expect(nodeTable(around, PANELS.explorer, 3)).toBeVisible({ timeout: STEP_MS });
+      await steps
+        .getByRole("button", { name: t("graph.steps.undo"), exact: true })
+        .click({ timeout: STEP_MS });
+      await expect(nodeTable(around, PANELS.explorer, 2)).toBeVisible({ timeout: STEP_MS });
+      await steps
+        .getByRole("button", { name: t("graph.steps.base", { count: 1 }), exact: true })
         .click({ timeout: STEP_MS });
       await expect(nodeTable(around, PANELS.explorer, 1)).toBeVisible({ timeout: STEP_MS });
     });
@@ -263,6 +273,92 @@ test.describe("Neo4j", () => {
       await expect(orders).toContainText(summary(3, 2), { timeout: STEP_MS });
     });
 
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+});
+
+/**
+ * Where the drawing shows a node, from the canvas' test hook (SigmaCanvas.tsx), once the layout
+ * has settled: the same place twice in a row.
+ */
+async function drawnNode(scope: Locator, caption: string): Promise<{ x: number; y: number }> {
+  const canvas = scope.locator(".graph__canvas");
+  let last: { x: number; y: number } | null = null;
+  for (let tries = 0; tries < 60; tries++) {
+    const now = await canvas.evaluate(
+      (element, name) =>
+        (
+          element as HTMLElement & {
+            kalzitNodePosition?: (caption: string) => { x: number; y: number } | null;
+          }
+        ).kalzitNodePosition?.(name) ?? null,
+      caption,
+    );
+    if (
+      now !== null &&
+      last !== null &&
+      Math.abs(now.x - last.x) + Math.abs(now.y - last.y) < 0.5
+    ) {
+      return now;
+    }
+    last = now;
+    await scope.page().waitForTimeout(250);
+  }
+  throw new Error(`${caption} is not drawn`);
+}
+
+test.describe("Neo4j drawing", () => {
+  test.use({ viewport: { width: 1440, height: 1200 } });
+
+  test("a click on a drawn node picks it, and Shift+click adds to the selection", async ({
+    page,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    let dashboardId = "";
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, drawn)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Shop graph drawn"), sourceId);
+      dashboardId = await owner.createDashboard({
+        ...model,
+        panels: model.panels.filter((p) => p.id === "customers" || p.id === "orders"),
+      });
+    } finally {
+      await owner.dispose();
+    }
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const customers = page.getByRole("article", { name: PANELS.customers, exact: true });
+    const drawing = customers.getByRole("application", { name: PANELS.customers, exact: true });
+    const noWebgl = customers.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+    const clara = await drawnNode(customers, "Clara");
+    await page.mouse.click(clara.x, clara.y);
+    // The pick selects the node (its details open) and sets the variable it is set up for.
+    await expect(
+      customers.getByRole("region", { name: t("graph.details", { name: "Clara" }), exact: true }),
+    ).toBeVisible({ timeout: STEP_MS });
+    await expect(page.getByLabel("Customer", { exact: true })).toHaveValue("Clara", {
+      timeout: STEP_MS,
+    });
+
+    const ana = await drawnNode(customers, "Ana");
+    await page.keyboard.down("Shift");
+    await page.mouse.click(ana.x, ana.y);
+    await page.keyboard.up("Shift");
+    await expect(
+      customers.getByRole("heading", {
+        name: t("graph.selection.count", { count: 2 }),
+        exact: true,
+      }),
+    ).toBeVisible({ timeout: STEP_MS });
     expect(await seriousViolations(page)).toEqual([]);
   });
 });

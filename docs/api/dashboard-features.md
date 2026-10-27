@@ -1,4 +1,4 @@
-# API: dashboard model version 2, annotations, playlists and library panels
+# API: dashboard model version 2, annotations, playlists, panel view state and library panels
 
 The routes and model parts that make dashboards more than a grid of panels, exactly as the server
 implements them. General rules (docs/ARCHITECTURE.md, "API conventions", and
@@ -198,6 +198,27 @@ Naming a dashboard the caller cannot read is `422 validation` field `items`. Aud
 | `PUT /orgs/{orgId}/playlists/{playlistId}` | `{"version", "name", "intervalSeconds", "items"}`; `409 version_conflict` |
 | `DELETE /orgs/{orgId}/playlists/{playlistId}` | `204` |
 | `GET /orgs/{orgId}/playlists/{playlistId}/play` | `{"intervalSeconds", "items": [{"id", "title"}]}`: the dashboards to show in order, tags expanded by title, each once, trashed and unreadable ones left out |
+
+## Panel view state
+
+What a viewer keeps of their own exploration of a dashboard panel (a graph panel's pins and
+selection), for them alone. Only node ids are stored, never a node's properties or any other part
+of a result; it changes neither the panel nor its query. Reading and writing need read access to
+the dashboard and a panel of that id in its current version; anything else, a trashed dashboard
+included, is `404 not_found`. The row goes with the user, organization and dashboard.
+
+```ts
+interface PanelViewState {
+  pinned: string[];   // node ids, at most 200, each 1 to 512 characters, each once
+  selected: string[]; // the same bounds
+}
+```
+
+| Route | |
+|---|---|
+| `GET /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | the caller's `PanelViewState`; empty lists when none is kept |
+| `PUT /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | replaces it; empty lists remove it; unknown fields and ids beyond the bounds are `422 validation` (field `pinned` or `selected`) |
+| `DELETE /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | `204`, also when none was kept or the dashboard is no longer readable |
 
 ## Library panels
 

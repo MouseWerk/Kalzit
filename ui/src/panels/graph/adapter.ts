@@ -180,49 +180,145 @@ export function normalizeGraph(value: GraphSet): GraphSet {
   };
 }
 
-/** The variable the expand query receives the node id in. */
+/** The variable the explorer's queries receive the node id in. */
 export const EXPAND_NODE_VARIABLE = "nodeId";
+/** The variable the query for pinned nodes receives their ids in. */
+export const NODE_IDS_VARIABLE = "nodeIds";
 /** At most this many neighbours per expansion step, whatever the panel asks for. */
 export const MAX_EXPAND_LIMIT = 200;
+/** Explore opens an exploration of at most this many nodes as a query. */
+export const MAX_QUERY_NODES = 1_000;
 
 export interface ExpandQuery {
   query: unknown;
   variables: Record<string, unknown>;
 }
 
+/** Which edges a step follows: from the node, to it, or both. */
+export type Direction = "both" | "out" | "in";
+
+export interface ExpandOptions {
+  limit: number;
+  /** Neighbours already loaded for the node, skipped by "load more". */
+  skip?: number;
+  /** Edge types to follow; empty follows every type. */
+  types?: readonly string[];
+  direction?: Direction;
+}
+
+/** The source kinds the explorer works with: Cypher over Bolt. */
+export function canExplore(kind: string): boolean {
+  return kind === "neo4j" || kind === "memgraph";
+}
+
+/** An identifier in backquotes, as Cypher writes names that are not plain words. */
+export function cypherName(name: string): string {
+  return `\`${name.replaceAll("`", "``")}\``;
+}
+
+/** A text as a Cypher string literal (JSON's escapes are Cypher's). */
+function cypherString(text: string): string {
+  return JSON.stringify(text);
+}
+
+/** `(n)-[r:A|B]->(m)` for the step's types and direction; `r` empty leaves the edge unnamed. */
+function pattern(r: string, types: readonly string[], direction: Direction): string {
+  const typed = types.length === 0 ? "" : `:${types.map(cypherName).join("|")}`;
+  const edge = `[${r}${typed}]`;
+  if (direction === "out") return `(n)-${edge}->(m)`;
+  if (direction === "in") return `(n)<-${edge}-(m)`;
+  return `(n)-${edge}-(m)`;
+}
+
 /**
- * The generic "expand" query of explorer mode: the node, its direct neighbours and the edges to
- * them, at most `limit` of them. The node id goes in as a parameter; the limit is a number this
- * module produces, so it is safe as text.
- *
- * - Neo4j 5 identifies nodes by `elementId(n)`; Bolt 4.4 sends the internal number, which
- *   `id(n)` matches.
- * - Memgraph by `id(n)`, an integer, sent as text and converted in the query.
- * - TigerGraph has no generic expand: a GSQL query needs the vertex and edge types spelled out
- *   (`Type:id` gives the vertex type, but not the edge types to follow), and interpreted queries
- *   need rights a `queryreader` user may lack. Explorer mode is off there for now.
+ * How a source's Cypher names a node: Neo4j 5 by `elementId(n)`; Bolt 4.4 sends the internal
+ * number, which `id(n)` matches, as does Memgraph's integer id (sent as text, converted in the
+ * query). The degree for ordering neighbours: a pattern count in Neo4j, `degree` in Memgraph.
  */
-export function expandQuery(kind: string, nodeId: string, limit: number): ExpandQuery | null {
-  const n = Math.max(1, Math.min(MAX_EXPAND_LIMIT, Math.floor(limit)));
-  const variables = { [EXPAND_NODE_VARIABLE]: nodeId };
-  switch (kind) {
-    case "neo4j":
-      return {
-        query: {
-          cypher: /^\d+$/.test(nodeId)
-            ? `MATCH (n)-[r]-(m) WHERE id(n) = toInteger($${EXPAND_NODE_VARIABLE}) RETURN n, r, m LIMIT ${n}`
-            : `MATCH (n)-[r]-(m) WHERE elementId(n) = $${EXPAND_NODE_VARIABLE} RETURN n, r, m LIMIT ${n}`,
-        },
-        variables,
-      };
-    case "memgraph":
-      return {
-        query: {
-          cypher: `MATCH (n)-[r]-(m) WHERE id(n) = toInteger($${EXPAND_NODE_VARIABLE}) RETURN n, r, m LIMIT ${n}`,
-        },
-        variables,
-      };
-    default:
-      return null;
-  }
+function dialect(kind: string, nodeId: string) {
+  const numeric = kind === "memgraph" || /^\d+$/.test(nodeId);
+  return {
+    match: (v: string) =>
+      numeric
+        ? `id(${v}) = toInteger($${EXPAND_NODE_VARIABLE})`
+        : `elementId(${v}) = $${EXPAND_NODE_VARIABLE}`,
+    key: (v: string) => (numeric ? `id(${v})` : `elementId(${v})`),
+    degree: (v: string) => (kind === "memgraph" ? `degree(${v})` : `size([(${v})--() | 1])`),
+  };
+}
+
+/**
+ * The explorer's step: the node, up to `limit` of its neighbours (the best connected first, after
+ * the `skip` already loaded) and every edge between it and them of the chosen types, in the
+ * chosen direction. The node id goes in as a parameter; limit, skip and the backquoted type
+ * names are made here, so they are safe as text.
+ *
+ * TigerGraph has no generic expand: a GSQL query needs the vertex and edge types spelled out,
+ * and interpreted queries need rights a `queryreader` user may lack. The explorer is off there.
+ */
+export function expandQuery(
+  kind: string,
+  nodeId: string,
+  options: ExpandOptions,
+): ExpandQuery | null {
+  if (!canExplore(kind)) return null;
+  const n = Math.max(1, Math.min(MAX_EXPAND_LIMIT, Math.floor(options.limit)));
+  const skip = Math.max(0, Math.floor(options.skip ?? 0));
+  const types = options.types ?? [];
+  const direction = options.direction ?? "both";
+  const d = dialect(kind, nodeId);
+  const cypher = [
+    `MATCH ${pattern("", types, direction)} WHERE ${d.match("n")}`,
+    `WITH DISTINCT n, m ORDER BY ${d.degree("m")} DESC, ${d.key("m")} SKIP ${skip} LIMIT ${n}`,
+    `MATCH ${pattern("r", types, direction)}`,
+    "RETURN n, r, m",
+  ].join("\n");
+  return { query: { cypher }, variables: { [EXPAND_NODE_VARIABLE]: nodeId } };
+}
+
+/** How many neighbours the step would reach in all: one number, for "25 of 312". */
+export function countQuery(
+  kind: string,
+  nodeId: string,
+  options: Pick<ExpandOptions, "types" | "direction">,
+): ExpandQuery | null {
+  if (!canExplore(kind)) return null;
+  const d = dialect(kind, nodeId);
+  const cypher = `MATCH ${pattern("", options.types ?? [], options.direction ?? "both")} WHERE ${d.match("n")} RETURN count(DISTINCT m) AS total`;
+  return { query: { cypher }, variables: { [EXPAND_NODE_VARIABLE]: nodeId } };
+}
+
+/** Nodes by their ids, for pins kept from an earlier visit; the ids go in as a parameter. */
+export function nodesQuery(kind: string, ids: readonly string[]): ExpandQuery | null {
+  if (!canExplore(kind) || ids.length === 0) return null;
+  const numeric = kind === "memgraph" || ids.every((id) => /^\d+$/.test(id));
+  const key = numeric ? "toString(id(n))" : "elementId(n)";
+  return {
+    query: { cypher: `MATCH (n) WHERE ${key} IN $${NODE_IDS_VARIABLE} RETURN n` },
+    variables: { [NODE_IDS_VARIABLE]: [...ids] },
+  };
+}
+
+/**
+ * The nodes shown as a Cypher query of their own, for Explore: the nodes by id and the edges
+ * between them. The ids are written into the query (Explore has no variables), as string
+ * literals or, for numeric ids, as numbers. Null for other kinds and more than MAX_QUERY_NODES.
+ */
+export function explorationQuery(kind: string, ids: readonly string[]): string | null {
+  if (!canExplore(kind) || ids.length === 0 || ids.length > MAX_QUERY_NODES) return null;
+  const numeric = ids.every((id) => /^\d+$/.test(id));
+  if (kind === "memgraph" && !numeric) return null;
+  const list = numeric ? ids.join(", ") : ids.map(cypherString).join(", ");
+  const key = (v: string) => (numeric ? `id(${v})` : `elementId(${v})`);
+  return [
+    `WITH [${list}] AS ids`,
+    `MATCH (n) WHERE ${key("n")} IN ids`,
+    `OPTIONAL MATCH (n)-[r]->(m) WHERE ${key("m")} IN ids`,
+    "RETURN n, r, m",
+  ].join("\n");
+}
+
+/** The number in a one-value table answer (a count), or null when it is not one. */
+export function frameNumber(frame: { fields: { values: unknown[] }[] }): number | null {
+  return readNumber(frame.fields[0]?.values[0]);
 }

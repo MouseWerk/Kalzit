@@ -291,6 +291,18 @@ export function PanelEditor({
     [deferredSteps, outcomes, calendar],
   );
   const inputs = useMemo(() => namedInputs(outcomes), [outcomes]);
+  // Node labels of the graph results with their counts, for the graph panels' colors per label.
+  const graphLabels = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const o of outcomes) {
+      if (!("result" in o) || o.result.shape !== "graph") continue;
+      for (const node of o.result.graph.nodes) {
+        const label = node.labels[0] ?? "";
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+      }
+    }
+    return [...counts].map(([label, count]) => ({ label, count }));
+  }, [outcomes]);
   // The number series the panel shows now, for the colours editor's rows, each name once.
   const seriesNames = useMemo(
     () => [
@@ -765,6 +777,7 @@ export function PanelEditor({
       variables={dashboardVariables}
       libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
       seriesNames={seriesNames}
+      graphLabels={graphLabels}
       onLook={setLook}
       onType={changeType}
       onMakeLibrary={makeLibrary}
@@ -1150,6 +1163,7 @@ function OptionsPane({
   variables,
   libraryName,
   seriesNames,
+  graphLabels,
   onLook,
   onType,
   onMakeLibrary,
@@ -1162,6 +1176,7 @@ function OptionsPane({
   variables: readonly VariableModel[];
   libraryName: string | undefined;
   seriesNames: readonly string[];
+  graphLabels: readonly { label: string; count: number }[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onType: (type: string) => void;
   onMakeLibrary: (() => void) | undefined;
@@ -1201,6 +1216,7 @@ function OptionsPane({
           <Editor
             options={plugin.options(look.options)}
             onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}
+            graphLabels={graphLabels}
           />
         </OptionGroup>
       )}

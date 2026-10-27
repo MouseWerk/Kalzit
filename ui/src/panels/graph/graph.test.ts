@@ -2,9 +2,24 @@ import { describe, expect, it } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
 import { graphOutcome, ID } from "../../features/datasources/test/fakeGraph";
 import { type Translate, translate } from "../../i18n/i18n";
-import { expandQuery, nodeCaption, readTime, typedId } from "./adapter";
+import {
+  countQuery,
+  expandQuery,
+  explorationQuery,
+  nodeCaption,
+  nodesQuery,
+  readTime,
+  typedId,
+} from "./adapter";
 import { type GraphPalette, hex, mix } from "./colors";
-import { DIM_EDGES_UP_TO, edgeColor, nodeDisplay, nodeToward } from "./drawing";
+import {
+  DEFAULT_STYLE,
+  DIM_EDGES_UP_TO,
+  edgeColor,
+  edgeDisplay,
+  nodeDisplay,
+  nodeToward,
+} from "./drawing";
 import { EDGE_CHUNK, handOver } from "./handover";
 import { ForceLayout, hierarchyLayout, seedPositions } from "./layoutEngine";
 import { communities, components } from "./metrics";
@@ -25,6 +40,7 @@ import {
   LABEL_BUDGET,
   labelAllowed,
   labelRanks,
+  rampGroup,
   shouldCluster,
   timeSteps,
   visibleAt,
@@ -88,15 +104,61 @@ describe("adapter", () => {
   });
 
   it("builds expand queries with the node id as a parameter, and none for TigerGraph", () => {
-    const neo = expandQuery("neo4j", "4:abc:7", 500);
+    const neo = expandQuery("neo4j", "4:abc:7", { limit: 500 });
     expect(neo?.query).toEqual({
-      cypher: "MATCH (n)-[r]-(m) WHERE elementId(n) = $nodeId RETURN n, r, m LIMIT 200",
+      cypher: [
+        "MATCH (n)-[]-(m) WHERE elementId(n) = $nodeId",
+        "WITH DISTINCT n, m ORDER BY size([(m)--() | 1]) DESC, elementId(m) SKIP 0 LIMIT 200",
+        "MATCH (n)-[r]-(m)",
+        "RETURN n, r, m",
+      ].join("\n"),
     });
     expect(neo?.variables).toEqual({ nodeId: "4:abc:7" });
     // Bolt 4.4 sends the internal number.
-    expect(JSON.stringify(expandQuery("neo4j", "17", 5)?.query)).toContain("id(n) = toInteger");
-    expect(JSON.stringify(expandQuery("memgraph", "17", 5)?.query)).toContain("LIMIT 5");
-    expect(expandQuery("tigergraph", "Person:1", 5)).toBeNull();
+    expect(JSON.stringify(expandQuery("neo4j", "17", { limit: 5 })?.query)).toContain(
+      "id(n) = toInteger",
+    );
+    const memgraph = JSON.stringify(
+      expandQuery("memgraph", "17", {
+        limit: 5,
+        skip: 10,
+        types: ["KNOWS", "a`b"],
+        direction: "out",
+      })?.query,
+    );
+    expect(memgraph).toContain("SKIP 10 LIMIT 5");
+    expect(memgraph).toContain("degree(m)");
+    // Types are quoted names, a backquote doubled.
+    expect(memgraph).toContain("(n)-[r:`KNOWS`|`a``b`]->(m)");
+    expect(expandQuery("tigergraph", "Person:1", { limit: 5 })).toBeNull();
+    expect(JSON.stringify(countQuery("neo4j", "4:a:1", { direction: "in" })?.query)).toContain(
+      "(n)<-[]-(m) WHERE elementId(n) = $nodeId RETURN count(DISTINCT m) AS total",
+    );
+  });
+
+  it("builds the queries for pinned nodes and for Explore", () => {
+    expect(nodesQuery("neo4j", ["4:a:1"])).toEqual({
+      query: { cypher: "MATCH (n) WHERE elementId(n) IN $nodeIds RETURN n" },
+      variables: { nodeIds: ["4:a:1"] },
+    });
+    expect(JSON.stringify(nodesQuery("memgraph", ["1", "2"])?.query)).toContain("toString(id(n))");
+    expect(nodesQuery("tigergraph", ["a"])).toBeNull();
+    expect(explorationQuery("neo4j", ["4:a:1", '4:a:"2'])).toBe(
+      [
+        'WITH ["4:a:1", "4:a:\\"2"] AS ids',
+        "MATCH (n) WHERE elementId(n) IN ids",
+        "OPTIONAL MATCH (n)-[r]->(m) WHERE elementId(m) IN ids",
+        "RETURN n, r, m",
+      ].join("\n"),
+    );
+    expect(explorationQuery("memgraph", ["1", "2"])).toContain("WITH [1, 2] AS ids");
+    expect(explorationQuery("neo4j", [])).toBeNull();
+    expect(
+      explorationQuery(
+        "neo4j",
+        Array.from({ length: 1_001 }, (_, i) => String(i)),
+      ),
+    ).toBeNull();
   });
 
   it("keeps panel options within their limits", () => {
@@ -283,6 +345,9 @@ describe("drawing", () => {
     background: "#ffffff",
     font: "sans-serif",
     boldWeight: "600",
+    selection: "#f0f0f0",
+    ramps: { blues: ["#b1", "#b2", "#b3", "#b4", "#b5"], gyr: [], grays: [] },
+    dimmedRamps: { blues: ["#d1", "#d2", "#d3", "#d4", "#d5"], gyr: [], grays: [] },
   };
   const base = { x: 0, y: 0, size: 5, label: "x" } as never;
 
@@ -293,10 +358,14 @@ describe("drawing", () => {
       palette,
       visibility: allVisible(v),
       ranks: labelRanks(v),
-      selected: 0,
+      selected: new Set([0]),
       neighbours: new Set([1]),
+      style: DEFAULT_STYLE,
     };
     const selected = nodeDisplay(0, base, props, 1);
+    // The selection's label sits on the neutral selection tint, the others on the canvas.
+    expect(selected.labelBackgroundColor).toBe("#f0f0f0");
+    expect(nodeDisplay(1, base, props, 1).labelBackgroundColor).toBe("#ffffff");
     expect(selected.color).toBe("#111111");
     expect(selected.labelVisibility).toBe("visible");
     expect(selected.labelFont).toBe("600 sans-serif");
@@ -309,18 +378,69 @@ describe("drawing", () => {
     expect(other.label).toBeNull();
     // No frame or glow of any kind: the renderer's backdrop stays off.
     expect(Object.keys(selected).some((key) => key.startsWith("backdrop"))).toBe(false);
-    const none = nodeDisplay(2, base, { ...props, selected: null }, 1);
+    const none = nodeDisplay(2, base, { ...props, selected: new Set<number>() }, 1);
     expect(none.color).toBe("#222222");
     // Edges the selection does not touch are dimmed too.
     expect(edgeColor({ source: 0, target: 1 }, props)).toBe("#444444");
     expect(edgeColor({ source: 1, target: 2 }, props)).toBe("#bbbbbb");
   });
 
+  it("draws arrows, edge labels and node labels as the panel's style says", () => {
+    const v = view();
+    const props = {
+      view: v,
+      palette,
+      visibility: allVisible(v),
+      ranks: labelRanks(v),
+      selected: new Set([0]),
+      neighbours: new Set<number>(),
+      style: { ...DEFAULT_STYLE, arrows: "selection" as const, edgeLabels: "always" as const },
+    };
+    const edge = { size: 1 } as never;
+    const touching = v.edges.findIndex((e) => e.source === 0 || e.target === 0);
+    const away = v.edges.findIndex((e) => e.source !== 0 && e.target !== 0);
+    expect(edgeDisplay(touching, edge, props).head).toBe("arrow");
+    expect(edgeDisplay(away, edge, props).head).toBeUndefined();
+    expect(edgeDisplay(away, edge, props).label).toBe(v.edges[away]?.type);
+    const never = { ...props, style: { ...props.style, edgeLabels: "never" as const } };
+    expect(edgeDisplay(touching, edge, never).label).toBeNull();
+    // Only the selection labelled; every node labelled.
+    const onlySelected = { ...props, style: { ...DEFAULT_STYLE, labels: "selection" as const } };
+    expect(
+      nodeDisplay(1, base, { ...onlySelected, selected: new Set<number>() }, 1).label,
+    ).toBeNull();
+    const always = {
+      ...props,
+      selected: new Set<number>(),
+      style: { ...DEFAULT_STYLE, labels: "always" as const },
+    };
+    expect(nodeDisplay(1, base, always, 100).labelVisibility).toBe("visible");
+  });
+
+  it("colors nodes by a ramp step of the panel's scheme", () => {
+    const v = view();
+    const ramped = { ...v, nodes: v.nodes.map((n) => ({ ...n, group: rampGroup(3) })) };
+    const props = {
+      view: ramped,
+      palette,
+      visibility: allVisible(ramped),
+      ranks: labelRanks(ramped),
+      selected: new Set<number>(),
+      neighbours: new Set<number>(),
+      style: DEFAULT_STYLE,
+    };
+    expect(nodeDisplay(0, base, props, 1).color).toBe("#b4");
+    expect(nodeDisplay(1, base, { ...props, selected: new Set([0]) }, 1).color).toBe("#d4");
+  });
+
   it("keeps the edges of large graphs undimmed, so a selection redraws only nodes", () => {
     const v = view();
     const many = { ...v, edges: Array.from({ length: DIM_EDGES_UP_TO + 1 }, () => v.edges[0]) };
     expect(
-      edgeColor({ source: 1, target: 2 }, { view: many as GraphView, palette, selected: 0 }),
+      edgeColor(
+        { source: 1, target: 2 },
+        { view: many as GraphView, palette, selected: new Set([0]) },
+      ),
     ).toBe("#444444");
   });
 
@@ -443,8 +563,8 @@ describe("refreshing visibility", () => {
 
 describe("the fake graph source", () => {
   it("answers both forms of the expand query", () => {
-    const byElement = expandQuery("neo4j", ID.desk, 10);
-    const byNumber = expandQuery("memgraph", "12", 10);
+    const byElement = expandQuery("neo4j", ID.desk, { limit: 10 });
+    const byNumber = expandQuery("memgraph", "12", { limit: 10 });
     for (const request of [byElement, byNumber]) {
       const cypher = String((request?.query as { cypher?: string } | undefined)?.cypher);
       const outcome = graphOutcome(cypher, request?.variables ?? {});

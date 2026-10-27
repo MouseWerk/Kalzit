@@ -223,21 +223,28 @@ export function optionValues(variable: VariableModel): string[] {
  * The variables a panel click may set (a node setting `$customerId`), and which values each
  * takes: free text (`textbox`) and query results (`query`) take any value, `custom` only one of
  * its options. A variable stored with several values (a list) is left alone, so a click never
- * turns it into one string; constants and intervals are not set by clicks.
+ * turns it into one string; constants and intervals are not set by clicks. Multi-value variables
+ * are listed apart (`multi`): a panel sets them to a list, such as a graph selection.
  */
 export function clickTargets(variables: readonly VariableModel[]): {
   names: string[];
+  multi: string[];
   accepts: (name: string, value: string) => boolean;
 } {
+  const multi = variables.filter(
+    (v) => (v.type === "query" || v.type === "custom") && v.multi === true,
+  );
   const settable = variables.filter(
     (v) =>
       (v.type === "textbox" || v.type === "query" || v.type === "custom") &&
-      !Array.isArray(v.current),
+      !Array.isArray(v.current) &&
+      v.multi !== true,
   );
   return {
     names: settable.map((v) => v.name),
+    multi: multi.map((v) => v.name),
     accepts: (name, value) => {
-      const variable = settable.find((v) => v.name === name);
+      const variable = [...settable, ...multi].find((v) => v.name === name);
       if (variable === undefined) return false;
       return variable.type === "custom" ? optionValues(variable).includes(value) : true;
     },

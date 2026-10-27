@@ -41,6 +41,11 @@ function graphPanel(options: Record<string, unknown>): PanelModel {
   };
 }
 
+/** The node table of a graph panel (tables are what jsdom shows). */
+function nodes(panel: HTMLElement): HTMLElement {
+  return within(panel).getByRole("table", { name: /^Nodes of / });
+}
+
 function setup(role: string, options: Record<string, unknown>, extra: PanelModel[] = []) {
   const server = installFakeServer({ signedIn: true, user: asRole(role) });
   addNeo4jSource(server.areas.datasources);
@@ -58,16 +63,113 @@ describe("graph panels on a dashboard", () => {
     const { user } = renderApp("/dashboards/d-shop");
     const panel = await screen.findByRole("article", { name: "Purchases" });
     await user.click(await within(panel).findByRole("button", { name: "Desk" }));
-    expect(await within(panel).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
+    expect(await within(nodes(panel)).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
     const sent = server.areas.datasources.queries.at(-1) as QueryRequest;
-    expect(sent.queries[0]?.query).toEqual({
-      cypher: "MATCH (n)-[r]-(m) WHERE elementId(n) = $nodeId RETURN n, r, m LIMIT 10",
-    });
+    expect(JSON.stringify(sent.queries[0]?.query)).toContain("SKIP 0 LIMIT 10");
+    expect(sent.queries[1]?.refId).toBe("count");
     expect(sent.variables).toEqual({ nodeId: ID.desk });
+    // The step with what it loaded of all the neighbours, and the announcement.
+    const steps = within(panel).getByRole("region", { name: "Steps" });
+    expect(within(steps).getByRole("button", { name: "Desk +1 of 1" })).toBeTruthy();
+    expect(within(panel).getByRole("status").textContent).toBe("Neighbours of Desk loaded, 1 of 1");
 
-    await user.click(within(panel).getByRole("button", { name: "Undo: neighbours of Desk" }));
-    expect(within(panel).queryByRole("button", { name: "Oak & Co" })).toBeNull();
-    expect(within(panel).getByRole("status").textContent).toBe("Neighbours of Desk removed");
+    await user.click(within(steps).getByRole("button", { name: "Undo" }));
+    expect(within(nodes(panel)).queryByRole("button", { name: "Oak & Co" })).toBeNull();
+  });
+
+  it("goes back to the query's result from the steps and loads with the next step's settings", async () => {
+    const server = setup("editor", { explorer: true });
+    const { user } = renderApp("/dashboards/d-shop");
+    const panel = await screen.findByRole("article", { name: "Purchases" });
+    const steps = await within(panel).findByRole("region", { name: "Steps" });
+    await user.selectOptions(within(steps).getByRole("combobox", { name: "Direction" }), "out");
+    await user.click(await within(panel).findByRole("button", { name: "Desk" }));
+    expect(await within(nodes(panel)).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
+    const sent = server.areas.datasources.queries.at(-1) as QueryRequest;
+    expect(JSON.stringify(sent.queries[0]?.query)).toContain("(n)-[]->(m)");
+    await user.click(within(steps).getByRole("button", { name: "Query result, 4 nodes" }));
+    expect(within(nodes(panel)).queryByRole("button", { name: "Oak & Co" })).toBeNull();
+  });
+
+  it("keeps a pinned node when its step is taken back, and keeps pins for the viewer", async () => {
+    const server = setup("editor", { explorer: true });
+    const { user } = renderApp("/dashboards/d-shop");
+    const panel = await screen.findByRole("article", { name: "Purchases" });
+    await user.click(await within(panel).findByRole("button", { name: "Desk" }));
+    await user.click(await within(nodes(panel)).findByRole("button", { name: "Oak & Co" }));
+    await user.click(within(panel).getByRole("button", { name: "Pin" }));
+    await user.click(
+      within(within(panel).getByRole("region", { name: "Steps" })).getByRole("button", {
+        name: "Undo",
+      }),
+    );
+    expect(within(nodes(panel)).getByRole("button", { name: "Oak & Co" })).toBeTruthy();
+    const pinned = within(panel).getByRole("region", { name: "Pinned" });
+    expect(within(pinned).getByText("step 1")).toBeTruthy();
+    // Kept on the server for this viewer and panel, after a short pause.
+    await waitFor(
+      () =>
+        expect(server.areas.dashboardFeatures.viewStates["d-shop/p-graph"]?.pinned).toEqual([
+          ID.oak,
+        ]),
+      { timeout: 2_000 },
+    );
+  });
+
+  it("opens the exploration as a query in Explore, unrun", async () => {
+    const server = setup("editor", { explorer: true });
+    const { user } = renderApp("/dashboards/d-shop");
+    const panel = await screen.findByRole("article", { name: "Purchases" });
+    await user.click(await within(panel).findByRole("button", { name: "Desk" }));
+    expect(await within(nodes(panel)).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
+    const ran = server.areas.datasources.queries.length;
+    await user.click(within(panel).getByRole("button", { name: "Open as a query in Explore" }));
+    const editor = (await screen.findByRole("textbox", { name: "Query" })) as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.value).toContain(`WITH ["${ID.ada}"`));
+    expect(editor.value).toContain(`"${ID.oak}"] AS ids`);
+    expect(server.areas.datasources.queries.length).toBe(ran);
+  });
+
+  it("restores the pins and selection the viewer kept on this panel", async () => {
+    const server = setup("viewer", {});
+    server.areas.dashboardFeatures.viewStates["d-shop/p-graph"] = {
+      pinned: [ID.lamp],
+      selected: [ID.grace],
+    };
+    renderApp("/dashboards/d-shop");
+    const panel = await screen.findByRole("article", { name: "Purchases" });
+    expect(await within(panel).findByRole("region", { name: "Details of Grace" })).toBeTruthy();
+    const pinned = within(panel).getByRole("region", { name: "Pinned" });
+    expect(within(pinned).getByRole("button", { name: "Lamp" })).toBeTruthy();
+  });
+
+  it("sets a multi-value variable from a selection of several nodes", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    addNeo4jSource(server.areas.datasources);
+    addDashboard(server.areas.dashboards, "d-shop", {
+      ...emptyModel("Shop"),
+      variables: [
+        { name: "customers", type: "custom", options: ["42", "43"], multi: true, current: ["42"] },
+      ],
+      panels: [graphPanel({ variable: "customers", variableProperty: "customerId" })],
+    });
+    const { user } = renderApp("/dashboards/d-shop");
+    const panel = await screen.findByRole("article", { name: "Purchases" });
+    await within(panel).findByRole("table", { name: /^Nodes of / });
+    await user.click(within(nodes(panel)).getByRole("button", { name: "Ada" }));
+    await user.keyboard("{Shift>}");
+    await user.click(within(nodes(panel)).getByRole("button", { name: "Grace" }));
+    // A product has no customerId and gives no value.
+    await user.click(within(nodes(panel)).getByRole("button", { name: "Desk" }));
+    await user.keyboard("{/Shift}");
+    await user.click(within(panel).getByRole("button", { name: "Set $customers (2 values)" }));
+    await waitFor(() =>
+      expect(
+        server.areas.dashboards.panelQueries.some(
+          (q) => JSON.stringify(q.body.variables.customers) === JSON.stringify(["42", "43"]),
+        ),
+      ).toBe(true),
+    );
   });
 
   it("cancels a step still loading when it is undone", async () => {
@@ -85,11 +187,11 @@ describe("graph panels on a dashboard", () => {
     const panel = await screen.findByRole("article", { name: "Purchases" });
     await user.click(await within(panel).findByRole("button", { name: "Desk" }));
     await waitFor(() => expect(answer).toBeDefined());
-    await user.click(within(panel).getByRole("button", { name: "Undo: neighbours of Desk" }));
+    await user.click(within(panel).getByRole("button", { name: "Cancel" }));
     answer?.();
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(within(panel).queryByRole("button", { name: "Oak & Co" })).toBeNull();
-    expect(within(panel).queryByRole("button", { name: /^Undo/ })).toBeNull();
+    expect(within(nodes(panel)).queryByRole("button", { name: "Oak & Co" })).toBeNull();
+    expect(within(panel).queryByText("Loading Desk…")).toBeNull();
   });
 
   it("starts over without steps when the panel's results are new", async () => {
@@ -97,12 +199,12 @@ describe("graph panels on a dashboard", () => {
     const { user } = renderApp("/dashboards/d-shop");
     const panel = await screen.findByRole("article", { name: "Purchases" });
     await user.click(await within(panel).findByRole("button", { name: "Desk" }));
-    expect(await within(panel).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
+    expect(await within(nodes(panel)).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() =>
-      expect(within(panel).queryByRole("button", { name: "Oak & Co" })).toBeNull(),
+      expect(within(nodes(panel)).queryByRole("button", { name: "Oak & Co" })).toBeNull(),
     );
-    expect(within(panel).queryByRole("button", { name: /^Undo/ })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: /^Desk \+/ })).toBeNull();
   });
 
   it("says why a viewer cannot load neighbours", async () => {
@@ -194,7 +296,7 @@ describe("a custom variable", () => {
       "$customerId has no value 43, so it stays as it is.",
     );
     await user.selectOptions(picker, "44");
-    await user.click(within(panel).getByRole("button", { name: "Ada" }));
+    await user.click(within(nodes(panel)).getByRole("button", { name: "Ada" }));
     expect(picker).toHaveProperty("value", "42");
   });
 });

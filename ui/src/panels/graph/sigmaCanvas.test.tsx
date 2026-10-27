@@ -5,6 +5,7 @@ import type { CameraState } from "sigma/types";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
 import { installWebGLStub } from "../../test/webglStub";
+import { DEFAULT_STYLE } from "./drawing";
 import { EDGE_CHUNK, handOver } from "./handover";
 import { seedPositions } from "./layoutEngine";
 import { buildGraphModel, edgeWidths, nodeSizes } from "./model";
@@ -78,11 +79,16 @@ function canvasProps(view: GraphView, camera: { current: CameraState | null }) {
       background: "#ffffff",
       font: "sans-serif",
       boldWeight: "600",
+      selection: "#eeeeee",
+      ramps: { blues: [], gyr: [], grays: [] },
+      dimmedRamps: { blues: [], gyr: [], grays: [] },
     },
     visibility: allVisible(view),
     ranks: labelRanks(view),
-    selected: null,
+    selected: new Set<number>(),
+    primary: null,
     neighbours: new Set<number>(),
+    style: DEFAULT_STYLE,
     reducedMotion: true,
     camera,
     onPick: () => undefined,
@@ -125,6 +131,29 @@ describe("handing a graph to the renderer", () => {
     // The renderer indexed the last edge too: it has its parallel-edge state.
     const last = `e${view.edges.length - 1}`;
     expect(handover.renderer.getEdgeState(last).parallelCount).toBeGreaterThan(0);
+    handover.renderer.kill();
+  });
+});
+
+describe("label picking", () => {
+  it("drops the picking pass of the label programs and keeps the one of nodes", () => {
+    // Labels are drawn with a picking shader that writes nothing, which Chromium refuses on
+    // every frame (labelPicking.ts); nodes and edges keep theirs, so clicks still pick them.
+    const view = bigView(10);
+    const live = { current: { ratioBucket: 0, props: canvasProps(view, { current: null }) } };
+    const handover = handOver(view, live.current.props.positions, (graph) =>
+      createRenderer(graph, host(), live),
+    );
+    const internals = (
+      handover.renderer as unknown as {
+        internals: Record<string, { pickProgram: unknown } | null>;
+      }
+    ).internals;
+    expect(internals.labelProgram?.pickProgram).toBeNull();
+    expect(internals.edgeLabelProgram?.pickProgram ?? null).toBeNull();
+    const nodes = (handover.renderer as unknown as { nodeProgram: { pickProgram: unknown } })
+      .nodeProgram;
+    expect(nodes.pickProgram).not.toBeNull();
     handover.renderer.kill();
   });
 });

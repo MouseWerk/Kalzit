@@ -46,6 +46,7 @@ import { useWideLayout } from "../../shell/sidebarState";
 import { AccessDialog } from "../admin/access";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
+import { handOffToExplore } from "../explore/handoff";
 import { AnnotationDialog } from "./AnnotationDialog";
 import { mayManageAccess } from "./accessIntegration";
 import { annotationRanges, type DashboardMark, useDashboardAnnotations } from "./annotations";
@@ -1170,9 +1171,15 @@ function DashboardView({
   // Panels may set a variable the dashboard defines (a node click setting $customerId).
   const host = {
     orgId,
+    openInExplore: (datasourceId: string, query: unknown) => {
+      handOffToExplore({ datasourceId, query });
+      void navigate({ to: "/explore", search: {} });
+    },
     variables: {
       ...clickTargets(model.variables),
       set: (name: string, value: string) => setValues((v) => ({ ...v, [name]: value })),
+      setMany: (name: string, list: readonly string[]) =>
+        setValues((v) => ({ ...v, [name]: [...list] })),
     },
   };
 

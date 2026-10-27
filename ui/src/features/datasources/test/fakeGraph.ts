@@ -1,5 +1,5 @@
 import type { GraphSet, QueryOutcome } from "../../../api/generated/shapes";
-import { EXPAND_NODE_VARIABLE } from "../../../panels/graph/adapter";
+import { EXPAND_NODE_VARIABLE, NODE_IDS_VARIABLE } from "../../../panels/graph/adapter";
 
 /**
  * Graph answers of the fake Neo4j source, in the `graph` shape (api/generated/shapes.ts): a small
@@ -94,18 +94,67 @@ const EMPTY: GraphSet = {
   schema: { labels: [], edgeTypes: [], propertyKeys: {} },
 };
 
+/** Every node the fake source knows, by id. */
+function knownNodes(): Map<string, GraphSet["nodes"][number]> {
+  const all = [FAKE_GRAPH, ...Object.values(NEIGHBOURHOOD)].flatMap((g) => g.nodes);
+  return new Map(all.map((n) => [n.id, n]));
+}
+
+/** The node an explorer query names, by element id or by its internal number. */
+function namedNode(cypher: string, nodeId: string): string {
+  if (/elementId\(n\) = \$nodeId/.test(cypher)) return nodeId;
+  return [...knownNodes().keys()].find((id) => id.endsWith(`:${nodeId}`)) ?? nodeId;
+}
+
 /**
- * The answer of the fake graph source to a Cypher query. The explorer's expand query comes in
- * both forms of adapter.ts: by element id (Neo4j 5) and by internal number (Bolt 4.4, Memgraph).
+ * The answer of the fake graph source to a Cypher query. The explorer's queries (adapter.ts) come
+ * in both forms: by element id (Neo4j 5) and by internal number (Bolt 4.4, Memgraph). A step
+ * answers the node's neighbourhood from NEIGHBOURHOOD, after `SKIP` and up to `LIMIT` neighbours;
+ * the count answers how many neighbours there are; the query for pinned nodes answers the nodes.
  */
 export function graphOutcome(cypher: string, variables: Record<string, unknown>): QueryOutcome {
   const nodeId = String(variables[EXPAND_NODE_VARIABLE] ?? "");
-  if (/WHERE elementId\(n\) = \$nodeId RETURN n, r, m LIMIT \d+$/.test(cypher)) {
-    return { result: { shape: "graph", graph: NEIGHBOURHOOD[nodeId] ?? EMPTY } };
+  if (/WITH DISTINCT n, m ORDER BY/.test(cypher)) {
+    const hood = NEIGHBOURHOOD[namedNode(cypher, nodeId)] ?? EMPTY;
+    const skip = Number(/SKIP (\d+)/.exec(cypher)?.[1] ?? 0);
+    const limit = Number(/LIMIT (\d+)/.exec(cypher)?.[1] ?? 0);
+    const centre = namedNode(cypher, nodeId);
+    const kept = new Set(
+      hood.nodes
+        .filter((n) => n.id !== centre)
+        .slice(skip, skip + limit)
+        .map((n) => n.id),
+    );
+    const graph: GraphSet = {
+      ...hood,
+      nodes: hood.nodes.filter((n) => n.id === centre || kept.has(n.id)),
+      edges: hood.edges.filter((e) => kept.has(e.from) || kept.has(e.to)),
+    };
+    return { result: { shape: "graph", graph } };
   }
-  if (/WHERE id\(n\) = toInteger\(\$nodeId\) RETURN n, r, m LIMIT \d+$/.test(cypher)) {
-    const key = Object.keys(NEIGHBOURHOOD).find((id) => id.endsWith(`:${nodeId}`));
-    return { result: { shape: "graph", graph: (key && NEIGHBOURHOOD[key]) || EMPTY } };
+  if (/count\(DISTINCT m\) AS total/.test(cypher)) {
+    const hood = NEIGHBOURHOOD[namedNode(cypher, nodeId)] ?? EMPTY;
+    const total = Math.max(0, hood.nodes.length - 1);
+    return {
+      result: {
+        shape: "frame",
+        frame: { fields: [{ name: "total", type: "int64", values: [total] }] },
+      },
+    };
+  }
+  if (new RegExp(`IN \\$${NODE_IDS_VARIABLE} RETURN n$`).test(cypher)) {
+    const ids = Array.isArray(variables[NODE_IDS_VARIABLE])
+      ? (variables[NODE_IDS_VARIABLE] as string[])
+      : [];
+    const nodes = knownNodes();
+    const graph: GraphSet = {
+      ...EMPTY,
+      nodes: ids.flatMap((id) => {
+        const node = nodes.get(id);
+        return node === undefined ? [] : [node];
+      }),
+    };
+    return { result: { shape: "graph", graph } };
   }
   if (/shortestPath/i.test(cypher)) {
     return {

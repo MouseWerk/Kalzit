@@ -248,16 +248,21 @@ export function scaleValues(values: readonly (number | null)[], min: number, max
   return out;
 }
 
-/** Node sizes: by degree, by a numeric property, or all the same. */
-export function nodeSizes(model: GraphModel, sizeBy: string): Float32Array {
+/** Node sizes in px: by degree, by a numeric property, or all the same, within [min, max]. */
+export function nodeSizes(
+  model: GraphModel,
+  sizeBy: string,
+  min = MIN_NODE_SIZE,
+  max = MAX_NODE_SIZE,
+): Float32Array {
   if (sizeBy === "") {
-    return new Float32Array(model.nodes.length).fill((MIN_NODE_SIZE + MAX_NODE_SIZE) / 3);
+    return new Float32Array(model.nodes.length).fill((min + max) / 3);
   }
   const values =
     sizeBy === "degree"
       ? model.nodes.map((n) => n.degree)
       : model.nodes.map((n) => readNumber(n.properties[sizeBy]));
-  return scaleValues(values, MIN_NODE_SIZE, MAX_NODE_SIZE);
+  return scaleValues(values, min, max);
 }
 
 /** Edge widths by a numeric property, or all the thinnest. */
