@@ -248,7 +248,7 @@ async fn installed_queries_with_parameters() {
     }
 
     let r = t
-        .query(&id, json!({ "installed": "nachbarn", "params": { "p": "1", "tiefe": 2, "tags": ["a b", "c&d"] } }))
+        .query(&id, json!({ "installed": "nachbarn", "params": { "p": "1", "tiefe": 2, "stichworte": ["a b", "c&d"] } }))
         .await;
     eprintln!("nachbarn: {r}");
     let graph = &r["result"]["graph"];

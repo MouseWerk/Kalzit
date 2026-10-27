@@ -25,7 +25,7 @@ show "token for the reader" -u "$reader" -H 'Content-Type: application/json' \
 token=$(curl -sS -u "$reader" -H 'Content-Type: application/json' -d '{"graph": "social", "lifetime": "3600"}' \
   "$base/gsql/v1/tokens" | jq -r '.token // .results.token // empty')
 show "installed nachbarn without a token" "$base/restpp/query/social/nachbarn?p=1"
-show "installed nachbarn" -H "Authorization: Bearer $token" "$base/restpp/query/social/nachbarn?p=1&tiefe=2&tags=a+b&tags=c%26d"
+show "installed nachbarn" -H "Authorization: Bearer $token" "$base/restpp/query/social/nachbarn?p=1&tiefe=2&stichworte=a+b&stichworte=c%26d"
 show "installed zahlen" -H "Authorization: Bearer $token" \
   "$base/restpp/query/social/zahlen?k=3&name=Ana&ab=2024-01-01+00%3A00%3A00&liste=1&liste=2&v=1&v.type=Person"
 show "installed loescht (refused, or Opfer is gone)" -H "Authorization: Bearer $token" "$base/restpp/query/social/loescht"

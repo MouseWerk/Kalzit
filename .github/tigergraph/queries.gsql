@@ -1,6 +1,6 @@
 USE GRAPH social
 
-CREATE QUERY nachbarn(VERTEX<Person> p, INT tiefe, SET<STRING> tags) FOR GRAPH social {
+CREATE QUERY nachbarn(VERTEX<Person> p, INT tiefe, SET<STRING> stichworte) FOR GRAPH social {
   SetAccum<EDGE> @@edges;
   SumAccum<INT> @@total;
   Start = {p};
@@ -8,7 +8,7 @@ CREATE QUERY nachbarn(VERTEX<Person> p, INT tiefe, SET<STRING> tags) FOR GRAPH s
       ACCUM @@edges += e, @@total += 1;
   PRINT R;
   PRINT @@edges;
-  PRINT @@total, tiefe, tags;
+  PRINT @@total, tiefe, stichworte;
 }
 
 CREATE QUERY nur_knoten() FOR GRAPH social {
