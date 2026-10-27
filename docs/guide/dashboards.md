@@ -124,7 +124,9 @@ variable** in the dashboard settings or the Add menu. Kinds:
   **Relationships** (a property, optionally only those with a label or type; empty takes the id)
   or **Documents** (a field path such as `customer.id`; a list gives one value per entry). A
   **Shown name** names each entry. The result itself keeps its shape; this is the visible step
-  that turns it into values.
+  that turns it into values. The query reads at most 10,000 rows, nodes or documents, and
+  repeated values count among them, so let the query return each value once (`RETURN DISTINCT`
+  in Cypher, a `$group` stage in MongoDB) when there are more records.
 
 Options: a **Label**, **Allow several values**, and a **Value when the dashboard opens**. Names
 use letters, digits and underscores. Queries use a variable as `$name` (MongoDB pipelines write
@@ -147,8 +149,8 @@ MATCH (c:Customer {customerId: $customerId})-[r]-(m) RETURN c, r, m
 Values always travel as parameters, never as text in a query, so text with quotes stays one
 value. A value set by a click is text; when a Cypher property holds numbers, compare with
 `toInteger($customerId)`. GSQL takes variables only as declared parameters: writing `$name` into
-GSQL code is refused with a hint. A dynamic label in Cypher (`n:$($label)`) takes only a
-**Fixed values** variable, whose values the dashboard lists. A click on a value that a fixed-values
+GSQL code is refused with a hint. A dynamic label or property key in Cypher (`n:$($label)`,
+`n[$property]`) takes only a **Fixed values** variable, whose values the dashboard lists. A click on a value that a fixed-values
 variable does not offer leaves it as it is and says so.
 
 ## Time range and time picker

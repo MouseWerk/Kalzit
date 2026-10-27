@@ -540,8 +540,12 @@ function FrameTable({
             {t("panels.variable.noColumn", { column: options.variableColumn })}
           </p>
         ) : null}
-        <span className="visually-hidden">{clicked.announcement}</span>
       </div>
+      {clicked.variable === null ? null : (
+        <p className="visually-hidden" role="status" aria-live="polite">
+          {clicked.announcement}
+        </p>
+      )}
       {options.pagination && total > 0 ? (
         <nav className="vt__pages" aria-label={t("panels.table.pages")}>
           <button

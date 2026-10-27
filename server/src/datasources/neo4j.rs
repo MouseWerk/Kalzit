@@ -590,7 +590,7 @@ fn parameters(checked: &Checked, req: &SourceQuery, utc: bool) -> Result<Vec<(St
             return Err(SourceError::rejected(
                 "cypher.variable_identifier",
                 format!(
-                    "${name} names a label or type here; only constant and custom variables may, since only their values are listed in the dashboard"
+                    "${name} names a label, type or property here; only constant and custom variables may, since only their values are listed in the dashboard"
                 ),
             )
             .with("name", name));
@@ -1186,6 +1186,10 @@ mod tests {
         // ids is a value, so only land needs to be listed.
         r.identifier_variables = Some(["land".to_string()].into());
         assert!(parameters(&checked, &r, true).is_ok());
+        // A dynamic property key follows the same rule.
+        let key = crate::datasources::cypher::check("MATCH (n) WHERE n[$land] = 1 RETURN n").unwrap();
+        r.identifier_variables = Some(BTreeSet::new());
+        assert_eq!(parameters(&key, &r, true).unwrap_err().detail().reason, "cypher.variable_identifier");
         let macro_label = crate::datasources::cypher::check("MATCH (n:$($__interval_ms)) RETURN n").unwrap();
         assert_eq!(parameters(&macro_label, &req(10), true).unwrap_err().detail().reason, "cypher.variable_identifier");
     }

@@ -808,8 +808,9 @@ parameter without a value is refused (`cypher.variable_missing`), as is an objec
 (`cypher.variable_type`).
 
 A parameter inside a dynamic label or relationship type (`n:$($label)`, `[r:$any($types)]`,
-`$all(...)`, Neo4j 5.26 and later) names what the query reads, like `${x:identifier}` in SQL, so
-the same rule applies: on a dashboard only `constant` and `custom` variables may be used there,
+`$all(...)`, Neo4j 5.26 and later) or a dynamic property key (`n[$key]`, also any subscript right
+after an expression, such as a list index `list[$i]` or slice) names what the query reads, like
+`${x:identifier}` in SQL, so the same rule applies: on a dashboard only `constant` and `custom` variables may be used there,
 since only their values are listed in the dashboard; any other variable, and a macro, answers
 `cypher.variable_identifier`. In Explore every variable is the caller's own and may be used.
 
@@ -1234,6 +1235,9 @@ that is not of type `query` is `422 validation`.
   decimal text, `time` becomes ISO 8601 in UTC (`2025-01-01T10:00:00.000Z`), numbers and booleans
   their JSON text.
 - At most 10,000 options; `truncated` is true when that limit or the query's row limit cut the list.
+  The query reads at most 10,000 rows, nodes or documents, not 10,000 distinct values: many
+  records with the same value give fewer options. Make the values distinct in the query
+  (`RETURN DISTINCT`, a `$group` stage) when a source has more records than that.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
 
@@ -1522,7 +1526,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `cypher.macro_unknown` | `name` | an unknown `$__` macro |
 | `cypher.variable_missing` | `name` | a parameter without a variable value |
 | `cypher.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
-| `cypher.variable_identifier` | `name` | a dynamic label or type (`$(...)`, `$any(...)`, `$all(...)`) with a macro, or on a dashboard with a variable that is not `constant` or `custom` |
+| `cypher.variable_identifier` | `name` | a dynamic label, type or property key (`$(...)`, `$any(...)`, `$all(...)`, `n[$key]`) with a macro, or on a dashboard with a variable that is not `constant` or `custom` |
 | `gsql.empty` | | the GSQL query is empty |
 | `gsql.not_one_query` | | not exactly one `INTERPRET QUERY` (interpreted) or `CREATE QUERY` (installed text) |
 | `gsql.parse_error` | `detail` | the query cannot be read for the check |

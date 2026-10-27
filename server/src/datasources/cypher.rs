@@ -228,35 +228,60 @@ fn backtick(chars: &[char], start: usize) -> Result<(String, usize), Detail> {
 pub struct Checked {
     pub params: BTreeSet<String>,
     /// Parameters used as names rather than values: inside a dynamic label or relationship type
-    /// (`n:$($label)`, `$any($types)`, `$all(...)`, Neo4j 5.26 and later). They decide what the
+    /// (`n:$($label)`, `$any($types)`, `$all(...)`, Neo4j 5.26 and later) or a dynamic property
+    /// key (`n[$key]`, also a list index or slice, which reads the same). They decide what the
     /// query reads, like `${x:identifier}` in SQL, so the same rule applies to them (see
     /// `neo4j::parameters`).
     pub identifier_params: BTreeSet<String>,
 }
 
-/// Where a dynamic label or type opens, if at `i`: the index of its `(`. `$(` lexes as the
-/// symbol `$`, `$any(` and `$all(` as a parameter followed by `(` (never valid otherwise).
-fn dynamic_open(toks: &[Tok], i: usize) -> Option<usize> {
+/// Words after which `[` starts a list literal (`IN [$a]`, `RETURN [$a]`), not a subscript.
+const BEFORE_LIST: &[&str] = &[
+    "AND", "AS", "BY", "CASE", "CONTAINS", "DISTINCT", "ELSE", "ENDS", "FILTER", "IN", "IS", "LET", "LIMIT", "NOT",
+    "OFFSET", "OR", "ORDER", "RETURN", "SET", "SKIP", "STARTS", "THEN", "UNWIND", "WHEN", "WHERE", "WITH", "XOR",
+    "YIELD",
+];
+
+/// Whether a token can end an expression, so that a `[` right after it is a subscript
+/// (`n[$key]`, `list[$i]`, `f(x)[$k]`) rather than a list or a relationship pattern (`-[r]-`).
+fn ends_expression(t: &Tok) -> bool {
+    match t {
+        Tok::Ident { text, quoted } => *quoted || !BEFORE_LIST.iter().any(|w| text.eq_ignore_ascii_case(w)),
+        Tok::Param(_) | Tok::Str | Tok::Sym(')' | ']' | '}') => true,
+        _ => false,
+    }
+}
+
+/// Where a part that names what the query reads opens, if at `i`: the index of its bracket and
+/// the closing character. A dynamic label or type: `$(` lexes as the symbol `$`, `$any(` and
+/// `$all(` as a parameter followed by `(` (never valid otherwise). A dynamic property key: `[`
+/// right after an expression.
+fn dynamic_open(toks: &[Tok], i: usize) -> Option<(usize, char)> {
     match (&toks[i], toks.get(i + 1)) {
-        (Tok::Sym('$'), Some(Tok::Sym('('))) => Some(i + 1),
+        (Tok::Sym('$'), Some(Tok::Sym('('))) => Some((i + 1, ')')),
         (Tok::Param(p), Some(Tok::Sym('('))) if p.eq_ignore_ascii_case("any") || p.eq_ignore_ascii_case("all") => {
-            Some(i + 1)
+            Some((i + 1, ')'))
         }
+        (Tok::Sym('['), _) if i > 0 && ends_expression(&toks[i - 1]) => Some((i, ']')),
         _ => None,
     }
 }
 
-/// For each token: whether it opens a dynamic label (`$any`), and whether it is inside one.
+/// For each token: whether it is the parameter-like marker of a dynamic label (`$any`), and
+/// whether it is inside a dynamic label, type or property key.
 fn dynamic_spans(toks: &[Tok]) -> (Vec<bool>, Vec<bool>) {
-    let marker: Vec<bool> = (0..toks.len()).map(|i| dynamic_open(toks, i).is_some()).collect();
+    let marker: Vec<bool> = (0..toks.len())
+        .map(|i| dynamic_open(toks, i).is_some_and(|(open, _)| open == i + 1) && matches!(toks[i], Tok::Param(_)))
+        .collect();
     let mut inside = vec![false; toks.len()];
-    for open in (0..toks.len()).filter_map(|i| dynamic_open(toks, i)) {
+    for (open, close) in (0..toks.len()).filter_map(|i| dynamic_open(toks, i)) {
+        let start = if close == ')' { '(' } else { '[' };
         let mut depth = 0usize;
         for (j, t) in toks.iter().enumerate().skip(open) {
             inside[j] = true;
             match t {
-                Tok::Sym('(') => depth += 1,
-                Tok::Sym(')') => {
+                Tok::Sym(c) if *c == start => depth += 1,
+                Tok::Sym(c) if *c == close => {
                     depth -= 1;
                     if depth == 0 {
                         break;
@@ -746,6 +771,13 @@ mod tests {
             check("MATCH (n:$($label))-[r:$any($types)]->(m:$all(['A', $other])) WHERE n.id = $id RETURN n").unwrap();
         assert_eq!(c.params, ["id", "label", "other", "types"].map(String::from).into());
         assert_eq!(c.identifier_params, ["label", "other", "types"].map(String::from).into());
+        // Dynamic property keys and indexes; lists and patterns are not.
+        let c = check(
+            "MATCH (n)-[r]->(m) WHERE n[$key] = $value AND $v IN [$a, $b] AND n.tags[$i] IS NOT NULL \
+             RETURN [$c], n[$k2 + 'x'], m['name'] AS name",
+        )
+        .unwrap();
+        assert_eq!(c.identifier_params, ["i", "k2", "key"].map(String::from).into());
         // A parameter that happens to be called any is a value where no `(` follows.
         let c = check("MATCH (n) WHERE n.x = $any RETURN n").unwrap();
         assert_eq!(c.params, ["any".to_string()].into());

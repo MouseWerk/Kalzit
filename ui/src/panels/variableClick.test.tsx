@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentSet, Frame, QueryResponse } from "../api/generated/shapes";
 import { sampleSchema } from "../documents/schema";
-import { optionsFromResponse } from "../features/dashboards/Variables";
+import { MAX_VARIABLE_OPTIONS, optionsFromResponse } from "../features/dashboards/Variables";
 import { fakeOrders } from "../features/datasources/test/fakeMongo";
 import { type PanelHost, PanelHostContext } from "./host";
 import { getPanel } from "./registry";
@@ -214,6 +214,26 @@ describe("click options in the editors", () => {
     );
   });
 
+  it("shows a value changed from outside, such as an undo", () => {
+    const plugin = getPanel("documents") as AnyPanelPlugin;
+    const { Editor } = plugin;
+    const at = (variablePath: string) => (
+      <PanelHostContext value={host(vi.fn())}>
+        <Editor
+          options={plugin.options({ variable: "customer", variablePath })}
+          onChange={vi.fn()}
+        />
+      </PanelHostContext>
+    );
+    const view = render(at("customer.id"));
+    const input = screen.getByLabelText(
+      "Field path for the variable (optional)",
+    ) as HTMLInputElement;
+    expect(input.value).toBe("customer.id");
+    view.rerender(at(""));
+    expect(input.value).toBe("");
+  });
+
   it("says when the dashboard has no variables", () => {
     const plugin = getPanel("documents") as AnyPanelPlugin;
     const { Editor } = plugin;
@@ -245,23 +265,21 @@ describe("query variable options from other shapes", () => {
         schema: { labels: [], edgeTypes: [] },
       },
     };
-    expect(optionsFromResponse(response(graph))).toEqual([]);
+    expect(optionsFromResponse(response(graph)).options).toEqual([]);
     expect(
       optionsFromResponse(response(graph), {
         from: "nodes",
         label: "Customer",
         value: "cid",
         text: "name",
-      }),
+      }).options,
     ).toEqual([{ value: "7", label: "Ada" }]);
-    expect(optionsFromResponse(response(graph), { from: "nodes" }).map((o) => o.value)).toEqual([
-      "n1",
-      "n2",
-      "n3",
-    ]);
-    expect(optionsFromResponse(response(graph), { from: "edges", value: "since" })).toEqual([
-      { value: "2020", label: "2020" },
-    ]);
+    expect(
+      optionsFromResponse(response(graph), { from: "nodes" }).options.map((o) => o.value),
+    ).toEqual(["n1", "n2", "n3"]);
+    expect(optionsFromResponse(response(graph), { from: "edges", value: "since" }).options).toEqual(
+      [{ value: "2020", label: "2020" }],
+    );
   });
 
   it("reads a document field path, one option per list entry", () => {
@@ -271,16 +289,44 @@ describe("query variable options from other shapes", () => {
         from: "documents",
         value: "customer.name",
         text: "status",
-      }).slice(0, 2),
+      }).options.slice(0, 2),
     ).toEqual([
       { value: "Ada", label: "paid" },
       { value: "Grace", label: "open" },
     ]);
     expect(
-      optionsFromResponse(response(documents), { from: "documents", value: "tags" }).map(
+      optionsFromResponse(response(documents), { from: "documents", value: "tags" }).options.map(
         (o) => o.value,
       ),
     ).toEqual(expect.arrayContaining(["new", "eu"]));
-    expect(optionsFromResponse(response(documents))).toEqual([]);
+    expect(optionsFromResponse(response(documents)).options).toEqual([]);
+  });
+
+  it("keeps at most as many options as the server and says when the list was cut", () => {
+    const many = Array.from({ length: MAX_VARIABLE_OPTIONS + 5 }, (_, i) => ({ id: i }));
+    const documents = {
+      shape: "documents",
+      documents: { documents: many, schema: [], notices: [] },
+    };
+    const cut = optionsFromResponse(response(documents), { from: "documents", value: "id" });
+    expect([cut.options.length, cut.truncated]).toEqual([MAX_VARIABLE_OPTIONS, true]);
+    const more = {
+      shape: "documents",
+      documents: { documents: [{ id: 1 }], schema: [], notices: [], nextCursor: "next" },
+    };
+    expect(optionsFromResponse(response(more), { from: "documents", value: "id" }).truncated).toBe(
+      true,
+    );
+    const frame = {
+      shape: "frame",
+      frame: { fields: [{ name: "v", type: "string", values: ["a", "a", "b"] }] },
+    };
+    expect(optionsFromResponse(response(frame))).toEqual({
+      options: [
+        { value: "a", label: "a" },
+        { value: "b", label: "b" },
+      ],
+      truncated: false,
+    });
   });
 });

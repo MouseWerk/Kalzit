@@ -65,31 +65,50 @@ export function referencedNames(query: unknown): Set<string> {
   return new Set([...text.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? ""));
 }
 
+/** The most options a query variable offers, as on the server (`MAX_OPTIONS`). */
+export const MAX_VARIABLE_OPTIONS = 10_000;
+
 /**
  * The options of a query variable's result, as the server reads them (`options_from`): a frame's
  * first field as values and its second (if any) as labels; a graph or documents result only
- * through `valuesFrom`, the explicit projection. Another shape gives no options.
+ * through `valuesFrom`, the explicit projection. Another shape gives no options. Distinct by
+ * value, at most `MAX_VARIABLE_OPTIONS`; `truncated` when that cap or a limit of the result cut
+ * the list.
  */
 export function optionsFromResponse(
   response: QueryResponse,
   valuesFrom?: ValuesFrom,
-): VariableOption[] {
+): { options: VariableOption[]; truncated: boolean } {
   const outcome = Object.values(response.results)[0];
   if (outcome === undefined) {
-    return [];
+    return { options: [], truncated: false };
   }
   if ("error" in outcome) {
     throw new ApiError(outcome.error.code, 200, outcome.error.message);
   }
   const seen = new Set<string>();
   const options: VariableOption[] = [];
+  let truncated = false;
   const add = (value: string | null, label: string | null) => {
-    if (value !== null && !seen.has(value)) {
-      seen.add(value);
-      options.push({ value, label: label ?? value });
+    if (value === null || seen.has(value)) {
+      return;
     }
+    if (options.length === MAX_VARIABLE_OPTIONS) {
+      truncated = true;
+      return;
+    }
+    seen.add(value);
+    options.push({ value, label: label ?? value });
   };
   const result = outcome.result;
+  if (result.shape === "frame") {
+    truncated = result.frame.meta?.rowsTruncated === true;
+  } else if (result.shape === "graph") {
+    truncated = result.graph.truncated !== undefined;
+  } else {
+    truncated =
+      result.documents.truncated !== undefined || result.documents.nextCursor !== undefined;
+  }
   if (result.shape === "frame" && valuesFrom === undefined) {
     const [values, labels] = result.frame.fields;
     (values?.values ?? []).forEach((raw, row) => {
@@ -128,7 +147,7 @@ export function optionsFromResponse(
       }
     }
   }
-  return options;
+  return { options, truncated };
 }
 
 /** One control per dashboard variable, above the panels. */
@@ -251,7 +270,7 @@ function VariableControl({
         },
         signal,
       );
-      return { options: optionsFromResponse(response, variable.valuesFrom), truncated: false };
+      return optionsFromResponse(response, variable.valuesFrom);
     },
     enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
     // Options belong to the stored range text; "Refresh" or a new range reads them again.

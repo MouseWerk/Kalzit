@@ -746,6 +746,61 @@ async fn graph_reads(t: &T, id: &str) {
     graph_variables(t, id).await;
 }
 
+/// A dashboard on the graph source: a free (textbox) variable may not name a label or property,
+/// a custom one may; a query variable reads its options from the graph through `valuesFrom`.
+async fn graph_dashboard_variables(t: &T, id: &str) {
+    let panel = |pid: &str, cypher: &str| {
+        json!({
+            "id": pid, "type": "table", "title": pid, "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": id, "query": { "cypher": cypher } }],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        })
+    };
+    let model = json!({
+        "schemaVersion": 1, "title": "Graph-Variablen", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "frei", "type": "textbox" },
+            { "name": "label", "type": "custom", "options": ["KalzitTest", "Person"] },
+            { "name": "person", "type": "query", "datasourceId": id,
+              "query": { "cypher": "MATCH (n:KalzitTest) RETURN n ORDER BY n.name" },
+              "valuesFrom": { "from": "nodes", "label": "Person", "value": "name", "text": "name" } },
+            { "name": "flach", "type": "query", "datasourceId": id,
+              "query": { "cypher": "MATCH (n:KalzitTest) RETURN n" } }
+        ],
+        "panels": [
+            panel("frei_label", "MATCH (n:$($frei)) RETURN count(n) AS c"),
+            panel("frei_key", "MATCH (n:KalzitTest) RETURN n[$frei] AS v"),
+            panel("custom_label", "MATCH (n:$($label)) RETURN count(n) AS c")
+        ]
+    });
+    let (status, dashboard) = t.send(Method::POST, "/dashboards", Some(json!({ "model": model }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{dashboard}");
+    let dashboard = dashboard["id"].as_str().unwrap();
+    let range = json!({ "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 });
+    for (pid, variables) in [("frei_label", json!({ "frei": "KalzitTest" })), ("frei_key", json!({ "frei": "name" }))] {
+        let body = json!({ "timeRange": range, "variables": variables });
+        let (status, r) =
+            t.send(Method::POST, &format!("/dashboards/{dashboard}/panels/{pid}/query"), Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{r}");
+        assert_eq!(r["results"]["A"]["error"]["reason"], "cypher.variable_identifier", "{pid}: {r}");
+    }
+    let body = json!({ "timeRange": range, "variables": { "label": "KalzitTest" } });
+    let (status, r) =
+        t.send(Method::POST, &format!("/dashboards/{dashboard}/panels/custom_label/query"), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(r["results"]["A"]["result"]["frame"]["fields"][0]["values"][0], "2", "{r}");
+
+    let body = json!({ "timeRange": range, "variables": {} });
+    let (status, r) =
+        t.send(Method::POST, &format!("/dashboards/{dashboard}/variables/person/options"), Some(body.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(r["options"], json!([{ "value": "Ana", "label": "Ana" }, { "value": "Bo", "label": "Bo" }]), "{r}");
+    let (status, r) =
+        t.send(Method::POST, &format!("/dashboards/{dashboard}/variables/flach/options"), Some(body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{r}");
+    assert_eq!(r["error"]["reason"], "variables.not_a_frame", "{r}");
+}
+
 /// Variables reach Cypher as Bolt parameters: a value, a list for a multi-value variable, and text
 /// written to break out of a string, which stays one value and matches nothing.
 async fn graph_variables(t: &T, id: &str) {
@@ -783,6 +838,7 @@ async fn neo4j_reads_graphs_in_read_transactions() {
     assert_eq!(h["reason"], "health.connected", "{h}");
     assert_eq!(h["params"]["engine"], "Neo4j", "{h}");
     graph_reads(&t, &id).await;
+    graph_dashboard_variables(&t, &id).await;
 
     // The node limit cuts the graph with a reason.
     let mut limited = settings;

@@ -805,6 +805,6 @@
   "datasources.reason.live.memory_limit": "Live results here would take more memory than the server allows for you. The last results that fit stay; new live queries start once there is room again.",
   "datasources.reason.live.check_failed": "Your access could not be checked again, so live updates stopped. Reconnect to resume them.",
   "datasources.reason.mongodb.streams_limit": "{max} change streams of this source are open already, so further live queries run at a fixed interval.",
-  "datasources.reason.cypher.variable_identifier": "${name} names a label or relationship type here. Only fixed-value and constant variables may do that, since only their values are listed in the dashboard.",
+  "datasources.reason.cypher.variable_identifier": "${name} names a label, relationship type or property here. Only fixed-value and constant variables may do that, since only their values are listed in the dashboard.",
   "datasources.reason.gsql.variable_text": "GSQL takes variables as query parameters: declare a parameter {name} in the query’s head instead of writing ${name} in its text."
 }

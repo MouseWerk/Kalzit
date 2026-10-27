@@ -196,7 +196,7 @@ function CardPanel({ documents = [], options }: PanelProps<CardOptions>) {
         )}
       </article>
       {clicked.variable === null ? null : (
-        <p className="visually-hidden" role="status">
+        <p className="visually-hidden" role="status" aria-live="polite">
           {clicked.announcement}
         </p>
       )}

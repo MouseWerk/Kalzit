@@ -78,6 +78,15 @@ export function ClickVariableOptions({
 }) {
   const sourceId = useId();
   const [text, setText] = useState(source);
+  // A value changed from outside (undo, another editor) replaces the typed text; the stored form
+  // of what is typed (trimmed) leaves it alone.
+  const [shown, setShown] = useState(source);
+  if (shown !== source) {
+    setShown(source);
+    if (clickOption(text, maxLength) !== source) {
+      setText(source);
+    }
+  }
   const choices = names.includes(variable) || variable === "" ? names : [variable, ...names];
   return (
     <>
