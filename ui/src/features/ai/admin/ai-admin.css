@@ -1,0 +1,374 @@
+@layer components {
+  /*
+   * The AI pages after the board docs/design/blueprint/AI.dc.html: cards of rows on the
+   * settings page, a status strip, tables of providers and usage, notes and the chips of
+   * excluded fields. Tokens only; nothing is framed in an accent or status color.
+   */
+  .ai-admin {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  .ai-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .ai-card__title {
+    display: grid;
+    flex: 1 1 18rem;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .ai-card__title h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ai-card__body {
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .ai-muted {
+    color: var(--text-muted);
+  }
+
+  .ai-small {
+    font-size: var(--font-size-xs);
+  }
+
+  .ai-mono {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  /* A small pill: the default provider, "Text for everyone", an excluded field. */
+  .ai-chip {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    white-space: nowrap;
+  }
+
+  .ai-chip--field {
+    color: var(--text);
+  }
+
+  .ai-chip__remove {
+    display: grid;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .ai-chip__remove:hover {
+    color: var(--text);
+  }
+
+  .ai-chip__remove:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* Status strip below the switch while AI is on. */
+  .ai-status {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .ai-status__cell {
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border-inline-end: var(--border-width) solid var(--border);
+  }
+
+  .ai-status__cell:last-child {
+    border-inline-end: 0;
+  }
+
+  .ai-status__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .ai-status__value {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ai-status__sub {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Tables inside a card: the card draws the frame. */
+  .ai-table-wrap {
+    overflow-x: auto;
+  }
+
+  .ai-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .ai-table--plain td {
+    color: var(--text-muted);
+  }
+
+  .ai-table th,
+  .ai-table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: middle;
+  }
+
+  .ai-table thead th {
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+  }
+
+  .ai-table tbody tr:last-child th,
+  .ai-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .ai-table__caption {
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    text-align: start;
+    caption-side: bottom;
+  }
+
+  .ai-table__name {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ai-table__status {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .ai-table__number {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  .ai-table th.ai-table__number,
+  .ai-table td.ai-table__number {
+    text-align: end;
+  }
+
+  .ai-table__actions {
+    white-space: nowrap;
+    text-align: end;
+  }
+
+  .ai-table th.ai-table__label {
+    width: 10rem;
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    vertical-align: top;
+  }
+
+  /* No provider yet: what to connect, in the middle of the card. */
+  .ai-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    padding: var(--space-6) var(--space-4);
+    text-align: center;
+  }
+
+  .ai-empty__icon {
+    display: grid;
+    width: var(--size-kind-mark);
+    height: var(--size-kind-mark);
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+  }
+
+  .ai-empty__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ai-empty__text {
+    max-width: var(--size-text-max);
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  /* A quiet note on the sunken surface, and an alarm on the danger tint without a frame. */
+  .ai-note,
+  .ai-alarm {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height);
+  }
+
+  .ai-note {
+    border: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+  }
+
+  .ai-note strong,
+  .ai-alarm strong {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ai-note .icon {
+    flex: none;
+  }
+
+  .ai-alarm {
+    background: var(--danger-bg);
+    color: var(--text);
+  }
+
+  /* The provider dialog. */
+  .ai-dialog {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .ai-dialog__value {
+    display: grid;
+    gap: var(--space-half);
+    margin: 0;
+  }
+
+  .ai-dialog__key {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ai-dialog__key .input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ai-dialog__pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+    gap: var(--space-3);
+  }
+
+  .ai-dialog__check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .ai-dialog__check > span {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .ai-dialog__footer {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ai-dialog__spacer {
+    flex: 1;
+  }
+
+  /* "AI may read" in a data source's settings. */
+  .ai-source__switch {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+  }
+
+  .ai-source__text {
+    display: grid;
+    flex: 1;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .ai-source__heading {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ai-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+  }
+
+  .ai-chips__list {
+    display: contents;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ai-chips__input {
+    flex: 1;
+    min-width: 8rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+  }
+}
