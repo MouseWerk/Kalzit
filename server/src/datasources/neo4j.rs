@@ -432,6 +432,10 @@ impl DataSourcePlugin for GraphDb {
         &[Shape::Graph, Shape::Frame]
     }
 
+    fn capabilities(&self) -> &'static [super::Capability] {
+        &[super::Capability::Pushdown]
+    }
+
     fn pushdown(&self, query: &Value, step: &crate::analysis::StepKind, max_rows: usize) -> Option<Value> {
         let q = CypherQuery::deserialize(query).ok()?;
         let dialect = match self.0 {
