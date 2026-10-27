@@ -250,6 +250,10 @@ struct DatasourceView {
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
     access: DatasourceAccess,
+    /// The last "Test connection" since the settings or secrets last changed, with its warnings,
+    /// for everyone who may see the source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_test: Option<datasources::LastTest>,
 }
 
 /// The answer for one data source, read through `conn`: after a change, the change's own
@@ -260,8 +264,10 @@ async fn view_in(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, ds: Datasource) -
     let secrets =
         secrets::set_fields(&mut *conn, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
     let access = access(ctx, AccessIndex::load(&mut *conn, ctx).await?.datasource(&ds.id));
+    let last_test = datasources::last_test(&mut *conn, &ds.id).await?;
     Ok(DatasourceView {
         access,
+        last_test,
         id: ds.id,
         name: ds.name,
         kind: ds.kind,
@@ -541,6 +547,10 @@ async fn update(
         return Err(stale(&state, &ctx, &ds.id).await);
     }
     secrets::apply_patch(&mut tx, state.datasources.keyring(), &ds.id, &body.secrets).await?;
+    if changed.iter().any(|c| c.starts_with("settings.") || c.starts_with("secrets.")) {
+        // The last test checked what was stored before; its warnings may no longer apply.
+        datasources::forget_last_test(&mut tx, &ds.id).await?;
+    }
     record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, json!({ "changed": changed }), now)).await?;
     let saved = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
     let answer = view_in(&mut tx, &ctx, saved).await?;

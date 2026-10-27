@@ -67,6 +67,11 @@ export function GsqlQueryEditor({
   );
   const parsed = parseParams(paramsText);
   const queries = schema.data?.kind === "graph" ? schema.data.queries : [];
+  // The picked query's declared parameters, when the server could read them.
+  const declared =
+    installed && schema.data?.kind === "graph"
+      ? schema.data.queryParams[value.installed]
+      : undefined;
   const graphSetting = settings.data?.settings.graph;
   const { graph, known } = templateGraph(graphSetting);
   const withParams = (next: { gsql: string } | { installed: string }) =>
@@ -118,6 +123,25 @@ export function GsqlQueryEditor({
                 </option>
               ))}
             </select>
+          )}
+          {declared === undefined ? null : declared.length === 0 ? (
+            <p className="field__hint">{t("datasources.editor.gsql.noParams")}</p>
+          ) : (
+            <div className="query-editor__params">
+              <p className="field__hint">{t("datasources.editor.gsql.declared")}</p>
+              <dl className="query-editor__macros">
+                {declared.map((param) => (
+                  <div key={param.name}>
+                    <dt>
+                      <code>{param.name}</code>
+                    </dt>
+                    <dd>
+                      <code>{param.type}</code>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
           )}
         </div>
       ) : (

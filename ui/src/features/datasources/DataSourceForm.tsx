@@ -20,6 +20,7 @@ import {
   type DatasourceKind,
   datasourceQuery,
   type Health,
+  type HealthWarning,
   kindsQuery,
   type SettingSpec,
   testDatasource,
@@ -447,16 +448,45 @@ function healthText(t: Translate, health: Health) {
   );
 }
 
+/**
+ * What a passed connection test found that needs attention (TigerGraph: REST++ without
+ * authentication), as a quiet neutral notice: the source works, saving stays allowed.
+ */
+export function HealthWarnings({ warnings }: { warnings: HealthWarning[] }) {
+  const { t } = useI18n();
+  if (warnings.length === 0) return null;
+  return (
+    <div className="notice ds-warnings">
+      <Icon name="alert" />
+      <div className="ds-health">
+        <strong>{t("datasources.health.warnings")}</strong>
+        {warnings.map((warning) => (
+          <span key={warning.reason} className="ds-health__message">
+            {reasonText(t, {
+              reason: warning.reason,
+              params: warning.params,
+              fallback: warning.message,
+            }) ?? warning.message}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** The outcome of "Test connection", in a live region so it is announced. */
 export function HealthResult({
   health,
   error,
   empty = null,
+  warnings = true,
 }: {
   health: Health | null;
   error: Error | null;
   /** What shows before any test. */
   empty?: ReactNode;
+  /** Whether the result shows its warnings (off where the page shows them on its own). */
+  warnings?: boolean;
 }) {
   const { t } = useI18n();
   let content = empty;
@@ -481,6 +511,14 @@ export function HealthResult({
         </div>
       </div>
     );
+    if (warnings) {
+      content = (
+        <>
+          {content}
+          <HealthWarnings warnings={health.ok ? (health.warnings ?? []) : []} />
+        </>
+      );
+    }
   }
   // One live region that stays mounted, so the result is announced when it arrives.
   return (

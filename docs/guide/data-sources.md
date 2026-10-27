@@ -110,6 +110,15 @@ access control; for Memgraph and TigerGraph it checks the user's rights and refu
 may write (Memgraph Community needs **Allow a user that may write**, where only the query check
 protects the data).
 
+For TigerGraph, turn on REST++ authentication (`gadmin config set RESTPP.Factory.EnableAuth true`,
+then `gadmin config apply -y` and `gadmin restart restpp -y`); a fresh Community Edition starts
+without it, and then REST++ runs any installed query for anyone who reaches it; **Test connection**
+warns about that, and the data source page keeps the warning in view. A `queryreader`
+cannot read the text of installed queries, so they run only when listed under **Approved
+installed queries**; one that TigerGraph marks as changing data is refused even then. The query
+editor lists the picked query's parameters with their types, and a parameter without a value takes
+the dashboard variable of the same name, as in written GSQL.
+
 ## Targets
 
 Sources may point at private networks and localhost. Always refused are Kalzit's own data

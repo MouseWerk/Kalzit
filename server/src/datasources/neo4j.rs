@@ -507,7 +507,7 @@ impl DataSourcePlugin for GraphDb {
                     .with("engine", engine)
                     .with("version", &version)
                     .with("privileges", &write);
-                    Health { ok: true, code: None, detail }
+                    Health { ok: true, code: None, detail, warnings: Vec::new() }
                 };
                 if !edition.is_empty() {
                     health.detail = health.detail.with("edition", edition);
@@ -543,7 +543,13 @@ impl DataSourcePlugin for GraphDb {
         }
         lease.release();
         let [labels, edge_types, property_keys]: [Vec<String>; 3] = lists.try_into().expect("three lists");
-        Ok(SourceSchema::Graph { labels, edge_types, property_keys, queries: Vec::new() })
+        Ok(SourceSchema::Graph {
+            labels,
+            edge_types,
+            property_keys,
+            queries: Vec::new(),
+            query_params: BTreeMap::new(),
+        })
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {

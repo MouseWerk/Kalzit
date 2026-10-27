@@ -28,6 +28,10 @@ struct Fake {
     v3: bool,
     /// The token endpoint redirects (to a same-origin twin that would issue a token).
     redirect_tokens: bool,
+    /// REST++ without authentication (a fresh Community Edition): it answers without a token.
+    restpp_open: bool,
+    /// How often `GET /gsql/v1/queries/info?query=...` was asked.
+    info_calls: Mutex<u32>,
 }
 
 type S = Arc<Fake>;
@@ -66,11 +70,13 @@ async fn schema_v3(Query(q): Query<BTreeMap<String, String>>) -> Response {
 
 async fn user(Path(name): Path<String>) -> Response {
     match name.as_str() {
+        // As 4.2.5 answers a queryreader about itself (the nightly job checks it).
         "leser" => json_reply(
             200,
-            json!({ "error": false, "results": [{ "name": "leser", "isSuperUser": false,
-                "roles": { "social": ["queryreader"] },
-                "privileges": { "social": { "privileges": ["READ_SCHEMA", "READ_DATA", "EXECUTE_LOADINGJOB", "READ_LOADINGJOB"] } } }] }),
+            json!({ "error": false, "message": "", "results": { "name": "leser", "isSuperUser": false, "disabled": false,
+                "roles": { "social": ["queryreader"] }, "creators": { "social": "tigergraph" }, "secrets": [],
+                "privileges": { "social": { "privileges": ["READ_SCHEMA", "READ_LOADINGJOB", "EXECUTE_LOADINGJOB",
+                    "READ_DATA", "APP_ACCESS_DATA", "READ_POLICY"] } } } }),
         ),
         "schreiber" => json_reply(
             200,
@@ -80,9 +86,13 @@ async fn user(Path(name): Path<String>) -> Response {
         ),
         "chef" => json_reply(
             200,
-            json!({ "error": false, "results": [{ "name": "chef", "isSuperUser": true, "roles": { "1": ["superuser"] } }] }),
+            json!({ "error": false, "results": { "name": "chef", "isSuperUser": true,
+                "roles": { "1": ["superuser"], "social": ["superuser"] },
+                "privileges": { "1": { "privileges": ["READ_DATA", "DELETE_DATA", "DROP_ALL"] },
+                    "social": { "privileges": [], "childPermissions": { "nachbarn": { "privileges": ["OWNER"] } } } } } }),
         ),
-        // Not allowed to read its own record: Kalzit asks with SHOW USER.
+        // Not allowed to read its own record (4.2.5 lets a queryreader read it; older or other
+        // setups may not): Kalzit asks with SHOW USER.
         _ => json_reply(403, json!({ "error": true, "message": "Permission denied: READ_USER" })),
     }
 }
@@ -136,8 +146,55 @@ async fn query_text(Path(name): Path<String>, Query(q): Query<BTreeMap<String, S
             200,
             json!({ "error": false, "results": { "queryContent": "CREATE QUERY loescht() FOR GRAPH social { DELETE s FROM Person:s; }" } }),
         ),
-        _ => json_reply(403, json!({ "error": true, "message": "Permission denied: READ_QUERY" })),
+        // As 4.2.5 answers a queryreader.
+        _ => json_reply(
+            403,
+            json!({ "error": true, "message": format!("User 'leser' does not have the permission to run the command\nRequired Query Privileges: \n  - Graph 'social' Privileges:\n    - Query '{name}' Privileges:\n      READ_QUERY [MISSING]\n\nPlease ask for the [MISSING] privileges.") }),
+        ),
     }
+}
+
+/// `GET /gsql/v1/queries/info`, which 4.2.5 answers a queryreader (shortened): every query, or
+/// the one named in `query`.
+async fn query_info(State(s): State<S>, Query(q): Query<BTreeMap<String, String>>) -> Response {
+    assert_eq!(q.get("graph").map(String::as_str), Some("social"));
+    if q.contains_key("query") {
+        *s.info_calls.lock().unwrap() += 1;
+    }
+    // The parameters as 4.2.5 describes `geheim(INT k, STRING name, LIST<INT> liste, VERTEX v,
+    // VERTEX<Person> p)`: an untyped vertex has a `v.type` companion, a list `max_count`.
+    let geheim = json!({
+        "k": { "index": 0, "type": "INT64", "min_count": 0 },
+        "name": { "index": 1, "type": "STRING", "min_count": 0 },
+        "liste": { "max_count": 2_147_483_647_u64, "index": 2, "type": "INT64", "min_count": 0 },
+        "v": { "index": 3, "id_type": "$v.type", "type": "STRING", "is_id": "true", "min_count": 0 },
+        "v.type": { "index": 4, "type": "STRING", "min_count": 0 },
+        "p": { "index": 5, "id_type": "Person", "type": "STRING", "is_id": "true", "min_count": 0 },
+        "query": { "default": "geheim", "type": "STRING" }
+    });
+    let all = [
+        ("nachbarn", false, json!({ "query": { "default": "nachbarn", "type": "STRING" } })),
+        ("loescht", true, json!({ "query": { "default": "loescht", "type": "STRING" } })),
+        ("geheim", false, geheim),
+        ("schreibt_geheim", true, json!({ "query": { "default": "schreibt_geheim", "type": "STRING" } })),
+        ("verboten", false, json!({ "query": { "default": "verboten", "type": "STRING" } })),
+    ];
+    let mut results: Vec<Value> = all
+        .iter()
+        .filter(|(n, _, _)| q.get("query").is_none_or(|w| w == n))
+        .map(|(n, update, params)| {
+            json!({ "name": n, "installed": true, "graphUpdate": update, "status": "VALID", "syntax": "GSQL v2",
+                    "endpoint": { "query": { "social": { *n: { "GET/POST": {
+                        "graphUpdate": update, "action": "query", "parameters": params } } } } } })
+        })
+        .collect();
+    // An info without `graphUpdate` (an older or changed server).
+    if q.get("query").is_none_or(|w| w == "ohne_flag") {
+        results
+            .push(json!({ "name": "ohne_flag", "installed": true, "endpoint": { "query": { "social": { "ohne_flag": {
+            "GET/POST": { "parameters": { "query": { "default": "ohne_flag", "type": "STRING" } } } } } } } }));
+    }
+    json_reply(200, json!({ "error": false, "message": "", "results": results }))
 }
 
 fn vertex(id: &str, name: &str) -> Value {
@@ -169,11 +226,25 @@ async fn restpp_query(
     let valid = s.valid_token.lock().unwrap().clone();
     let bearer =
         h.get("authorization").and_then(|v| v.to_str().ok()).map(|v| v.trim_start_matches("Bearer ").to_string());
+    // As 4.2.5 answers a missing or unknown token, with REST++ authentication on.
     if valid.is_none() || bearer != valid {
-        return json_reply(401, json!({ "error": true, "message": "token expired" }));
+        return json_reply(
+            403,
+            json!({ "version": { "edition": "community", "api": "v2", "schema": 0 }, "error": true,
+                    "message": "Access Denied because the input token = 'tok-****' is not in correct format", "code": "REST-10016" }),
+        );
     }
     assert!(h.get("gsql-timeout").is_some());
     *s.last_query.lock().unwrap() = raw.0.unwrap_or_default();
+    // As 4.2.5 answers a valid token that lacks a privilege the query needs: final, not a token issue.
+    if name == "verboten" {
+        return json_reply(
+            403,
+            json!({ "version": { "edition": "community", "api": "v2", "schema": 0 }, "error": true,
+                    "message": "Access Denied because the input token = 'tok-****' does not have permission to run the request",
+                    "code": "REST-10018" }),
+        );
+    }
     json_reply(
         200,
         json!({ "error": false, "message": "", "version": { "edition": "enterprise" }, "results": results_for(&name) }),
@@ -190,15 +261,24 @@ async fn interpret(State(s): State<S>, h: AxHeaders, raw: axum::extract::RawQuer
     json_reply(200, json!({ "error": false, "results": results }))
 }
 
-async fn version() -> Response {
+async fn version(State(s): State<S>, h: AxHeaders) -> Response {
+    let bearer =
+        h.get("authorization").and_then(|v| v.to_str().ok()).map(|v| v.trim_start_matches("Bearer ").to_string());
+    if !s.restpp_open && (bearer.is_none() || bearer != *s.valid_token.lock().unwrap()) {
+        return json_reply(
+            403,
+            json!({ "error": true, "message": "Access Denied because the input token = '' is empty or too short", "code": "REST-10016" }),
+        );
+    }
     json_reply(
         200,
         json!({ "error": false, "message": "\nTigerGraph RESTPP:\n --- Version --- \nTigerGraph version: 4.1.2\nEdition: enterprise\n" }),
     )
 }
 
+/// 4.2.5 answers a queryreader with an empty list here, even when the graph has queries.
 async fn queries() -> Response {
-    json_reply(200, json!({ "error": false, "results": ["nachbarn", "loescht"] }))
+    json_reply(200, json!({ "error": false, "message": "", "results": [] }))
 }
 
 async fn fake(v3: bool) -> (std::net::SocketAddr, S) {
@@ -218,6 +298,7 @@ async fn fake_with(fake: Fake) -> (std::net::SocketAddr, S) {
         .route("/gsql/v1/tokens2", post(tokens2))
         .route("/gsql/v1/queries/{name}", get(query_text))
         .route("/gsql/v1/queries", get(queries))
+        .route("/gsql/v1/queries/info", get(query_info))
         .route("/gsql/v1/queries/interpret", post(interpret))
         .route("/gsqlserver/interpreted_query", post(interpret))
         .route("/restpp/query/{graph}/{name}", get(restpp_query))
@@ -275,7 +356,7 @@ async fn installed_queries_run_with_typed_parameters_and_become_a_graph() {
     let q = json!({ "installed": "nachbarn", "params": { "p": "1", "tags": ["a b", "c&d"] } });
     let r = TigerGraph.query(&conn, req(q, json!({ "tiefe": 2 }))).await.unwrap();
     let sent = fake.last_query.lock().unwrap().clone();
-    assert_eq!(sent, "p=1&tiefe=2&tags=a+b&tags=c%26d", "typed, from params and variables");
+    assert_eq!(sent, "p=1&tiefe=2&tags=a%20b&tags=c%26d", "typed, from params and variables");
     let QueryResult::Graph { graph } = r else { panic!("a graph") };
     let ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
     assert_eq!(ids, ["Person:1", "Person:2", "Person:3"], "Person:3 is an edge's end");
@@ -300,14 +381,14 @@ async fn installed_queries_run_with_typed_parameters_and_become_a_graph() {
     *fake.valid_token.lock().unwrap() = Some("tok-neu".into());
     let again = json!({ "installed": "nachbarn", "params": { "p": "1" } });
     assert!(TigerGraph.query(&conn, req(again.clone(), json!({}))).await.is_ok(), "{:?}", fake.valid_token);
-    assert_eq!(*fake.tokens_issued.lock().unwrap(), 2, "a new token was fetched after the 401");
+    assert_eq!(*fake.tokens_issued.lock().unwrap(), 2, "a new token was fetched after REST++ refused the old one");
     assert!(TigerGraph.query(&conn, req(again, json!({}))).await.is_ok());
     assert_eq!(*fake.tokens_issued.lock().unwrap(), 2, "and kept");
 }
 
 #[tokio::test]
 async fn installed_queries_need_a_text_that_passes_or_an_approval() {
-    let (addr, _) = fake(false).await;
+    let (addr, fake) = fake(false).await;
     let conn = connection(addr, "leser", json!({})).await;
     let r = TigerGraph.query(&conn, req(json!({ "installed": "loescht" }), json!({}))).await;
     assert_eq!(reason(r), "gsql.write");
@@ -316,8 +397,37 @@ async fn installed_queries_need_a_text_that_passes_or_an_approval() {
     let r = TigerGraph.query(&conn, req(json!({ "installed": "x/../../gsql/v1/users" }), json!({}))).await;
     assert_eq!(reason(r), "tigergraph.query_name");
 
-    let approved = connection(addr, "leser", json!({ "approvedQueries": "geheim, andere" })).await;
-    let r = TigerGraph.query(&approved, req(json!({ "installed": "geheim", "params": { "k": 3 } }), json!({}))).await;
+    let approved =
+        connection(addr, "leser", json!({ "approvedQueries": "geheim, andere, schreibt_geheim, ohne_flag, verboten" }))
+            .await;
+    // TigerGraph marks a query that changes data (graphUpdate in its info): refused even when approved.
+    let r = TigerGraph.query(&approved, req(json!({ "installed": "schreibt_geheim" }), json!({}))).await;
+    assert_eq!(reason(r), "tigergraph.query_writes");
+    // 4.x fails closed: without an info, or without graphUpdate in it, an approved query does
+    // not run (it would run untyped and unchecked).
+    for name in ["andere", "ohne_flag"] {
+        let r = TigerGraph.query(&approved, req(json!({ "installed": name, "params": { "s": "x" } }), json!({}))).await;
+        assert_eq!(reason(r), "tigergraph.query_info_unreadable", "{name}");
+    }
+    // A token REST++ accepts but that lacks a privilege (REST-10018) is final: no new token.
+    let before = *fake.tokens_issued.lock().unwrap();
+    let r = TigerGraph.query(&approved, req(json!({ "installed": "verboten" }), json!({}))).await;
+    assert_eq!(reason(r), "tigergraph.error");
+    assert_eq!(*fake.tokens_issued.lock().unwrap(), before + 1, "one token for the call, none after the refusal");
+    // With info: typed parameters in their declared order, filled from dashboard variables too.
+    let params = json!({ "k": 3, "name": "x+y z", "liste": [1, 2], "v": { "type": "Ort", "id": "7" } });
+    let r = TigerGraph
+        .query(&approved, req(json!({ "installed": "geheim", "params": params }), json!({ "p": "1", "fremd": 1 })))
+        .await;
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "k=3&name=x%2By%20z&liste=1&liste=2&v=7&v.type=Ort&p=1");
+    for (bad, why) in [
+        (json!({ "k": "drei" }), "tigergraph.param_type"),
+        (json!({ "v": "7" }), "tigergraph.param_type"),
+        (json!({ "s": 1 }), "tigergraph.param_unknown"),
+    ] {
+        let q = json!({ "installed": "geheim", "params": bad });
+        assert_eq!(reason(TigerGraph.query(&approved, req(q, json!({}))).await), why, "{bad}");
+    }
     let QueryResult::Frame { frame } = r.unwrap() else { panic!("scalars are a frame") };
     let names: Vec<&str> = frame.fields().iter().map(|f| f.name.as_str()).collect();
     assert_eq!(names, ["@@total", "durchschnitt", "name"]);
@@ -343,7 +453,7 @@ async fn interpreted_queries_are_checked_and_sent_with_basic_auth() {
         .await
         .unwrap();
     assert!(matches!(r, QueryResult::Frame { .. }));
-    assert_eq!(fake.last_query.lock().unwrap().as_str(), "graph=social&name=Ana+%C3%96&ab=2027-01-15+08%3A00%3A00");
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "graph=social&name=Ana%20%C3%96&ab=2027-01-15%2008%3A00%3A00");
     assert_eq!(fake.last_body.lock().unwrap().as_str(), text);
 
     for (gsql, why) in [
@@ -432,14 +542,59 @@ async fn health_and_schema() {
     assert!(h.ok, "{h:?}");
     assert_eq!(h.detail.params["version"], "4.1.2");
     assert_eq!(h.detail.params["edition"], "enterprise");
-    let SourceSchema::Graph { labels, edge_types, property_keys, queries } = TigerGraph.schema(&conn).await.unwrap()
+    let SourceSchema::Graph { labels, edge_types, property_keys, queries, query_params } =
+        TigerGraph.schema(&conn).await.unwrap()
     else {
         panic!("a graph schema")
     };
     assert_eq!(labels, ["Person"]);
     assert_eq!(edge_types, ["Friend"]);
     assert_eq!(property_keys, ["age", "name", "since"]);
-    assert_eq!(queries, ["extra", "loescht", "nachbarn"]);
+    // From the query info, which a queryreader may read; the plain query list is empty for it.
+    assert_eq!(queries, ["extra", "geheim", "loescht", "nachbarn", "ohne_flag", "schreibt_geheim", "verboten"]);
+    let types: Vec<String> = query_params["geheim"].iter().map(|p| format!("{} {}", p.ty, p.name)).collect();
+    assert_eq!(types, ["INT k", "STRING name", "SET<INT> liste", "VERTEX v", "VERTEX<Person> p"]);
+    assert_eq!(query_params["nachbarn"], []);
+    assert!(h.warnings.is_empty(), "REST++ refuses requests without a token: {h:?}");
+}
+
+#[tokio::test]
+async fn approved_query_info_is_read_again_while_rest_is_open() {
+    let params = json!({ "installed": "geheim", "params": { "k": 1 } });
+    // REST++ checks tokens: the clean info is kept for a minute, like a checked text.
+    let (addr, fake) = fake(false).await;
+    let conn = connection(addr, "leser", json!({ "approvedQueries": "geheim" })).await;
+    for _ in 0..2 {
+        TigerGraph.query(&conn, req(params.clone(), json!({}))).await.unwrap();
+    }
+    assert_eq!(*fake.info_calls.lock().unwrap(), 1);
+    // REST++ without authentication: the info is the only guard, so every run reads it again.
+    let (addr, fake) = fake_with(Fake { restpp_open: true, ..Fake::default() }).await;
+    let conn = connection(addr, "leser", json!({ "approvedQueries": "geheim" })).await;
+    for _ in 0..2 {
+        TigerGraph.query(&conn, req(params.clone(), json!({}))).await.unwrap();
+    }
+    assert_eq!(*fake.info_calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn query_strings_keep_plus_space_and_ampersand_apart() {
+    let mut url = Url::parse("http://tg/restpp/query/social/q").unwrap();
+    set_query(&mut url, &[("a", "x+y z&w=1"), ("b c", "ö")]);
+    assert_eq!(url.query(), Some("a=x%2By%20z%26w%3D1&b%20c=%C3%B6"));
+    set_query::<&str, &str>(&mut url, &[]);
+    assert_eq!(url.query(), None);
+}
+
+#[tokio::test]
+async fn rest_without_authentication_is_a_warning() {
+    let (addr, _) = fake_with(Fake { restpp_open: true, ..Fake::default() }).await;
+    let conn = connection(addr, "leser", json!({})).await;
+    let h = TigerGraph.health(&conn).await;
+    assert!(h.ok, "a warning, not a failure: {h:?}");
+    assert_eq!(h.warnings.len(), 1);
+    assert_eq!(h.warnings[0].reason, "tigergraph.auth_disabled");
+    assert!(h.warnings[0].message.contains("RESTPP.Factory.EnableAuth"));
 }
 
 #[tokio::test]
@@ -479,6 +634,19 @@ fn rights_and_parameters() {
     .unwrap();
     assert_eq!(out, [("v[0]".to_string(), "7".to_string()), ("v[0].type".to_string(), "Person".to_string())]);
     assert!(typed_pairs("u", "u", &ParamType::Uint, &json!(-1), &mut Vec::new()).is_err());
+    // INT is i64: a larger number is refused, not wrapped; UINT takes the whole u64 range.
+    for big in [json!(9_223_372_036_854_775_808_u64), json!("9223372036854775808")] {
+        assert!(typed_pairs("i", "i", &ParamType::Int, &big, &mut Vec::new()).is_err(), "{big}");
+    }
+    let mut out = Vec::new();
+    typed_pairs("i", "i", &ParamType::Int, &json!(i64::MIN), &mut out).unwrap();
+    typed_pairs("u", "u", &ParamType::Uint, &json!(u64::MAX), &mut out).unwrap();
+    typed_pairs("u", "u", &ParamType::Uint, &json!("18446744073709551615"), &mut out).unwrap();
+    assert_eq!(
+        out.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>(),
+        ["-9223372036854775808", "18446744073709551615", "18446744073709551615"]
+    );
+    assert!(typed_pairs("u", "u", &ParamType::Uint, &json!("18446744073709551616"), &mut Vec::new()).is_err());
     assert!(typed_pairs("b", "b", &ParamType::Bool, &json!("ja"), &mut Vec::new()).is_err());
     assert_eq!(version_from("product release_3.10.1_02-01-2024"), Some("3.10.1".into()));
     assert!(kind().validate_settings(&json!({ "url": "http://tg", "graph": "a/b", "user": "u" })).is_err());
@@ -506,7 +674,7 @@ async fn variables_stay_typed_parameters() {
     assert!(r.is_ok(), "{:?}", r.err().map(|e| e.detail().reason));
     assert_eq!(
         fake.last_query.lock().unwrap().as_str(),
-        "graph=social&name=Ana%22%3B+DELETE+s+FROM+Person%3As%3B+PRINT+%22&tags=a%26b&tags=c%3Dd",
+        "graph=social&name=Ana%22%3B%20DELETE%20s%20FROM%20Person%3As%3B%20PRINT%20%22&tags=a%26b&tags=c%3Dd",
         "a variable the query does not declare is not sent"
     );
     assert_eq!(fake.last_body.lock().unwrap().as_str(), text);

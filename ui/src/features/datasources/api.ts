@@ -105,6 +105,15 @@ export interface Datasource {
   updatedAt?: number;
   /** When it was added. */
   createdAt?: number;
+  /** The last connection test since the settings last changed, kept by the server for everyone. */
+  lastTest?: LastTest;
+}
+
+/** A stored connection test: whether it passed, its warnings and when it ran. */
+export interface LastTest {
+  ok: boolean;
+  warnings: HealthWarning[];
+  testedAt: number;
 }
 
 /**
@@ -153,6 +162,15 @@ export interface Health {
   latencyMs: number;
   /** Only when the test failed: datasource_error, datasource_target_blocked or query_timeout. */
   code?: string;
+  /** What works but needs attention (TigerGraph: REST++ without authentication); the test passed. */
+  warnings?: HealthWarning[];
+}
+
+/** One warning of a connection test: a reason the UI translates, with the English text. */
+export interface HealthWarning {
+  reason: string;
+  params?: Record<string, string>;
+  message: string;
 }
 
 export interface SqlSchema {
@@ -195,6 +213,42 @@ export interface GraphSourceSchema {
   edgeTypes: string[];
   propertyKeys: string[];
   queries: string[];
+  /** TigerGraph: the declared parameters of installed queries whose info is readable, by name. */
+  queryParams: Record<string, QueryParam[]>;
+}
+
+/** One declared parameter of an installed query, its type as GSQL writes it (`SET<INT>`). */
+export interface QueryParam {
+  name: string;
+  type: string;
+}
+
+function parseQueryParams(value: unknown): Record<string, QueryParam[]> {
+  if (!isRecord(value)) return {};
+  const out: Record<string, QueryParam[]> = {};
+  for (const [name, list] of Object.entries(value)) {
+    if (!Array.isArray(list)) continue;
+    out[name] = list.flatMap((p) =>
+      isRecord(p) && typeof p.name === "string" && typeof p.type === "string"
+        ? [{ name: p.name, type: p.type }]
+        : [],
+    );
+  }
+  return out;
+}
+
+function parseWarnings(value: unknown): HealthWarning[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((w) => {
+    if (!isRecord(w) || typeof w.reason !== "string") return [];
+    const warning: HealthWarning = {
+      reason: w.reason,
+      message: typeof w.message === "string" ? w.message : "",
+    };
+    const params = stringParams(w.params);
+    if (params !== undefined) warning.params = params;
+    return [warning];
+  });
 }
 
 /**
@@ -337,6 +391,17 @@ function parseDatasource(value: unknown): Datasource {
     ...(summary.access === undefined ? {} : { access: summary.access }),
     ...(typeof value.updatedAt === "number" ? { updatedAt: value.updatedAt } : {}),
     createdAt: summary.createdAt,
+    ...(isRecord(value.lastTest) &&
+    typeof value.lastTest.ok === "boolean" &&
+    typeof value.lastTest.testedAt === "number"
+      ? {
+          lastTest: {
+            ok: value.lastTest.ok,
+            warnings: parseWarnings(value.lastTest.warnings),
+            testedAt: value.lastTest.testedAt,
+          },
+        }
+      : {}),
   };
 }
 
@@ -459,6 +524,10 @@ function parseHealth(value: unknown): Health {
   if (params !== undefined) {
     result.params = params;
   }
+  const warnings = parseWarnings(health.warnings);
+  if (warnings.length > 0) {
+    result.warnings = warnings;
+  }
   return result;
 }
 
@@ -512,6 +581,7 @@ export async function fetchSchema(
       edgeTypes: strings(value.edgeTypes),
       propertyKeys: strings(value.propertyKeys),
       queries: strings(value.queries),
+      queryParams: parseQueryParams(value.queryParams),
     };
   }
   if (isRecord(value) && value.kind === "tables" && Array.isArray(value.tables)) {

@@ -156,9 +156,18 @@ pub struct Health {
     /// What to show: `health.connected` and friends with `engine` and `version`, or why it
     /// failed.
     pub detail: Detail,
+    /// What works but needs attention, such as a TigerGraph REST++ without authentication. A
+    /// warning never makes the test fail and never stops a save.
+    pub warnings: Vec<Detail>,
 }
 
 impl Health {
+    /// The same answer with one more warning.
+    pub fn with_warning(mut self, warning: Detail) -> Self {
+        self.warnings.push(warning);
+        self
+    }
+
     /// Connected: `engine` and `version` for the text; `admin_login` when the login has
     /// administrator rights (which the text advises against).
     pub fn connected(engine: &str, version: &str, admin_login: bool) -> Self {
@@ -170,11 +179,16 @@ impl Health {
         } else {
             Detail::new("health.connected", format!("{engine} {version}").trim().to_string())
         };
-        Self { ok: true, code: None, detail: detail.with("engine", engine).with("version", version) }
+        Self {
+            ok: true,
+            code: None,
+            detail: detail.with("engine", engine).with("version", version),
+            warnings: Vec::new(),
+        }
     }
 
     pub fn failed(e: &SourceError) -> Self {
-        Self { ok: false, code: Some(e.code()), detail: e.detail() }
+        Self { ok: false, code: Some(e.code()), detail: e.detail(), warnings: Vec::new() }
     }
 }
 
@@ -221,7 +235,20 @@ pub enum SourceSchema {
         property_keys: Vec<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         queries: Vec<String>,
+        /// The declared parameters of the queries whose parameters are known (TigerGraph: from
+        /// the query info), by query name.
+        #[serde(rename = "queryParams", skip_serializing_if = "BTreeMap::is_empty")]
+        query_params: BTreeMap<String, Vec<QueryParam>>,
     },
+}
+
+/// One declared parameter of an installed query: its name and its type as the query language
+/// writes it (`INT`, `SET<STRING>`, `VERTEX<Person>`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct QueryParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1758,6 +1785,30 @@ pub struct HealthReport {
     pub latency_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<&'static str>,
+    /// What works but needs attention (`Health::warnings`); the test still passed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<HealthWarning>,
+}
+
+/// One warning of "Test connection": a `reason` code the UI translates with its `params`, and
+/// the English `message` as fallback.
+#[derive(Debug, Serialize)]
+pub struct HealthWarning {
+    pub reason: &'static str,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+    pub message: String,
+}
+
+fn health_warnings(health: &Health, conn: &Connection) -> Vec<HealthWarning> {
+    health
+        .warnings
+        .iter()
+        .map(|w| {
+            let w = w.clone().scrubbed(|t| conn.scrub(t));
+            HealthWarning { reason: w.reason, params: w.params, message: w.message }
+        })
+        .collect()
 }
 
 /// The target checks that need no network: the SQLite path, and the `host` or `url` setting
@@ -1842,6 +1893,66 @@ pub async fn check_on_save(
 
 /// "Test connection" with the cached connection, counted against the caller's query slots.
 pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
+    let report = run_health(state, user_id, ds).await?;
+    store_last_test(&state.db, &ds.id, &report, state.clock.now_ms()).await;
+    Ok(report)
+}
+
+/// The last "Test connection" of a stored data source, as `datasource_health` keeps it: whether
+/// it passed, its warnings and when it ran (Unix milliseconds).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastTest {
+    pub ok: bool,
+    /// `{reason, params?, message}` each, as in `HealthReport::warnings`.
+    pub warnings: Vec<Value>,
+    pub tested_at: i64,
+}
+
+/// Keeps a test's outcome for the data source page. A failure to write only loses the note (the
+/// source may have been deleted meanwhile), so it is logged, not answered.
+async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthReport, at: i64) {
+    let warnings = serde_json::to_string(&report.warnings).unwrap_or_else(|_| "[]".into());
+    let stored = sqlx::query(
+        "INSERT INTO datasource_health (datasource_id, ok, warnings, tested_at) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (datasource_id) DO UPDATE SET ok = excluded.ok, warnings = excluded.warnings, \
+         tested_at = excluded.tested_at",
+    )
+    .bind(datasource_id)
+    .bind(i64::from(report.ok))
+    .bind(warnings)
+    .bind(at)
+    .execute(db)
+    .await;
+    if let Err(e) = stored {
+        tracing::warn!("could not keep the connection test of data source {datasource_id}: {e}");
+    }
+}
+
+/// The stored last test of a data source, if one ran since its settings or secrets last changed.
+pub async fn last_test(conn: &mut sqlx::AnyConnection, datasource_id: &str) -> ApiResult<Option<LastTest>> {
+    let row: Option<(i64, String, i64)> =
+        sqlx::query_as("SELECT ok, warnings, tested_at FROM datasource_health WHERE datasource_id = $1")
+            .bind(datasource_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    Ok(row.map(|(ok, warnings, tested_at)| LastTest {
+        ok: ok != 0,
+        warnings: serde_json::from_str::<Vec<Value>>(&warnings).unwrap_or_default(),
+        tested_at,
+    }))
+}
+
+/// Drops the stored last test: after the settings or secrets changed it no longer applies.
+pub async fn forget_last_test(conn: &mut sqlx::AnyConnection, datasource_id: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM datasource_health WHERE datasource_id = $1")
+        .bind(datasource_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+async fn run_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let registry = &state.datasources;
     let kind =
         registry.kind(&ds.kind).ok_or_else(|| ApiError::internal("health", format!("unknown kind {}", ds.kind)))?;
@@ -1860,6 +1971,7 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
             message: detail.message,
             latency_ms: started.elapsed().as_millis() as u64,
             code: Some(e.code()),
+            warnings: Vec::new(),
         }
     };
     let policy = registry.policy(state).await?;
@@ -1883,6 +1995,7 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
         // The next query should not reuse a pool that just failed.
         registry.forget(&ds.id);
     }
+    let warnings = health_warnings(&health, &conn);
     let detail = health.detail.scrubbed(|t| conn.scrub(t));
     Ok(HealthReport {
         ok: health.ok,
@@ -1891,6 +2004,7 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
         message: detail.message,
         latency_ms: started.elapsed().as_millis() as u64,
         code: if health.ok { None } else { Some(health.code.unwrap_or("datasource_error")) },
+        warnings,
     })
 }
 
@@ -1921,6 +2035,7 @@ pub async fn check_unsaved(
         message: detail.message,
         latency_ms: started.elapsed().as_millis() as u64,
         code,
+        warnings: Vec::new(),
     };
     let policy = registry.policy(state).await?;
     if let Err((blocked, _)) = precheck_targets(&policy, kind, settings) {
@@ -1973,9 +2088,10 @@ pub async fn check_unsaved(
             return Ok(report(false, e.detail(), Some(e.code())));
         }
     };
+    let warnings = health_warnings(&health, &conn);
     let detail = health.detail.scrubbed(|t| conn.scrub(t));
     let code = if health.ok { None } else { Some(health.code.unwrap_or("datasource_error")) };
-    Ok(report(health.ok, detail, code))
+    Ok(HealthReport { warnings, ..report(health.ok, detail, code) })
 }
 
 /// The schema for query editors, counted against the caller's query slots.

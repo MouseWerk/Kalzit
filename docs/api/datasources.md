@@ -160,6 +160,10 @@ Items in the trash also carry `deletedAt`. `access` is described under [Access](
 ```
 
 `secrets` lists only the secret fields that have a value. `deletedAt` appears only in the trash.
+`lastTest` (omitted until a test ran) is the last Test connection of the stored source, for
+everyone who may read it: `{ "ok": true, "warnings": [{ "reason": ..., "params"?: ..., "message":
+... }], "testedAt": 1800000000000 }`. Each test replaces it; a change of settings or secrets drops
+it (a rename keeps it). It holds no secrets: warnings are scrubbed like every answer.
 
 ### Access
 
@@ -323,6 +327,12 @@ Body: none or `{}`. Always `200`, also when the source fails:
 
 - `reason` and `params` are what the UI shows (see [Reasons](#reasons)); `message` is the English
   fallback. `params` is omitted when empty.
+- `warnings` (omitted when empty): what works but needs attention, each with `reason`, `params`
+  and `message`; the test still passed (`ok` true) and saving stays allowed. The UI keeps them in
+  view on the data source page as a quiet notice (from `lastTest`, see above). So far only
+  `tigergraph.auth_disabled`: REST++ answers a request without a token (`GET <restppUrl>/version`,
+  sent like every TigerGraph request without following a redirect; a redirect or an error counts
+  as refused), so its authentication is off.
 - When `ok` is true, `reason` is `health.connected` (`engine`, `version`, and `edition` for the
   graph kinds when the server tells it), `health.connected_write_capable` (Memgraph with
   `allowWriteCapableUser`: the user may write),
@@ -432,7 +442,10 @@ Graph kinds:
 Neo4j answers `db.labels()`, `db.relationshipTypes()` and `db.propertyKeys()`; Memgraph a sample
 of up to 10,000 nodes and relationships; TigerGraph its vertex types, edge types and attribute
 names, and in `queries` the installed queries (4.x) and the approved ones. `queries` is omitted
-when empty.
+when empty. `queryParams` (TigerGraph 4.x, omitted when empty) holds the declared parameters of
+the queries whose info is readable, by query name, in their order, each `{ "name", "type" }` with
+the type as GSQL writes it (`INT`, `STRING`, `SET<INT>`, `VERTEX<Person>`, `VERTEX`):
+`"queryParams": { "nachbarn": [{ "name": "p", "type": "VERTEX<Person>" }, { "name": "tiefe", "type": "INT" }] }`.
 
 Errors: `502 datasource_error`, `422 datasource_target_blocked`, `504 query_timeout`.
 
@@ -841,21 +854,47 @@ value (`tigergraph.param_type`), before anything is sent.
   when REST++ answers 401.
 - The time limit goes along as `GSQL-TIMEOUT`, the size limit to REST++ as `RESPONSE-LIMIT`.
 - Parameters are typed REST++ query parameters from the declared types: `INT`, `UINT`, `FLOAT`,
-  `DOUBLE`, `BOOL`, `STRING`, `DATETIME` (text `YYYY-MM-DD HH:MM:SS` or Unix milliseconds),
+  `DOUBLE`, `BOOL`, `STRING`, `DATETIME` (text `YYYY-MM-DD HH:MM:SS`, passed on as written, or
+  Unix milliseconds, turned into that text in UTC),
   `VERTEX<T>` (the id), `VERTEX` (`{"type": ..., "id": ...}`), `SET`/`BAG`/`LIST` of them (a list,
-  sent as repeated values). A value that does not fit is refused (`tigergraph.param_type`), as is
-  a name the query does not declare. For an approved query whose text cannot be read the types
-  are unknown, and values go as given (lists repeated, `{"type", "id"}` as a vertex).
+  sent as repeated values). `INT` takes the 64-bit signed range and `UINT` the unsigned one; a
+  number outside it is refused, never wrapped. A value that does not fit is refused (`tigergraph.param_type`), as is
+  a name the query does not declare. For an approved query whose text cannot be read, the
+  declared parameters and their types come from its info (`GET /gsql/v1/queries/info`, readable
+  for a `queryreader`), with the same typing, refusals and dashboard variables. On 4.x this fails
+  closed: when the info cannot be read, or lacks `graphUpdate` or the parameters, the query is
+  refused (`tigergraph.query_info_unreadable`). Only 3.x, which has no query info, sends the values
+  as given (lists repeated, `{"type", "id"}` as a vertex), untyped and without dashboard variables. A space in
+  a value goes as `%20` and a `+` as `%2B`: REST++ keeps a literal `+` as a plus sign.
+- The query picker (`queries` in the schema) lists the graph's queries from
+  `GET /gsql/v1/queries/info?graph=<graph>`, which a `queryreader` may read (4.2 answers it with
+  an empty list from `GET /gsql/v1/queries`), plus the approved names.
 
-What Kalzit found in the TigerGraph documentation (October 2026) about reading a query's text:
-4.x has `GET /gsql/v1/queries/{name}?graph=<graph>` (field `queryContent`) and
-`GET /gsql/v1/queries/info?graph=<graph>&query=<name>` (field `code`); both need the
-`READ_QUERY` privilege, which the built-in `queryreader` role does not have. 3.x has no REST
-endpoint for it, only the GSQL command `SHOW QUERY`, which Kalzit does not send (it sends no GSQL
-commands made from input). So with a plain `queryreader` user, installed queries run only when
-approved by name. Whether `queryreader` may run interpreted queries in 4.1+ (the per-query
-`EXECUTE_QUERY` privilege) is checked against a real instance by the nightly job; if the server
-refuses, the query answers `tigergraph.error`.
+What a real TigerGraph 4.2.5 (Community Edition) does, checked every night by
+`.github/workflows/tigergraph-nightly.yml` (setup in `.github/tigergraph/`, tests in
+`server/tests/tigergraph_real.rs`):
+
+- A `queryreader` may read its own user record (`GET /gsql/v1/users/<user>`; `results` is one
+  object with `roles` and `privileges` per graph, `"1"` for global) and run `SHOW USER`. Its
+  privileges are `READ_SCHEMA`, `READ_LOADINGJOB`, `EXECUTE_LOADINGJOB`, `READ_DATA`,
+  `APP_ACCESS_DATA` and `READ_POLICY` (the nightly's step "Raw answers of the endpoints Kalzit
+  calls", "own user record" and "role queryreader", first seen in run 40463241963;
+  `reader_reads_graphs_and_frames` passes Test connection with that user). Kalzit therefore
+  allows `APP_ACCESS_DATA` (reading data in TigerGraph's own apps) and `READ_POLICY` (reading
+  access policies); both only read.
+- It may run interpreted queries; no `EXECUTE_QUERY` grant is needed. A query that writes is
+  refused by the server (403, `DELETE_DATA [MISSING]`), both interpreted and installed.
+- It may not read a query's text (`GET /gsql/v1/queries/<name>` answers 403,
+  `READ_QUERY [MISSING]`), so with a plain `queryreader` installed queries run only when approved
+  by name. It may read the query info, whose `graphUpdate` tells whether a query changes data.
+- REST++ authentication is off in a fresh Community Edition: then REST++ runs any installed query,
+  writing ones too, for anyone who reaches it, and the reader user protects nothing there. Turn it
+  on (`gadmin config set RESTPP.Factory.EnableAuth true`, `gadmin config apply -y`,
+  `gadmin restart restpp -y`); with it, a call without a token answers 403. Test connection warns (`tigergraph.auth_disabled`) when REST++ answers without a token.
+- TigerGraph's own HTTPS (`Nginx.SSL.Enable`) needs an Enterprise license; the Community Edition
+  refuses it. HTTPS with `caCert` is tested through a reverse proxy in front of it.
+- 3.x is not tested against a real server (no 3.x image is published for free use); its paths
+  are tested against the fake only.
 
 Read-only rules:
 
@@ -863,7 +902,8 @@ Read-only rules:
   connection (after every change of the source and every ten minutes) and in Test connection:
   4.x `GET /gsql/v1/users/<user>`, and when that is not allowed, and on 3.x, the fixed command
   `SHOW USER`. Allowed are only the privileges `READ_SCHEMA`, `READ_LOADINGJOB`,
-  `EXECUTE_LOADINGJOB`, `READ_DATA`, `READ_QUERY` and `EXECUTE_QUERY` (on any graph), or, when
+  `EXECUTE_LOADINGJOB`, `READ_DATA`, `APP_ACCESS_DATA`, `READ_POLICY`, `READ_QUERY` and
+  `EXECUTE_QUERY` (on any graph, per-query grants included), or, when
   only roles are known, the role `queryreader` (global roles and roles on the source's graph).
   Anything else, or a superuser, refuses the source (`tigergraph.user_can_write`). The built-in
   `queryreader` role includes `EXECUTE_LOADINGJOB`; Kalzit never runs loading jobs, but a custom
@@ -883,7 +923,14 @@ Read-only rules:
   one run and are allowed.
 - An installed query runs only when its text can be read and passes the check (the result of a
   check is kept for a minute), or when its text cannot be read and its name is in
-  `approvedQueries`. Then only the reader user protects the data.
+  `approvedQueries`. An approved query that TigerGraph marks as changing data (`graphUpdate` in
+  its info, 4.x) is refused (`tigergraph.query_writes`), as is one whose info says nothing about it
+  (`tigergraph.query_info_unreadable`); otherwise only the reader user protects the data, which
+  needs REST++ authentication on. The outcome for an approved query is kept for a minute like a
+  checked text, so a query changed to write within that minute can still run once more, refused
+  by the reader user when REST++ checks tokens. While REST++ answers without a token (seen when
+  the connection is set up, at most every ten minutes) a clean outcome is not kept: the info is
+  read before every run.
 - Kalzit never calls REST++ upsert, delete or loading endpoints.
 
 ### Graph steps
@@ -1583,6 +1630,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `gsql.unclosed_quote`, `gsql.unclosed_comment` | | an unclosed string or comment |
 | `tigergraph.query_name` | `name` | `installed` is not a query name |
 | `tigergraph.query_text_unreadable` | `name` | the installed query's text cannot be read and the query is not approved |
+| `tigergraph.query_writes` | `name` | the approved installed query changes data (`graphUpdate` in its info) |
+| `tigergraph.query_info_unreadable` | `name` | TigerGraph 4.x: the approved installed query's info cannot be read or does not say whether it changes data (`graphUpdate`) or which parameters it takes, so it does not run |
 | `tigergraph.param_type` | `name`, `type` | a parameter value does not fit its declared type |
 | `tigergraph.param_unknown` | `name` | `params` names a parameter the query does not declare |
 
@@ -1731,6 +1780,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `tigergraph.not_an_api_response` | `status` | the server answered without a TigerGraph API response |
 | `tigergraph.error` | `status`, `detail` | TigerGraph answered an error |
 | `tigergraph.no_token` | | the token endpoint answered without a token |
+| `tigergraph.auth_disabled` | | a warning of a passed Test connection (`warnings`), not a failure: REST++ answers without a token |
 | `tigergraph.redirect_refused` | `path` | TigerGraph answered a request with a redirect |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |

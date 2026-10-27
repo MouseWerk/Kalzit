@@ -974,6 +974,61 @@ async fn health_and_schema_of_a_sqlite_file() {
     t.finish().await;
 }
 
+/// The last test stays with the source for everyone who may see it, with its warnings, until the
+/// next test replaces it or the settings change; a rename keeps it.
+#[tokio::test]
+async fn the_last_test_and_its_warnings_are_kept() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let other = t.sqlite_file("andere.db", SALES).await;
+    let id = t.create_sqlite("Geprüft", &file).await;
+    assert!(t.get(&format!("/datasources/{id}")).await.body.get("lastTest").is_none(), "never tested");
+    assert_eq!(t.post(&format!("/datasources/{id}/health"), json!({})).await.body["ok"], true);
+    let v = t.get(&format!("/datasources/{id}")).await;
+    assert_eq!(
+        v.body["lastTest"],
+        json!({ "ok": true, "warnings": [], "testedAt": 1_800_000_000_000_i64 }),
+        "{}",
+        v.text
+    );
+
+    // A warning as a TigerGraph test stores it (that kind's warning is tested against its fake).
+    let warning = json!([{ "reason": "tigergraph.auth_disabled", "message": "REST++ answers without a token" }]);
+    sqlx::query("UPDATE datasource_health SET warnings = $1 WHERE datasource_id = $2")
+        .bind(warning.to_string())
+        .bind(&id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'vera@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let grant = json!({ "subjectType": "user", "subjectId": vera, "resourceType": "datasource", "resourceId": id, "level": "query" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    let seen = t.send(Method::GET, &t.path(&format!("/datasources/{id}")), None, Some(&viewer)).await;
+    assert_eq!(seen.body["lastTest"]["warnings"], warning, "{}", seen.text);
+
+    let path = t.path(&format!("/datasources/{id}"));
+    let patch = |body: Value| t.send(Method::PATCH, &path, Some(body), Some(&t.owner));
+    assert_eq!(patch(json!({ "name": "Neu" })).await.status, StatusCode::OK);
+    assert_eq!(t.get(&format!("/datasources/{id}")).await.body["lastTest"]["warnings"], warning, "a rename keeps it");
+    // The next test replaces it.
+    t.clock.advance_ms(60_000);
+    t.post(&format!("/datasources/{id}/health"), json!({})).await;
+    let v = t.get(&format!("/datasources/{id}")).await;
+    assert_eq!(
+        v.body["lastTest"],
+        json!({ "ok": true, "warnings": [], "testedAt": 1_800_000_060_000_i64 }),
+        "{}",
+        v.text
+    );
+    // New settings drop it: it checked what was stored before.
+    let r = patch(json!({ "settings": { "path": other.to_string_lossy() } })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert!(r.body.get("lastTest").is_none(), "{}", r.text);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn changed_settings_rebuild_the_connection() {
     let t = T::new().await;
