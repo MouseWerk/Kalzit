@@ -21,6 +21,22 @@ const CUSTOMERS = "MATCH (c:Customer) RETURN c";
 const ORDERS_OF_CUSTOMER =
   "MATCH (c:Customer {name: $customer})-[p:PLACED]->(o:Order) RETURN c, p, o";
 
+/**
+ * What Chromium's software WebGL (SwiftShader, as on the CI runners) reports while Sigma draws:
+ * its picking pass draws into two color buffers with programs that write only the first
+ * ("missing fragment shader outputs"), and reading the picking buffer back stalls the software
+ * GPU. Both come from the renderer library, not from Kalzit's code, and concern the hidden
+ * picking pass, not the visible drawing; everything else on the console still fails the test.
+ */
+const SIGMA_WEBGL_NOTICES = [
+  /^warning: \[\.WebGL-0x[0-9a-f]+\] GL_INVALID_OPERATION: glDrawArraysInstanced: Active draw buffers with missing fragment shader outputs\./,
+  /^warning: \[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels/,
+];
+
+test.beforeEach(({ consoleGuard }) => {
+  for (const notice of SIGMA_WEBGL_NOTICES) consoleGuard.allow(notice);
+});
+
 /** The line under a graph panel's tools: "17 nodes, 16 edges, 1 component." */
 function summary(nodes: number, edges: number, components = 1): string {
   const count = (noun: string, n: number) =>
