@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
-import { MONGO_FIXTURE } from "../support/services";
+import { boltTarget, GRAPH_FIXTURE, MONGO_FIXTURE } from "../support/services";
 import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
 import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
 
@@ -892,3 +892,109 @@ test("explore, field distribution, dark", async ({ browser }) => {
   await shoot(page, "explore-distribution-dark");
   await page.context().close();
 });
+
+let graphDashboard: string | undefined;
+
+/**
+ * The graph panels on the shop graph of the graph spec: a network, the category tree as a
+ * hierarchy, a shortest path and a network in explorer mode. Needs the Neo4j of the graph spec
+ * (KALZIT_E2E_NEO4J, seeded with e2e/fixtures/graph-shop.cypher); without it these pictures are
+ * skipped and the ones in the repository stay.
+ */
+async function seedGraphDashboard(address: string): Promise<string> {
+  if (graphDashboard !== undefined) return graphDashboard;
+  // The account picture signs out every other session, the seeding one included.
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
+  const datasourceId = await owner.createSource(
+    "Shop graph (Neo4j)",
+    "neo4j",
+    { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+    { password: GRAPH_FIXTURE.neo4jPassword },
+  );
+  const panel = (
+    id: string,
+    type: string,
+    title: string,
+    grid: { x: number; y: number; w: number; h: number },
+    cypher: string,
+    options: Record<string, unknown> = {},
+  ) => ({
+    id,
+    type,
+    title,
+    grid,
+    targets: [{ refId: "A", datasourceId, query: { cypher } }],
+    options,
+  });
+  graphDashboard = await owner.createDashboard({
+    schemaVersion: 1,
+    title: "Shop graph",
+    timeRange: { from: "now-6h", to: "now" },
+    variables: [],
+    panels: [
+      panel(
+        "shop",
+        "network",
+        "Customers, orders and products",
+        { x: 0, y: 0, w: 12, h: 11 },
+        "MATCH (c:Customer)-[p:PLACED]->(o:Order)-[i:CONTAINS]->(pr:Product) RETURN c, p, o, i, pr",
+      ),
+      panel(
+        "tree",
+        "hierarchy",
+        "Category tree",
+        { x: 12, y: 0, w: 12, h: 11 },
+        "MATCH (a:Category)-[r:SUBCATEGORY]->(b:Category) RETURN a, r, b",
+      ),
+      panel(
+        "path",
+        "path",
+        "From Ana to the monitor arm",
+        { x: 0, y: 11, w: 12, h: 8 },
+        "MATCH p = shortestPath((c:Customer {name: 'Ana'})-[:PLACED|CONTAINS*..10]-(pr:Product {name: 'Monitor arm'})) RETURN p",
+      ),
+      panel(
+        "explorer",
+        "network",
+        "Around Ben",
+        { x: 12, y: 11, w: 12, h: 8 },
+        "MATCH (c:Customer {name: 'Ben'}) RETURN c",
+        { explorer: true, expandLimit: 10 },
+      ),
+    ],
+  });
+  await owner.dispose();
+  return graphDashboard;
+}
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`graph panels, ${scheme}`, async ({ browser }) => {
+    const address = process.env.KALZIT_E2E_NEO4J ?? "";
+    test.skip(address === "", "KALZIT_E2E_NEO4J is not set; the picture needs the Neo4j fixture");
+    const id = await seedGraphDashboard(address);
+    const page = await openPage(browser, scheme, { width: 1440, height: 1000 });
+    await signIn(page);
+    await page.goto(`/dashboards/${id}`);
+    await expect(page.getByRole("heading", { name: "Shop graph" })).toBeVisible();
+    await expect(page.getByRole("application")).toHaveCount(3);
+    await expect(
+      page.getByRole("heading", { name: t("graph.path.title", { number: 1, count: 6 }) }),
+    ).toBeVisible();
+    // Explorer mode: Ben's orders, loaded from the node in the panel's table.
+    const around = page.getByRole("article", { name: "Around Ben", exact: true });
+    await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
+    await around.getByRole("button", { name: "Ben", exact: true }).click();
+    const load = around.getByRole("button", { name: t("graph.explorer.expand"), exact: true });
+    await expect(load).toBeVisible();
+    if (await load.isEnabled()) await load.click();
+    await expect(
+      around.getByRole("button", { name: t("graph.explorer.undo", { name: "Ben" }), exact: true }),
+    ).toBeVisible();
+    await around.getByRole("button", { name: t("graph.showDrawing"), exact: true }).click();
+    await expect(page.getByRole("application")).toHaveCount(4);
+    await expect(page.getByText(t("graph.layout.settling"))).toHaveCount(0);
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `graph-panels-${scheme}`);
+    await page.context().close();
+  });
+}
