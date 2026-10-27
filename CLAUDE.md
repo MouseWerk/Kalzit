@@ -47,6 +47,15 @@ where it is more specific.
   LiteLLM, local models such as Ollama), plain calls and agent-based flows with tools. AI is off
   by default; one server setting turns all AI on or off, and without a connected provider the UI
   shows no AI buttons or hints. AI queries only with the signed-in user's rights, read-only.
+  Clients: one OpenAI-compatible (OpenAI, LiteLLM, Ollama, other local servers) and a native
+  Anthropic one. Providers server-wide, an organization may override with its own provider and
+  key; request and token limits per user and organization (orgs may only lower them); chats
+  stored per user with admin-set retention (default 30 days, orgs may only shorten it); AI reads
+  a data source (schema included) only after a per-source opt-in, otherwise explain and draft see
+  only the typed query text; per-source excluded fields never reach a model (shared redaction
+  helper); a first-use notice per person and provider is acknowledged before the first call;
+  token counts, no currency; keys in the encrypted secret store; every call audited without its
+  content. Plain calls first, the agent chat after (docs/PLAN.md, M4; board `AI.dc.html`).
 - First graph sources: Neo4j, Memgraph and TigerGraph. All common standard sources are supported too
   (PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, Prometheus, Elasticsearch, ...; see
   `docs/PLAN.md` section 3).

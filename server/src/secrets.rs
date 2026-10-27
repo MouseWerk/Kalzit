@@ -1,4 +1,5 @@
-//! Encrypted secrets: passwords, tokens and keys of data sources. Each value is encrypted with
+//! Encrypted secrets: passwords, tokens and keys of data sources and AI providers (whose owner in
+//! the associated data is `ai-provider:<id>`, so it never matches a data source). Each value is encrypted with
 //! AES-256-GCM under a random 96-bit nonce, with the data source id and field name as associated
 //! data, so a blob copied to another source or field fails to decrypt. Each blob records the id
 //! of the key that encrypted it.
@@ -149,12 +150,18 @@ impl Keyring {
             }
             Err(std::fs::TryLockError::Error(e)) => return Err(e).context("locking the secrets key"),
         }
-        let (stored,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM datasource_secrets").fetch_one(db).await?;
+        let (stored,): (i64,) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM datasource_secrets) + (SELECT COUNT(*) FROM ai_provider_secrets)",
+        )
+        .fetch_one(db)
+        .await?;
         let mut ring = Self::load_env(data_dir, stored == 0)?;
         ring._lock = Some(lock);
         let known: Vec<String> = std::iter::once(&ring.current).chain(&ring.others).map(|k| k.id.clone()).collect();
         let ids: Vec<(String,)> =
-            sqlx::query_as("SELECT DISTINCT key_id FROM datasource_secrets").fetch_all(db).await?;
+            sqlx::query_as("SELECT key_id FROM datasource_secrets UNION SELECT key_id FROM ai_provider_secrets")
+                .fetch_all(db)
+                .await?;
         let foreign: Vec<&str> =
             ids.iter().map(|(id,)| id.as_str()).filter(|id| !known.iter().any(|k| k == id)).collect();
         if !foreign.is_empty() {
@@ -718,6 +725,36 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
         .await?;
         count += 1;
     }
+    // The keys of AI providers, bound to `ai-provider:<id>` (`ai::store`).
+    let rows: Vec<(String, String, String, String, String)> =
+        sqlx::query_as("SELECT provider_id, field, key_id, nonce, ciphertext FROM ai_provider_secrets")
+            .fetch_all(&mut *tx)
+            .await?;
+    for (provider_id, field, key_id, nonce, ciphertext) in rows {
+        if key_id == new.id {
+            continue;
+        }
+        let owner = crate::ai::store::secret_owner(&provider_id);
+        let blob = Blob { key_id, nonce, ciphertext };
+        let plain = match keyring.key(&blob.key_id) {
+            Some(key) => decrypt_with(key, &owner, &field, &blob),
+            None => Err(SecretError::UnknownKey(blob.key_id.clone())),
+        }
+        .with_context(|| format!("secret {field} of AI provider {provider_id}; nothing was changed"))?;
+        let fresh = encrypt_with(new, &owner, &field, &plain);
+        sqlx::query(
+            "UPDATE ai_provider_secrets SET key_id = $1, nonce = $2, ciphertext = $3 \
+             WHERE provider_id = $4 AND field = $5",
+        )
+        .bind(&fresh.key_id)
+        .bind(&fresh.nonce)
+        .bind(&fresh.ciphertext)
+        .bind(&provider_id)
+        .bind(&field)
+        .execute(&mut *tx)
+        .await?;
+        count += 1;
+    }
     crate::db::commit(tx).await?;
     Ok(count)
 }
@@ -938,6 +975,39 @@ mod tests {
         assert!(after.others.is_empty(), "the pending file became the key file");
         assert_eq!(load_all(&db, &after, "ds1").await.unwrap()["password"].as_str(), "eins");
         assert_eq!(load_all(&db, &after, "ds2").await.unwrap()["password"].as_str(), "zwei");
+    }
+
+    #[tokio::test]
+    async fn rotation_reencrypts_ai_provider_keys_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = db_with_source(&["ds1"]).await;
+        sqlx::query(
+            "INSERT INTO ai_providers (id, org_id, name, kind, base_url, model, is_default, created_at, updated_at) \
+             VALUES ('p1', NULL, 'P', 'openai', 'http://localhost:11434/v1', 'm', 1, 0, 0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let old = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
+        let mut conn = db.acquire().await.unwrap();
+        crate::ai::store::set_key(&mut conn, &old, "p1", Some("sk-alt")).await.unwrap();
+        drop(conn);
+        // A provider key cannot be read as a data source secret of the same id, nor the reverse.
+        let copied = "INSERT INTO datasource_secrets (datasource_id, field, key_id, nonce, ciphertext) \
+                      SELECT 'ds1', field, key_id, nonce, ciphertext FROM ai_provider_secrets";
+        sqlx::query(copied).execute(&db).await.unwrap();
+        assert!(load_all(&db, &old, "ds1").await.is_err());
+        sqlx::query("DELETE FROM datasource_secrets").execute(&db).await.unwrap();
+
+        let rotation =
+            rotate_with(&db, Keyring::load_from(None, None, None, dir.path(), true).unwrap(), dir.path(), None)
+                .await
+                .unwrap();
+        assert_eq!(rotation.reencrypted, 1);
+        let new = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
+        let key = crate::ai::store::load_key(&db, &new, "p1").await.unwrap().unwrap();
+        assert_eq!(key.as_str(), "sk-alt");
+        assert!(crate::ai::store::load_key(&db, &old, "p1").await.is_err());
     }
 
     #[tokio::test]

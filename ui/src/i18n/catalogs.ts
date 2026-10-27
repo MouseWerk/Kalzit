@@ -3,6 +3,7 @@
 // over the combined catalogs.
 import deAccess from "./de/access.json";
 import deAdmin from "./de/admin.json";
+import deAi from "./de/ai.json";
 import deAnalyses from "./de/analyses.json";
 import deAnalysis from "./de/analysis.json";
 // ux/dashboards: annotations, playlists, library panels and the dashboard tools.
@@ -23,6 +24,7 @@ import deShell from "./de/shell.json";
 import deToolbar from "./de/toolbar.json";
 import enAccess from "./en/access.json";
 import enAdmin from "./en/admin.json";
+import enAi from "./en/ai.json";
 import enAnalyses from "./en/analyses.json";
 import enAnalysis from "./en/analysis.json";
 import enAnnotations from "./en/annotations.json";
@@ -71,6 +73,7 @@ export const en = {
   ...enToolbar,
   ...enLive,
   ...enAccess,
+  ...enAi,
 };
 export const de = {
   ...deCore,
@@ -89,4 +92,5 @@ export const de = {
   ...deToolbar,
   ...deLive,
   ...deAccess,
+  ...deAi,
 };

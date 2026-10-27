@@ -91,25 +91,56 @@ impl From<reqwest::Error> for HttpError {
 pub struct HttpClient {
     client: reqwest::Client,
     policy: Arc<TargetPolicy>,
+    guard: Option<LocalGuard>,
+}
+
+/// Refuses every address of this computer: loopback, unspecified, and any address one of its
+/// interfaces holds. Set on a client whose target port is one of Kalzit's own listening ports,
+/// so it can never reach Kalzit itself, whatever name or address form points there
+/// (`localhost.`, `[::ffff:127.0.0.1]`, the server's own host name or LAN address).
+#[derive(Clone, Debug)]
+pub struct LocalGuard {
+    /// What a refusal answers with.
+    pub refused: crate::datasources::Detail,
+}
+
+impl LocalGuard {
+    /// Whether `ip` is an address of this computer. An address is local when a socket can be
+    /// bound to it, which holds for exactly the addresses the interfaces have.
+    pub fn is_local(ip: std::net::IpAddr) -> bool {
+        let ip = ip.to_canonical();
+        ip.is_loopback() || ip.is_unspecified() || std::net::UdpSocket::bind((ip, 0)).is_ok()
+    }
+
+    fn check(&self, ip: std::net::IpAddr) -> Result<(), Blocked> {
+        if Self::is_local(ip) { Err(Blocked(self.refused.clone())) } else { Ok(()) }
+    }
 }
 
 /// Resolves names through the target policy, so the connection uses the checked address.
-struct CheckedResolver(Arc<TargetPolicy>);
+struct CheckedResolver(Arc<TargetPolicy>, Option<LocalGuard>);
 
 impl reqwest::dns::Resolve for CheckedResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let policy = self.0.clone();
+        let guard = self.1.clone();
         let host = name.as_str().to_string();
         Box::pin(async move {
+            let boxed = |b: Blocked| -> Box<dyn std::error::Error + Send + Sync> { Box::new(b) };
             // Port 0 is replaced by the URL's port.
             // Every returned address passed the check, so the client may try them in turn.
             let addrs =
                 policy.resolve_all(&host, 0).await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     match e {
-                        ResolveError::Blocked(b) => Box::new(b),
+                        ResolveError::Blocked(b) => boxed(b),
                         other => Box::new(other),
                     }
                 })?;
+            if let Some(guard) = &guard {
+                for addr in &addrs {
+                    guard.check(addr.ip()).map_err(boxed)?;
+                }
+            }
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
     }
@@ -123,6 +154,12 @@ pub fn ensure_crypto_provider() {
 }
 
 pub fn client(opts: HttpOptions) -> Result<HttpClient, HttpError> {
+    client_guarded(opts, None)
+}
+
+/// `client` that also refuses every local address (`LocalGuard`), at the resolver and for
+/// address literals.
+pub fn client_guarded(opts: HttpOptions, guard: Option<LocalGuard>) -> Result<HttpClient, HttpError> {
     ensure_crypto_provider();
     let mut builder = reqwest::Client::builder()
         .timeout(opts.timeout)
@@ -131,7 +168,7 @@ pub fn client(opts: HttpOptions) -> Result<HttpClient, HttpError> {
         // Redirects are followed in `send`, which checks each target first.
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
-        .dns_resolver(Arc::new(CheckedResolver(opts.policy.clone())));
+        .dns_resolver(Arc::new(CheckedResolver(opts.policy.clone(), guard.clone())));
     if let Some(pem) = opts.extra_root_pem.as_deref().filter(|p| !p.trim().is_empty()) {
         for cert in reqwest::Certificate::from_pem_bundle(pem.as_bytes())
             .map_err(|e| HttpError::Other(format!("the CA certificate is not valid PEM: {e}")))?
@@ -140,7 +177,7 @@ pub fn client(opts: HttpOptions) -> Result<HttpClient, HttpError> {
         }
     }
     let client = builder.build().map_err(|e| HttpError::Other(format!("building the HTTP client: {e}")))?;
-    Ok(HttpClient { client, policy: opts.policy })
+    Ok(HttpClient { client, policy: opts.policy, guard })
 }
 
 impl HttpClient {
@@ -255,6 +292,9 @@ impl HttpClient {
         let host = url.host_str().ok_or_else(|| HttpError::Other("the URL has no host".into()))?;
         if let Some(ip) = parse_ip_literal(host) {
             self.policy.check_ip(host, ip)?;
+            if let Some(guard) = &self.guard {
+                guard.check(ip)?;
+            }
         }
         Ok(())
     }
@@ -383,6 +423,33 @@ mod tests {
         assert!(matches!(read_limited(r, 1000).await, Err(HttpError::TooLarge(1000))));
         let r = c.send(Method::GET, url, HeaderMap::new()).await.unwrap();
         assert_eq!(read_limited(r, 10_000).await.unwrap().len(), 10_000);
+    }
+
+    #[test]
+    fn the_local_guard_knows_this_computers_addresses_in_every_form() {
+        for local in ["127.0.0.1", "127.8.9.10", "::1", "::ffff:127.0.0.1", "0.0.0.0", "::"] {
+            assert!(LocalGuard::is_local(local.parse().unwrap()), "{local}");
+        }
+        for remote in ["192.0.2.1", "198.51.100.7", "::ffff:192.0.2.1", "2001:db8::1"] {
+            assert!(!LocalGuard::is_local(remote.parse().unwrap()), "{remote}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_guarded_client_refuses_local_targets_by_literal_and_by_name() {
+        let guard = LocalGuard { refused: crate::datasources::Detail::new("ai.base_url_kalzit", "Kalzit itself") };
+        let policy = TargetPolicy::new(std::path::Path::new("."), "sqlite::memory:", &[], &[]);
+        let c = client_guarded(
+            HttpOptions { timeout: Duration::from_secs(5), extra_root_pem: None, policy: Arc::new(policy) },
+            Some(guard),
+        )
+        .unwrap();
+        for url in
+            ["http://127.0.0.1:9/", "http://[::ffff:127.0.0.1]:9/", "http://localhost.:9/", "http://localhost:9/"]
+        {
+            let e = c.send_once(Method::POST, Url::parse(url).unwrap(), HeaderMap::new(), None).await.unwrap_err();
+            assert_eq!(e.detail().reason, "ai.base_url_kalzit", "{url}: {e}");
+        }
     }
 
     /// Every HTTP client comes from this module, so none skips the target check, the proxy

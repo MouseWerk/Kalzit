@@ -113,6 +113,14 @@
       "w": 1440,
       "x": 4560,
       "y": 0
+    },
+    "AI.dc.html": {
+      "expand": "fill",
+      "h": 8420,
+      "title": "KI (M4)",
+      "w": 1440,
+      "x": 9120,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -147,7 +155,8 @@
     "DataChat.dc.html",
     "SavedAnalyses.dc.html",
     "Graph.dc.html",
-    "Access.dc.html"
+    "Access.dc.html",
+    "AI.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
