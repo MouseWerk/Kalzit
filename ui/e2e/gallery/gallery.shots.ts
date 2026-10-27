@@ -119,9 +119,9 @@ function atGalleryTime(value: unknown, realNow: number): unknown {
 
 async function signIn(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel(t("login.email")).fill(OWNER.email);
-  await page.getByLabel(t("login.password"), { exact: true }).fill(OWNER.password);
-  await page.getByRole("button", { name: t("login.submit") }).click();
+  await page.getByLabel(t("access.login.email")).fill(OWNER.email);
+  await page.getByLabel(t("access.login.password"), { exact: true }).fill(OWNER.password);
+  await page.getByRole("button", { name: t("access.login.submit") }).click();
   await expect(page.getByRole("navigation", { name: t("nav.label") })).toBeVisible();
 }
 
@@ -198,8 +198,11 @@ async function selectNode(scope: Locator, title: string, node: string): Promise<
   await scope.getByRole("button", { name: node, exact: true }).click();
 }
 
+/** Switches the pressed table toggle off again, back to the drawing. */
 async function showDrawing(scope: Locator, title: string): Promise<void> {
-  await scope.getByRole("button", { name: t("graph.showDrawing"), exact: true }).click();
+  const toggle = scope.getByRole("button", { name: t("graph.showTable"), exact: true });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await toggle.click();
   await graphDrawn(scope, title);
 }
 
@@ -767,11 +770,17 @@ test("setup, then the example data", async ({ browser }) => {
   mkdirSync(OUT, { recursive: true });
   for (const scheme of SCHEMES) {
     const page = await openPage(browser, scheme);
-    await page.goto("/");
-    await expect(page.getByRole("heading", { name: t("setup.title") })).toBeVisible();
-    await page.getByLabel(t("setup.orgName")).fill(OWNER.orgName);
-    await page.getByLabel(t("setup.name")).fill(OWNER.name);
-    await page.getByLabel(t("setup.email")).fill(OWNER.email);
+    // The account step: checking the code only confirms it, setup completes below.
+    await page.goto("/setup");
+    await page
+      .getByLabel(t("access.setup.code.label"))
+      .fill(process.env.KALZIT_E2E_SETUP_TOKEN ?? "");
+    await page.getByRole("button", { name: t("access.next") }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: t("access.setup.account.title") }),
+    ).toBeVisible();
+    await page.getByLabel(t("access.setup.account.name")).fill(OWNER.name);
+    await page.getByLabel(t("access.setup.account.email")).fill(OWNER.email);
     await shoot(page, `setup-${scheme}`);
     await page.context().close();
   }
@@ -783,8 +792,8 @@ for (const scheme of SCHEMES) {
   test(`sign-in, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await page.goto("/login");
-    await expect(page.getByRole("heading", { name: t("login.title") })).toBeVisible();
-    await page.getByLabel(t("login.email")).fill(OWNER.email);
+    await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
+    await page.getByLabel(t("access.login.email")).fill(OWNER.email);
     await shoot(page, `sign-in-${scheme}`);
     await page.context().close();
   });
@@ -873,15 +882,20 @@ for (const scheme of SCHEMES) {
 
 /** Loads the neighbours of a node in explorer mode, from the node's row in the panel's table. */
 async function expand(around: Locator, node: string): Promise<void> {
-  await around.getByRole("button", { name: node, exact: true }).click();
+  // The node's row in the table of nodes; the details list it among the neighbours too.
+  await around
+    .getByRole("table", { name: /./ })
+    .first()
+    .getByRole("button", { name: node, exact: true })
+    .click();
   // The click loads the neighbours at once once the panel knows the source may be queried;
   // before that it only selects, and the details offer the same action.
+  const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
+  const step = steps.getByRole("button", { name: new RegExp(`^${node} \\+`) });
   const load = around.getByRole("button", { name: t("graph.explorer.expand"), exact: true });
-  await expect(load).toBeVisible();
-  if (await load.isEnabled()) await load.click();
-  await expect(
-    around.getByRole("button", { name: t("graph.explorer.undo", { name: node }), exact: true }),
-  ).toBeVisible();
+  await expect(step.or(load).first()).toBeVisible();
+  if (!(await step.isVisible()) && (await load.isEnabled())) await load.click();
+  await expect(step).toBeVisible();
 }
 
 for (const scheme of SCHEMES) {

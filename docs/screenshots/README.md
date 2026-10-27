@@ -12,6 +12,16 @@ Kalzit has two sets of pictures, both taken by Playwright against the real binar
 A pull request that visibly changes the UI reruns `npm run screenshots` in `ui/` and commits the
 changed images in this folder (see CONTRIBUTING.md, "Screenshots").
 
+The graph pictures (`graph-*`) need the Neo4j of the e2e specs and the field distribution
+(`explore-distribution-dark`) its MongoDB; without them those tests are skipped and the images
+here stay. To take every picture, run the `readme` set of the same workflow as the gallery, which
+starts and seeds the e2e services, and commit the images you changed from its artifact:
+
+```sh
+gh workflow run gallery.yml --ref <branch> -f set=readme
+gh run download <run-id> --name kalzit-screenshots --dir docs/screenshots
+```
+
 ## Gallery renders
 
 Curated scenes on a fictional data center, "Site Basalt" (three halls, racks, switches, power and
@@ -40,13 +50,13 @@ WebP (quality 90), mostly in dark and light:
 The gallery needs MongoDB, OpenSearch and Neo4j with the gallery data, so it runs in CI:
 
 ```sh
-gh workflow run gallery.yml --ref <branch>
+gh workflow run gallery.yml --ref <branch> -f set=gallery
 gh run watch                                  # or: gh run list --workflow gallery.yml
 gh run download <run-id> --name kalzit-gallery --dir <folder>
 ```
 
-The workflow (`.github/workflows/gallery.yml`, manual only) starts the services with
-`.github/scripts/e2e-services.sh start` and `ready`, seeds the gallery data with
+The workflow (`.github/workflows/gallery.yml`, manual only, set `gallery`) starts the services
+with `.github/scripts/e2e-services.sh start` and `ready`, seeds the gallery data with
 `e2e-services.sh seed-gallery` (MongoDB: `ui/e2e/fixtures/gallery-datacenter.js` into the database
 `kalzit_gallery`; Neo4j: `ui/e2e/fixtures/gallery-datacenter.cypher`, which replaces the e2e shop
 graph), builds Kalzit and runs `npm run gallery` with one worker. The SQLite metrics and the

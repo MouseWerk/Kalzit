@@ -9,14 +9,14 @@ written as the English interface shows them, with the German label in parenthese
 | Page | What it covers |
 |---|---|
 | [Installation](installation.md) | The container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates |
-| [Getting started](getting-started.md) | First setup and sign-in, your first data source, dashboard and Explore query |
-| [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables, time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
-| [Panels](panels.md) | Every visualization with its options; colours, thresholds, units, value mappings, overrides |
-| [Explore](explore.md) | Free queries per source kind, the three result shapes, steps, add to dashboard |
+| [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |
+| [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables (also set by clicks on documents, rows and graph nodes), time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
+| [Panels](panels.md) | Every visualization with its options, the graph panels with node details, selection, pins and the explorer; colours, thresholds, units, value mappings, overrides |
+| [Explore](explore.md) | Free queries per source kind (Cypher and GSQL included), the three result shapes, steps and graph steps, add to dashboard |
 | [Saved analyses](saved-analyses.md) | Saving Explore queries, the list under Explore, linked dashboard panels, versions and conflicts |
-| [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, with examples |
+| [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, graph steps, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
-| [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour, testing, access, trash |
+| [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 
 The HTTP API behind every function is described in [docs/api](../api): [access](../api/access.md),
