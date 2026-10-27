@@ -1858,6 +1858,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `graph.size_limit` | | notice: the graph was cut at the response size limit |
 | `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
 | `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |
+| `plugin.part_skipped` | `count` | notice: a plugin sent `count` result parts of a newer protocol version, which were skipped |
 
 ### Live updates (docs/api/live.md)
 

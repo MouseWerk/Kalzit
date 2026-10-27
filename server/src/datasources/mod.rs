@@ -968,7 +968,7 @@ pub const MAX_QUERIES_PER_REQUEST: usize = 50;
 /// A pool is rebuilt after this long, so a host name is resolved (and checked) again.
 const CONNECTION_REFRESH: Duration = Duration::from_secs(10 * 60);
 /// Health checks and schema reads get the query timeout, but never longer than this.
-const MAX_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const MAX_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the target rules built from the settings are reused (canonicalized directories).
 const POLICY_REFRESH: Duration = Duration::from_secs(60);
 /// The range a query may ask for: the years 1 to 9999, as Unix milliseconds.

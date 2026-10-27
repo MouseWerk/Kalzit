@@ -1,10 +1,11 @@
 //! The plugin manifest: `kalzit-plugin.toml` at the root of every plugin package (TOML, like
-//! `kalzit.toml`). It says what the plugin is, what it delivers, what it may reach and which
-//! binaries it ships with their SHA-256; the plugin signature covers its exact bytes
+//! `kalzit.toml`). It says what the plugin is, what it delivers, what it may reach, and pins
+//! every file of the package by SHA-256 (`files`); the plugin signature covers its exact bytes
 //! (`signing::manifest_message`). docs/ARCHITECTURE.md ("Plugins") shows a full example.
 //!
 //! `parse` reads and validates a manifest and reports every problem at once, each with the path
-//! of the value at fault and a stable code.
+//! of the value at fault and a stable code. `Manifest::check_package` compares an unpacked
+//! package with the manifest before anything in it runs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -14,11 +15,14 @@ use serde::{Deserialize, Serialize};
 /// The file name of the manifest in a plugin package.
 pub const MANIFEST_FILE: &str = "kalzit-plugin.toml";
 
+/// The file name of the detached signature next to the manifest.
+pub const SIGNATURE_FILE: &str = "kalzit-plugin.sig";
+
 /// The manifest format this crate reads (`manifest = 1`).
 pub const MANIFEST_VERSION: u32 = 1;
 
 /// Largest manifest accepted.
-pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
+pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 
 /// The platforms a plugin can ship binaries for.
 pub const PLATFORMS: &[&str] = &["windows-x64", "linux-x64", "linux-arm64"];
@@ -41,9 +45,20 @@ pub const COMMON_SETTINGS: &[&str] = &["queryTimeoutSecs", "maxRows"];
 /// Languages a label may carry; `en` is required, as the fallback.
 pub const LANGUAGES: &[&str] = &["en", "de"];
 
+/// Id prefixes only plugins signed with Kalzit's own plugin key may use
+/// (`signing::check_signer`).
+pub const RESERVED_ID_PREFIXES: &[&str] = &["io.kalzit.", "dev.kalzit."];
+
+/// What a network target's settings field holds.
+pub const TARGET_FORMS: &[&str] = &["host", "url"];
+
+/// How a plugin talks to a host-form or fixed target: plain TCP or TLS over TCP.
+pub const TARGET_PROTOCOLS: &[&str] = &["tcp", "tls"];
+
 const MAX_SETTINGS: usize = 64;
 const MAX_OPTIONS: usize = 256;
 const MAX_NETWORK_TARGETS: usize = 32;
+const MAX_FILES: usize = 4096;
 const MAX_NAME_CHARS: usize = 64;
 const MAX_TEXT_CHARS: usize = 500;
 const MAX_PATH_CHARS: usize = 255;
@@ -84,12 +99,17 @@ pub struct Manifest {
     pub settings: Vec<Setting>,
     #[serde(default)]
     pub permissions: Permissions,
-    /// Data sources: one binary per platform (`windows-x64`, `linux-x64`, `linux-arm64`).
+    /// Data sources: the executable per platform (`windows-x64`, `linux-x64`, `linux-arm64`), a
+    /// path listed in `files`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub binaries: BTreeMap<String, PackageFile>,
+    pub binaries: BTreeMap<String, String>,
     /// Panels: the web bundle the browser loads into a sandboxed iframe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel: Option<WebBundle>,
+    /// Every file of the package (paths relative to its root, `/` between parts) with its
+    /// SHA-256 in lowercase hex; only the manifest and its signature are not listed. Kalzit
+    /// refuses a package with any other file, a missing file, a different hash or a link.
+    pub files: BTreeMap<String, String>,
 }
 
 /// One field of a data source's settings form.
@@ -128,18 +148,23 @@ pub struct Permissions {
     pub network: Vec<NetworkTarget>,
 }
 
-/// One network target: the host (or URL) a settings field holds, or a fixed host and port.
+/// One network target: the host or URL a settings field holds, or a fixed host and port. Both
+/// pass the same data source target rules (`TargetPolicy`) as built-in sources: Kalzit's own
+/// database and metadata addresses are refused, `datasources.allowed_targets` applies.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkTarget {
-    /// A `target` settings field holding a host name, address or URL. The data source's own
-    /// target rules apply to it like to a built-in source.
+    /// A `target` settings field with the target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting: Option<String>,
-    /// A `target` number field with the port, for a `setting` that holds a host.
+    /// What `setting` holds: `host` (a host name or address, the port from `port_setting` or
+    /// `default_port`) or `url` (scheme, host and port from the URL; `https` means TLS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<String>,
+    /// A `target` number field with the port, for the `host` form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port_setting: Option<String>,
-    /// The port when the settings give none.
+    /// The port when the settings give none, for the `host` form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_port: Option<u16>,
     /// A fixed host name or address (no wildcards).
@@ -148,16 +173,9 @@ pub struct NetworkTarget {
     /// The port of a fixed `host`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
-}
-
-/// A file in the plugin package, pinned by its SHA-256.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageFile {
-    /// Relative to the package root, with `/` between parts.
-    pub path: String,
-    /// Lowercase hex.
-    pub sha256: String,
+    /// `tcp` (the default) or `tls`, for the `host` form and fixed hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
 }
 
 /// A panel's web bundle: one ES module with everything it needs inlined, run in a sandboxed
@@ -165,9 +183,8 @@ pub struct PackageFile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebBundle {
-    /// The bundle's `.js` or `.mjs` file, relative to the package root.
+    /// The bundle's `.js` or `.mjs` file, a path listed in `files`.
     pub path: String,
-    pub sha256: String,
     /// The panel message API version the bundle speaks.
     pub api: u32,
 }
@@ -176,6 +193,25 @@ pub struct WebBundle {
 pub enum PluginKind {
     DataSource,
     Panel,
+}
+
+/// One entry of an unpacked package, as the host lists it without following links.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageEntry {
+    /// Relative to the package root, with `/` between parts.
+    pub path: String,
+    pub kind: EntryKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    Directory,
+    /// A regular file with its SHA-256 (lowercase hex).
+    File {
+        sha256: String,
+    },
+    /// A symbolic link, junction or anything else that is not a plain file or directory.
+    Other,
 }
 
 /// One problem in a manifest: where (`settings[1].options`), a stable code and an English text.
@@ -223,6 +259,11 @@ pub fn parse(text: &str) -> Result<Manifest, Invalid> {
     Ok(manifest)
 }
 
+/// Whether `id` lies in a namespace reserved for Kalzit's own plugins.
+pub fn is_reserved_id(id: &str) -> bool {
+    RESERVED_ID_PREFIXES.iter().any(|p| id.starts_with(p) || id == p.trim_end_matches('.'))
+}
+
 impl Manifest {
     /// Checks every rule of the format; `parse` calls it.
     pub fn validate(&self) -> Result<(), Invalid> {
@@ -257,6 +298,46 @@ impl Manifest {
             ));
         }
         Ok(())
+    }
+
+    /// Compares an unpacked package with `files`: every regular file must be listed with the
+    /// same hash, every listed file must exist, and links or other special entries are refused
+    /// (a link could point outside the package, and on Windows a DLL placed next to the binary
+    /// would be loaded before the system's). Only the manifest and its signature may be extra.
+    pub fn check_package(&self, entries: &[PackageEntry]) -> Result<(), Invalid> {
+        let mut issues = Vec::new();
+        let mut seen = BTreeSet::new();
+        for entry in entries {
+            let path = &entry.path;
+            match &entry.kind {
+                EntryKind::Directory => {}
+                EntryKind::Other => {
+                    issues.push(issue(path.clone(), "package.link", "links and special files are refused"))
+                }
+                EntryKind::File { .. } if path == MANIFEST_FILE || path == SIGNATURE_FILE => {}
+                EntryKind::File { sha256 } => match self.files.get(path) {
+                    None => issues.push(issue(
+                        path.clone(),
+                        "package.file_unlisted",
+                        "the manifest does not list this file",
+                    )),
+                    Some(expected) if expected != sha256 => issues.push(issue(
+                        path.clone(),
+                        "package.hash_mismatch",
+                        "the file's SHA-256 differs from the manifest",
+                    )),
+                    Some(_) => {
+                        seen.insert(path.as_str());
+                    }
+                },
+            }
+        }
+        for path in self.files.keys().filter(|p| !seen.contains(p.as_str())) {
+            if !issues.iter().any(|i| &i.path == path) {
+                issues.push(issue(path.clone(), "package.file_missing", "a listed file is missing"));
+            }
+        }
+        if issues.is_empty() { Ok(()) } else { Err(Invalid(issues)) }
     }
 }
 
@@ -301,6 +382,7 @@ impl Validator {
             self.text("license", l, MAX_NAME_CHARS, true);
         }
         self.names("shapes", &m.shapes, SHAPES, true);
+        self.files(&m.files);
 
         let kind = match m.kind.as_str() {
             "datasource" => Some(PluginKind::DataSource),
@@ -341,9 +423,9 @@ impl Validator {
             if !PLATFORMS.contains(&platform.as_str()) {
                 self.push(&path, "manifest.platform_unknown", format!("use one of {}", PLATFORMS.join(", ")));
             }
-            self.file(&path, file);
-            if platform.starts_with("windows") && !file.path.to_ascii_lowercase().ends_with(".exe") {
-                self.push(format!("{path}.path"), "manifest.binary_not_exe", "a Windows binary ends with .exe");
+            self.listed(&path, file, &m.files);
+            if platform.starts_with("windows") && !file.to_ascii_lowercase().ends_with(".exe") {
+                self.push(&path, "manifest.binary_not_exe", "a Windows binary ends with .exe");
             }
         }
         self.settings(&m.settings);
@@ -353,7 +435,7 @@ impl Validator {
     fn panel(&mut self, m: &Manifest) {
         match &m.panel {
             Some(bundle) => {
-                self.file("panel", &PackageFile { path: bundle.path.clone(), sha256: bundle.sha256.clone() });
+                self.listed("panel.path", &bundle.path, &m.files);
                 if !(bundle.path.ends_with(".js") || bundle.path.ends_with(".mjs")) {
                     self.push("panel.path", "manifest.panel_not_module", "the panel bundle is a .js or .mjs file");
                 }
@@ -387,6 +469,8 @@ impl Validator {
             self.push(path, "manifest.text_too_long", format!("at most {max} characters"));
         } else if value.chars().any(char::is_control) {
             self.push(path, "manifest.text_control", "must not contain control characters");
+        } else if value.chars().any(is_bidi_control) {
+            self.push(path, "manifest.text_bidi", "must not contain bidirectional control characters");
         }
     }
 
@@ -405,16 +489,37 @@ impl Validator {
         }
     }
 
-    fn file(&mut self, path: &str, file: &PackageFile) {
-        if !valid_package_path(&file.path) {
-            self.push(
-                format!("{path}.path"),
-                "manifest.path_invalid",
-                "use a relative path inside the package with / between parts",
-            );
+    fn files(&mut self, files: &BTreeMap<String, String>) {
+        if files.is_empty() {
+            self.push("files", "manifest.files_missing", "list every file of the package with its SHA-256");
+        } else if files.len() > MAX_FILES {
+            self.push("files", "manifest.too_many", format!("at most {MAX_FILES} files"));
         }
-        if !(file.sha256.len() == 64 && file.sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) {
-            self.push(format!("{path}.sha256"), "manifest.sha256_invalid", "64 lowercase hex digits");
+        let mut folded = BTreeSet::new();
+        for (path, sha256) in files {
+            let at = format!("files.{path:?}");
+            if !valid_package_path(path) {
+                self.push(
+                    &at,
+                    "manifest.path_invalid",
+                    "a relative path inside the package with / between parts, no reserved Windows names, \
+                     no part ending in a dot or space",
+                );
+            } else if path == MANIFEST_FILE || path == SIGNATURE_FILE {
+                self.push(&at, "manifest.path_invalid", "the manifest and its signature are not listed");
+            } else if !folded.insert(path.to_lowercase()) {
+                self.push(&at, "manifest.path_case_duplicate", "another file differs only in case");
+            }
+            if !(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) {
+                self.push(&at, "manifest.sha256_invalid", "64 lowercase hex digits");
+            }
+        }
+    }
+
+    /// `file` must be one of the listed files.
+    fn listed(&mut self, path: &str, file: &str, files: &BTreeMap<String, String>) {
+        if !files.contains_key(file) {
+            self.push(path, "manifest.file_unlisted", format!("{file} is not in files"));
         }
     }
 
@@ -503,6 +608,18 @@ impl Validator {
         }
     }
 
+    fn protocol(&mut self, path: &str, protocol: Option<&String>) {
+        if let Some(p) = protocol
+            && !TARGET_PROTOCOLS.contains(&p.as_str())
+        {
+            self.push(
+                format!("{path}.protocol"),
+                "manifest.name_unknown",
+                format!("use one of {}", TARGET_PROTOCOLS.join(", ")),
+            );
+        }
+    }
+
     fn network(&mut self, targets: &[NetworkTarget], settings: &[Setting]) {
         if targets.len() > MAX_NETWORK_TARGETS {
             self.push("permissions.network", "manifest.too_many", format!("at most {MAX_NETWORK_TARGETS} targets"));
@@ -520,20 +637,43 @@ impl Validator {
                             format!("{name} is not a string settings field marked target"),
                         ),
                     }
-                    if let Some(port) = &t.port_setting
-                        && !field(port).is_some_and(|s| s.target && s.field_type == "number")
-                    {
-                        self.push(
-                            format!("{path}.port_setting"),
-                            "manifest.target_setting",
-                            format!("{port} is not a number settings field marked target"),
-                        );
+                    match t.form.as_deref() {
+                        Some("host") => {
+                            if let Some(port) = &t.port_setting
+                                && !field(port).is_some_and(|s| s.target && s.field_type == "number")
+                            {
+                                self.push(
+                                    format!("{path}.port_setting"),
+                                    "manifest.target_setting",
+                                    format!("{port} is not a number settings field marked target"),
+                                );
+                            }
+                            if t.default_port == Some(0) {
+                                self.push(
+                                    format!("{path}.default_port"),
+                                    "manifest.port_invalid",
+                                    "a port is 1 to 65535",
+                                );
+                            }
+                            self.protocol(&path, t.protocol.as_ref());
+                        }
+                        Some("url") => {
+                            if t.port_setting.is_some() || t.default_port.is_some() || t.protocol.is_some() {
+                                self.push(
+                                    path.clone(),
+                                    "manifest.not_for_target",
+                                    "a URL names its scheme and port itself",
+                                );
+                            }
+                        }
+                        _ => self.push(
+                            format!("{path}.form"),
+                            "manifest.target_form",
+                            "say whether the setting holds a host or a url",
+                        ),
                     }
                     if t.port.is_some() {
                         self.push(format!("{path}.port"), "manifest.not_for_target", "use default_port with a setting");
-                    }
-                    if t.default_port == Some(0) {
-                        self.push(format!("{path}.default_port"), "manifest.port_invalid", "a port is 1 to 65535");
                     }
                 }
                 (None, Some(host)) => {
@@ -552,14 +692,25 @@ impl Validator {
                         ),
                         Some(_) => {}
                     }
-                    if t.port_setting.is_some() || t.default_port.is_some() {
-                        self.push(path.clone(), "manifest.not_for_target", "a fixed host has only host and port");
+                    if t.port_setting.is_some() || t.default_port.is_some() || t.form.is_some() {
+                        self.push(
+                            path.clone(),
+                            "manifest.not_for_target",
+                            "a fixed host has only host, port and protocol",
+                        );
                     }
+                    self.protocol(&path, t.protocol.as_ref());
                 }
                 _ => self.push(path, "manifest.target_form", "give either setting or host"),
             }
         }
     }
+}
+
+/// Characters that reorder how text is shown (U+202A to U+202E, U+2066 to U+2069, the marks
+/// U+200E and U+200F), so a name cannot pretend to be another.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
 }
 
 fn valid_id(id: &str) -> bool {
@@ -582,13 +733,24 @@ fn valid_setting_name(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
+/// A name Windows reserves for a device in any directory and with any extension (`nul.txt`).
+fn windows_reserved(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or_default().trim_end().to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
+}
+
 fn valid_package_path(path: &str) -> bool {
     !path.is_empty()
         && path.chars().count() <= MAX_PATH_CHARS
         && !path.starts_with('/')
-        && !path.contains(['\\', ':'])
-        && !path.chars().any(char::is_control)
-        && path.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
+        && !path.contains(['\\', ':', '*', '?', '"', '<', '>', '|'])
+        && !path.chars().any(|c| c.is_control() || is_bidi_control(c))
+        && path.split('/').all(|part| {
+            !part.is_empty() && part != "." && part != ".." && !part.ends_with(['.', ' ']) && !windows_reserved(part)
+        })
 }
 
 fn valid_host(host: &str) -> bool {
@@ -609,6 +771,7 @@ mod tests {
     use super::*;
 
     const HASH: &str = "3f1a2b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708";
+    const HASH2: &str = "0000000000000000000000000000000000000000000000000000000000000002";
 
     fn datasource() -> String {
         format!(
@@ -655,24 +818,47 @@ default = "standalone"
 
 [[permissions.network]]
 setting = "host"
+form = "host"
 port_setting = "port"
 default_port = 6379
+protocol = "tls"
 
 [[permissions.network]]
 host = "license.example.dev"
 port = 443
+protocol = "tls"
 
-[binaries.windows-x64]
-path = "bin/windows-x64/redis-plugin.exe"
-sha256 = "{HASH}"
+[binaries]
+windows-x64 = "bin/windows-x64/redis-plugin.exe"
+linux-x64 = "bin/linux-x64/redis-plugin"
+linux-arm64 = "bin/linux-arm64/redis-plugin"
 
-[binaries.linux-x64]
-path = "bin/linux-x64/redis-plugin"
-sha256 = "{HASH}"
+[files]
+"bin/windows-x64/redis-plugin.exe" = "{HASH}"
+"bin/linux-x64/redis-plugin" = "{HASH}"
+"bin/linux-arm64/redis-plugin" = "{HASH}"
+"LICENSE" = "{HASH2}"
+"#
+        )
+    }
 
-[binaries.linux-arm64]
-path = "bin/linux-arm64/redis-plugin"
-sha256 = "{HASH}"
+    fn panel() -> String {
+        format!(
+            r#"
+manifest = 1
+id = "dev.example.sankey"
+name = "Sankey"
+version = "0.1.0"
+kind = "panel"
+min_kalzit = "0.4.0"
+shapes = ["graph", "frame"]
+
+[panel]
+path = "dist/panel.js"
+api = 1
+
+[files]
+"dist/panel.js" = "{HASH}"
 "#
         )
     }
@@ -686,48 +872,31 @@ sha256 = "{HASH}"
         let m = parse(&datasource()).expect("valid");
         assert_eq!(m.plugin_kind(), PluginKind::DataSource);
         assert_eq!(m.binaries.len(), 3);
+        assert_eq!(m.files.len(), 4);
         assert_eq!(m.permissions.network.len(), 2);
         assert_eq!(m.settings[1].default, Some(toml::Value::Integer(6379)));
     }
 
     #[test]
     fn a_panel_manifest_is_valid() {
-        let text = format!(
-            r#"
-manifest = 1
-id = "dev.example.sankey"
-name = "Sankey"
-version = "0.1.0"
-kind = "panel"
-min_kalzit = "0.4.0"
-shapes = ["graph", "frame"]
-
-[panel]
-path = "dist/panel.js"
-sha256 = "{HASH}"
-api = 1
-"#
-        );
+        let text = panel();
         assert_eq!(parse(&text).expect("valid").plugin_kind(), PluginKind::Panel);
-        let html = text.replacen("dist/panel.js", "dist/index.html", 1).replacen("api = 1", "api = 9", 1);
-        assert_eq!(codes(&html), ["manifest.panel_not_module", "manifest.panel_api_unsupported"]);
-        let binary = format!(
-            "{text}
-[binaries.linux-x64]
-path = \"bin/x\"
-sha256 = \"{HASH}\"
-"
+        let html = text
+            .replacen("path = \"dist/panel.js\"", "path = \"dist/index.html\"", 1)
+            .replacen("api = 1", "api = 9", 1);
+        assert_eq!(
+            codes(&html),
+            ["manifest.file_unlisted", "manifest.panel_not_module", "manifest.panel_api_unsupported"]
         );
+        let binary = text.replacen("[files]", "[binaries]\nlinux-x64 = \"dist/panel.js\"\n\n[files]", 1);
         assert_eq!(codes(&binary), ["manifest.not_for_kind"]);
     }
 
     #[test]
     fn syntax_errors_and_unknown_keys_are_refused() {
         assert_eq!(codes("manifest = "), ["manifest.syntax"]);
-        assert_eq!(
-            codes(&format!("{}\nentry = \"x\"\n", datasource().replacen("manifest = 1", "", 1))),
-            ["manifest.syntax"]
-        );
+        let no_files = datasource().split("[files]").next().unwrap().to_string();
+        assert_eq!(codes(&no_files), ["manifest.syntax"]);
         let unknown = datasource().replacen("protocol = 1", "protocol = 1\nnetwork = true", 1);
         assert_eq!(codes(&unknown), ["manifest.syntax"]);
     }
@@ -762,29 +931,99 @@ sha256 = \"{HASH}\"
         for bad in ["postgres", "Dev.example", "dev..x", ".dev.x", "dev.x.", "1dev.x", "dev.-x", "dev.x_y", "d.x/y"] {
             assert!(!valid_id(bad), "{bad}");
         }
+        for reserved in ["io.kalzit.csv", "dev.kalzit.redis", "io.kalzit"] {
+            assert!(is_reserved_id(reserved), "{reserved}");
+        }
+        for free in ["io.kalzitx.csv", "dev.example.kalzit", "dev.kalzitfan.x"] {
+            assert!(!is_reserved_id(free), "{free}");
+        }
     }
 
     #[test]
-    fn binaries_are_pinned_relative_files_for_known_platforms() {
+    fn binaries_are_listed_files_for_known_platforms() {
         let text = datasource()
-            .replacen("bin/windows-x64/redis-plugin.exe", "bin/windows-x64/redis-plugin", 1)
-            .replacen("bin/linux-x64/redis-plugin", "../redis-plugin", 1)
-            .replacen("[binaries.linux-arm64]", "[binaries.macos-arm64]", 1)
-            .replacen(&format!("sha256 = \"{HASH}\""), "sha256 = \"ABC\"", 1);
+            .replacen(
+                "windows-x64 = \"bin/windows-x64/redis-plugin.exe\"",
+                "windows-x64 = \"bin/windows-x64/redis-plugin\"",
+                1,
+            )
+            .replacen("linux-arm64 = ", "macos-arm64 = ", 1)
+            .replacen(&format!("\"LICENSE\" = \"{HASH2}\""), "\"LICENSE\" = \"ABC\"", 1);
         assert_eq!(
             codes(&text),
             [
-                "manifest.path_invalid",
-                "manifest.platform_unknown",
                 "manifest.sha256_invalid",
+                "manifest.platform_unknown",
+                "manifest.file_unlisted",
                 "manifest.binary_not_exe",
             ]
         );
-        for bad in ["/abs", "C:/x.exe", "bin\\x.exe", "bin//x", "./x", "bin/../x", ""] {
-            assert!(!valid_package_path(bad), "{bad}");
+        let none = datasource().replacen("[binaries]\n", "[unused]\n", 1);
+        assert_eq!(codes(&none), ["manifest.syntax"]);
+        let empty = datasource().replacen(
+            "windows-x64 = \"bin/windows-x64/redis-plugin.exe\"\nlinux-x64 = \"bin/linux-x64/redis-plugin\"\nlinux-arm64 = \"bin/linux-arm64/redis-plugin\"\n",
+            "",
+            1,
+        );
+        assert_eq!(codes(&empty), ["manifest.binaries_missing"]);
+    }
+
+    #[test]
+    fn package_paths_stay_inside_and_are_portable() {
+        for bad in [
+            "/abs",
+            "C:/x.exe",
+            "bin\\x.exe",
+            "bin//x",
+            "./x",
+            "bin/../x",
+            "",
+            "bin/CON",
+            "nul.txt",
+            "bin/com1.dll",
+            "LPT9",
+            "dir./x",
+            "x ",
+            "a?b",
+            "evil\u{202E}txt.exe",
+        ] {
+            assert!(!valid_package_path(bad), "{bad:?}");
         }
-        let none = datasource().split("[binaries.windows-x64]").next().unwrap().to_string();
-        assert_eq!(codes(&none), ["manifest.binaries_missing"]);
+        for good in ["bin/console.exe", "COM10/x", "nullable.js", "a/b.c/d", "x.y"] {
+            assert!(valid_package_path(good), "{good:?}");
+        }
+        let text = datasource().replacen(
+            &format!("\"LICENSE\" = \"{HASH2}\""),
+            &format!("\"LICENSE\" = \"{HASH2}\"\n\"license\" = \"{HASH2}\"\n\"kalzit-plugin.toml\" = \"{HASH2}\""),
+            1,
+        );
+        assert_eq!(codes(&text), ["manifest.path_invalid", "manifest.path_case_duplicate"]);
+    }
+
+    #[test]
+    fn packages_hold_exactly_the_listed_files() {
+        let m = parse(&datasource()).unwrap();
+        let file = |path: &str, sha256: &str| PackageEntry {
+            path: path.into(),
+            kind: EntryKind::File { sha256: sha256.into() },
+        };
+        let mut entries = vec![
+            PackageEntry { path: "bin".into(), kind: EntryKind::Directory },
+            file("bin/windows-x64/redis-plugin.exe", HASH),
+            file("bin/linux-x64/redis-plugin", HASH),
+            file("bin/linux-arm64/redis-plugin", HASH),
+            file("LICENSE", HASH2),
+            file(MANIFEST_FILE, HASH2),
+            file(SIGNATURE_FILE, HASH2),
+        ];
+        assert_eq!(m.check_package(&entries), Ok(()));
+
+        entries[4] = file("LICENSE", HASH);
+        entries.push(file("bin/windows-x64/version.dll", HASH));
+        entries.push(PackageEntry { path: "bin/link".into(), kind: EntryKind::Other });
+        entries.remove(3);
+        let codes = m.check_package(&entries).unwrap_err().codes();
+        assert_eq!(codes, ["package.hash_mismatch", "package.file_unlisted", "package.link", "package.file_missing"]);
     }
 
     #[test]
@@ -808,6 +1047,8 @@ sha256 = \"{HASH}\"
                 "manifest.target_setting",
             ]
         );
+        let bidi = datasource().replacen("name = \"Redis\"", "name = \"Redis\u{202E}lacol\"", 1);
+        assert_eq!(codes(&bidi), ["manifest.text_bidi"]);
     }
 
     #[test]
@@ -820,6 +1061,12 @@ sha256 = \"{HASH}\"
         assert_eq!(codes(&text), ["manifest.target_setting", "manifest.host_invalid", "manifest.port_invalid"]);
         let both = datasource().replacen("setting = \"host\"", "setting = \"host\"\nhost = \"x.dev\"", 1);
         assert_eq!(codes(&both), ["manifest.target_form"]);
+        let no_form = datasource().replacen("form = \"host\"\n", "", 1);
+        assert_eq!(codes(&no_form), ["manifest.target_form"]);
+        let url_with_port = datasource().replacen("form = \"host\"", "form = \"url\"", 1);
+        assert_eq!(codes(&url_with_port), ["manifest.not_for_target"]);
+        let udp = datasource().replacen("protocol = \"tls\"", "protocol = \"udp\"", 1);
+        assert_eq!(codes(&udp), ["manifest.name_unknown"]);
         for bad in ["https://x.dev", "x.dev:443", "*.x.dev", "-x.dev", ""] {
             assert!(!valid_host(bad), "{bad}");
         }
@@ -877,9 +1124,11 @@ sha256 = \"{HASH}\"
 
     #[test]
     fn a_valid_manifest_survives_writing_it_again() {
-        let m = parse(&datasource()).unwrap();
-        let again = parse(&toml::to_string(&m).expect("serializes")).expect("still valid");
-        assert_eq!(again, m);
+        for text in [datasource(), panel()] {
+            let m = parse(&text).unwrap();
+            let again = parse(&toml::to_string(&m).expect("serializes")).expect("still valid");
+            assert_eq!(again, m);
+        }
     }
 
     #[test]

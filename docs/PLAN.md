@@ -251,22 +251,29 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   `graph`), Einstellungsformular, Rechte (Netzwerkziele), Plattform-Binaries (`windows-x64`,
   `linux-x64`, `linux-arm64`) mit SHA-256, Mindestversion von Kalzit; bei Datenquellen dazu die
   Protokollversion und die Fähigkeiten, bei Panels statt Binaries das Web-Bundle mit Hash und
-  Version der Nachrichten-API. Der Validator im Crate `kalzit-plugin-api` meldet alle
-  Fehler auf einmal, jeden mit Pfad und Code.
+  Version der Nachrichten-API. `files` hält jede Datei des Pakets mit SHA-256 fest; Kalzit
+  lehnt Pakete mit weiteren Dateien oder Links ab. Der Validator im Crate `kalzit-plugin-api`
+  meldet alle Fehler auf einmal, jeden mit Pfad und Code.
 - **Protokoll** (Entscheidung des Owners vom 27.10.2026): gRPC (tonic/prost), Kalzit ist der
   Client. Verbindung unter Windows über eine Named Pipe, unter Linux über einen Unix-Socket;
   stdio nur für den Handshake und die Logs des Plugins. Version 1 enthält Health, Schema,
   Einstellungsprüfung, Abfrage mit gestreamtem Ergebnis in der nativen Form, Abbruch und
   Deadlines; dazu die Fähigkeiten `check_on_save` und `watch`. Feldverteilungen und Pushdown von
   Graph-Schritten bleiben vorerst den eingebauten Quellen vorbehalten, weil sie an Kalzits
-  Schrittsprache hängen, die noch kein stabiler Vertrag ist.
+  Schrittsprache hängen, die noch kein stabiler Vertrag ist. Kalzit setzt die Grenzen der
+  Abfrage (Zeilen, Elemente, Bytes, Teile) selbst durch und prüft jeden Wert gegen seinen Typ.
+  Version 1 wächst nur: Kalzit nennt in `Describe` seine Unterversion und die Erweiterungen,
+  die es kennt, und ein Plugin nutzt nur diese.
 - **Signatur** (Entscheidung vom 27.10.2026): Ed25519 über das Manifest (das die Hashes aller
   Dateien festhält), in einem eigenen Signaturkontext, getrennt von den Release-Signaturen.
   Vertraut wird Kalzits eigenem Plugin-Schlüssel und Herausgeber-Schlüsseln, die ein Admin
   hinzufügt; die Release-Schlüssel gelten nie für Plugins. Unsignierte Plugins nur mit einem
   ausdrücklichen Admin-Schalter, standardmäßig aus. Eine ungültige Signatur wird immer
   abgelehnt, auch mit diesem Schalter. Wird ein vertrauter Schlüssel entfernt, laufen seine
-  Plugins nach einer Bestätigung nicht mehr.
+  Plugins nach einer Bestätigung nicht mehr. Eine Plugin-ID ist an ihren Schlüssel gebunden:
+  Updates müssen mit demselben Schlüssel signiert sein oder mit einem, an den der alte die ID
+  per signierter Übergabe weitergereicht hat; ältere Versionen werden nie installiert. IDs
+  unter `io.kalzit.` und `dev.kalzit.` sind Kalzits eigenem Schlüssel vorbehalten.
 - **Rechte und Organisationen** (Entscheidung vom 27.10.2026): Ein Update, das neue Rechte
   (Netzwerkziele) verlangt, läuft erst nach erneuter Freigabe durch einen Admin.
   Organisations-Admins können installierte Plugins für ihre Organisation sperren.
@@ -274,7 +281,9 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   `sandbox`, nicht als gRPC-Prozess, und sprechen mit Kalzit nur über die versionierte
   Nachrichten-API (Daten und Einstellungen hinein, Ereignisse wie Klick oder Auswahl heraus).
 - **Katalog** (Entscheidung vom 27.10.2026): ein signierter, gehosteter Index, standardmäßig aus;
-  die Offline-Installation aus einer Datei geht immer.
+  die Offline-Installation aus einer Datei geht immer. Jeder Index trägt eine fortlaufende
+  Nummer und ein Ablaufdatum, damit niemand einen alten Index wieder ausliefern oder einfrieren
+  kann.
 - **Sandbox** (Entscheidung vom 27.10.2026): Plugin-Prozesse laufen, wo das Betriebssystem es
   erlaubt, in einer Sandbox (Windows: Job Object und eingeschränktes Token; Linux: Namespaces,
   seccomp, Landlock). Netzwerk nur zu den im Manifest erklärten Zielen und nur über Kalzit.

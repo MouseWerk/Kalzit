@@ -19,7 +19,10 @@ use zeroize::Zeroizing;
 use super::wire;
 use crate::datasources::frame::ResponseBudget;
 use crate::datasources::targets::TargetPolicy;
-use crate::datasources::{Capability, Connection, Kind, Limits, OwnDatabase, ResumeToken, SourceError, SourceQuery};
+use crate::datasources::{
+    Capability, Connection, Health, Kind, Limits, MAX_HEALTH_TIMEOUT, OwnDatabase, ResumeToken, SourceError,
+    SourceQuery,
+};
 use crate::shapes::TimeRange;
 
 /// Rows, documents or graph elements per result part.
@@ -28,7 +31,8 @@ const BATCH: usize = 1000;
 /// Resume tokens of change feeds kept for `Watch` calls that continue one.
 const MAX_TOKENS: usize = 1024;
 
-type Tokens = Arc<Mutex<VecDeque<(Vec<u8>, ResumeToken)>>>;
+/// Feed positions with the data source and the opaque token handed out for them.
+type Tokens = Arc<Mutex<VecDeque<(String, Vec<u8>, ResumeToken)>>>;
 
 type Parts<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
@@ -70,21 +74,40 @@ impl InProcess {
         Ok(conn)
     }
 
-    fn resume(&self, id: Option<&[u8]>) -> Option<ResumeToken> {
+    /// The position behind `id`, only for the data source whose feed handed it out.
+    fn resume(&self, datasource_id: &str, id: Option<&[u8]>) -> Option<ResumeToken> {
         let tokens = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
-        id.and_then(|id| tokens.iter().find(|(t, _)| t == id).map(|(_, token)| token.clone()))
+        let id = id?;
+        tokens.iter().find(|(ds, t, _)| ds == datasource_id && t == id).map(|(_, _, token)| token.clone())
     }
 }
 
 /// Keeps a feed position and answers the opaque token for it; the oldest go first.
-fn remember(tokens: &Tokens, token: ResumeToken) -> Vec<u8> {
+fn remember(tokens: &Tokens, datasource_id: &str, token: ResumeToken) -> Vec<u8> {
     let id = uuid::Uuid::now_v7().as_bytes().to_vec();
     let mut tokens = tokens.lock().unwrap_or_else(|e| e.into_inner());
     if tokens.len() == MAX_TOKENS {
         tokens.pop_front();
     }
-    tokens.push_back((id.clone(), token));
+    tokens.push_back((datasource_id.to_string(), id.clone(), token));
     id
+}
+
+/// How long a call may take: until its deadline (`deadline_unix_ms`, when set) and never
+/// longer than `max`.
+fn time_left(deadline_unix_ms: i64, max: Duration) -> Duration {
+    if deadline_unix_ms <= 0 {
+        return max;
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let left = Duration::from_millis(u64::try_from(deadline_unix_ms).unwrap_or(0)).saturating_sub(now);
+    left.min(max)
+}
+
+/// The timeout error for a call that ran `limit`; part of a second counts as a whole one, so a
+/// sub-second limit is not reported as zero seconds.
+fn timed_out(limit: Duration) -> SourceError {
+    SourceError::Timeout(u64::try_from(limit.as_millis().div_ceil(1000)).unwrap_or(u64::MAX).max(1))
 }
 
 fn json_object(text: &str, what: &str) -> Result<Value, Status> {
@@ -167,9 +190,16 @@ impl DataSource for InProcess {
     }
 
     async fn health(&self, request: Request<pb::HealthRequest>) -> Result<Response<pb::HealthResponse>, Status> {
-        let conn = self.connection(request.into_inner().connection)?;
-        let mut health = wire::health(&self.kind.plugin.health(&conn).await);
-        for d in health.detail.iter_mut().chain(health.warnings.iter_mut()) {
+        let h = request.into_inner();
+        let conn = self.connection(h.connection)?;
+        let limit = time_left(h.deadline_unix_ms, MAX_HEALTH_TIMEOUT);
+        let health = match tokio::time::timeout(limit, self.kind.plugin.health(&conn)).await {
+            Ok(health) => health,
+            Err(_) => Health::failed(&timed_out(limit)),
+        };
+        let mut health = wire::health(&health);
+        let error_detail = health.error.as_mut().and_then(|e| e.detail.as_mut());
+        for d in health.detail.iter_mut().chain(error_detail).chain(health.warnings.iter_mut()) {
             scrub_detail(d, &conn);
         }
         Ok(Response::new(health))
@@ -177,10 +207,13 @@ impl DataSource for InProcess {
 
     async fn schema(&self, request: Request<pb::SchemaRequest>) -> Result<Response<pb::SchemaResponse>, Status> {
         use pb::schema_response::Result as Answer;
-        let conn = self.connection(request.into_inner().connection)?;
-        let result = match self.kind.plugin.schema(&conn).await {
-            Ok(schema) => Answer::SchemaJson(serde_json::to_string(&schema).expect("a schema serializes")),
-            Err(e) => Answer::Error(scrubbed_error(&e, &conn)),
+        let r = request.into_inner();
+        let conn = self.connection(r.connection)?;
+        let limit = time_left(r.deadline_unix_ms, MAX_HEALTH_TIMEOUT);
+        let result = match tokio::time::timeout(limit, self.kind.plugin.schema(&conn)).await {
+            Ok(Ok(schema)) => Answer::SchemaJson(serde_json::to_string(&schema).expect("a schema serializes")),
+            Ok(Err(e)) => Answer::Error(scrubbed_error(&e, &conn)),
+            Err(_) => Answer::Error(scrubbed_error(&timed_out(limit), &conn)),
         };
         Ok(Response::new(pb::SchemaResponse { result: Some(result) }))
     }
@@ -191,11 +224,11 @@ impl DataSource for InProcess {
         let q = request.into_inner();
         let req = source_query(&q)?;
         let conn = self.connection(q.connection)?;
-        let timeout = req.limits.timeout;
+        let timeout = time_left(q.deadline_unix_ms, req.limits.timeout);
         let parts = match tokio::time::timeout(timeout, self.kind.plugin.query(&conn, req)).await {
             Ok(Ok(result)) => wire::chunks(&result, BATCH),
             Ok(Err(e)) => vec![error_part(scrubbed_error(&e, &conn))],
-            Err(_) => vec![error_part(scrubbed_error(&SourceError::Timeout(timeout.as_secs()), &conn))],
+            Err(_) => vec![error_part(scrubbed_error(&timed_out(timeout), &conn))],
         };
         Ok(Response::new(Box::pin(stream::iter(parts.into_iter().map(Ok)))))
     }
@@ -207,12 +240,14 @@ impl DataSource for InProcess {
         if !self.has(Capability::CheckOnSave) {
             return Err(Status::unimplemented("this kind has no checks on save"));
         }
-        let conn = self.connection(request.into_inner().connection)?;
-        let refusal =
-            self.kind.plugin.check_on_save(&conn).await.err().map(|(field, e)| pb::FieldRefusal {
-                field: field.to_string(),
-                error: Some(scrubbed_error(&e, &conn)),
-            });
+        let r = request.into_inner();
+        let conn = self.connection(r.connection)?;
+        let limit = time_left(r.deadline_unix_ms, MAX_HEALTH_TIMEOUT);
+        // A check that does not finish in time does not refuse the save, as for built-ins.
+        let checked = tokio::time::timeout(limit, self.kind.plugin.check_on_save(&conn)).await.unwrap_or(Ok(()));
+        let refusal = checked
+            .err()
+            .map(|(field, e)| pb::FieldRefusal { field: field.to_string(), error: Some(scrubbed_error(&e, &conn)) });
         Ok(Response::new(pb::CheckOnSaveResponse { refusal }))
     }
 
@@ -227,7 +262,7 @@ impl DataSource for InProcess {
         let q = w.query.ok_or_else(|| Status::invalid_argument("the query is missing"))?;
         let req = source_query(&q)?;
         let conn = self.connection(q.connection)?;
-        let resume = self.resume(w.resume_token.as_deref());
+        let resume = self.resume(conn.datasource_id(), w.resume_token.as_deref());
         let event = |e: Event| Ok(pb::WatchEvent { event: Some(e) });
         let events: Self::WatchStream = match self.kind.plugin.watch(&conn, req, resume).await {
             Ok(None) => Box::pin(stream::iter([event(Event::Unsupported(pb::Unsupported {}))])),
@@ -236,7 +271,7 @@ impl DataSource for InProcess {
                 let tokens = self.tokens.clone();
                 Box::pin(feed.map(move |item| match item {
                     Ok(change) => {
-                        let token = change.token.map(|t| remember(&tokens, t));
+                        let token = change.token.map(|t| remember(&tokens, conn.datasource_id(), t));
                         event(Event::Change(pb::Change { changed: change.changed, token }))
                     }
                     Err(e) => event(Event::Error(scrubbed_error(&e, &conn))),
@@ -289,6 +324,9 @@ mod tests {
         }
         async fn health(&self, conn: &Connection) -> Health {
             let failed = SourceError::from_source(format!("login with {} refused", conn.secret("password").unwrap()));
+            if conn.settings()["host"] == "slow" {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
             if conn.settings()["host"] == "down" {
                 Health::failed(&failed)
             } else {
@@ -388,7 +426,7 @@ mod tests {
 
     async fn run(adapter: &InProcess, req: pb::QueryRequest) -> wire::Outcome {
         let parts: Vec<_> = adapter.query(Request::new(req)).await.unwrap().into_inner().collect().await;
-        wire::assemble(parts.into_iter().map(Result::unwrap)).unwrap()
+        wire::assemble(wire::unlimited(), parts.into_iter().map(Result::unwrap)).unwrap()
     }
 
     #[tokio::test]
@@ -432,7 +470,25 @@ mod tests {
 
         let slow = run(&a, query(connection(json!({"host": "db"}), 1), json!({"result": "slow"}))).await.unwrap_err();
         assert_eq!(slow.kind, pb::ErrorKind::Timeout as i32);
-        assert_eq!(slow.detail.unwrap().reason, "query.timeout");
+        let detail = slow.detail.unwrap();
+        assert_eq!(detail.reason, "query.timeout");
+        // 200 ms is reported as a second, not as zero seconds.
+        assert_eq!(detail.params["seconds"], "1");
+
+        // A deadline in the past ends the call at once.
+        let mut late = query(connection(json!({"host": "db"}), 1), json!({"result": "slow"}));
+        late.limits.as_mut().unwrap().timeout_ms = 60_000;
+        late.deadline_unix_ms = 1;
+        let started = std::time::Instant::now();
+        let e = run(&a, late).await.unwrap_err();
+        assert_eq!(e.kind, pb::ErrorKind::Timeout as i32);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let health = a.health(Request::new(pb::HealthRequest {
+            connection: connection(json!({"host": "slow"}), 9),
+            deadline_unix_ms: 1,
+        }));
+        let health = health.await.unwrap().into_inner();
+        assert_eq!(wire::error_kind(health.error.as_ref().unwrap()), pb::ErrorKind::Timeout);
     }
 
     #[tokio::test]
@@ -462,18 +518,28 @@ mod tests {
             .into_inner();
         assert_eq!(checked.error.unwrap().field, "host");
 
-        let ok = a.health(Request::new(pb::HealthRequest { connection: connection(json!({"host": "db"}), 1) }));
+        let ok = a.health(Request::new(pb::HealthRequest {
+            deadline_unix_ms: 0,
+            connection: connection(json!({"host": "db"}), 1),
+        }));
         let ok = ok.await.unwrap().into_inner();
         assert!(ok.ok);
         assert_eq!(ok.detail.unwrap().params["engine"], "Fixture");
         // A new revision is a new connection with the new settings.
-        let down = a.health(Request::new(pb::HealthRequest { connection: connection(json!({"host": "down"}), 2) }));
+        let down = a.health(Request::new(pb::HealthRequest {
+            deadline_unix_ms: 0,
+            connection: connection(json!({"host": "down"}), 2),
+        }));
         let down = down.await.unwrap().into_inner();
         assert!(!down.ok);
-        assert_eq!(down.code, "datasource_error");
-        assert!(!down.detail.unwrap().message.contains("hunter2-secret"));
+        let error = down.error.unwrap();
+        assert_eq!(wire::error_kind(&error), pb::ErrorKind::Failed);
+        assert!(!error.detail.unwrap().message.contains("hunter2-secret"));
 
-        let schema = a.schema(Request::new(pb::SchemaRequest { connection: connection(json!({"host": "db"}), 2) }));
+        let schema = a.schema(Request::new(pb::SchemaRequest {
+            deadline_unix_ms: 0,
+            connection: connection(json!({"host": "db"}), 2),
+        }));
         let Some(pb::schema_response::Result::SchemaJson(text)) = schema.await.unwrap().into_inner().result else {
             panic!("a schema")
         };
@@ -482,7 +548,10 @@ mod tests {
             json!({"kind": "metrics", "metrics": ["up"], "labels": ["job"]})
         );
 
-        let save = a.check_on_save(Request::new(pb::CheckOnSaveRequest { connection: connection(json!({}), 3) }));
+        let save = a.check_on_save(Request::new(pb::CheckOnSaveRequest {
+            deadline_unix_ms: 0,
+            connection: connection(json!({}), 3),
+        }));
         let refusal = save.await.unwrap().into_inner().refusal.unwrap();
         assert_eq!(refusal.field, "user");
         assert_eq!(refusal.error.unwrap().kind, pb::ErrorKind::Rejected as i32);
@@ -508,8 +577,10 @@ mod tests {
         let resumed: Vec<_> =
             watch(json!({"result": "frame"}), changes[1].token.clone()).await.unwrap().into_inner().collect().await;
         let Some(Event::Change(first)) = resumed[0].as_ref().unwrap().event.clone() else { panic!("a change") };
-        let held = a.resume(first.token.as_deref()).unwrap();
+        let held = a.resume("ds", first.token.as_deref()).unwrap();
         assert_eq!(held.0.downcast_ref::<u32>(), Some(&3));
+        // A token is only good for the data source whose feed handed it out.
+        assert!(a.resume("other", first.token.as_deref()).is_none());
 
         let poll: Vec<_> = watch(json!({"result": "poll"}), None).await.unwrap().into_inner().collect().await;
         assert!(matches!(poll[0].as_ref().unwrap().event, Some(Event::Unsupported(_))));
@@ -519,7 +590,12 @@ mod tests {
     async fn kinds_without_a_capability_refuse_its_calls() {
         let dir = tempfile::tempdir().unwrap();
         let a = adapter(crate::datasources::sqlite::kind(), dir.path()).await;
-        let save = a.check_on_save(Request::new(pb::CheckOnSaveRequest { connection: connection(json!({}), 1) })).await;
+        let save = a
+            .check_on_save(Request::new(pb::CheckOnSaveRequest {
+                deadline_unix_ms: 0,
+                connection: connection(json!({}), 1),
+            }))
+            .await;
         assert_eq!(save.err().unwrap().code(), tonic::Code::Unimplemented);
         let req = pb::WatchRequest { query: Some(query(connection(json!({}), 1), json!({}))), resume_token: None };
         assert_eq!(a.watch(Request::new(req)).await.err().unwrap().code(), tonic::Code::Unimplemented);
@@ -544,7 +620,8 @@ mod tests {
         let QueryResult::Frame { frame } = &through else { panic!("a frame") };
         assert!(frame.rows() > 0);
 
-        let health = a.health(Request::new(pb::HealthRequest { connection: req.connection.clone() }));
+        let health =
+            a.health(Request::new(pb::HealthRequest { deadline_unix_ms: 0, connection: req.connection.clone() }));
         assert!(health.await.unwrap().into_inner().ok);
         drop(conn);
         a.release(Request::new(pb::ReleaseRequest { datasource_id: "ds".into() })).await.unwrap();

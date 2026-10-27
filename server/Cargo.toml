@@ -48,7 +48,8 @@ tiberius = { version = "0.13.0", default-features = false, features = ["tds80", 
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net", "fs", "time", "sync", "io-util", "process"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-util = { version = "0.7.20", features = ["compat", "io"] }
-# gRPC types of the plugin protocol (kalzit-plugin-api); no transport yet.
+# gRPC types of the plugin protocol (kalzit-plugin-api); no transport yet. prost sizes its parts.
+prost = "0.14.4"
 tonic = { version = "0.14.8", default-features = false, features = ["codegen"] }
 toml = "1.1.8"
 tower = { version = "0.5.3", features = ["util"] }
@@ -72,8 +73,6 @@ windows = { version = "0.62.2", features = [
 
 [dev-dependencies]
 http-body-util = "0.1.5"
-# Encodes and decodes the plugin protocol's messages in the wire tests.
-prost = "0.14.4"
 rcgen = "0.14.10"
 # A WebSocket client for the live update tests; the version axum's server side uses.
 tokio-tungstenite = "0.29.0"

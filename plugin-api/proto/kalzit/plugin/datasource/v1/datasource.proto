@@ -17,8 +17,22 @@
 //
 // Values without a fixed type in protobuf (frame values, documents, graph properties, settings,
 // variables, queries) travel as UTF-8 JSON text in the forms docs/api/datasources.md describes,
-// including the `{"$type": ..., "value": ...}` wrappers of document values. Additions within
-// version 1 only add fields and enum values; anything else is a new package version.
+// including the `{"$type": ..., "value": ...}` wrappers of document values.
+//
+// Limits: the host decodes no message larger than 16 MiB (`MAX_MESSAGE_BYTES` in
+// kalzit-plugin-api); a plugin cuts its batches well below that. The host enforces the query's
+// limits on what arrives (rows, documents, graph elements, response bytes, number of parts),
+// whatever the plugin does: it cuts the result with a notice, or ends the call when the stream
+// does not end.
+//
+// Evolution: version 1 only grows. A change adds fields, enum values, oneof parts or RPCs and
+// raises the minor version (`PROTOCOL_MINOR`); renaming, renumbering or changing a field's
+// meaning needs a new package (`...datasource.v2`). The host announces its minor version and
+// the additions it understands in `DescribeRequest`; a plugin uses an addition only when the
+// host announced it. In return the host stays safe with what it does not know: an unknown
+// notice severity counts as info, an unknown error kind as failed, an unknown capability is
+// ignored, an unknown result part is skipped with a notice, and a frame field of an unknown
+// type is left out with a notice naming it.
 syntax = "proto3";
 
 package kalzit.plugin.datasource.v1;
@@ -66,6 +80,10 @@ message DescribeRequest {
   uint32 protocol_version = 1;
   // Kalzit's own version, such as "0.4.0".
   string host_version = 2;
+  // The host's minor version of protocol 1: every addition up to it is understood.
+  uint32 protocol_minor = 3;
+  // Additions the host understands by name, for those a plugin may want to check one by one.
+  repeated string features = 4;
 }
 
 message DescribeResponse {
@@ -136,19 +154,23 @@ message FieldError {
 
 message HealthRequest {
   Connection connection = 1;
+  // When the host gives up on the call, in Unix milliseconds.
+  int64 deadline_unix_ms = 2;
 }
 
 message HealthResponse {
   bool ok = 1;
-  // The error code when it failed (datasource_error, datasource_target_blocked, ...).
-  string code = 2;
-  Detail detail = 3;
+  // What connected (`health.connected` with engine and version) when `ok`.
+  Detail detail = 2;
+  // Why it failed when not `ok`.
+  Error error = 3;
   // What works but needs attention; never makes the test fail.
   repeated Detail warnings = 4;
 }
 
 message SchemaRequest {
   Connection connection = 1;
+  int64 deadline_unix_ms = 2;
 }
 
 message SchemaResponse {
@@ -287,7 +309,7 @@ message Notice {
 }
 
 message Truncated {
-  uint32 limit = 1;
+  uint64 limit = 1;
   optional string reason = 2;
 }
 
@@ -353,6 +375,7 @@ message ResultEnd {
 
 message CheckOnSaveRequest {
   Connection connection = 1;
+  int64 deadline_unix_ms = 2;
 }
 
 message CheckOnSaveResponse {

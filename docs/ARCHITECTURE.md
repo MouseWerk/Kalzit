@@ -320,8 +320,10 @@ process, a network target or the gRPC protocol.
   The build compiles it with protox, a protobuf compiler written in Rust, and tonic-prost-build,
   so no `protoc` is needed on Windows, Linux or in the Docker build. The crate holds the
   generated messages, the client and the server trait, without a transport.
-- `manifest.rs`: the manifest format and its validator; `signing.rs`: what plugin and catalog
-  signatures cover. The crate depends on no server type, so SDKs and the signing tool can use it.
+- `manifest.rs`: the manifest format, its validator and the package check; `signing.rs`: what
+  plugin, catalog and hand-over signatures cover and the trust rules (reserved ids, updates
+  bound to the key); `catalog.rs`: the catalog index with its rollback and freeze checks. The
+  crate depends on no server type, so SDKs and the signing tool can use it.
 
 ### Process model and transport (M4)
 
@@ -347,7 +349,7 @@ process, a network target or the gRPC protocol.
 |---|---|
 | `Describe` | Protocol version, kind (the manifest id), shapes, capabilities. First call after start; an answer that contradicts the manifest stops the plugin. |
 | `CheckSettings` | The kind's own settings checks, without network. The form rules of the manifest are checked by Kalzit before. |
-| `Health` | "Test connection". |
+| `Health` | "Test connection": what connected, or an `Error` like any other call. |
 | `Schema` | Completion data in one of the documented schema forms, as JSON. |
 | `Query` | One query; the result streams as parts (below). |
 | `CheckOnSave` | Capability `check_on_save`: checks on the source itself when it is saved (the login may only read). |
@@ -364,9 +366,26 @@ process, a network target or the gRPC protocol.
   a stream without `end` or `error` is a failed query. Values without a protobuf type travel as
   JSON in the forms of docs/api/datasources.md; present-but-empty maps and paths keep their
   presence, so a result survives the wire exactly (tested for all three shapes).
+- **Frame values** must fit their field's type, as the result envelope defines them: `time`
+  and `date` JSON numbers of Unix milliseconds in the supported range, `number` JSON numbers,
+  `int64` decimal integer strings within 64 bits, `decimal` decimal strings (`-1234.50`, no
+  exponent, no `NaN`), `string` strings, `bool` booleans, `json` anything; `null` everywhere. A
+  value that does not fit fails the query with the column and row named.
+- **The host enforces the limits**, whatever the plugin sends. `plugins::wire::Assembler`
+  takes the query's limits (`wire::Limits`: rows, documents and graph elements, the request's
+  response byte budget, at most `MAX_PARTS` parts): rows, documents, nodes and edges beyond the
+  limits and batches beyond the budget are cut, with the same truncation and notices built-in
+  sources give (`frame.row_limit`, `documents.limit`, `graph.node_limit`, `*.size_limit`; a
+  cut graph keeps only edges and paths whose ends remain, a cut document set loses its cursor);
+  a stream with more parts ends the query with an error, so a plugin that never ends cannot
+  hold the host. Both sides decode no message above 16 MiB (`MAX_MESSAGE_BYTES`, set as tonic's
+  `max_decoding_message_size`); batches aim at 1 MiB (`TARGET_PART_BYTES`), as the in-process
+  adapter cuts them.
 - **Cancellation** is the end of the call (HTTP/2 `RST_STREAM`); the plugin stops the work in
-  the database too. **Deadlines** arrive as the gRPC deadline and as `deadline_unix_ms`, next to
-  the limits (`timeout_ms`, `max_rows`, `max_response_bytes`) the result must keep.
+  the database too. **Deadlines** arrive as the gRPC deadline and as `deadline_unix_ms` on
+  `Query`, `Health`, `Schema` and `CheckOnSave`, next to the limits (`timeout_ms`, `max_rows`,
+  `max_response_bytes`) a result must keep. A timeout of less than a second is reported as one
+  second, never as zero.
 - **Errors** are `Error { kind, detail }` with the kinds of `SourceError` (rejected, blocked,
   timeout, failed) and a detail (reason, params, English text), so they reach the API with the
   same codes as built-in errors. gRPC status codes are for broken calls only
@@ -375,9 +394,16 @@ process, a network target or the gRPC protocol.
   step pushdown stay with the built-in kinds: both depend on Kalzit's step language, which is not
   yet a stable contract. `DataSourcePlugin::capabilities` declares them for every kind; Kalzit
   never calls an RPC whose capability is missing.
-- Compatibility: version 1 grows only by new fields and enum values; anything else is a new
-  package (`kalzit.plugin.datasource.v2`). `Describe` exchanges the versions, and Kalzit refuses
-  plugins whose version it does not speak (`SUPPORTED_PROTOCOL_VERSIONS`).
+- **Evolution.** Version 1 only grows: new fields, enum values, oneof parts or RPCs, each
+  raising the minor version (`PROTOCOL_MINOR`, now 0). Renaming, renumbering or changing a
+  field's meaning needs a new package (`kalzit.plugin.datasource.v2`). The host announces its
+  minor version and the additions it understands by name in `DescribeRequest`
+  (`protocol_minor`, `features`); a plugin uses an addition only when the host announced it.
+  The host in turn stays safe with what it does not know: an unknown notice severity counts as
+  info, an unknown error kind as failed, an unknown capability is ignored, an unknown result
+  part is skipped with the notice `plugin.part_skipped`, and a frame field of an unknown type
+  is left out with `frame.type_unsupported` naming it. Kalzit refuses plugins whose major
+  version it does not speak (`SUPPORTED_PROTOCOL_VERSIONS`). Tested in both crates.
 
 ### Panel plugins (M4)
 
@@ -435,33 +461,60 @@ secret = true
 
 [[permissions.network]]            # the only targets the plugin can reach
 setting = "host"                   # a target field ...
+form = "host"                      # ... holding a host (or "url": scheme, host and port)
 default_port = 6379
+protocol = "tls"                   # tcp (default) or tls, for hosts
 [[permissions.network]]
-host = "license.example.dev"       # ... or a fixed host and port
+host = "license.example.dev"       # or a fixed host and port
 port = 443
+protocol = "tls"
 
-[binaries.windows-x64]             # also linux-x64, linux-arm64
-path = "bin/windows-x64/redis-plugin.exe"
-sha256 = "<64 hex digits>"
+[binaries]                         # data sources: one executable per platform
+windows-x64 = "bin/windows-x64/redis-plugin.exe"
+linux-x64 = "bin/linux-x64/redis-plugin"
+
+[files]                            # every file of the package with its SHA-256
+"bin/windows-x64/redis-plugin.exe" = "<64 hex digits>"
+"bin/linux-x64/redis-plugin" = "<64 hex digits>"
+"LICENSE" = "<64 hex digits>"
 ```
+
+A panel has `[panel]` with `path` (the `.js`/`.mjs` bundle, listed in `files`) and `api` (the
+panel message API version) instead of binaries, settings and permissions.
 
 `manifest::parse` reports every problem at once with its path and a stable code
 (`manifest.*`): unknown keys, ids that are not reverse domain names (so a plugin can never take
 a built-in name such as `postgres`), versions that are not semver, unknown shapes,
 capabilities, platforms or setting types, repeats, secrets that are targets or have defaults,
-selects without options, network targets that are not `target` fields or that use wildcards,
-package paths that leave the package, hashes that are not SHA-256, Windows binaries without
-`.exe`, and parts of the other kind (a panel names one ES module and nothing a data source
-has). Plugin texts come from the manifest (labels in `en`, optionally `de`), not from Kalzit's
-catalogs.
+selects without options, network targets that are not `target` fields, lack their `form` or
+use wildcards, protocols other than `tcp` and `tls`, binaries or bundles not listed in
+`files`, hashes that are not SHA-256, Windows binaries without `.exe`, texts with control or
+bidirectional override characters, and parts of the other kind. Package paths stay inside the
+package and are portable: relative, `/` between parts, no `..`, no Windows device names
+(`CON`, `NUL`, `COM1`, also with an extension), no part ending in a dot or space, no characters
+Windows refuses, and no two paths that differ only in case. Plugin texts come from the manifest
+(labels in `en`, optionally `de`), not from Kalzit's catalogs. Fixed hosts and setting targets
+pass the same data source target rules (`TargetPolicy`) as built-in sources.
 
 ### Signing and trust (M4 for the checks)
 
 - A plugin signature is Ed25519 over `kalzit-plugin-manifest-v1\n` followed by the manifest's
-  exact bytes; the manifest pins every binary and file by SHA-256. A catalog index is signed
-  over `kalzit-plugin-catalog-v1\n` and its bytes. These contexts are not prefixes of the
-  release contexts (`kalzit-update-*`) or the other way round (tested), so no signature verifies
-  in the other's context.
+  exact bytes (`kalzit-plugin.sig` next to `kalzit-plugin.toml`). A catalog index is signed over
+  `kalzit-plugin-catalog-v1\n`, a key hand-over over `kalzit-plugin-handover-v1\n`. No
+  context is a prefix of another or of the release contexts (`kalzit-update-*`), and a real
+  Ed25519 signature made in one context fails in every other (tested).
+- **The manifest pins the whole package.** `files` lists every file with its SHA-256; before
+  anything runs, the host compares the unpacked package with it (`Manifest::check_package`)
+  and refuses unlisted files, missing files, other hashes and links or other special entries.
+  So nothing unsigned can ride along: on Windows a DLL placed next to the binary would be
+  loaded before the system's (DLL search order), and the host also starts plugin binaries with
+  the safe DLL search mode (system directory first, not the current directory).
+- **A plugin id is bound to its key** (`signing::check_update`). An update must be signed by
+  the key of the installed version, or by a key that key handed the id over to: a hand-over
+  statement (`plugin`, `from`, `to` key ids) signed by the old key, kept with the plugin, so a
+  publisher can rotate keys without the admin re-trusting the plugin. Updates never go to an
+  older version (downgrades refused), and a signed install never becomes unsigned. Ids under
+  `io.kalzit.` and `dev.kalzit.` need Kalzit's own plugin key (`check_signer`).
 - Trusted for plugins: Kalzit's own plugin key and the publisher keys a server admin adds. The
   release keys are never trusted for plugins and plugin keys never for releases. Unsigned
   plugins install only with an explicit admin switch, off by default, and are marked as such.
@@ -478,9 +531,13 @@ catalogs.
 
 ### Catalog (M4)
 
-A signed index hosted by the project lists plugins with versions, publishers and package hashes.
-It is off by default; turning it on is a server setting. Installing from a file (the package with
-its manifest and signature) always works, also offline, and runs the same checks.
+A signed index hosted by the project lists plugins with versions, key ids, download URLs and
+package hashes (`catalog::CatalogIndex`). It is off by default; turning it on is a server
+setting. Every index carries a growing `sequence`, its publication time and an `expiresAt` at
+most 31 days later: the host remembers the highest sequence it accepted and refuses an older or
+equal one (rollback) and an index past its expiry (freeze), so whoever controls the download
+cannot keep a known-vulnerable version listed. Installing from a file (the package with its
+manifest and signature) always works, also offline, and runs the same checks.
 
 ### Sandbox (M4)
 

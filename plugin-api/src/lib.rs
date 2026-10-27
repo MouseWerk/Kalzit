@@ -1,8 +1,9 @@
 //! The Kalzit plugin contract (docs/ARCHITECTURE.md, "Plugins"): the data source protocol that
-//! plugin processes serve over gRPC, the plugin manifest with its validator, and the context
-//! plugin signatures are made in. The server and plugin SDKs share this crate; the host itself
-//! (processes, sandbox, catalog) lives in the server.
+//! plugin processes serve over gRPC, the plugin manifest with its validator, the signing and
+//! trust rules, and the catalog index. The server and plugin SDKs share this crate; the host
+//! itself (processes, sandbox, catalog downloads) lives in the server.
 
+pub mod catalog;
 pub mod manifest;
 pub mod signing;
 
@@ -18,8 +19,23 @@ pub mod datasource {
 /// The protocol version this crate speaks; `Describe` exchanges it.
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// The minor version of protocol 1 this crate speaks: additions up to it are understood. A host
+/// announces it in `DescribeRequest.protocol_minor`, and a plugin uses no addition above it.
+pub const PROTOCOL_MINOR: u32 = 0;
+
+/// Additions of protocol 1 by name, as a host announces them in `DescribeRequest.features`.
+/// Empty until the first addition.
+pub const FEATURES: &[&str] = &[];
+
 /// The protocol versions a host of this crate accepts from a plugin.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[u32] = &[1];
+
+/// The largest message either side decodes (`max_decoding_message_size`). Plugins cut result
+/// batches well below it; the host refuses larger messages.
+pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// The size a result part aims for, so batches stay far below `MAX_MESSAGE_BYTES`.
+pub const TARGET_PART_BYTES: usize = 1024 * 1024;
 
 #[cfg(test)]
 mod tests {
@@ -93,6 +109,23 @@ mod tests {
         let decode = |f: &pb::FrameField| pb::FrameField::decode(f.encode_to_vec().as_slice()).unwrap();
         assert_eq!(decode(&with_empty).labels, Some(pb::StringMap::default()));
         assert_eq!(decode(&without).labels, None);
+    }
+
+    /// What a host of this version sees of a newer plugin's additions: an unknown part decodes
+    /// as no part and an unknown enum value as its number, so the host can skip or map them.
+    #[test]
+    fn additions_of_newer_minor_versions_decode_safely() {
+        // Field 99 (a part this version does not know), length-delimited and empty.
+        let future_part = [0x9a, 0x06, 0x00];
+        let chunk = pb::QueryChunk::decode(future_part.as_slice()).expect("decodes");
+        assert_eq!(chunk.part, None);
+
+        let notice = pb::Notice { severity: 7, code: "x.y".into(), ..Default::default() };
+        let back = pb::Notice::decode(notice.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(back.severity, 7);
+        assert!(pb::NoticeSeverity::try_from(back.severity).is_err());
+
+        const { assert!(super::TARGET_PART_BYTES * 8 <= super::MAX_MESSAGE_BYTES) };
     }
 
     #[test]
