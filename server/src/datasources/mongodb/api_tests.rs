@@ -463,8 +463,10 @@ async fn logins_that_may_do_more_than_read_are_refused() {
 
 #[tokio::test]
 async fn an_unreachable_server_does_not_stop_the_save() {
-    // A port nobody listens on: the check on save cannot finish, so the save goes ahead.
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    // A port nobody listens on: the check on save cannot finish, so the save goes ahead. Port 1
+    // needs privileges to bind, so no test server running in parallel can take it; a port taken
+    // from the system and released again could be handed to another test's fake server.
+    let closed = 1;
     let t = T::new().await;
     let mut s = json!({ "hosts": format!("127.0.0.1:{closed}"), "database": "shop" });
     s["queryTimeoutSecs"] = json!(30);
