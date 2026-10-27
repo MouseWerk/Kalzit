@@ -9,8 +9,9 @@ name: TigerGraph nightly
 # 16 GB). Setup: .github/tigergraph/ (REST++ authentication on, schema, data, installed queries,
 # a queryreader and a querywriter user); probe.sh prints the raw answers of every endpoint Kalzit
 # calls; the tests are server/tests/tigergraph_real.rs, ignored unless run with --ignored and
-# KALZIT_TEST_TIGERGRAPH_URL. Last, tls.sh switches the server to HTTPS with a private CA for the
-# TLS test. TigerGraph 3.x has no freely available image and is tested against the fake only.
+# KALZIT_TEST_TIGERGRAPH_URL. Last, tls.sh puts an HTTPS proxy with a private CA in front for the
+# TLS test (TigerGraph's own HTTPS needs an Enterprise license). TigerGraph 3.x has no freely
+# available image and is tested against the fake only.
 
 on:
   schedule:
@@ -65,11 +66,11 @@ jobs:
         env:
           KALZIT_TEST_TIGERGRAPH_URL: http://127.0.0.1:14240
         run: cargo test --locked --test tigergraph_real -- --ignored --nocapture --test-threads 1 --skip tls_
-      - name: Switch TigerGraph to HTTPS with a private CA
+      - name: HTTPS in front of TigerGraph with a private CA
         run: bash .github/tigergraph/tls.sh "$RUNNER_TEMP/tigergraph-ca.pem"
       - name: TLS test against the real instance
         env:
-          KALZIT_TEST_TIGERGRAPH_URL: https://localhost:14240
+          KALZIT_TEST_TIGERGRAPH_URL: https://localhost:14243
           KALZIT_TEST_TIGERGRAPH_CA: ${{ runner.temp }}/tigergraph-ca.pem
         run: cargo test --locked --test tigergraph_real -- --ignored --nocapture --exact tls_with_a_private_ca
       - name: TigerGraph logs on failure

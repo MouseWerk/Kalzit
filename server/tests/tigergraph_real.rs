@@ -388,8 +388,8 @@ async fn users_who_may_write_are_refused() {
 }
 
 /// HTTPS with a certificate from a private CA: refused without `caCert`, read with it. The
-/// nightly job switches the server to HTTPS after the other tests and sets
-/// `KALZIT_TEST_TIGERGRAPH_CA` to the CA certificate's file.
+/// nightly job puts an HTTPS proxy in front of the server (TigerGraph's own HTTPS needs an Enterprise
+/// license) and sets `KALZIT_TEST_TIGERGRAPH_CA` to the CA certificate's file.
 #[tokio::test]
 #[ignore = "needs a real TigerGraph with HTTPS (KALZIT_TEST_TIGERGRAPH_URL, KALZIT_TEST_TIGERGRAPH_CA)"]
 async fn tls_with_a_private_ca() {
