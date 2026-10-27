@@ -83,6 +83,8 @@ pub struct AppState {
     pub live: Arc<crate::live::Live>,
     /// AI calls running now (`ai::service`).
     pub ai: Arc<crate::ai::service::AiRuntime>,
+    /// Installed plugins and their processes (`plugins::host`).
+    pub plugins: Arc<crate::plugins::host::PluginHost>,
 }
 
 impl AppState {
@@ -105,6 +107,8 @@ impl AppState {
         let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs, Capacity::SMALL);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
+        let plugins = Arc::new(crate::plugins::host::PluginHost::new(&config.paths.data_dir));
+        plugins.load(&db, &datasources).await.map_err(|e| anyhow::anyhow!("loading the plugins: {}", e.message))?;
         let touch_limit = crate::auth::session::Touches::limit_for(&db);
         // The touches, plus one for each of the two hourly jobs.
         let background = Arc::new(db::Background::new(&db, &config.database_url(), touch_limit + 2));
@@ -154,6 +158,7 @@ impl AppState {
             updates,
             live: Arc::default(),
             ai: Arc::default(),
+            plugins,
         })
     }
 
@@ -164,6 +169,7 @@ impl AppState {
     pub async fn close(&self) {
         // Live connections are not requests the listeners wait for; they are told to close.
         self.live.shutdown(crate::live::SHUTDOWN_WAIT).await;
+        self.plugins.shutdown().await;
         self.background.stop().await;
         self.datasources.close().await;
         self.read_db.close().await;

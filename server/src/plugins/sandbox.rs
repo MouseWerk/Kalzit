@@ -1,0 +1,1124 @@
+//! The sandbox a plugin process runs in (docs/ARCHITECTURE.md, "Sandbox").
+//!
+//! Linux, each layer where the kernel offers it (the ones in force are reported, none is
+//! required): `no_new_privs`; Landlock (the file system read-only and only where a process
+//! needs it: the system libraries, a few files of `/etc`, `/proc`, `/sys`, the device files
+//! `null`, `zero`, `full`, `random` and `urandom`, the plugin's package to read and run, its run
+//! directory to write); seccomp (no `ptrace`, no other process's memory, no mounts, no
+//! namespaces, no kernel modules or `kexec`, no `bpf`, `perf_event_open`, `userfaultfd` or
+//! keyrings); a user and an IPC namespace; no core dumps and a limit on the data segment; its
+//! own process group (all of it is killed), and it is killed when Kalzit ends
+//! (`PR_SET_PDEATHSIG`). The plugin keeps the network of the host: Kalzit's connector for
+//! plugins is not built yet, so a network namespace would cut the plugin off from its database.
+//!
+//! Windows: a restricted token (no privileges but "bypass traverse checking", Administrators
+//! deny-only, restricting SIDs Everyone, Users, `RESTRICTED` and the logon session: the plugin
+//! can open only what one of these may open, so not Kalzit's data directory, only its package
+//! to read and run and its run directory to write); a job object (killed with Kalzit, no
+//! breakaway, limits on memory and processes, optional CPU cap, no desktop, clipboard or global
+//! atoms); image load policy (system DLLs first, no images from remote shares or with a low
+//! label). A restricted token does not stop a process from opening sockets: holding the network
+//! to the declared targets needs an AppContainer or a filtering rule, which are not built yet.
+
+#[cfg(target_os = "linux")]
+pub use linux::spawn;
+#[cfg(target_os = "linux")]
+pub use linux::{LANDLOCK_REFUSED, landlock_available};
+#[cfg(windows)]
+pub use windows::{label_low, spawn};
+
+/// Whether Kalzit runs as root (Linux): plugins are refused then, as a sandboxed process of root
+/// would still be root.
+pub fn runs_as_root() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: geteuid cannot fail.
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Whether this kernel offers Landlock (Linux only).
+#[cfg(not(target_os = "linux"))]
+pub fn landlock_available() -> bool {
+    false
+}
+
+/// Plugins run on Windows and Linux only.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn spawn(_spec: &super::process::Spec) -> std::io::Result<super::process::Child> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "plugins run on Windows and Linux only"))
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use tokio::sync::watch;
+
+    use super::super::process::{Child, Control, Spec};
+
+    // Landlock (include/uapi/linux/landlock.h).
+    const CREATE_RULESET_VERSION: u32 = 1;
+    const RULE_PATH_BENEATH: u32 = 1;
+    const EXECUTE: u64 = 1 << 0;
+    const WRITE_FILE: u64 = 1 << 1;
+    const READ_FILE: u64 = 1 << 2;
+    const READ_DIR: u64 = 1 << 3;
+    const MAKE_CHAR: u64 = 1 << 6;
+    const MAKE_BLOCK: u64 = 1 << 11;
+    const REFER: u64 = 1 << 13;
+    const TRUNCATE: u64 = 1 << 14;
+    const IOCTL_DEV: u64 = 1 << 15;
+
+    /// ABI 6: signals and abstract Unix sockets only within the sandbox.
+    const SCOPE_ABSTRACT_UNIX_SOCKET: u64 = 1 << 0;
+    const SCOPE_SIGNAL: u64 = 1 << 1;
+
+    /// `landlock_ruleset_attr`; older kernels get only its first field (`size`), ABI 6 all.
+    #[repr(C)]
+    struct RulesetAttr {
+        handled_access_fs: u64,
+        handled_access_net: u64,
+        scoped: u64,
+    }
+
+    #[repr(C, packed)]
+    struct PathBeneath {
+        allowed_access: u64,
+        parent_fd: i32,
+    }
+
+    // Seccomp and BPF (include/uapi/linux/seccomp.h, filter.h, audit.h).
+    const BPF_LD_W_ABS: u16 = 0x20;
+    const BPF_JMP_JEQ_K: u16 = 0x15;
+    const BPF_JMP_JSET_K: u16 = 0x45;
+    const BPF_RET_K: u16 = 0x06;
+    #[cfg(target_arch = "x86_64")]
+    const AUDIT_ARCH: u32 = 0xC000_003E;
+    #[cfg(target_arch = "aarch64")]
+    const AUDIT_ARCH: u32 = 0xC000_00B7;
+    const EPERM: u32 = 1;
+    const ENOSYS: u32 = 38;
+    /// `seccomp_data`: the number at 0, the architecture at 4, the first argument's low half at 16.
+    const ARG0: u32 = 16;
+    /// The `CLONE_NEW*` flags: a new namespace of any kind.
+    const CLONE_NAMESPACES: u32 = 0x0002_0000 // NEWNS
+        | 0x0200_0000 // NEWCGROUP
+        | 0x0400_0000 // NEWUTS
+        | 0x0800_0000 // NEWIPC
+        | 0x1000_0000 // NEWUSER
+        | 0x2000_0000 // NEWPID
+        | 0x4000_0000 // NEWNET
+        | 0x0000_0080; // NEWTIME
+
+    /// The error `spawn` answers when Landlock is required but did not take (`ENOTSUP`).
+    pub const LANDLOCK_REFUSED: i32 = libc::ENOTSUP;
+
+    // `prctl` reads its arguments as `unsigned long`.
+    const ZERO: libc::c_ulong = 0;
+    const ONE: libc::c_ulong = 1;
+
+    // What the child reports back, one bit per layer.
+    const NO_NEW_PRIVS: u8 = 1;
+    const USER_NAMESPACE: u8 = 2;
+    const IPC_NAMESPACE: u8 = 4;
+    const LANDLOCK: u8 = 8;
+    const SECCOMP: u8 = 16;
+    const MEMORY_LIMIT: u8 = 32;
+    const SIGNALS: u8 = 64;
+    const NAMES: [(u8, &str); 7] = [
+        (NO_NEW_PRIVS, "no_new_privs"),
+        (USER_NAMESPACE, "user_namespace"),
+        (IPC_NAMESPACE, "ipc_namespace"),
+        (LANDLOCK, "landlock"),
+        (SECCOMP, "seccomp"),
+        (MEMORY_LIMIT, "memory_limit"),
+        (SIGNALS, "signals"),
+    ];
+
+    /// The system calls the filter refuses with `EPERM`.
+    fn denied() -> Vec<libc::c_long> {
+        let mut calls = vec![
+            libc::SYS_ptrace,
+            libc::SYS_process_vm_readv,
+            libc::SYS_process_vm_writev,
+            libc::SYS_pidfd_getfd,
+            libc::SYS_mount,
+            libc::SYS_umount2,
+            libc::SYS_pivot_root,
+            libc::SYS_open_tree,
+            libc::SYS_move_mount,
+            libc::SYS_fsopen,
+            libc::SYS_fsconfig,
+            libc::SYS_fsmount,
+            libc::SYS_fspick,
+            libc::SYS_mount_setattr,
+            libc::SYS_setns,
+            libc::SYS_unshare,
+            libc::SYS_swapon,
+            libc::SYS_swapoff,
+            libc::SYS_reboot,
+            libc::SYS_kexec_load,
+            libc::SYS_kexec_file_load,
+            libc::SYS_init_module,
+            libc::SYS_finit_module,
+            libc::SYS_delete_module,
+            libc::SYS_bpf,
+            libc::SYS_perf_event_open,
+            libc::SYS_userfaultfd,
+            libc::SYS_keyctl,
+            libc::SYS_add_key,
+            libc::SYS_request_key,
+            libc::SYS_open_by_handle_at,
+            libc::SYS_acct,
+            libc::SYS_quotactl,
+            libc::SYS_lookup_dcookie,
+            libc::SYS_io_uring_setup,
+            libc::SYS_io_uring_enter,
+            libc::SYS_io_uring_register,
+            libc::SYS_pidfd_send_signal,
+            libc::SYS_tkill,
+            libc::SYS_name_to_handle_at,
+            // After its own `setsid` the plugin leads a session of its own; it may not move
+            // into another process group (Kalzit's) to reach it with `kill(0)`.
+            libc::SYS_setpgid,
+            libc::SYS_setsid,
+        ];
+        #[cfg(target_arch = "x86_64")]
+        calls.extend([libc::SYS_iopl, libc::SYS_ioperm]);
+        calls
+    }
+
+    /// The filter: other architectures killed; `denied` with `EPERM`; `truncate` and
+    /// `ftruncate` too where Landlock cannot hold them (ABI below 3); `clone3` with `ENOSYS`
+    /// (its flags are out of reach of a filter; the C library falls back to `clone`); `clone`
+    /// with any `CLONE_NEW*` flag with `EPERM`; the rest allowed.
+    fn filter(truncate_unguarded: bool) -> Vec<libc::sock_filter> {
+        let op = |code: u16, jt: u8, jf: u8, k: u32| libc::sock_filter { code, jt, jf, k };
+        let errno = libc::SECCOMP_RET_ERRNO | EPERM;
+        let mut f = vec![
+            op(BPF_LD_W_ABS, 0, 0, 4),
+            op(BPF_JMP_JEQ_K, 1, 0, AUDIT_ARCH),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_KILL_PROCESS),
+            op(BPF_LD_W_ABS, 0, 0, 0),
+        ];
+        // The x32 ABI reaches the same calls under other numbers.
+        if cfg!(target_arch = "x86_64") {
+            f.push(op(BPF_JMP_JSET_K, 0, 1, 0x4000_0000));
+            f.push(op(BPF_RET_K, 0, 0, errno));
+        }
+        let mut calls = denied();
+        if truncate_unguarded {
+            calls.extend([libc::SYS_truncate, libc::SYS_ftruncate]);
+        }
+        for nr in calls {
+            f.push(op(BPF_JMP_JEQ_K, 0, 1, nr as u32));
+            f.push(op(BPF_RET_K, 0, 0, errno));
+        }
+        f.push(op(BPF_JMP_JEQ_K, 0, 1, libc::SYS_clone3 as u32));
+        f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | ENOSYS));
+        // clone: the flags are the first argument (x86_64 and aarch64 alike).
+        f.push(op(BPF_JMP_JEQ_K, 0, 3, libc::SYS_clone as u32));
+        f.push(op(BPF_LD_W_ABS, 0, 0, ARG0));
+        f.push(op(BPF_JMP_JSET_K, 0, 1, CLONE_NAMESPACES));
+        f.push(op(BPF_RET_K, 0, 0, errno));
+        f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW));
+        f
+    }
+
+    /// Signals only to the plugin itself and its process group (`kill(0)`, `kill(-pid)`,
+    /// threads of its own process): Kalzit and other processes of the account are out of reach.
+    /// Built in the child, which knows its own process id, on the stack.
+    fn signal_filter(pid: u32) -> [libc::sock_filter; 15] {
+        let op = |code: u16, jt: u8, jf: u8, k: u32| libc::sock_filter { code, jt, jf, k };
+        [
+            op(BPF_LD_W_ABS, 0, 0, 4),
+            op(BPF_JMP_JEQ_K, 1, 0, AUDIT_ARCH),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_KILL_PROCESS),
+            op(BPF_LD_W_ABS, 0, 0, 0),
+            op(BPF_JMP_JEQ_K, 4, 0, libc::SYS_kill as u32),
+            op(BPF_JMP_JEQ_K, 3, 0, libc::SYS_tgkill as u32),
+            op(BPF_JMP_JEQ_K, 2, 0, libc::SYS_rt_sigqueueinfo as u32),
+            op(BPF_JMP_JEQ_K, 1, 0, libc::SYS_rt_tgsigqueueinfo as u32),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW),
+            op(BPF_LD_W_ABS, 0, 0, ARG0),
+            op(BPF_JMP_JEQ_K, 3, 0, 0),
+            op(BPF_JMP_JEQ_K, 2, 0, pid),
+            op(BPF_JMP_JEQ_K, 1, 0, pid.wrapping_neg()),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | EPERM),
+            op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW),
+        ]
+    }
+
+    /// Whether this kernel offers Landlock.
+    pub fn landlock_available() -> bool {
+        landlock_abi() > 0
+    }
+
+    /// The Landlock ABI of the running kernel; 0 without Landlock.
+    fn landlock_abi() -> libc::c_long {
+        // SAFETY: the version query takes no attribute and changes nothing.
+        let abi = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                std::ptr::null::<RulesetAttr>(),
+                0usize,
+                CREATE_RULESET_VERSION,
+            )
+        };
+        abi.max(0)
+    }
+
+    fn handled(abi: libc::c_long) -> u64 {
+        if abi < 1 {
+            return 0;
+        }
+        let mut access = (1u64 << 13) - 1;
+        if abi >= 2 {
+            access |= REFER;
+        }
+        if abi >= 3 {
+            access |= TRUNCATE;
+        }
+        if abi >= 5 {
+            access |= IOCTL_DEV;
+        }
+        access
+    }
+
+    /// Read-only places every process needs: libraries, a few files of `/etc` (name lookup,
+    /// certificates, time zones, users), and `/proc` and `/sys` (Landlock keeps the plugin away
+    /// from other processes' `/proc` entries itself).
+    const READ_ONLY: &[&str] = &[
+        "/usr",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/libx32",
+        "/bin",
+        "/sbin",
+        "/proc",
+        "/sys",
+        "/etc/ssl",
+        "/etc/pki",
+        "/etc/ca-certificates",
+        "/etc/ld.so.conf.d",
+        "/etc/ld.so.cache",
+        "/etc/ld.so.conf",
+        "/etc/resolv.conf",
+        "/etc/hosts",
+        "/etc/host.conf",
+        "/etc/nsswitch.conf",
+        "/etc/gai.conf",
+        "/etc/services",
+        "/etc/protocols",
+        "/etc/localtime",
+        "/etc/passwd",
+        "/etc/group",
+    ];
+    const DEVICES: &[&str] = &["/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom"];
+
+    /// Everything the child does between fork and exec, prepared beforehand: the child only
+    /// makes system calls with what is here (no allocation after the fork).
+    struct Plan {
+        abi: libc::c_long,
+        handled: u64,
+        rules: Vec<(OwnedFd, u64)>,
+        filter: Vec<libc::sock_filter>,
+        uid: libc::uid_t,
+        uid_map: Vec<u8>,
+        gid_map: Vec<u8>,
+        uid_map_path: CString,
+        gid_map_path: CString,
+        setgroups_path: CString,
+        memory: u64,
+        status: RawFd,
+        /// Landlock must take, or the plugin does not start.
+        require_landlock: bool,
+    }
+
+    fn open_path(path: &Path) -> Option<(OwnedFd, bool)> {
+        let c = CString::new(path.as_os_str().as_bytes()).ok()?;
+        // SAFETY: `c` is a NUL-terminated path; O_PATH opens no data, O_CLOEXEC keeps it from the plugin.
+        let fd = unsafe { libc::open(c.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+        if fd < 0 {
+            return None;
+        }
+        // SAFETY: `fd` was just opened and is owned here.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let is_dir = std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false);
+        Some((fd, is_dir))
+    }
+
+    impl Plan {
+        fn new(spec: &Spec, status: RawFd) -> Self {
+            let abi = landlock_abi();
+            let handled = handled(abi);
+            let mut rules = Vec::new();
+            let file_rights = EXECUTE | READ_FILE;
+            let mut add = |path: &Path, dir_rights: u64, file_only: u64| {
+                if let Some((fd, is_dir)) = open_path(path) {
+                    let rights = if is_dir { dir_rights } else { file_only };
+                    rules.push((fd, rights & handled));
+                }
+            };
+            for p in READ_ONLY {
+                add(Path::new(p), EXECUTE | READ_FILE | READ_DIR, file_rights);
+            }
+            for p in DEVICES {
+                add(Path::new(p), 0, READ_FILE | WRITE_FILE | TRUNCATE | IOCTL_DEV);
+            }
+            add(&spec.package_dir, EXECUTE | READ_FILE | READ_DIR, file_rights);
+            // Write, but neither run nor make devices.
+            add(&spec.run_dir, handled & !(EXECUTE | MAKE_CHAR | MAKE_BLOCK), READ_FILE | WRITE_FILE | TRUNCATE);
+            // SAFETY: getuid and getgid cannot fail.
+            let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+            Plan {
+                abi,
+                handled,
+                rules,
+                filter: filter(abi < 3),
+                uid,
+                uid_map: format!("{uid} {uid} 1\n").into_bytes(),
+                gid_map: format!("{gid} {gid} 1\n").into_bytes(),
+                uid_map_path: CString::new("/proc/self/uid_map").expect("no NUL"),
+                gid_map_path: CString::new("/proc/self/gid_map").expect("no NUL"),
+                setgroups_path: CString::new("/proc/self/setgroups").expect("no NUL"),
+                memory: spec.limits.memory_bytes,
+                status,
+                require_landlock: spec.require_landlock,
+            }
+        }
+
+        /// Writes `bytes` to the file at `path`; only system calls.
+        fn write_file(path: &CString, bytes: &[u8]) -> bool {
+            // SAFETY: `path` is NUL-terminated and `bytes` valid for its length.
+            unsafe {
+                let fd = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+                if fd < 0 {
+                    return false;
+                }
+                let n = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+                libc::close(fd);
+                n == bytes.len() as isize
+            }
+        }
+
+        /// Runs in the child between fork and exec. Each layer that fails is left out and
+        /// reported; the plugin then runs with the others.
+        fn apply(&self) -> std::io::Result<()> {
+            let mut layers = 0u8;
+            // SAFETY: only system calls on data prepared before the fork.
+            unsafe {
+                // A session and process group of its own, outside Kalzit's: the plugin's group
+                // is killed as a whole, and `kill(0)` reaches only it.
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, ZERO, ZERO, ZERO);
+                let no_core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+                libc::setrlimit(libc::RLIMIT_CORE, &no_core);
+                let data = libc::rlimit { rlim_cur: self.memory, rlim_max: self.memory };
+                if libc::setrlimit(libc::RLIMIT_DATA, &data) == 0 {
+                    layers |= MEMORY_LIMIT;
+                }
+                // A user namespace mapping the account to itself; only for a non-root account,
+                // which keeps no capabilities after exec.
+                if self.uid != 0
+                    && libc::unshare(libc::CLONE_NEWUSER) == 0
+                    && Self::write_file(&self.setgroups_path, b"deny\n")
+                    && Self::write_file(&self.uid_map_path, &self.uid_map)
+                    && Self::write_file(&self.gid_map_path, &self.gid_map)
+                {
+                    layers |= USER_NAMESPACE;
+                    if libc::unshare(libc::CLONE_NEWIPC) == 0 {
+                        layers |= IPC_NAMESPACE;
+                    }
+                }
+                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, ONE, ZERO, ZERO, ZERO) == 0 {
+                    layers |= NO_NEW_PRIVS;
+                }
+                let scoped = self.abi >= 6;
+                let mut signals_scoped = false;
+                if self.handled != 0 && layers & NO_NEW_PRIVS != 0 {
+                    let attr = RulesetAttr {
+                        handled_access_fs: self.handled,
+                        handled_access_net: 0,
+                        scoped: if scoped { SCOPE_ABSTRACT_UNIX_SOCKET | SCOPE_SIGNAL } else { 0 },
+                    };
+                    let size = if scoped { std::mem::size_of::<RulesetAttr>() } else { std::mem::size_of::<u64>() };
+                    let ruleset = libc::syscall(libc::SYS_landlock_create_ruleset, &raw const attr, size, 0u32);
+                    if ruleset >= 0 {
+                        let ruleset = ruleset as libc::c_int;
+                        let mut all = true;
+                        for (fd, access) in &self.rules {
+                            let rule = PathBeneath { allowed_access: *access, parent_fd: fd.as_raw_fd() };
+                            if *access != 0
+                                && libc::syscall(
+                                    libc::SYS_landlock_add_rule,
+                                    ruleset,
+                                    RULE_PATH_BENEATH,
+                                    &raw const rule,
+                                    0u32,
+                                ) != 0
+                            {
+                                all = false;
+                            }
+                        }
+                        if all && libc::syscall(libc::SYS_landlock_restrict_self, ruleset, 0u32) == 0 {
+                            layers |= LANDLOCK;
+                            signals_scoped = scoped;
+                        }
+                        libc::close(ruleset);
+                    }
+                }
+                if layers & NO_NEW_PRIVS != 0 {
+                    let program =
+                        libc::sock_fprog { len: self.filter.len() as u16, filter: self.filter.as_ptr().cast_mut() };
+                    let mode = libc::SECCOMP_MODE_FILTER as libc::c_ulong;
+                    if libc::prctl(libc::PR_SET_SECCOMP, mode, &raw const program, ZERO, ZERO) == 0 {
+                        layers |= SECCOMP;
+                    }
+                    if signals_scoped {
+                        layers |= SIGNALS;
+                    } else {
+                        let signals = signal_filter(libc::getpid() as u32);
+                        let program =
+                            libc::sock_fprog { len: signals.len() as u16, filter: signals.as_ptr().cast_mut() };
+                        if libc::prctl(libc::PR_SET_SECCOMP, mode, &raw const program, ZERO, ZERO) == 0 {
+                            layers |= SIGNALS;
+                        }
+                    }
+                }
+                libc::write(self.status, (&raw const layers).cast(), 1);
+                if self.require_landlock && layers & LANDLOCK == 0 {
+                    // `spawn` fails with this error; nothing of the plugin runs.
+                    return Err(std::io::Error::from_raw_os_error(LANDLOCK_REFUSED));
+                }
+            }
+            Ok(())
+        }
+    }
+
+    struct Group {
+        pid: u32,
+        kill: tokio::sync::Notify,
+    }
+
+    impl Control for Group {
+        fn kill(&self) {
+            self.kill.notify_one();
+            // The process group, so children go too.
+            // SAFETY: a signal to the group the plugin leads.
+            unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
+        }
+    }
+
+    pub fn spawn(spec: &Spec) -> std::io::Result<Child> {
+        let mut fds = [0 as RawFd; 2];
+        // SAFETY: `fds` has room for both ends.
+        if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: both ends were just made and are owned here.
+        let (status_read, status_write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        let plan = Arc::new(Plan::new(spec, status_write.as_raw_fd()));
+        let mut command = tokio::process::Command::new(&spec.program);
+        command
+            .args(&spec.args)
+            .env_clear()
+            .envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .current_dir(&spec.run_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        let hook = plan.clone();
+        // SAFETY: the hook only makes system calls on data prepared above (`Plan::apply`).
+        unsafe { command.pre_exec(move || hook.apply()) };
+        let mut child = command.spawn()?;
+        drop(status_write);
+        drop(plan);
+        let mut bits = 0u8;
+        // SAFETY: a one-byte read into `bits`; the child wrote it before exec, which `spawn` waited for.
+        let read = unsafe { libc::read(status_read.as_raw_fd(), (&raw mut bits).cast(), 1) };
+        if read != 1 {
+            bits = 0;
+        }
+        let pid = child.id().ok_or_else(|| std::io::Error::other("the plugin ended at once"))?;
+        let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| std::io::Error::other("no stderr"))?;
+        let (tx, exited) = watch::channel(None);
+        let control = Arc::new(Group { pid, kill: tokio::sync::Notify::new() });
+        let watcher = control.clone();
+        tokio::spawn(async move {
+            let status = tokio::select! {
+                status = child.wait() => status,
+                () = watcher.kill.notified() => {
+                    let _ = child.start_kill();
+                    child.wait().await
+                }
+            };
+            // Children the plugin left behind go with it.
+            // SAFETY: a signal to the plugin's process group.
+            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+            let text = match status {
+                Ok(s) => s.to_string(),
+                Err(e) => format!("unknown ({e})"),
+            };
+            let _ = tx.send(Some(text));
+        });
+        let layers = NAMES.iter().filter(|(bit, _)| bits & bit != 0).map(|(_, name)| *name).collect();
+        let mut missing: Vec<&'static str> =
+            NAMES.iter().filter(|(bit, _)| bits & bit == 0).map(|(_, name)| *name).collect();
+        missing.push("network");
+        Ok(Child { pid, stdout: Box::new(stdout), stderr: Box::new(stderr), layers, missing, exited, control })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_filter_checks_the_architecture_first_and_allows_the_rest() {
+            let f = filter(true);
+            assert!(f.iter().any(|i| i.k == libc::SYS_truncate as u32));
+            assert!(!filter(false).iter().any(|i| i.k == libc::SYS_truncate as u32));
+            let s = signal_filter(4242);
+            assert_eq!(s[11].k, 4242);
+            assert_eq!(s[12].k, (-4242i32) as u32);
+            assert_eq!((f[0].code, f[0].k), (BPF_LD_W_ABS, 4));
+            assert_eq!((f[1].code, f[1].k), (BPF_JMP_JEQ_K, AUDIT_ARCH));
+            assert_eq!(f.last().unwrap().k, libc::SECCOMP_RET_ALLOW);
+            assert!(f.len() < 4096);
+            assert!(denied().contains(&libc::SYS_ptrace));
+        }
+
+        #[test]
+        fn landlock_rights_grow_with_the_abi() {
+            assert_eq!(handled(0), 0);
+            assert_eq!(handled(1) & REFER, 0);
+            assert_ne!(handled(2) & REFER, 0);
+            assert_ne!(handled(3) & TRUNCATE, 0);
+            assert_ne!(handled(5) & IOCTL_DEV, 0);
+        }
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
+    use std::sync::Arc;
+
+    use tokio::sync::watch;
+    use windows::Win32::Foundation::{
+        CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, LocalFree, SetHandleInformation,
+    };
+    use windows::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW, SDDL_REVISION_1,
+    };
+    use windows::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
+    use windows::Win32::Security::{
+        ACL, CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, GetLengthSid, GetSecurityDescriptorDacl,
+        GetSecurityDescriptorSacl, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SID_AND_ATTRIBUTES,
+        SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenDefaultDacl, TokenIntegrityLevel,
+    };
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
+        JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_UILIMIT, JOBOBJECT_BASIC_UI_RESTRICTIONS, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicUIRestrictions, JobObjectCpuRateControlInformation,
+        JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+    };
+    use windows::Win32::System::Pipes::CreatePipe;
+    use windows::Win32::System::Threading::{
+        CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW,
+        DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
+        InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
+        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, PROCESS_INFORMATION, ResumeThread,
+        STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    };
+    use windows::core::{HSTRING, PWSTR};
+
+    use super::super::process::{Child, Control, Spec};
+
+    /// `SE_GROUP_INTEGRITY`: the attribute of an integrity label in a token.
+    const SE_GROUP_INTEGRITY: u32 = 0x20;
+    /// The low integrity level.
+    const LOW_INTEGRITY: &str = "S-1-16-4096";
+
+    /// Serializes making the plugin's pipe ends inheritable and creating the process, so no
+    /// other process this server starts at the same moment inherits them.
+    static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// Image load policy: no images from remote shares, none with a low label, system32 first.
+    const IMAGE_LOAD_POLICY: u64 = (1 << 52) | (1 << 56) | (1 << 60);
+    /// Every UI restriction of a job: desktop, display settings, exit, global atoms, handles,
+    /// clipboard and system parameters.
+    const UI_LIMITS: u32 = 0xFF;
+
+    /// A handle closed on drop.
+    struct Owned(HANDLE);
+
+    // SAFETY: a kernel handle may be used and closed from any thread.
+    unsafe impl Send for Owned {}
+    // SAFETY: as above; the handles here are only passed to thread-safe kernel calls.
+    unsafe impl Sync for Owned {}
+
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() && !self.0.0.is_null() {
+                // SAFETY: the handle is owned and closed once.
+                let _ = unsafe { CloseHandle(self.0) };
+            }
+        }
+    }
+
+    fn os(e: windows::core::Error) -> std::io::Error {
+        let code = e.code().0 as u32;
+        if code & 0xFFFF_0000 == 0x8007_0000 {
+            std::io::Error::from_raw_os_error((code & 0xFFFF) as i32)
+        } else {
+            std::io::Error::other(e.to_string())
+        }
+    }
+
+    /// A SID from its string form, freed on drop.
+    struct Sid(PSID);
+
+    impl Sid {
+        fn parse(text: &str) -> std::io::Result<Self> {
+            let mut sid = PSID::default();
+            // SAFETY: `sid` receives a LocalAlloc'ed SID owned by the returned value.
+            unsafe { ConvertStringSidToSidW(&HSTRING::from(text), &mut sid) }.map_err(os)?;
+            Ok(Self(sid))
+        }
+    }
+
+    impl Drop for Sid {
+        fn drop(&mut self) {
+            // SAFETY: allocated by ConvertStringSidToSidW, freed once.
+            unsafe { LocalFree(Some(HLOCAL(self.0.0))) };
+        }
+    }
+
+    /// A security descriptor from SDDL, freed on drop.
+    struct Descriptor(PSECURITY_DESCRIPTOR);
+
+    impl Descriptor {
+        fn parse(sddl: &str) -> std::io::Result<Self> {
+            let mut sd = PSECURITY_DESCRIPTOR::default();
+            // SAFETY: `sd` receives a LocalAlloc'ed descriptor owned by the returned value.
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    &HSTRING::from(sddl),
+                    SDDL_REVISION_1,
+                    &mut sd,
+                    None,
+                )
+            }
+            .map_err(os)?;
+            Ok(Self(sd))
+        }
+
+        fn dacl(&self) -> std::io::Result<*mut ACL> {
+            let mut present = windows::core::BOOL::default();
+            let mut defaulted = windows::core::BOOL::default();
+            let mut dacl: *mut ACL = std::ptr::null_mut();
+            // SAFETY: `self.0` is valid; `dacl` points into it.
+            unsafe { GetSecurityDescriptorDacl(self.0, &mut present, &mut dacl, &mut defaulted) }.map_err(os)?;
+            Ok(dacl)
+        }
+    }
+
+    impl Drop for Descriptor {
+        fn drop(&mut self) {
+            // SAFETY: allocated by the conversion, freed once.
+            unsafe { LocalFree(Some(HLOCAL(self.0.0))) };
+        }
+    }
+
+    /// A primary token like Kalzit's, without privileges (but bypass traverse checking), with
+    /// Administrators for deny only, restricted to Everyone, Users and `RESTRICTED`, at low
+    /// integrity, and a default DACL that only Kalzit's account, SYSTEM and a SID of this start
+    /// pass. Not the logon
+    /// session: Kalzit's own process grants it read access, and with it a plugin could read
+    /// Kalzit's memory. The low label keeps it from opening Kalzit's process for reading (no read
+    /// up on processes) and from writing anything not labelled low; the default DACL keeps other
+    /// plugins (restricted tokens all) out of this plugin's process and objects.
+    fn restricted_token(plugin_sid: &str, own: &str) -> std::io::Result<Owned> {
+        let mut current = HANDLE::default();
+        // SAFETY: the pseudo handle of this process; `current` receives a handle owned below.
+        unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT,
+                &mut current,
+            )
+        }
+        .map_err(os)?;
+        let current = Owned(current);
+        let disable = [Sid::parse("S-1-5-32-544")?, Sid::parse("S-1-5-114")?];
+        // `RESTRICTED` stays for the plugin's pipe instances; files grant the plugin's or the
+        // start's SID instead, so plugins do not reach each other's files.
+        let restrict = [
+            Sid::parse("S-1-1-0")?,
+            Sid::parse("S-1-5-32-545")?,
+            Sid::parse("S-1-5-12")?,
+            Sid::parse(plugin_sid)?,
+            Sid::parse(own)?,
+        ];
+        let restricting: Vec<SID_AND_ATTRIBUTES> =
+            restrict.iter().map(|s| SID_AND_ATTRIBUTES { Sid: s.0, Attributes: 0 }).collect();
+        let disabling: Vec<SID_AND_ATTRIBUTES> =
+            disable.iter().map(|s| SID_AND_ATTRIBUTES { Sid: s.0, Attributes: 0 }).collect();
+        let mut token = HANDLE::default();
+        // SAFETY: the SID arrays and the buffers they point into live for the call.
+        unsafe {
+            CreateRestrictedToken(
+                current.0,
+                DISABLE_MAX_PRIVILEGE,
+                Some(&disabling),
+                None,
+                Some(&restricting),
+                &mut token,
+            )
+        }
+        .map_err(os)?;
+        let token = Owned(token);
+        let user = crate::data_dir::acl::current_user()?;
+        let descriptor = Descriptor::parse(&format!("D:(A;;GA;;;{user})(A;;GA;;;SY)(A;;GA;;;{own})"))?;
+        let default = TOKEN_DEFAULT_DACL { DefaultDacl: descriptor.dacl()? };
+        // SAFETY: `default` points into `descriptor`, alive for the call.
+        unsafe {
+            SetTokenInformation(
+                token.0,
+                TokenDefaultDacl,
+                (&raw const default).cast(),
+                std::mem::size_of::<TOKEN_DEFAULT_DACL>() as u32,
+            )
+        }
+        .map_err(os)?;
+        let low = Sid::parse(LOW_INTEGRITY)?;
+        let label = TOKEN_MANDATORY_LABEL { Label: SID_AND_ATTRIBUTES { Sid: low.0, Attributes: SE_GROUP_INTEGRITY } };
+        // SAFETY: `label` points at `low`, alive for the call; the size covers the SID.
+        unsafe {
+            SetTokenInformation(
+                token.0,
+                TokenIntegrityLevel,
+                (&raw const label).cast(),
+                std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32 + GetLengthSid(low.0),
+            )
+        }
+        .map_err(os)?;
+        Ok(token)
+    }
+
+    /// Gives a directory (and what is created in it) the low integrity label, so a plugin at low
+    /// integrity may write there; anything without the label it may not write.
+    pub fn label_low(path: &std::path::Path) -> std::io::Result<()> {
+        let descriptor = Descriptor::parse("S:(ML;OICI;NW;;;LW)")?;
+        let mut present = windows::core::BOOL::default();
+        let mut defaulted = windows::core::BOOL::default();
+        let mut sacl: *mut ACL = std::ptr::null_mut();
+        // SAFETY: the descriptor is valid; `sacl` points into it while it lives.
+        unsafe { GetSecurityDescriptorSacl(descriptor.0, &mut present, &mut sacl, &mut defaulted) }.map_err(os)?;
+        // SAFETY: `sacl` points into `descriptor`, alive for the call.
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                &HSTRING::from(path.as_os_str()),
+                SE_FILE_OBJECT,
+                LABEL_SECURITY_INFORMATION,
+                None,
+                None,
+                None,
+                Some(sacl.cast_const()),
+            )
+        };
+        if status.0 == 0 { Ok(()) } else { Err(std::io::Error::from_raw_os_error(status.0 as i32)) }
+    }
+
+    /// A job that kills everything in it when its last handle closes, with the limits, and the
+    /// layers that took.
+    fn job(limits: &super::super::process::Limits) -> std::io::Result<(Owned, Vec<&'static str>)> {
+        // SAFETY: an unnamed job with default security.
+        let job = Owned(unsafe { CreateJobObjectW(None, None) }.map_err(os)?);
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+            | JOB_OBJECT_LIMIT_JOB_MEMORY
+            | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+        info.BasicLimitInformation.ActiveProcessLimit = limits.max_processes.max(1);
+        info.JobMemoryLimit = usize::try_from(limits.memory_bytes).unwrap_or(usize::MAX);
+        // SAFETY: `info` is the structure the class names, with its size.
+        unsafe {
+            SetInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                (&raw const info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        }
+        .map_err(os)?;
+        let mut layers = vec!["job_object", "kill_on_close", "memory_limit", "process_limit"];
+        let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS { UIRestrictionsClass: JOB_OBJECT_UILIMIT(UI_LIMITS) };
+        // SAFETY: as above.
+        let ui_set = unsafe {
+            SetInformationJobObject(
+                job.0,
+                JobObjectBasicUIRestrictions,
+                (&raw const ui).cast(),
+                std::mem::size_of::<JOBOBJECT_BASIC_UI_RESTRICTIONS>() as u32,
+            )
+        };
+        if ui_set.is_ok() {
+            layers.push("ui_restrictions");
+        }
+        if let Some(percent) = limits.cpu_percent.filter(|p| (1..100).contains(p)) {
+            let mut cpu = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION {
+                ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
+                ..Default::default()
+            };
+            cpu.Anonymous.CpuRate = percent * 100;
+            // SAFETY: as above.
+            let set = unsafe {
+                SetInformationJobObject(
+                    job.0,
+                    JobObjectCpuRateControlInformation,
+                    (&raw const cpu).cast(),
+                    std::mem::size_of::<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>() as u32,
+                )
+            };
+            if set.is_ok() {
+                layers.push("cpu_limit");
+            }
+        }
+        Ok((job, layers))
+    }
+
+    /// A pipe with the plugin's end and ours, neither inheritable; the plugin's end becomes
+    /// inheritable only while the process is created (`SPAWN`), and only it is in the handle list.
+    fn pipe(child_reads: bool) -> std::io::Result<(Owned, Owned)> {
+        let (mut read, mut write) = (HANDLE::default(), HANDLE::default());
+        // SAFETY: both out pointers are valid; no security attributes, so not inheritable.
+        unsafe { CreatePipe(&mut read, &mut write, None, 0) }.map_err(os)?;
+        let (read, write) = (Owned(read), Owned(write));
+        Ok(if child_reads { (read, write) } else { (write, read) })
+    }
+
+    fn inheritable(handle: &Owned) -> std::io::Result<()> {
+        // SAFETY: the handle is owned and open.
+        unsafe { SetHandleInformation(handle.0, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }.map_err(os)
+    }
+
+    /// The program, quoted, then the arguments (none have quotes or spaces: plugins get none,
+    /// the tests pass plain words), as a command line.
+    fn command_line(program: &std::path::Path, args: &[String]) -> Vec<u16> {
+        let mut line: Vec<u16> = "\"".encode_utf16().collect();
+        line.extend(program.as_os_str().encode_wide());
+        line.extend("\"".encode_utf16());
+        for arg in args {
+            line.push(u16::from(b' '));
+            line.extend(arg.encode_utf16());
+        }
+        line.push(0);
+        line
+    }
+
+    /// The environment block: `NAME=value` entries, sorted without regard to case, each ended by
+    /// a NUL and the block by another.
+    fn environment_block(env: &[(String, String)]) -> Vec<u16> {
+        let mut entries: Vec<&(String, String)> = env.iter().collect();
+        entries.sort_by_key(|(k, _)| k.to_uppercase());
+        let mut block = Vec::new();
+        for (k, v) in entries {
+            block.extend(format!("{k}={v}").encode_utf16());
+            block.push(0);
+        }
+        block.push(0);
+        block
+    }
+
+    /// Deletes an initialized attribute list on drop.
+    struct AttributeList(LPPROC_THREAD_ATTRIBUTE_LIST);
+
+    impl Drop for AttributeList {
+        fn drop(&mut self) {
+            // SAFETY: the list was initialized and is deleted once, after the process creation.
+            unsafe { DeleteProcThreadAttributeList(self.0) };
+        }
+    }
+
+    struct Job {
+        job: Owned,
+        process: Owned,
+    }
+
+    impl Control for Job {
+        fn kill(&self) {
+            // SAFETY: both handles are owned by `self` and open.
+            unsafe {
+                let _ = TerminateJobObject(self.job.0, 1);
+                let _ = TerminateProcess(self.process.0, 1);
+            }
+        }
+    }
+
+    pub fn spawn(spec: &Spec) -> std::io::Result<Child> {
+        let token = restricted_token(&spec.plugin_sid, &spec.start_sid)?;
+        let (job, mut layers) = job(&spec.limits)?;
+        layers.insert(0, "restricted_token");
+        layers.insert(1, "low_integrity");
+        let (stdin_child, stdin_ours) = pipe(true)?;
+        drop(stdin_ours);
+        let (stdout_child, stdout_ours) = pipe(false)?;
+        let (stderr_child, stderr_ours) = pipe(false)?;
+
+        let mut size = 0usize;
+        // SAFETY: a size query for two attributes; fails with "insufficient buffer" by design.
+        let _ = unsafe { InitializeProcThreadAttributeList(None, 2, None, &mut size) };
+        let mut attributes = vec![0u64; size.div_ceil(8)];
+        let list = LPPROC_THREAD_ATTRIBUTE_LIST(attributes.as_mut_ptr().cast());
+        // SAFETY: `attributes` holds `size` bytes for the list.
+        unsafe { InitializeProcThreadAttributeList(Some(list), 2, None, &mut size) }.map_err(os)?;
+        let _guard = AttributeList(list);
+        let inherited = [stdin_child.0, stdout_child.0, stderr_child.0];
+        // SAFETY: the handle array and the policy outlive the process creation below.
+        unsafe {
+            UpdateProcThreadAttribute(
+                list,
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                Some(inherited.as_ptr().cast()),
+                std::mem::size_of_val(&inherited),
+                None,
+                None,
+            )
+        }
+        .map_err(os)?;
+        let policy = IMAGE_LOAD_POLICY;
+        // SAFETY: as above.
+        unsafe {
+            UpdateProcThreadAttribute(
+                list,
+                0,
+                PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY as usize,
+                Some((&raw const policy).cast()),
+                std::mem::size_of::<u64>(),
+                None,
+                None,
+            )
+        }
+        .map_err(os)?;
+        layers.push("image_load_policy");
+
+        let mut info = STARTUPINFOEXW::default();
+        info.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+        info.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        info.StartupInfo.hStdInput = stdin_child.0;
+        info.StartupInfo.hStdOutput = stdout_child.0;
+        info.StartupInfo.hStdError = stderr_child.0;
+        info.lpAttributeList = list;
+        let mut line = command_line(&spec.program, &spec.args);
+        let env = environment_block(&spec.env);
+        let mut created = PROCESS_INFORMATION::default();
+        let spawning = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+        for handle in [&stdin_child, &stdout_child, &stderr_child] {
+            inheritable(handle)?;
+        }
+        // SAFETY: every pointer refers to data alive for the call; the process starts suspended,
+        // so it runs no code before it is in the job.
+        unsafe {
+            CreateProcessAsUserW(
+                Some(token.0),
+                &HSTRING::from(spec.program.as_os_str()),
+                Some(PWSTR(line.as_mut_ptr())),
+                None,
+                None,
+                true,
+                CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+                Some(env.as_ptr().cast()),
+                &HSTRING::from(spec.run_dir.as_os_str()),
+                &info.StartupInfo,
+                &mut created,
+            )
+        }
+        .map_err(os)?;
+        let process = Owned(created.hProcess);
+        let thread = Owned(created.hThread);
+        // SAFETY: the process is suspended and owned here.
+        if let Err(e) = unsafe { AssignProcessToJobObject(job.0, process.0) } {
+            // SAFETY: as above; it never ran.
+            let _ = unsafe { TerminateProcess(process.0, 1) };
+            return Err(os(e));
+        }
+        // SAFETY: the main thread of the suspended process.
+        unsafe { ResumeThread(thread.0) };
+        drop(thread);
+        drop((stdin_child, stdout_child, stderr_child));
+        drop(spawning);
+        // SAFETY: our pipe ends are owned; the files take them over and close them.
+        let (stdout, stderr) = unsafe {
+            let out = std::fs::File::from_raw_handle(stdout_ours.0.0);
+            let err = std::fs::File::from_raw_handle(stderr_ours.0.0);
+            std::mem::forget(stdout_ours);
+            std::mem::forget(stderr_ours);
+            (tokio::fs::File::from_std(out), tokio::fs::File::from_std(err))
+        };
+        let pid = created.dwProcessId;
+        let control = Arc::new(Job { job, process });
+        let (tx, exited) = watch::channel(None);
+        let waiter = control.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut code = 0u32;
+            // SAFETY: the process handle stays open while `waiter` lives.
+            unsafe {
+                WaitForSingleObject(waiter.process.0, INFINITE);
+                let _ = GetExitCodeProcess(waiter.process.0, &mut code);
+                // Whatever the plugin started goes with it.
+                let _ = TerminateJobObject(waiter.job.0, 1);
+            }
+            let _ = tx.send(Some(format!("exit code {code}")));
+        });
+        Ok(Child {
+            pid,
+            stdout: Box::new(stdout),
+            stderr: Box::new(stderr),
+            layers,
+            missing: vec!["network"],
+            exited,
+            control,
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn environment_blocks_are_sorted_and_terminated() {
+            let env = [("b".to_string(), "2".to_string()), ("A".to_string(), "1".to_string())];
+            let block = String::from_utf16(&environment_block(&env)).unwrap();
+            assert_eq!(block, "A=1\0b=2\0\0");
+        }
+
+        #[test]
+        fn a_restricted_token_can_be_made() {
+            restricted_token(
+                &crate::plugins::package::plugin_sid("dev.example.t"),
+                &crate::plugins::package::start_sid(),
+            )
+            .unwrap();
+        }
+    }
+}

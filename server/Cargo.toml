@@ -49,9 +49,13 @@ tiberius = { version = "0.13.0", default-features = false, features = ["tds80", 
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net", "fs", "time", "sync", "io-util", "process"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-util = { version = "0.7.20", features = ["compat", "io"] }
-# gRPC types of the plugin protocol (kalzit-plugin-api); no transport yet. prost sizes its parts.
+# Plugin packages (zip files).
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+# The plugin protocol (kalzit-plugin-api): the gRPC client over a local pipe or socket. prost sizes
+# its parts; hyper-util adapts the pipe or socket to the client.
 prost = "0.14.4"
-tonic = { version = "0.14.8", default-features = false, features = ["codegen"] }
+tonic = { version = "0.14.8", default-features = false, features = ["codegen", "channel"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 toml = "1.1.8"
 tower = { version = "0.5.3", features = ["util"] }
 unicode-normalization = "0.1.26"
@@ -70,7 +74,8 @@ libc = "0.2.191"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography",
-    "Win32_Storage_FileSystem", "Win32_System_Threading",
+    "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes",
+    "Win32_System_IO",
 ] }
 
 [dev-dependencies]
@@ -81,6 +86,4 @@ tokio-tungstenite = "0.29.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "json"] }
 tower = { version = "0.5.3", features = ["util"] }
 ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
-# Reads the xlsx files of the export tests; the version rust_xlsxwriter writes them with.
-zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 

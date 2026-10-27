@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use super::{Detail, SourceError, SourceQuery, api_error, resolve_in_org, sql};
+use super::{SourceError, SourceQuery, api_error, resolve_in_org, sql};
 use crate::app::AppState;
 use crate::authz::OrgCtx;
 use crate::error::{ApiError, ApiResult};
@@ -111,11 +111,8 @@ pub async fn run(
 ) -> ApiResult<FieldDistribution> {
     let registry = &state.datasources;
     let ds = resolve_in_org(&state.db, &ctx.org_id, datasource_id).await?;
-    let Some(kind) = registry.kind(&ds.kind) else {
-        let detail =
-            Detail::new("datasource.kind_unavailable", format!("the data source kind {} is not available", ds.kind))
-                .with("kind", &ds.kind);
-        return Err(api_error(SourceError::Failed(detail), None));
+    let Some(kind) = registry.kind_in_org(&ds.org_id, &ds.kind) else {
+        return Err(api_error(SourceError::Failed(super::kind_unavailable(&ds.kind)), None));
     };
     let budget = registry.response_budget(state).await?;
     let limits = registry.limits(state, &ds, budget).await?;

@@ -277,8 +277,9 @@ mod tests {
             assert!(code.remove(*not), "{not} is listed as a non-reason but no longer appears in the code");
         }
         let mut docs = BTreeSet::new();
-        // The AI routes document their own reasons; they share the target and request reasons.
-        for file in ["datasources.md", "ai.md"] {
+        // The AI and plugin routes document their own reasons; they share the target and request
+        // reasons.
+        for file in ["datasources.md", "ai.md", "plugins.md"] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }
@@ -286,7 +287,7 @@ mod tests {
         let unknown: Vec<_> = docs.difference(&code).collect();
         assert!(
             undocumented.is_empty() && unknown.is_empty(),
-            "in the code but not in docs/api/datasources.md or ai.md: {undocumented:?}; documented but not in the code: {unknown:?}"
+            "in the code but not in docs/api/datasources.md, ai.md or plugins.md: {undocumented:?}; documented but not in the code: {unknown:?}"
         );
         assert!(code.len() > 100, "the scan found only {} reasons", code.len());
     }

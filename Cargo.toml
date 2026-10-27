@@ -1,5 +1,5 @@
 [workspace]
-members = ["server", "release", "plugin-api"]
+members = ["server", "release", "plugin-api", "plugin-api/test-plugin"]
 resolver = "3"
 
 [workspace.package]

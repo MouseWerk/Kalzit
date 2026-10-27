@@ -26,6 +26,7 @@ pub mod members;
 pub mod orgs;
 pub mod panel_state;
 pub mod playlists;
+pub mod plugins;
 pub mod preferences;
 pub mod query;
 pub mod roles;
@@ -76,6 +77,7 @@ pub fn all() -> Vec<table::RouteDef> {
         updates::routes(),
         ai::routes(),
         ai_calls::routes(),
+        plugins::routes(),
     ]
     .into_iter()
     .flatten()

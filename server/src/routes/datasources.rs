@@ -61,6 +61,11 @@ fn field_error(e: FieldError) -> ApiError {
     ApiError::validation(e.detail.message).with_field(e.field).with_reason(e.detail.reason, e.detail.params)
 }
 
+/// The kind's own settings checks that run in a plugin process (`CheckSettings`).
+async fn check_remote(kind: &Kind, settings: &Value) -> ApiResult<()> {
+    kind.plugin.check_settings_remote(&datasources::plugin_settings(settings)).await.map_err(field_error)
+}
+
 fn blocked(detail: crate::datasources::Detail, field: &'static str) -> ApiError {
     ApiError::new(
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -79,19 +84,25 @@ struct KindView {
     shapes: &'static [Shape],
     hint_key: &'static str,
     settings: Vec<SettingField>,
+    /// A plugin's kind: the plugin, its version and the labels of its settings from its
+    /// manifest (docs/api/plugins.md).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plugin: Option<crate::plugins::host::KindTexts>,
 }
 
-async fn kinds(State(state): State<AppState>) -> Json<Page<KindView>> {
+async fn kinds(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) -> Json<Page<KindView>> {
     let items = state
         .datasources
         .kinds()
         .iter()
+        .filter(|k| !state.datasources.is_blocked(&ctx.org_id, k.kind()))
         .map(|k| KindView {
             kind: k.kind(),
             name: k.name,
             shapes: k.plugin.shapes(),
             hint_key: k.hint_key,
             settings: k.all_settings().copied().collect(),
+            plugin: state.plugins.kind_texts(k.kind()),
         })
         .collect();
     Json(Page { items, next_cursor: None })
@@ -361,13 +372,14 @@ async fn create(
     JsonBody(body): JsonBody<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
-    let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
+    let kind = state.datasources.kind_in_org(&ctx.org_id, &body.kind).ok_or_else(|| {
         ApiError::validation(format!("{} is not a data source kind", body.kind))
             .with_field("kind")
             .because("datasource.kind_unknown")
             .param("kind", &body.kind)
     })?;
     let settings = kind.validate_settings(&body.settings).map_err(field_error)?;
+    check_remote(&kind, &settings).await?;
     // A secret that is null on create is simply not set.
     let secrets: SecretPatch = body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect();
     kind.validate_secrets(&secrets).map_err(field_error)?;
@@ -595,7 +607,10 @@ async fn update(
     if expected != ds.updated_at {
         return Err(stale(&state, &ctx, &ds.id).await);
     }
-    let kind = state.datasources.kind(&ds.kind).ok_or_else(|| ApiError::internal("update", "unknown kind"))?;
+    let kind = state
+        .datasources
+        .kind_in_org(&ctx.org_id, &ds.kind)
+        .ok_or_else(|| datasources::kind_unavailable_error(&ds.kind))?;
     let mut changed: Vec<String> = Vec::new();
     let name = match &body.name {
         Some(raw) => {
@@ -613,6 +628,7 @@ async fn update(
     let settings = match &body.settings {
         Some(s) => {
             let new = kind.validate_settings(s).map_err(field_error)?;
+            check_remote(&kind, &new).await?;
             let keys = |v: &Value| v.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
             let mut all = keys(&new);
             all.extend(keys(&ds.settings));
@@ -787,7 +803,7 @@ async fn test_unsaved(
             .because("datasource.test_rate_limited")
             .param("max", PROBE_MAX));
     }
-    let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
+    let kind = state.datasources.kind_in_org(&ctx.org_id, &body.kind).ok_or_else(|| {
         ApiError::validation(format!("{} is not a data source kind", body.kind))
             .with_field("kind")
             .because("datasource.kind_unknown")
@@ -803,6 +819,7 @@ async fn test_unsaved(
         (None, Some(ds)) => ds.settings.clone(),
         (None, None) => kind.validate_settings(&empty_object()).map_err(field_error)?,
     };
+    check_remote(&kind, &settings).await?;
     // A secret that is null for a new source is simply not set.
     let patch: SecretPatch =
         if stored.is_some() { body.secrets } else { body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect() };

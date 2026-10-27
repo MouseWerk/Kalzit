@@ -326,9 +326,11 @@ type QueryResult =
 ## Plugins
 
 Decided by the owner on 2026-10-27. Done: the protocol, the manifest with its validator, the
-signing context, the kind registry and the in-process adapter. The host (processes, transport,
-sandbox), the panel message API, signature checks, the catalog and the Rust SDK follow in M4
-(marked (M4) below). The UI follows the board `docs/design/blueprint/Plugins.dc.html`.
+signing context, the kind registry, the in-process adapter, and the host for data source plugins
+(install from a file with every check, trust, approval, processes with supervision and sandbox,
+the admin API in docs/api/plugins.md). The panel message API, the catalog, Kalzit's network
+connector for plugins, the Rust SDK and the Plugins board follow in M4 (marked (M4) below). The
+UI follows the board `docs/design/blueprint/Plugins.dc.html`.
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
 serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a
@@ -346,7 +348,7 @@ process, a network target or the gRPC protocol.
   bound to the key); `catalog.rs`: the catalog index with its rollback and freeze checks. The
   crate depends on no server type, so SDKs and the signing tool can use it.
 
-### Process model and transport (M4)
+### Process model and transport
 
 - A data source plugin is a process of its own next to the server, one per installed plugin,
   serving all data sources of its kind. Kalzit starts it with a time limit for the handshake,
@@ -354,15 +356,31 @@ process, a network target or the gRPC protocol.
   of its kind, never the server.
 - Kalzit is the gRPC client (tonic, HTTP/2), the plugin the server. The connection is local:
   - Windows: a named pipe with a random name Kalzit chooses (`\\.\pipe\kalzit-plugin-<random>`).
-    The plugin creates it as first instance with an ACL for Kalzit's account only; Kalzit checks
-    that the pipe's server process (`GetNamedPipeServerProcessId`) is the child it started.
-  - Linux: a Unix socket in a directory with mode 0700 that Kalzit creates in its runtime
-    directory; Kalzit checks the peer's process id (`SO_PEERCRED`).
+    The plugin creates it as first instance with a DACL for Kalzit's account and `RESTRICTED`
+    (its restricted token needs that to create the next instance); Kalzit checks that the pipe's
+    server process (`GetNamedPipeServerProcessId`) is the child it started, on every connect.
+  - Linux: a Unix socket `socket` in the start's private run directory (mode 0700,
+    `<data_dir>/plugins/run/<random>`); Kalzit checks the peer's process id (`SO_PEERCRED`) on
+    every connect.
   - stdio carries only the handshake (the plugin prints `kalzit-plugin 1 ready` on stdout when it
-    listens) and the plugin's log (stderr, into Kalzit's log with the plugin id). The address
+    listens) and the plugin's log (stderr, into Kalzit's log with the plugin id, kept per plugin
+    with limits: 2000 lines, 512 KiB, lines cut at 4 KiB, 200 lines per second). The address
     and a per-start token arrive in the environment (`KALZIT_PLUGIN_ADDRESS`,
-    `KALZIT_PLUGIN_TOKEN`); every call carries the token as metadata and the plugin refuses
-    calls without it.
+    `KALZIT_PLUGIN_TOKEN`, and Kalzit's process id as `KALZIT_PLUGIN_HOST_PID`), which holds
+    nothing else of Kalzit's; the plugin accepts connections only from that process (the pipe's
+    client process id, `SO_PEERCRED` of the socket), every call carries the token as metadata
+    (`kalzit-plugin-token`) and the plugin refuses calls without it.
+- `plugins::supervisor`: the process starts with the first call of its kind; within 10 seconds
+  it must say ready, accept the checked connection and answer `Describe` in line with its
+  manifest. Every 30 seconds a `Describe` probes it; two missed answers end it. After the n-th
+  failure in a row it waits 10 s, 30 s, 1, 2, 5 and 10 minutes before its next start, then stays
+  stopped until an administrator restarts it; 10 minutes of running start the count afresh.
+  Disabling, removing, removing its key and Kalzit's stop kill it with everything it started.
+- `plugins::remote::Remote` is the `DataSourcePlugin` of a plugin kind: every call goes over
+  gRPC with a deadline; results go through `wire::Assembler` with the query's limits. Plugin
+  reasons that are not reasons of Kalzit's catalog become `plugin.error` (docs/api/plugins.md).
+  Before each call the targets the manifest takes from the settings pass the data source target
+  rules; the plugin connects on its own (see Sandbox).
 
 ### Protocol, version 1
 
@@ -522,7 +540,7 @@ Windows refuses, and no two paths that differ only in case. Plugin texts come fr
 (labels in `en`, optionally `de`), not from Kalzit's catalogs. Fixed hosts and setting targets
 pass the same data source target rules (`TargetPolicy`) as built-in sources.
 
-### Signing and trust (M4 for the checks)
+### Signing and trust
 
 - A plugin signature is Ed25519 over `kalzit-plugin-manifest-v1\n` followed by the manifest's
   exact bytes (`kalzit-plugin.sig` next to `kalzit-plugin.toml`). A catalog index is signed over
@@ -565,8 +583,17 @@ pass the same data source target rules (`TargetPolicy`) as built-in sources.
   targets) does not run until a server admin approves them; the installed version keeps
   running meanwhile.
 - Organization admins can block an installed plugin for their organization: its kind and panel
-  type are then not offered there and its data sources and panels in that organization stop.
+  type are then not offered there and its data sources and panels in that organization stop
+  (`DataSources::kind_in_org`).
 - Installing, removing, approving, blocking and changing trust are recorded in the audit log.
+- The host (`plugins::package`, `plugins::host`): the package is unpacked into a fresh
+  directory below `<data_dir>/plugins/packages` that only Kalzit's account may write, with every
+  entry path checked before anything is written and the unpacked size counted (at most 1 GiB);
+  then `check_package`, the signature against Kalzit's plugin keys (compiled in or
+  `KALZIT_PLUGIN_PUBLIC_KEYS` at build time; none yet) and the publisher keys in
+  `plugin_keys`, `check_signer` and, for an update, `check_update` with the hand-overs kept
+  in `plugin_handovers`. Installed plugins are the table `plugins` (migration 0020), with the
+  exact manifest, the signer and its key, the approval, the switch and an update that waits.
 
 ### Catalog (M4)
 
@@ -581,26 +608,49 @@ checked: a valid plugin id, semantic version and kind, a 16-digit key id, an `ht
 without user info, a SHA-256 in lowercase hex, and no id with the same version twice. Installing from a file (the package with its
 manifest and signature) always works, also offline, and runs the same checks.
 
-### Sandbox (M4)
+### Sandbox
 
-What a plugin process gets, where the operating system allows it:
+What a plugin process gets (`plugins::sandbox`; details and the exact lists in
+docs/api/plugins.md, "Sandbox"). The layers in force and the missing ones are in the plugin's
+status and in the log. On Linux Landlock is required unless an administrator allows plugins
+without it (`allowWithoutLandlock`, shown on the plugin before approval), and plugins do not run
+while Kalzit runs as root.
 
-- Windows: a Job Object (killed with Kalzit, no breakaway, limits on memory and processes, no
-  desktop or clipboard access) and a restricted token without administrator groups or
-  privileges. Limit: a restricted token does not stop a process from opening sockets; holding
-  the network to the declared targets on Windows needs an AppContainer without network
-  capabilities or a filtering rule, to be decided with the host. Until then the network rule on
-  Windows rests on the signature.
-- Linux: user, mount, PID and network namespaces (the network namespace has no interfaces, so
-  the only way out is the socket to Kalzit), seccomp (no `ptrace`, no new privileges, no
-  kernel module or mount calls) and Landlock (read-only access to the plugin's own directory).
-  Limits: hosts that forbid unprivileged user namespaces (some distributions, many containers)
-  and kernels without Landlock get fewer layers; Kalzit says which layers are active on the
-  plugin page and in the log instead of refusing to run.
-- Network only to the targets the manifest declares and only through Kalzit: the plugin asks
-  Kalzit for a connection, and Kalzit checks the target against the manifest and the data
-  source target rules (private networks allowed, Kalzit's own database and metadata addresses
-  refused, `datasources.allowed_targets`) before it connects.
+- Windows: a restricted token without privileges (except bypass traverse checking), with
+  Administrators for deny only and the restricting SIDs Everyone, Users, `RESTRICTED`, a SID of
+  the plugin and a SID of this start (not the logon session: Kalzit's process grants it read access), at low
+  integrity, with a default DACL for Kalzit's account, SYSTEM and that SID only. So the plugin
+  cannot open Kalzit's process or another plugin's (tested), cannot read or write Kalzit's data
+  directory (tested) and writes only where the low label allows: its run directory. Its package
+  is read and run for the plugin's SID only, its run directory read and write (not run) for the
+  start's SID only. A job object, assigned before
+  the process runs (it starts suspended): killed with Kalzit, no breakaway, 2 GiB of memory and
+  16 processes for the whole job, no desktop, clipboard, global atoms or system settings, an
+  optional CPU cap. Image load policy: System32 first, no images from remote shares or with a low
+  label. Its pipe ends are inheritable only while it is created, under a lock, and only they are
+  in its handle list.
+- Linux: `no_new_privs`; Landlock: the file system read-only and visible only where a process
+  needs it (system libraries, `/proc`, `/sys`, certificates and a few files of `/etc`, five device
+  files), its package to read and run, its run directory to write (not to run), other processes'
+  `/proc` entries out of reach; seccomp: no `ptrace`, no other process's memory, no mounts, no
+  namespaces (also `clone` with `CLONE_NEW*`; `clone3` answers `ENOSYS`), no `io_uring`, kernel
+  modules, `kexec`, `bpf`, `perf_event_open`, `userfaultfd` or keyrings, `truncate` refused where
+  Landlock cannot guard it (ABI below 3), other architectures killed; signals only to itself and
+  its group (Landlock signal scope from ABI 6, else a seccomp filter that knows its process id);
+  a user and an IPC namespace with the account mapped to itself (where unprivileged user
+  namespaces are allowed); a limit on the data segment; no core dumps; its own process group,
+  killed as a whole, and killed when Kalzit ends.
+  The plugin gets its own session and process group (`setsid` before exec), outside Kalzit's,
+  and `setpgid`/`setsid` are refused after that. Without Landlock (unless allowed) nothing
+  starts: the host checks before spawning, and the child fails the spawn when Landlock does not
+  take.
+- Network, both systems: **not limited yet.** Kalzit's connector (the plugin asks Kalzit for a
+  connection, Kalzit checks the target against the manifest and the target rules and connects)
+  is not built; without it a network namespace (Linux) or an AppContainer without network
+  capabilities or a filtering rule (Windows) would cut the plugin off from its database. Until
+  then the network rule rests on the signature, the administrator's approval of the declared
+  targets, and the host's check of the configured target before each call; a plugin can open
+  connections to any address the server reaches. Processes and CPU are not limited on Linux.
 
 ## Dashboards
 
