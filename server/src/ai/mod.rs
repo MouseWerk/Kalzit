@@ -15,6 +15,7 @@
 
 pub mod anthropic;
 pub mod openai;
+pub mod prompts;
 pub mod redact;
 pub mod service;
 pub mod sse;

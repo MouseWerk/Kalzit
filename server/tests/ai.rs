@@ -199,7 +199,13 @@ impl TestApp {
     }
 
     fn caller(&self, org: &str, who: &Session) -> Caller {
-        Caller { org_id: org.into(), user_id: who.user_id.clone(), address: None, purpose: "test_suite" }
+        Caller {
+            org_id: org.into(),
+            user_id: who.user_id.clone(),
+            address: None,
+            purpose: "test_suite",
+            prompt_version: None,
+        }
     }
 }
 
@@ -349,13 +355,20 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
 
     let r = t.get(&status, &viewer).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert_eq!(r.body, json!({ "enabled": false, "usable": false }), "off: no reason, provider or usage");
+    assert_eq!(
+        r.body,
+        json!({ "enabled": false, "usable": false, "orgProvidersAllowed": true }),
+        "off: no reason, provider or usage"
+    );
 
     // A provider alone does not turn AI on.
     let server_mock = openai(Mode::Ok).await;
     let r = t.post("/api/admin/ai/providers", provider_body("openai", server_mock.url("/v1"), None), &owner).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
-    assert_eq!(t.get(&status, &viewer).await.body, json!({ "enabled": false, "usable": false }));
+    assert_eq!(
+        t.get(&status, &viewer).await.body,
+        json!({ "enabled": false, "usable": false, "orgProvidersAllowed": true })
+    );
 
     let server_id = r.body["id"].as_str().unwrap().to_string();
     t.enable(&owner).await;
@@ -364,8 +377,15 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
     assert_eq!(r.body["noticeAcknowledged"], false);
     assert_eq!(
         r.body["provider"],
-        json!({ "id": server_id, "kind": "openai", "model": "modell-1", "host": "127.0.0.1", "scope": "server" })
+        json!({
+            "id": server_id, "name": "openai lokal", "kind": "openai", "model": "modell-1", "host": "127.0.0.1",
+            "scope": "server"
+        })
     );
+    assert_eq!(r.body["maxRowsToModel"], 200);
+    assert!(r.body.get("noticeText").is_none(), "no addition of the administrators yet");
+    t.setting("ai.notice_text", json!("  Fragen an datenschutz@example.org.  "), &owner).await;
+    assert_eq!(t.get(&status, &viewer).await.body["noticeText"], "Fragen an datenschutz@example.org.");
     assert_eq!(r.body["usage"]["requestsLimit"], 200);
     assert_eq!(r.body["usage"]["orgTokensMonthLimit"], 20_000_000);
     assert!(!r.body.to_string().contains('€') && r.body["usage"].get("cost").is_none(), "tokens, no prices");
@@ -390,7 +410,10 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
     t.org_setting(&org, "ai.chat_retention_days", json!(7), &owner).await;
     assert_eq!(service::chat_retention_days(&t.state, &org).await.unwrap(), 7);
     t.org_setting(&org, "ai.org_enabled", json!(false), &owner).await;
-    assert_eq!(t.get(&status, &viewer).await.body, json!({ "enabled": false, "usable": false }));
+    assert_eq!(
+        t.get(&status, &viewer).await.body,
+        json!({ "enabled": false, "usable": false, "orgProvidersAllowed": true })
+    );
     let e = service::complete(&t.state, &caller, &hello(), &CancellationToken::new()).await.unwrap_err();
     assert_eq!(e.reason.unwrap().code, "ai.org_disabled");
     t.org_setting(&org, "ai.org_enabled", json!(true), &owner).await;
@@ -427,7 +450,10 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
         }
     }
     let r = t.get(&status, &viewer).await;
-    assert_eq!(r.body, json!({ "enabled": true, "usable": false, "reason": "ai.no_provider" }));
+    assert_eq!(
+        r.body,
+        json!({ "enabled": true, "usable": false, "orgProvidersAllowed": true, "reason": "ai.no_provider" })
+    );
     let e =
         service::complete(&t.state, &t.caller(&org, &viewer), &hello(), &CancellationToken::new()).await.unwrap_err();
     assert_eq!((e.code, e.reason.unwrap().code.as_str()), ("ai_unavailable", "ai.no_provider"));

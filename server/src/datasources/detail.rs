@@ -103,6 +103,7 @@ mod tests {
         "ai.max_rows_to_model",
         "ai.max_tool_calls",
         "ai.notice_acknowledged",
+        "ai.notice_text",
         "ai.org_enabled",
         "ai.org_tokens_per_month",
         "ai.provider_created",

@@ -39,6 +39,8 @@ import { useSourceKinds } from "../datasources/useSourceKinds";
 import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
 import "./dashboardTools.css";
+import { PanelAiSummary } from "../ai/PanelAiSummary";
+import { useAiStatusFor } from "../ai/useAiStatus";
 import { reasonText } from "../datasources/reasons";
 import { linkHref } from "./links";
 import {
@@ -153,6 +155,9 @@ export function PanelCard({
   const hintId = useId();
   const [inspecting, setInspecting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  // AI shows only while it is usable; a summary reads the saved panel as the server runs it.
+  const ai = useAiStatusFor(query.orgId);
   // The server checks data:export on the export routes; without it the action is not offered.
   const mayExport = useOrgPermissions().has("data:export");
   const handleRef = useRef<HTMLButtonElement>(null);
@@ -387,6 +392,14 @@ export function PanelCard({
       disabled: noData,
     });
   }
+  if (ai.usable && query.source === "stored" && edit === undefined) {
+    menuItems.push({
+      key: "summarize",
+      label: t("ai.call.summarize"),
+      name: t("ai.call.summarizeNamed", { title }),
+      onSelect: () => setSummarizing(true),
+    });
+  }
   if (edit !== undefined) {
     menuItems.push(
       {
@@ -548,6 +561,18 @@ export function PanelCard({
           >
             <Inspect outcomes={outcomes} />
           </Dialog>
+        ) : null}
+        {summarizing ? (
+          <PanelAiSummary
+            orgId={query.orgId}
+            dashboardId={query.dashboardId}
+            panelId={panel.id}
+            title={title}
+            range={range}
+            variables={storedQueryVariables(query.variables, query.saved ?? [])}
+            intervalMs={intervalFor(range)}
+            onClose={() => setSummarizing(false)}
+          />
         ) : null}
         {exporting ? (
           <ExportDialog

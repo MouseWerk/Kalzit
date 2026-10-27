@@ -19,6 +19,8 @@ import {
 } from "../admin/api";
 import { LoadState } from "../admin/components/Section";
 import { ConflictDialog, useSettingChanges } from "../admin/components/Settings";
+import { AiOrgSection } from "../ai/admin/AiOrgSection";
+import { AiServerSection } from "../ai/admin/AiServerSection";
 import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
@@ -129,6 +131,10 @@ function SectionBody({ section }: { section: SectionDef }) {
           </div>
         </div>
       );
+    case "ai":
+      return <AiServerSection section={section} />;
+    case "aiOrg":
+      return <AiOrgSection section={section} />;
     case "updates":
       return (
         <>

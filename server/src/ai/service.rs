@@ -126,6 +126,8 @@ pub struct Caller {
     pub user_id: String,
     pub address: Option<String>,
     pub purpose: &'static str,
+    /// The version of the feature's system prompt (`ai::prompts`), for the audit entry.
+    pub prompt_version: Option<u32>,
 }
 
 /// `ai.enabled` of the server.
@@ -455,20 +457,42 @@ struct Admitted {
     reserved: i64,
 }
 
-/// Checks everything before a call and takes its place: the switches, the provider, the notice,
-/// the limits and the concurrency. The check and the reservation are one step (`admission`).
-async fn admit(state: &AppState, caller: &Caller, request: &ChatRequest) -> ApiResult<Admitted> {
+/// The switches, the provider in effect and the caller's notice: what a call needs before its
+/// limits are looked at.
+async fn ready_row(state: &AppState, caller: &Caller) -> ApiResult<ProviderRow> {
     if !enabled(state).await? {
         return Err(unavailable("ai.disabled", "AI is turned off on this server"));
     }
     if !enabled_in_org(state, &caller.org_id).await? {
         return Err(unavailable("ai.org_disabled", "AI is turned off in this organization"));
     }
-    let (row, provider) = provider_for(state, &caller.org_id).await?;
+    let row = in_effect(state, &caller.org_id)
+        .await?
+        .ok_or_else(|| unavailable("ai.no_provider", "no AI provider is configured"))?;
     // The person saw what leaves the server, and to which provider, before the first call.
     if !store::notice_acknowledged(&state.db, &caller.user_id, &row.id).await? {
         return Err(unavailable("ai.notice_required", "the AI notice for this provider was not acknowledged yet"));
     }
+    Ok(row)
+}
+
+/// Whether a call for `caller` would be admitted now, before a feature does work for it (such as
+/// running a query to summarize): the switches, the provider, the notice and the daily and monthly
+/// limits. Nothing is reserved; `stream` checks everything again when the call starts.
+pub async fn precheck(state: &AppState, caller: &Caller) -> ApiResult<ProviderRow> {
+    let row = ready_row(state, caller).await?;
+    let limits = limits(state, &caller.org_id).await?;
+    let (user, _) = today(state, &caller.org_id, &caller.user_id).await?;
+    let (month_used, month_reserved) = month_usage(state, &caller.org_id).await?;
+    check_limits(&limits, user, month_used + month_reserved, state.clock.now_ms())?;
+    Ok(row)
+}
+
+/// Checks everything before a call and takes its place: the switches, the provider, the notice,
+/// the limits and the concurrency. The check and the reservation are one step (`admission`).
+async fn admit(state: &AppState, caller: &Caller, request: &ChatRequest) -> ApiResult<Admitted> {
+    let row = ready_row(state, caller).await?;
+    let provider = build(state, &row).await?;
     let limits = limits(state, &caller.org_id).await?;
     let at_once = AtOnce {
         total: setting_u64(state, "ai.max_concurrent").await? as usize,
@@ -546,6 +570,9 @@ async fn finish(state: &AppState, caller: &Caller, admitted: &Admitted, used: Us
     });
     if used.estimated {
         summary["estimated"] = json!(true);
+    }
+    if let Some(version) = caller.prompt_version {
+        summary["promptVersion"] = json!(version);
     }
     if let Some(reason) = reason {
         summary["reason"] = json!(reason);
@@ -683,10 +710,14 @@ pub async fn stream(
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AiStatus {
-    /// `ai.enabled` of the server and the organization. Off, nothing else is sent.
+    /// `ai.enabled` of the server and the organization. Off, nothing else is sent but
+    /// `orgProvidersAllowed`.
     pub enabled: bool,
     /// AI can be used here: on, and a provider is in effect for the organization.
     pub usable: bool,
+    /// Whether the server lets organizations use a provider of their own
+    /// (`ai.allow_org_providers`), so an organization's AI page knows before AI is on.
+    pub org_providers_allowed: bool,
     /// Whether the caller acknowledged the first-use notice for the provider in effect; the UI
     /// shows the notice before the first call otherwise (`POST .../ai/notice`).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -702,6 +733,14 @@ pub struct AiStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub usage: Option<AiStatusUsage>,
+    /// The paragraph the administrators added to the first-use notice (`ai.notice_text`), when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub notice_text: Option<String>,
+    /// The most rows, documents or nodes of one result AI receives (`ai.max_rows_to_model`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_rows_to_model: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -710,6 +749,8 @@ pub struct AiStatus {
 pub struct AiStatusProvider {
     /// What the first-use notice is acknowledged for.
     pub id: String,
+    /// The name the administrators gave it.
+    pub name: String,
     /// `openai` or `anthropic`.
     pub kind: String,
     pub model: String,
@@ -734,17 +775,28 @@ pub struct AiStatusUsage {
 }
 
 impl AiStatus {
-    fn off() -> Self {
-        Self { enabled: false, usable: false, notice_acknowledged: None, reason: None, provider: None, usage: None }
+    fn off(org_providers_allowed: bool) -> Self {
+        Self {
+            enabled: false,
+            usable: false,
+            org_providers_allowed,
+            notice_acknowledged: None,
+            reason: None,
+            provider: None,
+            usage: None,
+            notice_text: None,
+            max_rows_to_model: None,
+        }
     }
 }
 
 pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<AiStatus> {
+    let allowed = org_providers_allowed(state).await?;
     if !enabled(state).await? || !enabled_in_org(state, org_id).await? {
-        return Ok(AiStatus::off());
+        return Ok(AiStatus::off(allowed));
     }
     let Some(row) = in_effect(state, org_id).await? else {
-        return Ok(AiStatus { enabled: true, reason: Some("ai.no_provider".into()), ..AiStatus::off() });
+        return Ok(AiStatus { enabled: true, reason: Some("ai.no_provider".into()), ..AiStatus::off(allowed) });
     };
     let (user, _) = today(state, org_id, user_id).await?;
     let month = month_tokens(state, org_id).await?;
@@ -752,14 +804,23 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
     let acknowledged = store::notice_acknowledged(&state.db, user_id, &row.id).await?;
     let clamp = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
     let host = url::Url::parse(&row.base_url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+    let notice_text = settings::get(state, "ai.notice_text")
+        .await?
+        .as_str()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    let max_rows = i64::try_from(max_rows_to_model(state).await?).unwrap_or(i64::MAX);
     Ok(AiStatus {
         enabled: true,
         usable: true,
+        org_providers_allowed: allowed,
         notice_acknowledged: Some(acknowledged),
         reason: None,
         provider: Some(AiStatusProvider {
             scope: if row.org_id.is_some() { "org" } else { "server" }.into(),
             id: row.id,
+            name: row.name,
             kind: row.kind,
             model: row.model,
             host,
@@ -772,6 +833,8 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
             org_tokens_month: month,
             org_tokens_month_limit: clamp(limits.org_tokens_month),
         }),
+        notice_text,
+        max_rows_to_model: Some(max_rows),
     })
 }
 
