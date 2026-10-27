@@ -356,6 +356,19 @@ pub fn refusal(r: &signing::Refusal) -> HostError {
     HostError::new(reason, message)
 }
 
+/// Lets Kalzit's account run the binary of this platform (zip files carry no mode Kalzit
+/// trusts; unpacked files are not executable). Windows needs nothing.
+pub fn make_executable(program: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    let _ = program;
+    Ok(())
+}
+
 /// The binary of this platform, as a path inside the package directory.
 pub fn binary(manifest: &Manifest, package_dir: &Path) -> Result<PathBuf, HostError> {
     let platform = super::platform()

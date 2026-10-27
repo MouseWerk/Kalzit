@@ -410,7 +410,8 @@ impl PluginHost {
         }
         m.runs_on(env!("CARGO_PKG_VERSION"))
             .map_err(|i| HostError::new("plugin.kalzit_too_old", i.message).with("minKalzit", &m.min_kalzit).api())?;
-        package::binary(m, dir).map_err(HostError::api)?;
+        let program = package::binary(m, dir).map_err(HostError::api)?;
+        package::make_executable(&program).map_err(|e| HostError::from(e).api())?;
         let keys = store::keys(&state.db).await?;
         let allow_unsigned = store::allow_unsigned(&state.db).await?;
         let verified = package::verify(&unpacked, &self.trusted(&keys), allow_unsigned).map_err(HostError::api)?;
