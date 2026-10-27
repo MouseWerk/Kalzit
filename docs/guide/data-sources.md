@@ -117,7 +117,17 @@ warns about that, and the data source page keeps the warning in view. A `queryre
 cannot read the text of installed queries, so they run only when listed under **Approved
 installed queries**; one that TigerGraph marks as changing data is refused even then. The query
 editor lists the picked query's parameters with their types, and a parameter without a value takes
-the dashboard variable of the same name, as in written GSQL.
+the dashboard variable of the same name, as in written GSQL; a value of the wrong type (text for an
+`INT`, a number too large) is refused before it is sent. A `queryreader` of TigerGraph 4.2 is
+accepted, and its picker lists the graph's installed queries. TigerGraph's own HTTPS needs an
+Enterprise license; with the Community Edition put a reverse proxy with TLS in front of REST++ and
+the GSQL server and give its CA under **CA certificate**. Kalzit renews an expired login token by
+itself.
+
+Graph sources answer in the `graph` shape: Neo4j and Memgraph through Cypher, TigerGraph through
+GSQL (`PRINT` of vertex and edge sets becomes the graph; other printed values become a table).
+Edges appear only when the query returns them. What you do with the result is in
+[Explore](explore.md#graphs) and [Panels](panels.md#graph-panels).
 
 ## Targets
 

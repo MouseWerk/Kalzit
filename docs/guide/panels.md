@@ -194,6 +194,8 @@ For `graph` results (see [Explore](explore.md#graphs)): **Network** (nodes and e
 layout, WebGL; groups and an explorer), **Hierarchy** (directed structures in layers) and **Paths**
 (paths as sequences of nodes and edges, for example from `shortestPath`).
 
+![Network, hierarchy, path and explorer panels on a Neo4j shop graph](../screenshots/graph-panels-dark.png)
+
 The options are grouped as in the panel editor:
 
 - **Nodes**: **Node name property**; **Color by** Label (with **Color per label** from the palette),
@@ -218,7 +220,11 @@ selection; **Show only the selection** (S) hides the rest, and a multi-value var
 values of all selected nodes (**Set $customers (2 values)**). **Pin** (P) keeps a node when you take
 back explorer steps. Your pins and selection are kept for you on that dashboard panel, on the
 server; they change neither the panel nor its query. The legend under the drawing hides and shows
-labels, and **Layout** switches between forces and layers for this view.
+labels, and **Layout** switches between forces and layers for this view. A selection gives a
+multi-value variable at most 100 values and says so; a click on a node whose neighbours cannot be
+loaded opens its details instead.
+
+![A network panel with a customer selected and the details beside the drawing](../screenshots/graph-inspector-dark.png)
 
 The **Explorer** (on in the toolbar, on from the start with the panel option) loads a node's
 neighbours step by step: each step appears in the **Steps** line, a click on an earlier step takes
@@ -229,6 +235,8 @@ with a node's next neighbours. **Open as a query in Explore** turns what is show
 Cypher query in Explore's editor. Loading neighbours needs query access to the data source; the
 explorer is not available for TigerGraph sources.
 
+![Explorer mode: a customer's orders loaded as a step in the Steps line](../screenshots/graph-explorer-dark.png)
+
 A **Hierarchy** lays out at most 2,000 nodes; a larger result offers **Show as a network**. Edges
 that close a cycle are noted. **Paths** shows the first path open and the others folded with their
 chain of nodes; each edge shows its type, direction and properties, each node its labels and first
@@ -237,4 +245,10 @@ Browsers without WebGL 2 show every graph as a table; **Show as table** is also 
 demand. Keyboard: Tab into the drawing, arrow keys move to the nearest node, Enter loads
 neighbours or opens a group, Escape clears the selection.
 
-![Graph styles in the dark theme](../screenshots/graph-styles-dark.png)
+| | |
+|---|---|
+| ![A category tree as a hierarchy in layers](../screenshots/graph-hierarchy-dark.png) | ![A shortest path from a customer to a product](../screenshots/graph-path-dark.png) |
+| Hierarchy | Paths |
+
+Graph steps (counts per label, degree, top N, shared neighbours, a table from the graph) work on
+a graph panel's result as in Explore; see [Graph steps](explore.md#graph-steps).
