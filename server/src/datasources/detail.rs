@@ -85,10 +85,32 @@ mod tests {
         "distribution",
         "updates",
         "live",
+        // Documented in docs/api/ai.md.
+        "ai",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // AI settings keys and audit actions.
+        "ai.allow_org_providers",
+        "ai.called",
+        "ai.chat_retention_days",
+        "ai.enabled",
+        "ai.max_concurrent",
+        "ai.max_concurrent_per_user",
+        "ai.max_rows_to_model",
+        "ai.max_tool_calls",
+        "ai.notice_acknowledged",
+        "ai.org_enabled",
+        "ai.org_tokens_per_month",
+        "ai.provider_created",
+        "ai.provider_deleted",
+        "ai.provider_tested",
+        "ai.provider_updated",
+        "ai.request_timeout_secs",
+        "ai.user_requests_per_day",
+        "ai.user_tokens_per_day",
+        "datasource.ai_access_changed",
         // Audit actions of saved analyses.
         "analysis.created",
         "analysis.deleted",
@@ -251,13 +273,17 @@ mod tests {
         for not in NOT_REASONS {
             assert!(code.remove(*not), "{not} is listed as a non-reason but no longer appears in the code");
         }
-        let doc = std::fs::read_to_string(root.join("../docs/api/datasources.md")).unwrap().replace("\r\n", "\n");
-        let docs = reasons_in_docs(&doc);
+        let mut docs = BTreeSet::new();
+        // The AI routes document their own reasons; they share the target and request reasons.
+        for file in ["datasources.md", "ai.md"] {
+            let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
+            docs.extend(reasons_in_docs(&doc));
+        }
         let undocumented: Vec<_> = code.difference(&docs).collect();
         let unknown: Vec<_> = docs.difference(&code).collect();
         assert!(
             undocumented.is_empty() && unknown.is_empty(),
-            "in the code but not in docs/api/datasources.md: {undocumented:?}; documented but not in the code: {unknown:?}"
+            "in the code but not in docs/api/datasources.md or ai.md: {undocumented:?}; documented but not in the code: {unknown:?}"
         );
         assert!(code.len() > 100, "the scan found only {} reasons", code.len());
     }

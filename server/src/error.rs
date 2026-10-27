@@ -28,6 +28,8 @@ pub const ERROR_CODES: &[&str] = &[
     "datasource_target_blocked",
     "query_timeout",
     "query_rejected",
+    "ai_unavailable",
+    "ai_provider_error",
     "busy",
     "internal",
 ];

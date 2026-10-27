@@ -16,6 +16,7 @@ everything else is M1.
 | `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
 | `server/src/saved_analyses.rs` | Saved analyses: the versioned model, its checks and dashboard links (routes in `routes/analyses.rs`, docs/api/analyses.md). |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
+| `server/src/ai/` | AI: the provider interface with the OpenAI-compatible and Anthropic clients, stored providers and keys, limits, usage and audit (see "AI"; routes in `routes/ai.rs`, docs/api/ai.md). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `server/src/updates/`, `release/` | Updates: signed releases, staging, installation, trial and return; the release format and the signing tool `kalzit-sign` (see "Updates"). |
 | `ui/` | React UI: `ui/src/features/<area>/` per area, `ui/src/panels/<type>/` per panel type. |
@@ -434,6 +435,91 @@ type QueryResult =
   `(created_at, id)`, so it runs on the indexes `audit_events_org_time_id` and
   `audit_events_org_resource` (migration 0015) without a sort; a test checks the plan with
   `EXPLAIN QUERY PLAN` on SQLite.
+
+## AI
+
+Built-in AI (M4; owner decisions in docs/PLAN.md, section 12, API in docs/api/ai.md). This
+section is the core every AI function builds on; the functions themselves (explain or draft a
+query, summarize a result, the agent chat) come after it and must go through it.
+
+- **Off by default, one switch.** `ai.enabled` (server setting, default `false`) gates every AI
+  call (`409 ai_unavailable`, `ai.disabled`). `GET /api/orgs/{orgId}/ai/status` tells the UI
+  whether AI is usable (on and a provider in effect). Off, it answers only
+  `{"enabled": false, "usable": false}`. Every AI element in the UI sits inside `AiGate`
+  (`ui/src/features/ai`), which renders nothing unless the status says usable, so without a
+  connected provider there is no AI button, menu entry, placeholder or hint.
+- **One provider interface** (`server/src/ai/mod.rs`, trait `Provider`): a `ChatRequest`
+  (system text, messages of text, tool calls and tool results, tool definitions as JSON Schema,
+  max tokens, temperature) becomes a stream of `ChatEvent`s: text deltas, complete tool calls,
+  token usage, the end with its stop reason. `ai::complete` collects a whole answer. Two clients:
+  `openai` (chat completions, for OpenAI, LiteLLM, Ollama and other compatible servers; reads
+  a streamed or a whole JSON answer) and `anthropic` (Messages API, `anthropic-version`
+  2023-06-01). Server-sent events are parsed by `ai::sse`. Model ids are configuration only;
+  the code names none.
+- **Transport.** Every request uses the one HTTP client factory (`crate::http`), so the base URL
+  passes the data source target policy on every connection (private networks and localhost
+  allowed, link-local and metadata addresses refused, `datasources.allowed_targets` applied),
+  plus a check that refuses Kalzit's own addresses. Requests are sent with `send_once`: no
+  redirects, so the key reaches exactly the configured URL. Retries with backoff (0.5 s, 1 s,
+  jitter, at most 3 attempts, `Retry-After` up to 10 s) on passing failures before anything
+  of the answer arrived; one time limit for the whole call (`ai.request_timeout_secs`); a
+  `CancellationToken` stops a call at once, and dropping its stream cancels it. Answers are
+  capped at 16 MiB. The last connection test of a provider is kept on it (`lastTest`).
+- **Configuration.** `ai_providers` (migration 0019): server-wide rows (`org_id` NULL) and an
+  organization's own rows, which override the server's for its members. One default per scope.
+  Keys live in `ai_provider_secrets`, encrypted with the secrets key like data source secrets
+  (associated data `ai-provider:<id>` and the field, so a blob cannot pass as a data source's);
+  `kalzit secrets rotate` re-encrypts them. Keys are write-only in the API, scrubbed from every
+  error, and never logged or audited. A changed base URL needs the key sent again.
+- **Rights.** Server providers and usage: server administrators. An organization's providers:
+  `settings:write` (`settings:read` to list). The status: every member. AI acts only with the
+  signed-in user's rights and only reads: a function that reads data runs the query as the user
+  through the normal query path (read-only rules, grants, limits), never with a service identity.
+- **What data leaves the server.** Only what a function puts into its prompt, sent only to the
+  provider in effect, and only through `ai::redact`, the one helper every feature uses for data
+  of a source. A source is closed to AI until someone who may edit it opens it
+  (`ai_datasource_access.readable`, `PUT .../datasources/{id}/ai-access`, `datasources:write`):
+  closed, explain and draft send only the query text the user typed (`schema_for_model` answers
+  `None`) and summarize and the chat refuse it (`result_for_model`, `ai.datasource_not_readable`).
+  Open, its schema and results go in, with the values of its excluded fields
+  (`excluded_fields`, "Felder ausnehmen") replaced by `[excluded]` (names stay) and results cut
+  to `ai.max_rows_to_model`. Matching of excluded fields is broad on purpose (dotted suffixes in
+  both directions, any case), since results do not always name their table. Secrets, connection
+  settings and Kalzit's own data never go into a prompt. A local provider (Ollama) keeps
+  everything on the network of the installation.
+- **First-use notice.** Before a person's first call through a provider the UI shows what leaves
+  the server and to which host (`provider.host` of the status); the acknowledgement is stored per
+  person and provider (`ai_notice_acks`), and `ai::service` refuses calls without it
+  (`ai.notice_required`). A new provider asks again.
+- **Limits.** Per person and day (UTC) in an organization: calls and tokens
+  (`ai.user_requests_per_day`, `ai.user_tokens_per_day`); per organization and calendar month:
+  tokens (`ai.org_tokens_per_month`); 0 is no limit. An organization may lower each of them and
+  the chat retention in its own settings (`inherit` by default; the stricter value applies), and
+  turn AI off for its members (`ai.org_enabled`). `ai.allow_org_providers` decides whether its own
+  providers are allowed and used. At once: on the server (`ai.max_concurrent`) and per user
+  (`ai.max_concurrent_per_user`), held in memory (`ai::service::AiRuntime`) and given back when a
+  call ends or its stream is dropped. Counters are `ai_usage` rows per day, organization and
+  user: a call counts when it starts (so calls at once cannot all pass a limit), its tokens when
+  it ends. Refusals are `429 rate_limited` with `Retry-After`. Usage is shown in tokens and calls,
+  never in money.
+- **Audit.** Every call writes `ai.called` (purpose, provider kind and scope, model, input and
+  output tokens, outcome `ok`, `failed` with its reason, or `cancelled`), never the prompt or the
+  answer. Configuration writes `ai.provider_created|updated|deleted|tested`,
+  `ai.notice_acknowledged` and `datasource.ai_access_changed` (with the number of excluded fields,
+  not their names).
+- **Privacy.** Chats (with the chat package) are stored per user and deleted
+  `ai.chat_retention_days` (default 30, 0 keeps none; an organization may only shorten it,
+  `ai::service::chat_retention_days`) after their last message; nobody else reads them, admins
+  included. Usage rows hold counts only. The audit retention covers the call entries.
+- **Screens.** The approved board is `docs/design/blueprint/AI.dc.html` (Verwaltung > KI, KI der
+  Organisation, the source's KI tab with "Felder ausnehmen", the notice, explain and draft in
+  Explore). Until its package lands, the settings page shows a planned AI section.
+- **Calling AI from a feature:** `ai::service::complete` or `ai::service::stream` with a
+  `Caller` (organization, user, address, a short stable purpose such as `explain_query`). They
+  check the switch, the provider, the limits and the concurrency, then count and audit; a feature
+  never builds a provider itself. The connection test (`POST .../providers/{id}/test`) is the one
+  exception: it calls the stored provider directly, also while AI is off, is not counted, but is
+  audited.
 
 ## Data directory
 

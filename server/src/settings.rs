@@ -102,6 +102,120 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Memory the results of all running queries together may take, counted like the per-request limit.",
     },
     SettingDef {
+        key: "ai.enabled",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Turns every AI function on or off. Off, the UI shows no AI buttons or hints.",
+    },
+    SettingDef {
+        key: "ai.request_timeout_secs",
+        scope: Scope::Server,
+        default: || json!(120),
+        ui_editable: true,
+        description: "Longest a single call to an AI provider may take, including the streamed answer.",
+    },
+    SettingDef {
+        key: "ai.user_requests_per_day",
+        scope: Scope::Server,
+        default: || json!(200),
+        ui_editable: true,
+        description: "AI calls one user may make per day (UTC) in one organization; 0 for no limit.",
+    },
+    SettingDef {
+        key: "ai.user_tokens_per_day",
+        scope: Scope::Server,
+        default: || json!(200_000),
+        ui_editable: true,
+        description: "Tokens (input and output) one user may use per day (UTC) in one organization; 0 for no limit.",
+    },
+    SettingDef {
+        key: "ai.org_tokens_per_month",
+        scope: Scope::Server,
+        default: || json!(20_000_000),
+        ui_editable: true,
+        description: "Tokens all members of one organization together may use per calendar month (UTC); then AI is \
+                      refused there until the month ends. 0 for no limit.",
+    },
+    SettingDef {
+        key: "ai.max_rows_to_model",
+        scope: Scope::Server,
+        default: || json!(200),
+        ui_editable: true,
+        description: "Most rows, documents or nodes of one result AI receives; more are cut off with a note.",
+    },
+    SettingDef {
+        key: "ai.max_tool_calls",
+        scope: Scope::Server,
+        default: || json!(10),
+        ui_editable: true,
+        description: "Most tool calls the assistant makes for one answer in a chat; then it answers with what it has.",
+    },
+    SettingDef {
+        key: "ai.allow_org_providers",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Organization admins may connect their own AI provider with their own key; the server's limits \
+                      still apply.",
+    },
+    SettingDef {
+        key: "ai.max_concurrent",
+        scope: Scope::Server,
+        default: || json!(8),
+        ui_editable: true,
+        description: "AI calls running at once on the whole server; a further call is refused until one ends.",
+    },
+    SettingDef {
+        key: "ai.max_concurrent_per_user",
+        scope: Scope::Server,
+        default: || json!(2),
+        ui_editable: true,
+        description: "AI calls one user may have running at once.",
+    },
+    SettingDef {
+        key: "ai.chat_retention_days",
+        scope: Scope::Server,
+        default: || json!(30),
+        ui_editable: true,
+        description: "AI chats are deleted this many days after their last message; 0 keeps no chats.",
+    },
+    SettingDef {
+        key: "ai.org_enabled",
+        scope: Scope::Org,
+        default: || json!(true),
+        ui_editable: true,
+        description: "AI in this organization, while the server has it on. Off, members see nothing of AI.",
+    },
+    SettingDef {
+        key: "ai.user_requests_per_day",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A lower limit of AI calls per member and day than the server's, or inherit.",
+    },
+    SettingDef {
+        key: "ai.user_tokens_per_day",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A lower limit of AI tokens per member and day than the server's, or inherit.",
+    },
+    SettingDef {
+        key: "ai.org_tokens_per_month",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A lower limit of AI tokens for the organization per month than the server's, or inherit.",
+    },
+    SettingDef {
+        key: "ai.chat_retention_days",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A shorter retention of AI chats than the server's, or inherit.",
+    },
+    SettingDef {
         key: "audit.retention_days",
         scope: Scope::Server,
         default: || json!(365),
@@ -477,7 +591,9 @@ pub const INHERIT: &str = "inherit";
 
 /// The rule of a setting in its scope.
 fn rule_for(key: &str, scope: Scope) -> Option<Rule> {
-    if scope == Scope::Org && key.starts_with("appearance.") {
+    // An organization's AI limits and retention follow the server's or lower them
+    // (`ai::service` takes the lower of both).
+    if scope == Scope::Org && (key.starts_with("appearance.") || (key.starts_with("ai.") && key != "ai.org_enabled")) {
         return Some(Rule::Inherit(Box::new(rule(key)?)));
     }
     rule(key)
@@ -495,6 +611,16 @@ fn rule(key: &str) -> Option<Rule> {
         "datasources.max_response_bytes" => Rule::Int { min: 1024, max: 1024 * 1024 * 1024 },
         "datasources.max_parallel_queries" => Rule::Int { min: 1, max: 10_000 },
         "datasources.max_inflight_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
+        "ai.enabled" | "ai.org_enabled" | "ai.allow_org_providers" => Rule::Bool,
+        "ai.request_timeout_secs" => Rule::Int { min: 5, max: 900 },
+        "ai.user_requests_per_day" => Rule::Int { min: 0, max: 10_000_000 },
+        "ai.user_tokens_per_day" | "ai.org_tokens_per_month" => Rule::Int { min: 0, max: 100_000_000_000 },
+        "ai.max_concurrent" => Rule::Int { min: 1, max: 1_000 },
+        "ai.max_concurrent_per_user" => Rule::Int { min: 1, max: 100 },
+        "ai.max_rows_to_model" => Rule::Int { min: 1, max: 10_000 },
+        "ai.max_tool_calls" => Rule::Int { min: 1, max: 100 },
+        // 0 keeps no chats at all.
+        "ai.chat_retention_days" => Rule::Int { min: 0, max: 3_650 },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),
@@ -1105,7 +1231,7 @@ mod tests {
             assert!(!d.description.is_empty());
             // A key in both scopes is an organization override of the server's value.
             if d.scope == Scope::Org && find(d.key, Scope::Server).is_some() {
-                assert!(d.key.starts_with("appearance."), "{} is in both scopes", d.key);
+                assert!(d.key.starts_with("appearance.") || d.key.starts_with("ai."), "{} is in both scopes", d.key);
                 assert_eq!((d.default)(), json!(INHERIT), "{} starts by following the server", d.key);
             }
         }

@@ -2,6 +2,7 @@ pub mod about;
 pub mod admin_orgs;
 pub mod admin_settings;
 pub mod admin_users;
+pub mod ai;
 pub mod analyses;
 pub mod annotations;
 pub mod audit;
@@ -72,6 +73,7 @@ pub fn all() -> Vec<table::RouteDef> {
         panel_state::routes(),
         preferences::routes(),
         updates::routes(),
+        ai::routes(),
     ]
     .into_iter()
     .flatten()

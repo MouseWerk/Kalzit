@@ -172,6 +172,32 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
+    // The page follows the board docs/design/blueprint/AI.dc.html in its own package; until then
+    // the section says so. The organization's AI keys belong to "KI der Organisation" there.
+    id: "ai",
+    group: "server",
+    kind: "planned",
+    label: "settings.section.ai.label",
+    lead: "settings.section.ai.lead",
+    keywords: "settings.section.ai.keywords",
+    planned: "settings.planned.ai",
+    keys: [
+      "ai.enabled",
+      "ai.allow_org_providers",
+      "ai.org_enabled",
+      "ai.user_requests_per_day",
+      "ai.user_tokens_per_day",
+      "ai.org_tokens_per_month",
+      "ai.max_rows_to_model",
+      "ai.max_tool_calls",
+      "ai.max_concurrent",
+      "ai.max_concurrent_per_user",
+      "ai.request_timeout_secs",
+      "ai.chat_retention_days",
+    ],
+    visible: serverAdmin,
+  },
+  {
     id: "storage",
     group: "server",
     kind: "settings",
