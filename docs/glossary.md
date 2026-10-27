@@ -55,6 +55,9 @@ catalog.
 | Verwaltung | Administration | Bereich für Organisationen, Teams, Benutzer und Rollen. | Administration (im Deutschen), Admin-Bereich |
 | Darstellung | Theme | System, Hell, Dunkel, Hoher Kontrast. | Thema, Design (für das Theme) |
 | Computer | Computer | Das Gerät, auf dem der Browser oder der Server läuft. | Rechner |
+| KI | AI | Die eingebauten Funktionen, die ein Sprachmodell nutzen; standardmäßig aus. | AI (im Deutschen), Künstliche Intelligenz |
+| KI-Anbieter | AI provider | Der Dienst, der die Antworten liefert: eine OpenAI-kompatible API (auch lokal, etwa Ollama) oder Anthropic. | Provider (im Deutschen), LLM-Anbieter |
+| Schlüssel (KI) | API key | Der Zugangsschlüssel eines KI-Anbieters; nur verschlüsselt gespeichert, nie angezeigt. | API-Key (im Deutschen), Token (für den Schlüssel) |
 
 ## Schreibweise / Style
 
