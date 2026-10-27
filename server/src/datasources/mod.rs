@@ -65,6 +65,12 @@ pub trait DataSourcePlugin: Send + Sync {
     fn kind(&self) -> &'static str;
     fn shapes(&self) -> &'static [Shape];
     fn check_settings(&self, settings: &serde_json::Value) -> Result<(), FieldError>;
+    /// Checks that need the kind's own code but no network, after the form rules and
+    /// `check_settings`: a plugin process answers its `CheckSettings` here. Built-in kinds check
+    /// everything in `check_settings`.
+    async fn check_settings_remote(&self, _settings: &serde_json::Value) -> Result<(), FieldError> {
+        Ok(())
+    }
     async fn health(&self, conn: &Connection) -> Health;
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError>;
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError>;
@@ -263,6 +269,10 @@ pub enum SourceSchema {
         #[serde(rename = "queryParams", skip_serializing_if = "BTreeMap::is_empty")]
         query_params: BTreeMap<String, Vec<QueryParam>>,
     },
+    /// A plugin's schema in one of the forms above, as the plugin sent it (an object whose
+    /// `kind` names one of them; `plugins::remote` checks that).
+    #[serde(untagged)]
+    Plugin(Value),
 }
 
 /// One declared parameter of an installed query: its name and its type as the query language
@@ -866,7 +876,7 @@ impl Kind {
 }
 
 /// The settings without the common limit fields, as the plugin sees them.
-fn plugin_settings(settings: &Value) -> Value {
+pub(crate) fn plugin_settings(settings: &Value) -> Value {
     let mut s = settings.clone();
     if let Value::Object(map) = &mut s {
         for f in COMMON_SETTINGS {
@@ -1041,6 +1051,8 @@ pub struct DataSources {
     policy_cache: Mutex<Option<CachedPolicy>>,
     /// Set by `close`: a connection built after that is closed again instead of handed out.
     closed: std::sync::atomic::AtomicBool,
+    /// Plugin kinds organizations blocked, as (organization, kind) (`plugins::host`).
+    blocked: std::sync::RwLock<std::collections::HashSet<(String, String)>>,
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
     pub(crate) test_settings: Mutex<BTreeMap<String, Value>>,
@@ -1065,6 +1077,7 @@ impl DataSources {
             inflight_bytes: Mutex::new((0, Arc::new(std::sync::atomic::AtomicUsize::new(0)))),
             policy_cache: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
+            blocked: std::sync::RwLock::default(),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
@@ -1084,6 +1097,36 @@ impl DataSources {
     /// The kind registry, where installed plugins add their kinds.
     pub fn registry(&self) -> &registry::KindRegistry {
         &self.kinds
+    }
+
+    /// A kind as an organization may use it: `None` also when the organization blocked the
+    /// plugin that provides it. Its data sources there then answer `datasource.kind_unavailable`.
+    pub fn kind_in_org(&self, org_id: &str, kind: &str) -> Option<Arc<Kind>> {
+        if self.is_blocked(org_id, kind) {
+            return None;
+        }
+        self.kinds.get(kind)
+    }
+
+    /// Whether `org_id` blocked the plugin `kind`.
+    pub fn is_blocked(&self, org_id: &str, kind: &str) -> bool {
+        let blocked = self.blocked.read().unwrap_or_else(|e| e.into_inner());
+        !blocked.is_empty() && blocked.contains(&(org_id.to_string(), kind.to_string()))
+    }
+
+    /// Replaces every block (at start).
+    pub fn set_blocks(&self, blocks: Vec<(String, String)>) {
+        *self.blocked.write().unwrap_or_else(|e| e.into_inner()) = blocks.into_iter().collect();
+    }
+
+    pub fn set_blocked(&self, org_id: &str, kind: &str, blocked: bool) {
+        let mut set = self.blocked.write().unwrap_or_else(|e| e.into_inner());
+        let key = (org_id.to_string(), kind.to_string());
+        if blocked {
+            set.insert(key);
+        } else {
+            set.remove(&key);
+        }
     }
 
     pub fn keyring(&self) -> &Keyring {
@@ -1606,11 +1649,8 @@ async fn run_one(
         Ok(ds) => ds,
         Err(e) => return QueryOutcome::Err { error: api_error_body(e) },
     };
-    let Some(kind) = registry.kind(&ds.kind) else {
-        let detail =
-            Detail::new("datasource.kind_unavailable", format!("the data source kind {} is not available", ds.kind))
-                .with("kind", &ds.kind);
-        return outcome_error("datasource_error", detail);
+    let Some(kind) = registry.kind_in_org(&ds.org_id, &ds.kind) else {
+        return outcome_error("datasource_error", kind_unavailable(&ds.kind));
     };
     let mut limits = match registry.limits(state, &ds, budget).await {
         Ok(l) => l,
@@ -1749,7 +1789,7 @@ pub async fn watch_item(
     let registry = &state.datasources;
     let ds =
         resolve_in_org(&state.db, &ctx.org_id, &item.datasource_id).await.map_err(|e| Box::new(api_error_body(e)))?;
-    let Some(kind) = registry.kind(&ds.kind) else { return Ok(None) };
+    let Some(kind) = registry.kind_in_org(&ds.org_id, &ds.kind) else { return Ok(None) };
     let budget = registry.response_budget(state).await.map_err(|e| Box::new(api_error_body(e)))?;
     let mut limits = registry.limits(state, &ds, budget).await.map_err(|e| Box::new(api_error_body(e)))?;
     if let Some(limit) = item.limit {
@@ -1778,6 +1818,18 @@ pub async fn watch_item(
         Ok(Ok((_, Ok(feed)))) => Ok(feed),
         Ok(Ok((conn, Err(e)))) => Err(Box::new(error_body(e.code(), e.detail().scrubbed(|t| conn.scrub(t))))),
     }
+}
+
+/// The kind of a stored source is not available: not registered (a removed or disabled plugin)
+/// or blocked for the source's organization.
+pub fn kind_unavailable(kind: &str) -> Detail {
+    Detail::new("datasource.kind_unavailable", format!("the data source kind {kind} is not available"))
+        .with("kind", kind)
+}
+
+pub fn kind_unavailable_error(kind: &str) -> ApiError {
+    let detail = kind_unavailable(kind);
+    ApiError::new(StatusCode::BAD_GATEWAY, "datasource_error", detail.message).with_reason(detail.reason, detail.params)
 }
 
 /// The source error as an API error, scrubbed of the connection's secrets.
@@ -1972,8 +2024,7 @@ pub async fn forget_last_test(conn: &mut sqlx::AnyConnection, datasource_id: &st
 
 async fn run_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let registry = &state.datasources;
-    let kind =
-        registry.kind(&ds.kind).ok_or_else(|| ApiError::internal("health", format!("unknown kind {}", ds.kind)))?;
+    let kind = registry.kind_in_org(&ds.org_id, &ds.kind).ok_or_else(|| kind_unavailable_error(&ds.kind))?;
     let budget = registry.response_budget(state).await?;
     let timeout = registry.limits(state, ds, budget).await?.timeout.min(MAX_HEALTH_TIMEOUT);
     let started = Instant::now();
@@ -2120,8 +2171,7 @@ pub async fn check_unsaved(
 /// The schema for query editors, counted against the caller's query slots.
 pub async fn read_schema(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<SourceSchema> {
     let registry = &state.datasources;
-    let kind =
-        registry.kind(&ds.kind).ok_or_else(|| ApiError::internal("schema", format!("unknown kind {}", ds.kind)))?;
+    let kind = registry.kind_in_org(&ds.org_id, &ds.kind).ok_or_else(|| kind_unavailable_error(&ds.kind))?;
     let budget = registry.response_budget(state).await?;
     let timeout = registry.limits(state, ds, budget).await?.timeout;
     let run = async {

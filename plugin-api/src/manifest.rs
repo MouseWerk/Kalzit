@@ -751,6 +751,12 @@ fn windows_reserved(part: &str) -> bool {
             && stem.as_bytes()[3].is_ascii_digit())
 }
 
+/// Whether `path` is a valid path inside a package (relative, `/` between parts, portable). The
+/// host refuses archive entries whose paths are not, before it unpacks anything.
+pub fn is_package_path(path: &str) -> bool {
+    valid_package_path(path)
+}
+
 fn valid_package_path(path: &str) -> bool {
     !path.is_empty()
         && path.chars().count() <= MAX_PATH_CHARS
