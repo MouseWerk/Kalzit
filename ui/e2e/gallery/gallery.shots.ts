@@ -48,12 +48,13 @@ interface Seeded {
 }
 
 /**
- * The ids of what the first scene seeded, kept in a file beside the fixtures: one worker runs the
- * scenes in order, and after a failed scene it starts anew, so a module variable would be lost
- * while the server and its data stay.
+ * The ids of what the first scene seeded, kept in a file in the run's fixture folder (below the
+ * system temp folder, made and removed by global-setup.ts, never in the repository): one worker
+ * runs the scenes in order, and after a failed scene it starts anew, so a module variable would
+ * be lost while the server and its data stay.
  */
 function seededFile(): string {
-  return join(fixturesDir(), "gallery-seeded().json");
+  return join(fixturesDir(), "gallery-seeded.json");
 }
 
 let cached: Seeded | undefined;
