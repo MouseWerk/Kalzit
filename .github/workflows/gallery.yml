@@ -8,9 +8,6 @@ name: Gallery renders
 
 on:
   workflow_dispatch:
-  # TEMPORARY while the renders are tuned; removed before the pull request merges.
-  push:
-    branches: [docs/gallery-renders]
 
 permissions:
   contents: read
