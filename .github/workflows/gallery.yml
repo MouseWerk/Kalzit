@@ -14,8 +14,6 @@ name: Gallery renders and README screenshots
 # Run by hand only. How to run it: docs/screenshots/README.md.
 
 on:
-  push:
-    branches: [m3/docs-and-release]
   workflow_dispatch:
     inputs:
       set:
@@ -40,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      SET: ${{ inputs.set || 'readme' }}
+      SET: ${{ inputs.set }}
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit
       KALZIT_GALLERY_OUT: ${{ github.workspace }}/gallery
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
