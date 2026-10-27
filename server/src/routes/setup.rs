@@ -149,7 +149,8 @@ fn hash_code(code: &str) -> CodeHash {
 
 /// Compares two hashes in time that does not depend on where they differ.
 fn same_hash(a: &CodeHash, b: &CodeHash) -> bool {
-    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 enum CodeMatch {
@@ -237,7 +238,8 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
     })
 }
 
-/// Counts one attempt for the client address (the sign-in limits, `security.login_*`); the key
+/// Counts one attempt for the client (IPv4 per address, IPv6 per /48, so a site gets no more
+/// tries by using more of its /64 networks; the sign-in limits, `security.login_*`); the key
 /// is for the refund of a correct code. Only wrong codes use up budgets, so no one can use up
 /// the budget of the person who has the code from elsewhere.
 ///
@@ -248,8 +250,8 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
 /// budget, which keeps a fixed code from `KALZIT_SETUP_TOKEN` (16 characters at least) out of
 /// reach as well.
 fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<String> {
-    use crate::auth::ratelimit::{CLEAN_ADDRESS_FAILURES, address_key, network_key};
-    let key = address_key("setup", info.client_ip);
+    use crate::auth::ratelimit::{CLEAN_ADDRESS_FAILURES, network_key, site_key};
+    let key = site_key("setup", info.client_ip);
     let now = state.clock.monotonic_ms();
     let refused = |wait| ApiError::rate_limited("too many setup code attempts, wait", wait);
     let earlier = state.setup_limiter.try_acquire(&key, &network_key(info.client_ip), now).map_err(refused)?;

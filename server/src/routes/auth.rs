@@ -83,30 +83,51 @@ pub async fn login(
         state.pair_limiter.refund(&pair_key);
         refuse(wait)
     };
-    // The waits named below are the whole window, so they tell nothing about the account or
-    // the network.
-    let window = state.login_limiter.window();
-    // An IPv6 site (/48) whose failures for all accounts are used up: only attempts whose
-    // account at this address is clean go on, so others' typos never make the owner dirty.
-    let ipv6 = info.client_ip.to_canonical().is_ipv6();
-    if ipv6 && pair_failures > CLEAN_ADDRESS_FAILURES && state.network_limiter.wait(&network, mono).is_some() {
-        return Err(refuse(window));
-    }
+    // At most a few checks of one account at once; more wait briefly for a slot, then are refused.
+    let Some(_checking) = state.password_checks.enter_soon(&account_key).await else {
+        return Err(refuse(std::time::Duration::from_secs(1)));
+    };
 
     let row: Option<LoginRow> =
         sqlx::query_as("SELECT id, email, name, password_hash, is_server_admin, disabled FROM users WHERE email = $1")
             .bind(&email)
             .fetch_optional(&state.read_db)
             .await?;
-    // A browser this account signed in with before is not held to the account's shared budget;
-    // everyone else is, and an account the full table cannot count is refused (fail closed).
+    // The waits named below are the whole window, so they tell nothing about the account or
+    // the network.
+    let window = state.login_limiter.window();
+    // The shared budgets are counted before the password is checked, under their lock, so
+    // parallel guesses cannot pass them all; a correct password gives the attempts back.
+    // An IPv6 site (/48) whose failures for all accounts are used up: only attempts whose account
+    // at this address is clean go on, so others' typos never make the owner dirty.
+    let ipv6 = info.client_ip.to_canonical().is_ipv6();
+    let site_counted = if !ipv6 {
+        false
+    } else if pair_failures > CLEAN_ADDRESS_FAILURES {
+        state.network_limiter.try_acquire(&network, &network, mono).map_err(|_| refuse(window))?;
+        true
+    } else {
+        state.network_limiter.record(&network, &network, mono)
+    };
+    let refuse = |wait| {
+        if site_counted {
+            state.network_limiter.refund(&network);
+        }
+        refuse(wait)
+    };
+    // A browser this account signed in with before is not held to the account's shared budget,
+    // but its failures count for it; everyone else is held to it, and an account the full table
+    // cannot count is refused (fail closed).
     let device = crate::auth::device::read_cookie(&headers, info.https);
     let known_device = row.as_ref().zip(device.as_deref()).is_some_and(|(r, value)| {
         crate::auth::device::is_known(&state.secrets, value, &r.id, r.password_hash.as_deref(), now)
     });
-    if !known_device && state.account_limiter.check(&account_key, &network, mono).is_err() {
-        return Err(refuse(window));
-    }
+    let account_counted = if known_device {
+        state.account_limiter.record(&account_key, &network, mono)
+    } else {
+        state.account_limiter.try_acquire(&account_key, &network, mono).map_err(|_| refuse(window))?;
+        true
+    };
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
     let ok = password::verify(req.password, stored).await;
     let audit = |action: &'static str, user_id: Option<String>| crate::audit::AuditEvent {
@@ -125,10 +146,6 @@ pub async fn login(
     let known_id = row.as_ref().map(|r| r.id.clone());
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
-        state.account_limiter.record(&account_key, &network, mono);
-        if ipv6 {
-            state.network_limiter.record(&network, &network, mono);
-        }
         // The id of an existing account is recorded, never the email that was typed.
         // A failed sign-in answers the same whatever happens to its audit entry: a busy database
         // must not turn it into "try again", which would invite repeated password guesses past
@@ -144,6 +161,12 @@ pub async fn login(
     };
     state.pair_limiter.reset(&pair_key);
     state.login_limiter.refund(&ip_key);
+    if site_counted {
+        state.network_limiter.refund(&network);
+    }
+    if account_counted {
+        state.account_limiter.refund(&account_key);
+    }
 
     let mut tx = crate::db::begin(&state.db).await?;
     // Lock the user row and confirm it still holds the hash we verified and is still enabled. A

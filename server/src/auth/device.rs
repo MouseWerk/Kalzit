@@ -3,9 +3,10 @@
 //! (`routes::auth`), so an attacker who uses it up cannot lock the owner out of a browser they
 //! signed in with before. The limits per address stay.
 //!
-//! The cookie is signed, not stored: `v1.<user id>.<expiry>.<random>.<mac>`, the MAC an HMAC with
-//! the signing key derived from the secrets key (`Keyring::sign`) over the user id, the expiry,
-//! the random part and a fingerprint of the account's password hash. A new password (changed by
+//! The cookie is signed, not stored: `v2.<expiry>.<random>.<mac>`, the MAC an HMAC with the
+//! signing key derived from the secrets key (`Keyring::sign`) over the user id, the expiry, the
+//! random part and a fingerprint of the account's password hash. It does not name the account:
+//! a sign-in names it by email, and only that account's MAC matches. A new password (changed by
 //! the user or set by an admin) changes the hash and so revokes every device cookie of the
 //! account; a new secrets key revokes all of them. A device cookie alone signs nobody in.
 
@@ -19,7 +20,7 @@ pub const COOKIE_NAME: &str = "kalzit_device";
 pub const SECURE_COOKIE_NAME: &str = "__Host-kalzit_device";
 /// How long a device stays known after its last sign-in.
 pub const LIFETIME_MS: i64 = 90 * 24 * 3_600_000;
-const VERSION: &str = "v1";
+const VERSION: &str = "v2";
 
 fn signed_part(user_id: &str, expires_ms: i64, nonce: &str, password_hash: Option<&str>) -> Vec<u8> {
     let fingerprint = Sha256::digest(password_hash.unwrap_or_default().as_bytes());
@@ -41,21 +42,17 @@ pub fn issue(keys: &Keyring, user_id: &str, password_hash: Option<&str>, now_ms:
     let expires = now_ms + LIFETIME_MS;
     let nonce = hex::encode(rand::random::<[u8; 16]>());
     let mac = hex::encode(keys.sign(&signed_part(user_id, expires, &nonce, password_hash)));
-    format!("{VERSION}.{user_id}.{expires}.{nonce}.{mac}")
+    format!("{VERSION}.{expires}.{nonce}.{mac}")
 }
 
-/// Whether `value` is an unexpired device cookie of this account with its current password.
+/// Whether `value` is an unexpired device cookie of this account with its current password. The
+/// account comes from the sign-in (its email), so the cookie need not name it.
 pub fn is_known(keys: &Keyring, value: &str, user_id: &str, password_hash: Option<&str>, now_ms: i64) -> bool {
-    let mut parts = value.rsplitn(4, '.');
-    let (Some(mac), Some(nonce), Some(expires), Some(head)) = (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return false;
-    };
+    let parts: Vec<&str> = value.split('.').collect();
+    let [version, expires, nonce, mac] = parts[..] else { return false };
     let Ok(expires) = expires.parse::<i64>() else { return false };
     let Ok(mac) = hex::decode(mac) else { return false };
-    head.strip_prefix(VERSION).and_then(|h| h.strip_prefix('.')) == Some(user_id)
-        && expires > now_ms
-        && keys.verify(&signed_part(user_id, expires, nonce, password_hash), &mac)
+    version == VERSION && expires > now_ms && keys.verify(&signed_part(user_id, expires, nonce, password_hash), &mac)
 }
 
 fn cookie_name(secure: bool) -> &'static str {
@@ -88,7 +85,8 @@ mod tests {
         assert!(!is_known(&Keyring::from_key(SecretKey::generate().0), &cookie, "u-1", Some("hash-1"), 0));
         let stretched = cookie.replacen(&LIFETIME_MS.to_string(), &(2 * LIFETIME_MS).to_string(), 1);
         assert!(!is_known(&keys, &stretched, "u-1", Some("hash-1"), 0), "a changed expiry");
-        for broken in ["", "v1", "v1.u-1.x.y.z", "v2.u-1.1.ab.cd"] {
+        assert!(!cookie.contains("u-1"), "the cookie does not name the account");
+        for broken in ["", "v2", "v2.x.y.z", "v2.1.ab.cd", "v1.u-1.1.ab.cd"] {
             assert!(!is_known(&keys, broken, "u-1", Some("hash-1"), 0), "{broken}");
         }
     }

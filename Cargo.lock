@@ -1943,6 +1943,7 @@ dependencies = [
  "sha2 0.11.1",
  "sqlparser",
  "sqlx",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tiberius",

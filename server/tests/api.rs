@@ -478,7 +478,9 @@ async fn parallel_wrong_passwords_cannot_exceed_the_limit() {
     let statuses = set.join_all().await;
     let unauthorized = statuses.iter().filter(|s| **s == StatusCode::UNAUTHORIZED).count();
     let limited = statuses.iter().filter(|s| **s == StatusCode::TOO_MANY_REQUESTS).count();
-    assert_eq!((unauthorized, limited), (3, 17));
+    // At most the limit is checked; the checks in flight per account may refuse some sooner.
+    assert_eq!(unauthorized + limited, 20, "{statuses:?}");
+    assert!((1..=3).contains(&unauthorized), "{unauthorized}");
     t.finish().await;
 }
 
@@ -815,7 +817,7 @@ async fn a_known_device_signs_in_while_the_account_is_under_attack() {
         assert_eq!(r.body["error"]["retryAfterSecs"], 600);
     }
     // A device cookie of another account, or a forged one, does not help.
-    let forged = device.replacen("kalzit_device=v1.", "kalzit_device=v1.x", 1);
+    let forged = device.replacen("kalzit_device=v2.", "kalzit_device=v2.9", 1);
     assert_eq!(
         t.from("203.0.113.9:1").login_with("joerg@example.de", PASSWORD, &forged).await.status,
         StatusCode::TOO_MANY_REQUESTS
@@ -936,6 +938,72 @@ async fn full_rate_limit_tables_still_let_other_networks_in() {
     let owner = t.from("198.51.100.7:1");
     assert_eq!(owner.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
     drop((flooded, owner));
+    t.finish().await;
+}
+
+/// Tables filled to their hard cap (300 000 entries from 30 000 networks) still take a client
+/// from a fresh network: the setup completes and the owner signs in.
+#[tokio::test]
+async fn tables_at_their_hard_cap_still_let_a_fresh_network_in() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let now = t.clock.monotonic_ms();
+    for i in 0..300_000 {
+        let net = format!("net:attacker-{}", i / 10);
+        let _ = t.state.login_limiter.try_acquire(&format!("ip:login:a{i}"), &net, now);
+        let _ = t.state.pair_limiter.try_acquire(&format!("account:a{i}"), &net, now);
+        let _ = t.state.account_limiter.record(&format!("email:a{i}@example.de"), &net, now);
+        let _ = t.state.setup_limiter.try_acquire(&format!("ip:setup:a{i}"), &net, now);
+    }
+    let done = t.setup().await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    let owner = t.from("198.51.100.7:1");
+    assert_eq!(owner.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    drop(owner);
+    t.finish().await;
+}
+
+/// Wrong passwords sent all at once from fresh networks, right when the account's window
+/// starts again, are held to the account's budget: it is counted before the password is checked.
+#[tokio::test]
+async fn simultaneous_guesses_are_held_to_the_account_budget() {
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 3;
+        c.security.login_window_secs = 600;
+    })
+    .await;
+    t.setup().await;
+    for i in 1..=3 {
+        let attacker = t.from(&format!("[2001:db8:{i:x}::1]:1"));
+        assert_eq!(attacker.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+    }
+    t.clock.advance_ms(600_000);
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0..30 {
+        let peer: SocketAddr = format!("[2001:db8:{:x}::1]:1", 0x100 + i).parse().unwrap();
+        let app = router(t.state.clone()).layer(MockConnectInfo(peer));
+        set.spawn(async move {
+            let body = json!({ "email": "joerg@example.de", "password": "falsch falsch falsch" });
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/api/auth/login")
+                .header(header::HOST, "kalzit.test")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            app.oneshot(req).await.unwrap().status()
+        });
+    }
+    let statuses = set.join_all().await;
+    let wrong = statuses.iter().filter(|s| **s == StatusCode::UNAUTHORIZED).count();
+    let refused = statuses.iter().filter(|s| **s == StatusCode::TOO_MANY_REQUESTS).count();
+    assert_eq!(wrong + refused, 30, "{statuses:?}");
+    assert!((1..=3).contains(&wrong), "{wrong} guesses were checked");
+    // Whatever got through, the account's budget is used up for browsers it does not know.
+    for _ in wrong..3 {
+        let _ = t.from("[2001:db8:ffff::1]:1").login("joerg@example.de", "falsch falsch falsch").await;
+    }
+    let r = t.from("[2001:db8:fffe::1]:1").login("joerg@example.de", PASSWORD).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
     t.finish().await;
 }
 

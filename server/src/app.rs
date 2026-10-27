@@ -45,6 +45,8 @@ pub struct AppState {
     pub account_limiter: Arc<RateLimiter>,
     /// Checks of the current password per user (`POST /me/password`).
     pub password_limiter: Arc<RateLimiter>,
+    /// Password checks in flight per account (sign-ins and `POST /me/password`).
+    pub password_checks: Arc<crate::auth::ratelimit::InFlight>,
     /// Setup code attempts per client address (`routes::setup`).
     pub setup_limiter: Arc<RateLimiter>,
     /// Wrong setup codes from all addresses together (`security.setup_*`).
@@ -106,6 +108,7 @@ impl AppState {
             network_limiter: Arc::new(network_limiter),
             account_limiter: Arc::new(login()),
             password_limiter: Arc::new(login()),
+            password_checks: Arc::default(),
             setup_limiter: Arc::new(setup_limiter),
             setup_all_limiter: Arc::new(setup_all_limiter),
             probe_limiter: Arc::new(RateLimiter::new(

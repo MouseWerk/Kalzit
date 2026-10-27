@@ -80,10 +80,11 @@ async fn change_password(
     use crate::auth::ratelimit::{account_key, network_key};
     let mono = state.clock.monotonic_ms();
     let limit_key = format!("password:{}", user.id);
-    state
-        .password_limiter
-        .try_acquire(&limit_key, &limit_key, mono)
-        .map_err(|wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait))?;
+    let refused = |wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait);
+    let Some(_checking) = state.password_checks.enter_soon(&account_key(&user.email)).await else {
+        return Err(refused(std::time::Duration::from_secs(1)));
+    };
+    state.password_limiter.try_acquire(&limit_key, &limit_key, mono).map_err(refused)?;
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
     if !password::verify(req.current, stored.clone()).await {

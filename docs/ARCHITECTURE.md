@@ -66,9 +66,12 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   HMAC with a key derived from the secrets key over account, expiry and password hash), so an
   attacker cannot lock the owner out of a known browser, while distributed guessing gets one
   budget. An IPv6 /48 has a budget for all accounts that refuses only accounts not clean at the
-  address. One bounded table per key class, windows on a monotonic clock; only expired entries
-  are dropped, and a full table refuses new keys of the networks (/48, /24) that filled it while
-  other networks are still counted.
+  address. Shared budgets are counted before the password check under their lock and refunded
+  on success; at most 2 checks per account run at once, and hashing runs on at most one thread
+  per CPU. One bounded table per key class, windows on a monotonic clock. A network (/48, /24)
+  with fewer than 16 entries always gets its key; at the hard cap room is made from the network
+  with the most entries that have not used up their attempts, and used-up entries are never
+  dropped before their window ends.
 - **Every query on an organization table filters by `ctx.org_id`.** Ids in the path or body
   (`datasourceId`, folder or dashboard ids) are resolved within the organization first; an id of
   another organization is `not_found`.

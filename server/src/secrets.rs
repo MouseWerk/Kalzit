@@ -304,10 +304,8 @@ impl Keyring {
     /// Whether `mac` signs `data` with any loaded key (also one pending in a rotation), compared
     /// in time that does not depend on where they differ.
     pub fn verify(&self, data: &[u8], mac: &[u8]) -> bool {
-        std::iter::once(&self.current).chain(&self.others).any(|k| {
-            let expected = hmac_sha256(&k.signing, data);
-            mac.len() == expected.len() && expected.iter().zip(mac).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
-        })
+        use subtle::ConstantTimeEq;
+        std::iter::once(&self.current).chain(&self.others).any(|k| hmac_sha256(&k.signing, data)[..].ct_eq(mac).into())
     }
 }
 

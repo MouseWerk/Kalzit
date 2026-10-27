@@ -474,26 +474,36 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 ## Sign-in rate limits
 
 `POST /auth/login` (`server/src/routes/auth.rs`) counts every attempt before the password is
-checked, and refuses it with `429 rate_limited` (with `Retry-After` and `retryAfterSecs`) when a
-budget is used up. `security.login_max_failures` per `security.login_window_secs` (default 10
-per 15 minutes) applies to each of:
+checked, each budget under its own lock, and refuses it with `429 rate_limited` (with
+`Retry-After` and `retryAfterSecs`) when a budget is used up. Parallel attempts therefore cannot
+all pass a budget before the first failure is counted. A correct password gives the attempts
+back. `security.login_max_failures` per `security.login_window_secs` (default 10 per 15 minutes)
+applies to each of:
 
 - the client address (IPv4 per address, IPv6 per /64), whatever the email;
 - the account at that address. Wrong passwords from other addresses never use it up;
-- the account from all addresses together (failed sign-ins and failed `POST /me/password`
-  checks). Used up, it refuses every sign-in of the account from a browser without a known
-  device cookie, the right password included, with the whole window as the wait (it tells
-  nothing about the account). A guess spread over many addresses so gets this one budget, not
-  the budget of every address.
+- the account from all addresses together (sign-ins and failed `POST /me/password` checks).
+  Used up, it refuses every sign-in of the account from a browser without a known device
+  cookie, the right password included, with the whole window as the wait (it tells nothing
+  about the account). A guess spread over many addresses so gets this one budget, not the
+  budget of every address.
+
+At most 2 password checks of one account run at the same moment (sign-ins and `POST
+/me/password` together); more wait up to 2 seconds for a slot, then are refused with
+`429 rate_limited` and a wait of 1 second. All
+password hashing and checking together runs on at most one thread per CPU; further checks wait
+their turn.
 
 Known devices: a successful sign-in sets the cookie `kalzit_device` (`__Host-kalzit_device` over
-HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 90 days, renewed with every sign-in). It is signed
-with a key derived from the secrets key and bound to the account and its current password hash;
-it holds no session and signs nobody in. A sign-in that brings a valid device cookie of the
-account is not held to the account's shared budget (the budgets of the address and of the
-account at the address still apply), so an attacker who uses that budget up cannot lock the
-owner out of a browser they signed in with before. A new password, set by the user or an admin,
-revokes every device cookie of the account; so does a new secrets key.
+HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 90 days, renewed with every sign-in, kept on sign
+out). Its value is an expiry, a random part and an HMAC, with a key derived from the secrets
+key, over these, the account and its current password hash; it does not name the account, holds
+no session and signs nobody in. A sign-in that brings a valid device cookie of the account it
+names by email is not refused by the account's shared budget (its failures still count there,
+and the budgets of the address and of the account at the address still apply), so an attacker
+who uses that budget up cannot lock the owner out of a browser they signed in with before. A
+new password, set by the user or an admin, revokes every device cookie of the account; so does a
+new secrets key.
 
 An IPv6 site (/48) also has a budget for all accounts together: 5 times
 `security.login_max_failures` failures per window. Used up, an address in it goes on only with
@@ -501,16 +511,23 @@ accounts that are clean at that address (at most 2 failures there), so others' t
 same network never make the owner's account dirty.
 
 A successful sign-in gives the address its attempt back and clears the account's budget at that
-address; the account's shared budget runs until its window ends. Windows are measured on a
-monotonic clock, so a change of the system time neither ends nor stretches them.
+address. Windows are measured on a monotonic clock, so a change of the system time neither ends
+nor stretches them.
 
 The counts live in memory, one bounded table per kind of key (addresses, accounts at an
-address, accounts, sites, setup codes), so a flood of one kind never crowds out another. Only
-entries whose window has ended are dropped. Beyond 100 000 entries, a new key is taken only
-while its network (IPv6 /48, IPv4 /24) holds fewer than 16 entries: the networks that filled the
-table are refused, a client from any other network is still counted. At 300 000 entries every new
-key is refused until the oldest window ends. An account the table cannot take is refused rather
-than left uncounted, and a running budget is never pushed out.
+address, accounts, sites, password checks, setup codes), so a flood of one kind never crowds out
+another. Entries whose window has ended are dropped. Every key belongs to a network (IPv6 /48,
+IPv4 /24):
+
+- a network holding fewer than 16 entries always gets its new key. At 300 000 entries, room is
+  made by dropping the oldest entry that has not used up its attempts from the network with the
+  most such entries, so a flood pushes out its own entries. An entry that has used up its
+  attempts is never dropped before its window ends;
+- a network holding 16 or more gets new keys only while the table has fewer than 100 000.
+
+A client from a network that is not flooding is so always counted. Only a table holding nothing
+but used-up entries refuses new keys, until the oldest window ends; an account the table cannot
+take is refused rather than left uncounted.
 
 ## Setup
 
@@ -553,13 +570,14 @@ with `field` `orgName`, `name`, `email`, `password`, `language`, `theme` or `tim
 Both `POST` routes share two budgets. Only wrong codes (and the code of the previous start) use
 them up, so nobody can use up the budget of the person who has the right code:
 
-- per client address (IPv6 per /64), the sign-in limits: `security.login_max_failures` wrong
-  codes per `security.login_window_secs` (default 10 per 15 minutes). Used up, the address is
-  refused before its code is compared, the right code included;
+- per client (IPv4 per address, IPv6 per /48, so a site gets no more tries by using more of its
+  /64 networks), the sign-in limits: `security.login_max_failures` wrong codes per
+  `security.login_window_secs` (default 10 per 15 minutes). Used up, the client is refused
+  before its code is compared, the right code included;
 - for all addresses together: `security.setup_max_failures` wrong codes per
-  `security.setup_window_secs` (default 100 per hour). Used up, it refuses an address that
-  already had more than 2 wrong codes in its own window, so a guess spread over many addresses
-  gets 3 tries per address instead of the full budget. A clean address (at most 2 wrong codes) is
+  `security.setup_window_secs` (default 100 per hour). Used up, it refuses a client that
+  already had more than 2 wrong codes in its own window, so a guess spread over many clients
+  gets 3 tries per client instead of the full budget. A clean address (at most 2 wrong codes) is
   still checked, and the right code opens setup.
 
 Refused: `429 rate_limited` with `Retry-After` and `retryAfterSecs` (the wait of the budget that

@@ -28,13 +28,20 @@ fn hash_blocking(password: &str) -> Result<String, String> {
     Argon2::default().hash_password(password.as_bytes()).map(|h| h.to_string()).map_err(|e| e.to_string())
 }
 
+/// Hashes and verifications running at once, one per CPU: more would only queue on the blocking
+/// pool and take its threads from everything else. Further ones wait their turn.
+static HASHING: LazyLock<tokio::sync::Semaphore> =
+    LazyLock::new(|| tokio::sync::Semaphore::new(std::thread::available_parallelism().map_or(2, |n| n.get())));
+
 pub async fn hash(password: String) -> Result<String, String> {
+    let _turn = HASHING.acquire().await.map_err(|e| e.to_string())?;
     tokio::task::spawn_blocking(move || hash_blocking(&password)).await.map_err(|e| e.to_string())?
 }
 
 /// True when `password` matches `stored`. A missing hash (unknown user) still costs one
 /// verification and returns false.
 pub async fn verify(password: String, stored: Option<String>) -> bool {
+    let Ok(_turn) = HASHING.acquire().await else { return false };
     tokio::task::spawn_blocking(move || {
         let known = stored.is_some();
         let phc = stored.unwrap_or_else(|| DUMMY_HASH.clone());
