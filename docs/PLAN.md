@@ -239,7 +239,7 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 | Typ | Läuft wo | Schnittstelle |
 |---|---|---|
 | Datenquelle | Eigener Prozess neben dem Server, in einer Sandbox | gRPC über lokale Verbindung (Named Pipe unter Windows, Unix-Socket unter Linux; stdio für Handshake und Logs) |
-| Panel | Browser | ES-Modul mit festgelegter Panel-API, deklariert unterstützte Formen |
+| Panel | Browser, in einem abgeschotteten iframe (sandbox) | Web-Bundle (ein ES-Modul) mit kleiner, versionierter Nachrichten-API: Daten rein, Ereignisse raus; deklariert unterstützte Formen |
 | App | Beides | Seiten plus Backend-Teil |
 
 - Die eingebauten Datenquellen (SQL-Quellen, Prometheus, MongoDB, Neo4j/Memgraph usw.) benutzen **dieselbe** Schnittstelle
@@ -250,7 +250,8 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   Typ (`datasource` oder `panel`), gelieferte bzw. angezeigte Formen (`frame`, `documents`,
   `graph`), Einstellungsformular, Rechte (Netzwerkziele), Plattform-Binaries (`windows-x64`,
   `linux-x64`, `linux-arm64`) mit SHA-256, Mindestversion von Kalzit; bei Datenquellen dazu die
-  Protokollversion und die Fähigkeiten. Der Validator im Crate `kalzit-plugin-api` meldet alle
+  Protokollversion und die Fähigkeiten, bei Panels statt Binaries das Web-Bundle mit Hash und
+  Version der Nachrichten-API. Der Validator im Crate `kalzit-plugin-api` meldet alle
   Fehler auf einmal, jeden mit Pfad und Code.
 - **Protokoll** (Entscheidung des Owners vom 27.10.2026): gRPC (tonic/prost), Kalzit ist der
   Client. Verbindung unter Windows über eine Named Pipe, unter Linux über einen Unix-Socket;
@@ -263,7 +264,15 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   Dateien festhält), in einem eigenen Signaturkontext, getrennt von den Release-Signaturen.
   Vertraut wird Kalzits eigenem Plugin-Schlüssel und Herausgeber-Schlüsseln, die ein Admin
   hinzufügt; die Release-Schlüssel gelten nie für Plugins. Unsignierte Plugins nur mit einem
-  ausdrücklichen Admin-Schalter, standardmäßig aus.
+  ausdrücklichen Admin-Schalter, standardmäßig aus. Eine ungültige Signatur wird immer
+  abgelehnt, auch mit diesem Schalter. Wird ein vertrauter Schlüssel entfernt, laufen seine
+  Plugins nach einer Bestätigung nicht mehr.
+- **Rechte und Organisationen** (Entscheidung vom 27.10.2026): Ein Update, das neue Rechte
+  (Netzwerkziele) verlangt, läuft erst nach erneuter Freigabe durch einen Admin.
+  Organisations-Admins können installierte Plugins für ihre Organisation sperren.
+- **Panel-Plugins** (Entscheidung vom 27.10.2026): laufen im Browser in einem iframe mit
+  `sandbox`, nicht als gRPC-Prozess, und sprechen mit Kalzit nur über die versionierte
+  Nachrichten-API (Daten und Einstellungen hinein, Ereignisse wie Klick oder Auswahl heraus).
 - **Katalog** (Entscheidung vom 27.10.2026): ein signierter, gehosteter Index, standardmäßig aus;
   die Offline-Installation aus einer Datei geht immer.
 - **Sandbox** (Entscheidung vom 27.10.2026): Plugin-Prozesse laufen, wo das Betriebssystem es
@@ -274,7 +283,8 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   Plugin legt nur seine Panels lahm, nicht den Server.
 - Stand M4: Protokoll (`plugin-api/proto`), Manifest mit Validator, Signaturkontext, Registry der
   Datenquellen-Typen und In-Process-Adapter für die eingebauten Quellen sind fertig; Host,
-  Sandbox, Signaturprüfung und Katalog folgen.
+  Sandbox, Signaturprüfung, Panel-Nachrichten-API und Katalog folgen. Die Oberfläche folgt dem
+  Board `docs/design/blueprint/Plugins.dc.html`.
 
 ## 8. Windows- und Linux-Server
 

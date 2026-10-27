@@ -306,7 +306,13 @@ type QueryResult =
 
 Decided by the owner on 2026-10-27. Done: the protocol, the manifest with its validator, the
 signing context, the kind registry and the in-process adapter. The host (processes, transport,
-sandbox), signature checks, the catalog and the Rust SDK follow in M4 (marked (M4) below).
+sandbox), the panel message API, signature checks, the catalog and the Rust SDK follow in M4
+(marked (M4) below). The UI follows the board `docs/design/blueprint/Plugins.dc.html`.
+
+Two plugin kinds, two models: a **data source** plugin is a process next to the server that
+serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a
+sandboxed iframe and talks to Kalzit through a small, versioned message API. Panels never get a
+process, a network target or the gRPC protocol.
 
 ### Contract (`plugin-api/`, crate `kalzit-plugin-api`)
 
@@ -372,6 +378,21 @@ sandbox), signature checks, the catalog and the Rust SDK follow in M4 (marked (M
 - Compatibility: version 1 grows only by new fields and enum values; anything else is a new
   package (`kalzit.plugin.datasource.v2`). `Describe` exchanges the versions, and Kalzit refuses
   plugins whose version it does not speak (`SUPPORTED_PROTOCOL_VERSIONS`).
+
+### Panel plugins (M4)
+
+- The bundle (`[panel]` in the manifest: one `.js`/`.mjs` file with its SHA-256 and the message
+  API version `api`) is served by Kalzit from the installed package and loaded into an
+  `<iframe sandbox="allow-scripts">` without `allow-same-origin`: the panel gets an opaque
+  origin, so it cannot read Kalzit's cookies, storage or DOM, and a Content Security Policy on
+  the frame allows no network requests (`connect-src 'none'`) and no other scripts.
+- Messages (`postMessage`, each with `api` and `type`): into the frame the panel's options, its
+  size, the theme tokens and the query results in their native shapes, as the panel API of
+  built-in panels receives them; out of the frame only events (a clicked row, document or node,
+  a selection, a variable to set, a size request). Kalzit checks every message against the
+  schema of its version and drops anything else; a panel cannot run queries of its own.
+- Version 1 grows only by new optional fields and message types; the manifest's `api` names the
+  version a bundle speaks, and Kalzit refuses versions it does not know.
 
 ### Registry and the in-process adapter
 
@@ -444,7 +465,16 @@ catalogs.
 - Trusted for plugins: Kalzit's own plugin key and the publisher keys a server admin adds. The
   release keys are never trusted for plugins and plugin keys never for releases. Unsigned
   plugins install only with an explicit admin switch, off by default, and are marked as such.
-- Installing, removing and changing trust are server admin actions in the audit log.
+  An invalid signature (one that does not verify, or a manifest that does not match it) is
+  always refused, also with that switch on.
+- Removing a trusted key stops the plugins signed with it, after the admin confirms the list
+  of affected plugins.
+- An update whose manifest adds permissions (`Manifest::added_permissions`, new network
+  targets) does not run until a server admin approves them; the installed version keeps
+  running meanwhile.
+- Organization admins can block an installed plugin for their organization: its kind and panel
+  type are then not offered there and its data sources and panels in that organization stop.
+- Installing, removing, approving, blocking and changing trust are recorded in the audit log.
 
 ### Catalog (M4)
 

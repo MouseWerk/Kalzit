@@ -113,6 +113,14 @@
       "w": 1440,
       "x": 4560,
       "y": 0
+    },
+    "Plugins.dc.html": {
+      "expand": "fill",
+      "h": 7480,
+      "title": "Plugins (M4)",
+      "w": 1440,
+      "x": 7600,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -147,7 +155,8 @@
     "DataChat.dc.html",
     "SavedAnalyses.dc.html",
     "Graph.dc.html",
-    "Access.dc.html"
+    "Access.dc.html",
+    "Plugins.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

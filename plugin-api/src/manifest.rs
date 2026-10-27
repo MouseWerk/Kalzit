@@ -29,6 +29,9 @@ pub const SHAPES: &[&str] = &["frame", "documents", "graph"];
 /// The optional parts of the data source protocol, version 1 (`Capability` in the proto).
 pub const CAPABILITIES: &[&str] = &["check_on_save", "watch"];
 
+/// The versions of the panel message API (data in, events out) this crate knows.
+pub const PANEL_API_VERSIONS: &[u32] = &[1];
+
 /// The settings field types of a data source form.
 pub const SETTING_TYPES: &[&str] = &["string", "text", "number", "bool", "select"];
 
@@ -84,9 +87,9 @@ pub struct Manifest {
     /// Data sources: one binary per platform (`windows-x64`, `linux-x64`, `linux-arm64`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub binaries: BTreeMap<String, PackageFile>,
-    /// Panels: the ES module the browser loads.
+    /// Panels: the web bundle the browser loads into a sandboxed iframe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub panel: Option<PackageFile>,
+    pub panel: Option<WebBundle>,
 }
 
 /// One field of a data source's settings form.
@@ -157,6 +160,18 @@ pub struct PackageFile {
     pub sha256: String,
 }
 
+/// A panel's web bundle: one ES module with everything it needs inlined, run in a sandboxed
+/// iframe that talks to Kalzit only through the versioned panel message API.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebBundle {
+    /// The bundle's `.js` or `.mjs` file, relative to the package root.
+    pub path: String,
+    pub sha256: String,
+    /// The panel message API version the bundle speaks.
+    pub api: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginKind {
     DataSource,
@@ -219,6 +234,12 @@ impl Manifest {
     /// The kind; only meaningful on a valid manifest.
     pub fn plugin_kind(&self) -> PluginKind {
         if self.kind == "panel" { PluginKind::Panel } else { PluginKind::DataSource }
+    }
+
+    /// The network targets of `self` (an update) that `installed` did not have. An update with
+    /// any needs an administrator's approval again before it runs.
+    pub fn added_permissions<'a>(&'a self, installed: &Manifest) -> Vec<&'a NetworkTarget> {
+        self.permissions.network.iter().filter(|t| !installed.permissions.network.contains(t)).collect()
     }
 
     /// Whether this Kalzit version may run the plugin (`min_kalzit`).
@@ -331,11 +352,20 @@ impl Validator {
 
     fn panel(&mut self, m: &Manifest) {
         match &m.panel {
-            Some(file) => self.file("panel", file),
-            None => self.push("panel", "manifest.panel_missing", "a panel names its ES module"),
-        }
-        if !file_is_module(m.panel.as_ref()) {
-            self.push("panel.path", "manifest.panel_not_module", "the panel entry is a .js or .mjs file");
+            Some(bundle) => {
+                self.file("panel", &PackageFile { path: bundle.path.clone(), sha256: bundle.sha256.clone() });
+                if !(bundle.path.ends_with(".js") || bundle.path.ends_with(".mjs")) {
+                    self.push("panel.path", "manifest.panel_not_module", "the panel bundle is a .js or .mjs file");
+                }
+                if !PANEL_API_VERSIONS.contains(&bundle.api) {
+                    self.push(
+                        "panel.api",
+                        "manifest.panel_api_unsupported",
+                        format!("panel API {} is not supported", bundle.api),
+                    );
+                }
+            }
+            None => self.push("panel", "manifest.panel_missing", "a panel names its web bundle"),
         }
         for (path, present) in [
             ("protocol", m.protocol.is_some()),
@@ -561,10 +591,6 @@ fn valid_package_path(path: &str) -> bool {
         && path.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
-fn file_is_module(file: Option<&PackageFile>) -> bool {
-    file.is_none_or(|f| f.path.ends_with(".js") || f.path.ends_with(".mjs"))
-}
-
 fn valid_host(host: &str) -> bool {
     if host.parse::<std::net::IpAddr>().is_ok() {
         return true;
@@ -679,9 +705,20 @@ shapes = ["graph", "frame"]
 [panel]
 path = "dist/panel.js"
 sha256 = "{HASH}"
+api = 1
 "#
         );
         assert_eq!(parse(&text).expect("valid").plugin_kind(), PluginKind::Panel);
+        let html = text.replacen("dist/panel.js", "dist/index.html", 1).replacen("api = 1", "api = 9", 1);
+        assert_eq!(codes(&html), ["manifest.panel_not_module", "manifest.panel_api_unsupported"]);
+        let binary = format!(
+            "{text}
+[binaries.linux-x64]
+path = \"bin/x\"
+sha256 = \"{HASH}\"
+"
+        );
+        assert_eq!(codes(&binary), ["manifest.not_for_kind"]);
     }
 
     #[test]
@@ -811,6 +848,22 @@ sha256 = "{HASH}"
         assert_eq!(codes(&future), ["manifest.protocol_unsupported"]);
         let other = datasource().replacen("kind = \"datasource\"", "kind = \"app\"", 1);
         assert_eq!(codes(&other), ["manifest.kind_unknown"]);
+    }
+
+    #[test]
+    fn updates_name_the_permissions_they_add() {
+        let installed = parse(&datasource()).unwrap();
+        assert!(installed.added_permissions(&installed).is_empty());
+        let update =
+            parse(&datasource().replacen("host = \"license.example.dev\"", "host = \"telemetry.example.dev\"", 1))
+                .unwrap();
+        let added = update.added_permissions(&installed);
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].host.as_deref(), Some("telemetry.example.dev"));
+        // Dropping a permission needs no approval.
+        let mut fewer = installed.clone();
+        fewer.permissions.network.pop();
+        assert!(fewer.added_permissions(&installed).is_empty());
     }
 
     #[test]
