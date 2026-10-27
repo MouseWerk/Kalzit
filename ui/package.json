@@ -17,7 +17,8 @@
     "check": "biome check --error-on-warnings .",
     "test": "vitest run",
     "e2e": "playwright test -c e2e/playwright.config.ts",
-    "screenshots": "playwright test -c e2e/screenshots.config.ts"
+    "screenshots": "playwright test -c e2e/screenshots.config.ts",
+    "gallery": "playwright test -c e2e/gallery.config.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.4",

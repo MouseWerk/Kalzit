@@ -1,0 +1,101 @@
+name: Gallery renders
+
+# Curated renders of Kalzit for the gallery of the website, on the fictional data center of
+# ui/e2e/gallery/datacenter.ts and the gallery fixtures in ui/e2e/fixtures (MongoDB, Neo4j) plus
+# log events in OpenSearch: 1600 x 1000 at twice the device scale, dark and light, as PNG and
+# WebP. Run by hand only; the images are uploaded as the artifact `kalzit-gallery` and are not
+# committed. How to run it: docs/screenshots/README.md.
+
+on:
+  workflow_dispatch:
+  # TEMPORARY while the renders are tuned; removed before the pull request merges.
+  push:
+    branches: [docs/gallery-renders]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gallery-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gallery:
+    name: gallery renders
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit
+      KALZIT_GALLERY_OUT: ${{ github.workspace }}/gallery
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Started first, so they are up once the build is done (as in the e2e job of ci.yml).
+      - name: Start MongoDB, OpenSearch, Neo4j and Memgraph
+        timeout-minutes: 5
+        run: .github/scripts/e2e-services.sh start
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: gallery
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: cargo build --profile e2e --locked -p kalzit
+      - name: Playwright version
+        id: playwright
+        working-directory: ui
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Restore Playwright browsers
+        id: browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .playwright-browsers
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        working-directory: ui
+        run: |
+          for attempt in 1 2 3; do
+            npx playwright install chromium && exit 0
+            echo "::warning::installing Chromium failed (attempt $attempt of 3)"
+          done
+          exit 1
+      - name: Install Chromium's system packages
+        timeout-minutes: 12
+        working-directory: ui
+        run: ../.github/scripts/browser-deps.sh node node_modules/@playwright/test/cli.js install-deps chromium
+      - name: Wait for MongoDB, OpenSearch, Neo4j and Memgraph
+        timeout-minutes: 5
+        run: .github/scripts/e2e-services.sh ready
+      # The data center in MongoDB (a database of its own) and Neo4j (replacing the shop graph).
+      - name: Seed the gallery data
+        timeout-minutes: 5
+        run: .github/scripts/e2e-services.sh seed-gallery
+      - run: npm run gallery
+        timeout-minutes: 20
+        working-directory: ui
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kalzit-gallery
+          path: gallery
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !success() }}
+        with:
+          name: gallery-output
+          path: ui/e2e/.output
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 7

@@ -12,6 +12,12 @@
 #                           ui/e2e/fixtures/graph-shop.cypher, and writes KALZIT_E2E_MONGODB,
 #                           KALZIT_E2E_OPENSEARCH, KALZIT_E2E_NEO4J and KALZIT_E2E_MEMGRAPH
 #                           to $GITHUB_ENV
+#   e2e-services.sh seed-gallery
+#                           after `ready`, for the gallery renders only (.github/workflows/
+#                           gallery.yml): adds the database kalzit_gallery to MongoDB
+#                           (ui/e2e/fixtures/gallery-datacenter.js) and replaces the Neo4j graph
+#                           with ui/e2e/fixtures/gallery-datacenter.cypher, so it never runs
+#                           before the e2e specs
 #
 # The images are those of the server tests' services in ci.yml. The passwords belong to throwaway
 # containers reachable only from this job; they protect nothing and are not secrets. Kalzit reads
@@ -31,6 +37,8 @@ NEO4J_PASSWORD=kalzit-e2e-neo4j
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXTURE="$HERE/../../ui/e2e/fixtures/mongo-orders.js"
 GRAPH_FIXTURE="$HERE/../../ui/e2e/fixtures/graph-shop.cypher"
+GALLERY_MONGO="$HERE/../../ui/e2e/fixtures/gallery-datacenter.js"
+GALLERY_GRAPH="$HERE/../../ui/e2e/fixtures/gallery-datacenter.cypher"
 
 start() {
   docker run -d --name "$MONGO" -p 127.0.0.1:27017:27017 \
@@ -123,11 +131,18 @@ ready() {
   return 1
 }
 
+seed_gallery() {
+  seed "MongoDB (gallery)" mongosh_root "$GALLERY_MONGO"
+  seed "Neo4j (gallery)" cypher_neo4j "$GALLERY_GRAPH"
+  echo "the gallery data is in MongoDB and Neo4j"
+}
+
 case "${1:-}" in
   start) start ;;
   ready) ready ;;
+  seed-gallery) seed_gallery ;;
   *)
-    echo "usage: $0 start|ready" >&2
+    echo "usage: $0 start|ready|seed-gallery" >&2
     exit 2
     ;;
 esac
