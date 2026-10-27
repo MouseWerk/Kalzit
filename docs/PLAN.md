@@ -309,7 +309,7 @@ mit Rückgängig (Ausnahme nach `design/principles.md`, in `CLAUDE.md` festgehal
 | Werkzeuge | Biome (Format und Lint), Vitest 5, Playwright | Schnell, wenige Abhängigkeiten |
 | HTTPS | rustls (kein OpenSSL, identisch auf Windows und Linux) | Keine Systembibliothek nötig |
 | Zeitreihen | uPlot | Sehr schnell bei vielen Punkten |
-| Graphen | Sigma.js + Graphology (WebGL), ELK für Hierarchie-Layouts | Zehntausende Knoten flüssig |
+| Graphen | Sigma.js + Graphology (WebGL); ForceAtlas2 für Netzwerke, für Hierarchien ein eigenes Schichten-Layout (Zyklen aufbrechen, Schichten nach längstem Pfad, Baryzentrum-Sortierung) im Layout-Worker | Zehntausende Knoten flüssig, keine zusätzliche Layout-Bibliothek im Bundle; ELK (elkjs) kommt höchstens in M5 als optionales Layout |
 | Diagramme sonst | ECharts | Balken, Heatmaps, Verteilungen |
 | Live-Daten | WebSocket; MongoDB Change Streams, sonst Polling | Push statt ständiges Neuladen |
 | Plugin-Protokoll | gRPC (tonic) | Plattformübergreifend, SDKs in mehreren Sprachen |
@@ -372,7 +372,8 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 5. **M4 Plugins**: externe Plugin-Prozesse, Manifest, Signaturen, Katalog, Rust-SDK, Beispiel-Plugins
    (eine Datenquelle, ein Panel).
 6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
-   Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse.
+   Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse; ELK (elkjs) als
+   optionales Hierarchie-Layout, nur bei Auswahl nachgeladen.
 7. **M6 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
    (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase).

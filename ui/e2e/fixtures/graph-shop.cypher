@@ -1,0 +1,55 @@
+// The graph fixture of the graph spec (ui/e2e/graph.spec.ts), run as the admin of the Neo4j and
+// the Memgraph container with cypher-shell and mgconsole (.github/scripts/e2e-services.sh). A shop
+// as a graph: customers place orders, orders contain products, products sit in a category tree.
+// Along PLACED and CONTAINS alone, Ana reaches the monitor arm only through Ben: one shortest
+// path of 6 steps.
+// The names and counts are those of GRAPH_FIXTURE in ui/e2e/support/services.ts. Plain Cypher that
+// both databases read; it starts by deleting everything, so a retry seeds the same graph.
+MATCH (n) DETACH DELETE n;
+CREATE
+  (allProducts:Category {name: 'All products'}),
+  (office:Category {name: 'Office'}),
+  (lighting:Category {name: 'Lighting'}),
+  (seating:Category {name: 'Seating'}),
+  (desks:Category {name: 'Desks'}),
+  (allProducts)-[:SUBCATEGORY]->(office),
+  (allProducts)-[:SUBCATEGORY]->(lighting),
+  (office)-[:SUBCATEGORY]->(seating),
+  (office)-[:SUBCATEGORY]->(desks),
+  (lamp:Product {name: 'Desk lamp', price: 39.9}),
+  (chair:Product {name: 'Office chair', price: 249}),
+  (arm:Product {name: 'Monitor arm', price: 89}),
+  (desk:Product {name: 'Standing desk', price: 499}),
+  (lamp)-[:IN_CATEGORY]->(lighting),
+  (chair)-[:IN_CATEGORY]->(seating),
+  (arm)-[:IN_CATEGORY]->(desks),
+  (desk)-[:IN_CATEGORY]->(desks),
+  (ana:Customer {name: 'Ana', city: 'Hamburg'}),
+  (ben:Customer {name: 'Ben', city: 'München'}),
+  (clara:Customer {name: 'Clara', city: 'Köln'}),
+  (david:Customer {name: 'David', city: 'Leipzig'}),
+  (emma:Customer {name: 'Emma', city: 'Bremen'}),
+  (o1:Order {name: 'A-1001', total: 249}),
+  (o2:Order {name: 'A-1002', total: 79.8}),
+  (o3:Order {name: 'A-1003', total: 39.9}),
+  (o4:Order {name: 'A-1004', total: 89}),
+  (o5:Order {name: 'A-1005', total: 178}),
+  (o6:Order {name: 'A-1006', total: 499}),
+  (o7:Order {name: 'A-1007', total: 498}),
+  (o8:Order {name: 'A-1008', total: 499}),
+  (ana)-[:PLACED]->(o1),
+  (ana)-[:PLACED]->(o2),
+  (ben)-[:PLACED]->(o3),
+  (ben)-[:PLACED]->(o4),
+  (clara)-[:PLACED]->(o5),
+  (clara)-[:PLACED]->(o6),
+  (david)-[:PLACED]->(o7),
+  (emma)-[:PLACED]->(o8),
+  (o1)-[:CONTAINS {quantity: 1}]->(chair),
+  (o2)-[:CONTAINS {quantity: 2}]->(lamp),
+  (o3)-[:CONTAINS {quantity: 1}]->(lamp),
+  (o4)-[:CONTAINS {quantity: 1}]->(arm),
+  (o5)-[:CONTAINS {quantity: 2}]->(arm),
+  (o6)-[:CONTAINS {quantity: 1}]->(desk),
+  (o7)-[:CONTAINS {quantity: 2}]->(chair),
+  (o8)-[:CONTAINS {quantity: 1}]->(desk);
