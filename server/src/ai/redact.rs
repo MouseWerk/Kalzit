@@ -52,6 +52,27 @@ impl DataPolicy {
         Self { readable: access.readable, excluded, max_rows }
     }
 
+    /// The rules for a result made from several sources (a panel's steps join or combine their
+    /// queries): readable only when every source is, with the excluded fields of all of them and
+    /// the smallest row limit.
+    pub fn merged<'a>(policies: impl IntoIterator<Item = &'a DataPolicy>) -> Self {
+        let mut out = Self { readable: true, excluded: Vec::new(), max_rows: usize::MAX };
+        for p in policies {
+            out.readable &= p.readable;
+            out.max_rows = out.max_rows.min(p.max_rows);
+            for e in &p.excluded {
+                if !out.excluded.contains(e) {
+                    out.excluded.push(e.clone());
+                }
+            }
+        }
+        if out.max_rows == usize::MAX {
+            out.max_rows = 0;
+            out.readable = false;
+        }
+        out
+    }
+
     /// Whether the value at `path` (a field name or dotted path) is excluded.
     pub fn excludes(&self, path: &str) -> bool {
         let path = fold(path);

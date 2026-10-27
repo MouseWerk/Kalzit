@@ -1,0 +1,180 @@
+@layer components {
+  /*
+   * The AI calls after the board docs/design/blueprint/AI.dc.html (frames 7 to 9): the tools in
+   * Explore's query header, the answer card with its states, the first-use notice. Tokens only;
+   * the sparkle mark is neutral, and nothing is framed in an accent or status color.
+   */
+  .ai-tools {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .ai-tools__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .ai-tools__limit {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .ai-tools__ask {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .ai-tools__request {
+    flex: 1 1 var(--size-ai-request);
+    min-width: 0;
+    resize: vertical;
+  }
+
+  .ai-tools__ask-actions {
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .ai-answer {
+    display: flex;
+    flex-direction: column;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    overflow: hidden;
+  }
+
+  .ai-answer__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .ai-answer__mark {
+    align-self: center;
+    color: var(--text-muted);
+  }
+
+  .ai-answer__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ai-answer__who,
+  .ai-answer__state {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .ai-answer__state {
+    margin-left: auto;
+    letter-spacing: var(--letter-spacing-caps);
+  }
+
+  .ai-answer__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    line-height: var(--line-height-relaxed);
+  }
+
+  .ai-answer__body p,
+  .ai-answer__text p {
+    margin: 0;
+  }
+
+  .ai-answer__text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    overflow-wrap: anywhere;
+  }
+
+  .ai-answer__code {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .ai-answer__code--draft {
+    min-height: calc(var(--control-height) * 2);
+  }
+
+  .ai-answer__waiting,
+  .ai-answer__hint,
+  .ai-answer__footnote {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .ai-answer__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .ai-answer__actions:empty {
+    display: none;
+  }
+
+  .ai-notice {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    line-height: var(--line-height-relaxed);
+  }
+
+  .ai-notice p {
+    margin: 0;
+  }
+
+  .ai-notice__list {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+  }
+
+  .ai-notice__list dt {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ai-notice__list dd {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .ai-notice__addition {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    white-space: pre-wrap;
+  }
+
+  .ai-notice__once {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+}

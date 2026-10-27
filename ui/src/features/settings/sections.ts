@@ -13,6 +13,8 @@ export type SectionKind =
   | "settings"
   | "appearance"
   | "planned"
+  | "ai"
+  | "aiOrg"
   | "updates"
   | "profile"
   | "shortcuts"
@@ -172,19 +174,17 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
-    // The page follows the board docs/design/blueprint/AI.dc.html in its own package; until then
-    // the section says so. The organization's AI keys belong to "KI der Organisation" there.
+    // The page follows the board docs/design/blueprint/AI.dc.html, frames 1 to 4 and 7. The
+    // organization's AI keys belong to "AI of the organization" (frame 5).
     id: "ai",
     group: "server",
-    kind: "planned",
+    kind: "ai",
     label: "settings.section.ai.label",
     lead: "settings.section.ai.lead",
     keywords: "settings.section.ai.keywords",
-    planned: "settings.planned.ai",
     keys: [
       "ai.enabled",
       "ai.allow_org_providers",
-      "ai.org_enabled",
       "ai.user_requests_per_day",
       "ai.user_tokens_per_day",
       "ai.org_tokens_per_month",
@@ -195,6 +195,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "ai.max_concurrent_per_user",
       "ai.request_timeout_secs",
       "ai.chat_retention_days",
+      "ai.notice_text",
     ],
     visible: serverAdmin,
   },
@@ -240,6 +241,22 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.week_start",
       "dashboards.default_time_range",
       "dashboards.new_in_team_space",
+    ],
+    visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
+  },
+  {
+    id: "org-ai",
+    group: "org",
+    kind: "aiOrg",
+    label: "settings.section.orgAi.label",
+    lead: "settings.section.orgAi.lead",
+    keywords: "settings.section.orgAi.keywords",
+    keys: [
+      "ai.org_enabled",
+      "ai.user_requests_per_day",
+      "ai.user_tokens_per_day",
+      "ai.org_tokens_per_month",
+      "ai.chat_retention_days",
     ],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
   },

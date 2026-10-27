@@ -67,6 +67,7 @@ export function useSettingChanges({
   queryKey,
   patch,
   reset,
+  reasonText,
 }: {
   queryKey: QueryKey;
   patch: (key: string, value: unknown, version: number) => Promise<Setting>;
@@ -75,6 +76,11 @@ export function useSettingChanges({
    * had no value of its own uses it, so undo does not store a copy of the default.
    */
   reset?: (key: string, version: number) => Promise<Setting>;
+  /**
+   * The text of a refusal that carries a reason (`ai.enable_needs_tested_provider`), shown at
+   * the setting's field like a rejected value; undefined leaves the error to the generic text.
+   */
+  reasonText?: (error: unknown) => string | undefined;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -169,6 +175,12 @@ export function useSettingChanges({
       if (isApiError(error, "validation") && error.field === "value") {
         notice.clear();
         setRejected({ key, message: errorText(t, error, SETTING_ERRORS) });
+        return;
+      }
+      const reason = isApiError(error, "version_conflict") ? undefined : reasonText?.(error);
+      if (reason !== undefined) {
+        notice.clear();
+        setRejected({ key, message: reason });
         return;
       }
       if (!isApiError(error, "version_conflict")) {

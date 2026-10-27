@@ -470,6 +470,8 @@
   "admin.settings.ai.max_concurrent_per_user.description": "How many AI calls one user may have running at once.",
   "admin.settings.ai.chat_retention_days.label": "AI chat retention (days)",
   "admin.settings.ai.chat_retention_days.description": "AI chats are deleted this many days after their last message; 0 keeps no chats. Organizations can only choose a shorter time. Applies once chats are stored.",
+  "admin.settings.ai.notice_text.label": "AI notice addition",
+  "admin.settings.ai.notice_text.description": "A paragraph of your own under the notice about which data leaves the server, which everyone sees before their first AI call.",
   "admin.settings.audit.retention_days.label": "Audit log retention (days)",
   "admin.settings.audit.retention_days.description": "Audit events are deleted after this many days, since they can hold client addresses.",
   "admin.settings.appearance.default_language.label": "Default language",

@@ -470,6 +470,8 @@
   "admin.settings.ai.max_concurrent_per_user.description": "So viele KI-Aufrufe darf ein Benutzer gleichzeitig laufen lassen.",
   "admin.settings.ai.chat_retention_days.label": "Aufbewahrung von KI-Chats (Tage)",
   "admin.settings.ai.chat_retention_days.description": "KI-Chats werden so viele Tage nach ihrer letzten Nachricht gelöscht; 0 speichert keine Chats. Organisationen können nur kürzer wählen. Gilt, sobald Chats gespeichert werden.",
+  "admin.settings.ai.notice_text.label": "Zusatz zum KI-Hinweis",
+  "admin.settings.ai.notice_text.description": "Ein eigener Absatz unter dem Hinweis, welche Daten den Server verlassen; alle sehen ihn vor ihrem ersten KI-Aufruf.",
   "admin.settings.audit.retention_days.label": "Aufbewahrung des Audit-Logs (Tage)",
   "admin.settings.audit.retention_days.description": "Audit-Ereignisse werden nach so vielen Tagen gelöscht, weil sie Client-Adressen enthalten können.",
   "admin.settings.appearance.default_language.label": "Standardsprache",

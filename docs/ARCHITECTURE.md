@@ -748,7 +748,7 @@ query, summarize a result, the agent chat) come after it and must go through it.
 - **Off by default, one switch.** `ai.enabled` (server setting, default `false`) gates every AI
   call (`409 ai_unavailable`, `ai.disabled`). `GET /api/orgs/{orgId}/ai/status` tells the UI
   whether AI is usable (on and a provider in effect). Off, it answers only
-  `{"enabled": false, "usable": false}`. Every AI element in the UI sits inside `AiGate`
+  `{"enabled": false, "usable": false, "orgProvidersAllowed": ...}`. Every AI element in the UI sits inside `AiGate`
   (`ui/src/features/ai`), which renders nothing unless the status says usable, so without a
   connected provider there is no AI button, menu entry, placeholder or hint.
 - **One provider interface** (`server/src/ai/mod.rs`, trait `Provider`): a `ChatRequest`
@@ -833,8 +833,23 @@ query, summarize a result, the agent chat) come after it and must go through it.
   `ai::service::chat_retention_days`) after their last message; nobody else reads them, admins
   included. Usage rows hold counts only. The audit retention covers the call entries.
 - **Screens.** The approved board is `docs/design/blueprint/AI.dc.html` (Verwaltung > KI, KI der
-  Organisation, the source's KI tab with "Felder ausnehmen", the notice, explain and draft in
-  Explore). Until its package lands, the settings page shows a planned AI section.
+  Organisation, the source's KI part with "Felder ausnehmen", the notice, explain and draft in
+  Explore, summarize at the result and in the panel menu). The UI lives in `ui/src/features/ai`.
+- **Plain calls** (`server/src/routes/ai_calls.rs`, docs/api/ai.md "Explain, draft and
+  summarize"): explain, draft and summarize call `ai::service::stream` with the feature's
+  versioned prompt (`ai::prompts`) and answer with server-sent events (`meta`, `text`, `done` or
+  `error`). Not the live WebSocket: each call is one request and one answer, and closing the
+  request cancels the call, which the service then counts and audits as `cancelled`. Explain and
+  draft need `datasources:query` on the source and add its schema only when it is open to AI.
+  Summaries run the query again on the server as the caller (a free query in Explore, or a
+  panel's stored queries for whoever may read the dashboard), refuse a closed source before
+  anything runs, and pass the results through `ai::redact`; a panel's own steps run on the server
+  first and its hidden queries stay out. The switch, provider, notice and
+  daily limits are checked first (`service::precheck`), so a refused call runs no query. A draft
+  is only returned in the source's query form; running it goes through the normal read-only
+  checks. Untrusted text (queries, requests, titles, schemas, results) goes into the user message
+  in `<kalzit:...>` blocks that cannot be closed from inside; the system prompt names the blocks
+  as data whose instructions are never followed.
 - **Prompt injection (for the tool use that comes with the chat).** Everything that comes back
   from a data source, a document or a web page is untrusted input to the model: it may contain
   text written to steer it. So tools are read-only by construction (they run queries through the
