@@ -58,8 +58,12 @@ off, never a hidden conversion in the backend.
   variables).
 - Visualizations for documents: document list with an expandable tree, single document card,
   schema (field paths with types and coverage) and field distribution.
-- Visualizations for graphs: network (WebGL), hierarchy and path panels; expand a node's
-  neighbourhood step by step and undo each step.
+- Visualizations for graphs: network (WebGL), hierarchy and path panels; node details with typed
+  properties and neighbours by edge type, multi-selection and pins kept per viewer; an explorer
+  that loads a node's neighbourhood step by step, with going back, cancel and undo, and opens
+  the exploration as a Cypher query in Explore.
+- Variables across result shapes: a click on a document, a table row or a graph node sets a
+  variable that SQL, Cypher, GSQL and MongoDB queries take as a parameter.
 - Time series graph styles: lines, bars or points, smooth or stepped lines, dashed or dotted
   lines, fills and hatching with gradients, stacking (also to 100 %) and muted comparison series,
   each settable per series through an override.
@@ -88,6 +92,9 @@ again at an interval.
   (also across two joined queries), statistics (sum, mean, median, percentiles, standard
   deviation), trend line, moving average, correlation, comparison with the previous week, month
   or year, group and pivot, and the `toFrame` projection for documents.
+- Graph steps: counts per label and edge type, degree distribution, top N by degree, shared
+  neighbours, degree as a property, a filtered subgraph and a table from the graph; Neo4j and
+  Memgraph run them in the database where they can, and each step shows where it runs.
 - Each step can be moved, turned off and removed, with a preview after every step; the queries
   themselves stay as they are.
 - The browser and the server run the same steps with the same rules (a shared conformance
@@ -187,9 +194,17 @@ The images come from the real application with demo data (`npm run screenshots` 
 | ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
 | Time picker, dark theme | Dashboard in edit mode, dark theme |
 | ![A dashboard on a phone with the top bar and the toolbar in two rows](docs/screenshots/dashboard-phone.png) | ![A dashboard with live updates on: each panel says how it stays current](docs/screenshots/dashboard-live-dark.png) |
+| Dashboard on a phone | Live updates, dark theme |
 | ![Explore with a saved analysis open, its name above the toolbar](docs/screenshots/explore-saved.png) | ![The list of saved analyses with data source, creator and use in dashboards](docs/screenshots/analyses.png) |
+| Explore with a saved analysis | Saved analyses |
 | ![A saved analysis opened by a viewer to view and run](docs/screenshots/analysis-view.png) | ![Explore on a MongoDB collection with the field distribution counted over all documents of the result](docs/screenshots/explore-distribution-dark.png) |
-| Dashboard on a phone | |
+| A saved analysis for a viewer | Field distribution on MongoDB, dark theme |
+| ![Network, hierarchy, path and explorer panels on a Neo4j shop graph, dark theme](docs/screenshots/graph-panels-dark.png) | ![The same graph panels in the light theme](docs/screenshots/graph-panels-light.png) |
+| Graph panels on Neo4j, dark theme | Graph panels, light theme |
+| ![A network panel with a customer selected and the node details beside the drawing](docs/screenshots/graph-inspector-dark.png) | ![Explorer mode: a customer's orders loaded as a step in the Steps line](docs/screenshots/graph-explorer-dark.png) |
+| Node details | Explorer mode |
+| ![A category tree as a hierarchy in layers](docs/screenshots/graph-hierarchy-dark.png) | ![A shortest path from a customer to a product, node, relationship, node](docs/screenshots/graph-path-dark.png) |
+| Hierarchy | Paths |
 | ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
 | Settings, dark theme | Settings, light theme |
 | ![Settings on a phone](docs/screenshots/settings-phone.png) | ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) |
@@ -411,7 +426,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M0 Foundation | Server with HTTP and HTTPS, own database with migrations, first-run setup, local sign-in, design tokens, i18n, CI on Windows and Linux | Done |
 | M1 Core | Organizations, teams, roles and permissions, administration, audit log, dashboards, SQL and Prometheus sources, Explore, analysis steps, export | Done |
 | M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, saved analyses, live updates with change streams, Docker image | Done |
-| M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels, explorer mode | Largely done |
+| M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels with node details, explorer mode, graph steps, variables across result shapes, new sign-in and setup with sample data | Done |
 | M4 Plugins | External plugin processes, manifest, signatures, catalog, Rust SDK | Planned |
 | M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, InfluxDB, Loki, ClickHouse | Planned |
 | M6 Expansion | Alerting, public links, provisioning as code, further sources (Graphite, Redis, Oracle, traces) | Planned |

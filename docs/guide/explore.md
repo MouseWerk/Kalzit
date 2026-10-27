@@ -88,6 +88,17 @@ stage is not saved with the query.
 A file source shows the file, how it is read and its columns. An HTTP JSON source sends only `GET`
 requests; its preview shows the request.
 
+### Graph sources
+
+The Cypher editor (Neo4j, Memgraph) suggests labels, relationship types and property keys from
+the database; every query runs in a read transaction. Variables reach Cypher as parameters
+(`$customerId`). For TigerGraph choose **Write GSQL** for an interpreted query
+(`INTERPRET QUERY (STRING name) FOR GRAPH Shop { ... }`) or **Run an installed query** and pick
+one of the graph's installed queries; the editor lists its parameters with their types, and a
+parameter left empty takes the dashboard variable of the same name. GSQL takes variables only as
+declared parameters: `$name` written into GSQL code is refused with a hint. See
+[Data sources](data-sources.md#read-only) for the read-only login and the REST++ warning.
+
 ## Result shapes
 
 Every result keeps its native shape. Conversions are explicit steps you add.
@@ -118,7 +129,11 @@ the next ones.
 
 A `graph` result stays nodes and edges: the **Network**, **Hierarchy** or **Paths** panel
 ([panels](panels.md#graph-panels)). Return paths from the query (for example with `shortestPath`)
-to use the path panel. In explorer mode a click loads a node's neighbours.
+to use the path panel. In explorer mode a click loads a node's neighbours. An exploration on a
+dashboard panel opens here as a Cypher query with **Open as a query in Explore**; it opens unrun,
+so you can read it before you press **Run query**.
+
+![A network of customers, orders and products from Neo4j](../screenshots/graph-network-dark.png)
 
 ## Steps
 
@@ -130,9 +145,9 @@ the previous period, group, pivot and the documents projection. The queries stay
 ### Graph steps
 
 When the query answers a graph, "Add step" offers graph steps first: "Count per label",
-"Count per edge type", "Degree distribution", "Top N by degree", "Shared neighbours" (such as
-customers who bought the same products), "Calculate degree" and "Filter subgraph" (both stay a
-graph) and "Turn into a table" (nodes or edges with the
+"Count per edge type", "Degree distribution", "Shared neighbours" (such as customers who bought
+the same products), "Top N by degree", "Calculate degree" (the degree as a node property) and
+"Filter subgraph" (these three stay a graph) and "Turn into a table" (nodes or edges with the
 properties you pick as rows). Each step shows the shape it reads and makes ("Graph → Table") and
 where it runs: "Runs in Neo4j (Cypher)" for the first graph step of a Neo4j or Memgraph query,
 which then counts over the whole result, not only the nodes drawn; "Runs on the server" for the

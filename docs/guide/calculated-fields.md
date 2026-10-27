@@ -120,6 +120,16 @@ text or true/false). A column's values that do not fit its type are empty. A res
 is a table passes unchanged. You edit the projection in the documents panel's editor; steps after
 it work on the table. At most 200 columns.
 
+## Graph steps
+
+On a `graph` result the steps start with graph steps: **Count per label**, **Count per edge
+type**, **Degree distribution**, **Top N by degree**, **Shared neighbours**, **Calculate degree**,
+**Filter subgraph** and **Turn into a table**. Each says which shape it reads and makes
+("Graph → Table") and where it runs: for Neo4j and Memgraph the first graph step runs in the
+database as Cypher and counts over the whole result; the others run on the server. Once a step has
+made a table, the table steps above (group, statistics, calculated fields) follow. Details and an
+example: [Explore, graph steps](explore.md#graph-steps).
+
 ## Limits
 
 A step makes at most 5,000,000 cells (rows times fields) and the steps of one run at most

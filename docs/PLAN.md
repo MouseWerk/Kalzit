@@ -369,6 +369,20 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    werden zum `graph`, Knoten-ID ist Typ plus ID, Kanten-IDs werden abgeleitet; Kanten erscheinen
    nur, wenn die Abfrage sie ausgibt; andere `PRINT`-Werte werden zum `frame`), Netzwerk-,
    Hierarchie- und Pfad-Panel, Explorer-Modus, Graph-Aggregationen, Variablen über Formen hinweg.
+   **Stand: abgeschlossen (Oktober 2026, Version 0.3.0).** Enthalten: Neo4j, Memgraph und
+   TigerGraph mit Cypher- und GSQL-Editor; Netzwerk-, Hierarchie- und Pfad-Panel mit
+   Knotendetails, Mehrfachauswahl, Pins und pro Betrachter gespeicherter Ansicht; Explorer mit
+   Schrittleiste, Rücknahme, Abbruch und „Als Abfrage in Explore öffnen“; Graph-Schritte (Zählen,
+   Grad, Top N, gemeinsame Nachbarn, Graph zu Tabelle), bei Neo4j und Memgraph als Cypher in der
+   Datenbank; Variablen über alle drei Formen (Klick auf Dokument, Zeile oder Knoten, Cypher- und
+   GSQL-Parameter, Abfragevariablen aus Graphen und Dokumenten); dazu die neue Anmeldung und
+   Ersteinrichtung mit Prüfung des Einrichtungscodes, Beispieldaten und mitgelieferter Hilfe.
+   Die Hierarchie behält das eigene Schichten-Layout; ELK bleibt ein optionales Layout für M5.
+   Der Explorer bleibt für TigerGraph-Quellen aus; seine Nachbarschaftsabfragen sind Cypher.
+   TigerGraph prüft ein nächtlicher Lauf gegen die echte Community Edition (mit REST++-
+   Authentifizierung, `queryreader` und typisierten Parametern installierter Abfragen); Test
+   connection warnt bei REST++ ohne Authentifizierung. Neo4j und Memgraph laufen in den E2E-Tests
+   unter Linux; unter Windows deckt sie die Checkliste der Release Notes ab.
 5. **M4 Plugins und KI**: externe Plugin-Prozesse, Manifest, Signaturen, Katalog, Rust-SDK,
    Beispiel-Plugins (eine Datenquelle, ein Panel). Eingebaute KI-Funktionen über eine
    Anbieter-Schnittstelle: OpenAI und OpenAI-kompatible APIs, LiteLLM als Proxy, weitere Anbieter
