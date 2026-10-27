@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
@@ -15,6 +15,7 @@ import { Page } from "../../components/Page";
 import { STACK_ROLES } from "../../components/stackTable";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import { stillOnRoute } from "../../lib/stillOnRoute";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useTeamContext } from "../../org/teamContext";
@@ -70,6 +71,7 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
   const userId = appRoute.useRouteContext().me.id;
   const search = listRoute.useSearch();
   const navigate = listRoute.useNavigate();
+  const router = useRouter();
   const searchId = useId();
   // The team context scopes the tree and the list; both wait for it, so they load once.
   const teams = useTeamContext();
@@ -99,7 +101,9 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
   const [query, setQuery] = useState(search.q ?? "");
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      if (query !== (search.q ?? "")) {
+      // A dashboard opened within the pause leaves the list while it still shows (its page is
+      // loading); the search must not take the person back to the list then.
+      if (query !== (search.q ?? "") && stillOnRoute(router, listRoute.id)) {
         void navigate({
           search: (prev) => ({ ...prev, q: query === "" ? undefined : query }),
           replace: true,
@@ -107,7 +111,7 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
       }
     }, SEARCH_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [query, search.q, navigate]);
+  }, [query, search.q, navigate, router]);
   const folder = folders.data?.find((f) => f.id === search.folder);
   // Creating a dashboard in the selected folder follows that folder's `access.write` (a grant on
   // it counts); at the top level, and for folders and the trash, the organization role decides.

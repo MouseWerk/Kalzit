@@ -221,6 +221,33 @@ describe("the list of saved analyses", () => {
     expect(screen.getByText("2 analyses in All analyses")).toBeTruthy();
   });
 
+  it("writes the search into the address after a pause in typing", async () => {
+    const server = setup();
+    addAnalysis(server.areas.analyses, { title: "Customers", datasourceId: PG_ID, query: {} });
+    const { user, location } = renderApp("/explore/saved/");
+    await screen.findByRole("table");
+    await user.type(screen.getByRole("searchbox", { name: "Search analyses" }), "Cust");
+    await waitFor(() => expect(location().search).toEqual({ q: "Cust" }));
+    expect(location().pathname).toBe("/explore/saved");
+  });
+
+  it("stays on an analysis opened before the search's pause ended", async () => {
+    const server = setup();
+    const payments = addAnalysis(server.areas.analyses, {
+      title: "Payments",
+      datasourceId: PG_ID,
+      query: {},
+    });
+    server.areas.analyses.noQuery.add(payments.id);
+    const { user, location } = renderApp("/explore/saved");
+    const table = await screen.findByRole("table");
+    await user.type(screen.getByRole("searchbox", { name: "Search analyses" }), "Pay");
+    await user.click(within(table).getByRole("link", { name: "Open Payments" }));
+    // Longer than the pause (250 ms): a search that still landed would take us back.
+    await act(() => new Promise((done) => setTimeout(done, 400)));
+    expect(location().pathname).toBe(`/explore/saved/${payments.id}`);
+  });
+
   it("names who created and saved each analysis, as the server answers", async () => {
     const server = setup();
     addAnalysis(server.areas.analyses, {

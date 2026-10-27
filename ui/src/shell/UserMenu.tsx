@@ -49,7 +49,12 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const menu = useMenuButton({ onOpen: () => signOut.reset() });
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   const signOut = useMutation({
-    mutationFn: logout,
+    mutationFn: async () => {
+      // Reads still under way are stopped first: answered after the session ended, they would
+      // come back as 401 errors of a page that is being left.
+      await queryClient.cancelQueries();
+      await logout();
+    },
     onSuccess: async () => {
       // Nothing chosen in this session passes to whoever signs in next in this browser.
       clearChoice();

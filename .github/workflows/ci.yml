@@ -467,10 +467,34 @@ jobs:
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh ready
+      # Windows: a page load failed with net::ERR_NO_BUFFER_SPACE in about a third of the runs
+      # (Winsock WSAENOBUFS on connect, one request of a burst, at any time in the run). The
+      # runner's dynamic port range is 49152 to 65535 (16,384 ports), and the run leaves up to
+      # 1,070 loopback connections in TIME_WAIT (each closed browser context's connections, held
+      # for minutes). Chromium on Windows 11 22H2 and later picks a random source port
+      # (TcpPortRandomizationWin); the likely cause is a pick that meets a port still in TIME_WAIT
+      # towards the same server. A range more than three times as large makes such a pick that
+      # much rarer. It starts at 10000, clear of the service ports below it (WinRM 5985 and 5986,
+      # and the like); a port in use or excluded (47001 on the runner) is never handed out. The
+      # watch records the counts, so a failure can be read against them; it pauses while the
+      # performance budgets run (KALZIT_E2E_QUIET_FILE), so it adds no CPU load to them.
+      - name: Widen the dynamic port range
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        run: netsh int ipv4 set dynamicport tcp start=10000 num=55535
+      - name: Watch TCP connections
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/tcp-watch.ps1 start
       - run: npm run e2e
         if: env.RUN_JOB == 'true'
         timeout-minutes: 15
         working-directory: ui
+        env:
+          KALZIT_E2E_QUIET_FILE: ${{ runner.os == 'Windows' && format('{0}/tcp-watch.pause', runner.temp) || '' }}
+      - name: TCP connections during the run
+        if: ${{ !cancelled() && env.RUN_JOB == 'true' && runner.os == 'Windows' }}
+        shell: pwsh
+        run: .github/scripts/tcp-watch.ps1 report
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !success() }}
         with:

@@ -2080,7 +2080,12 @@ pub async fn check_unsaved(
         }
         Ok::<_, SourceError>(kind.plugin.health(&conn).await)
     };
-    let health = match tokio::time::timeout(timeout, run).await {
+    let outcome = tokio::time::timeout(timeout, run).await;
+    // The probe's SQLite pool is closed before the answer, not dropped: a dropped pool closes
+    // its connections later, in the background, and until then the file stays open (on Windows
+    // it cannot be moved or deleted).
+    conn.close().await;
+    let health = match outcome {
         Ok(Ok(health)) => health,
         Ok(Err(e)) => {
             let detail = e.detail().scrubbed(|t| conn.scrub(t));

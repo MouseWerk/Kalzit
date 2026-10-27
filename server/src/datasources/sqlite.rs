@@ -27,6 +27,8 @@ const SETTINGS: &[SettingField] =
 const POOL_SIZE: u32 = 4;
 /// Tables listed in the schema.
 const MAX_SCHEMA_TABLES: usize = 2_000;
+/// How long a read waits for another program's write lock on the file.
+const BUSY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// SQLite virtual machine steps between checks for timeout and cancellation.
 const PROGRESS_STEPS: i32 = 10_000;
 
@@ -58,7 +60,12 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlitePool>, SourceError> {
             // is cached: a query prepares three statements (the schema read in `query`, the
             // user's statement for its columns, and the same statement again to run it), about
             // 0.25 ms in all.
-            .statement_cache_capacity(0);
+            .statement_cache_capacity(0)
+            // Another program writing the file holds its lock for a moment; a read waits for it
+            // instead of failing with "database is locked". Without a wait, 522 of 866 reads beside
+            // a writer that inserted one row at a time failed; with it, none of 530 did. (This is
+            // sqlx's default too; it is set here so the source does not depend on it.)
+            .busy_timeout(BUSY_WAIT);
         SqlitePoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)

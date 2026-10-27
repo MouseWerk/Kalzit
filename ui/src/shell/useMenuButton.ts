@@ -44,22 +44,29 @@ export function useMenuButton(options: { onOpen?: () => void } = {}) {
 
   useEscapeLayer(open, () => closeMenu(true));
 
-  // Runs after every render while open, until focus has moved into the menu: items that arrive
-  // after it opened (permissions or teams still loading) get the focus the opening asked for.
-  const focused = useRef(false);
+  // Runs after every render while open: items that arrive after the menu opened (permissions or
+  // teams still loading) get the focus the opening asked for. An item that arrives ahead of the
+  // one focused takes the focus over, as long as it still rests where the opening put it; once
+  // the person moved it, it stays where they put it (an item that went away hands it on).
+  const placed = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!open) {
-      focused.current = false;
+      placed.current = null;
       return;
     }
-    if (focused.current) {
+    const active = document.activeElement;
+    const moved =
+      placed.current !== null &&
+      active !== placed.current &&
+      (placed.current.isConnected || menuRef.current?.contains(active) === true);
+    if (moved) {
       return;
     }
     const items = menuItems(menuRef.current);
     const target = focusTarget === "last" ? items.at(-1) : items[0];
-    if (target !== undefined) {
+    if (target !== undefined && target !== placed.current) {
       target.focus();
-      focused.current = true;
+      placed.current = target;
     }
   });
 
