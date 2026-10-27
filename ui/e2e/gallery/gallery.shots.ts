@@ -882,7 +882,12 @@ for (const scheme of SCHEMES) {
 
 /** Loads the neighbours of a node in explorer mode, from the node's row in the panel's table. */
 async function expand(around: Locator, node: string): Promise<void> {
-  await around.getByRole("button", { name: node, exact: true }).click();
+  // The node's row in the table of nodes; the details list it among the neighbours too.
+  await around
+    .getByRole("table", { name: /./ })
+    .first()
+    .getByRole("button", { name: node, exact: true })
+    .click();
   // The click loads the neighbours at once once the panel knows the source may be queried;
   // before that it only selects, and the details offer the same action.
   const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
