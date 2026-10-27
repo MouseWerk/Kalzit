@@ -888,8 +888,17 @@ const STEPS_SETUP: &[&str] = &[
 impl T {
     /// One query with graph steps (`QueryItem.steps`), its outcome.
     async fn query_steps(&self, id: &str, cypher: &str, steps: Value) -> Value {
+        self.query_steps_limited(id, cypher, steps, None).await
+    }
+
+    /// `query_steps` with the row limit `limit`.
+    async fn query_steps_limited(&self, id: &str, cypher: &str, steps: Value, limit: Option<u32>) -> Value {
+        let mut item = json!({ "refId": "A", "datasourceId": id, "query": { "cypher": cypher }, "steps": steps });
+        if let Some(limit) = limit {
+            item["limit"] = json!(limit);
+        }
         let body = json!({
-            "queries": [{ "refId": "A", "datasourceId": id, "query": { "cypher": cypher }, "steps": steps }],
+            "queries": [item],
             "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 },
             "variables": {}
         });
@@ -917,11 +926,14 @@ fn ids(graph: &Value, what: &str) -> Vec<String> {
 }
 
 /// Graph steps run in the database answer what the server's engine answers on the same graph:
-/// the query with named columns runs the step in Cypher, the same query with `RETURN *` (whose
-/// columns Kalzit does not name) runs it on the server.
+/// the query with named columns runs the step in Cypher, the same query with `RETURN *` or an
+/// unnamed expression (whose columns Kalzit does not name) runs it on the server. Also for a query
+/// that returns only relationships, whose end nodes both count as nodes without labels.
 async fn graph_steps(t: &T, id: &str) {
     let named = "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN n, r, m";
     let star = "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN *";
+    let rels = "MATCH (:GsKunde)-[r]->(:KalzitSteps) RETURN r";
+    let rels_unnamed = "MATCH (:GsKunde)-[r]->(:KalzitSteps) RETURN [r][0]";
     let one = |step: Value| {
         let mut s = step;
         s["id"] = json!("s");
@@ -938,13 +950,17 @@ async fn graph_steps(t: &T, id: &str) {
         json!({ "type": "sharedNeighbours", "label": "GsKunde", "via": "GsProdukt", "min": 1, "limit": 10, "name": "name" }),
         json!({ "type": "sharedNeighbours", "label": "GsKunde", "via": "GsProdukt", "edgeType": "GS_KAUFTE",
                 "min": 2, "limit": 1 }),
-    ] {
+    ]
+    .into_iter()
+    .flat_map(|step| [(step.clone(), named, star), (step, rels, rels_unnamed)])
+    {
+        let (step, named, star) = step;
         let db = t.query_steps(id, named, one(step.clone())).await;
         if db["steps"][0]["ranIn"] != "database" {
             // Why the database did not run it: the generated query run as a query says so.
             let kind = kalzit::analysis::parse_step(&one(step.clone())[0]).unwrap().kind;
             for dialect in [kalzit::analysis::pushdown::Dialect::Neo4j, kalzit::analysis::pushdown::Dialect::Memgraph] {
-                let q = kalzit::analysis::pushdown::cypher(named, &kind, dialect).unwrap();
+                let q = kalzit::analysis::pushdown::cypher(named, &kind, dialect, 10_000).unwrap();
                 eprintln!("{dialect:?}:\n{q}\n=> {}", t.query(id, json!({ "cypher": q })).await);
             }
         }
@@ -967,6 +983,19 @@ async fn graph_steps(t: &T, id: &str) {
         // The inspector shows the Cypher that ran.
         assert!(d["frame"]["meta"]["executedQuery"].as_str().unwrap().contains("CALL"), "{db}");
     }
+    let (named, star) = (
+        "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN n, r, m",
+        "MATCH (n:KalzitSteps) OPTIONAL MATCH (n)-[r]->(m:KalzitSteps) RETURN *",
+    );
+    // The row limit holds in the database too, and a cut is said.
+    for query in [named, star] {
+        let r = t.query_steps_limited(id, query, one(json!({ "type": "countLabels" })), Some(3)).await;
+        assert_eq!(r["result"]["frame"]["meta"]["rowsTruncated"], true, "{query}: {r}");
+        let r = t.query_steps_limited(id, query, one(json!({ "type": "topDegree", "n": 2 })), Some(3)).await;
+        assert!(r["result"]["graph"]["truncated"].is_object(), "{query}: {r}");
+    }
+    let r = t.query_steps_limited(id, named, one(json!({ "type": "countLabels" })), Some(1000)).await;
+    assert_eq!(r["result"]["frame"]["meta"]["rowsTruncated"], false, "{r}");
     // What the counts are: the loop counts twice, the lone node has no edge.
     let r = t.query_steps(id, named, one(json!({ "type": "degreeDistribution" }))).await;
     let fields = &r["result"]["frame"]["fields"];

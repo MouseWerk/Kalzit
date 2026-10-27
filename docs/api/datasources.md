@@ -907,15 +907,22 @@ A query item may carry graph steps (`"steps": [...]`, the forms in docs/api/sett
   read-only check and parameter rules as any query, and `executedQuery` shows it. This works when
   every column of the query's last `RETURN` is a variable or has `AS name`; `RETURN *`,
   expressions without a name, `UNION`, `EXPLAIN`, `PROFILE` and a `CYPHER` prefix keep the step on
-  the server. A source that cannot run the generated query (an older version) answers as if it
-  had not been tried. One difference: an edge whose end the query did not return has that end
-  with its labels in the database, but only as an id on the server.
+  the server. The database reads the query's rows up to the same row limit as the server and
+  says when it cut them (`rowsTruncated`, or a cut graph, with the notice `graph.row_limit`).
+  Shared neighbours count their pairs first and are made in the database only within the
+  server's cell budget. The source gets half of the query timeout for the step; when it cannot
+  run the generated query in that time, or at all (an older version), the query runs as written
+  and the server runs the step, and that source is not asked again for that query for ten
+  minutes.
 - `server`: every other graph step, on the result as the query answered it.
 - A step that fails carries `error` (an error body, reason `steps.*`); the result is the one
-  before it, and the steps after it do not run.
+  before it, and the steps after it do not run. A stored step that no longer passes the checks
+  answers `steps.invalid` the same way; the panel still shows the result before it.
 
 A dashboard's stored queries carry their panel's enabled graph steps the same way; exports run
-them before the panel's other steps.
+them before the panel's other steps. Since they run in the data source with the query, adding or
+changing a graph step of a stored query (on a dashboard, a library panel or a saved analysis)
+needs `datasources:query` on its source, as changing the query does.
 
 ### Graph results
 

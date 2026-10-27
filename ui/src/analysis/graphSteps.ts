@@ -37,7 +37,35 @@ export type GraphStepKind =
       min: number;
       limit: number;
       name?: string;
+    }
+  /** "Grad berechnen": every node gets its degree as the property `name` (`degree`). */
+  | { type: "degree"; frame: string; direction?: Direction; name?: string }
+  /** "Teilgraph filtern": nodes with one of `labels` passing `property`, edges of `edgeTypes`. */
+  | {
+      type: "filterGraph";
+      frame: string;
+      labels?: string[];
+      edgeTypes?: string[];
+      property?: PropertyFilter;
     };
+
+export type PropertyOp = "exists" | "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "contains";
+export const PROPERTY_OPS: readonly PropertyOp[] = [
+  "exists",
+  "eq",
+  "ne",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "contains",
+];
+
+export interface PropertyFilter {
+  key: string;
+  op: PropertyOp;
+  value?: string | number | boolean;
+}
 
 /** The server's bounds (server/src/analysis/mod.rs). */
 export const MAX_TOP_NODES = 1000;
@@ -101,6 +129,12 @@ export function applyGraphStep(
       return { frame: degreeDistribution(graph, step.direction ?? "both") };
     case "topDegree":
       return { graph: topDegree(graph, step.n, step.label, step.direction ?? "both") };
+    case "degree":
+      return { graph: withDegree(graph, step.direction ?? "both", step.name ?? "degree") };
+    case "filterGraph":
+      return {
+        graph: filterGraph(graph, step.labels ?? [], step.edgeTypes ?? [], step.property),
+      };
     case "sharedNeighbours":
       return { frame: sharedNeighbours(graph, step, maxCells) };
     case "toFrame":
@@ -339,4 +373,99 @@ function sharedNeighbours(
       rows.map((r) => [...r.vs].sort(textOrder).map(display)),
     ),
   ]);
+}
+
+/** The graph with every node's degree as the property `name` (replacing one of that name). */
+function withDegree(graph: GraphSet, direction: Direction, name: string): GraphSet {
+  const deg = degrees(graph, direction);
+  const nodes = graph.nodes.map((n, i) => ({
+    ...n,
+    properties: { ...n.properties, [name]: deg[i] ?? 0 },
+  }));
+  const out: GraphSet = { ...graph, nodes, schema: schemaOf(nodes, graph.edges) };
+  return out;
+}
+
+const PLAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+/**
+ * A property value as a number: a JSON number, or the text of a typed 64-bit integer, float or
+ * decimal (`{"$type": "int64", "value": "..."}`).
+ */
+function numberOf(v: unknown): number | null {
+  let n: number | null = null;
+  if (typeof v === "number") n = v;
+  else if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+    const r = v as Record<string, unknown>;
+    const text = typeof r.value === "string" ? r.value.trim() : "";
+    if (
+      Object.keys(r).length === 2 &&
+      ["int64", "float", "decimal"].includes(r.$type as string) &&
+      PLAIN_NUMBER.test(text)
+    ) {
+      n = Number(text);
+    }
+  }
+  return n !== null && Number.isFinite(n) ? n : null;
+}
+
+/** Whether a node passes the condition; a missing or empty property passes none. */
+export function passes(properties: Record<string, unknown>, filter: PropertyFilter): boolean {
+  const v = properties[filter.key];
+  if (v === undefined || v === null) return false;
+  const want = filter.value;
+  const compare = (ok: (d: number) => boolean) => {
+    const a = numberOf(v);
+    return a !== null && typeof want === "number" && ok(a - want);
+  };
+  const equal = () =>
+    typeof want === "number"
+      ? numberOf(v) === want
+      : typeof want === "string" || typeof want === "boolean"
+        ? v === want
+        : false;
+  switch (filter.op) {
+    case "exists":
+      return true;
+    case "eq":
+      return equal();
+    case "ne":
+      return !equal();
+    case "gt":
+      return compare((d) => d > 0);
+    case "gte":
+      return compare((d) => d >= 0);
+    case "lt":
+      return compare((d) => d < 0);
+    case "lte":
+      return compare((d) => d <= 0);
+    case "contains":
+      return typeof v === "string" && typeof want === "string" && v.includes(want);
+  }
+}
+
+/**
+ * The nodes with one of `labels` (any, when empty) that pass `property`, and the edges of
+ * `edgeTypes` (any, when empty) between them; paths are left out.
+ */
+function filterGraph(
+  graph: GraphSet,
+  labels: readonly string[],
+  edgeTypes: readonly string[],
+  property: PropertyFilter | undefined,
+): GraphSet {
+  const nodes = graph.nodes.filter(
+    (n) =>
+      (labels.length === 0 || n.labels.some((l) => labels.includes(l))) &&
+      (property === undefined || passes(n.properties, property)),
+  );
+  const kept = new Set(nodes.map((n) => n.id));
+  const edges = graph.edges.filter(
+    (e) =>
+      (edgeTypes.length === 0 || edgeTypes.includes(e.type)) && kept.has(e.from) && kept.has(e.to),
+  );
+  const out: GraphSet = { nodes, edges, schema: schemaOf(nodes, edges) };
+  if (graph.truncated !== undefined) out.truncated = graph.truncated;
+  if (graph.notices !== undefined) out.notices = graph.notices;
+  return out;
 }

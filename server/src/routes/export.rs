@@ -284,6 +284,7 @@ async fn make_query(state: &AppState, ctx: &OrgCtx, req: ExportRequest, wanted: 
         }
     }
     check_items(&queries)?;
+    crate::datasources::check_item_steps(&queries)?;
     let response =
         run_queries(state, ctx, queries, req.time_range, req.interval_ms, req.max_data_points, &req.variables).await;
     let title = req.title.unwrap_or_else(|| "kalzit-export".into());

@@ -263,7 +263,11 @@ pub async fn linked_queries(db: &AnyPool, org_id: &str, ids: &BTreeSet<&str>) ->
     for id in ids {
         let Some(row) = fetch_link(db, org_id, id).await? else { continue };
         match stored(&row.body) {
-            Ok(m) => out.extend(m.targets.into_iter().map(|t| (t.datasource_id, t.query.to_string()))),
+            // The graph steps run with their query in the data source, so they are part of it.
+            Ok(m) => out.extend(m.targets.into_iter().map(|t| {
+                let steps = crate::routes::query::graph_steps_of(&m.steps, &t.ref_id);
+                (t.datasource_id, serde_json::json!([t.query, steps]).to_string())
+            })),
             Err(e) => tracing::warn!("analysis {id} cannot be read, its queries are left out: {}", e.message),
         }
     }

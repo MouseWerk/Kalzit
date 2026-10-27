@@ -166,6 +166,50 @@ pub enum StepKind {
         #[serde(default)]
         name: Option<String>,
     },
+    /// Graph to graph ("Grad berechnen"): every node gets its degree as the property `name`
+    /// (`degree` when absent).
+    Degree {
+        frame: String,
+        #[serde(default)]
+        direction: Direction,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph ("Teilgraph filtern"): the nodes with one of `labels` (all when absent) that
+    /// pass `property`, and the edges of `edgeTypes` (all when absent) between them.
+    FilterGraph {
+        frame: String,
+        #[serde(default)]
+        labels: Vec<String>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        property: Option<PropertyFilter>,
+    },
+}
+
+/// A condition on a node property: `exists`, equal or not to `value`, a number compared with
+/// it, or text that contains it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PropertyFilter {
+    pub key: String,
+    pub op: PropertyOp,
+    #[serde(default)]
+    pub value: Option<Value>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PropertyOp {
+    Exists,
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
 }
 
 /// Which edges count for a node's degree.
@@ -334,7 +378,9 @@ impl StepKind {
             | StepKind::CountEdgeTypes { frame }
             | StepKind::DegreeDistribution { frame, .. }
             | StepKind::TopDegree { frame, .. }
-            | StepKind::SharedNeighbours { frame, .. } => vec![frame],
+            | StepKind::SharedNeighbours { frame, .. }
+            | StepKind::Degree { frame, .. }
+            | StepKind::FilterGraph { frame, .. } => vec![frame],
         }
     }
 
@@ -348,6 +394,8 @@ impl StepKind {
                 | StepKind::DegreeDistribution { .. }
                 | StepKind::TopDegree { .. }
                 | StepKind::SharedNeighbours { .. }
+                | StepKind::Degree { .. }
+                | StepKind::FilterGraph { .. }
                 | StepKind::ToFrame { rows: Some(_), .. }
         )
     }
@@ -423,6 +471,15 @@ pub fn check_steps(raw: &[Value], frames: &BTreeSet<&str>, at: &str) -> Result<V
 fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
     let name = |n: &str| check_text(&format!("{at}.name"), n, MAX_NAME_CHARS);
     let field = |what: &str, f: &str| check_text(&format!("{at}.{what}"), f, MAX_NAME_CHARS);
+    // Labels, edge types and property keys of graph steps may run in the database as quoted
+    // Cypher text or names: no backslash, which only escape sequences need.
+    let graph_name = |what: &str, f: &str| {
+        field(what, f)?;
+        if f.contains('\\') {
+            return Err(format!("{at}.{what} may not contain a backslash"));
+        }
+        Ok::<(), String>(())
+    };
     match kind {
         StepKind::Calculate { name: n, expression, .. } => {
             name(n)?;
@@ -508,26 +565,61 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
                 return Err(format!("{at}.n must be 1 to {MAX_TOP_NODES}"));
             }
             if let Some(l) = label {
-                field("label", l)?;
+                graph_name("label", l)?;
             }
         }
         StepKind::SharedNeighbours { label, via, edge_type, min, limit, name: n, .. } => {
-            field("label", label)?;
-            field("via", via)?;
+            graph_name("label", label)?;
+            graph_name("via", via)?;
             if label == via {
                 return Err(format!("{at}.via must be another label than label"));
             }
             if let Some(t) = edge_type {
-                field("edgeType", t)?;
+                graph_name("edgeType", t)?;
             }
             if let Some(n) = n {
-                field("name", n)?;
+                graph_name("name", n)?;
             }
             if *min < 1 {
                 return Err(format!("{at}.min must be at least 1"));
             }
             if !(1..=MAX_PAIRS).contains(limit) {
                 return Err(format!("{at}.limit must be 1 to {MAX_PAIRS}"));
+            }
+        }
+        StepKind::Degree { name: n, .. } => {
+            if let Some(n) = n {
+                graph_name("name", n)?;
+            }
+        }
+        StepKind::FilterGraph { labels, edge_types, property, .. } => {
+            if labels.len() > MAX_STEP_FIELDS || edge_types.len() > MAX_STEP_FIELDS {
+                return Err(format!("{at}: labels and edgeTypes take at most {MAX_STEP_FIELDS} entries"));
+            }
+            for (i, l) in labels.iter().enumerate() {
+                graph_name(&format!("labels[{i}]"), l)?;
+            }
+            for (i, t) in edge_types.iter().enumerate() {
+                graph_name(&format!("edgeTypes[{i}]"), t)?;
+            }
+            if let Some(f) = property {
+                graph_name("property.key", &f.key)?;
+                let ok = matches!(
+                    (f.op, &f.value),
+                    (PropertyOp::Exists, None)
+                        | (PropertyOp::Eq | PropertyOp::Ne, Some(Value::String(_) | Value::Number(_) | Value::Bool(_)))
+                        | (PropertyOp::Gt | PropertyOp::Gte | PropertyOp::Lt | PropertyOp::Lte, Some(Value::Number(_)))
+                        | (PropertyOp::Contains, Some(Value::String(_)))
+                );
+                if !ok {
+                    return Err(format!(
+                        "{at}.property.value: exists takes none, eq and ne text, a number or true or false, \
+                         gt, gte, lt and lte a number, contains text"
+                    ));
+                }
+                if let Some(Value::String(t)) = &f.value {
+                    check_text(&format!("{at}.property.value"), t, MAX_NAME_CHARS)?;
+                }
             }
         }
         StepKind::ToFrame { columns, rows, label, edge_type, .. } => {
@@ -540,10 +632,10 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
                 _ => {}
             }
             if let Some(l) = label {
-                field("label", l)?;
+                graph_name("label", l)?;
             }
             if let Some(t) = edge_type {
-                field("edgeType", t)?;
+                graph_name("edgeType", t)?;
             }
             if columns.is_empty() || columns.len() > MAX_PROJECTION_COLUMNS {
                 return Err(format!("{at}.columns takes 1 to {MAX_PROJECTION_COLUMNS} entries"));

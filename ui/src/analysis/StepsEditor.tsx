@@ -4,7 +4,14 @@ import { reasonText } from "../features/datasources/reasons";
 import { type MessageKey, type Translate, useI18n } from "../i18n/i18n";
 import { formatValue, isNumeric } from "../panels/frame";
 import { DetailError, FUNCTIONS, parse } from "./expr";
-import { type Direction, MAX_PAIRS, MAX_TOP_NODES } from "./graphSteps";
+import {
+  type Direction,
+  MAX_PAIRS,
+  MAX_TOP_NODES,
+  PROPERTY_OPS,
+  type PropertyFilter,
+  type PropertyOp,
+} from "./graphSteps";
 import { useAnalysisCalendar } from "./panel";
 import {
   AGGS,
@@ -61,9 +68,12 @@ const PUSHDOWN_TYPES: readonly StepType[] = [
 
 type ShapeName = "graph" | "frame" | "documents";
 
+/** Graph steps that leave a graph. */
+const GRAPH_TO_GRAPH: readonly StepType[] = ["topDegree", "degree", "filterGraph"];
+
 /** The shape a step reads and the one it makes. */
 function shapesOf(step: StepKind): [ShapeName, ShapeName] {
-  if (step.type === "topDegree") return ["graph", "graph"];
+  if (GRAPH_TO_GRAPH.includes(step.type)) return ["graph", "graph"];
   if (isGraphStep(step)) return ["graph", "frame"];
   if (step.type === "toFrame") return ["documents", "frame"];
   return ["frame", "frame"];
@@ -427,7 +437,7 @@ export function StepsEditor({
                   ? "graph"
                   : "frame"
               }
-              to={chosen === "topDegree" ? "graph" : "frame"}
+              to={GRAPH_TO_GRAPH.includes(chosen) ? "graph" : "frame"}
             />{" "}
             {t(`analysis.about.${chosen}` as MessageKey)}
             {tablesThere ? null : ` ${t("analysis.catalog.tablesLater")}`}
@@ -570,6 +580,10 @@ function newGraphStep(id: string, type: StepType, { name: frame, graph }: NamedG
       return { id, type, frame, direction: "both" };
     case "topDegree":
       return { id, type, frame, n: 10, direction: "both" };
+    case "degree":
+      return { id, type, frame, direction: "both" };
+    case "filterGraph":
+      return { id, type, frame };
     case "sharedNeighbours": {
       const label = labels[0] ?? "";
       return {
@@ -933,6 +947,29 @@ function optional<S extends Step>(step: S, key: string, value: string): S {
 
 const DIRECTIONS: readonly Direction[] = ["both", "out", "in"];
 
+/** Without `key` when the list is empty. */
+function optionalList<S extends Step>(step: S, key: string, value: string[]): S {
+  const { [key]: _, ...rest } = step as Record<string, unknown>;
+  return (value.length === 0 ? rest : { ...rest, [key]: value }) as S;
+}
+
+/** The value of a condition as typed: a number for comparisons, else text ("true" and "false" as such). */
+function valueFor(op: PropertyOp, text: string): { value?: string | number | boolean } {
+  const t = text.trim();
+  if (t === "") return {};
+  const n = Number(t.replace(",", "."));
+  if (op === "gt" || op === "gte" || op === "lt" || op === "lte") {
+    return Number.isFinite(n) ? { value: n } : {};
+  }
+  if (op === "contains") return { value: text };
+  if (t === "true" || t === "false") return { value: t === "true" };
+  return Number.isFinite(n) && /^[+-]?[\d.,]+$/.test(t) ? { value: n } : { value: text };
+}
+
+function keptValue(filter: PropertyFilter | undefined): { value?: string | number | boolean } {
+  return filter?.value === undefined ? {} : { value: filter.value };
+}
+
 function GraphStepForm({
   step,
   graph,
@@ -1045,6 +1082,81 @@ function GraphStepForm({
           {hint(t("analysis.graph.fields.sharedNeighbours"))}
         </div>
       );
+    case "degree":
+      return (
+        <div className="step__form">
+          {frameChoice}
+          {direction(step.direction, (d) => onChange({ ...step, direction: d }))}
+          <Text
+            label={t("analysis.graph.property")}
+            value={step.name ?? "degree"}
+            onChange={(name) => onChange(optional(step, "name", name === "degree" ? "" : name))}
+          />
+          {hint(t("analysis.graph.fields.degree"))}
+        </div>
+      );
+    case "filterGraph": {
+      const filter = step.property;
+      const setFilter = (next: PropertyFilter | undefined) => {
+        const { property: _, ...rest } = step;
+        onChange(next === undefined ? rest : { ...rest, property: next });
+      };
+      const valueText = filter?.value === undefined ? "" : String(filter.value);
+      return (
+        <div className="step__form">
+          {frameChoice}
+          <Checks
+            legend={t("analysis.graph.labels")}
+            options={withCurrent(labels, step.labels ?? []).map((l) => [l, l])}
+            value={step.labels ?? []}
+            onChange={(next) => onChange(optionalList(step, "labels", next))}
+          />
+          <Checks
+            legend={t("analysis.graph.edgeTypes")}
+            options={withCurrent(types, step.edgeTypes ?? []).map((l) => [l, l])}
+            value={step.edgeTypes ?? []}
+            onChange={(next) => onChange(optionalList(step, "edgeTypes", next))}
+          />
+          <Choice
+            label={t("analysis.graph.propertyKey")}
+            value={filter?.key ?? ""}
+            options={options(allKeys, t("analysis.graph.noCondition"))}
+            onChange={(key) =>
+              setFilter(
+                key === "" ? undefined : { key, op: filter?.op ?? "exists", ...keptValue(filter) },
+              )
+            }
+          />
+          {filter === undefined ? null : (
+            <>
+              <Choice
+                label={t("analysis.graph.op")}
+                value={filter.op}
+                options={PROPERTY_OPS.map((op) => [op, t(`analysis.op.${op}`)])}
+                onChange={(op) => {
+                  const next = op as PropertyOp;
+                  setFilter(
+                    next === "exists"
+                      ? { key: filter.key, op: next }
+                      : { key: filter.key, op: next, ...valueFor(next, valueText) },
+                  );
+                }}
+              />
+              {filter.op === "exists" ? null : (
+                <Text
+                  label={t("analysis.graph.value")}
+                  value={valueText}
+                  onChange={(text) =>
+                    setFilter({ key: filter.key, op: filter.op, ...valueFor(filter.op, text) })
+                  }
+                />
+              )}
+            </>
+          )}
+          {hint(t("analysis.graph.fields.filterGraph"))}
+        </div>
+      );
+    }
     case "toFrame": {
       const rows = step.rows ?? "nodes";
       const own =

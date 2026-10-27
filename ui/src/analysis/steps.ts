@@ -132,6 +132,8 @@ export const GRAPH_STEP_TYPES = [
   "degreeDistribution",
   "topDegree",
   "sharedNeighbours",
+  "degree",
+  "filterGraph",
 ] as const satisfies readonly StepType[];
 
 /**

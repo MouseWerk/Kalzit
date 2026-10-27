@@ -496,7 +496,9 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         | StepKind::CountEdgeTypes { .. }
         | StepKind::DegreeDistribution { .. }
         | StepKind::TopDegree { .. }
-        | StepKind::SharedNeighbours { .. } => unreachable!("joins above, projections and graph steps in run_shapes"),
+        | StepKind::SharedNeighbours { .. }
+        | StepKind::Degree { .. }
+        | StepKind::FilterGraph { .. } => unreachable!("joins above, projections and graph steps in run_shapes"),
     };
     frames[index].frame = result;
     Ok(())

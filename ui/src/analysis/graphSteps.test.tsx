@@ -110,6 +110,31 @@ describe("graph steps in the steps editor", () => {
   });
 });
 
+describe("graph steps that stay a graph", () => {
+  it("filter a subgraph by label and a property condition, and add the degree", async () => {
+    const { user, seen } = setup();
+    await user.selectOptions(screen.getByLabelText("Kind of step"), "Filter subgraph");
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    expect(within(step).getByText("Graph")).toBeTruthy();
+    expect(within(step).getByText("3 nodes, 2 edges")).toBeTruthy();
+    await user.click(within(step).getByRole("checkbox", { name: "Kunde" }));
+    expect(seen.steps[0]).toMatchObject({ type: "filterGraph", labels: ["Kunde"] });
+    await user.selectOptions(within(step).getByLabelText("Condition on the property"), "name");
+    await user.selectOptions(within(step).getByLabelText("Comparison"), "is");
+    await user.type(within(step).getByLabelText("Value"), "Anna");
+    expect(seen.steps[0]).toMatchObject({ property: { key: "name", op: "eq", value: "Anna" } });
+    expect(within(step).getByText("1 nodes, 0 edges")).toBeTruthy();
+
+    // A graph is left, so graph steps are still offered: the degree as a property.
+    await user.selectOptions(screen.getByLabelText("Kind of step"), "Calculate degree");
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    expect(seen.steps[1]).toMatchObject({ type: "degree", frame: "A" });
+    const run = runSteps(seen.steps, INPUTS);
+    expect(run.graphs[0]?.graph.nodes[0]?.properties).toEqual({ name: "Anna", degree: 0 });
+  });
+});
+
 describe("graph steps the server ran", () => {
   const count: Step = { id: "c", type: "countLabels", frame: "A" };
   const top: Step = { id: "t", type: "topDegree", frame: "A", n: 2 };

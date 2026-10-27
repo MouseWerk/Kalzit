@@ -41,6 +41,7 @@ import { readPreference, writePreference } from "../../lib/storage";
 import { tabForKey } from "../../lib/tabKeys";
 import { showErrorToast, showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
+import { useSettled } from "../../lib/useSettled";
 import { type LiveSpec, liveClient } from "../../live/client";
 import { liveNote } from "../../live/text";
 import { useLiveSubscription } from "../../live/useLive";
@@ -107,6 +108,8 @@ const REF_ID = "A";
 const EXPLORE_KEY = "explore";
 /** The cache key of the runs with graph steps (a key of their own, so a new run keeps them). */
 const EXPLORE_STEPS_KEY = "explore-steps";
+/** How long graph steps stay unchanged before they run in the database. */
+const GRAPH_STEPS_SETTLE_MS = 600;
 
 const exploreRoute = getRouteApi("/_app/explore");
 const appRoute = getRouteApi("/_app");
@@ -319,7 +322,12 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
   });
   // Graph steps run with the query, in the database where the source can: the result above stays
   // the query's own (drawn as the graph); this run answers what the steps make of it.
-  const graphSteps = graphStepsByQuery(deferredSteps).get(REF_ID);
+  // Settled for a moment first: a number being typed or a choice being tried asks the database
+  // once; the browser previews the steps meanwhile.
+  const graphSteps = useSettled(
+    graphStepsByQuery(deferredSteps).get(REF_ID),
+    GRAPH_STEPS_SETTLE_MS,
+  );
   const stepped = useQuery({
     queryKey: [EXPLORE_STEPS_KEY, orgId, submitted, graphSteps ?? null],
     enabled: submitted !== null && graphSteps !== undefined && result.data !== undefined,

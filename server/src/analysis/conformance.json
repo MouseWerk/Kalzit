@@ -479,6 +479,42 @@
       "frames": {"A": "shop"},
       "steps": [{"id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "1"}],
       "error": {"index": 0, "reason": "steps.frame_missing", "params": {"frame": "A"}}
+    },
+    {
+      "name": "graph: the degree as a node property",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "d", "type": "degree", "frame": "A", "name": "grad"}, {"id": "f", "type": "toFrame", "frame": "A", "rows": "nodes", "columns": [{"path": "@id"}, {"path": "grad"}]}],
+      "expect": {"A": {"fields": [{"name": "@id", "type": "string", "values": ["k1", "k2", "k3", "k4", "p1", "p2", "p3", "h1", "x9"]}, {"name": "grad", "type": "number", "values": [4, 3, 4, 2, 4, 3, 2, 1, 1]}]}}
+    },
+    {
+      "name": "graph: a subgraph by labels, edge types and an existing property",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "labels": ["Kunde", "Produkt"], "edgeTypes": ["KAUFTE"], "property": {"key": "name", "op": "exists"}}],
+      "expectGraphs": {"A": {"nodes": ["k1", "k2", "k3", "k4", "p1", "p2", "p3"], "edges": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"], "schema": {"labels": ["Kunde", "Produkt", "VIP"], "edgeTypes": ["KAUFTE"], "propertyKeys": {"Kunde": ["name"], "Produkt": ["name"], "VIP": ["name"]}}}}
+    },
+    {
+      "name": "graph: a subgraph of the nodes with a degree of at least 3",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "d", "type": "degree", "frame": "A"}, {"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "degree", "op": "gte", "value": 3}}],
+      "expectGraphs": {"A": {"nodes": ["k1", "k2", "k3", "p1", "p2"], "edges": ["e1", "e2", "e3", "e4", "e5", "e10", "e12"], "schema": {"labels": ["Kunde", "Produkt"], "edgeTypes": ["EMPFAHL", "KAUFTE", "MAG"], "propertyKeys": {"Kunde": ["degree", "name"], "Produkt": ["degree", "name"]}}}}
+    },
+    {
+      "name": "graph: a subgraph by equal text",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "name", "op": "eq", "value": "Anna"}}],
+      "expectGraphs": {"A": {"nodes": ["k1"], "edges": [], "schema": {"labels": ["Kunde"], "edgeTypes": [], "propertyKeys": {"Kunde": ["name"]}}}}
+    },
+    {
+      "name": "graph: a subgraph by contained text; a number is no text",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "name", "op": "contains", "value": "o"}}],
+      "expectGraphs": {"A": {"nodes": ["k4", "p1", "p2", "h1"], "edges": ["e6", "e9"], "schema": {"labels": ["Händler", "Kunde", "Produkt", "VIP"], "edgeTypes": ["KAUFTE", "LIEFERT"], "propertyKeys": {"Händler": ["name"], "Kunde": ["name"], "Produkt": ["name"], "VIP": ["name"]}}}}
+    },
+    {
+      "name": "graph: numbers compare as numbers, other values never",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "name", "op": "lt", "value": 10}}],
+      "expectGraphs": {"A": {"nodes": ["p3"], "edges": [], "schema": {"labels": ["Produkt"], "edgeTypes": [], "propertyKeys": {"Produkt": ["name"]}}}}
     }
   ]
 }

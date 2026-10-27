@@ -20,7 +20,7 @@ use serde_json::Value;
 use super::{Direction, StepKind};
 use crate::datasources::cypher::{Tok, lex};
 use crate::datasources::detail::Detail;
-use crate::shapes::{Field, FieldType, Frame, GraphSchema, GraphSet, QueryResult};
+use crate::shapes::{Field, FieldType, Frame, GraphSchema, GraphSet, Notice, NoticeSeverity, QueryResult};
 
 /// The Cypher flavour: how node ids are read, and how a subquery starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,35 +123,48 @@ fn is_type(var: &str, ty: &str) -> String {
     format!("toUpper(valueType({var})) STARTS WITH '{ty}'")
 }
 
-/// The user's query, and every distinct node and relationship it returned, as `__kz_nodes` and
-/// `__kz_rels`: nodes, relationships with both their ends, paths, and lists of these.
-fn prelude(query: &str, columns: &[String], dialect: Dialect) -> String {
+/// The column that says the query's rows were cut at the row limit (`CUT`), in every answer.
+pub const CUT: &str = "__kz_cut";
+/// The column of the shared-neighbours answer that counts the pairs the step would make.
+const PAIRS: &str = "__kz_pairs";
+
+/// The user's query, cut at `cap` rows as the server cuts it, and every distinct node and
+/// relationship it returned. `__kz_nodes` holds `[node, returned]` (1 for a node the query
+/// returned, 0 for one known only as the end of a relationship, which counts as a node without
+/// labels, as on the server); `__kz_rels` the relationships; `__kz_cut` whether rows were cut.
+fn prelude(query: &str, columns: &[String], dialect: Dialect, cap: usize) -> String {
     // Neo4j types the columns while planning and refuses `nodes()` on a column that cannot be a
     // path; read through a map with a key known only when running, a value has no known type.
-    let values = match dialect {
+    let (row, values) = match dialect {
         Dialect::Neo4j => {
             let map = columns.iter().map(|c| format!("{}: {}", quoted(c), quoted(c))).collect::<Vec<_>>().join(", ");
             let keys = columns.iter().map(|c| text(c)).collect::<Vec<_>>().join(", ");
-            format!("WITH {{{map}}} AS __kz_row\nUNWIND [{keys}] AS __kz_k\nWITH __kz_row[__kz_k] AS __kz_v\n")
+            (format!("{{{map}}}"), format!("UNWIND [{keys}] AS __kz_k\nWITH __kz_cut, __kz_row[__kz_k] AS __kz_v\n"))
         }
         Dialect::Memgraph => {
-            let row = columns.iter().map(|c| quoted(c)).collect::<Vec<_>>().join(", ");
-            format!("WITH [{row}] AS __kz_row\nUNWIND __kz_row AS __kz_v\n")
+            let list = columns.iter().map(|c| quoted(c)).collect::<Vec<_>>().join(", ");
+            (format!("[{list}]"), "UNWIND __kz_row AS __kz_v\n".to_string())
         }
     };
     format!(
         "{call}\n{query}\n}}\n\
+         WITH {row} AS __kz_row\n\
+         LIMIT {more}\n\
+         WITH collect(__kz_row) AS __kz_all\n\
+         WITH size(__kz_all) > {cap} AS __kz_cut, __kz_all[0..{cap}] AS __kz_all\n\
+         UNWIND __kz_all AS __kz_row\n\
          {values}\
          UNWIND CASE WHEN {list} THEN __kz_v ELSE [__kz_v] END AS __kz_e\n\
          UNWIND CASE\n  \
-         WHEN {node} THEN [__kz_e]\n  \
-         WHEN {rel} THEN [__kz_e, startNode(__kz_e), endNode(__kz_e)]\n  \
-         WHEN {path} THEN nodes(__kz_e) + relationships(__kz_e)\n  \
-         ELSE [] END AS __kz_x\n\
-         WITH DISTINCT __kz_x\n\
-         WITH collect(CASE WHEN {xnode} THEN __kz_x END) AS __kz_nodes,\n     \
+         WHEN {node} THEN [[__kz_e, 1]]\n  \
+         WHEN {rel} THEN [[__kz_e, 1], [startNode(__kz_e), 0], [endNode(__kz_e), 0]]\n  \
+         WHEN {path} THEN [__kz_y IN nodes(__kz_e) | [__kz_y, 1]] + [__kz_y IN relationships(__kz_e) | [__kz_y, 1]]\n  \
+         ELSE [] END AS __kz_p\n\
+         WITH __kz_cut, __kz_p[0] AS __kz_x, max(__kz_p[1]) AS __kz_f\n\
+         WITH __kz_cut, collect(CASE WHEN {xnode} THEN [__kz_x, __kz_f] END) AS __kz_nodes,\n     \
          collect(CASE WHEN {xrel} THEN __kz_x END) AS __kz_rels\n",
         call = dialect.call(),
+        more = cap + 1,
         list = is_type("__kz_v", "LIST"),
         node = is_type("__kz_e", "NODE"),
         rel = is_type("__kz_e", "RELATIONSHIP"),
@@ -161,8 +174,9 @@ fn prelude(query: &str, columns: &[String], dialect: Dialect) -> String {
     )
 }
 
-/// Per node, its degree in `direction` and its relationships (each at both its ends), as
-/// `__kz_n`, `__kz_d`, `__kz_rs`; nodes without relationships too.
+/// Per node, its degree in `direction`, its relationships (each listed at both its ends) and
+/// whether the query returned it, as `__kz_n`, `__kz_d`, `__kz_rs`, `__kz_f`; nodes without
+/// relationships too.
 fn degree_rows(direction: Direction) -> String {
     let (out, inn) = match direction {
         Direction::Both => (1, 1),
@@ -170,12 +184,23 @@ fn degree_rows(direction: Direction) -> String {
         Direction::In => (0, 1),
     };
     format!(
-        "UNWIND [__kz_n IN __kz_nodes | [__kz_n, 0, null]]\n  \
-         + [__kz_r IN __kz_rels | [startNode(__kz_r), {out}, __kz_r]]\n  \
-         + [__kz_r IN __kz_rels | [endNode(__kz_r), {inn}, __kz_r]] AS __kz_p\n\
-         WITH __kz_p[0] AS __kz_n, sum(__kz_p[1]) AS __kz_d, collect(__kz_p[2]) AS __kz_rs\n"
+        "UNWIND [__kz_q IN __kz_nodes | [__kz_q[0], 0, null, __kz_q[1]]]\n  \
+         + [__kz_r IN __kz_rels | [startNode(__kz_r), {out}, __kz_r, 0]]\n  \
+         + [__kz_r IN __kz_rels | [endNode(__kz_r), {inn}, __kz_r, 0]] AS __kz_p\n\
+         WITH __kz_cut, __kz_p[0] AS __kz_n, sum(__kz_p[1]) AS __kz_d, collect(__kz_p[2]) AS __kz_rs,\n     \
+         max(__kz_p[3]) AS __kz_f\n"
     )
 }
+
+/// Per end of each relationship: the relationship `__kz_r`, its side `__kz_side` (0 start, 1
+/// end), the node `__kz_n` and whether the query returned that node `__kz_f`.
+const ENDS: &str = "UNWIND [__kz_q IN __kz_nodes | [__kz_q[0], __kz_q[1], null, null]]\n  \
+     + [__kz_r IN __kz_rels | [startNode(__kz_r), 0, __kz_r, 0]]\n  \
+     + [__kz_r IN __kz_rels | [endNode(__kz_r), 0, __kz_r, 1]] AS __kz_q\n\
+     WITH __kz_cut, __kz_q[0] AS __kz_n, max(__kz_q[1]) AS __kz_f,\n     \
+     collect(CASE WHEN __kz_q[2] IS NOT NULL THEN [__kz_q[2], __kz_q[3]] END) AS __kz_inc\n\
+     UNWIND __kz_inc AS __kz_i\n\
+     WITH __kz_cut, __kz_i[0] AS __kz_r, __kz_i[1] AS __kz_side, __kz_n, __kz_f\n";
 
 /// A node's labels joined with `:`, null without labels.
 fn labels_text(node: &str) -> String {
@@ -184,53 +209,59 @@ fn labels_text(node: &str) -> String {
     )
 }
 
-/// The Cypher that runs `step` on the result of `query` in the database; `None` when the step or
-/// the query cannot run there.
-pub fn cypher(query: &str, step: &StepKind, dialect: Dialect) -> Option<String> {
+/// The Cypher that runs `step` on the result of `query` in the database, the query cut at
+/// `max_rows` rows as the server cuts it; `None` when the step or the query cannot run there.
+pub fn cypher(query: &str, step: &StepKind, dialect: Dialect, max_rows: usize) -> Option<String> {
     let columns = return_columns(query)?;
     let query = query.trim_end().trim_end_matches(';');
     let tail = match step {
-        StepKind::CountLabels { .. } => "WITH __kz_nodes, size(__kz_nodes) AS __kz_total\n\
-             UNWIND __kz_nodes AS __kz_n\n\
-             UNWIND labels(__kz_n) AS __kz_l\n\
-             WITH __kz_l, __kz_total, count(*) AS __kz_c\n\
-             RETURN __kz_l AS `label`, __kz_c AS `nodes`, toFloat(__kz_c) / __kz_total AS `share`\n\
+        StepKind::CountLabels { .. } => format!(
+            "WITH __kz_cut, __kz_nodes, size(__kz_nodes) AS __kz_total\n\
+             UNWIND __kz_nodes AS __kz_q\n\
+             UNWIND CASE WHEN __kz_q[1] = 1 THEN labels(__kz_q[0]) ELSE [] END AS __kz_l\n\
+             WITH __kz_cut, __kz_l, __kz_total, count(*) AS __kz_c\n\
+             RETURN __kz_l AS `label`, __kz_c AS `nodes`, toFloat(__kz_c) / __kz_total AS `share`, __kz_cut AS `{CUT}`\n\
              ORDER BY `nodes` DESC, `label` ASC"
-            .to_string(),
+        ),
         StepKind::CountEdgeTypes { .. } => format!(
-            "UNWIND __kz_rels AS __kz_r\n\
-             WITH type(__kz_r) AS __kz_t, {from} AS __kz_f, {to} AS __kz_o\n\
-             WITH __kz_t, __kz_f, __kz_o, count(*) AS __kz_c\n\
-             RETURN __kz_t AS `type`, __kz_f AS `from`, __kz_o AS `to`, __kz_c AS `edges`\n\
+            "{ENDS}\
+             WITH __kz_cut, __kz_r, collect([__kz_side, CASE WHEN __kz_f = 1 THEN {labels} END]) AS __kz_ends\n\
+             WITH __kz_cut, type(__kz_r) AS __kz_t,\n     \
+             [__kz_e IN __kz_ends WHERE __kz_e[0] = 0][0][1] AS __kz_fr,\n     \
+             [__kz_e IN __kz_ends WHERE __kz_e[0] = 1][0][1] AS __kz_o\n\
+             WITH __kz_cut, __kz_t, __kz_fr, __kz_o, count(*) AS __kz_c\n\
+             RETURN __kz_t AS `type`, __kz_fr AS `from`, __kz_o AS `to`, __kz_c AS `edges`, __kz_cut AS `{CUT}`\n\
              ORDER BY `edges` DESC, `type` ASC, `from` ASC, `to` ASC",
-            from = labels_text("startNode(__kz_r)"),
-            to = labels_text("endNode(__kz_r)"),
+            labels = labels_text("__kz_n"),
         ),
         StepKind::DegreeDistribution { direction, .. } => format!(
-            "{rows}WITH __kz_d, count(*) AS __kz_c\n\
-             RETURN __kz_d AS `degree`, __kz_c AS `nodes`\n\
+            "{rows}WITH __kz_cut, __kz_d, count(*) AS __kz_c\n\
+             RETURN __kz_d AS `degree`, __kz_c AS `nodes`, __kz_cut AS `{CUT}`\n\
              ORDER BY `degree` ASC",
             rows = degree_rows(*direction),
         ),
         StepKind::TopDegree { n, label, direction, .. } => {
-            let only = label.as_ref().map(|l| format!("WHERE {} IN labels(__kz_n)\n", text(l))).unwrap_or_default();
+            let only = label
+                .as_ref()
+                .map(|l| format!("WHERE __kz_f = 1 AND {} IN labels(__kz_n)\n", text(l)))
+                .unwrap_or_default();
             // Each relationship is listed at both its ends: one listed twice among the kept nodes
             // has both ends there. A row without one carries the kept nodes.
             format!(
-                "{rows}{only}WITH __kz_n, __kz_d, __kz_rs\n\
+                "{rows}{only}WITH __kz_cut, __kz_n, __kz_d, __kz_rs\n\
                  ORDER BY __kz_d DESC, {id} ASC\n\
                  LIMIT {n}\n\
                  UNWIND [null] + __kz_rs AS __kz_r\n\
-                 WITH __kz_r, count(*) AS __kz_k, collect(__kz_n) AS __kz_ns\n\
-                 WITH __kz_r, __kz_k, __kz_ns WHERE __kz_r IS NULL OR __kz_k >= 2\n\
-                 RETURN CASE WHEN __kz_r IS NULL THEN __kz_ns ELSE __kz_r END AS `element`",
+                 WITH __kz_cut, __kz_r, count(*) AS __kz_k, collect(__kz_n) AS __kz_ns\n\
+                 WITH __kz_cut, __kz_r, __kz_k, __kz_ns WHERE __kz_r IS NULL OR __kz_k >= 2\n\
+                 RETURN CASE WHEN __kz_r IS NULL THEN __kz_ns ELSE __kz_r END AS `element`, __kz_cut AS `{CUT}`",
                 rows = degree_rows(*direction),
                 id = dialect.id("__kz_n"),
             )
         }
         StepKind::SharedNeighbours { label, via, edge_type, min, limit, name, .. } => {
             let (l, v) = (text(label), text(via));
-            let pick = format!("{l} IN labels(__kz_s) AND {v} IN labels(__kz_t)");
+            let pick = format!("{l} IN __kz_sl AND {v} IN __kz_tl");
             let typed = edge_type.as_ref().map(|t| format!("type(__kz_r) = {} AND ", text(t))).unwrap_or_default();
             let named = |var: &str| match name {
                 Some(key) => format!(
@@ -241,23 +272,38 @@ pub fn cypher(query: &str, step: &StepKind, dialect: Dialect) -> Option<String> 
                 ),
                 None => dialect.id(var),
             };
+            // The pairs grow with the square of each neighbour's nodes: counted first, and made
+            // only within the server's cell budget. A row without a pair always comes first and
+            // carries the count, so the server learns it also when no pair is made.
             format!(
-                "UNWIND __kz_rels AS __kz_r\n\
-                 WITH __kz_r, startNode(__kz_r) AS __kz_s, endNode(__kz_r) AS __kz_t\n\
-                 WHERE {typed}(({pick}) OR ({v} IN labels(__kz_s) AND {l} IN labels(__kz_t)))\n\
-                 WITH DISTINCT CASE WHEN {pick} THEN __kz_s ELSE __kz_t END AS __kz_a,\n     \
+                "{ENDS}\
+                 WITH __kz_cut, __kz_r, collect([__kz_side, __kz_n, CASE WHEN __kz_f = 1 THEN labels(__kz_n) ELSE [] END]) AS __kz_ends\n\
+                 WITH __kz_cut, __kz_r, [__kz_e IN __kz_ends WHERE __kz_e[0] = 0][0] AS __kz_se,\n     \
+                 [__kz_e IN __kz_ends WHERE __kz_e[0] = 1][0] AS __kz_te\n\
+                 WITH __kz_cut, __kz_r, __kz_se[1] AS __kz_s, __kz_se[2] AS __kz_sl, __kz_te[1] AS __kz_t, __kz_te[2] AS __kz_tl\n\
+                 WHERE {typed}(({pick}) OR ({v} IN __kz_sl AND {l} IN __kz_tl))\n\
+                 WITH DISTINCT __kz_cut, CASE WHEN {pick} THEN __kz_s ELSE __kz_t END AS __kz_a,\n     \
                  CASE WHEN {pick} THEN __kz_t ELSE __kz_s END AS __kz_v\n\
-                 WITH __kz_v, collect(__kz_a) AS __kz_as\n\
-                 UNWIND __kz_as AS __kz_x\n\
-                 UNWIND __kz_as AS __kz_y\n\
-                 WITH __kz_x, __kz_y, __kz_v WHERE {xi} < {yi}\n\
-                 WITH __kz_x, __kz_y, __kz_v ORDER BY {vi} ASC\n\
-                 WITH __kz_x, __kz_y, collect(__kz_v) AS __kz_vs\n\
-                 WHERE size(__kz_vs) >= {min}\n\
-                 RETURN {xn} AS `a`, {yn} AS `b`, size(__kz_vs) AS `shared`,\n       \
-                 [__kz_w IN __kz_vs | {wn}] AS `neighbours`, {xi} AS `__kz_ai`, {yi} AS `__kz_bi`\n\
-                 ORDER BY `shared` DESC, `__kz_ai` ASC, `__kz_bi` ASC\n\
-                 LIMIT {limit}",
+                 WITH __kz_cut, __kz_v, collect(__kz_a) AS __kz_as\n\
+                 WITH max(CASE WHEN __kz_cut THEN 1 ELSE 0 END) AS __kz_cn,\n     \
+                 sum(size(__kz_as) * (size(__kz_as) - 1) / 2) AS __kz_pairs, collect([__kz_v, __kz_as]) AS __kz_groups\n\
+                 UNWIND [null] + CASE WHEN __kz_pairs <= {budget} THEN __kz_groups ELSE [] END AS __kz_g\n\
+                 UNWIND CASE WHEN __kz_g IS NULL THEN [null] ELSE __kz_g[1] END AS __kz_x\n\
+                 UNWIND CASE WHEN __kz_g IS NULL THEN [null] ELSE __kz_g[1] END AS __kz_y\n\
+                 WITH __kz_cn, __kz_pairs, __kz_x, __kz_y, __kz_g[0] AS __kz_v\n\
+                 WHERE __kz_x IS NULL OR {xi} < {yi}\n\
+                 WITH __kz_cn, __kz_pairs, __kz_x, __kz_y, __kz_v ORDER BY CASE WHEN __kz_v IS NULL THEN '' ELSE {vi} END ASC\n\
+                 WITH __kz_cn, __kz_pairs, __kz_x, __kz_y, collect(__kz_v) AS __kz_vs\n\
+                 WHERE __kz_x IS NULL OR size(__kz_vs) >= {min}\n\
+                 WITH __kz_cn, __kz_pairs, __kz_x, __kz_y, __kz_vs,\n     \
+                 CASE WHEN __kz_x IS NULL THEN null ELSE {xi} END AS __kz_xi, CASE WHEN __kz_x IS NULL THEN null ELSE {yi} END AS __kz_yi\n\
+                 ORDER BY CASE WHEN __kz_x IS NULL THEN 0 ELSE 1 END ASC, size(__kz_vs) DESC, __kz_xi ASC, __kz_yi ASC\n\
+                 LIMIT {more}\n\
+                 RETURN CASE WHEN __kz_x IS NULL THEN null ELSE {xn} END AS `a`, CASE WHEN __kz_x IS NULL THEN null ELSE {yn} END AS `b`,\n       \
+                 size(__kz_vs) AS `shared`, [__kz_w IN __kz_vs | {wn}] AS `neighbours`,\n       \
+                 __kz_cn = 1 AS `{CUT}`, __kz_pairs AS `{PAIRS}`",
+                budget = super::steps::MAX_CELLS,
+                more = *limit + 1,
                 xi = dialect.id("__kz_x"),
                 yi = dialect.id("__kz_y"),
                 vi = dialect.id("__kz_v"),
@@ -268,7 +314,7 @@ pub fn cypher(query: &str, step: &StepKind, dialect: Dialect) -> Option<String> 
         }
         _ => return None,
     };
-    Some(format!("{}{tail}", prelude(query, &columns, dialect)))
+    Some(format!("{}{tail}", prelude(query, &columns, dialect, max_rows)))
 }
 
 /// The columns each step answers, with their types.
@@ -284,11 +330,13 @@ fn output(step: &StepKind) -> &'static [(&'static str, FieldType)] {
 }
 
 /// The database's answer in the form the server's step gives: the step's fields and types
-/// (counts as numbers, not the 64-bit integers Bolt sends), the query as it ran kept; a top-N
-/// step stays a graph.
-pub fn normalize(step: &StepKind, result: QueryResult) -> Result<QueryResult, Detail> {
+/// (counts as numbers, not the 64-bit integers Bolt sends), the query as it ran kept, a cut at
+/// the row limit marked; a top-N step stays a graph. Shared neighbours beyond the server's cell
+/// budget are `steps.too_many_cells`, as on the server.
+pub fn normalize(step: &StepKind, result: QueryResult, max_rows: usize) -> Result<QueryResult, Detail> {
     if let StepKind::TopDegree { .. } = step {
         return Ok(match result {
+            // The graph builder marks a cut it is told of (`CUT`, datasources/neo4j.rs).
             QueryResult::Graph { graph } => QueryResult::Graph { graph },
             // No row at all: the query found no node.
             _ => QueryResult::Graph {
@@ -306,14 +354,30 @@ pub fn normalize(step: &StepKind, result: QueryResult) -> Result<QueryResult, De
     let QueryResult::Frame { frame } = result else {
         return Err(Detail::new("steps.pushdown_shape", "the database answered the graph step with no table"));
     };
-    let rows = frame.rows();
+    let column = |name: &str| frame.fields().iter().find(|f| f.name == name);
+    let cut = column(CUT).is_some_and(|f| f.values.contains(&Value::Bool(true)));
+    if let Some(pairs) = column(PAIRS).and_then(|f| f.values.iter().find_map(super::steps::number_at)) {
+        let max = super::steps::MAX_CELLS;
+        if pairs > max as f64 {
+            return Err(Detail::new("steps.too_many_cells", format!("the step would make more than {max} cells"))
+                .with("max", max));
+        }
+    }
+    // The row that only carries the counts of the shared-neighbours step is no pair.
+    let rows: Vec<usize> = (0..frame.rows())
+        .filter(|row| {
+            !matches!(step, StepKind::SharedNeighbours { .. })
+                || column("a").and_then(|f| f.values.get(*row)).is_some_and(|v| !v.is_null())
+        })
+        .collect();
     let fields = output(step)
         .iter()
         .map(|(name, field_type)| {
-            let given = frame.fields().iter().find(|f| f.name == *name);
-            let values = (0..rows)
+            let given = column(name);
+            let values = rows
+                .iter()
                 .map(|row| {
-                    let v = given.and_then(|f| f.values.get(row)).cloned().unwrap_or(Value::Null);
+                    let v = given.and_then(|f| f.values.get(*row)).cloned().unwrap_or(Value::Null);
                     match field_type {
                         FieldType::Number => super::expr::to_json(
                             super::steps::number_at(&v).map_or(super::expr::V::Null, super::expr::V::Num),
@@ -325,11 +389,17 @@ pub fn normalize(step: &StepKind, result: QueryResult) -> Result<QueryResult, De
             Field { name: (*name).to_string(), field_type: *field_type, unit: None, values, labels: None }
         })
         .collect();
-    let mut out = Frame::new(fields).expect("one value per row in every field");
-    if let Some(meta) = frame.meta() {
-        out = out.with_meta(meta.clone());
+    let mut meta = frame.meta().cloned().unwrap_or_default();
+    if cut {
+        meta.rows_truncated = true;
+        meta.notices.push(Notice {
+            severity: NoticeSeverity::Warning,
+            code: "graph.row_limit".into(),
+            params: Some([("limit".to_string(), max_rows.to_string())].into()),
+            text: format!("only the first {max_rows} records are counted (row limit)"),
+        });
     }
-    Ok(QueryResult::Frame { frame: out })
+    Ok(QueryResult::Frame { frame: Frame::new(fields).expect("one value per row in every field").with_meta(meta) })
 }
 
 #[cfg(test)]
@@ -387,7 +457,7 @@ mod tests {
             "MATCH (k:Kunde)-[r:KAUFTE]->(p:Produkt) WHERE r.am >= $__timeFrom AND k.land = $land RETURN k, r, p";
         for dialect in [Dialect::Neo4j, Dialect::Memgraph] {
             for s in all_steps() {
-                let q = cypher(user, &s, dialect).unwrap();
+                let q = cypher(user, &s, dialect, 1000).unwrap();
                 let checked = check(&q).unwrap_or_else(|e| panic!("{q}\n{}", e.message));
                 assert_eq!(
                     checked.params.into_iter().collect::<Vec<_>>(),
@@ -406,14 +476,14 @@ mod tests {
         let evil = "x') DETACH DELETE n //";
         let s = step(json!({ "type": "sharedNeighbours", "label": evil, "via": "a\\'b", "edgeType": "T`] DELETE n",
                              "min": 1, "limit": 1, "name": "n` DELETE x //" }));
-        let q = cypher("MATCH (a)-[r]->(b) RETURN a, r, b", &s, Dialect::Neo4j).unwrap();
+        let q = cypher("MATCH (a)-[r]->(b) RETURN a, r, b", &s, Dialect::Neo4j, 1000).unwrap();
         // The names are text or quoted names: the check sees no keyword in them.
         check(&q).unwrap_or_else(|e| panic!("{q}\n{}", e.message));
         assert!(q.contains(r"'x\') DETACH DELETE n //'"), "{q}");
         assert!(q.contains(r"'a\\\'b'"), "{q}");
         assert!(q.contains("`n`` DELETE x //`"), "{q}");
         let s = step(json!({ "type": "topDegree", "n": 3, "label": "K'); MATCH (n) DELETE n" }));
-        let q = cypher("MATCH (a) RETURN a", &s, Dialect::Memgraph).unwrap();
+        let q = cypher("MATCH (a) RETURN a", &s, Dialect::Memgraph, 1000).unwrap();
         check(&q).unwrap_or_else(|e| panic!("{q}\n{}", e.message));
     }
 
@@ -421,7 +491,7 @@ mod tests {
     #[test]
     fn writing_user_queries_stay_refused() {
         for user in ["MATCH (n) DETACH DELETE n RETURN n", "MATCH (n) SET n.x = 1 RETURN n", "CREATE (n) RETURN n"] {
-            let q = cypher(user, &all_steps()[0], Dialect::Neo4j).unwrap();
+            let q = cypher(user, &all_steps()[0], Dialect::Neo4j, 1000).unwrap();
             assert!(check(&q).is_err(), "{q}");
         }
     }
@@ -429,16 +499,16 @@ mod tests {
     #[test]
     fn dialects_differ_in_ids_and_subqueries() {
         let s = step(json!({ "type": "topDegree", "n": 3 }));
-        let neo = cypher("MATCH (a) RETURN a", &s, Dialect::Neo4j).unwrap();
-        let mem = cypher("MATCH (a) RETURN a", &s, Dialect::Memgraph).unwrap();
+        let neo = cypher("MATCH (a) RETURN a", &s, Dialect::Neo4j, 1000).unwrap();
+        let mem = cypher("MATCH (a) RETURN a", &s, Dialect::Memgraph, 1000).unwrap();
         assert!(neo.starts_with("CALL () {\nMATCH (a) RETURN a\n}"), "{neo}");
         assert!(mem.starts_with("CALL {\nMATCH (a) RETURN a\n}"), "{mem}");
         assert!(neo.contains("elementId(__kz_n) ASC") && mem.contains("toString(id(__kz_n)) ASC"));
         assert!(neo.contains("LIMIT 3"));
         // Other steps stay on the server.
         let p = step(json!({ "type": "toFrame", "rows": "nodes", "columns": [{ "path": "name" }] }));
-        assert_eq!(cypher("MATCH (a) RETURN a", &p, Dialect::Neo4j), None);
-        assert_eq!(cypher("MATCH (a) RETURN *", &s, Dialect::Neo4j), None);
+        assert_eq!(cypher("MATCH (a) RETURN a", &p, Dialect::Neo4j, 1000), None);
+        assert_eq!(cypher("MATCH (a) RETURN *", &s, Dialect::Neo4j, 1000), None);
     }
 
     #[test]
@@ -467,18 +537,74 @@ mod tests {
             },
         ])
         .unwrap();
-        let out = normalize(&all_steps()[0], QueryResult::Frame { frame }).unwrap();
+        let out = normalize(&all_steps()[0], QueryResult::Frame { frame }, 1000).unwrap();
         let QueryResult::Frame { frame } = out else { panic!() };
         assert_eq!(frame.fields()[1].field_type, FieldType::Number);
         assert_eq!(frame.fields()[1].values, vec![json!(3.0)]);
         // No row: the columns are there all the same.
         let empty = Frame::new(vec![]).unwrap();
-        let QueryResult::Frame { frame } = normalize(&all_steps()[2], QueryResult::Frame { frame: empty }).unwrap()
+        let QueryResult::Frame { frame } =
+            normalize(&all_steps()[2], QueryResult::Frame { frame: empty }, 1000).unwrap()
         else {
             panic!()
         };
         assert_eq!(frame.fields().iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["degree", "nodes"]);
-        let top = normalize(&all_steps()[3], QueryResult::Frame { frame: Frame::new(vec![]).unwrap() }).unwrap();
+        let top = normalize(&all_steps()[3], QueryResult::Frame { frame: Frame::new(vec![]).unwrap() }, 1000).unwrap();
         assert!(matches!(top, QueryResult::Graph { graph } if graph.nodes.is_empty()));
+    }
+
+    fn field(name: &str, field_type: FieldType, values: Vec<Value>) -> Field {
+        Field { name: name.into(), field_type, unit: None, values, labels: None }
+    }
+
+    /// The database reads at most the server's row limit of the query and says when it cut.
+    #[test]
+    fn the_row_limit_holds_and_a_cut_is_marked() {
+        let q = cypher("MATCH (a) RETURN a", &all_steps()[0], Dialect::Neo4j, 500).unwrap();
+        assert!(q.contains("LIMIT 501") && q.contains("size(__kz_all) > 500") && q.contains("__kz_all[0..500]"), "{q}");
+        let frame = Frame::new(vec![
+            field("label", FieldType::String, vec![json!("Kunde")]),
+            field("nodes", FieldType::Int64, vec![json!("500")]),
+            field("share", FieldType::Number, vec![json!(1.0)]),
+            field(CUT, FieldType::Bool, vec![json!(true)]),
+        ])
+        .unwrap();
+        let QueryResult::Frame { frame } = normalize(&all_steps()[0], QueryResult::Frame { frame }, 500).unwrap()
+        else {
+            panic!()
+        };
+        let meta = frame.meta().unwrap();
+        assert!(meta.rows_truncated);
+        assert_eq!(meta.notices[0].code, "graph.row_limit");
+        assert_eq!(frame.fields().len(), 3, "the cut column is no field of the step");
+    }
+
+    /// Shared neighbours: the counting row is no pair, and more pairs than the server's cell
+    /// budget are refused before they are made.
+    #[test]
+    fn shared_neighbours_are_bounded() {
+        let q = cypher("MATCH (a)-[r]->(b) RETURN a, r, b", &all_steps()[5], Dialect::Neo4j, 1000).unwrap();
+        assert!(q.contains(&format!("__kz_pairs <= {}", crate::analysis::steps::MAX_CELLS)), "{q}");
+        let answer = |pairs: Value| {
+            Frame::new(vec![
+                field("a", FieldType::String, vec![Value::Null, json!("Anna")]),
+                field("b", FieldType::String, vec![Value::Null, json!("Ben")]),
+                field("shared", FieldType::Int64, vec![json!("0"), json!("2")]),
+                field("neighbours", FieldType::Json, vec![json!([]), json!(["Abo", "Dock"])]),
+                field(CUT, FieldType::Bool, vec![json!(false), json!(false)]),
+                field(PAIRS, FieldType::Int64, vec![pairs.clone(), pairs]),
+            ])
+            .unwrap()
+        };
+        let QueryResult::Frame { frame } =
+            normalize(&all_steps()[5], QueryResult::Frame { frame: answer(json!("3")) }, 1000).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(frame.fields()[0].values, vec![json!("Anna")]);
+        assert_eq!(frame.fields()[2].values, vec![json!(2.0)]);
+        let too_many = json!((crate::analysis::steps::MAX_CELLS + 1).to_string());
+        let e = normalize(&all_steps()[5], QueryResult::Frame { frame: answer(too_many) }, 1000).unwrap_err();
+        assert_eq!(e.reason, "steps.too_many_cells");
     }
 }

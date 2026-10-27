@@ -1,5 +1,6 @@
 //! Graph steps on the server: counts per label and per edge type, the degree distribution, the
-//! top nodes by degree, shared neighbours and the projection of nodes or edges into a frame
+//! top nodes by degree, shared neighbours, the degree as a property, a filtered subgraph and the
+//! projection of nodes or edges into a frame
 //! (docs/api/settings-dashboards.md, "Graph steps"). The same steps run in the database where the
 //! source can (`pushdown.rs`), and in the browser for a preview (`ui/src/analysis/graphSteps.ts`);
 //! the server and the browser pass the graph cases of `conformance.json`.
@@ -13,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use serde_json::Value;
 
 use super::steps::Control;
-use super::{Direction, StepKind};
+use super::{Direction, PropertyFilter, PropertyOp, StepKind};
 use crate::datasources::detail::Detail;
 use crate::shapes::{Edge, Field, FieldType, Frame, FrameMeta, GraphSchema, GraphSet, Node};
 
@@ -83,6 +84,12 @@ pub fn apply(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<Gra
         StepKind::ToFrame { columns, rows: Some(rows), label, edge_type, .. } => GraphOut::Frame(
             super::projection::project_graph(graph, *rows, label.as_deref(), edge_type.as_deref(), columns),
         ),
+        StepKind::Degree { direction, name, .. } => {
+            GraphOut::Graph(with_degree(graph, *direction, name.as_deref().unwrap_or("degree")))
+        }
+        StepKind::FilterGraph { labels, edge_types, property, .. } => {
+            GraphOut::Graph(filter_graph(graph, labels, edge_types, property.as_ref()))
+        }
         _ => unreachable!("only graph steps run on graphs"),
     })
 }
@@ -294,4 +301,124 @@ fn shared_neighbours(graph: &GraphSet, spec: &SharedSpec, control: &Control) -> 
             field("neighbours", FieldType::Json, neighbours),
         ],
     ))
+}
+
+/// The graph with every node's degree as the property `name` (replacing one of that name).
+fn with_degree(graph: &GraphSet, direction: Direction, name: &str) -> GraphSet {
+    let deg = degrees(graph, direction);
+    let nodes: Vec<Node> = graph
+        .nodes
+        .iter()
+        .zip(deg)
+        .map(|(n, d)| {
+            let mut n = n.clone();
+            n.properties.insert(name.to_string(), count(d));
+            n
+        })
+        .collect();
+    GraphSet {
+        schema: schema_of(&nodes, &graph.edges),
+        nodes,
+        edges: graph.edges.clone(),
+        paths: graph.paths.clone(),
+        truncated: graph.truncated.clone(),
+        notices: graph.notices.clone(),
+    }
+}
+
+/// A property value as a number: a JSON number, or the text of a typed 64-bit integer, float or
+/// decimal (`{"$type": "int64", "value": "..."}`).
+fn number_of(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::Object(m) if m.len() == 2 => {
+            let kind = m.get("$type")?.as_str()?;
+            let text = m.get("value")?.as_str()?;
+            let text = text.trim();
+            (matches!(kind, "int64" | "float" | "decimal") && plain_number(text))
+                .then(|| text.parse::<f64>().ok())
+                .flatten()
+        }
+        _ => None,
+    }
+    .filter(|x| x.is_finite())
+}
+
+/// A plain decimal number as text (`-12`, `1.5`, `.5`, `2e3`), as the browser reads it too.
+fn plain_number(t: &str) -> bool {
+    let t = t.strip_prefix(['+', '-']).unwrap_or(t);
+    let (mantissa, exponent) = match t.find(['e', 'E']) {
+        Some(i) => (&t[..i], Some(&t[i + 1..])),
+        None => (t, None),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    let mantissa_ok = digits(whole) && digits(fraction) && !(whole.is_empty() && fraction.is_empty());
+    let exponent_ok = exponent.is_none_or(|e| {
+        let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+        !e.is_empty() && digits(e)
+    });
+    mantissa_ok && exponent_ok
+}
+
+/// Whether a node passes the condition; a missing or empty property passes none.
+pub fn passes(properties: &BTreeMap<String, Value>, filter: &PropertyFilter) -> bool {
+    let Some(v) = properties.get(&filter.key).filter(|v| !v.is_null()) else { return false };
+    let want = filter.value.as_ref();
+    let compare = |ok: fn(Ordering) -> bool| match (number_of(v), want.and_then(Value::as_f64)) {
+        (Some(a), Some(b)) => a.partial_cmp(&b).is_some_and(ok),
+        _ => false,
+    };
+    let equal = || match want {
+        Some(Value::Number(n)) => number_of(v).is_some_and(|a| Some(a) == n.as_f64()),
+        Some(Value::String(s)) => v.as_str() == Some(s.as_str()),
+        Some(Value::Bool(b)) => v.as_bool() == Some(*b),
+        _ => false,
+    };
+    match filter.op {
+        PropertyOp::Exists => true,
+        PropertyOp::Eq => equal(),
+        PropertyOp::Ne => !equal(),
+        PropertyOp::Gt => compare(|o| o == Ordering::Greater),
+        PropertyOp::Gte => compare(|o| o != Ordering::Less),
+        PropertyOp::Lt => compare(|o| o == Ordering::Less),
+        PropertyOp::Lte => compare(|o| o != Ordering::Greater),
+        PropertyOp::Contains => match (v.as_str(), want.and_then(Value::as_str)) {
+            (Some(text), Some(part)) => text.contains(part),
+            _ => false,
+        },
+    }
+}
+
+/// The nodes with one of `labels` (any, when empty) that pass `property`, and the edges of
+/// `edge_types` (any, when empty) between them; paths are left out.
+fn filter_graph(
+    graph: &GraphSet,
+    labels: &[String],
+    edge_types: &[String],
+    property: Option<&PropertyFilter>,
+) -> GraphSet {
+    let nodes: Vec<Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| labels.is_empty() || n.labels.iter().any(|l| labels.contains(l)))
+        .filter(|n| property.is_none_or(|f| passes(&n.properties, f)))
+        .cloned()
+        .collect();
+    let kept: HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+    let edges: Vec<Edge> = graph
+        .edges
+        .iter()
+        .filter(|e| edge_types.is_empty() || edge_types.contains(&e.edge_type))
+        .filter(|e| kept.contains(e.from.as_str()) && kept.contains(e.to.as_str()))
+        .cloned()
+        .collect();
+    GraphSet {
+        schema: schema_of(&nodes, &edges),
+        nodes,
+        edges,
+        paths: None,
+        truncated: graph.truncated.clone(),
+        notices: graph.notices.clone(),
+    }
 }

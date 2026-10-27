@@ -172,6 +172,7 @@ async fn query(
     JsonBody(req): JsonBody<QueryRequest>,
 ) -> ApiResult<Json<QueryResponse>> {
     check_items(&req.queries)?;
+    crate::datasources::check_item_steps(&req.queries)?;
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;

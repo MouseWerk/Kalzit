@@ -84,7 +84,7 @@ pub trait DataSourcePlugin: Send + Sync {
     /// The query that runs the graph step `step` on the result of `query` in the source itself
     /// (`analysis::pushdown`), run with `query` as any query is; `None` when the kind or the
     /// query cannot, and the server runs the step on the result instead.
-    fn pushdown(&self, _query: &Value, _step: &crate::analysis::StepKind) -> Option<Value> {
+    fn pushdown(&self, _query: &Value, _step: &crate::analysis::StepKind, _max_rows: usize) -> Option<Value> {
         None
     }
     /// Checks that need the source itself, run when its settings or secrets are saved (MongoDB:
@@ -431,6 +431,8 @@ pub struct Connection {
     policy: Arc<TargetPolicy>,
     own: Arc<OwnDatabase>,
     shared: OnceCell<Arc<dyn Any + Send + Sync>>,
+    /// Graph steps this source could not run itself (`with_pushdown`).
+    pushdown: PushdownMemo,
 }
 
 /// A connection nobody holds anymore closes its SQLite file, also one that was never cached or
@@ -453,7 +455,15 @@ impl Connection {
         policy: Arc<TargetPolicy>,
         own: Arc<OwnDatabase>,
     ) -> Self {
-        Self { datasource_id: datasource_id.into(), settings, secrets, policy, own, shared: OnceCell::new() }
+        Self {
+            datasource_id: datasource_id.into(),
+            settings,
+            secrets,
+            policy,
+            own,
+            shared: OnceCell::new(),
+            pushdown: PushdownMemo::default(),
+        }
     }
 
     pub fn datasource_id(&self) -> &str {
@@ -1355,6 +1365,13 @@ pub fn check_items(items: &[QueryItem]) -> ApiResult<()> {
                 .because("query.ref_id"));
         }
     }
+    Ok(())
+}
+
+/// Refuses free queries whose graph steps (`QueryItem::steps`) are not valid: steps of that
+/// query, graph steps only. A dashboard's stored steps are not refused as a whole: a step that
+/// no longer passes answers its error at the step (`run_queries`).
+pub fn check_item_steps(items: &[QueryItem]) -> ApiResult<()> {
     for (i, item) in items.iter().enumerate() {
         query_steps(item).map_err(|e| {
             ApiError::validation(format!("queries[{i}].{e}"))
@@ -1374,6 +1391,103 @@ pub fn query_steps(item: &QueryItem) -> Result<Vec<crate::analysis::Step>, Strin
         return Err(format!("steps[{i}]: only graph steps run with the query"));
     }
     Ok(steps)
+}
+
+/// The graph steps of a query up to the first one that is not valid, and that one's place with
+/// its error: the query still runs with the steps before it.
+fn valid_steps(item: &QueryItem) -> (Vec<crate::analysis::Step>, Option<crate::shapes::StepPlace>) {
+    let refs = std::collections::BTreeSet::from([item.ref_id.as_str()]);
+    let mut steps: Vec<crate::analysis::Step> = Vec::new();
+    for (i, raw) in item.steps.iter().enumerate() {
+        let checked = crate::analysis::check_steps(std::slice::from_ref(raw), &refs, &format!("steps[{i}]")).and_then(
+            |mut one| {
+                let step = one.remove(0);
+                if !step.kind.is_graph_step() {
+                    return Err(format!("steps[{i}]: only graph steps run with the query"));
+                }
+                if steps.iter().any(|s| s.id == step.id) {
+                    return Err(format!("steps[{i}].id {} is used twice", step.id));
+                }
+                Ok(step)
+            },
+        );
+        match checked {
+            Ok(step) => steps.push(step),
+            Err(e) => {
+                let id = raw.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                let detail = Detail::new("steps.invalid", format!("the step is not valid: {e}")).with("detail", e);
+                let place = crate::shapes::StepPlace {
+                    id,
+                    ran_in: crate::shapes::RanIn::Server,
+                    error: Some(error_body("validation", detail)),
+                };
+                return (steps, Some(place));
+            }
+        }
+    }
+    (steps, None)
+}
+
+/// Generated queries a source could not run, by their text, so a refresh does not try them again
+/// for a while (an older database without the needed Cypher, a step that is too large for it).
+#[derive(Default)]
+pub struct PushdownMemo(std::sync::Mutex<HashMap<String, Instant>>);
+
+impl PushdownMemo {
+    const FOR: Duration = Duration::from_secs(600);
+    const MAX: usize = 256;
+
+    fn refused(&self, query: &Value) -> bool {
+        let key = query.to_string();
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match map.get(&key) {
+            Some(at) if at.elapsed() < Self::FOR => true,
+            Some(_) => {
+                map.remove(&key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn remember(&self, query: &Value) {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() >= Self::MAX {
+            map.clear();
+        }
+        map.insert(query.to_string(), Instant::now());
+    }
+}
+
+/// Runs a graph step in the source (`pushed`, the generated query) within `share` of the query's
+/// time, and the query as written when the source cannot (an error, a timeout, an answer
+/// `accept` refuses); `true` when the step ran in the source. A generated query that failed is
+/// not tried again for a while (`memo`).
+pub(crate) async fn with_pushdown<Run, Fut>(
+    run: Run,
+    pushed: Option<Value>,
+    original: Value,
+    share: Duration,
+    accept: impl Fn(QueryResult) -> Result<QueryResult, Detail>,
+    memo: &PushdownMemo,
+) -> Result<(QueryResult, bool), SourceError>
+where
+    Run: Fn(Value) -> Fut,
+    Fut: Future<Output = Result<QueryResult, SourceError>>,
+{
+    if let Some(query) = pushed.filter(|q| !memo.refused(q)) {
+        let why = match tokio::time::timeout(share, run(query.clone())).await {
+            Ok(Ok(result)) => match accept(result) {
+                Ok(result) => return Ok((result, true)),
+                Err(d) => d.message,
+            },
+            Ok(Err(e)) => e.detail().message,
+            Err(_) => format!("no answer within {} s", share.as_secs()),
+        };
+        tracing::debug!("graph step not run in the source: {}", scrub(&why, std::iter::empty()));
+        memo.remember(&query);
+    }
+    run(original).await.map(|r| (r, false))
 }
 
 /// Runs queries in parallel within the caller's concurrency limit and answers per `refId`. One
@@ -1462,10 +1576,11 @@ async fn run_one(
     }
     let timeout = limits.timeout;
     let started = Instant::now();
-    // Checked with the request (`check_items`); the first may run in the source.
-    let steps = query_steps(&item).unwrap_or_default();
+    // The valid graph steps; the first may run in the source.
+    let (steps, invalid) = valid_steps(&item);
     let first = steps.iter().find(|s| !s.disabled);
-    let pushed = first.and_then(|s| kind.plugin.pushdown(&item.query, &s.kind));
+    let max_rows = limits.max_rows;
+    let pushed = first.and_then(|s| kind.plugin.pushdown(&item.query, &s.kind, max_rows));
     let run = async {
         // Waiting for a free slot counts against the query's own timeout.
         let _slots = registry.slots(state, &ctx.user.id).await?;
@@ -1481,20 +1596,19 @@ async fn run_one(
             limits: limits.clone(),
             cursor: item.cursor.clone(),
         };
-        if let (Some(query), Some(first)) = (pushed.clone(), first) {
-            // A source that cannot run the generated query (an older version, a missing
-            // function) still answers: the query runs as written and the server runs the step.
-            match kind.plugin.query(&conn, request(query)).await {
-                Ok(result) => match crate::analysis::pushdown::normalize(&first.kind, result) {
-                    Ok(result) => return Ok((conn, Ok((result, true)))),
-                    Err(d) => tracing::debug!(datasource = %ds.id, "graph step not run in the source: {}", d.message),
-                },
-                Err(e) => {
-                    tracing::debug!(datasource = %ds.id, code = e.code(), "graph step not run in the source: {}", e.detail().scrubbed(|t| conn.scrub(t)).message)
-                }
-            }
-        }
-        let result = kind.plugin.query(&conn, request(item.query.clone())).await.map(|r| (r, false));
+        // The source gets half the time for a graph step, so the query as written still has time.
+        let result = with_pushdown(
+            |query| kind.plugin.query(&conn, request(query)),
+            pushed.clone(),
+            item.query.clone(),
+            timeout / 2,
+            |result| match first {
+                Some(step) => crate::analysis::pushdown::normalize(&step.kind, result, max_rows),
+                None => Ok(result),
+            },
+            &conn.pushdown,
+        )
+        .await;
         Ok::<_, SourceError>((conn, result))
     };
     let outcome = tokio::time::timeout(timeout, run).await;
@@ -1503,7 +1617,7 @@ async fn run_one(
         Ok(Err(e)) => outcome_error(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))),
         Ok(Ok((_, Ok((result, in_source))))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
-            if steps.is_empty() {
+            if steps.is_empty() && invalid.is_none() {
                 return QueryOutcome::Ok { result, steps: None };
             }
             let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
@@ -1512,7 +1626,15 @@ async fn run_one(
                 tokio::task::spawn_blocking(move || graph_steps_on_server(&steps, &name, result, in_source, left))
                     .await;
             match ran {
-                Ok((result, places)) => QueryOutcome::Ok { result, steps: Some(places) },
+                Ok((result, mut places)) => {
+                    // A stored step that is no longer valid says so; the steps before it ran.
+                    if let Some(place) = invalid
+                        && places.iter().all(|p| p.error.is_none())
+                    {
+                        places.push(place);
+                    }
+                    QueryOutcome::Ok { result, steps: Some(places) }
+                }
                 Err(e) => outcome_error("internal", Detail::new("steps.failed", e.to_string())),
             }
         }
@@ -1545,17 +1667,21 @@ fn graph_steps_on_server(
         places.push(StepPlace { id: first.id.clone(), ran_in: RanIn::Database, error: None });
     }
     for step in enabled {
-        match crate::analysis::steps::run_graph_steps(std::slice::from_ref(step), name, result.clone(), &control) {
-            Ok(next) => {
-                result = next;
-                places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: None });
-            }
-            Err(failure) => {
-                let error = error_body("validation", failure.detail);
+        // Each step reads the graph as the one before left it; a failure keeps that graph.
+        let ran = match &result {
+            QueryResult::Graph { graph } => crate::analysis::graph::apply(&step.kind, graph, &control),
+            _ => Err(Detail::new("steps.not_graph", format!("the result {name} is no graph")).with("frame", name)),
+        };
+        match ran {
+            Ok(crate::analysis::graph::GraphOut::Graph(graph)) => result = QueryResult::Graph { graph },
+            Ok(crate::analysis::graph::GraphOut::Frame(frame)) => result = QueryResult::Frame { frame },
+            Err(detail) => {
+                let error = error_body("validation", detail);
                 places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: Some(error) });
                 break;
             }
         }
+        places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: None });
     }
     (result, places)
 }
@@ -1934,6 +2060,87 @@ pub fn naive_to_ms(t: chrono::NaiveDateTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame_of(label: &str) -> QueryResult {
+        let field = crate::shapes::Field {
+            name: "x".into(),
+            field_type: crate::shapes::FieldType::String,
+            unit: None,
+            values: vec![serde_json::json!(label)],
+            labels: None,
+        };
+        QueryResult::Frame { frame: crate::shapes::Frame::new(vec![field]).unwrap() }
+    }
+
+    /// A graph step the source does not answer in its share of the time runs on the server
+    /// instead, within the query's time; a source that failed is not asked again for a while.
+    #[tokio::test]
+    async fn a_slow_or_failing_pushdown_falls_back_and_is_remembered() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let memo = PushdownMemo::default();
+        let pushed_runs = AtomicUsize::new(0);
+        let run = |q: Value| {
+            let pushed = q == serde_json::json!("pushed");
+            if pushed {
+                pushed_runs.fetch_add(1, Ordering::SeqCst);
+            }
+            async move {
+                if pushed {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok(frame_of("database"))
+                } else {
+                    Ok(frame_of("as written"))
+                }
+            }
+        };
+        let started = Instant::now();
+        let pushed = Some(serde_json::json!("pushed"));
+        let original = serde_json::json!("original");
+        let share = Duration::from_millis(50);
+        let (result, in_source) = with_pushdown(run, pushed.clone(), original.clone(), share, Ok, &memo).await.unwrap();
+        assert!(!in_source);
+        assert_eq!(result, frame_of("as written"));
+        assert!(started.elapsed() < Duration::from_secs(2), "the fallback did not wait for the source");
+        // Not tried again: the next refresh runs the query as written at once.
+        let (_, in_source) = with_pushdown(run, pushed.clone(), original.clone(), share, Ok, &memo).await.unwrap();
+        assert!(!in_source);
+        assert_eq!(pushed_runs.load(Ordering::SeqCst), 1);
+        // An answer the step refuses (too many pairs) falls back too.
+        let memo = PushdownMemo::default();
+        let fast =
+            |q: Value| async move { Ok(frame_of(if q == serde_json::json!("pushed") { "db" } else { "as written" })) };
+        let refuse = |_: QueryResult| Err(Detail::new("steps.too_many_cells", "too many"));
+        let (result, in_source) =
+            with_pushdown(fast, pushed.clone(), original.clone(), share, refuse, &memo).await.unwrap();
+        assert_eq!((result, in_source), (frame_of("as written"), false));
+        let (result, in_source) =
+            with_pushdown(fast, pushed, original, share, Ok, &PushdownMemo::default()).await.unwrap();
+        assert_eq!((result, in_source), (frame_of("db"), true));
+    }
+
+    /// A stored step that no longer passes the checks does not refuse its query: the steps
+    /// before it run, and it answers its error.
+    #[test]
+    fn an_invalid_stored_step_stops_there() {
+        let item = QueryItem {
+            ref_id: "A".into(),
+            datasource_id: "d".into(),
+            query: serde_json::json!({}),
+            cursor: None,
+            limit: None,
+            steps: vec![
+                serde_json::json!({ "id": "a", "type": "countLabels", "frame": "A" }),
+                serde_json::json!({ "id": "b", "type": "topDegree", "frame": "A", "n": 0 }),
+                serde_json::json!({ "id": "c", "type": "countLabels", "frame": "A" }),
+            ],
+        };
+        let (steps, invalid) = valid_steps(&item);
+        assert_eq!(steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["a"]);
+        let invalid = invalid.unwrap();
+        assert_eq!(invalid.id, "b");
+        assert_eq!(invalid.error.unwrap().reason.as_deref(), Some("steps.invalid"));
+        assert!(query_steps(&item).is_err(), "a free query is refused as a whole");
+    }
 
     /// TLS paths written relative in `kalzit.toml` are resolved against the file's folder before
     /// they are compared, so the files the server serves are the ones refused.

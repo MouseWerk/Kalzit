@@ -420,13 +420,13 @@ impl DataSourcePlugin for GraphDb {
         &[Shape::Graph, Shape::Frame]
     }
 
-    fn pushdown(&self, query: &Value, step: &crate::analysis::StepKind) -> Option<Value> {
+    fn pushdown(&self, query: &Value, step: &crate::analysis::StepKind, max_rows: usize) -> Option<Value> {
         let q = CypherQuery::deserialize(query).ok()?;
         let dialect = match self.0 {
             Flavor::Neo4j => crate::analysis::pushdown::Dialect::Neo4j,
             Flavor::Memgraph => crate::analysis::pushdown::Dialect::Memgraph,
         };
-        crate::analysis::pushdown::cypher(&q.cypher, step, dialect).map(|cypher| json!({ "cypher": cypher }))
+        crate::analysis::pushdown::cypher(&q.cypher, step, dialect, max_rows).map(|cypher| json!({ "cypher": cypher }))
     }
 
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
@@ -929,6 +929,14 @@ impl Collector {
         }
         self.graph_records += 1;
         for (i, v) in record.iter().enumerate() {
+            // A graph step run in the database says in this column that it cut the query's rows
+            // at the row limit (analysis/pushdown.rs).
+            if self.fields.get(i).is_some_and(|f| f == crate::analysis::pushdown::CUT) {
+                if *v == Bv::Bool(true) {
+                    self.graph.cut_at_rows(self.max_rows);
+                }
+                continue;
+            }
             match v {
                 Bv::Null => {}
                 v if is_graph(v) => {

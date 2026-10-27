@@ -89,6 +89,15 @@ function complete(step: Step): boolean {
       return step.label !== "" && step.via !== "" && step.label !== step.via;
     case "toFrame":
       return step.columns.some((c) => c.path.trim() !== "");
+    case "filterGraph": {
+      const f = step.property;
+      if (f === undefined) return true;
+      if (f.key.trim() === "") return false;
+      if (f.op === "exists") return f.value === undefined;
+      if (f.op === "contains") return typeof f.value === "string" && f.value !== "";
+      if (f.op === "eq" || f.op === "ne") return f.value !== undefined && f.value !== "";
+      return typeof f.value === "number";
+    }
     default:
       return true;
   }

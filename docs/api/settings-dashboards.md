@@ -656,6 +656,10 @@ type Step = { id: string; disabled?: boolean } & (
   | { type: "topDegree"; frame: string; n: number; label?: string; direction?: Direction }  // n 1 to 1000
   | { type: "sharedNeighbours"; frame: string; label: string; via: string;  // via differs from label
       edgeType?: string; min: number; limit: number; name?: string }        // min at least 1, limit 1 to 1000
+  | { type: "degree"; frame: string; direction?: Direction; name?: string } // name default "degree"
+  | { type: "filterGraph"; frame: string; labels?: string[]; edgeTypes?: string[];  // up to 50 each
+      property?: { key: string; op: "exists" | "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "contains";
+                   value?: string | number | boolean } }                   // none for exists, a number to compare
 );
 type Direction = "both" | "out" | "in";                                     // default "both"
 type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "first" | "last";
@@ -714,10 +718,22 @@ graph step on anything else `steps.not_graph`.
   (how many) and `neighbours` (a list). Pairs with at least `min` shared neighbours, the `limit`
   with the most, then by the ids of `a` and `b`. Nodes are named by their text property `name`,
   else by their id; neighbours are listed by id. Such as customers who bought the same products.
+- **degree** ("Grad berechnen") gives every node its degree as the property `name` (`degree`),
+  replacing one of that name. The result stays a graph.
+- **filterGraph** ("Teilgraph filtern") keeps the nodes with one of `labels` (all when absent)
+  whose property `key` passes the condition, and the edges of `edgeTypes` (all when absent) whose
+  ends both stay; paths are left out. `exists`: the property has a value; `eq`, `ne`: equal to the
+  text, number (also a 64-bit integer or decimal property) or true or false; `gt`, `gte`, `lt`,
+  `lte`: a number compared with a number; `contains`: text in text. A node without the property
+  passes no condition. The result stays a graph.
 - **toFrame** with `rows` makes one row per node (only those with `label`) or per edge (only
   those of `edgeType`); the column paths are property keys, and `@id`, `@labels` (nodes) or
   `@id`, `@type`, `@from`, `@to` (edges), which win over properties of the same name. The rest is
   as for documents.
+
+Labels, edge types and property keys of graph steps are 1 to 200 characters without control
+characters or backslashes. A node the query returned only as the end of a relationship counts as
+a node without labels and properties, in the database as on the server.
 
 Text and ids compare by UTF-16 code units, as Neo4j compares them, so every engine answers the
 same rows in the same order. Where they run: the enabled graph steps of a query go with it
