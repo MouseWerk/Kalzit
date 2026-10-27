@@ -1005,6 +1005,45 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.getByText(t("graph.layout.settling"))).toHaveCount(0);
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
     await shoot(page, `graph-panels-${scheme}`);
+    if (scheme === "dark") {
+      // Each panel on its own for the guide.
+      for (const [title, name] of [
+        ["Customers, orders and products", "graph-network-dark"],
+        ["Category tree", "graph-hierarchy-dark"],
+        ["From Ana to the monitor arm", "graph-path-dark"],
+        ["Around Ben", "graph-explorer-dark"],
+      ] as const) {
+        await page
+          .getByRole("article", { name: title, exact: true })
+          .screenshot({ path: join(OUT, `${name}.png`), animations: "disabled", caret: "hide" });
+      }
+    }
     await page.context().close();
   });
 }
+
+test("graph node details, dark", async ({ browser }) => {
+  const address = process.env.KALZIT_E2E_NEO4J ?? "";
+  test.skip(address === "", "KALZIT_E2E_NEO4J is not set; the picture needs the Neo4j fixture");
+  const id = await seedGraphDashboard(address);
+  const page = await openPage(browser, "dark", { width: 1440, height: 1000 });
+  await signIn(page);
+  await page.goto(`/dashboards/${id}`);
+  const title = "Customers, orders and products";
+  const shop = page.getByRole("article", { name: title, exact: true });
+  await expect(shop.getByRole("application", { name: title, exact: true })).toBeVisible();
+  // Ana selected from the panel's table, then back to the drawing with her details open.
+  const table = shop.getByRole("button", { name: t("graph.showTable"), exact: true });
+  await table.click();
+  await shop.getByRole("button", { name: "Ana", exact: true }).first().click();
+  await table.click();
+  await expect(shop.getByRole("region", { name: t("graph.details", { name: "Ana" }) })).toBeVisible();
+  await expect(page.getByText(t("graph.layout.settling"))).toHaveCount(0);
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await shop.screenshot({
+    path: join(OUT, "graph-inspector-dark.png"),
+    animations: "disabled",
+    caret: "hide",
+  });
+  await page.context().close();
+});
