@@ -75,21 +75,37 @@ async fn change_password(
     if req.current.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(wrong_current());
     }
-    // Its own budget, and the sign-in budget of the account's email, so the two together allow
-    // no more guesses than sign-ins alone.
+    // Its own budget. A failure also counts for the account's sign-ins from all addresses
+    // (`AppState::account_limiter`), which does not refuse here: the caller has a session.
+    use crate::auth::ratelimit::{account_key, network_key};
+    let mono = state.clock.monotonic_ms();
     let limit_key = format!("password:{}", user.id);
-    let email_key = format!("email:{}", user.email);
-    state
-        .login_limiter
-        .try_acquire(&[&limit_key, &email_key], now)
-        .map_err(|wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait))?;
+    let refused = |wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait);
+    let counted = state.password_limiter.try_acquire(&limit_key, &limit_key, mono).map_err(refused)?;
+    let busy = || {
+        state.password_limiter.refund(&limit_key, &counted);
+        refused(std::time::Duration::from_secs(1))
+    };
+    // A signed-in user has check slots and hashing threads apart from those of sign-ins, so
+    // guesses at the sign-in page cannot keep them waiting.
+    let slot_key = format!("session:{}", account_key(&user.email));
+    let Some(_checking) = state
+        .password_checks
+        .enter(&slot_key, crate::auth::ratelimit::MAX_TRUSTED_IN_FLIGHT_PER_ACCOUNT, std::time::Duration::from_secs(2))
+        .await
+    else {
+        return Err(busy());
+    };
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
-    if !password::verify(req.current, stored.clone()).await {
+    let Some(matched) = password::verify(req.current, stored.clone(), &password::TRUSTED).await else {
+        return Err(busy());
+    };
+    if !matched {
+        state.account_limiter.record(&account_key(&user.email), &network_key(info.client_ip), mono);
         return Err(wrong_current());
     }
-    state.login_limiter.reset(&limit_key);
-    state.login_limiter.reset(&email_key);
+    state.password_limiter.reset(&limit_key);
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
     let hash = password::hash(req.new).await.map_err(|e| ApiError::internal("hashing password", e))?;
 

@@ -1,6 +1,7 @@
 //! Password hashing with Argon2id. Hashing is CPU-heavy, so it runs on the blocking pool.
 
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
@@ -28,21 +29,77 @@ fn hash_blocking(password: &str) -> Result<String, String> {
     Argon2::default().hash_password(password.as_bytes()).map(|h| h.to_string()).map_err(|e| e.to_string())
 }
 
+fn cpus() -> usize {
+    std::thread::available_parallelism().map_or(2, |n| n.get())
+}
+
+/// Checks waiting for a thread, per CPU, before further ones are refused at once.
+const WAITING_PER_CPU: usize = 32;
+
+/// Threads for hashing and checking: at most so many at once, since more would only queue on the
+/// blocking pool and take its threads from everything else; further ones wait their turn, up to
+/// `WAITING_PER_CPU` per CPU.
+pub struct Lane {
+    turns: tokio::sync::Semaphore,
+    waiting: AtomicUsize,
+    max_waiting: usize,
+}
+
+/// For everyone: hashing, and the checks of sign-ins from browsers the account does not know.
+pub static SHARED: LazyLock<Lane> = LazyLock::new(|| Lane::new(cpus()));
+/// For the checks of known devices (`auth::device`) and of signed-in users, so a flood of
+/// guesses that fills the shared lane cannot keep the owner out.
+pub static TRUSTED: LazyLock<Lane> = LazyLock::new(|| Lane::new((cpus() / 4).max(1)));
+
+/// Counts a waiter until dropped (also when the request is cancelled while waiting).
+struct Waiting<'a>(&'a AtomicUsize);
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl Lane {
+    fn new(threads: usize) -> Self {
+        Self {
+            turns: tokio::sync::Semaphore::new(threads),
+            waiting: AtomicUsize::new(0),
+            max_waiting: threads * WAITING_PER_CPU,
+        }
+    }
+
+    /// A turn, or `None` at once when too many wait already.
+    async fn turn(&self) -> Option<tokio::sync::SemaphorePermit<'_>> {
+        if self.waiting.fetch_add(1, Ordering::SeqCst) >= self.max_waiting {
+            self.waiting.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        let _waiting = Waiting(&self.waiting);
+        self.turns.acquire().await.ok()
+    }
+}
+
+/// Hashes a new password on the shared lane; it waits for its turn however many wait (only
+/// admins, signed-in users and setup hash).
 pub async fn hash(password: String) -> Result<String, String> {
+    let _turn = SHARED.turns.acquire().await.map_err(|e| e.to_string())?;
     tokio::task::spawn_blocking(move || hash_blocking(&password)).await.map_err(|e| e.to_string())?
 }
 
-/// True when `password` matches `stored`. A missing hash (unknown user) still costs one
-/// verification and returns false.
-pub async fn verify(password: String, stored: Option<String>) -> bool {
-    tokio::task::spawn_blocking(move || {
+/// Whether `password` matches `stored`, checked on `lane`; `None` when the lane is too busy to
+/// take the check. A missing hash (unknown user) still costs one verification and is `false`.
+pub async fn verify(password: String, stored: Option<String>, lane: &Lane) -> Option<bool> {
+    let _turn = lane.turn().await?;
+    let matched = tokio::task::spawn_blocking(move || {
         let known = stored.is_some();
         let phc = stored.unwrap_or_else(|| DUMMY_HASH.clone());
         let Ok(parsed) = PasswordHash::new(&phc) else { return false };
         Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok() && known
     })
     .await
-    .unwrap_or(false)
+    .unwrap_or(false);
+    Some(matched)
 }
 
 pub fn check_policy(password: &str) -> Result<(), String> {
@@ -64,13 +121,34 @@ mod tests {
     async fn hash_then_verify() {
         let h = hash("korrekt Pferd Batterie".into()).await.unwrap();
         assert!(h.starts_with("$argon2id$"));
-        assert!(verify("korrekt Pferd Batterie".into(), Some(h.clone())).await);
-        assert!(!verify("falsch".into(), Some(h)).await);
+        assert_eq!(verify("korrekt Pferd Batterie".into(), Some(h.clone()), &SHARED).await, Some(true));
+        assert_eq!(verify("falsch".into(), Some(h), &TRUSTED).await, Some(false));
     }
 
     #[tokio::test]
     async fn unknown_user_never_verifies() {
-        assert!(!verify("anything".into(), None).await);
+        assert_eq!(verify("anything".into(), None, &SHARED).await, Some(false));
+    }
+
+    /// Beyond its waiters a lane refuses at once instead of queueing without end.
+    #[tokio::test]
+    async fn a_full_lane_refuses_at_once() {
+        let lane = Lane::new(1);
+        let busy = lane.turns.acquire().await.unwrap();
+        let mut waiting = Vec::new();
+        for _ in 0..WAITING_PER_CPU {
+            let lane = &lane;
+            waiting.push(Box::pin(async move { lane.turn().await.is_some() }));
+        }
+        // Start every waiter once, so each takes its place in the queue.
+        for w in &mut waiting {
+            assert!(futures_util::poll!(w.as_mut()).is_pending());
+        }
+        assert!(lane.turn().await.is_none(), "the queue is full");
+        drop(waiting);
+        assert_eq!(lane.waiting.load(Ordering::SeqCst), 0, "cancelled waiters leave the queue");
+        drop(busy);
+        assert!(lane.turn().await.is_some());
     }
 
     #[test]

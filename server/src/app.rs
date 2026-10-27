@@ -9,7 +9,7 @@ use axum::routing::get;
 use sqlx::AnyPool;
 use tower_http::trace::TraceLayer;
 
-use crate::auth::ratelimit::RateLimiter;
+use crate::auth::ratelimit::{Capacity, RateLimiter};
 use crate::clock::Clock;
 use crate::config::Config;
 use crate::datasources::DataSources;
@@ -19,6 +19,10 @@ use crate::routes::{self, health};
 use crate::secrets::Keyring;
 use crate::{db, net, web};
 
+/// The failed sign-ins one IPv6 /48 may collect for all accounts together, as a multiple of
+/// `security.login_max_failures` (the budget of one address).
+pub const NETWORK_FAILURES_FACTOR: u32 = 5;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: AnyPool,
@@ -27,7 +31,33 @@ pub struct AppState {
     pub read_db: AnyPool,
     pub config: Arc<Config>,
     pub clock: Arc<dyn Clock>,
+    /// Sign-in attempts per client address (`routes::auth`). Each class of keys has its own
+    /// table, so a flood of one never crowds out another.
     pub login_limiter: Arc<RateLimiter>,
+    /// Sign-in attempts per account at one client address.
+    pub pair_limiter: Arc<RateLimiter>,
+    /// Failed sign-ins per IPv6 /48 for all accounts together (`NETWORK_FAILURES_FACTOR`); used
+    /// up, it refuses attempts whose account at that address is not clean
+    /// (`ratelimit::CLEAN_ADDRESS_FAILURES`).
+    pub network_limiter: Arc<RateLimiter>,
+    /// Failed sign-ins and password checks per existing account from all addresses together.
+    /// Used up, it refuses every sign-in of the account without a known device (`auth::device`).
+    /// Without a cap and never dropped before its window ends (bounded by the number of users).
+    pub account_limiter: Arc<RateLimiter>,
+    /// The same budget for emails without an account, so a refusal looks the same for both; a
+    /// bounded table, since anyone can make up emails.
+    pub unknown_account_limiter: Arc<RateLimiter>,
+    /// The same budget for such emails while that table is full, in a fixed set of buckets
+    /// (`routes::auth::overflow_bucket`).
+    pub overflow_limiter: Arc<RateLimiter>,
+    /// Successful sign-ins of known devices per account (`ratelimit::MAX_SIGN_INS`).
+    pub sign_in_account_limiter: Arc<RateLimiter>,
+    /// Successful sign-ins of known devices per client address.
+    pub sign_in_address_limiter: Arc<RateLimiter>,
+    /// Checks of the current password per user (`POST /me/password`).
+    pub password_limiter: Arc<RateLimiter>,
+    /// Password checks in flight per account (sign-ins and `POST /me/password`).
+    pub password_checks: Arc<crate::auth::ratelimit::InFlight>,
     /// Setup code attempts per client address (`routes::setup`).
     pub setup_limiter: Arc<RateLimiter>,
     /// Wrong setup codes from all addresses together (`security.setup_*`).
@@ -62,11 +92,17 @@ impl AppState {
         let setup = SetupGate::init(&db, &config.paths.data_dir, setup_code).await?;
         crate::auth::password::prewarm().await;
         let sec = &config.security;
-        let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
-        // Setup codes per client address count like sign-ins; all addresses together have a
-        // budget of their own, so a guess spread over many addresses is capped as well.
-        let setup_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
-        let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs);
+        let (max_failures, window_secs) = (sec.login_max_failures, sec.login_window_secs);
+        let login = move |capacity| RateLimiter::new(max_failures, window_secs, capacity);
+        let network_limiter = RateLimiter::new(
+            sec.login_max_failures.saturating_mul(NETWORK_FAILURES_FACTOR),
+            sec.login_window_secs,
+            Capacity::LARGE,
+        );
+        // Setup codes per client address count like sign-ins; wrong codes from all addresses
+        // together have a budget of their own, which slows a guess spread over many addresses.
+        let setup_limiter = login(Capacity::SMALL);
+        let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs, Capacity::SMALL);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
         let touch_limit = crate::auth::session::Touches::limit_for(&db);
@@ -81,12 +117,31 @@ impl AppState {
             read_db,
             config: Arc::new(config),
             clock,
-            login_limiter: Arc::new(login_limiter),
+            login_limiter: Arc::new(login(Capacity::LARGE)),
+            pair_limiter: Arc::new(login(Capacity::LARGE)),
+            network_limiter: Arc::new(network_limiter),
+            account_limiter: Arc::new(login(Capacity::UNBOUNDED)),
+            unknown_account_limiter: Arc::new(login(Capacity::LARGE)),
+            // At most `OVERFLOW_BUCKETS` keys.
+            overflow_limiter: Arc::new(login(Capacity::UNBOUNDED)),
+            sign_in_account_limiter: Arc::new(RateLimiter::new(
+                crate::auth::ratelimit::MAX_SIGN_INS,
+                window_secs,
+                Capacity::UNBOUNDED,
+            )),
+            sign_in_address_limiter: Arc::new(RateLimiter::new(
+                crate::auth::ratelimit::MAX_SIGN_INS,
+                window_secs,
+                Capacity::LARGE,
+            )),
+            password_limiter: Arc::new(login(Capacity::SMALL)),
+            password_checks: Arc::default(),
             setup_limiter: Arc::new(setup_limiter),
             setup_all_limiter: Arc::new(setup_all_limiter),
             probe_limiter: Arc::new(RateLimiter::new(
                 crate::routes::datasources::PROBE_MAX,
                 crate::routes::datasources::PROBE_WINDOW_SECS,
+                Capacity::SMALL,
             )),
             setup: Arc::new(setup),
             secrets,

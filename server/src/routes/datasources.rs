@@ -775,7 +775,14 @@ async fn test_unsaved(
     // Per user and per client address within the organization.
     let user_key = format!("datasource-test:user:{}", ctx.user.id);
     let address_key = format!("datasource-test:{}:address:{}", ctx.org_id, info.client_ip);
-    if let Err(wait) = state.probe_limiter.try_acquire(&[&user_key, &address_key], state.clock.now_ms()) {
+    let mono = state.clock.monotonic_ms();
+    let network = crate::auth::ratelimit::network_key(info.client_ip);
+    let counted = state.probe_limiter.try_acquire(&user_key, &user_key, mono).and_then(|user| {
+        state.probe_limiter.try_acquire(&address_key, &network, mono).inspect_err(|_| {
+            state.probe_limiter.refund(&user_key, &user);
+        })
+    });
+    if let Err(wait) = counted {
         return Err(ApiError::rate_limited("too many connection tests; wait a minute", wait)
             .because("datasource.test_rate_limited")
             .param("max", PROBE_MAX));

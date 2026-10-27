@@ -1,3 +1,4 @@
+pub mod device;
 pub mod password;
 pub mod ratelimit;
 pub mod session;

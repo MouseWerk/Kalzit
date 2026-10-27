@@ -1508,6 +1508,11 @@ impl PushdownMemo {
 /// time, and the query as written when the source cannot (an error, a timeout, an answer
 /// `accept` refuses); `true` when the step ran in the source. A generated query that failed is
 /// not tried again for a while (`memo`).
+///
+/// `run` gets the time its query may take in the source: `Some(share)` for the generated query,
+/// which the source must give up after that time too (a graph source passes it as the
+/// transaction timeout), so an abandoned step does not keep running there; `None` for the query
+/// as written, which has the query's own time.
 pub(crate) async fn with_pushdown<Run, Fut>(
     run: Run,
     pushed: Option<Value>,
@@ -1517,11 +1522,11 @@ pub(crate) async fn with_pushdown<Run, Fut>(
     memo: &PushdownMemo,
 ) -> Result<(QueryResult, bool), SourceError>
 where
-    Run: Fn(Value) -> Fut,
+    Run: Fn(Value, Option<Duration>) -> Fut,
     Fut: Future<Output = Result<QueryResult, SourceError>>,
 {
     if let Some(query) = pushed.filter(|q| !memo.refused(q)) {
-        let why = match tokio::time::timeout(share, run(query.clone())).await {
+        let why = match tokio::time::timeout(share, run(query.clone(), Some(share))).await {
             Ok(Ok(result)) => match accept(result) {
                 Ok(result) => return Ok((result, true)),
                 Err(d) => d.message,
@@ -1532,7 +1537,7 @@ where
         tracing::debug!("graph step not run in the source: {}", scrub(&why, std::iter::empty()));
         memo.remember(&query);
     }
-    run(original).await.map(|r| (r, false))
+    run(original, None).await.map(|r| (r, false))
 }
 
 /// Runs queries in parallel within the caller's concurrency limit and answers per `refId`. One
@@ -1630,7 +1635,7 @@ async fn run_one(
         // Waiting for a free slot counts against the query's own timeout.
         let _slots = registry.slots(state, &ctx.user.id).await?;
         let conn = registry.connection(state, &ds).await?;
-        let request = |query: Value| SourceQuery {
+        let request = |query: Value, time: Option<Duration>| SourceQuery {
             ref_id: item.ref_id.clone(),
             query,
             range,
@@ -1638,12 +1643,12 @@ async fn run_one(
             max_data_points,
             variables: variables.clone(),
             identifier_variables: identifier_variables.cloned(),
-            limits: limits.clone(),
+            limits: Limits { timeout: time.unwrap_or(limits.timeout), ..limits.clone() },
             cursor: item.cursor.clone(),
         };
         // The source gets half the time for a graph step, so the query as written still has time.
         let result = with_pushdown(
-            |query| kind.plugin.query(&conn, request(query)),
+            |query, time| kind.plugin.query(&conn, request(query, time)),
             pushed.clone(),
             item.query.clone(),
             timeout / 2,
@@ -2218,8 +2223,11 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let memo = PushdownMemo::default();
         let pushed_runs = AtomicUsize::new(0);
-        let run = |q: Value| {
+        let share = Duration::from_millis(50);
+        let run = |q: Value, time: Option<Duration>| {
             let pushed = q == serde_json::json!("pushed");
+            // The source is told to give up a pushed step after its share, not the whole time.
+            assert_eq!(time, pushed.then_some(share));
             if pushed {
                 pushed_runs.fetch_add(1, Ordering::SeqCst);
             }
@@ -2235,7 +2243,6 @@ mod tests {
         let started = Instant::now();
         let pushed = Some(serde_json::json!("pushed"));
         let original = serde_json::json!("original");
-        let share = Duration::from_millis(50);
         let (result, in_source) = with_pushdown(run, pushed.clone(), original.clone(), share, Ok, &memo).await.unwrap();
         assert!(!in_source);
         assert_eq!(result, frame_of("as written"));
@@ -2246,8 +2253,9 @@ mod tests {
         assert_eq!(pushed_runs.load(Ordering::SeqCst), 1);
         // An answer the step refuses (too many pairs) falls back too.
         let memo = PushdownMemo::default();
-        let fast =
-            |q: Value| async move { Ok(frame_of(if q == serde_json::json!("pushed") { "db" } else { "as written" })) };
+        let fast = |q: Value, _: Option<Duration>| async move {
+            Ok(frame_of(if q == serde_json::json!("pushed") { "db" } else { "as written" }))
+        };
         let refuse = |_: QueryResult| Err(Detail::new("steps.too_many_cells", "too many"));
         let (result, in_source) =
             with_pushdown(fast, pushed.clone(), original.clone(), share, refuse, &memo).await.unwrap();

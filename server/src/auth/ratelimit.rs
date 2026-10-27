@@ -1,4 +1,6 @@
-//! Counts sign-in attempts per key (email, client address) in a fixed window.
+//! Counts attempts per key (a client address, an account at an address, an account) in a fixed
+//! window. One `RateLimiter` holds one class of keys, so a flood of one class never crowds out
+//! another.
 //!
 //! A refused attempt learns how long to wait; the API sends it as `Retry-After` and
 //! `retryAfterSecs` (`ApiError::rate_limited`).
@@ -9,49 +11,143 @@
 //!
 //! Client addresses are keys made by `address_key`: an IPv6 client is counted per /64, the
 //! smallest network one subscriber usually gets, so changing the low bits buys no new attempts.
+//!
+//! Times are milliseconds of a monotonic clock (`Clock::monotonic_ms`), so a change of the
+//! system time neither ends nor stretches a window.
+//!
+//! The table is bounded. Entries whose window has ended are dropped, oldest first through an
+//! index ordered by window start (no scan). Every key belongs to a network (`network_key`: IPv6
+//! per /48, IPv4 per /24):
+//!
+//! - a network holding fewer than `NETWORK_SHARE` entries always gets its new key. When the table
+//!   is at its hard cap (`Capacity`), room is made by dropping the oldest entry that has not used
+//!   up its attempts from the network with the most such entries: a flood pushes out its own
+//!   entries. An entry that has used up its attempts is never dropped before its window ends;
+//! - a network holding more gets new keys only up to the soft cap.
+//!
+//! So a client from a network that is not flooding is always counted, and a used-up budget is
+//! never reset by a flood. The budgets of existing accounts live in a table without a cap
+//! (`Capacity::UNBOUNDED`, bounded by the number of users), from which nothing is ever dropped
+//! before its window ends.
+//!
+//! A counted attempt is given back (`refund`) only within the window it was counted in.
 
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv6Addr};
-use std::sync::Mutex;
+use std::collections::{BTreeSet, HashMap};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-/// Hard cap on tracked keys. Beyond it the oldest entry is dropped, so memory stays bounded no
-/// matter how many different keys an attacker sends.
-const MAX_ENTRIES: usize = 100_000;
+/// How many entries a table holds: up to `soft` any network may add one, up to `hard` only
+/// networks holding fewer than `NETWORK_SHARE`.
+#[derive(Clone, Copy, Debug)]
+pub struct Capacity {
+    soft: usize,
+    hard: usize,
+}
+
+impl Capacity {
+    /// For the keys of clients: addresses, accounts at an address, sites, unknown accounts.
+    pub const LARGE: Self = Self { soft: 100_000, hard: 300_000 };
+    /// For keys of which there are few: password checks per user, setup codes, connection tests.
+    pub const SMALL: Self = Self { soft: 10_000, hard: 30_000 };
+    /// No cap, for keys whose number is bounded elsewhere (the accounts that exist).
+    pub const UNBOUNDED: Self = Self { soft: usize::MAX, hard: usize::MAX };
+}
+
+const NETWORK_SHARE: u32 = 16;
+
+/// An attempt counted by `try_acquire` or `record`, for its `refund`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Counted {
+    /// The attempts in the window before this one.
+    pub earlier: u32,
+    window_start: i64,
+}
 
 /// Keys are stored as a fixed-size digest, so a huge email in a request costs no memory here.
 type KeyDigest = [u8; 16];
 
-/// Prefix of the keys `address_key` makes. When the table is full these go first, so a flood
-/// from many addresses cannot push out (and so reset) the budget of an account.
-const ADDRESS_PREFIX: &str = "ip:";
+/// Earlier failures that still count as clean. A clean client is let through a budget that
+/// others used up (the setup codes of all addresses, the sign-ins of one IPv6 /48), so someone
+/// who mistyped once or twice is not locked out by an attacker elsewhere.
+pub const CLEAN_ADDRESS_FAILURES: u32 = 2;
+
+/// Password checks of one account at the same moment on the shared lane (`InFlight`).
+pub const MAX_IN_FLIGHT_PER_ACCOUNT: u32 = 2;
+/// The same on the trusted lane (known devices, signed-in users): one, so one account cannot
+/// take more than its share of the trusted threads.
+pub const MAX_TRUSTED_IN_FLIGHT_PER_ACCOUNT: u32 = 1;
+/// Successful sign-ins of known devices per account and per client address in the sign-in
+/// window: an account that signs in over and over cannot keep the threads of known devices busy.
+pub const MAX_SIGN_INS: u32 = 30;
 
 /// The key of a client address for `scope` (`login`, `setup`): IPv4 (also IPv4-mapped IPv6) per
 /// address, IPv6 per /64 network.
 pub fn address_key(scope: &str, ip: IpAddr) -> String {
     match ip.to_canonical() {
-        IpAddr::V4(v4) => format!("{ADDRESS_PREFIX}{scope}:{v4}"),
-        IpAddr::V6(v6) => {
-            let net = Ipv6Addr::from(u128::from(v6) & !((1u128 << 64) - 1));
-            format!("{ADDRESS_PREFIX}{scope}:{net}/64")
-        }
+        IpAddr::V4(v4) => format!("ip:{scope}:{v4}"),
+        IpAddr::V6(v6) => format!("ip:{scope}:{}/64", masked(v6, 64)),
     }
+}
+
+/// The key of a client's site for `scope`: IPv4 per address, IPv6 per /48, for budgets where a
+/// site should not get more tries by using more of its /64 networks (setup codes).
+pub fn site_key(scope: &str, ip: IpAddr) -> String {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => format!("ip:{scope}:{v4}"),
+        IpAddr::V6(v6) => format!("ip:{scope}:{}/48", masked(v6, 48)),
+    }
+}
+
+/// The network a client address belongs to: IPv6 per /48 (one site), IPv4 per /24.
+pub fn network_key(ip: IpAddr) -> String {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => format!("net:{}/24", Ipv4Addr::from(u32::from(v4) & 0xFFFF_FF00)),
+        IpAddr::V6(v6) => format!("net:{}/48", masked(v6, 48)),
+    }
+}
+
+fn masked(ip: Ipv6Addr, prefix: u32) -> Ipv6Addr {
+    Ipv6Addr::from(u128::from(ip) & !((1u128 << (128 - prefix)) - 1))
+}
+
+/// The key of an account's failed sign-ins and password checks (`AppState::account_limiter`).
+pub fn account_key(email: &str) -> String {
+    format!("email:{email}")
 }
 
 pub struct RateLimiter {
     max_attempts: u32,
     window_ms: i64,
-    entries: Mutex<HashMap<KeyDigest, Entry>>,
+    capacity: Capacity,
+    table: Mutex<Table>,
+}
+
+#[derive(Default)]
+struct Table {
+    entries: HashMap<KeyDigest, Entry>,
+    /// The same entries ordered by window start, so the expired ones are found without a scan.
+    by_start: BTreeSet<(i64, KeyDigest)>,
+    networks: HashMap<KeyDigest, Network>,
+    /// Networks by how many of their entries may be dropped to make room.
+    by_droppable: BTreeSet<(usize, KeyDigest)>,
+}
+
+#[derive(Default)]
+struct Network {
+    entries: u32,
+    /// Its entries that have not used up their attempts, by window start.
+    droppable: BTreeSet<(i64, KeyDigest)>,
 }
 
 #[derive(Clone, Copy)]
 struct Entry {
     count: u32,
     window_start: i64,
-    /// A client address key (`address_key`), dropped before account keys when room is needed.
-    address: bool,
+    network: KeyDigest,
 }
 
 fn digest(key: &str) -> KeyDigest {
@@ -61,47 +157,176 @@ fn digest(key: &str) -> KeyDigest {
     out
 }
 
-impl RateLimiter {
-    pub fn new(max_attempts: u32, window_secs: u64) -> Self {
-        Self { max_attempts, window_ms: window_secs as i64 * 1000, entries: Mutex::new(HashMap::new()) }
+/// A wait in whole seconds: rounded up, at least one.
+fn whole_secs(ms: i64) -> Duration {
+    Duration::from_secs((ms.max(1) as u64).div_ceil(1000))
+}
+
+impl Table {
+    /// Moves `key` into or out of its network's droppable entries.
+    fn set_droppable(&mut self, key: KeyDigest, droppable: bool) {
+        let Some(e) = self.entries.get(&key).copied() else { return };
+        let Some(net) = self.networks.get_mut(&e.network) else { return };
+        let before = net.droppable.len();
+        if droppable {
+            net.droppable.insert((e.window_start, key));
+        } else {
+            net.droppable.remove(&(e.window_start, key));
+        }
+        let after = net.droppable.len();
+        if before != after {
+            self.by_droppable.remove(&(before, e.network));
+            if after > 0 {
+                self.by_droppable.insert((after, e.network));
+            }
+        }
     }
 
-    /// Counts one attempt for every key, or none when any key has used up its attempts. Then the
-    /// error is the wait until all blocked keys have a new window: the longest remaining window,
-    /// in whole seconds (rounded up, at least one).
-    pub fn try_acquire(&self, keys: &[&str], now_ms: i64) -> Result<(), Duration> {
-        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        let digests: Vec<(KeyDigest, bool)> = keys.iter().map(|k| (digest(k), k.starts_with(ADDRESS_PREFIX))).collect();
-        let wait_ms = digests
-            .iter()
-            .filter_map(|(d, _)| entries.get(d))
-            .filter(|e| now_ms - e.window_start < self.window_ms && e.count >= self.max_attempts)
-            .map(|e| e.window_start + self.window_ms - now_ms)
-            .max();
-        if let Some(wait_ms) = wait_ms {
-            let secs = (wait_ms.max(1) as u64).div_ceil(1000);
-            return Err(Duration::from_secs(secs));
-        }
-        if entries.len() + digests.len() > MAX_ENTRIES {
-            self.make_room(&mut entries, now_ms, digests.len());
-        }
-        for (d, address) in digests {
-            let entry = entries.entry(d).or_insert(Entry { count: 0, window_start: now_ms, address });
-            if now_ms - entry.window_start >= self.window_ms {
-                *entry = Entry { count: 0, window_start: now_ms, address };
+    fn remove(&mut self, key: &KeyDigest) {
+        self.set_droppable(*key, false);
+        let Some(e) = self.entries.remove(key) else { return };
+        self.by_start.remove(&(e.window_start, *key));
+        if let Some(net) = self.networks.get_mut(&e.network) {
+            net.entries -= 1;
+            if net.entries == 0 {
+                self.networks.remove(&e.network);
             }
-            entry.count += 1;
         }
-        Ok(())
+    }
+
+    /// Drops every entry whose window has ended, oldest first; stops at the first live one.
+    fn drop_expired(&mut self, now_ms: i64, window_ms: i64) {
+        while let Some(&(start, key)) = self.by_start.first() {
+            if now_ms - start < window_ms {
+                break;
+            }
+            self.remove(&key);
+        }
+    }
+
+    fn network_entries(&self, network: &KeyDigest) -> u32 {
+        self.networks.get(network).map_or(0, |n| n.entries)
+    }
+
+    /// Makes room for a new key of `network`, or answers false when it may not have one: a
+    /// network with its share gets none beyond the soft cap; at the hard cap an entry that may
+    /// be dropped goes, from the network with the most of them.
+    fn make_room(&mut self, network: &KeyDigest, capacity: Capacity) -> bool {
+        let len = self.entries.len();
+        if self.network_entries(network) >= NETWORK_SHARE {
+            return len < capacity.soft;
+        }
+        if len < capacity.hard {
+            return true;
+        }
+        let Some(&(_, largest)) = self.by_droppable.last() else { return false };
+        let Some(&(_, key)) = self.networks.get(&largest).and_then(|n| n.droppable.first()) else { return false };
+        self.remove(&key);
+        true
+    }
+
+    /// Counts one attempt for `key`, starting its window when it has none. The caller has made
+    /// room for a new key.
+    fn count(&mut self, key: KeyDigest, network: KeyDigest, now_ms: i64, max: u32) -> Counted {
+        if !self.entries.contains_key(&key) {
+            self.networks.entry(network).or_default().entries += 1;
+            self.by_start.insert((now_ms, key));
+            self.entries.insert(key, Entry { count: 0, window_start: now_ms, network });
+        }
+        let entry = self.entries.get_mut(&key).expect("inserted above");
+        let counted = Counted { earlier: entry.count, window_start: entry.window_start };
+        entry.count = entry.count.saturating_add(1);
+        let droppable = entry.count < max;
+        self.set_droppable(key, droppable);
+        counted
+    }
+}
+
+impl RateLimiter {
+    pub fn new(max_attempts: u32, window_secs: u64, capacity: Capacity) -> Self {
+        Self { max_attempts, window_ms: window_secs as i64 * 1000, capacity, table: Mutex::new(Table::default()) }
+    }
+
+    fn lock(&self, now_ms: i64) -> MutexGuard<'_, Table> {
+        let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        table.drop_expired(now_ms, self.window_ms);
+        table
+    }
+
+    /// The wait of an entry that has used up its attempts in a window still running.
+    fn blocked(&self, e: &Entry, now_ms: i64) -> Option<Duration> {
+        let left = e.window_start + self.window_ms - now_ms;
+        (left > 0 && e.count >= self.max_attempts).then(|| whole_secs(left))
+    }
+
+    /// The wait for a key the table cannot take: the whole window for a network with its share
+    /// (its own entries may be the newest), else until the oldest window ends (the table holds
+    /// only used-up entries).
+    fn full(&self, table: &Table, network: &KeyDigest, now_ms: i64) -> Duration {
+        if table.network_entries(network) >= NETWORK_SHARE {
+            whole_secs(self.window_ms)
+        } else {
+            let oldest = table.by_start.first().map_or(now_ms, |(start, _)| *start);
+            whole_secs(oldest + self.window_ms - now_ms)
+        }
+    }
+
+    /// Counts one attempt for `key` (of `network`), unless it has used up its attempts or the
+    /// table cannot take it; then the error is the wait (whole seconds, rounded up, at least
+    /// one).
+    pub fn try_acquire(&self, key: &str, network: &str, now_ms: i64) -> Result<Counted, Duration> {
+        let mut table = self.lock(now_ms);
+        let (d, network) = (digest(key), digest(network));
+        match table.entries.get(&d) {
+            Some(e) => {
+                if let Some(wait) = self.blocked(e, now_ms) {
+                    return Err(wait);
+                }
+            }
+            None => {
+                if !table.make_room(&network, self.capacity) {
+                    return Err(self.full(&table, &network, now_ms));
+                }
+            }
+        }
+        Ok(table.count(d, network, now_ms, self.max_attempts))
+    }
+
+    /// `try_acquire`, except that a new key the table cannot take is not counted (`Ok(None)`)
+    /// instead of refused: for budgets whose refusal would tell something (emails without an
+    /// account must answer like accounts, whose table always takes them).
+    pub fn try_count(&self, key: &str, network: &str, now_ms: i64) -> Result<Option<Counted>, Duration> {
+        let mut table = self.lock(now_ms);
+        let (d, network) = (digest(key), digest(network));
+        match table.entries.get(&d) {
+            Some(e) => {
+                if let Some(wait) = self.blocked(e, now_ms) {
+                    return Err(wait);
+                }
+            }
+            None => {
+                if !table.make_room(&network, self.capacity) {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(table.count(d, network, now_ms, self.max_attempts)))
+    }
+
+    /// Counts one attempt for `key` without refusing it, even when used up; `None` when the
+    /// table cannot take a new key.
+    pub fn record(&self, key: &str, network: &str, now_ms: i64) -> Option<Counted> {
+        let mut table = self.lock(now_ms);
+        let (d, network) = (digest(key), digest(network));
+        if !table.entries.contains_key(&d) && !table.make_room(&network, self.capacity) {
+            return None;
+        }
+        Some(table.count(d, network, now_ms, self.max_attempts))
     }
 
     /// The wait until `key` may try again, when it has used up its attempts.
     pub fn wait(&self, key: &str, now_ms: i64) -> Option<Duration> {
-        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        entries
-            .get(&digest(key))
-            .filter(|e| now_ms - e.window_start < self.window_ms && e.count >= self.max_attempts)
-            .map(|e| Duration::from_secs(((e.window_start + self.window_ms - now_ms).max(1) as u64).div_ceil(1000)))
+        self.lock(now_ms).entries.get(&digest(key)).and_then(|e| self.blocked(e, now_ms))
     }
 
     /// The length of the counting window.
@@ -109,35 +334,73 @@ impl RateLimiter {
         Duration::from_millis(self.window_ms as u64)
     }
 
-    /// Gives back the attempt counted for `key` (the sign-in succeeded).
-    pub fn refund(&self, key: &str) {
-        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(e) = entries.get_mut(&digest(key)) {
+    /// Gives back the attempt `counted` for `key` (the sign-in succeeded), when its window is
+    /// still the one it was counted in.
+    pub fn refund(&self, key: &str, counted: &Counted) {
+        let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        let d = digest(key);
+        if let Some(e) = table.entries.get_mut(&d)
+            && e.window_start == counted.window_start
+        {
             e.count = e.count.saturating_sub(1);
+            let droppable = e.count < self.max_attempts;
+            table.set_droppable(d, droppable);
         }
     }
 
     /// Forgets `key` entirely (the account proved its password).
     pub fn reset(&self, key: &str) {
-        self.entries.lock().unwrap_or_else(|e| e.into_inner()).remove(&digest(key));
-    }
-
-    fn make_room(&self, entries: &mut HashMap<KeyDigest, Entry>, now_ms: i64, needed: usize) {
-        let window = self.window_ms;
-        entries.retain(|_, e| now_ms - e.window_start < window);
-        // Address keys first (oldest first), then account keys: an attacker controls how many
-        // addresses they use, not how many accounts are being guessed at.
-        while entries.len() + needed > MAX_ENTRIES {
-            let Some(oldest) = entries.iter().min_by_key(|(_, e)| (!e.address, e.window_start)).map(|(k, _)| *k) else {
-                break;
-            };
-            entries.remove(&oldest);
-        }
+        self.table.lock().unwrap_or_else(|e| e.into_inner()).remove(&digest(key));
     }
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.entries.lock().unwrap().len()
+        let table = self.table.lock().unwrap();
+        assert_eq!(table.entries.len(), table.by_start.len(), "the index lists every entry once");
+        let per_network: usize = table.networks.values().map(|n| n.entries as usize).sum();
+        assert_eq!(per_network, table.entries.len());
+        let droppable: usize = table.networks.values().map(|n| n.droppable.len()).sum();
+        let ranked: usize = table.by_droppable.iter().map(|(n, _)| *n).sum();
+        assert_eq!(droppable, ranked, "the ranking matches the networks");
+        table.entries.len()
+    }
+}
+
+/// Password checks in flight per key (an account; its known devices have a key of their own):
+/// at most the given number of slots at once, so guesses cannot tie up the hashing threads for
+/// one account. Further checks wait for a slot up to a given time.
+#[derive(Default)]
+pub struct InFlight(Mutex<HashMap<KeyDigest, Arc<Semaphore>>>);
+
+/// One check in flight; ends when dropped.
+pub struct InFlightGuard<'a> {
+    owner: &'a InFlight,
+    key: KeyDigest,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl InFlight {
+    /// A slot for `key`, waiting up to `wait` for one; `None` when none came free in that time.
+    pub async fn enter(&self, key: &str, slots: u32, wait: Duration) -> Option<InFlightGuard<'_>> {
+        let key = digest(key);
+        let slots = {
+            let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            map.entry(key).or_insert_with(|| Arc::new(Semaphore::new(slots as usize))).clone()
+        };
+        // Made before waiting, so a timeout or a cancelled request removes an unused entry.
+        let mut guard = InFlightGuard { owner: self, key, permit: None };
+        guard.permit = Some(tokio::time::timeout(wait, slots.acquire_owned()).await.ok()?.ok()?);
+        Some(guard)
+    }
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        let mut map = self.owner.0.lock().unwrap_or_else(|e| e.into_inner());
+        if map.get(&self.key).is_some_and(|slots| Arc::strong_count(slots) == 1) {
+            map.remove(&self.key);
+        }
     }
 }
 
@@ -147,59 +410,70 @@ mod tests {
 
     #[test]
     fn blocks_after_max_attempts_until_window_passes() {
-        let rl = RateLimiter::new(3, 60);
+        let rl = RateLimiter::new(3, 60, Capacity::LARGE);
         for _ in 0..3 {
-            assert!(rl.try_acquire(&["a"], 0).is_ok());
+            assert!(rl.try_acquire("a", "n", 0).is_ok());
         }
-        assert!(rl.try_acquire(&["a"], 59_999).is_err());
-        assert!(rl.try_acquire(&["a"], 60_000).is_ok());
-        assert!(rl.try_acquire(&["b"], 0).is_ok());
+        assert!(rl.try_acquire("a", "n", 59_999).is_err());
+        assert!(rl.try_acquire("a", "n", 60_000).is_ok());
+        assert!(rl.try_acquire("b", "n", 0).is_ok());
+        assert_eq!(rl.len(), 2);
     }
 
     #[test]
     fn a_blocked_attempt_names_the_wait_in_whole_seconds() {
-        let rl = RateLimiter::new(1, 60);
-        assert!(rl.try_acquire(&["a"], 0).is_ok());
-        assert_eq!(rl.try_acquire(&["a"], 0), Err(Duration::from_secs(60)));
+        let rl = RateLimiter::new(1, 60, Capacity::LARGE);
+        assert!(rl.try_acquire("a", "n", 0).is_ok());
+        assert_eq!(rl.try_acquire("a", "n", 0), Err(Duration::from_secs(60)));
         // Rounded up: 30.5 seconds left are 31.
-        assert_eq!(rl.try_acquire(&["a"], 29_500), Err(Duration::from_secs(31)));
+        assert_eq!(rl.try_acquire("a", "n", 29_500), Err(Duration::from_secs(31)));
         // At least one second, even in the last millisecond of the window.
-        assert_eq!(rl.try_acquire(&["a"], 59_999), Err(Duration::from_secs(1)));
-        assert!(rl.try_acquire(&["a"], 60_000).is_ok());
-
-        // Of several blocked keys, the one whose window ends last decides.
-        let rl = RateLimiter::new(1, 60);
-        assert!(rl.try_acquire(&["early"], 0).is_ok());
-        assert!(rl.try_acquire(&["late"], 20_000).is_ok());
-        assert_eq!(rl.try_acquire(&["early", "late", "free"], 30_000), Err(Duration::from_secs(50)));
-        assert_eq!(rl.try_acquire(&["early", "free"], 30_000), Err(Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn a_blocked_key_counts_nothing_for_the_others() {
-        let rl = RateLimiter::new(1, 60);
-        assert!(rl.try_acquire(&["email"], 0).is_ok());
-        assert!(rl.try_acquire(&["email", "ip"], 0).is_err());
-        assert!(rl.try_acquire(&["ip"], 0).is_ok(), "the refused attempt must not have counted for ip");
+        assert_eq!(rl.try_acquire("a", "n", 59_999), Err(Duration::from_secs(1)));
+        assert!(rl.try_acquire("a", "n", 60_000).is_ok());
     }
 
     #[test]
     fn refund_and_reset() {
-        let rl = RateLimiter::new(1, 60);
-        assert!(rl.try_acquire(&["a"], 0).is_ok());
-        rl.refund("a");
-        assert!(rl.try_acquire(&["a"], 0).is_ok());
+        let rl = RateLimiter::new(1, 60, Capacity::LARGE);
+        let counted = rl.try_acquire("a", "n", 0).unwrap();
+        rl.refund("a", &counted);
+        assert!(rl.try_acquire("a", "n", 0).is_ok());
         rl.reset("a");
-        assert!(rl.try_acquire(&["a"], 0).is_ok());
+        assert!(rl.try_acquire("a", "n", 0).is_ok());
+        assert_eq!(rl.len(), 1);
+    }
+
+    /// A refund gives back only within the window the attempt was counted in: an attempt of an
+    /// earlier window never takes one off a new window.
+    #[test]
+    fn a_refund_from_an_earlier_window_gives_nothing_back() {
+        let rl = RateLimiter::new(2, 60, Capacity::LARGE);
+        let old = rl.try_acquire("a", "n", 0).unwrap();
+        assert!(rl.try_acquire("a", "n", 60_000).is_ok());
+        assert!(rl.try_acquire("a", "n", 60_000).is_ok());
+        rl.refund("a", &old);
+        assert!(rl.try_acquire("a", "n", 60_000).is_err(), "the new window stays used up");
+    }
+
+    /// A table without a cap takes every key and drops none before its window ends.
+    #[test]
+    fn an_unbounded_table_never_drops_a_running_budget() {
+        let rl = RateLimiter::new(2, 60, Capacity::UNBOUNDED);
+        assert!(rl.try_acquire("victim", "attacker", 0).is_ok());
+        for i in 0..(Capacity::LARGE.hard + 10) {
+            assert!(rl.try_acquire(&format!("k{i}"), &format!("n{}", i % 5), 0).is_ok());
+        }
+        assert_eq!(rl.try_acquire("victim", "attacker", 1_000).map(|c| c.earlier), Ok(1));
+        assert!(rl.try_acquire("victim", "attacker", 1_000).is_err());
     }
 
     #[test]
     fn parallel_attempts_cannot_exceed_the_limit() {
-        let rl = std::sync::Arc::new(RateLimiter::new(3, 60));
+        let rl = std::sync::Arc::new(RateLimiter::new(3, 60, Capacity::LARGE));
         let granted: usize = (0..40)
             .map(|_| {
                 let rl = rl.clone();
-                std::thread::spawn(move || rl.try_acquire(&["a"], 0).is_ok() as usize)
+                std::thread::spawn(move || rl.try_acquire("a", "n", 0).is_ok() as usize)
             })
             .collect::<Vec<_>>()
             .into_iter()
@@ -209,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn ipv6_clients_count_per_64_and_ipv4_per_address() {
+    fn addresses_count_per_64_and_networks_per_48_or_24() {
         let ip = |s: &str| s.parse::<IpAddr>().unwrap();
         assert_eq!(address_key("login", ip("2001:db8:1:2::1")), address_key("login", ip("2001:db8:1:2:ffff::9")));
         assert_ne!(address_key("login", ip("2001:db8:1:2::1")), address_key("login", ip("2001:db8:1:3::1")));
@@ -217,33 +491,136 @@ mod tests {
         assert_eq!(address_key("login", ip("::ffff:203.0.113.7")), "ip:login:203.0.113.7");
         assert_ne!(address_key("login", ip("203.0.113.7")), address_key("login", ip("203.0.113.8")));
         assert_ne!(address_key("login", ip("203.0.113.7")), address_key("setup", ip("203.0.113.7")));
+        assert_eq!(site_key("setup", ip("2001:db8:1:2::1")), "ip:setup:2001:db8:1::/48");
+        assert_eq!(site_key("setup", ip("2001:db8:1:ffff::1")), site_key("setup", ip("2001:db8:1:2::1")));
+        assert_eq!(site_key("setup", ip("203.0.113.7")), "ip:setup:203.0.113.7");
+        assert_eq!(network_key(ip("2001:db8:1:2::1")), "net:2001:db8:1::/48");
+        assert_eq!(network_key(ip("2001:db8:1:ffff::1")), network_key(ip("2001:db8:1:2::1")));
+        assert_ne!(network_key(ip("2001:db8:2::1")), network_key(ip("2001:db8:1::1")));
+        assert_eq!(network_key(ip("::ffff:203.0.113.7")), "net:203.0.113.0/24");
+    }
 
-        let rl = RateLimiter::new(2, 60);
-        let a = address_key("login", ip("2001:db8::1"));
-        let b = address_key("login", ip("2001:db8::abcd:1"));
-        assert!(rl.try_acquire(&[&a], 0).is_ok() && rl.try_acquire(&[&b], 0).is_ok());
-        assert!(rl.try_acquire(&[&a], 0).is_err(), "the whole /64 shares one budget");
+    /// Beyond `Capacity::LARGE.soft`, the networks that filled the table get no new keys, while a client
+    /// from another network is still counted, and running budgets stay.
+    #[test]
+    fn a_full_table_refuses_the_networks_that_filled_it_and_takes_others() {
+        let rl = RateLimiter::new(2, 60, Capacity::LARGE);
+        for i in 0..Capacity::LARGE.soft {
+            assert!(rl.try_acquire(&format!("k{i}"), &format!("attacker-{}", i / 100), 0).is_ok());
+        }
+        assert_eq!(rl.try_acquire("new", "attacker-7", 1_000), Err(Duration::from_secs(60)));
+        assert!(rl.record("new", "attacker-7", 1_000).is_none());
+        // A known key of a full network goes on counting, and is refused once used up.
+        assert_eq!(rl.try_acquire("k700", "attacker-7", 1_000).map(|c| c.earlier), Ok(1));
+        assert!(rl.try_acquire("k700", "attacker-7", 1_000).is_err());
+        // Another network gets its share, then is refused too.
+        for i in 0..NETWORK_SHARE {
+            assert!(rl.try_acquire(&format!("clean{i}"), "clean", 1_000).is_ok());
+        }
+        assert!(rl.try_acquire("clean-more", "clean", 1_000).is_err());
+        assert!(rl.try_acquire("other", "elsewhere", 1_000).is_ok());
+        assert_eq!(rl.len(), Capacity::LARGE.soft + NETWORK_SHARE as usize + 1);
+        // Once the flood's windows end, everything is taken again.
+        assert!(rl.try_acquire("new", "attacker-7", 60_000).is_ok());
+        assert_eq!(rl.len(), NETWORK_SHARE as usize + 2);
+    }
+
+    /// At `Capacity::LARGE.hard` (filled from 30 000 networks of 10 entries), a fresh network still gets its
+    /// key: room is made from the network with the most entries that may be dropped, never from
+    /// an entry that has used up its attempts.
+    #[test]
+    fn at_the_hard_cap_a_fresh_network_pushes_out_the_flood() {
+        let rl = RateLimiter::new(2, 60, Capacity::LARGE);
+        for i in 0..Capacity::LARGE.hard {
+            assert!(rl.try_acquire(&format!("k{i}"), &format!("n{}", i / 10), 0).is_ok());
+        }
+        // One network's keys use up their attempts.
+        for i in 0..10 {
+            assert!(rl.try_acquire(&format!("k{i}"), "n0", 0).is_ok());
+        }
+        assert_eq!(rl.len(), Capacity::LARGE.hard);
+        for i in 0..100 {
+            assert!(rl.try_acquire(&format!("owner{i}"), &format!("fresh{i}"), 1_000).is_ok());
+        }
+        assert_eq!(rl.len(), Capacity::LARGE.hard);
+        for i in 0..10 {
+            assert!(rl.wait(&format!("k{i}"), 1_000).is_some(), "a used-up budget stays");
+        }
+    }
+
+    /// Room is made from the network with the most entries that may be dropped.
+    #[test]
+    fn room_is_made_from_the_biggest_network() {
+        let mut table = Table::default();
+        let net = |n: &str| digest(n);
+        for i in 0..5 {
+            table.count(digest(&format!("small{i}")), net("small"), i, 2);
+        }
+        for i in 0..9 {
+            table.count(digest(&format!("big{i}")), net("big"), i, 2);
+        }
+        assert_eq!(table.by_droppable.last().map(|(n, d)| (*n, *d)), Some((9, net("big"))));
+        let (_, largest) = *table.by_droppable.last().unwrap();
+        let (_, oldest) = *table.networks[&largest].droppable.first().unwrap();
+        assert_eq!(oldest, digest("big0"));
+        // Using up its attempts takes an entry out of the droppable ones.
+        table.count(digest("big0"), net("big"), 0, 2);
+        assert_eq!(table.by_droppable.last().map(|(n, _)| *n), Some(8));
     }
 
     #[test]
-    fn a_flood_of_addresses_never_resets_an_account_budget() {
-        let rl = RateLimiter::new(2, 60);
-        assert!(rl.try_acquire(&["email:opfer@example.de"], 0).is_ok());
-        assert!(rl.try_acquire(&["email:opfer@example.de"], 0).is_ok());
-        for i in 0..(MAX_ENTRIES as u32 + 10) {
-            let ip = IpAddr::V6(Ipv6Addr::from(u128::from(i) << 64));
-            let _ = rl.try_acquire(&[&address_key("login", ip)], 1);
+    fn a_table_of_used_up_entries_refuses_new_keys_until_the_oldest_window_ends() {
+        let rl = RateLimiter::new(1, 60, Capacity::LARGE);
+        for i in 0..Capacity::LARGE.hard {
+            assert!(
+                rl.try_acquire(&format!("k{i}"), &format!("n{i}"), (i / Capacity::LARGE.soft) as i64 * 10_000).is_ok()
+            );
         }
-        assert!(rl.len() <= MAX_ENTRIES);
-        assert!(rl.try_acquire(&["email:opfer@example.de"], 2).is_err(), "the account's used-up budget must stay");
+        assert_eq!(rl.try_acquire("new", "fresh", 30_000), Err(Duration::from_secs(30)));
+        assert!(rl.try_acquire("new", "fresh", 60_000).is_ok(), "the oldest windows ended");
     }
 
     #[test]
-    fn memory_is_bounded() {
-        let rl = RateLimiter::new(5, 60);
-        for i in 0..(MAX_ENTRIES + 500) {
-            let _ = rl.try_acquire(&[&format!("k{i}")], i as i64);
+    fn expired_entries_are_dropped_oldest_first() {
+        let rl = RateLimiter::new(1, 60, Capacity::LARGE);
+        assert!(rl.try_acquire("a", "n", 0).is_ok());
+        assert!(rl.try_acquire("b", "n", 30_000).is_ok());
+        assert_eq!(rl.len(), 2);
+        assert!(rl.try_acquire("c", "n", 60_000).is_ok());
+        assert_eq!(rl.len(), 2, "the window of a has ended");
+        assert!(rl.try_acquire("b", "n", 60_000).is_err(), "the window of b is still running");
+        rl.reset("b");
+        assert_eq!(rl.len(), 1);
+    }
+
+    #[test]
+    fn counting_answers_the_earlier_attempts_and_record_never_refuses() {
+        let rl = RateLimiter::new(3, 60, Capacity::LARGE);
+        assert_eq!(rl.try_acquire("a", "n", 0).map(|c| c.earlier), Ok(0));
+        assert_eq!(rl.try_acquire("a", "n", 0).map(|c| c.earlier), Ok(1));
+        for _ in 0..5 {
+            assert!(rl.record("c", "n", 0).is_some());
         }
-        assert!(rl.len() <= MAX_ENTRIES);
+        assert_eq!(rl.wait("c", 0), Some(Duration::from_secs(60)));
+        assert_eq!(rl.wait("c", 60_000), None);
+        let counted = rl.record("c", "n", 0).unwrap();
+        rl.refund("c", &counted);
+        rl.len();
+    }
+
+    #[tokio::test]
+    async fn in_flight_checks_are_capped_per_key() {
+        let flight = InFlight::default();
+        let soon = Duration::from_millis(50);
+        let a = flight.enter("a", 2, soon).await.unwrap();
+        let b = flight.enter("a", 2, soon).await.unwrap();
+        assert!(flight.enter("a", 2, soon).await.is_none(), "no slot came free in time");
+        assert!(flight.enter("b", 2, soon).await.is_some());
+        // A waiter gets the slot as soon as it is given back.
+        let waiter = flight.enter("a", 2, Duration::from_secs(5));
+        let (got, ()) = tokio::join!(waiter, async move { drop(a) });
+        assert!(got.is_some());
+        drop((got, b));
+        assert!(flight.0.lock().unwrap().is_empty(), "unused entries are removed");
     }
 }

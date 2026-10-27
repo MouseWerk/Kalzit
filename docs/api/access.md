@@ -471,6 +471,76 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 **`PATCH /admin/orgs/{orgId}`** `{ "name" }`. Errors: `404`, `validation` `name`. Audit
 `org.renamed`.
 
+## Sign-in rate limits
+
+`POST /auth/login` (`server/src/routes/auth.rs`) counts every attempt before the password is
+checked, each budget under its own lock, and refuses it with `429 rate_limited` (with
+`Retry-After` and `retryAfterSecs`) when a budget is used up. Parallel attempts therefore cannot
+all pass a budget before the first failure is counted. A correct password gives the attempts
+back, within the window they were counted in. `security.login_max_failures` per `security.login_window_secs` (default 10 per 15 minutes)
+applies to each of:
+
+- the client address (IPv4 per address, IPv6 per /64), whatever the email;
+- the account at that address. Wrong passwords from other addresses never use it up;
+- the account from all addresses together (sign-ins and failed `POST /me/password` checks).
+  Used up, it refuses every sign-in of the account from a browser without a known device
+  cookie, the right password included, with the whole window as the wait (it tells nothing
+  about the account). A guess spread over many addresses so gets this one budget, not the
+  budget of every address. An email without an account has the same budget, answered the same
+  way, so a refusal does not tell whether the account exists. While the table of such emails is
+  full, a new one counts in one of 4096 overflow buckets with the same budget, chosen by an HMAC
+  of the email with a key derived from the secrets key; it reaches its refusal after about as
+  many failures as an account does.
+
+Only an attempt that passed its budgets takes a check slot: at most 2 password checks of one
+account run at the same moment; more wait up to 2 seconds for a slot, then are refused with
+`429 rate_limited` and a wait of 1 second. Sign-ins with a known device cookie, and `POST
+/me/password` of a signed-in user, each have 1 slot per account of their own, so guesses holding
+the others cannot keep them waiting. Successful sign-ins with a known device cookie also have a
+budget of 30 per account and per address in the window, so an account that signs in over and
+over cannot keep the threads of known devices busy for others. Password hashing and checking runs on at most one thread per CPU
+(for known devices and signed-in users on a quarter of that, at least one, apart from the
+others); up to 32 checks per thread wait their turn, further ones are refused at once with
+`429 rate_limited`.
+
+Known devices: a successful sign-in sets the cookie `kalzit_device` (`__Host-kalzit_device` over
+HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 90 days, renewed with every sign-in, kept on sign
+out). Its value is an expiry, a random part and an HMAC, with a key derived from the secrets
+key, over these, the account and its current password hash; it does not name the account, holds
+no session and signs nobody in. A sign-in that brings a valid device cookie of the account it
+names by email is not refused by the account's shared budget (its failures still count there,
+and the budgets of the address and of the account at the address still apply), so an attacker
+who uses that budget up cannot lock the owner out of a browser they signed in with before. A
+new password, set by the user or an admin, revokes every device cookie of the account; so does a
+new secrets key.
+
+An IPv6 site (/48) also has a budget for all accounts together: 5 times
+`security.login_max_failures` failures per window. Used up, an address in it goes on only with
+accounts that are clean at that address (at most 2 failures there), so others' typos behind the
+same network never make the owner's account dirty.
+
+A successful sign-in gives the address its attempt back and clears the account's budget at that
+address. Windows are measured on a monotonic clock, so a change of the system time neither ends
+nor stretches them.
+
+The counts live in memory, one table per kind of key (addresses, accounts at an address,
+accounts, emails without an account, sites, password checks, setup codes), so a flood of one
+kind never crowds out another. Entries whose window has ended are dropped. The budgets of
+existing accounts have a table without a cap (it holds at most one entry per user), from which
+nothing is dropped before its window ends, so no flood can reset them. The other tables are
+bounded (100 000 / 300 000 entries; 10 000 / 30 000 for password checks, setup codes and
+connection tests), and every key belongs to a network (IPv6 /48, IPv4 /24):
+
+- a network holding fewer than 16 entries always gets its new key. At the larger number, room
+  is made by dropping the oldest entry that has not used up its attempts from the network with
+  the most such entries, so a flood pushes out its own entries. An entry that has used up its
+  attempts is never dropped before its window ends;
+- a network holding 16 or more gets new keys only while the table has fewer than the smaller
+  number.
+
+A client from a network that is not flooding is so always counted. Only a table holding nothing
+but used-up entries refuses new keys, until the oldest window ends.
+
 ## Setup
 
 The first start (`server/src/routes/setup.rs`). While the server has no user, a one-time setup
@@ -490,8 +560,8 @@ are `Public`.
 the code. `fixed` when it comes from `KALZIT_SETUP_TOKEN`, `docker` when the server runs in a
 container (`/.dockerenv` or `/run/.containerenv`), else `file`. It never names a path. `fixed`
 tells a visitor that the code was chosen by a person (at least 16 letters or digits) rather than
-generated; that is acceptable only because of the shared budget below, which keeps any guess,
-however many addresses it uses, to `security.setup_max_failures` tries per window.
+generated; that is acceptable only because of the budgets below, which keep a guess slow however
+many addresses it uses.
 
 **`POST /setup/check`** `{ "token" }` checks the code alone, so the setup page can confirm it
 before asking for the rest. Errors: `403 invalid_setup_token` (wrong code), `403
@@ -509,17 +579,22 @@ with `field` `orgName`, `name`, `email`, `password`, `language`, `theme` or `tim
 `setup.completed`, and `settings.updated` per chosen setting (summary `{ "key", "version",
 "setup": true }`, never the value).
 
-Both `POST` routes share two budgets, and a code is checked only when both have room:
+Both `POST` routes share two budgets. Only wrong codes (and the code of the previous start) use
+them up, so nobody can use up the budget of the person who has the right code:
 
-- per client address (IPv6 per /64), the sign-in limits: `security.login_max_failures` wrong
-  codes per `security.login_window_secs` (default 10 per 15 minutes);
+- per client (IPv4 per address, IPv6 per /48, so a site gets no more tries by using more of its
+  /64 networks), the sign-in limits: `security.login_max_failures` wrong codes per
+  `security.login_window_secs` (default 10 per 15 minutes). Used up, the client is refused
+  before its code is compared, the right code included;
 - for all addresses together: `security.setup_max_failures` wrong codes per
-  `security.setup_window_secs` (default 100 per hour), so a guess spread over many addresses is
-  capped as well.
+  `security.setup_window_secs` (default 100 per hour). Used up, it refuses a client that
+  already had more than 2 wrong codes in its own window, so a guess spread over many clients
+  gets 3 tries per client instead of the full budget. A clean address (at most 2 wrong codes) is
+  still checked, and the right code opens setup.
 
-Beyond either, `429 rate_limited` with `Retry-After` and `retryAfterSecs` (the wait of the budget
-that refused). An attempt refused by the shared budget does not count for the address. A correct
-code gives its attempts back; a check after setup is done does not count.
+Refused: `429 rate_limited` with `Retry-After` and `retryAfterSecs` (the wait of the budget that
+refused). An attempt refused by the shared budget does not count for the address. A correct
+code gives its attempt back; a check after setup is done does not count.
 
 ## Self service
 
@@ -546,9 +621,11 @@ interface SessionView {
 **`PATCH /me`** `{ "name" }`. Errors: `validation` `name`. Audit `user.updated`.
 
 **`POST /me/password`** `{ "current", "new" }`. Ends every other session of the account; this one
-stays. Attempts count against a budget of their own and against the account email's sign-in
-budget (failed sign-ins and failed checks here add up); once either is used up the answer is
-`429 rate_limited`. A correct password resets both. Of two changes at the same moment with the same
+stays. Attempts count against a budget of their own (`security.login_max_failures` per window);
+once it is used up the answer is `429 rate_limited`. Failed checks also count for the account's
+shared sign-in budget (see Sign-in rate limits), which does not refuse here, since the caller
+has a session. A correct password resets the budget of its own, and the new password revokes
+the account's device cookies. Of two changes at the same moment with the same
 current password, the second answers `validation` `current`. Errors: `validation` `current` (not correct), `validation` `new`
 (policy), `429 rate_limited`. Audit `user.password_changed`.
 

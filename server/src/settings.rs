@@ -506,7 +506,7 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!(10),
         ui_editable: false,
-        description: "Failed sign-ins per email and per address before further attempts are refused.",
+        description: "Failed sign-ins per address, per account at one address and per account before further attempts are refused.",
     },
     SettingDef {
         key: "security.login_window_secs",
@@ -520,7 +520,7 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!(100),
         ui_editable: false,
-        description: "Wrong setup codes from all addresses together before further checks are refused.",
+        description: "Wrong setup codes from all addresses together before addresses that guessed are refused.",
     },
     SettingDef {
         key: "security.setup_window_secs",
