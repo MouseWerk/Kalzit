@@ -30,10 +30,8 @@ pub const TOKEN_FILE: &str = "setup-token.txt";
 /// A fixed code from the environment must not be guessable; the generated one has 24 hex digits.
 const MIN_FIXED_CODE_CHARS: usize = 16;
 
-/// Failed setup code attempts per client address in `SETUP_WINDOW_SECS`, for `POST /api/setup`
-/// and `POST /api/setup/check` together.
-pub const SETUP_MAX_FAILURES: u32 = 5;
-pub const SETUP_WINDOW_SECS: u64 = 60;
+/// The key of the budget all client addresses share for wrong setup codes.
+const ALL_ADDRESSES_KEY: &str = "setup:all";
 
 pub struct SetupGate {
     /// `None` once setup is done. The lock also serializes concurrent setup attempts.
@@ -239,14 +237,27 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
     })
 }
 
-/// Counts one attempt for the client address; the key is for the refund of a correct code.
+/// Counts one attempt for the client address (the sign-in limits, `security.login_*`) and one
+/// for all addresses together (`security.setup_*`); the key is for the refund of a correct code.
+/// The shared budget makes a guess spread over many addresses as slow as one from a single
+/// address, which keeps a fixed code from `KALZIT_SETUP_TOKEN` (16 characters at least) out of
+/// reach as well.
 fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<String> {
     let key = crate::auth::ratelimit::address_key("setup", info.client_ip);
-    state
-        .setup_limiter
-        .try_acquire(&[&key], state.clock.now_ms())
-        .map_err(|wait| ApiError::rate_limited("too many attempts, wait a minute", wait))?;
+    let now = state.clock.now_ms();
+    let refused = |wait| ApiError::rate_limited("too many setup code attempts, wait", wait);
+    state.setup_limiter.try_acquire(&[&key], now).map_err(refused)?;
+    if let Err(wait) = state.setup_all_limiter.try_acquire(&[ALL_ADDRESSES_KEY], now) {
+        state.setup_limiter.refund(&key);
+        return Err(refused(wait));
+    }
     Ok(key)
+}
+
+/// Gives both attempts back: the code was right, or there was nothing to guess.
+fn refund(state: &AppState, key: &str) {
+    state.setup_limiter.refund(key);
+    state.setup_all_limiter.refund(ALL_ADDRESSES_KEY);
 }
 
 /// Checks `token` against the open gate: `Ok` for the current code (the attempt is refunded),
@@ -255,7 +266,7 @@ fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<String> {
 fn verify(state: &AppState, open: &OpenGate, token: &str, limit_key: &str) -> ApiResult<()> {
     match open.matches(token) {
         CodeMatch::Current => {
-            state.setup_limiter.refund(limit_key);
+            refund(state, limit_key);
             Ok(())
         }
         CodeMatch::Previous => Err(ApiError::new(
@@ -285,7 +296,7 @@ pub async fn check(
     let gate = state.setup.state.lock().await;
     let Some(open) = gate.as_ref() else {
         // Not a guess: once setup is done, no code opens anything.
-        state.setup_limiter.refund(&limit_key);
+        refund(&state, &limit_key);
         return Err(setup_done());
     };
     verify(&state, open, &req.token, &limit_key)?;

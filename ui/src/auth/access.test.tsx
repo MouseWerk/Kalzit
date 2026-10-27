@@ -224,7 +224,7 @@ describe("setup, step 1: the setup code", () => {
       "Setup code",
     );
     const code = screen.getByLabelText("Setup code");
-    expect(code.getAttribute("autocomplete")).toBe("off");
+    expect(code.getAttribute("autocomplete")).toBe("one-time-code");
     expect(code.getAttribute("spellcheck")).toBe("false");
     expect(describedText(code)).toContain("Case, spaces and dashes do not matter.");
 
@@ -272,7 +272,7 @@ describe("setup, step 1: the setup code", () => {
     const code = screen.getByLabelText("Setup code");
     await waitFor(() => expect(code.getAttribute("aria-invalid")).toBe("true"));
     expect(describedText(code)).toContain(
-      "The code is not correct. Copy it again from “setup-token.txt”; after 5 failed attempts you wait a minute.",
+      "The code is not correct. Copy it again from “setup-token.txt”; after several failed attempts you have to wait a while.",
     );
     expect(document.activeElement).toBe(code);
     expect(server.calls.find((call) => call.path === "/api/setup/check")?.body).toEqual({
@@ -286,7 +286,7 @@ describe("setup, step 1: the setup code", () => {
     await passCode(user, "wrong-code");
     expect(
       await screen.findByText(
-        "The code is not correct. Use the value of KALZIT_SETUP_TOKEN; after 5 failed attempts you wait a minute.",
+        "The code is not correct. Use the value of KALZIT_SETUP_TOKEN; after several failed attempts you have to wait a while.",
       ),
     ).toBeTruthy();
   });
@@ -488,6 +488,28 @@ describe("setup, step 3 and the finish", () => {
     server.state.offline = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("heading", { level: 1, name: "All set, Zoë." })).toBeTruthy();
+  });
+
+  it("counts down a rate limit on the last step too, inputs kept", async () => {
+    const server = installFakeServer({ setupNeeded: true });
+    const { user } = renderApp("/setup");
+    await toOrgStep(user);
+    server.rateLimitNext("/api/setup", 75);
+    await user.click(screen.getByRole("button", { name: "Finish setup" }));
+    const wait = await screen.findByRole("button", { name: /^Possible again in 1:1\d$/ });
+    expect(wait.getAttribute("aria-disabled")).toBe("true");
+    const notice = screen.getByText(
+      "Too many failed attempts from this device. Wait a moment; the button counts down the time.",
+    );
+    expect(notice.closest('[role="alert"]')).toBeTruthy();
+    expect(screen.queryByText(/Too many attempts/)).toBeNull();
+    // A press while waiting sends nothing.
+    const sent = server.calls.length;
+    await user.click(wait);
+    expect(server.calls.length).toBe(sent);
+    expect((screen.getByLabelText("Organization name") as HTMLInputElement).value).toBe(
+      "Müller & Söhne",
+    );
   });
 
   it("says when someone else finished setup in the meantime", async () => {

@@ -185,6 +185,12 @@ export function SetupPage() {
       setStep(4);
     },
     onError: (error) => {
+      const wait = waitUntil(error);
+      if (wait !== null) {
+        // Too many wrong codes, from here or from everywhere: the button counts down the wait.
+        setUntil(wait);
+        return;
+      }
       const code = errorCode(error);
       const rejected = fieldFromServer(FIELD_ORDER, error);
       if (code === "invalid_setup_token" || code === "setup_token_expired") {
@@ -269,7 +275,7 @@ export function SetupPage() {
 
   function submitOrg(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (setup.isPending || !validStep(3)) {
+    if (setup.isPending || waiting || !validStep(3)) {
       return;
     }
     setup.mutate({
@@ -334,7 +340,7 @@ export function SetupPage() {
           label={t("access.setup.code.label")}
           hint={t("access.setup.code.hint")}
           name="setup-token"
-          autoComplete="off"
+          autoComplete="one-time-code"
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
@@ -449,8 +455,12 @@ export function SetupPage() {
         error={fieldError("orgName")}
         orgRef={refs.orgName}
         busy={setup.isPending}
+        waiting={waiting}
+        left={left}
         failure={
-          setup.error === null || fieldFromServer(FIELD_ORDER, setup.error) !== undefined
+          setup.error === null ||
+          isApiError(setup.error, "rate_limited") ||
+          fieldFromServer(FIELD_ORDER, setup.error) !== undefined
             ? null
             : errorCode(setup.error)
         }
@@ -587,6 +597,8 @@ function OrgForm({
   error,
   orgRef,
   busy,
+  waiting,
+  left,
   failure,
   onSubmit,
   onBack,
@@ -598,6 +610,9 @@ function OrgForm({
   error: string | undefined;
   orgRef: RefObject<HTMLInputElement | null>;
   busy: boolean;
+  /** Waiting out a rate limit; `left` is the seconds still to go. */
+  waiting: boolean;
+  left: number;
   failure: ErrorCode | null;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onBack: () => void;
@@ -615,7 +630,14 @@ function OrgForm({
       onKeyDown={preventComposingSubmit}
     >
       <AccessAlert>
-        {failure === null ? null : (
+        {waiting ? (
+          <AccessNotice
+            tone="danger"
+            icon="clock"
+            title={t("access.setup.code.rateLimited")}
+            detail={t("access.setup.org.kept")}
+          />
+        ) : failure === null ? null : (
           <AccessNotice
             tone="danger"
             icon="alert"
@@ -713,7 +735,7 @@ function OrgForm({
           <Icon name="back" />
           {t("access.back")}
         </button>
-        <SubmitButton busy={busy} waiting={false} left={0}>
+        <SubmitButton busy={busy} waiting={waiting} left={left}>
           {busy
             ? t("access.setup.org.submitting")
             : failure === null

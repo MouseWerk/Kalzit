@@ -95,6 +95,20 @@ impl RateLimiter {
         Ok(())
     }
 
+    /// The wait until `key` may try again, when it has used up its attempts.
+    pub fn wait(&self, key: &str, now_ms: i64) -> Option<Duration> {
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        entries
+            .get(&digest(key))
+            .filter(|e| now_ms - e.window_start < self.window_ms && e.count >= self.max_attempts)
+            .map(|e| Duration::from_secs(((e.window_start + self.window_ms - now_ms).max(1) as u64).div_ceil(1000)))
+    }
+
+    /// The length of the counting window.
+    pub fn window(&self) -> Duration {
+        Duration::from_millis(self.window_ms as u64)
+    }
+
     /// Gives back the attempt counted for `key` (the sign-in succeeded).
     pub fn refund(&self, key: &str) {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());

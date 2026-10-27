@@ -426,7 +426,12 @@ async fn create_sample(
     // The canonical path the target rules answer is the one stored, so it is the same for every
     // source of the sample.
     let policy = state.datasources.policy(&state).await?;
-    let path = policy.check_sqlite_path(&file.to_string_lossy()).map_err(|b| blocked(b.0, "path"))?;
+    // The rules resolve the path on disk, so they run off the async workers.
+    let checked = file.to_string_lossy().to_string();
+    let path = tokio::task::spawn_blocking(move || policy.check_sqlite_path(&checked))
+        .await
+        .map_err(|e| ApiError::internal("checking the sample database", e))?
+        .map_err(|b| blocked(b.0, "path"))?;
     let settings = kind.validate_settings(&json!({ "path": path.to_string_lossy() })).map_err(field_error)?;
     let secrets = SecretPatch::default();
     precheck_targets(&state, kind, &settings).await?;
@@ -443,13 +448,19 @@ async fn create_sample(
     .bind(&ctx.org_id)
     .fetch_all(&mut *tx)
     .await?;
-    let existing = sqlite_sources.into_iter().find(|(_, stored)| {
-        serde_json::from_str::<Value>(stored)
-            .ok()
-            .and_then(|s| s.get("path").and_then(Value::as_str).map(std::path::PathBuf::from))
-            .and_then(|p| std::fs::canonicalize(p).ok())
-            .is_some_and(|p| std::fs::canonicalize(&path).is_ok_and(|sample| sample == p))
-    });
+    let sample_path = path.clone();
+    let existing = tokio::task::spawn_blocking(move || {
+        let sample = std::fs::canonicalize(&sample_path).ok()?;
+        sqlite_sources.into_iter().find(|(_, stored)| {
+            serde_json::from_str::<Value>(stored)
+                .ok()
+                .and_then(|s| s.get("path").and_then(Value::as_str).map(std::path::PathBuf::from))
+                .and_then(|p| std::fs::canonicalize(p).ok())
+                .is_some_and(|p| p == sample)
+        })
+    })
+    .await
+    .map_err(|e| ApiError::internal("looking for the sample source", e))?;
     if let Some((id, _)) = existing {
         let ds = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &id).await?;
         let answer = view_in(&mut tx, &ctx, ds).await?;

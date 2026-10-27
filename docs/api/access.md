@@ -488,7 +488,10 @@ are `Public`.
 
 **`GET /setup`** carries `codeHint` only while setup is needed: where the person setting up finds
 the code. `fixed` when it comes from `KALZIT_SETUP_TOKEN`, `docker` when the server runs in a
-container (`/.dockerenv` or `/run/.containerenv`), else `file`. It never names a path.
+container (`/.dockerenv` or `/run/.containerenv`), else `file`. It never names a path. `fixed`
+tells a visitor that the code was chosen by a person (at least 16 letters or digits) rather than
+generated; that is acceptable only because of the shared budget below, which keeps any guess,
+however many addresses it uses, to `security.setup_max_failures` tries per window.
 
 **`POST /setup/check`** `{ "token" }` checks the code alone, so the setup page can confirm it
 before asking for the rest. Errors: `403 invalid_setup_token` (wrong code), `403
@@ -506,9 +509,17 @@ with `field` `orgName`, `name`, `email`, `password`, `language`, `theme` or `tim
 `setup.completed`, and `settings.updated` per chosen setting (summary `{ "key", "version",
 "setup": true }`, never the value).
 
-Both `POST` routes share one budget per client address (IPv6 per /64): 5 wrong codes per 60
-seconds, then `429 rate_limited` with `Retry-After`. A correct code gives its attempt back; a
-check after setup is done does not count.
+Both `POST` routes share two budgets, and a code is checked only when both have room:
+
+- per client address (IPv6 per /64), the sign-in limits: `security.login_max_failures` wrong
+  codes per `security.login_window_secs` (default 10 per 15 minutes);
+- for all addresses together: `security.setup_max_failures` wrong codes per
+  `security.setup_window_secs` (default 100 per hour), so a guess spread over many addresses is
+  capped as well.
+
+Beyond either, `429 rate_limited` with `Retry-After` and `retryAfterSecs` (the wait of the budget
+that refused). An attempt refused by the shared budget does not count for the address. A correct
+code gives its attempts back; a check after setup is done does not count.
 
 ## Self service
 

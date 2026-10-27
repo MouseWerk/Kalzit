@@ -21,7 +21,7 @@ default `http://localhost:3000`. Setup has four steps; **Back** keeps everything
      `docker compose exec kalzit kalzit setup-code`).
    - **Fixed code**: the value of `KALZIT_SETUP_TOKEN`, for automated installs.
 
-   Case, spaces and dashes do not matter. After 5 wrong codes you wait a minute; the button
+   Case, spaces and dashes do not matter. After several wrong codes you have to wait; the button
    counts down the time. A restart of the server makes a new code: the page then says that the
    code you entered is no longer valid, rather than wrong.
 2. **Your account**: your name, email address and a password of at least 12 characters. The

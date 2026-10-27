@@ -139,7 +139,7 @@ Server settings:
 | `appearance.week_start` | `"monday"` | `"monday"`, `"sunday"`, `"saturday"` |
 | `signin.welcome` | `""` | text up to 280 characters, line breaks allowed, no other control characters |
 | `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
-| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `log.level`, `log.format` | as `kalzit.toml` | read-only (configuration), source `file`, `env` or `default` |
+| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format` | as `kalzit.toml` | read-only (configuration), source `file`, `env` or `default` |
 
 The product name and the sign-in texts refuse invisible direction and format characters (bidi
 embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, the marks U+200E and

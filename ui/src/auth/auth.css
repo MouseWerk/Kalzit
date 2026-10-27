@@ -889,8 +889,15 @@
     text-align: start;
   }
 
+  /* Links in the guide: the neutral link of the app's tables, the text color, underlined on hover. */
   .help__body a {
-    color: var(--accent-text);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    text-decoration: none;
+  }
+
+  .help__body a:hover {
+    text-decoration: underline;
   }
 
   /* Password fields: a show/hide toggle inside the input, caps-lock warning, strength and rules. */
@@ -1093,10 +1100,11 @@
     }
   }
 
-  /* The light rests for reduced motion; the contrast theme has no backdrop at all. */
+  /* The light and the spinner rest for reduced motion; the contrast theme has no backdrop. */
   @media (prefers-reduced-motion: reduce) {
     .access-bd__lamp,
-    .access-bd__layer--lit {
+    .access-bd__layer--lit,
+    .access__spinner {
       animation: none;
     }
   }

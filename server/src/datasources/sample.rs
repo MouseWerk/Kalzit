@@ -24,29 +24,35 @@ pub fn path(data_dir: &Path) -> PathBuf {
     data_dir.join(SAMPLES_DIR).join(FILE_NAME)
 }
 
+/// Whether `path` is a file; the lookup runs off the async workers, like every file system call
+/// here.
+async fn is_file(path: &Path) -> bool {
+    tokio::fs::metadata(path).await.is_ok_and(|m| m.is_file())
+}
+
 /// The sample database of `data_dir`, made first when it does not exist yet. It is built under
 /// a temporary name in the same directory and renamed when complete, so a source never sees a
 /// half-written file. An existing file is used as it is.
 pub async fn ensure(data_dir: &Path) -> Result<PathBuf> {
     let file = path(data_dir);
     let _building = BUILDING.lock().await;
-    if file.is_file() {
+    if is_file(&file).await {
         return Ok(file);
     }
     let dir = data_dir.join(SAMPLES_DIR);
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    tokio::fs::create_dir_all(&dir).await.with_context(|| format!("creating {}", dir.display()))?;
     let temp = dir.join(format!(".{FILE_NAME}.{}.tmp", uuid::Uuid::now_v7().simple()));
-    let built = build(&temp).await;
-    let result = built.and_then(|()| {
-        std::fs::rename(&temp, &file)
-            .or_else(|e| {
-                // Another server process on the same data directory was faster.
-                if file.is_file() { Ok(()) } else { Err(e) }
-            })
-            .with_context(|| format!("moving the sample database to {}", file.display()))
-    });
-    if temp.exists() {
-        let _ = std::fs::remove_file(&temp);
+    let mut result = build(&temp).await;
+    if result.is_ok() {
+        let moved = match tokio::fs::rename(&temp, &file).await {
+            // Another server process on the same data directory was faster.
+            Err(_) if is_file(&file).await => Ok(()),
+            other => other,
+        };
+        result = moved.with_context(|| format!("moving the sample database to {}", file.display()));
+    }
+    if tokio::fs::try_exists(&temp).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_file(&temp).await;
     }
     result.map(|()| file)
 }

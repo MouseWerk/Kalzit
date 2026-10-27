@@ -749,6 +749,44 @@ async fn a_rate_limited_sign_in_names_the_wait() {
     t.finish().await;
 }
 
+/// The wait a sign-in names is the client address's only: an account whose budget is used up,
+/// asked for from a fresh address, answers the whole window, so the wait tells nothing about the
+/// account.
+#[tokio::test]
+async fn a_rate_limited_sign_in_names_only_the_address_wait() {
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 3;
+        c.security.login_window_secs = 600;
+    })
+    .await;
+    t.setup().await;
+    for address in ["192.0.2.1:1", "192.0.2.2:1", "192.0.2.3:1"] {
+        let peer: SocketAddr = address.parse().unwrap();
+        let client = TestApp {
+            app: router(t.state.clone()).layer(MockConnectInfo(peer)),
+            clock: t.clock.clone(),
+            state: t.state.clone(),
+            dir: t.dir.clone(),
+        };
+        assert_eq!(client.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+        t.clock.advance_ms(100_000);
+    }
+    // The account's window ends in 400 s; the fresh address has none and hears the full window.
+    let peer: SocketAddr = "192.0.2.9:1".parse().unwrap();
+    let fresh = TestApp {
+        app: router(t.state.clone()).layer(MockConnectInfo(peer)),
+        clock: t.clock.clone(),
+        state: t.state.clone(),
+        dir: t.dir.clone(),
+    };
+    let r = fresh.login("joerg@example.de", PASSWORD).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    assert_eq!(r.body["error"]["retryAfterSecs"], 600);
+    assert_eq!(r.headers.get(header::RETRY_AFTER).unwrap(), "600");
+    drop(fresh);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn the_setup_code_can_be_checked_on_its_own() {
     let t = test_app("127.0.0.1:50000", |_| {}).await;
@@ -773,7 +811,12 @@ async fn the_setup_code_can_be_checked_on_its_own() {
 /// gives its attempt back.
 #[tokio::test]
 async fn setup_codes_are_rate_limited_per_address() {
-    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    // Per address the sign-in limits apply.
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 5;
+        c.security.login_window_secs = 120;
+    })
+    .await;
     for _ in 0..4 {
         assert_eq!(t.post("/api/setup/check", json!({ "token": "falsch" })).await.status, StatusCode::FORBIDDEN);
     }
@@ -789,13 +832,62 @@ async fn setup_codes_are_rate_limited_per_address() {
     assert_eq!(wrong_setup.code(), "invalid_setup_token");
     let blocked = t.post("/api/setup/check", json!({ "token": SETUP_CODE })).await;
     assert_eq!((blocked.status, blocked.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", blocked.body);
-    assert_eq!(blocked.headers.get(header::RETRY_AFTER).unwrap(), "60");
-    assert_eq!(blocked.body["error"]["retryAfterSecs"], 60);
+    assert_eq!(blocked.headers.get(header::RETRY_AFTER).unwrap(), "120");
+    assert_eq!(blocked.body["error"]["retryAfterSecs"], 120);
     assert_eq!(t.setup().await.code(), "rate_limited");
-    t.clock.advance_ms(30_000);
-    assert_eq!(t.post("/api/setup/check", json!({ "token": SETUP_CODE })).await.body["error"]["retryAfterSecs"], 30);
-    t.clock.advance_ms(30_000);
+    t.clock.advance_ms(60_000);
+    assert_eq!(t.post("/api/setup/check", json!({ "token": SETUP_CODE })).await.body["error"]["retryAfterSecs"], 60);
+    t.clock.advance_ms(60_000);
     assert_eq!(t.setup().await.status, StatusCode::OK);
+    t.finish().await;
+}
+
+/// All addresses together have a budget of their own: a guess spread over many addresses is
+/// capped too, and the cap names its wait.
+#[tokio::test]
+async fn setup_codes_are_capped_across_all_addresses() {
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 2;
+        c.security.setup_max_failures = 5;
+        c.security.setup_window_secs = 3600;
+    })
+    .await;
+    let from = |address: &str| {
+        let peer: SocketAddr = address.parse().unwrap();
+        TestApp {
+            app: router(t.state.clone()).layer(MockConnectInfo(peer)),
+            clock: t.clock.clone(),
+            state: t.state.clone(),
+            dir: t.dir.clone(),
+        }
+    };
+    let guess = json!({ "token": "falsch" });
+    // Two wrong codes each from two addresses, one from a third: five in all.
+    for address in ["192.0.2.1:1", "192.0.2.2:1"] {
+        let client = from(address);
+        for _ in 0..2 {
+            assert_eq!(client.post("/api/setup/check", guess.clone()).await.code(), "invalid_setup_token");
+        }
+        // The address's own budget is used up.
+        assert_eq!(client.post("/api/setup/check", guess.clone()).await.code(), "rate_limited");
+    }
+    let third = from("192.0.2.3:1");
+    assert_eq!(third.post("/api/setup/check", guess.clone()).await.code(), "invalid_setup_token");
+    // Now every address waits for the shared window, even with the right code.
+    t.clock.advance_ms(600_000);
+    for client in [from("192.0.2.4:1"), from("192.0.2.3:1")] {
+        let r = client.post("/api/setup/check", json!({ "token": SETUP_CODE })).await;
+        assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+        assert_eq!(r.headers.get(header::RETRY_AFTER).unwrap(), "3000");
+        assert_eq!(r.body["error"]["retryAfterSecs"], 3000);
+    }
+    // A refused attempt cost the address nothing: once the shared window is over, it may try.
+    t.clock.advance_ms(3_000_000);
+    assert_eq!(
+        from("192.0.2.4:1").post("/api/setup/check", json!({ "token": SETUP_CODE })).await.status,
+        StatusCode::OK
+    );
+    drop(third);
     t.finish().await;
 }
 
