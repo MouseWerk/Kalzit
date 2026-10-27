@@ -9,8 +9,9 @@
 #                           so they are up by the time the build is done)
 #   e2e-services.sh ready   waits for all of them, seeds MongoDB with
 #                           ui/e2e/fixtures/mongo-orders.js and Neo4j and Memgraph with
-#                           ui/e2e/fixtures/graph-shop.cypher, and writes KALZIT_E2E_MONGODB, KALZIT_E2E_OPENSEARCH, KALZIT_E2E_NEO4J and
-#                           KALZIT_E2E_MEMGRAPH to $GITHUB_ENV
+#                           ui/e2e/fixtures/graph-shop.cypher, and writes KALZIT_E2E_MONGODB,
+#                           KALZIT_E2E_OPENSEARCH, KALZIT_E2E_NEO4J and KALZIT_E2E_MEMGRAPH
+#                           to $GITHUB_ENV
 #
 # The images are those of the server tests' services in ci.yml. The passwords belong to throwaway
 # containers reachable only from this job; they protect nothing and are not secrets. Kalzit reads
