@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Browser, expect, type Page, test } from "@playwright/test";
+import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
 import { boltTarget, GRAPH_FIXTURE, MONGO_FIXTURE } from "../support/services";
@@ -904,6 +904,19 @@ test("explore, field distribution, dark", async ({ browser }) => {
 let graphDashboard: string | undefined;
 
 /**
+ * Clicks a node's button in a graph panel's table; when the click cannot land, the log says why
+ * and Enter on the focused button does the same.
+ */
+async function activate(button: Locator): Promise<void> {
+  try {
+    await button.click({ timeout: 10_000 });
+  } catch (error) {
+    process.stderr.write(`click did not land, pressing Enter instead: ${String(error)}\n`);
+    await button.press("Enter");
+  }
+}
+
+/**
  * The graph panels on the shop graph of the graph spec: a network, the category tree as a
  * hierarchy, a shortest path and a network in explorer mode. Needs the Neo4j of the graph spec
  * (KALZIT_E2E_NEO4J, seeded with e2e/fixtures/graph-shop.cypher); without it these pictures are
@@ -994,11 +1007,12 @@ for (const scheme of ["light", "dark"] as const) {
     // The explorer is on once the panel knows the source may be queried; a click loads.
     const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
     await expect(steps).toBeVisible();
-    await around
-      .getByRole("table", { name: /./ })
-      .first()
-      .getByRole("button", { name: "Ben", exact: true })
-      .click();
+    await activate(
+      around.getByRole("table", { name: /./ }).first().getByRole("button", {
+        name: "Ben",
+        exact: true,
+      }),
+    );
     await expect(steps.getByRole("button", { name: /^Ben \+/ })).toBeVisible();
     await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
     await expect(page.getByRole("application")).toHaveCount(4);
@@ -1035,9 +1049,11 @@ test("graph node details, dark", async ({ browser }) => {
   // Ana selected from the panel's table, then back to the drawing with her details open.
   const table = shop.getByRole("button", { name: t("graph.showTable"), exact: true });
   await table.click();
-  await shop.getByRole("button", { name: "Ana", exact: true }).first().click();
+  await activate(shop.getByRole("button", { name: "Ana", exact: true }).first());
   await table.click();
-  await expect(shop.getByRole("region", { name: t("graph.details", { name: "Ana" }) })).toBeVisible();
+  await expect(
+    shop.getByRole("region", { name: t("graph.details", { name: "Ana" }) }),
+  ).toBeVisible();
   await expect(page.getByText(t("graph.layout.settling"))).toHaveCount(0);
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
   await shop.screenshot({
