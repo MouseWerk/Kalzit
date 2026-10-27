@@ -376,9 +376,14 @@ process, a network target or the gRPC protocol.
   response byte budget, at most `MAX_PARTS` parts): rows, documents, nodes and edges beyond the
   limits and batches beyond the budget are cut, with the same truncation and notices built-in
   sources give (`frame.row_limit`, `documents.limit`, `graph.node_limit`, `*.size_limit`; a
-  cut graph keeps only edges and paths whose ends remain, a cut document set loses its cursor);
-  a stream with more parts ends the query with an error, so a plugin that never ends cannot
-  hold the host. Both sides decode no message above 16 MiB (`MAX_MESSAGE_BYTES`, set as tonic's
+  cut graph keeps only edges and paths whose ends remain and says how many paths it left out
+  with `graph.paths_cut`, a cut document set loses its cursor). Every part draws its size from
+  the budget before its JSON is read, and after a cut the remaining parts are dropped unread.
+  The start (at most `MAX_FIELDS` frame fields) and the end count against the budget too: a
+  start that does not fit fails the query, an end that does not fit leaves out the plugin's
+  schema, notices and executed query and marks the result as cut. A stream with more parts
+  than allowed ends the query with an error, so a plugin that never ends cannot hold the
+  host. Both sides decode no message above 16 MiB (`MAX_MESSAGE_BYTES`, set as tonic's
   `max_decoding_message_size`); batches aim at 1 MiB (`TARGET_PART_BYTES`), as the in-process
   adapter cuts them.
 - **Cancellation** is the end of the call (HTTP/2 `RST_STREAM`); the plugin stops the work in
@@ -506,15 +511,28 @@ pass the same data source target rules (`TargetPolicy`) as built-in sources.
 - **The manifest pins the whole package.** `files` lists every file with its SHA-256; before
   anything runs, the host compares the unpacked package with it (`Manifest::check_package`)
   and refuses unlisted files, missing files, other hashes and links or other special entries.
+  The host unpacks into a fresh directory only Kalzit's service account can write, hashes the
+  files there and runs the plugin from there (nothing can change between check and start);
+  it lists entries without following links and reports symbolic links, junctions, reparse
+  points, files with more than one hard link and archive entries that are links or devices as
+  special entries.
   So nothing unsigned can ride along: on Windows a DLL placed next to the binary would be
   loaded before the system's (DLL search order), and the host also starts plugin binaries with
   the safe DLL search mode (system directory first, not the current directory).
 - **A plugin id is bound to its key** (`signing::check_update`). An update must be signed by
   the key of the installed version, or by a key that key handed the id over to: a hand-over
-  statement (`plugin`, `from`, `to` key ids) signed by the old key, kept with the plugin, so a
-  publisher can rotate keys without the admin re-trusting the plugin. Updates never go to an
-  older version (downgrades refused), and a signed install never becomes unsigned. Ids under
-  `io.kalzit.` and `dev.kalzit.` need Kalzit's own plugin key (`check_signer`).
+  statement (plugin id, the old and the new public key in full, and the first plugin version
+  the new key may sign) signed by the old key and kept with the plugin, so a publisher can
+  rotate keys without the admin re-trusting the plugin. Keys are compared by all 32 bytes,
+  never by the short key id. Chains of hand-overs are followed until nothing changes, so their
+  order does not matter. Updates never go to an older version (downgrades refused), and a
+  signed install never becomes unsigned.
+- Hand-overs do not expire, and a leaked old key can hand the id over again: the remedy for a
+  leaked key is removing it from the trusted keys, which stops its plugins (after the admin
+  confirms), and trusting the publisher's new key.
+- Ids under `io.kalzit.` and `dev.kalzit.` need Kalzit's own plugin key (`check_signer`).
+  `check_update` does not look at ids, so the host runs `check_signer` on every install and
+  every update as well.
 - Trusted for plugins: Kalzit's own plugin key and the publisher keys a server admin adds. The
   release keys are never trusted for plugins and plugin keys never for releases. Unsigned
   plugins install only with an explicit admin switch, off by default, and are marked as such.
@@ -534,9 +552,12 @@ pass the same data source target rules (`TargetPolicy`) as built-in sources.
 A signed index hosted by the project lists plugins with versions, key ids, download URLs and
 package hashes (`catalog::CatalogIndex`). It is off by default; turning it on is a server
 setting. Every index carries a growing `sequence`, its publication time and an `expiresAt` at
-most 31 days later: the host remembers the highest sequence it accepted and refuses an older or
-equal one (rollback) and an index past its expiry (freeze), so whoever controls the download
-cannot keep a known-vulnerable version listed. Installing from a file (the package with its
+most 31 days later. The host remembers the highest sequence it accepted per catalog key
+(`catalog::Accepted`, by the full public key; `parse_index` takes the key whose signature
+verified) and refuses an older or equal one (rollback) and an index past its expiry (freeze),
+so whoever controls the download cannot keep a known-vulnerable version listed. Every entry is
+checked: a valid plugin id, semantic version and kind, a 16-digit key id, an `https` URL
+without user info, a SHA-256 in lowercase hex, and no id with the same version twice. Installing from a file (the package with its
 manifest and signature) always works, also offline, and runs the same checks.
 
 ### Sandbox (M4)

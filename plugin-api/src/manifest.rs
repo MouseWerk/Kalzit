@@ -304,6 +304,15 @@ impl Manifest {
     /// same hash, every listed file must exist, and links or other special entries are refused
     /// (a link could point outside the package, and on Windows a DLL placed next to the binary
     /// would be loaded before the system's). Only the manifest and its signature may be extra.
+    ///
+    /// What the host must do for this check to mean anything:
+    /// - Unpack into a fresh directory that only Kalzit's service account can write, and run the
+    ///   plugin from there; hash the files there, not in the archive or a download folder, so
+    ///   nothing can change between the check and the start.
+    /// - List entries without following links. Report as `EntryKind::Other` symbolic links,
+    ///   junctions and reparse points, files with more than one hard link, and archive entries
+    ///   that are links, devices or anything but a plain file or directory; refuse archive paths
+    ///   that are not valid package paths before unpacking.
     pub fn check_package(&self, entries: &[PackageEntry]) -> Result<(), Invalid> {
         let mut issues = Vec::new();
         let mut seen = BTreeSet::new();
@@ -713,7 +722,7 @@ fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     let parts: Vec<&str> = id.split('.').collect();
     (3..=64).contains(&id.len())
         && parts.len() >= 2

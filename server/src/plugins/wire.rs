@@ -27,6 +27,9 @@ use crate::shapes::{
 /// Parts one result may have at most, so a stream that never ends is stopped.
 pub const MAX_PARTS: usize = 100_000;
 
+/// Fields one frame may have at most.
+pub const MAX_FIELDS: usize = 10_000;
+
 /// A part that breaks the protocol: out of order, of another shape, not valid JSON, a value
 /// that does not fit its type, or too many parts.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -407,6 +410,8 @@ pub struct Assembler {
     /// Notices of the host about the stream (skipped parts, fields left out).
     notices: Vec<Notice>,
     skipped: usize,
+    /// Graph paths left out: beyond the limit, or with an end that was cut.
+    paths_cut: usize,
 }
 
 /// What a finished stream answered: a result, or the plugin's error.
@@ -414,7 +419,7 @@ pub type Outcome = Result<QueryResult, pb::Error>;
 
 impl Assembler {
     pub fn new(limits: Limits) -> Self {
-        Self { limits, building: None, parts: 0, cut: None, notices: Vec::new(), skipped: 0 }
+        Self { limits, building: None, parts: 0, cut: None, notices: Vec::new(), skipped: 0, paths_cut: 0 }
     }
 
     fn cut(&mut self, detail: Detail, at: usize) {
@@ -423,7 +428,8 @@ impl Assembler {
         }
     }
 
-    /// Draws a data part's size from the budget; false once the result is cut.
+    /// Draws a data part's size from the budget before anything in it is parsed; false once
+    /// the result is cut, so the parts after a cut are dropped unread.
     fn draw(&mut self, bytes: usize, size_reason: &'static str, kept: usize) -> bool {
         if self.cut.is_some() {
             return false;
@@ -450,20 +456,37 @@ impl Assembler {
         };
         match (part, self.building.is_some()) {
             (Part::Error(e), _) => Ok(Some(Err(e))),
-            (Part::Start(start), false) => self.start(start).map(|()| None),
+            (Part::Start(start), false) => self.start(start, bytes).map(|()| None),
             (Part::Start(_), true) => Err(broken("a second start")),
             (_, false) => Err(broken("a part before the start")),
             (Part::FrameRows(rows), true) => self.frame_rows(rows, bytes).map(|()| None),
             (Part::Documents(batch), true) => self.documents(batch, bytes).map(|()| None),
             (Part::Graph(batch), true) => self.graph(batch, bytes).map(|()| None),
             (Part::End(end), true) => {
+                // The plugin's metadata (schema, notices, executed query) counts against the
+                // budget like data; when it does not fit, the result goes without it, cut.
+                let lean = !self.limits.budget.take(bytes);
                 let building = self.building.take().expect("checked above");
-                Ok(Some(Ok(self.finish(building, end)?)))
+                if lean {
+                    let (reason, kept) = match &building {
+                        Building::Frame { rows, .. } => ("frame.size_limit", *rows),
+                        Building::Documents(docs) => ("documents.size_limit", docs.len()),
+                        Building::Graph { nodes, .. } => ("graph.size_limit", nodes.len()),
+                    };
+                    self.cut(Detail::new(reason, "the result was cut off at the response size limit"), kept);
+                }
+                Ok(Some(Ok(self.finish(building, end, lean)?)))
             }
         }
     }
 
-    fn start(&mut self, start: pb::ResultStart) -> Result<(), WireError> {
+    fn start(&mut self, start: pb::ResultStart, bytes: usize) -> Result<(), WireError> {
+        if start.frame_fields.len() > MAX_FIELDS {
+            return Err(broken(format!("a frame with more than {MAX_FIELDS} fields")));
+        }
+        if !self.limits.budget.take(bytes) {
+            return Err(broken("the result's fields do not fit the response size limit"));
+        }
         let shape = pb::Shape::try_from(start.shape).ok().and_then(shape_from);
         self.building = Some(match shape {
             Some(Shape::Frame) => {
@@ -503,6 +526,11 @@ impl Assembler {
         if rows.columns_json.len() != fields.len() {
             return Err(broken(format!("{} columns for {} fields", rows.columns_json.len(), fields.len())));
         }
+        let kept = *kept;
+        if !self.draw(bytes, "frame.size_limit", kept) {
+            return Ok(());
+        }
+        let Some(Building::Frame { fields, .. }) = &self.building else { unreachable!() };
         let mut columns = Vec::with_capacity(fields.len());
         let mut length = None;
         for (field, column) in fields.iter().zip(&rows.columns_json) {
@@ -522,10 +550,7 @@ impl Assembler {
             }
             columns.push(values);
         }
-        let (kept, count) = (*kept, length.unwrap_or(0));
-        if !self.draw(bytes, "frame.size_limit", kept) {
-            return Ok(());
-        }
+        let count = length.unwrap_or(0);
         let room = self.limits.max_rows.saturating_sub(kept);
         let take = count.min(room);
         if take < count {
@@ -549,6 +574,9 @@ impl Assembler {
     fn documents(&mut self, batch: pb::DocumentBatch, bytes: usize) -> Result<(), WireError> {
         let Some(Building::Documents(docs)) = &self.building else { return Err(broken("a part of another shape")) };
         let kept = docs.len();
+        if !self.draw(bytes, "documents.size_limit", kept) {
+            return Ok(());
+        }
         let mut parsed = Vec::with_capacity(batch.documents_json.len());
         for text in batch.documents_json {
             let doc = OrderedJson::from_text(text).map_err(|e| broken(format!("a document is not JSON: {e}")))?;
@@ -556,9 +584,6 @@ impl Assembler {
                 return Err(broken("a document is not a JSON object"));
             }
             parsed.push(doc);
-        }
-        if !self.draw(bytes, "documents.size_limit", kept) {
-            return Ok(());
         }
         let max = self.limits.max_elements;
         if kept + parsed.len() > max {
@@ -578,6 +603,10 @@ impl Assembler {
             return Err(broken("a part of another shape"));
         };
         let (kept_nodes, kept_edges) = (nodes.len(), edges.len());
+        if !self.draw(bytes, "graph.size_limit", kept_nodes) {
+            self.paths_cut += batch.paths.len();
+            return Ok(());
+        }
         let mut new_nodes = Vec::with_capacity(batch.nodes.len());
         for n in batch.nodes {
             let properties = parse("node properties", &n.properties_json)?;
@@ -587,9 +616,6 @@ impl Assembler {
         for e in batch.edges {
             let properties = parse("edge properties", &e.properties_json)?;
             new_edges.push(Edge { id: e.id, edge_type: e.r#type, from: e.from, to: e.to, properties });
-        }
-        if !self.draw(bytes, "graph.size_limit", kept_nodes) {
-            return Ok(());
         }
         let max = self.limits.max_elements;
         if kept_nodes + new_nodes.len() > max {
@@ -610,6 +636,7 @@ impl Assembler {
         nodes.extend(new_nodes);
         edges.extend(new_edges);
         let room = max.saturating_sub(paths.len());
+        self.paths_cut += batch.paths.len().saturating_sub(room);
         paths.extend(batch.paths.into_iter().take(room).map(|p| GraphPath { nodes: p.nodes, edges: p.edges }));
         Ok(())
     }
@@ -628,18 +655,44 @@ impl Assembler {
         if let Some((detail, _)) = &self.cut {
             out.push(detail.clone().notice(NoticeSeverity::Warning));
         }
+        if self.paths_cut > 0 {
+            let detail = Detail::new(
+                "graph.paths_cut",
+                format!("{} paths are left out because the graph was cut", self.paths_cut),
+            )
+            .with("count", self.paths_cut);
+            out.push(detail.notice(NoticeSeverity::Warning));
+        }
         out
     }
 
-    fn finish(&mut self, building: Building, end: pb::ResultEnd) -> Result<QueryResult, WireError> {
+    /// The result with the end's metadata; `lean` leaves out what the plugin said beyond the
+    /// data (schema, notices, executed query) because it did not fit the budget.
+    fn finish(&mut self, building: Building, end: pb::ResultEnd, lean: bool) -> Result<QueryResult, WireError> {
         use pb::result_end::Meta;
+        let mut end = end;
+        if lean {
+            match &mut end.meta {
+                Some(Meta::Frame(f)) => f.meta = None,
+                Some(Meta::Documents(d)) => {
+                    d.schema.clear();
+                    d.notices.clear();
+                    d.executed_query = None;
+                }
+                Some(Meta::Graph(g)) => {
+                    g.schema = None;
+                    g.notices = None;
+                }
+                None => {}
+            }
+        }
         let cut = self.cut.as_ref().map(|(d, at)| Truncated {
             limit: u32::try_from(*at).unwrap_or(u32::MAX),
             reason: Some(d.reason.to_string()),
         });
-        let host = self.host_notices();
         match (building, end.meta) {
             (Building::Frame { fields, .. }, Some(Meta::Frame(end))) => {
+                let host = self.host_notices();
                 let frame = Frame::new(fields.into_iter().flatten().collect()).map_err(broken)?;
                 let mut meta = end.meta.map(|m| FrameMeta {
                     executed_query: m.executed_query,
@@ -659,6 +712,7 @@ impl Assembler {
                 })
             }
             (Building::Documents(documents), Some(Meta::Documents(end))) => {
+                let host = self.host_notices();
                 let mut notices = notices_from(end.notices);
                 notices.extend(host);
                 Ok(QueryResult::Documents {
@@ -695,11 +749,14 @@ impl Assembler {
                     let node_ids: BTreeSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
                     edges.retain(|e| node_ids.contains(e.from.as_str()) && node_ids.contains(e.to.as_str()));
                     let edge_ids: BTreeSet<&str> = edges.iter().map(|e| e.id.as_str()).collect();
+                    let before = paths.len();
                     paths.retain(|p| {
                         p.nodes.iter().all(|n| node_ids.contains(n.as_str()))
                             && p.edges.iter().all(|e| edge_ids.contains(e.as_str()))
                     });
+                    self.paths_cut += before - paths.len();
                 }
+                let host = self.host_notices();
                 let schema = end.schema.unwrap_or_default();
                 let mut notices = end.notices.map(|n| notices_from(n.items));
                 if !host.is_empty() {
@@ -962,6 +1019,9 @@ mod tests {
         // The edge a-b and the path through it lost their end b.
         assert!(g.edges.is_empty() && g.paths == Some(vec![]));
         assert_eq!(g.truncated.unwrap().reason.as_deref(), Some("graph.node_limit"));
+        let notices = g.notices.unwrap();
+        let paths_cut = notices.iter().find(|n| n.code == "graph.paths_cut").expect("a notice for the path");
+        assert_eq!(paths_cut.params.as_ref().unwrap()["count"], "1");
     }
 
     #[test]
@@ -974,6 +1034,66 @@ mod tests {
         assert!(set.documents.len() < 3);
         assert_eq!(set.truncated.as_ref().unwrap().reason.as_deref(), Some("documents.size_limit"));
         assert!(codes(&set.notices).contains(&"documents.size_limit"));
+    }
+
+    /// After a cut, later parts are dropped unread: not even invalid JSON in them matters.
+    #[test]
+    fn parts_after_a_cut_are_not_parsed() {
+        let mut parts = chunks(&documents(), 1);
+        let end = parts.pop().unwrap();
+        parts.push(pb::QueryChunk {
+            part: Some(pb::query_chunk::Part::Documents(pb::DocumentBatch {
+                documents_json: vec!["{not json".into()],
+            })),
+        });
+        parts.push(end);
+        let QueryResult::Documents { documents: set } =
+            assemble(limits(100, 2, 100, usize::MAX), parts).unwrap().unwrap()
+        else {
+            panic!("documents")
+        };
+        assert_eq!(set.documents.len(), 2);
+    }
+
+    /// The start and the end count against the budget too, and a frame has a field limit.
+    #[test]
+    fn start_and_end_are_budgeted() {
+        let many = pb::QueryChunk {
+            part: Some(pb::query_chunk::Part::Start(pb::ResultStart {
+                shape: pb::Shape::Frame as i32,
+                frame_fields: vec![pb::FrameField::default(); MAX_FIELDS + 1],
+            })),
+        };
+        assert!(assemble(unlimited(), [many]).unwrap_err().0.contains("fields"));
+        let parts = chunks(&frame(), 1000);
+        let start = parts[0].encoded_len();
+        assert!(assemble(limits(100, 100, 100, start - 1), parts.clone()).unwrap_err().0.contains("fields"));
+        // Metadata that does not fit is left out, and the result says it was cut.
+        let all_but_end: usize = parts[..parts.len() - 1].iter().map(|p| p.encoded_len()).sum();
+        let QueryResult::Frame { frame: lean } = assemble(limits(100, 100, 100, all_but_end), parts).unwrap().unwrap()
+        else {
+            panic!("a frame")
+        };
+        let meta = lean.meta().unwrap();
+        assert_eq!(meta.executed_query, None);
+        assert!(meta.rows_truncated);
+        assert_eq!(codes(&meta.notices), ["frame.size_limit"]);
+        let paths_only = QueryResult::Graph {
+            graph: GraphSet {
+                paths: Some(vec![
+                    GraphPath { nodes: vec![], edges: vec![] },
+                    GraphPath { nodes: vec![], edges: vec![] },
+                ]),
+                ..Default::default()
+            },
+        };
+        let QueryResult::Graph { graph: g } =
+            assemble(limits(100, 1, 100, usize::MAX), chunks(&paths_only, 1000)).unwrap().unwrap()
+        else {
+            panic!("a graph")
+        };
+        assert_eq!(g.paths.unwrap().len(), 1);
+        assert_eq!(g.notices.unwrap().last().unwrap().code, "graph.paths_cut");
     }
 
     /// A plugin that never ends its result is stopped at the parts cap, also after a cut.

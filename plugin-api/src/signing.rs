@@ -11,7 +11,13 @@
 //! - Ids under `io.kalzit.` and `dev.kalzit.` need Kalzit's own plugin key (`check_signer`).
 //! - A plugin id is bound to the key that signed its installed version: an update needs the
 //!   same key, or a new key the old one handed the id over to (`HandOver`), and never goes back
-//!   to an older version (`check_update`).
+//!   to an older version (`check_update`). Keys are compared by all their 32 bytes, never by
+//!   the short `key_id`.
+//! - `check_update` does not look at reserved ids: the host runs `check_signer` on every
+//!   install and every update as well.
+//! - Hand-overs do not expire, and a leaked old key can hand the id over again. The remedy for
+//!   a leaked key is to remove it from the trusted keys (its plugins stop) and trust only the
+//!   publisher's new key.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
@@ -50,19 +56,28 @@ pub fn catalog_message(index: &[u8]) -> Vec<u8> {
 }
 
 /// The old key of a plugin hands its id over to a new key (key rotation). Signed by the old
-/// key; the host keeps it with the plugin, so later updates may be signed by the new key.
+/// key; the host keeps it with the plugin, so updates from `from_version` on may be signed by
+/// the new key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandOver {
     pub plugin_id: String,
-    /// `key_id` of the old key.
+    /// The old public key, all 32 bytes in lowercase hex (`key_hex`).
     pub from: String,
-    /// `key_id` of the new key.
+    /// The new public key, all 32 bytes in lowercase hex.
     pub to: String,
+    /// The first plugin version the new key may sign (semver).
+    pub from_version: String,
+}
+
+/// A public key as hand-overs name it: all 32 bytes in lowercase hex, never the short `key_id`.
+pub fn key_hex(key: &VerifyingKey) -> String {
+    hex::encode(key.as_bytes())
 }
 
 /// What a hand-over signature covers: the context line, then one `key=value` line per field.
 pub fn handover_message(h: &HandOver) -> Vec<u8> {
-    with_context(HANDOVER_CONTEXT, format!("plugin={}\nfrom={}\nto={}\n", h.plugin_id, h.from, h.to).as_bytes())
+    let body = format!("plugin={}\nfrom={}\nto={}\nfrom_version={}\n", h.plugin_id, h.from, h.to, h.from_version);
+    with_context(HANDOVER_CONTEXT, body.as_bytes())
 }
 
 /// Checks `signature` over `message` strictly (non-canonical signatures and weak keys refused).
@@ -78,8 +93,16 @@ pub fn verify_catalog(key: &VerifyingKey, index: &[u8], signature: &Signature) -
     verifies(key, &catalog_message(index), signature)
 }
 
+/// Whether `old_key` signed this hand-over. The statement names `old_key` in full as `from`, a
+/// valid, not weak public key in canonical hex as `to`, and a semantic `from_version`.
 pub fn verify_handover(old_key: &VerifyingKey, h: &HandOver, signature: &Signature) -> bool {
-    h.from == key_id(old_key) && verifies(old_key, &handover_message(h), signature)
+    let to_is_key = hex::decode(&h.to).ok().and_then(|bytes| <[u8; 32]>::try_from(bytes).ok()).is_some_and(|bytes| {
+        h.to == hex::encode(bytes) && VerifyingKey::from_bytes(&bytes).is_ok_and(|k| !k.is_weak())
+    });
+    h.from == key_hex(old_key)
+        && to_is_key
+        && semver::Version::parse(&h.from_version).is_ok()
+        && verifies(old_key, &handover_message(h), signature)
 }
 
 /// Who signed a package whose signature verified (or that has none).
@@ -130,7 +153,7 @@ pub struct Installed<'a> {
     pub manifest: &'a Manifest,
     /// The key that signed it; `None` for an unsigned install.
     pub key: Option<&'a VerifyingKey>,
-    /// Verified hand-overs of this plugin's id (`verify_handover`), oldest first.
+    /// Verified hand-overs of this plugin's id (`verify_handover`), in any order.
     pub handovers: &'a [HandOver],
 }
 
@@ -148,18 +171,23 @@ pub fn check_update(installed: &Installed, update: &Manifest, key: Option<&Verif
     }
     let Some(old) = installed.key else { return Ok(()) };
     let Some(new) = key else { return Err(Refusal::KeyChanged) };
-    // Follow the hand-overs from the installed key; each must name this plugin.
-    let mut current = key_id(old);
-    let target = key_id(new);
-    for h in installed.handovers.iter().filter(|h| h.plugin_id == update.id) {
-        if current == target {
+    // The keys reachable from the installed key through this plugin's hand-overs that apply to
+    // the update's version, followed until nothing changes, so their order does not matter.
+    let version = parse(&update.version).expect("checked above");
+    let mut reachable = std::collections::BTreeSet::from([key_hex(old)]);
+    loop {
+        let before = reachable.len();
+        for h in installed.handovers.iter().filter(|h| h.plugin_id == update.id) {
+            let applies = parse(&h.from_version).is_some_and(|from| version >= from);
+            if applies && reachable.contains(&h.from) {
+                reachable.insert(h.to.clone());
+            }
+        }
+        if reachable.len() == before {
             break;
         }
-        if h.from == current {
-            current = h.to.clone();
-        }
     }
-    if current == target { Ok(()) } else { Err(Refusal::KeyChanged) }
+    if reachable.contains(&key_hex(new)) { Ok(()) } else { Err(Refusal::KeyChanged) }
 }
 
 #[cfg(test)]
@@ -224,7 +252,12 @@ linux-x64 = "bin/redis-plugin"
         assert!(!verify_manifest(&k.verifying_key(), body, &release));
         assert!(k.verifying_key().verify_strict(&kalzit_release::manifest_message(body), &signature).is_err());
 
-        let h = HandOver { plugin_id: "dev.example.redis".into(), from: key_id(&k.verifying_key()), to: "x".into() };
+        let h = HandOver {
+            plugin_id: "dev.example.redis".into(),
+            from: key_hex(&k.verifying_key()),
+            to: key_hex(&key(9).verifying_key()),
+            from_version: "2.0.0".into(),
+        };
         let catalog = k.sign(&catalog_message(&handover_message(&h)[HANDOVER_CONTEXT.len()..]));
         assert!(!verify_handover(&k.verifying_key(), &h, &catalog));
         assert!(verify_handover(&k.verifying_key(), &h, &k.sign(&handover_message(&h))));
@@ -258,23 +291,78 @@ linux-x64 = "bin/redis-plugin"
             Err(Refusal::OtherPlugin)
         );
 
-        // The old key hands the id over to the new one; a stranger's key stays refused.
-        let handovers = [HandOver {
-            plugin_id: "dev.example.redis".into(),
-            from: key_id(&old.verifying_key()),
-            to: key_id(&new.verifying_key()),
-        }];
-        assert!(verify_handover(&old.verifying_key(), &handovers[0], &old.sign(&handover_message(&handovers[0]))));
+        // The old key hands the id over to the new one from 1.3.0 on; a stranger stays refused.
+        let handovers = [handover("dev.example.redis", &old, &new, "1.3.0")];
         let rotated = Installed { handovers: &handovers, ..installed };
         assert_eq!(check_update(&rotated, &next, Some(&new.verifying_key())), Ok(()));
         assert_eq!(check_update(&rotated, &next, Some(&stranger.verifying_key())), Err(Refusal::KeyChanged));
+        // Not for versions before the hand-over's minimum.
+        let early = manifest("1.2.5", "dev.example.redis");
+        assert_eq!(check_update(&rotated, &early, Some(&new.verifying_key())), Err(Refusal::KeyChanged));
         // A hand-over for another plugin does not count.
-        let elsewhere = [HandOver { plugin_id: "dev.example.other".into(), ..handovers[0].clone() }];
+        let elsewhere = [handover("dev.example.other", &old, &new, "1.0.0")];
         let other = Installed { handovers: &elsewhere, ..rotated };
         assert_eq!(check_update(&other, &next, Some(&new.verifying_key())), Err(Refusal::KeyChanged));
 
         // An unsigned install may become signed.
         let unsigned = Installed { manifest: &installed_manifest, key: None, handovers: &[] };
         assert_eq!(check_update(&unsigned, &next, Some(&stranger.verifying_key())), Ok(()));
+    }
+
+    /// A verified hand-over from `from` to `to`.
+    fn handover(plugin: &str, from: &SigningKey, to: &SigningKey, from_version: &str) -> HandOver {
+        let h = HandOver {
+            plugin_id: plugin.into(),
+            from: key_hex(&from.verifying_key()),
+            to: key_hex(&to.verifying_key()),
+            from_version: from_version.into(),
+        };
+        assert!(verify_handover(&from.verifying_key(), &h, &from.sign(&handover_message(&h))));
+        h
+    }
+
+    #[test]
+    fn handover_chains_are_followed_in_any_order() {
+        let (a, b, c) = (key(1), key(2), key(3));
+        let installed_manifest = manifest("1.0.0", "dev.example.redis");
+        let next = manifest("2.0.0", "dev.example.redis");
+        // b to c is listed before a to b.
+        let handovers =
+            [handover("dev.example.redis", &b, &c, "1.0.0"), handover("dev.example.redis", &a, &b, "1.0.0")];
+        let installed =
+            Installed { manifest: &installed_manifest, key: Some(&a.verifying_key()), handovers: &handovers };
+        assert_eq!(check_update(&installed, &next, Some(&c.verifying_key())), Ok(()));
+    }
+
+    /// Keys are compared in full: a hand-over naming the new key by its short id, or a key that
+    /// shares its id but differs in its bytes, does not let it sign.
+    #[test]
+    fn keys_are_compared_by_all_their_bytes() {
+        let (old, new) = (key(1), key(2));
+        let installed_manifest = manifest("1.0.0", "dev.example.redis");
+        let next = manifest("1.1.0", "dev.example.redis");
+        let mut by_id = handover("dev.example.redis", &old, &new, "1.0.0");
+        by_id.to = key_id(&new.verifying_key());
+        assert!(!verify_handover(&old.verifying_key(), &by_id, &old.sign(&handover_message(&by_id))));
+        let mut near = handover("dev.example.redis", &old, &new, "1.0.0");
+        let mut bytes = new.verifying_key().to_bytes();
+        bytes[31] ^= 1;
+        near.to = hex::encode(bytes);
+        for h in [by_id, near] {
+            let handovers = [h];
+            let installed =
+                Installed { manifest: &installed_manifest, key: Some(&old.verifying_key()), handovers: &handovers };
+            assert_eq!(check_update(&installed, &next, Some(&new.verifying_key())), Err(Refusal::KeyChanged));
+        }
+        // The signature covers the plugin, both keys and the version: changing any breaks it.
+        let h = handover("dev.example.redis", &old, &new, "1.0.0");
+        let signature = old.sign(&handover_message(&h));
+        for changed in [
+            HandOver { plugin_id: "dev.example.other".into(), ..h.clone() },
+            HandOver { from_version: "0.1.0".into(), ..h.clone() },
+            HandOver { to: key_hex(&key(5).verifying_key()), ..h.clone() },
+        ] {
+            assert!(!verify_handover(&old.verifying_key(), &changed, &signature));
+        }
     }
 }
