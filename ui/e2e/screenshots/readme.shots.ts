@@ -971,14 +971,14 @@ async function seedGraphDashboard(address: string): Promise<string> {
         "path",
         "path",
         "From Ana to the monitor arm",
-        { x: 0, y: 11, w: 12, h: 8 },
+        { x: 0, y: 11, w: 12, h: 13 },
         "MATCH p = shortestPath((c:Customer {name: 'Ana'})-[:PLACED|CONTAINS*..10]-(pr:Product {name: 'Monitor arm'})) RETURN p",
       ),
       panel(
         "explorer",
         "network",
         "Around Ben",
-        { x: 12, y: 11, w: 12, h: 8 },
+        { x: 12, y: 11, w: 12, h: 13 },
         "MATCH (c:Customer {name: 'Ben'}) RETURN c",
         { explorer: true, expandLimit: 10 },
       ),
@@ -993,7 +993,7 @@ for (const scheme of ["light", "dark"] as const) {
     const address = process.env.KALZIT_E2E_NEO4J ?? "";
     test.skip(address === "", "KALZIT_E2E_NEO4J is not set; the picture needs the Neo4j fixture");
     const id = await seedGraphDashboard(address);
-    const page = await openPage(browser, scheme, { width: 1440, height: 1000 });
+    const page = await openPage(browser, scheme, { width: 1440, height: 1240 });
     await signIn(page);
     await page.goto(`/dashboards/${id}`);
     await expect(page.getByRole("heading", { name: "Shop graph" })).toBeVisible();
