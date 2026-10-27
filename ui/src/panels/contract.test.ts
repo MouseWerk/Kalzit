@@ -162,6 +162,13 @@ function editorOptions(type: string): unknown[] {
     return [{ caption: LONGEST, variable: "customer", variableProperty: LONGEST }];
   }
   const parse = (stored: unknown) => PANELS.find((panel) => panel.type === type)?.options(stored);
+  // A click that sets a variable, with the longest texts each editor takes.
+  if (type === "documents" || type === "document") {
+    return [parse({ variable: "$customer", variablePath: "p".repeat(500) })];
+  }
+  if (type === "table") {
+    return [parse({ variable: "customer", variableColumn: "c".repeat(200) })];
+  }
   // State panels: known state words switched off, as the editor's check box stores it.
   if (type === "state-timeline" || type === "status-history") {
     return [parse({ colorStateWords: false })];

@@ -139,6 +139,13 @@ export interface DocumentTreeProps {
   onFilter?: ((path: string, value: unknown) => void) | undefined;
   /** Opens a non-empty array as a list of its own. */
   onOpenList?: ((item: number, segments: Segment[]) => void) | undefined;
+  /**
+   * A click on a row, or Enter or Space on it, besides opening it: the item, the path from it
+   * and the value (a panel setting a dashboard variable). The bar offers it as a button too,
+   * named `activateLabel`.
+   */
+  onActivate?: ((item: number, segments: Segment[], value: unknown) => void) | undefined;
+  activateLabel?: string | undefined;
 }
 
 /**
@@ -154,6 +161,8 @@ export function DocumentTree({
   label,
   onFilter,
   onOpenList,
+  onActivate,
+  activateLabel,
 }: DocumentTreeProps) {
   const { t, language } = useI18n();
   const baseId = useId();
@@ -275,6 +284,7 @@ export function DocumentTree({
           showMore(row);
         } else if (row !== undefined) {
           toggle(row);
+          onActivate?.(row.item, row.segments, row.value);
         }
         break;
       default:
@@ -321,6 +331,7 @@ export function DocumentTree({
             showMore(row);
           } else {
             toggle(row);
+            onActivate?.(row.item, row.segments, row.value);
           }
         }}
       />,
@@ -341,6 +352,8 @@ export function DocumentTree({
     filterablePath(fullSegments(active));
   const canOpen =
     hasPath && onOpenList !== undefined && Array.isArray(active.value) && active.value.length > 0;
+  const canActivate =
+    onActivate !== undefined && activateLabel !== undefined && active?.more === undefined;
 
   return (
     <div className="doc-tree">
@@ -352,6 +365,17 @@ export function DocumentTree({
         ) : (
           <span className="doc-tree__hint">{t("documents.tree.hint")}</span>
         )}
+        {canActivate && active !== undefined && !hasPath ? (
+          <div className="doc-tree__actions">
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onClick={() => onActivate?.(active.item, active.segments, active.value)}
+            >
+              {activateLabel}
+            </button>
+          </div>
+        ) : null}
         {hasPath ? (
           <div className="doc-tree__actions">
             <button
@@ -385,6 +409,15 @@ export function DocumentTree({
                 onClick={() => onOpenList?.(active.item, active.segments)}
               >
                 {t("documents.tree.openList")}
+              </button>
+            ) : null}
+            {canActivate ? (
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                onClick={() => onActivate?.(active.item, active.segments, active.value)}
+              >
+                {activateLabel}
               </button>
             ) : null}
           </div>

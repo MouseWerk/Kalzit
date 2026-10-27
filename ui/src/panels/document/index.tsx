@@ -6,29 +6,61 @@ import { MAX_PATH_CHARS } from "../../documents/projection";
 import { SetPicker } from "../../documents/shared";
 import { entriesOf, isContainer, typeOf, unwrap } from "../../documents/values";
 import { useI18n } from "../../i18n/i18n";
+import { usePanelHost } from "../host";
 import { EmptyPanel } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
 import { DocumentCardPreview } from "../picker/previews";
+import {
+  ClickVariableOptions,
+  clickOption,
+  MAX_VARIABLE_CHARS,
+  useClickOptionTexts,
+  useClickVariable,
+  variableText,
+} from "../variableClick";
 
 export interface CardOptions {
   /** The field whose value titles the card (`name`); `_id` when empty. */
   titlePath: string;
+  /** Dashboard variable a click on a value of the card sets; empty sets none. */
+  variable: string;
+  /** Path in the shown document the variable takes; empty takes the clicked value. */
+  variablePath: string;
 }
+
+export function parseCardOptions(stored: unknown): CardOptions {
+  const value = isRecord(stored) ? stored : {};
+  return {
+    titlePath: typeof value.titlePath === "string" ? value.titlePath : "",
+    variable: clickOption(value.variable, MAX_VARIABLE_CHARS, true),
+    variablePath: clickOption(value.variablePath, MAX_PATH_CHARS),
+  };
+}
+
+/** A click on a value of the card: given only when the card sets a variable. */
+type Pick = ((value: unknown) => void) | undefined;
 
 /** Below this depth nested values are summarized, so a deep document stays a readable card. */
 const MAX_DEPTH = 6;
 /** Array elements shown at first, and added by each "Show more". */
 export const CARD_PAGE = 50;
 
-function Value({ value, depth }: { value: unknown; depth: number }) {
+function Value({ value, depth, pick }: { value: unknown; depth: number; pick: Pick }) {
   const { t, language } = useI18n();
   const [shown, setShown] = useState(CARD_PAGE);
   const entries = entriesOf(value);
   if (!isContainer(value) || depth >= MAX_DEPTH || entries.length === 0) {
+    const summary = valueSummary(t, value, language);
     return (
       <span className="doc-card__value">
-        <span>{valueSummary(t, value, language)}</span>
+        {pick === undefined || isContainer(value) ? (
+          <span>{summary}</span>
+        ) : (
+          <button type="button" className="value-pick" onClick={() => pick(value)}>
+            {summary}
+          </button>
+        )}
         <span className="doc-tree__type">{typeLabel(t, typeOf(value))}</span>
       </span>
     );
@@ -39,7 +71,7 @@ function Value({ value, depth }: { value: unknown; depth: number }) {
         <ol className="doc-card__list">
           {entries.slice(0, shown).map(([i, item]) => (
             <li key={i}>
-              <Value value={item} depth={depth + 1} />
+              <Value value={item} depth={depth + 1} pick={pick} />
             </li>
           ))}
         </ol>
@@ -58,17 +90,25 @@ function Value({ value, depth }: { value: unknown; depth: number }) {
       </>
     );
   }
-  return <Fields value={unwrap(value) as Record<string, unknown>} depth={depth + 1} />;
+  return <Fields value={unwrap(value) as Record<string, unknown>} depth={depth + 1} pick={pick} />;
 }
 
-function Fields({ value, depth }: { value: Record<string, unknown>; depth: number }) {
+function Fields({
+  value,
+  depth,
+  pick,
+}: {
+  value: Record<string, unknown>;
+  depth: number;
+  pick: Pick;
+}) {
   return (
     <dl className="doc-card__fields">
       {entriesOf(value).map(([key, child]) => (
         <div key={key} className="doc-card__field">
           <dt className="doc-card__key">{key}</dt>
           <dd>
-            <Value value={child} depth={depth} />
+            <Value value={child} depth={depth} pick={pick} />
           </dd>
         </div>
       ))}
@@ -82,6 +122,7 @@ function Fields({ value, depth }: { value: Record<string, unknown>; depth: numbe
  */
 function CardPanel({ documents = [], options }: PanelProps<CardOptions>) {
   const { t, language } = useI18n();
+  const clicked = useClickVariable(options.variable);
   const headingId = useId();
   const [index, setIndex] = useState(0);
   const [page, setPage] = useState(0);
@@ -98,6 +139,17 @@ function CardPanel({ documents = [], options }: PanelProps<CardOptions>) {
     titleValue === undefined || isContainer(titleValue)
       ? t("documents.tree.document", { number: current + 1 })
       : valueSummary(t, titleValue, language);
+  // A click on any value sets the variable: to the value at the option's path in this document,
+  // or to the clicked value itself.
+  const pick: Pick =
+    clicked.variable === null
+      ? undefined
+      : (value) =>
+          clicked.click(
+            variableText(
+              options.variablePath === "" ? value : valueAt(document, options.variablePath),
+            ),
+          );
   return (
     <div className="doc-panel">
       <div className="doc-panel__bar">
@@ -138,36 +190,67 @@ function CardPanel({ documents = [], options }: PanelProps<CardOptions>) {
           {heading}
         </h3>
         {isRecord(unwrap(document)) ? (
-          <Fields value={unwrap(document) as Record<string, unknown>} depth={0} />
+          <Fields value={unwrap(document) as Record<string, unknown>} depth={0} pick={pick} />
         ) : (
-          <Value value={document} depth={0} />
+          <Value value={document} depth={0} pick={pick} />
         )}
       </article>
+      {clicked.variable === null ? null : (
+        <p className="visually-hidden" role="status" aria-live="polite">
+          {clicked.announcement}
+        </p>
+      )}
     </div>
   );
 }
 
 function CardEditor({ options, onChange }: PanelEditorProps<CardOptions>) {
   const { t } = useI18n();
+  const host = usePanelHost();
   const id = useId();
   const hintId = useId();
+  const variableId = useId();
+  const texts = useClickOptionTexts(
+    t("panels.variable.triggerCard"),
+    t("panels.variable.path"),
+    t("panels.variable.pathHintCard"),
+  );
   return (
-    <div className="field">
-      <label className="field__label" htmlFor={id}>
-        {t("documents.card.titlePath")}
-      </label>
-      <p className="field__hint" id={hintId}>
-        {t("documents.card.titlePathHint")}
-      </p>
-      <input
-        id={id}
-        className="input input--mono"
-        value={options.titlePath}
+    <>
+      <div className="field">
+        <label className="field__label" htmlFor={id}>
+          {t("documents.card.titlePath")}
+        </label>
+        <p className="field__hint" id={hintId}>
+          {t("documents.card.titlePathHint")}
+        </p>
+        <input
+          id={id}
+          className="input input--mono"
+          value={options.titlePath}
+          maxLength={MAX_PATH_CHARS}
+          aria-describedby={hintId}
+          onChange={(event) => onChange({ ...options, titlePath: event.currentTarget.value })}
+        />
+      </div>
+      <ClickVariableOptions
+        id={variableId}
+        names={host.variables?.names ?? []}
+        variable={options.variable}
+        source={options.variablePath}
+        texts={texts}
         maxLength={MAX_PATH_CHARS}
-        aria-describedby={hintId}
-        onChange={(event) => onChange({ titlePath: event.currentTarget.value })}
+        onChange={(patch) =>
+          onChange(
+            parseCardOptions({
+              ...options,
+              ...(patch.variable === undefined ? {} : { variable: patch.variable }),
+              ...(patch.source === undefined ? {} : { variablePath: patch.source }),
+            }),
+          )
+        }
       />
-    </div>
+    </>
   );
 }
 
@@ -177,9 +260,7 @@ export const documentCardPanel: PanelPlugin<CardOptions> = {
   description: "documents.describe.card",
   Preview: DocumentCardPreview,
   shapes: ["documents"],
-  options: (stored) => ({
-    titlePath: isRecord(stored) && typeof stored.titlePath === "string" ? stored.titlePath : "",
-  }),
+  options: parseCardOptions,
   Panel: CardPanel,
   Editor: CardEditor,
 };

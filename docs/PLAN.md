@@ -363,8 +363,15 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    werden zum `graph`, Knoten-ID ist Typ plus ID, Kanten-IDs werden abgeleitet; Kanten erscheinen
    nur, wenn die Abfrage sie ausgibt; andere `PRINT`-Werte werden zum `frame`), Netzwerk-,
    Hierarchie- und Pfad-Panel, Explorer-Modus, Graph-Aggregationen, Variablen über Formen hinweg.
-5. **M4 Plugins**: externe Plugin-Prozesse, Manifest, Signaturen, Katalog, Rust-SDK, Beispiel-Plugins
-   (eine Datenquelle, ein Panel).
+5. **M4 Plugins und KI**: externe Plugin-Prozesse, Manifest, Signaturen, Katalog, Rust-SDK,
+   Beispiel-Plugins (eine Datenquelle, ein Panel). Eingebaute KI-Funktionen über eine
+   Anbieter-Schnittstelle: OpenAI und OpenAI-kompatible APIs, LiteLLM als Proxy, weitere Anbieter
+   und lokale Modelle (z. B. Ollama, OpenAI-kompatible lokale Server); einfache Aufrufe (Abfrage
+   erklären oder entwerfen, Ergebnis zusammenfassen) und agentenbasierte Abläufe, die mit Werkzeugen
+   arbeiten (Datenquellen lesen, Explore-Schritte vorschlagen). KI ist standardmäßig aus: ein
+   Schalter in den Server-Einstellungen schaltet alle KI-Funktionen ein oder aus, und ohne
+   verbundenen Anbieter erscheinen keine KI-Knöpfe oder -Hinweise in der Oberfläche. KI fragt nur
+   mit den Rechten des angemeldeten Nutzers ab, nur lesend; Zugangsdaten liegen im Credential Store.
 6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
    Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse; ELK (elkjs) als
    optionales Hierarchie-Layout, nur bei Auswahl nachgeladen.

@@ -508,6 +508,15 @@
     height: var(--vt-row-height);
   }
 
+  /* A row whose click sets a dashboard variable. */
+  .vt__row--pick {
+    cursor: pointer;
+  }
+
+  .vt__row--pick:hover {
+    background: var(--bg-hover);
+  }
+
   .vt__cell {
     max-width: var(--size-text-max);
     padding: 0 var(--space-2);

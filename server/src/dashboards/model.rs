@@ -329,7 +329,43 @@ pub struct Variable {
     /// Several values may be picked at once (custom and query variables); repeats need it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub multi: bool,
+    /// How a query variable reads its options from a `graph` or `documents` result. Without it
+    /// the result must be a frame (first field values, second labels): a result keeps its shape,
+    /// and this is the explicit, visible projection to a list of values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values_from: Option<ValuesFrom>,
 }
+
+/// Where a query variable's options come from in a result that is not a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ValuesSource {
+    /// The graph's nodes.
+    Nodes,
+    /// The graph's edges (relationships).
+    Edges,
+    /// The documents of a `documents` result.
+    Documents,
+}
+
+/// The projection of a query variable's result to options: each node, edge or document gives the
+/// value at `value` (a property, or a dotted path for documents; for nodes and edges empty takes
+/// the id) and, as its label, the value at `text`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValuesFrom {
+    pub from: ValuesSource,
+    /// Nodes with this label, or edges of this type; empty takes all. Not for documents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// Longest property, path or label a `ValuesFrom` names.
+pub const MAX_VALUES_FROM_CHARS: usize = 500;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -607,6 +643,24 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         }
         if v.multi && !matches!(v.kind, VariableType::Custom | VariableType::Query) {
             return Err(format!("{at}.multi is only for custom and query variables"));
+        }
+        if let Some(from) = &v.values_from {
+            if v.kind != VariableType::Query {
+                return Err(format!("{at}.valuesFrom is only for query variables"));
+            }
+            for (name, text) in [("label", &from.label), ("value", &from.value), ("text", &from.text)] {
+                if let Some(text) = text {
+                    check_text(&format!("{at}.valuesFrom.{name}"), text, 0, MAX_VALUES_FROM_CHARS)?;
+                }
+            }
+            if from.from == ValuesSource::Documents {
+                if from.label.as_deref().is_some_and(|l| !l.is_empty()) {
+                    return Err(format!("{at}.valuesFrom.label is only for nodes and edges"));
+                }
+                if from.value.as_deref().is_none_or(str::is_empty) {
+                    return Err(format!("{at}.valuesFrom.value is required for documents (a field path)"));
+                }
+            }
         }
     }
     // What a repeat may name: a variable offering several values at once.
@@ -1112,6 +1166,26 @@ mod tests {
             (vec!["variables", "1", "name"], json!("1st"), "variables[1].name"),
             (vec!["variables", "0", "datasourceId"], Value::Null, "required for a query variable"),
             (vec!["variables", "1", "datasourceId"], json!("ds-1"), "only to query variables"),
+            (vec!["variables", "1", "valuesFrom"], json!({ "from": "nodes" }), "only for query variables"),
+            (vec!["variables", "0", "valuesFrom"], json!({ "from": "rows" }), "unknown variant"),
+            (vec!["variables", "0", "valuesFrom"], json!({ "from": "nodes", "sql": "x" }), "unknown field"),
+            (vec!["variables", "0", "valuesFrom"], json!({ "from": "documents" }), "valuesFrom.value is required"),
+            (
+                vec!["variables", "0", "valuesFrom"],
+                json!({ "from": "documents", "value": "a", "label": "Kunde" }),
+                "valuesFrom.label is only",
+            ),
+            (
+                vec!["variables", "0", "valuesFrom"],
+                json!({ "from": "edges", "value": "x".repeat(MAX_VALUES_FROM_CHARS + 1) }),
+                "valuesFrom.value",
+            ),
+            (
+                vec!["variables", "0", "valuesFrom"],
+                json!({ "from": "nodes", "text": "a
+b" }),
+                "control characters",
+            ),
             (vec!["title"], json!("  "), "model.title"),
             (vec!["title"], json!("x".repeat(201)), "model.title"),
             (vec!["timeRange", "from"], json!("gestern"), "timeRange"),
@@ -1121,6 +1195,18 @@ mod tests {
         ] {
             let err = parse(with(sample(), &path, value)).unwrap_err();
             assert!(err.contains(expect), "{path:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn query_variables_may_read_graphs_and_documents_through_values_from() {
+        for from in [
+            json!({ "from": "nodes", "label": "Kunde", "value": "kundenId", "text": "name" }),
+            json!({ "from": "edges" }),
+            json!({ "from": "documents", "value": "customer.id", "text": "customer.name" }),
+        ] {
+            let model = parse(with(sample(), &["variables", "0", "valuesFrom"], from.clone())).unwrap();
+            assert_eq!(serde_json::to_value(&model.variables[0]).unwrap()["valuesFrom"], from);
         }
     }
 

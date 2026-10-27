@@ -369,6 +369,9 @@ struct TableOptions {
     column_filters: Option<bool>,
     pagination: Option<bool>,
     page_size: Option<u32>,
+    /// Dashboard variable a click on a row sets, and the column it takes (empty: the first).
+    variable: Option<String>,
+    variable_column: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -443,10 +446,19 @@ struct TextOptions {
     content: Option<String>,
 }
 
-/// The document explorer and the schema panel have no options of their own.
+/// The schema panel has no options of its own.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NoOptions {}
+
+/// The document explorer: the dashboard variable a click on a document or value sets, and the
+/// field path it takes from the clicked document (empty: the clicked value, or `_id`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExplorerOptions {
+    variable: Option<String>,
+    variable_path: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -477,6 +489,8 @@ struct GraphOptions {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CardOptions {
     title_path: Option<String>,
+    variable: Option<String>,
+    variable_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -722,6 +736,10 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         }
         "table" => {
             let o: TableOptions = parse("options", options)?;
+            check_graph_texts(&[("variable", &o.variable)])?;
+            if let Some(column) = &o.variable_column {
+                check_text("options.variableColumn", column, MAX_TEXT_CHARS, false)?;
+            }
             check_range("options.pageSize", o.page_size, 5, 1000)
         }
         "gauge" => parse::<GaugeOptions>("options", options).map(|_| ()),
@@ -762,7 +780,15 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             }
             Ok(())
         }
-        "documents" | "schema" => parse::<NoOptions>("options", options).map(|_| ()),
+        "schema" => parse::<NoOptions>("options", options).map(|_| ()),
+        "documents" => {
+            let o: ExplorerOptions = parse("options", options)?;
+            check_graph_texts(&[("variable", &o.variable)])?;
+            match &o.variable_path {
+                Some(path) => check_text("options.variablePath", path, MAX_FIELD_PATH_CHARS, false),
+                None => Ok(()),
+            }
+        }
         "distribution" => {
             let o: DistributionOptions = parse("options", options)?;
             match &o.path {
@@ -772,10 +798,13 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         }
         "document" => {
             let o: CardOptions = parse("options", options)?;
-            match &o.title_path {
-                Some(path) => check_text("options.titlePath", path, MAX_FIELD_PATH_CHARS, false),
-                None => Ok(()),
+            check_graph_texts(&[("variable", &o.variable)])?;
+            for (name, path) in [("titlePath", &o.title_path), ("variablePath", &o.variable_path)] {
+                if let Some(path) = path {
+                    check_text(&format!("options.{name}"), path, MAX_FIELD_PATH_CHARS, false)?;
+                }
             }
+            Ok(())
         }
         "network" | "hierarchy" => {
             let o: GraphOptions = parse("options", options)?;
@@ -891,11 +920,18 @@ mod tests {
             ("distribution", json!({ "path": "items[].price" })),
             ("distribution", json!({})),
             ("document", json!({ "titlePath": "customer.name" })),
+            ("document", json!({ "titlePath": "", "variable": "kunde", "variablePath": "customer.id" })),
+            ("documents", json!({ "variable": "kunde", "variablePath": "" })),
+            ("table", json!({ "variable": "kunde", "variableColumn": "Kunden-ID" })),
         ] {
             check(kind, &options, &json!({})).unwrap_or_else(|e| panic!("{kind}: {e}"));
         }
         for (kind, options, expect) in [
             ("documents", json!({ "columns": 3 }), "unknown field"),
+            ("documents", json!({ "variable": "x".repeat(MAX_GRAPH_TEXT_CHARS + 1) }), "options.variable"),
+            ("documents", json!({ "variablePath": "a\nb" }), "control characters"),
+            ("document", json!({ "variablePath": "t".repeat(MAX_FIELD_PATH_CHARS + 1) }), "options.variablePath"),
+            ("table", json!({ "variableColumn": "a\tb" }), "control characters"),
             ("schema", json!({ "x": 1 }), "unknown field"),
             ("distribution", json!({ "path": "p".repeat(MAX_FIELD_PATH_CHARS + 1) }), "options.path"),
             ("distribution", json!({ "path": "a\nb" }), "options.path"),
