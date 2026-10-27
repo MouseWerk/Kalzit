@@ -43,6 +43,10 @@ where it is more specific.
 - Kalzit's own database: SQLite (default) or PostgreSQL; no MySQL/MariaDB backend and no copy tool between them for now.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
 - Multiple organizations per installation. Alerting comes in M6, after the core.
+- Built-in AI comes in M4: providers behind one interface (OpenAI and OpenAI-compatible APIs,
+  LiteLLM, local models such as Ollama), plain calls and agent-based flows with tools. AI is off
+  by default; one server setting turns all AI on or off, and without a connected provider the UI
+  shows no AI buttons or hints. AI queries only with the signed-in user's rights, read-only.
 - First graph sources: Neo4j, Memgraph and TigerGraph. All common standard sources are supported too
   (PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, Prometheus, Elasticsearch, ...; see
   `docs/PLAN.md` section 3).
