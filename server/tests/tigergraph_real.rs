@@ -134,8 +134,7 @@ impl T {
 }
 
 fn ids(list: &Value) -> Vec<String> {
-    let mut out: Vec<String> =
-        list.as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect();
+    let mut out: Vec<String> = list.as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect();
     out.sort();
     out
 }
@@ -151,8 +150,9 @@ fn field<'a>(r: &'a Value, name: &str) -> &'a Value {
 
 const PRINT_EDGES: &str = "INTERPRET QUERY (STRING name) FOR GRAPH social { SetAccum<EDGE> @@kanten; \
     SumAccum<INT> @@anzahl; S = {Person.*}; \
-    R = SELECT t FROM S:s -(Friend|Lebt>:e)- :t WHERE s.name == name ACCUM @@kanten += e, @@anzahl += 1; \
-    PRINT R; PRINT @@kanten; PRINT @@anzahl; }";
+    R = SELECT t FROM S:s -(Friend:e)- Person:t WHERE s.name == name ACCUM @@kanten += e, @@anzahl += 1; \
+    W = SELECT o FROM S:s -(Lebt>:e)- Ort:o WHERE s.name == name ACCUM @@kanten += e; \
+    PRINT R; PRINT W; PRINT @@kanten; PRINT @@anzahl; }";
 
 /// The reader user: health, schema with the query picker, interpreted and installed queries,
 /// vertex and edge sets as a graph, other values as a frame.
@@ -191,12 +191,12 @@ async fn reader_reads_graphs_and_frames() {
     assert_eq!(ana["properties"], json!({}), "Ana is not printed, only an edge end: {r}");
     assert!(r.to_string().contains("graph.columns_omitted"), "@@anzahl is not part of the graph: {r}");
 
-    let nodes_only = t
-        .query(&id, json!({ "gsql": "INTERPRET QUERY () FOR GRAPH social { S = {Person.*}; PRINT S; }" }))
-        .await;
+    let nodes_only =
+        t.query(&id, json!({ "gsql": "INTERPRET QUERY () FOR GRAPH social { S = {Person.*}; PRINT S; }" })).await;
     assert_eq!(nodes_only["result"]["shape"], "graph", "{nodes_only}");
     assert_eq!(nodes_only["result"]["graph"]["edges"], json!([]), "no edges unless printed: {nodes_only}");
-    let ana = nodes_only["result"]["graph"]["nodes"].as_array().unwrap().iter().find(|n| n["id"] == "Person:1").cloned();
+    let ana =
+        nodes_only["result"]["graph"]["nodes"].as_array().unwrap().iter().find(|n| n["id"] == "Person:1").cloned();
     let ana = ana.unwrap_or_else(|| panic!("{nodes_only}"));
     assert_eq!(ana["labels"], json!(["Person"]), "{nodes_only}");
     assert_eq!(ana["properties"]["gross"], json!({ "$type": "int64", "value": "9007199254740993" }), "{nodes_only}");
@@ -240,15 +240,22 @@ async fn installed_queries_with_parameters() {
     assert_eq!(r["error"]["code"], "query_rejected", "{r}");
     assert_eq!(r["error"]["reason"], "tigergraph.query_text_unreadable", "{r}");
 
-    let id = t.source(READER, json!({ "approvedQueries": "nachbarn, zahlen, loescht" })).await;
-    let schema = t.schema(&id).await;
+    // The picker lists the installed queries for a plain queryreader too.
+    let schema = t.schema(&plain).await;
     eprintln!("schema: {schema}");
-    for q in ["loescht", "nachbarn", "zahlen"] {
-        assert!(schema["queries"].as_array().unwrap().contains(&json!(q)), "{q}: {schema}");
-    }
+    assert_eq!(schema["queries"], json!(["loescht", "nachbarn", "nur_knoten", "zahlen"]), "{schema}");
+
+    let id = t.source(READER, json!({ "approvedQueries": "nachbarn, zahlen, nur_knoten" })).await;
+    let r = t.query(&id, json!({ "installed": "nur_knoten" })).await;
+    assert_eq!(r["result"]["shape"], "graph", "{r}");
+    assert_eq!(ids(&r["result"]["graph"]["nodes"]), ["Person:1", "Person:2", "Person:3", "Person:9"], "{r}");
+    assert_eq!(r["result"]["graph"]["edges"], json!([]), "no edges unless printed: {r}");
 
     let r = t
-        .query(&id, json!({ "installed": "nachbarn", "params": { "p": "1", "tiefe": 2, "stichworte": ["a b", "c&d"] } }))
+        .query(
+            &id,
+            json!({ "installed": "nachbarn", "params": { "p": "1", "tiefe": 2, "stichworte": ["a b", "c&d"] } }),
+        )
         .await;
     eprintln!("nachbarn: {r}");
     let graph = &r["result"]["graph"];
@@ -278,7 +285,10 @@ async fn installed_queries_with_parameters() {
     let r = t.query(&id, json!({ "installed": "zahlen", "params": { "name": odd } })).await;
     assert_eq!(field(&r, "name")["values"], json!([odd]), "{r}");
     let r = t
-        .query(&id, json!({ "gsql": "INTERPRET QUERY (STRING s) FOR GRAPH social { PRINT s; }", "params": { "s": odd } }))
+        .query(
+            &id,
+            json!({ "gsql": "INTERPRET QUERY (STRING s) FOR GRAPH social { PRINT s; }", "params": { "s": odd } }),
+        )
         .await;
     assert_eq!(field(&r, "s")["values"], json!([odd]), "{r}");
     t.finish().await;
@@ -300,10 +310,46 @@ async fn writes_are_refused() {
         let r = t.query(&id, json!({ "gsql": gsql })).await;
         assert_eq!(r["error"]["code"], "query_rejected", "{gsql}: {r}");
     }
-    // The approved query writes: only the reader user stands in the way, and the server says no.
+    // The approved query writes: TigerGraph marks it (graphUpdate), so Kalzit refuses it.
     let r = t.query(&id, json!({ "installed": "loescht" })).await;
     eprintln!("approved write query as reader: {r}");
-    assert!(r["error"].is_object(), "the server refused it: {r}");
+    assert_eq!(r["error"]["code"], "query_rejected", "{r}");
+    assert_eq!(r["error"]["reason"], "tigergraph.query_writes", "{r}");
+
+    // Behind that, the reader user itself may not write, through REST++ (with authentication on)
+    // and through the GSQL server.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let http = reqwest::Client::new();
+    let token: Value = http
+        .post(format!("{}/gsql/v1/tokens", url()))
+        .basic_auth(READER.0, Some(READER.1))
+        .json(&json!({ "graph": "social", "lifetime": "600" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token = token["token"].as_str().unwrap_or_else(|| panic!("{token}"));
+    let res = http.get(format!("{}/restpp/query/social/loescht", url())).bearer_auth(token).send().await.unwrap();
+    let status = res.status();
+    let text = res.text().await.unwrap();
+    assert_eq!(status, reqwest::StatusCode::FORBIDDEN, "{text}");
+    assert!(text.contains("DELETE [MISSING]"), "{text}");
+    let res = http.get(format!("{}/restpp/query/social/nur_knoten", url())).send().await.unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::FORBIDDEN, "REST++ checks tokens");
+    let res = http
+        .post(format!("{}/gsql/v1/queries/interpret?graph=social", url()))
+        .basic_auth(READER.0, Some(READER.1))
+        .header("content-type", "text/plain")
+        .body("INTERPRET QUERY () FOR GRAPH social { S = {Person.*}; DELETE s FROM S:s WHERE s.name == \"Opfer\"; PRINT 1; }")
+        .send()
+        .await
+        .unwrap();
+    let status = res.status();
+    let text = res.text().await.unwrap();
+    assert_eq!(status, reqwest::StatusCode::FORBIDDEN, "{text}");
+    assert!(text.contains("DELETE_DATA [MISSING]"), "{text}");
     let check = t
         .query(
             &id,

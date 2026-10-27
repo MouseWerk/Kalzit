@@ -66,11 +66,13 @@ async fn schema_v3(Query(q): Query<BTreeMap<String, String>>) -> Response {
 
 async fn user(Path(name): Path<String>) -> Response {
     match name.as_str() {
+        // As 4.2.5 answers a queryreader about itself (the nightly job checks it).
         "leser" => json_reply(
             200,
-            json!({ "error": false, "results": [{ "name": "leser", "isSuperUser": false,
-                "roles": { "social": ["queryreader"] },
-                "privileges": { "social": { "privileges": ["READ_SCHEMA", "READ_DATA", "EXECUTE_LOADINGJOB", "READ_LOADINGJOB"] } } }] }),
+            json!({ "error": false, "message": "", "results": { "name": "leser", "isSuperUser": false, "disabled": false,
+                "roles": { "social": ["queryreader"] }, "creators": { "social": "tigergraph" }, "secrets": [],
+                "privileges": { "social": { "privileges": ["READ_SCHEMA", "READ_LOADINGJOB", "EXECUTE_LOADINGJOB",
+                    "READ_DATA", "APP_ACCESS_DATA", "READ_POLICY"] } } } }),
         ),
         "schreiber" => json_reply(
             200,
@@ -80,9 +82,13 @@ async fn user(Path(name): Path<String>) -> Response {
         ),
         "chef" => json_reply(
             200,
-            json!({ "error": false, "results": [{ "name": "chef", "isSuperUser": true, "roles": { "1": ["superuser"] } }] }),
+            json!({ "error": false, "results": { "name": "chef", "isSuperUser": true,
+                "roles": { "1": ["superuser"], "social": ["superuser"] },
+                "privileges": { "1": { "privileges": ["READ_DATA", "DELETE_DATA", "DROP_ALL"] },
+                    "social": { "privileges": [], "childPermissions": { "nachbarn": { "privileges": ["OWNER"] } } } } } }),
         ),
-        // Not allowed to read its own record: Kalzit asks with SHOW USER.
+        // Not allowed to read its own record (4.2.5 lets a queryreader read it; older or other
+        // setups may not): Kalzit asks with SHOW USER.
         _ => json_reply(403, json!({ "error": true, "message": "Permission denied: READ_USER" })),
     }
 }
@@ -136,8 +142,25 @@ async fn query_text(Path(name): Path<String>, Query(q): Query<BTreeMap<String, S
             200,
             json!({ "error": false, "results": { "queryContent": "CREATE QUERY loescht() FOR GRAPH social { DELETE s FROM Person:s; }" } }),
         ),
-        _ => json_reply(403, json!({ "error": true, "message": "Permission denied: READ_QUERY" })),
+        // As 4.2.5 answers a queryreader.
+        _ => json_reply(
+            403,
+            json!({ "error": true, "message": format!("User 'leser' does not have the permission to run the command\nRequired Query Privileges: \n  - Graph 'social' Privileges:\n    - Query '{name}' Privileges:\n      READ_QUERY [MISSING]\n\nPlease ask for the [MISSING] privileges.") }),
+        ),
     }
+}
+
+/// `GET /gsql/v1/queries/info`, which 4.2.5 answers a queryreader (shortened): every query, or
+/// the one named in `query`.
+async fn query_info(Query(q): Query<BTreeMap<String, String>>) -> Response {
+    assert_eq!(q.get("graph").map(String::as_str), Some("social"));
+    let all = [("nachbarn", false), ("loescht", true), ("geheim", false), ("schreibt_geheim", true)];
+    let results: Vec<Value> = all
+        .iter()
+        .filter(|(n, _)| q.get("query").is_none_or(|w| w == n))
+        .map(|(n, update)| json!({ "name": n, "installed": true, "graphUpdate": update, "status": "VALID", "syntax": "GSQL v2" }))
+        .collect();
+    json_reply(200, json!({ "error": false, "message": "", "results": results }))
 }
 
 fn vertex(id: &str, name: &str) -> Value {
@@ -197,8 +220,9 @@ async fn version() -> Response {
     )
 }
 
+/// 4.2.5 answers a queryreader with an empty list here, even when the graph has queries.
 async fn queries() -> Response {
-    json_reply(200, json!({ "error": false, "results": ["nachbarn", "loescht"] }))
+    json_reply(200, json!({ "error": false, "message": "", "results": [] }))
 }
 
 async fn fake(v3: bool) -> (std::net::SocketAddr, S) {
@@ -218,6 +242,7 @@ async fn fake_with(fake: Fake) -> (std::net::SocketAddr, S) {
         .route("/gsql/v1/tokens2", post(tokens2))
         .route("/gsql/v1/queries/{name}", get(query_text))
         .route("/gsql/v1/queries", get(queries))
+        .route("/gsql/v1/queries/info", get(query_info))
         .route("/gsql/v1/queries/interpret", post(interpret))
         .route("/gsqlserver/interpreted_query", post(interpret))
         .route("/restpp/query/{graph}/{name}", get(restpp_query))
@@ -275,7 +300,7 @@ async fn installed_queries_run_with_typed_parameters_and_become_a_graph() {
     let q = json!({ "installed": "nachbarn", "params": { "p": "1", "tags": ["a b", "c&d"] } });
     let r = TigerGraph.query(&conn, req(q, json!({ "tiefe": 2 }))).await.unwrap();
     let sent = fake.last_query.lock().unwrap().clone();
-    assert_eq!(sent, "p=1&tiefe=2&tags=a+b&tags=c%26d", "typed, from params and variables");
+    assert_eq!(sent, "p=1&tiefe=2&tags=a%20b&tags=c%26d", "typed, from params and variables");
     let QueryResult::Graph { graph } = r else { panic!("a graph") };
     let ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
     assert_eq!(ids, ["Person:1", "Person:2", "Person:3"], "Person:3 is an edge's end");
@@ -307,7 +332,7 @@ async fn installed_queries_run_with_typed_parameters_and_become_a_graph() {
 
 #[tokio::test]
 async fn installed_queries_need_a_text_that_passes_or_an_approval() {
-    let (addr, _) = fake(false).await;
+    let (addr, fake) = fake(false).await;
     let conn = connection(addr, "leser", json!({})).await;
     let r = TigerGraph.query(&conn, req(json!({ "installed": "loescht" }), json!({}))).await;
     assert_eq!(reason(r), "gsql.write");
@@ -316,8 +341,14 @@ async fn installed_queries_need_a_text_that_passes_or_an_approval() {
     let r = TigerGraph.query(&conn, req(json!({ "installed": "x/../../gsql/v1/users" }), json!({}))).await;
     assert_eq!(reason(r), "tigergraph.query_name");
 
-    let approved = connection(addr, "leser", json!({ "approvedQueries": "geheim, andere" })).await;
-    let r = TigerGraph.query(&approved, req(json!({ "installed": "geheim", "params": { "k": 3 } }), json!({}))).await;
+    let approved = connection(addr, "leser", json!({ "approvedQueries": "geheim, andere, schreibt_geheim" })).await;
+    // TigerGraph marks a query that changes data (graphUpdate in its info): refused even when approved.
+    let r = TigerGraph.query(&approved, req(json!({ "installed": "schreibt_geheim" }), json!({}))).await;
+    assert_eq!(reason(r), "tigergraph.query_writes");
+    let r = TigerGraph
+        .query(&approved, req(json!({ "installed": "geheim", "params": { "k": 3, "s": "x+y z" } }), json!({})))
+        .await;
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "k=3&s=x%2By%20z", "a + stays a +, a space is %20");
     let QueryResult::Frame { frame } = r.unwrap() else { panic!("scalars are a frame") };
     let names: Vec<&str> = frame.fields().iter().map(|f| f.name.as_str()).collect();
     assert_eq!(names, ["@@total", "durchschnitt", "name"]);
@@ -343,7 +374,7 @@ async fn interpreted_queries_are_checked_and_sent_with_basic_auth() {
         .await
         .unwrap();
     assert!(matches!(r, QueryResult::Frame { .. }));
-    assert_eq!(fake.last_query.lock().unwrap().as_str(), "graph=social&name=Ana+%C3%96&ab=2027-01-15+08%3A00%3A00");
+    assert_eq!(fake.last_query.lock().unwrap().as_str(), "graph=social&name=Ana%20%C3%96&ab=2027-01-15%2008%3A00%3A00");
     assert_eq!(fake.last_body.lock().unwrap().as_str(), text);
 
     for (gsql, why) in [
@@ -439,7 +470,8 @@ async fn health_and_schema() {
     assert_eq!(labels, ["Person"]);
     assert_eq!(edge_types, ["Friend"]);
     assert_eq!(property_keys, ["age", "name", "since"]);
-    assert_eq!(queries, ["extra", "loescht", "nachbarn"]);
+    // From the query info, which a queryreader may read; the plain query list is empty for it.
+    assert_eq!(queries, ["extra", "geheim", "loescht", "nachbarn", "schreibt_geheim"]);
 }
 
 #[tokio::test]

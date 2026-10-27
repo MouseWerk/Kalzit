@@ -20,11 +20,14 @@ show "SHOW USER" -u "$reader" -H 'Content-Type: text/plain' --data-binary 'SHOW 
 show "query list" -u "$reader" "$base/gsql/v1/queries?graph=social"
 show "query text nachbarn" -u "$reader" "$base/gsql/v1/queries/nachbarn?graph=social"
 show "query info nachbarn" -u "$reader" "$base/gsql/v1/queries/info?graph=social&query=nachbarn"
+show "query info, all queries" -u "$reader" "$base/gsql/v1/queries/info?graph=social"
+show "query info loescht" -u "$reader" "$base/gsql/v1/queries/info?graph=social&query=loescht"
 show "token for the reader" -u "$reader" -H 'Content-Type: application/json' \
   -d '{"graph": "social", "lifetime": "3600"}' "$base/gsql/v1/tokens"
 token=$(curl -sS -u "$reader" -H 'Content-Type: application/json' -d '{"graph": "social", "lifetime": "3600"}' \
   "$base/gsql/v1/tokens" | jq -r '.token // .results.token // empty')
 show "installed nachbarn without a token" "$base/restpp/query/social/nachbarn?p=1"
+show "installed nachbarn with an invalid token" -H "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789" "$base/restpp/query/social/nachbarn?p=1"
 show "installed nachbarn" -H "Authorization: Bearer $token" "$base/restpp/query/social/nachbarn?p=1&tiefe=2&stichworte=a+b&stichworte=a%20b&stichworte=c%26d"
 show "installed zahlen" -H "Authorization: Bearer $token" \
   "$base/restpp/query/social/zahlen?k=3&name=Ana&ab=2024-01-01+00%3A00%3A00&liste=1&liste=2&v=1&v.type=Person"

@@ -72,11 +72,22 @@ const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 const TEXT_CACHE: Duration = Duration::from_secs(60);
 const MAX_SCHEMA_NAMES: usize = 10_000;
 
-/// Privileges a reader may hold. `EXECUTE_LOADINGJOB` belongs to the built-in `queryreader`
-/// role; Kalzit never runs loading jobs (the GSQL check refuses `RUN`, and REST++ loading
-/// endpoints are never called), but the docs advise a custom role without it.
-const READ_PRIVILEGES: &[&str] =
-    &["READ_SCHEMA", "READ_LOADINGJOB", "EXECUTE_LOADINGJOB", "READ_DATA", "READ_QUERY", "EXECUTE_QUERY"];
+/// Privileges a reader may hold. The built-in `queryreader` role of 4.2 holds `READ_SCHEMA`,
+/// `READ_LOADINGJOB`, `EXECUTE_LOADINGJOB`, `READ_DATA`, `APP_ACCESS_DATA` (reading data in
+/// TigerGraph's own apps) and `READ_POLICY` (reading access policies), as the nightly job checks
+/// against the real server. `EXECUTE_LOADINGJOB` is the only one that is more than reading;
+/// Kalzit never runs loading jobs (the GSQL check refuses `RUN`, and REST++ loading endpoints are
+/// never called), but the docs advise a custom role without it.
+const READ_PRIVILEGES: &[&str] = &[
+    "READ_SCHEMA",
+    "READ_LOADINGJOB",
+    "EXECUTE_LOADINGJOB",
+    "READ_DATA",
+    "APP_ACCESS_DATA",
+    "READ_POLICY",
+    "READ_QUERY",
+    "EXECUTE_QUERY",
+];
 
 pub fn kind() -> Kind {
     Kind {
@@ -167,6 +178,24 @@ fn with_slash(mut url: Url) -> Url {
 
 fn is_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// Sets the URL's query to `pairs`, with a space as `%20`: REST++ keeps a `+` in a value as a
+/// plus sign (`a+b` arrives as `a+b`), so the form encoding of `Url::query_pairs_mut` would change
+/// every value with a space. The form encoding writes a `+` in a value as `%2B`, so afterwards
+/// every `+` stands for a space.
+fn set_query<K: AsRef<str>, V: AsRef<str>>(url: &mut Url, pairs: &[(K, V)]) {
+    let mut out = String::new();
+    for (k, v) in pairs {
+        if !out.is_empty() {
+            out.push('&');
+        }
+        out.extend(url::form_urlencoded::byte_serialize(k.as_ref().as_bytes()));
+        out.push('=');
+        out.extend(url::form_urlencoded::byte_serialize(v.as_ref().as_bytes()));
+    }
+    let out = out.replace('+', "%20");
+    url.set_query((!out.is_empty()).then_some(out.as_str()));
 }
 
 fn approved_list(raw: Option<&str>) -> Vec<String> {
@@ -325,7 +354,7 @@ impl Client {
     async fn gsql_json(&self, method: Method, path: &str, query: &[(&str, &str)]) -> Result<Answer, SourceError> {
         let mut url = self.gsql.join(path).map_err(|e| SourceError::failed("internal", e.to_string()))?;
         if !query.is_empty() {
-            url.query_pairs_mut().extend_pairs(query);
+            set_query(&mut url, query);
         }
         let (status, bytes) = self.call(method, url, self.basic.clone(), None, &[], MAX_SMALL_RESPONSE, None).await?;
         Ok(Answer { status, body: self.parse(status, &bytes)? })
@@ -490,14 +519,46 @@ impl Client {
             return names.clone();
         }
         let names = match self.api {
-            Api::V4 => match self.gsql_json(Method::GET, "gsql/v1/queries", &[("graph", &self.graph)]).await {
-                Ok(a) if a.status.is_success() => Some(query_names(a.body.get("results").unwrap_or(&a.body))),
-                _ => None,
-            },
+            Api::V4 => self.list_queries().await,
             Api::V3 => None,
         };
         *self.query_names.lock().expect("names lock") = Some((Instant::now(), names.clone()));
         names
+    }
+
+    /// The graph's query names (4.x). `GET /gsql/v1/queries/info?graph=g` answers a `queryreader`
+    /// with every query; `GET /gsql/v1/queries?graph=g` answers it with an empty list (4.2, checked
+    /// by the nightly job), so it is only asked when the first is not available.
+    async fn list_queries(&self) -> Option<Vec<String>> {
+        let graph = [("graph", self.graph.as_str())];
+        if let Ok(a) = self.gsql_json(Method::GET, "gsql/v1/queries/info", &graph).await
+            && a.status.is_success()
+            && a.body.get("error").and_then(Value::as_bool) != Some(true)
+        {
+            return Some(query_names(a.body.get("results").unwrap_or(&a.body)));
+        }
+        match self.gsql_json(Method::GET, "gsql/v1/queries", &graph).await {
+            Ok(a) if a.status.is_success() => Some(query_names(a.body.get("results").unwrap_or(&a.body))),
+            _ => None,
+        }
+    }
+
+    /// Whether an installed query changes data, from its info (4.x, `graphUpdate`, readable for a
+    /// `queryreader`). `None` when the info cannot be read.
+    async fn query_updates(&self, name: &str) -> Option<bool> {
+        let a = self
+            .gsql_json(Method::GET, "gsql/v1/queries/info", &[("graph", &self.graph), ("query", name)])
+            .await
+            .ok()?;
+        if !a.status.is_success() || a.body.get("error").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        let results = a.body.get("results").unwrap_or(&a.body);
+        let info = match results {
+            Value::Array(items) => items.iter().find(|i| i.get("name").and_then(Value::as_str) == Some(name))?,
+            other => other,
+        };
+        info.get("graphUpdate").and_then(Value::as_bool)
     }
 
     /// The checked parameters of an installed query, or why it may not run.
@@ -518,6 +579,15 @@ impl Client {
         };
         let Some(text) = text else {
             if self.approved.iter().any(|a| a == name) {
+                // TigerGraph marks a query that changes data; such a query is refused even when
+                // approved (the reader user would refuse it too, but only when REST++ checks tokens).
+                if self.api == Api::V4 && self.query_updates(name).await == Some(true) {
+                    return Err(SourceError::rejected(
+                        "tigergraph.query_writes",
+                        format!("{name} changes data, so Kalzit does not run it"),
+                    )
+                    .with("name", name));
+                }
                 return Ok(None);
             }
             return Err(SourceError::rejected(
@@ -1095,10 +1165,7 @@ impl DataSourcePlugin for TigerGraph {
         keys.dedup();
         keys.truncate(MAX_SCHEMA_NAMES);
         let mut queries = match c.api {
-            Api::V4 => match c.gsql_json(Method::GET, "gsql/v1/queries", &[("graph", &c.graph)]).await {
-                Ok(a) if a.status.is_success() => query_names(a.body.get("results").unwrap_or(&a.body)),
-                _ => Vec::new(),
-            },
+            Api::V4 => c.list_queries().await.unwrap_or_default(),
             Api::V3 => Vec::new(),
         };
         for approved in &c.approved {
@@ -1135,13 +1202,12 @@ impl DataSourcePlugin for TigerGraph {
                     Api::V3 => c.gsql.join("gsqlserver/interpreted_query"),
                 }
                 .map_err(|e| SourceError::failed("internal", e.to_string()))?;
-                {
-                    let mut qp = url.query_pairs_mut();
-                    if c.api == Api::V4 {
-                        qp.append_pair("graph", &c.graph);
-                    }
-                    qp.extend_pairs(&pairs);
+                let mut all = Vec::with_capacity(pairs.len() + 1);
+                if c.api == Api::V4 {
+                    all.push(("graph".to_string(), c.graph.clone()));
                 }
+                all.extend(pairs);
+                set_query(&mut url, &all);
                 let body = Some((text.clone().into_bytes(), "text/plain"));
                 let headers = [("gsql-timeout", timeout_ms.clone())];
                 let (s, b) =
@@ -1159,7 +1225,7 @@ impl DataSourcePlugin for TigerGraph {
                     .restpp
                     .join(&format!("query/{}/{name}", c.graph))
                     .map_err(|e| SourceError::failed("internal", e.to_string()))?;
-                url.query_pairs_mut().extend_pairs(&pairs);
+                set_query(&mut url, &pairs);
                 let headers = [("gsql-timeout", timeout_ms.clone()), ("response-limit", max_bytes.max(1).to_string())];
                 let mut renew = false;
                 loop {
