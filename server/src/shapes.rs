@@ -1027,6 +1027,9 @@ mod tests {
             TypeCount::decl(&cfg),
             ValueCount::decl(&cfg),
             DistributionBin::decl(&cfg),
+            crate::ai::service::AiStatus::decl(&cfg),
+            crate::ai::service::AiStatusProvider::decl(&cfg),
+            crate::ai::service::AiStatusUsage::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",

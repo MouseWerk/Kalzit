@@ -51,6 +51,8 @@ pub struct AppState {
     pub updates: Arc<crate::updates::Updates>,
     /// Live update connections and their feeds (`live`).
     pub live: Arc<crate::live::Live>,
+    /// AI calls running now (`ai::service`).
+    pub ai: Arc<crate::ai::service::AiRuntime>,
 }
 
 impl AppState {
@@ -96,6 +98,7 @@ impl AppState {
             export_limits: Arc::default(),
             updates,
             live: Arc::default(),
+            ai: Arc::default(),
         })
     }
 

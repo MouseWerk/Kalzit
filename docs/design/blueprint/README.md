@@ -26,5 +26,6 @@ titles and heights.
 | `Access.dc.html` | Sign in and first-run setup on the calm backdrop: every state of both, 360 px layouts, light and dark, notes on motion and accessibility |
 | `Graph.dc.html` | Graph native (M3): network panel, explorer, hierarchy and paths, the graph panel editor, and Explore with graph steps (frames 5A and 5B) |
 | `Plugins.dc.html` | Plugins (M4): installed plugins, install from a file or the catalog, signatures and trusted keys, permissions and their re-approval, per-organization blocking |
+| `AI.dc.html` | KI (M4): AI settings and providers, limits and usage, per data source opt-in and excluded fields, the first-use notice, and the AI functions in the UI |
 
 The boards contain sample data only.

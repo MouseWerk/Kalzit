@@ -434,7 +434,39 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    arbeiten (Datenquellen lesen, Explore-Schritte vorschlagen). KI ist standardmäßig aus: ein
    Schalter in den Server-Einstellungen schaltet alle KI-Funktionen ein oder aus, und ohne
    verbundenen Anbieter erscheinen keine KI-Knöpfe oder -Hinweise in der Oberfläche. KI fragt nur
-   mit den Rechten des angemeldeten Nutzers ab, nur lesend; Zugangsdaten liegen im Credential Store.
+   mit den Rechten des angemeldeten Benutzers ab, nur lesend; Zugangsdaten liegen im Credential Store.
+
+   Entscheidungen des Inhabers zur KI (27.10.2026), Architektur in `docs/ARCHITECTURE.md` („AI“),
+   API in `docs/api/ai.md`:
+   - M4 enthält alle KI-Funktionen. Reihenfolge: erst der Kern (Anbieter, Einstellungen, Grenzen,
+     Audit, Status), dann einfache Aufrufe (Abfrage erklären oder entwerfen, Ergebnis
+     zusammenfassen), danach der Agenten-Chat mit Werkzeugen.
+   - Anbieter: ein OpenAI-kompatibler Client (OpenAI, LiteLLM, Ollama und andere lokale Server mit
+     dieser API) und ein nativer Anthropic-Client (Messages API). Modelle sind frei einstellbar;
+     Kalzit hat keine eingebaute Modellliste.
+   - Anbieter werden serverweit eingerichtet (Server-Admin); eine Organisation kann mit eigenem
+     Anbieter und Schlüssel übersteuern (Org-Admin, `settings:write`).
+   - Grenzen pro Benutzer (Aufrufe und Tokens pro Tag, UTC) und pro Organisation (Tokens pro
+     Kalendermonat), dazu gleichzeitige Aufrufe auf dem Server und pro Benutzer. Organisationen
+     können die Grenzen nur senken und KI für ihre Mitglieder ausschalten. Angezeigt werden
+     Tokens und Aufrufe, keine Kosten oder Währungen.
+   - Chat-Verläufe werden pro Benutzer gespeichert, mit einstellbarer Aufbewahrung (Standard
+     30 Tage, `ai.chat_retention_days`); eine Organisation kann eine kürzere Aufbewahrung
+     wählen. Die Speicherung kommt mit dem Chat-Paket.
+   - Pro Datenquelle wird freigegeben, ob KI sie lesen darf (Standard: nein); das entscheidet,
+     wer die Quelle bearbeiten darf. „Erklären“ und „Entwerfen“ lesen das Schema einer Quelle
+     nur nach dieser Freigabe, sonst nur den eingegebenen Abfragetext.
+   - Pro Datenquelle lassen sich Felder ausnehmen: Ihre Werte erreichen die KI nie, nur der
+     Name. Das setzt ein gemeinsamer Helfer auf dem Server durch (`ai::redact`), den alle
+     KI-Funktionen nutzen.
+   - Vor dem ersten KI-Aufruf sieht jede Person einmal je Anbieter einen Hinweis, welche Daten
+     wohin gehen; die Bestätigung wird gespeichert, vorher lehnt der Server KI-Aufrufe ab.
+   - Die Oberfläche folgt dem freigegebenen Board `docs/design/blueprint/AI.dc.html`.
+   - Basis-Adressen der Anbieter laufen durch dieselbe Ziel-Prüfung wie Datenquellen; Kalzit selbst
+     ist als Ziel ausgeschlossen. Schlüssel liegen verschlüsselt wie die Geheimnisse von
+     Datenquellen und erscheinen nie in Antworten, Logs oder im Audit-Log.
+   - Jeder KI-Aufruf wird protokolliert (wer, Anbieter, Modell, Tokens, Zweck, Ergebnis), nie der
+     Inhalt von Frage oder Antwort.
 6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
    Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse; ELK (elkjs) als
    optionales Hierarchie-Layout, nur bei Auswahl nachgeladen.
@@ -466,3 +498,7 @@ Getroffen (stehen auch in `CLAUDE.md`):
     der Datenquelle, die Projektion ist sichtbar, abschaltbar, und die Schritte danach arbeiten
     mit ihrer Tabelle. Schritte laufen im Browser für die Anzeige und auf dem Server für den
     Export, mit denselben Regeln (`docs/api/settings-dashboards.md`, „Analysis steps“).
+14. KI (M4): standardmäßig aus, ein Schalter für alles; OpenAI-kompatibler und nativer
+    Anthropic-Client; serverweite Anbieter mit Übersteuerung pro Organisation; Grenzen pro
+    Benutzer und Organisation; Chat-Aufbewahrung standardmäßig 30 Tage; Freigabe pro Datenquelle;
+    nur mit den Rechten des Benutzers und nur lesend (Abschnitt 12, M4).

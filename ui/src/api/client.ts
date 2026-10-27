@@ -29,6 +29,8 @@ const SERVER_ERROR_CODE_SET: Record<ServerErrorCode, true> = {
   datasource_target_blocked: true,
   query_timeout: true,
   query_rejected: true,
+  ai_unavailable: true,
+  ai_provider_error: true,
   busy: true,
   internal: true,
 };
