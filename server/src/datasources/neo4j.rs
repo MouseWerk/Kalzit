@@ -27,6 +27,7 @@ use tokio::sync::Semaphore;
 
 use super::Detail;
 use super::bolt::{self, BoltConn, BoltError, Bv, PullEnd};
+use super::cypher::Checked;
 use super::frame::{Column, FrameBuilder};
 use super::graph::{GraphBuilder, GraphLimits, float_value, int_value};
 use super::{
@@ -552,7 +553,7 @@ impl DataSourcePlugin for GraphDb {
         let db = s.database.as_deref();
         let pool = pool(conn).await?;
         let mut lease = lease(self.0, conn, &pool).await?;
-        let params = parameters(&checked.params, &req, lease.conn().utc)?;
+        let params = parameters(&checked, &req, lease.conn().utc)?;
         let c = lease.conn();
         let utc = c.utc;
         c.begin(db, req.limits.timeout, true).await.map_err(BoltError::into_source)?;
@@ -585,10 +586,24 @@ impl DataSourcePlugin for GraphDb {
     }
 }
 
-/// The values of the parameters the query uses: macros and the request's variables.
-fn parameters(names: &BTreeSet<String>, req: &SourceQuery, utc: bool) -> Result<Vec<(String, Bv)>, SourceError> {
+/// The values of the parameters the query uses: macros and the request's variables. Variables are
+/// always Bolt parameters, never text in the query. A parameter used as a name (a dynamic label
+/// or type, `Checked::identifier_params`) takes only a variable that may be an identifier: on a
+/// dashboard a constant or custom one, whose values the dashboard lists (`sql::Context`).
+fn parameters(checked: &Checked, req: &SourceQuery, utc: bool) -> Result<Vec<(String, Bv)>, SourceError> {
     let mut out = Vec::new();
-    for name in names {
+    for name in &checked.params {
+        if checked.identifier_params.contains(name)
+            && (name.starts_with("__") || req.identifier_variables.as_ref().is_some_and(|c| !c.contains(name)))
+        {
+            return Err(SourceError::rejected(
+                "cypher.variable_identifier",
+                format!(
+                    "${name} names a label, type or property here; only constant and custom variables may, since only their values are listed in the dashboard"
+                ),
+            )
+            .with("name", name));
+        }
         let value = match name.as_str() {
             "__timeFrom" => datetime_param(req.range.from, utc),
             "__timeTo" => datetime_param(req.range.to, utc),
@@ -1131,19 +1146,61 @@ mod tests {
 
     #[test]
     fn parameters_bind_macros_and_variables() {
-        let names: BTreeSet<String> = ["__timeFrom", "__interval_ms", "land", "ids"].map(String::from).into();
-        let p = parameters(&names, &req(10), true).unwrap();
+        let names = |n: &[&str]| Checked { params: n.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+        let p = parameters(&names(&["__timeFrom", "__interval_ms", "land", "ids"]), &req(10), true).unwrap();
         let get = |n: &str| p.iter().find(|(k, _)| k == n).unwrap().1.clone();
         assert_eq!(get("__timeFrom"), Bv::Struct(0x49, vec![Bv::Int(1_800_000_000), Bv::Int(123_000_000), Bv::Int(0)]));
         assert_eq!(get("__interval_ms"), Bv::Int(15_000));
         assert_eq!(get("land"), Bv::String("Österreich".into()));
         assert_eq!(get("ids"), Bv::List(vec![Bv::Int(1), Bv::Int(2)]));
-        let missing = parameters(&["fehlt".to_string()].into(), &req(10), true).unwrap_err();
+        let missing = parameters(&names(&["fehlt"]), &req(10), true).unwrap_err();
         assert_eq!(missing.detail().reason, "cypher.variable_missing");
-        let object = parameters(&["doc".to_string()].into(), &req(10), true).unwrap_err();
+        let object = parameters(&names(&["doc"]), &req(10), true).unwrap_err();
         assert_eq!(object.detail().reason, "cypher.variable_type");
-        let unknown = parameters(&["__nope".to_string()].into(), &req(10), true).unwrap_err();
+        let unknown = parameters(&names(&["__nope"]), &req(10), true).unwrap_err();
         assert_eq!(unknown.detail().reason, "cypher.macro_unknown");
+    }
+
+    /// Text that would change the query if it were spliced in stays one string parameter, and the
+    /// query text is sent as written.
+    #[test]
+    fn injection_attempts_stay_parameters() {
+        let mut r = req(10);
+        let attacks =
+            ["Ana' OR 1=1 //", "x\"}) DETACH DELETE n //", "$land", "${land}", "`) MATCH (m) DETACH DELETE m //"];
+        r.variables.insert("land".into(), json!(attacks[0]));
+        r.variables.insert("ids".into(), json!(attacks));
+        let checked =
+            crate::datasources::cypher::check("MATCH (n) WHERE n.name = $land OR n.name IN $ids RETURN n").unwrap();
+        let p = parameters(&checked, &r, true).unwrap();
+        let get = |n: &str| p.iter().find(|(k, _)| k == n).unwrap().1.clone();
+        assert_eq!(get("land"), Bv::String(attacks[0].into()));
+        assert_eq!(get("ids"), Bv::List(attacks.iter().map(|a| Bv::String((*a).into())).collect()));
+        // Numbers keep their type; a whole number is an integer.
+        r.variables.insert("land".into(), json!(42));
+        assert_eq!(parameters(&checked, &r, true).unwrap()[1].1, Bv::Int(42));
+    }
+
+    /// A dynamic label takes only variables that may be identifiers, as `${x:identifier}` in SQL.
+    #[test]
+    fn dynamic_labels_take_only_listed_variables() {
+        let checked = crate::datasources::cypher::check("MATCH (n:$($land)) WHERE n.id IN $ids RETURN n").unwrap();
+        let mut r = req(10);
+        // Explore: every variable is the caller's own.
+        assert!(parameters(&checked, &r, true).is_ok());
+        // A dashboard where land is a free (query or textbox) variable.
+        r.identifier_variables = Some(BTreeSet::new());
+        let refused = parameters(&checked, &r, true).unwrap_err();
+        assert_eq!(refused.detail().reason, "cypher.variable_identifier");
+        // ids is a value, so only land needs to be listed.
+        r.identifier_variables = Some(["land".to_string()].into());
+        assert!(parameters(&checked, &r, true).is_ok());
+        // A dynamic property key follows the same rule.
+        let key = crate::datasources::cypher::check("MATCH (n) WHERE n[$land] = 1 RETURN n").unwrap();
+        r.identifier_variables = Some(BTreeSet::new());
+        assert_eq!(parameters(&key, &r, true).unwrap_err().detail().reason, "cypher.variable_identifier");
+        let macro_label = crate::datasources::cypher::check("MATCH (n:$($__interval_ms)) RETURN n").unwrap();
+        assert_eq!(parameters(&macro_label, &req(10), true).unwrap_err().detail().reason, "cypher.variable_identifier");
     }
 
     #[test]

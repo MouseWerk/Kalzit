@@ -133,7 +133,9 @@ Every row and column, sortable by clicking a header. Options: **Column filters**
 `=` and `!=` on numbers), **Show in pages** with **Rows per page**. Under **Table cells**, per
 column or field: **Cell display** (Value, Colored text, Colored background, Gauge, Link), a **Link**
 (web address, email address or path on this server; `${__value}` is the cell's value) and **Column
-width (px)**.
+width (px)**. **Clicking a row sets** a dashboard variable to the row's value in **Column for the
+variable** (the name the header shows, or the field name; empty takes the first column); that
+cell becomes a button, so the keyboard reaches it too.
 
 ## Pie chart
 
@@ -169,7 +171,10 @@ Text or Markdown (**Format**: Markdown or Plain text) in **Content**, with dashb
 For `documents` results (see [Explore](explore.md#documents)):
 
 - **Document explorer**: every document as a tree with the type of each value. Select a value to
-  copy its path or filter by it; arrow keys move through the tree.
+  copy its path or filter by it; arrow keys move through the tree. **Clicking a document or value
+  sets** a dashboard variable: to the value at **Field path for the variable** in the clicked
+  document (`customer.id`), or, without a path, to the clicked value (a whole document gives its
+  `_id`). Enter on a row and the **Set $name** button do the same.
 - **Schema**: every field path with its types and **Coverage**, marking fields missing in some
   documents or with mixed types; **Only outliers** narrows the list.
 - **Field distribution**: how the values of one field (a path such as `items[].price`) are spread,
@@ -178,7 +183,8 @@ For `documents` results (see [Explore](explore.md#documents)):
   sources they count the loaded documents and say **Across the N loaded documents**. A field with
   a dot in its name (`preis.netto`) is counted as that field.
 - **Document card**: one document readably, field by field, paging through the rest; **Title
-  field** names the card.
+  field** names the card. With **Clicking a value sets**, each value is a button that sets the
+  variable to the value at the field path in the shown document, or to the clicked value.
 
 ![Documents as a tree, schema and distribution](../screenshots/dashboard-documents-dark.png)
 

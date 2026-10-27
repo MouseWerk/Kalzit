@@ -340,5 +340,19 @@
   "dashboards.variables.more": "+{count}",
   "dashboards.variables.count": "{count} values",
   "dashboards.variables.quick": "Quick choice",
-  "dashboards.variables.picker": "{label}: {value}"
+  "dashboards.variables.picker": "{label}: {value}",
+  "dashboards.variables.valuesFrom": "Values from",
+  "dashboards.variables.valuesFromHint": "A graph or documents keep their shape; choose what becomes the list of values.",
+  "dashboards.variables.valuesFrom.frame": "First column of a table",
+  "dashboards.variables.valuesFrom.nodes": "Nodes",
+  "dashboards.variables.valuesFrom.edges": "Relationships",
+  "dashboards.variables.valuesFrom.documents": "Documents",
+  "dashboards.variables.valuesFrom.nodeLabel": "Only nodes with the label (optional)",
+  "dashboards.variables.valuesFrom.edgeType": "Only relationships of the type (optional)",
+  "dashboards.variables.valuesFrom.property": "Property for the value (optional)",
+  "dashboards.variables.valuesFrom.propertyHint": "Empty uses the id.",
+  "dashboards.variables.valuesFrom.path": "Field path for the value",
+  "dashboards.variables.valuesFrom.pathHint": "For example customer.id. A list gives one value per entry.",
+  "dashboards.variables.valuesFrom.text": "Shown name (optional)",
+  "dashboards.variables.valuesFrom.textHint": "A property or field path whose value names each entry. Empty shows the value."
 }

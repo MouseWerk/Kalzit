@@ -17,12 +17,21 @@ import {
   toneClass,
 } from "../fieldConfig/fieldConfig";
 import { compareValues, formatValue, int64Key, isNumeric, rowCount, toNumber } from "../frame";
+import { usePanelHost } from "../host";
 import { TablePreview } from "../picker/previews";
 import { fraction, toneName } from "../reduce";
 import { CheckboxField, EmptyPanel, NumberField } from "../shared";
 import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
+import {
+  ClickVariableOptions,
+  clickOption,
+  MAX_VARIABLE_CHARS,
+  useClickOptionTexts,
+  useClickVariable,
+  variableText,
+} from "../variableClick";
 import "../viz.css";
 
 export interface TableOptions {
@@ -31,19 +40,42 @@ export interface TableOptions {
   /** Pages instead of one scrolled list. */
   pagination: boolean;
   pageSize: number;
+  /** Dashboard variable a click on a row sets; empty sets none. */
+  variable: string;
+  /** Column (its shown name or field name) the variable takes; empty takes the first. */
+  variableColumn: string;
 }
 
 export const MIN_PAGE_SIZE = 5;
 export const MAX_PAGE_SIZE = 1000;
+/** Longest column name the click option stores (the server's limit for option texts). */
+export const MAX_COLUMN_CHARS = 200;
 
-function parseOptions(stored: unknown): TableOptions {
+export function parseTableOptions(stored: unknown): TableOptions {
   const value = isRecord(stored) ? stored : {};
   const size = typeof value.pageSize === "number" ? Math.round(value.pageSize) : 50;
   return {
     columnFilters: value.columnFilters === true,
     pagination: value.pagination === true,
     pageSize: Math.min(Math.max(size, MIN_PAGE_SIZE), MAX_PAGE_SIZE),
+    variable: clickOption(value.variable, MAX_VARIABLE_CHARS, true),
+    variableColumn: clickOption(value.variableColumn, MAX_COLUMN_CHARS),
   };
+}
+
+/**
+ * The column a row click takes the variable's value from: the one whose shown name or field
+ * name is `name`, the first when `name` is empty, none when no column has that name.
+ */
+export function pickColumn(
+  columns: readonly { name: string; field: Field }[],
+  name: string,
+): number {
+  if (name === "") {
+    return columns.length > 0 ? 0 : -1;
+  }
+  const shown = columns.findIndex((c) => c.name === name);
+  return shown >= 0 ? shown : columns.findIndex((c) => c.field.name === name);
 }
 
 /** Fixed row height in px, which is what lets the table render only the rows in view. */
@@ -282,6 +314,37 @@ function ColWidth({ width }: { width: number | undefined }) {
   return <col ref={ref} className={width === undefined ? undefined : "vt__col--fixed"} />;
 }
 
+/** The cell of the column a row click reads: its value as a button, the row's keyboard way. */
+function PickCell({
+  column,
+  raw,
+  label,
+  language,
+  timeZone,
+}: {
+  column: Column;
+  raw: unknown;
+  label: string;
+  language: string;
+  timeZone: string | null;
+}) {
+  const { field, options } = column;
+  const display =
+    Object.keys(options).length === 0
+      ? null
+      : displayValue(raw, field.type, options, language, column.range, timeZone);
+  const text =
+    display === null ? formatValue(field.type, raw, language, timeZone) : displayText(display);
+  return (
+    <td className={`vt__cell vt__cell--${field.type}`}>
+      {/* The click reaches the row, which sets the variable. */}
+      <button type="button" className="value-pick truncate" aria-label={label} title={text}>
+        {text}
+      </button>
+    </td>
+  );
+}
+
 function FrameTable({
   frame,
   title,
@@ -294,6 +357,7 @@ function FrameTable({
   options: TableOptions;
 }) {
   const { t, language, timeZone } = useI18n();
+  const clicked = useClickVariable(options.variable);
   const filterId = useId();
   const scrollRef = useRef<HTMLElement>(null);
   const topRef = useRef<HTMLTableRowElement>(null);
@@ -330,22 +394,52 @@ function FrameTable({
     "--vt-spacer": `${options.pagination ? 0 : (total - end) * ROW_HEIGHT}px`,
   });
 
+  const picked = clicked.variable === null ? -1 : pickColumn(columns, options.variableColumn);
+  const pickedField = columns[picked]?.field;
+
   const rows: ReactNode[] = [];
   for (let position = start; position < end; position++) {
     const row = order[position] as number;
+    const cells = columns.map((column, index) =>
+      index === picked ? (
+        <PickCell
+          // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
+          key={index}
+          column={column}
+          raw={column.field.values[row]}
+          label={t("panels.variable.setTo", {
+            name: clicked.variable ?? "",
+            value: variableText(column.field.values[row]) ?? "",
+          })}
+          language={language}
+          timeZone={timeZone}
+        />
+      ) : (
+        <Cell
+          // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
+          key={index}
+          column={column}
+          raw={column.field.values[row]}
+          language={language}
+          timeZone={timeZone}
+        />
+      ),
+    );
     rows.push(
-      <tr key={row} className="vt__row" aria-rowindex={position + headerRows + 1}>
-        {columns.map((column, index) => (
-          <Cell
-            // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
-            key={index}
-            column={column}
-            raw={column.field.values[row]}
-            language={language}
-            timeZone={timeZone}
-          />
-        ))}
-      </tr>,
+      pickedField === undefined ? (
+        <tr key={row} className="vt__row" aria-rowindex={position + headerRows + 1}>
+          {cells}
+        </tr>
+      ) : (
+        <tr
+          key={row}
+          className="vt__row vt__row--pick"
+          aria-rowindex={position + headerRows + 1}
+          onClick={() => clicked.click(variableText(pickedField.values[row]))}
+        >
+          {cells}
+        </tr>
+      ),
     );
   }
 
@@ -441,7 +535,17 @@ function FrameTable({
         {options.columnFilters && total === 0 && rowCount(frame) > 0 ? (
           <p className="panel-note">{t("panels.table.noMatch")}</p>
         ) : null}
+        {clicked.variable !== null && picked < 0 ? (
+          <p className="panel-note">
+            {t("panels.variable.noColumn", { column: options.variableColumn })}
+          </p>
+        ) : null}
       </div>
+      {clicked.variable === null ? null : (
+        <p className="visually-hidden" role="status" aria-live="polite">
+          {clicked.announcement}
+        </p>
+      )}
       {options.pagination && total > 0 ? (
         <nav className="vt__pages" aria-label={t("panels.table.pages")}>
           <button
@@ -509,6 +613,13 @@ function TablePanel({
 
 function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
   const { t } = useI18n();
+  const host = usePanelHost();
+  const variableId = useId();
+  const texts = useClickOptionTexts(
+    t("panels.variable.triggerTable"),
+    t("panels.variable.column"),
+    t("panels.variable.columnHint"),
+  );
   return (
     <>
       <p className="field__hint">{t("dashboards.panels.tableHint")}</p>
@@ -536,6 +647,23 @@ function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
           }
         />
       ) : null}
+      <ClickVariableOptions
+        id={variableId}
+        names={host.variables?.names ?? []}
+        variable={options.variable}
+        source={options.variableColumn}
+        texts={texts}
+        maxLength={MAX_COLUMN_CHARS}
+        onChange={(patch) =>
+          onChange(
+            parseTableOptions({
+              ...options,
+              ...(patch.variable === undefined ? {} : { variable: patch.variable }),
+              ...(patch.source === undefined ? {} : { variableColumn: patch.source }),
+            }),
+          )
+        }
+      />
     </>
   );
 }
@@ -545,7 +673,7 @@ export const tablePanel: PanelPlugin<TableOptions> = {
   name: "dashboards.panels.table",
   description: "panels.describe.table",
   shapes: ["frame"],
-  options: parseOptions,
+  options: parseTableOptions,
   Panel: TablePanel,
   Editor: TableEditor,
   fieldOptions: ["standard", "range", "thresholds", "mappings", "color", "table", "overrides"],

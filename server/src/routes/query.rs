@@ -19,7 +19,7 @@ use serde_json::Value;
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
-use crate::dashboards::model::{self, DashboardModel, VariableType};
+use crate::dashboards::model::{self, DashboardModel, ValuesFrom, ValuesSource, VariableType};
 use crate::datasources::distribution::DistributionSpec;
 use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
 use crate::error::{ApiError, ApiResult};
@@ -507,7 +507,7 @@ async fn variable_options(
     let mut response =
         run_queries_with(&state, &ctx, vec![item], req.time_range, None, None, &variables, Some(&identifiers)).await;
     match response.results.remove(OPTIONS_REF_ID) {
-        Some(QueryOutcome::Ok { result, .. }) => Ok(Json(options_from(result)?)),
+        Some(QueryOutcome::Ok { result, .. }) => Ok(Json(options_from(result, variable.values_from.as_ref())?)),
         Some(QueryOutcome::Err { error }) => Err(api_error(error)),
         None => Err(ApiError::internal("variable options", "no outcome for the query")),
     }
@@ -533,35 +533,164 @@ pub(crate) fn api_error(error: ErrorBody) -> ApiError {
     e
 }
 
-/// The options of a query variable: values from the frame's first field, labels from the second
-/// (or the value), distinct by value, at most `MAX_OPTIONS`.
-fn options_from(result: QueryResult) -> ApiResult<VariableOptionsResponse> {
-    let QueryResult::Frame { frame } = result else {
-        return Err(
-            ApiError::validation("a variable's query must answer a table (frame)").because("variables.not_a_frame")
-        );
-    };
-    let fields = frame.fields();
-    let mut truncated = frame.meta().is_some_and(|m| m.rows_truncated);
-    let Some(values) = fields.first() else {
-        return Ok(VariableOptionsResponse { options: Vec::new(), truncated });
-    };
-    let labels = fields.get(1);
-    let mut seen = BTreeSet::new();
-    let mut options = Vec::new();
-    for (row, raw) in values.values.iter().enumerate() {
-        let Some(value) = as_text(raw, values.field_type) else { continue };
-        if !seen.insert(value.clone()) {
-            continue;
-        }
-        if options.len() == MAX_OPTIONS {
-            truncated = true;
-            break;
-        }
-        let label = labels.and_then(|l| as_text(&l.values[row], l.field_type)).unwrap_or_else(|| value.clone());
-        options.push(VariableOption { value, label });
+/// Options in the order they come, distinct by value, at most `MAX_OPTIONS`.
+struct Collected {
+    seen: BTreeSet<String>,
+    options: Vec<VariableOption>,
+    truncated: bool,
+}
+
+impl Collected {
+    fn new(truncated: bool) -> Self {
+        Self { seen: BTreeSet::new(), options: Vec::new(), truncated }
     }
-    Ok(VariableOptionsResponse { options, truncated })
+
+    /// Adds an option; false once the list is full.
+    fn push(&mut self, value: String, label: Option<String>) -> bool {
+        if self.seen.contains(&value) {
+            return true;
+        }
+        if self.options.len() == MAX_OPTIONS {
+            self.truncated = true;
+            return false;
+        }
+        self.seen.insert(value.clone());
+        let label = label.unwrap_or_else(|| value.clone());
+        self.options.push(VariableOption { value, label });
+        true
+    }
+
+    fn done(self) -> VariableOptionsResponse {
+        VariableOptionsResponse { options: self.options, truncated: self.truncated }
+    }
+}
+
+/// The options of a query variable. A frame: values from its first field, labels from the second
+/// (or the value). A graph or documents result only through the variable's `valuesFrom`, the
+/// explicit projection; without it, or when it names another shape, the answer says so.
+fn options_from(result: QueryResult, values_from: Option<&ValuesFrom>) -> ApiResult<VariableOptionsResponse> {
+    let shape_error = |message: &str| ApiError::validation(message.to_string()).because("variables.not_a_frame");
+    match (result, values_from) {
+        (QueryResult::Frame { frame }, None) => {
+            let fields = frame.fields();
+            let mut out = Collected::new(frame.meta().is_some_and(|m| m.rows_truncated));
+            let Some(values) = fields.first() else { return Ok(out.done()) };
+            let labels = fields.get(1);
+            for (row, raw) in values.values.iter().enumerate() {
+                let Some(value) = as_text(raw, values.field_type) else { continue };
+                let label = labels.and_then(|l| as_text(&l.values[row], l.field_type));
+                if !out.push(value, label) {
+                    break;
+                }
+            }
+            Ok(out.done())
+        }
+        (QueryResult::Graph { graph }, Some(from)) if from.from != ValuesSource::Documents => {
+            let mut out = Collected::new(graph.truncated.is_some());
+            let wanted = from.label.as_deref().filter(|l| !l.is_empty());
+            let key = from.value.as_deref().filter(|k| !k.is_empty());
+            let text = from.text.as_deref().filter(|k| !k.is_empty());
+            let pick = |id: &str, props: &BTreeMap<String, Value>| {
+                let value = match key {
+                    Some(k) => props.get(k).and_then(cell_text),
+                    None => Some(id.to_string()),
+                };
+                value.map(|v| (v, text.and_then(|t| props.get(t)).and_then(cell_text)))
+            };
+            let items: Vec<(String, Option<String>)> = if from.from == ValuesSource::Nodes {
+                graph
+                    .nodes
+                    .iter()
+                    .filter(|n| wanted.is_none_or(|l| n.labels.iter().any(|x| x == l)))
+                    .filter_map(|n| pick(&n.id, &n.properties))
+                    .collect()
+            } else {
+                graph
+                    .edges
+                    .iter()
+                    .filter(|e| wanted.is_none_or(|t| e.edge_type == t))
+                    .filter_map(|e| pick(&e.id, &e.properties))
+                    .collect()
+            };
+            for (value, label) in items {
+                if !out.push(value, label) {
+                    break;
+                }
+            }
+            Ok(out.done())
+        }
+        (QueryResult::Documents { documents }, Some(from)) if from.from == ValuesSource::Documents => {
+            let mut out = Collected::new(documents.truncated.is_some() || documents.next_cursor.is_some());
+            let path = from.value.as_deref().unwrap_or_default();
+            let text = from.text.as_deref().filter(|t| !t.is_empty());
+            let mut full = false;
+            for raw in &documents.documents {
+                let Ok(doc) = serde_json::from_str::<Value>(raw.get()) else { continue };
+                let label = text.and_then(|t| document_value(&doc, t)).and_then(cell_text);
+                // An array of values gives one option per element (tags, several ids).
+                let values: Vec<String> = match document_value(&doc, path) {
+                    Some(Value::Array(items)) => items.iter().filter_map(cell_text).collect(),
+                    Some(v) => cell_text(v).into_iter().collect(),
+                    None => Vec::new(),
+                };
+                for value in values {
+                    if !out.push(value, label.clone()) {
+                        full = true;
+                        break;
+                    }
+                }
+                if full {
+                    break;
+                }
+            }
+            Ok(out.done())
+        }
+        (QueryResult::Frame { .. }, Some(_)) => {
+            Err(shape_error("the variable's query answers a table (frame); remove valuesFrom to read its first column"))
+        }
+        (QueryResult::Graph { .. }, _) => Err(shape_error(
+            "the variable's query answers a graph; set valuesFrom to nodes or edges to read values from it",
+        )),
+        (QueryResult::Documents { .. }, _) => {
+            Err(shape_error("the variable's query answers documents; set valuesFrom to documents with a field path"))
+        }
+    }
+}
+
+/// The value at a dotted path of a document (`customer.id`, `items.0.sku`). Typed values
+/// (`{"$type": ..., "value": ...}`) are leaves; a wrapped document is read through.
+fn document_value<'a>(doc: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = doc;
+    for part in path.split('.') {
+        if current.get("$type").and_then(Value::as_str) == Some("document") {
+            current = current.get("value")?;
+        }
+        current = match current {
+            Value::Array(items) if !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()) => {
+                items.get(part.parse::<usize>().ok()?)?
+            }
+            Value::Object(m) if !m.contains_key("$type") => m.get(part)?,
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
+/// A property or field value as option text: scalars as their text, typed values
+/// (`{"$type": "int64", "value": "..."}`, object ids, dates) as their value; `null`, objects and
+/// lists give none.
+fn cell_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Object(m) if m.contains_key("$type") => match m.get("value") {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(v @ (Value::Number(_) | Value::Bool(_))) => Some(v.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// A cell as option text: int64 and decimal stay their decimal string, time becomes ISO 8601 in
@@ -599,7 +728,7 @@ mod tests {
             field("name", FieldType::String, vec![json!("Groß"), json!("Klein"), json!("Doppelt"), json!("Leer")]),
         ])
         .unwrap();
-        let r = options_from(QueryResult::Frame { frame }).unwrap();
+        let r = options_from(QueryResult::Frame { frame }, None).unwrap();
         assert_eq!(
             r.options,
             [
@@ -612,15 +741,92 @@ mod tests {
         let frame = Frame::new(vec![field("t", FieldType::Time, vec![json!(1_735_725_600_000_i64)])])
             .unwrap()
             .with_meta(FrameMeta { rows_truncated: true, ..Default::default() });
-        let r = options_from(QueryResult::Frame { frame }).unwrap();
+        let r = options_from(QueryResult::Frame { frame }, None).unwrap();
         assert_eq!(r.options[0].value, "2025-01-01T10:00:00.000Z");
         assert_eq!(r.options[0].label, r.options[0].value);
         assert!(r.truncated);
 
         let many = (0..MAX_OPTIONS + 5).map(|i| json!(i)).collect();
         let frame = Frame::new(vec![field("n", FieldType::Number, many)]).unwrap();
-        let r = options_from(QueryResult::Frame { frame }).unwrap();
+        let r = options_from(QueryResult::Frame { frame }, None).unwrap();
         assert_eq!((r.options.len(), r.truncated), (MAX_OPTIONS, true));
+    }
+
+    fn from(v: Value) -> ValuesFrom {
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn values(r: &VariableOptionsResponse) -> Vec<(&str, &str)> {
+        r.options.iter().map(|o| (o.value.as_str(), o.label.as_str())).collect()
+    }
+
+    /// A graph gives options only through `valuesFrom`: node or edge properties (or ids), filtered
+    /// by label or type, typed values as their text, distinct by value.
+    #[test]
+    fn graph_options_come_from_the_named_property() {
+        use crate::shapes::{Edge, GraphSet, Node};
+        let node = |id: &str, label: &str, props: Value| Node {
+            id: id.into(),
+            labels: vec![label.into()],
+            properties: serde_json::from_value(props).unwrap(),
+        };
+        let graph = GraphSet {
+            nodes: vec![
+                node(
+                    "4:1",
+                    "Kunde",
+                    json!({ "kundenId": { "$type": "int64", "value": "9007199254740993" }, "name": "Groß" }),
+                ),
+                node("4:2", "Kunde", json!({ "kundenId": 7, "name": "Klein" })),
+                node("4:3", "Kunde", json!({ "kundenId": 7, "name": "Doppelt" })),
+                node("4:4", "Kunde", json!({ "name": "Ohne Id" })),
+                node("4:5", "Produkt", json!({ "kundenId": 99 })),
+            ],
+            edges: vec![Edge {
+                id: "5:1".into(),
+                edge_type: "KAUFT".into(),
+                from: "4:1".into(),
+                to: "4:5".into(),
+                properties: serde_json::from_value(json!({ "seit": 2020 })).unwrap(),
+            }],
+            ..Default::default()
+        };
+        let run = |v: Value| options_from(QueryResult::Graph { graph: graph.clone() }, Some(&from(v)));
+        let r = run(json!({ "from": "nodes", "label": "Kunde", "value": "kundenId", "text": "name" })).unwrap();
+        assert_eq!(values(&r), [("9007199254740993", "Groß"), ("7", "Klein")]);
+        assert!(!r.truncated);
+        let r = run(json!({ "from": "nodes" })).unwrap();
+        assert_eq!(r.options.len(), 5, "empty value takes the node id");
+        assert_eq!(r.options[0].value, "4:1");
+        let r = run(json!({ "from": "edges", "label": "KAUFT", "value": "seit" })).unwrap();
+        assert_eq!(values(&r), [("2020", "2020")]);
+        // Without valuesFrom, or with one for documents, a graph is refused with the reason.
+        let err = options_from(QueryResult::Graph { graph: graph.clone() }, None).unwrap_err();
+        assert_eq!(err.reason.as_ref().unwrap().code, "variables.not_a_frame");
+        assert!(run(json!({ "from": "documents", "value": "a" })).is_err());
+    }
+
+    #[test]
+    fn document_options_come_from_a_field_path() {
+        use crate::shapes::DocumentSet;
+        let docs = DocumentSet {
+            documents: vec![
+                json!({ "customer": { "id": { "$type": "objectId", "value": "65a1" }, "name": "Ana" }, "tags": ["a", "b"] }).into(),
+                json!({ "customer": { "id": 7, "name": "Bo" }, "tags": ["b", null] }).into(),
+                json!({ "customer": { "name": "Ohne" } }).into(),
+            ],
+            next_cursor: Some("weiter".into()),
+            ..Default::default()
+        };
+        let run = |v: Value| options_from(QueryResult::Documents { documents: docs.clone() }, Some(&from(v)));
+        let r = run(json!({ "from": "documents", "value": "customer.id", "text": "customer.name" })).unwrap();
+        assert_eq!(values(&r), [("65a1", "Ana"), ("7", "Bo")]);
+        assert!(r.truncated, "more documents follow");
+        let r = run(json!({ "from": "documents", "value": "tags" })).unwrap();
+        assert_eq!(values(&r), [("a", "a"), ("b", "b")], "each element of an array");
+        assert!(run(json!({ "from": "nodes" })).is_err());
+        let frame = Frame::new(vec![field("n", FieldType::Number, vec![json!(1)])]).unwrap();
+        assert!(options_from(QueryResult::Frame { frame }, Some(&from(json!({ "from": "nodes" })))).is_err());
     }
 
     #[test]

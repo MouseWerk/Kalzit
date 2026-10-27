@@ -384,7 +384,7 @@
   "datasources.reason.variables.value_type": "The value of {name} must be a value or a list of values.",
   "datasources.reason.variables.self_dependency": "The options of {name} cannot depend on {name} itself.",
   "datasources.reason.variables.not_a_query": "{name} takes its values from no query.",
-  "datasources.reason.variables.not_a_frame": "The variable’s query has to answer a table.",
+  "datasources.reason.variables.not_a_frame": "The variable’s query has to answer a table, or set “Values from” to read a graph or documents.",
   "datasources.reason.distribution.path_length": "A field path has 1 to {max} steps.",
   "datasources.reason.distribution.path_too_long": "The field path is too long (at most {max} bytes).",
   "datasources.reason.distribution.path_invalid": "The field path names no field.",
@@ -808,5 +808,7 @@
   "datasources.reason.live.feeds_busy": "The server runs as many live queries as it allows ({max}). Try again shortly.",
   "datasources.reason.live.memory_limit": "Live results here would take more memory than the server allows for you. The last results that fit stay; new live queries start once there is room again.",
   "datasources.reason.live.check_failed": "Your access could not be checked again, so live updates stopped. Reconnect to resume them.",
-  "datasources.reason.mongodb.streams_limit": "{max} change streams of this source are open already, so further live queries run at a fixed interval."
+  "datasources.reason.mongodb.streams_limit": "{max} change streams of this source are open already, so further live queries run at a fixed interval.",
+  "datasources.reason.cypher.variable_identifier": "${name} names a label, relationship type or property here. Only fixed-value and constant variables may do that, since only their values are listed in the dashboard.",
+  "datasources.reason.gsql.variable_text": "GSQL takes variables as query parameters: declare a parameter {name} in the query’s head instead of writing ${name} in its text."
 }

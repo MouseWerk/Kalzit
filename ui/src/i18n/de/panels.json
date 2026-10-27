@@ -368,5 +368,22 @@
   "panels.graph.comparison": "Vergleichsreihe: gedämpft und gestrichelt",
   "panels.checkingPattern": "Das Muster wird geprüft…",
   "panels.state.colorStateWords": "Bekannte Zustandswörter einfärben",
-  "panels.state.colorStateWordsHint": "Ein Wert, der ein Zustandswort ist, bekommt dessen Farbe: ok, up, gesund, erfolgreich und bestanden gut; Warnung, eingeschränkt und ausstehend Warnung; Fehler, fehlgeschlagen, ausgefallen, kritisch und offline Gefahr; unbekannt neutral. Eine Wertzuordnung, Schwellenwerte oder eine Feldfarbe gehen vor."
+  "panels.state.colorStateWordsHint": "Ein Wert, der ein Zustandswort ist, bekommt dessen Farbe: ok, up, gesund, erfolgreich und bestanden gut; Warnung, eingeschränkt und ausstehend Warnung; Fehler, fehlgeschlagen, ausgefallen, kritisch und offline Gefahr; unbekannt neutral. Eine Wertzuordnung, Schwellenwerte oder eine Feldfarbe gehen vor.",
+  "panels.variable.triggerDocuments": "Ein Klick auf ein Dokument oder einen Wert setzt",
+  "panels.variable.triggerCard": "Ein Klick auf einen Wert setzt",
+  "panels.variable.triggerTable": "Ein Klick auf eine Zeile setzt",
+  "panels.variable.hint": "Eine Dashboard-Variable, damit andere Panels dem Klick folgen, auch solche mit einer anderen Art von Ergebnis.",
+  "panels.variable.none": "Das Dashboard hat noch keine Variablen. Lege eine in den Dashboard-Einstellungen an.",
+  "panels.variable.off": "Keine Variable",
+  "panels.variable.path": "Feldpfad für die Variable (optional)",
+  "panels.variable.pathHintDocuments": "Ein Pfad im angeklickten Dokument, zum Beispiel customer.id. Leer nimmt den angeklickten Wert, bei einem ganzen Dokument _id.",
+  "panels.variable.pathHintCard": "Ein Pfad im angezeigten Dokument, zum Beispiel customer.id. Leer nimmt den angeklickten Wert.",
+  "panels.variable.column": "Spalte für die Variable (optional)",
+  "panels.variable.columnHint": "Der Name der Spalte wie in der Kopfzeile oder ihr Feldname. Leer nimmt die erste Spalte.",
+  "panels.variable.noColumn": "Keine Spalte heißt {column}, daher setzt ein Klick auf eine Zeile nichts.",
+  "panels.variable.setAction": "${name} setzen",
+  "panels.variable.setTo": "${name} auf {value} setzen",
+  "panels.variable.announce": "${name} ist jetzt {value}",
+  "panels.variable.refused": "${name} kennt den Wert {value} nicht und bleibt, wie sie ist.",
+  "panels.variable.empty": "Hier steht kein Wert, daher bleibt ${name}, wie sie ist."
 }

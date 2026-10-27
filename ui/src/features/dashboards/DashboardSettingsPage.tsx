@@ -5,7 +5,7 @@ import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
-import { datasourcesQuery } from "../datasources/api";
+import { datasourcesQuery, kindsQuery } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
 import {
@@ -16,7 +16,9 @@ import {
   type DashboardLinkModel,
   type DashboardModel,
   optionValues,
+  VALUES_SOURCES,
   VARIABLE_TYPES,
+  type ValuesFrom,
   type VariableModel,
   type VariableType,
 } from "./model";
@@ -510,6 +512,121 @@ export function DashboardSettingsPage({
   );
 }
 
+/**
+ * Where a query variable's values come from when its source answers a graph or documents: the
+ * first column of a table (the default), node or edge properties, or a document field. A result
+ * keeps its shape, so this is the visible step that turns it into a list of values.
+ */
+function ValuesFromEditor({
+  orgId,
+  kind,
+  valuesFrom,
+  onChange,
+}: {
+  orgId: string;
+  kind: string;
+  valuesFrom: ValuesFrom | undefined;
+  onChange: (valuesFrom: ValuesFrom | undefined) => void;
+}) {
+  const { t } = useI18n();
+  const id = useId();
+  const kinds = useQuery(kindsQuery(orgId));
+  const shapes = kinds.data?.find((k) => k.kind === kind)?.shapes ?? [];
+  const sources = VALUES_SOURCES.filter((source) =>
+    source === "documents" ? shapes.includes("documents") : shapes.includes("graph"),
+  );
+  if (sources.length === 0 && valuesFrom === undefined) {
+    return null;
+  }
+  const choices =
+    valuesFrom === undefined || sources.includes(valuesFrom.from)
+      ? sources
+      : [valuesFrom.from, ...sources];
+  const set = (patch: Partial<ValuesFrom>) => {
+    if (valuesFrom === undefined) return;
+    const next: ValuesFrom = { from: valuesFrom.from };
+    for (const key of ["label", "value", "text"] as const) {
+      const text = key in patch ? patch[key] : valuesFrom[key];
+      if (text !== undefined && text !== "") next[key] = text;
+    }
+    onChange(next);
+  };
+  const graph = valuesFrom !== undefined && valuesFrom.from !== "documents";
+  return (
+    <>
+      <div className="field">
+        <label className="field__label" htmlFor={id}>
+          {t("dashboards.variables.valuesFrom")}
+        </label>
+        <p className="field__hint" id={`${id}-hint`}>
+          {t("dashboards.variables.valuesFromHint")}
+        </p>
+        <select
+          id={id}
+          className="select"
+          value={valuesFrom?.from ?? ""}
+          aria-describedby={`${id}-hint`}
+          onChange={(event) => {
+            const from = VALUES_SOURCES.find((s) => s === event.currentTarget.value);
+            onChange(from === undefined ? undefined : { from });
+          }}
+        >
+          <option value="">{t("dashboards.variables.valuesFrom.frame")}</option>
+          {choices.map((source) => (
+            <option key={source} value={source}>
+              {t(`dashboards.variables.valuesFrom.${source}`)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {graph ? (
+        <TextField
+          label={
+            valuesFrom.from === "nodes"
+              ? t("dashboards.variables.valuesFrom.nodeLabel")
+              : t("dashboards.variables.valuesFrom.edgeType")
+          }
+          value={valuesFrom.label ?? ""}
+          onValueChange={(label) => set({ label })}
+          maxLength={500}
+          mono
+          autoComplete="off"
+        />
+      ) : null}
+      {valuesFrom === undefined ? null : (
+        <>
+          <TextField
+            label={
+              graph
+                ? t("dashboards.variables.valuesFrom.property")
+                : t("dashboards.variables.valuesFrom.path")
+            }
+            hint={
+              graph
+                ? t("dashboards.variables.valuesFrom.propertyHint")
+                : t("dashboards.variables.valuesFrom.pathHint")
+            }
+            value={valuesFrom.value ?? ""}
+            onValueChange={(value) => set({ value })}
+            maxLength={500}
+            mono
+            autoComplete="off"
+          />
+          <TextField
+            label={t("dashboards.variables.valuesFrom.text")}
+            hint={t("dashboards.variables.valuesFrom.textHint")}
+            value={valuesFrom.text ?? ""}
+            onValueChange={(text) => set({ text })}
+            maxLength={500}
+            mono
+            autoComplete="off"
+          />
+        </>
+      )}
+    </>
+  );
+}
+
 function VariableEditor({
   orgId,
   variable,
@@ -619,7 +736,17 @@ function VariableEditor({
               onChange={(query) => onChange({ query })}
             />
           )}
-          <p className="field__hint">{t("dashboards.variables.queryHint")}</p>
+          {datasource === undefined ? null : (
+            <ValuesFromEditor
+              orgId={orgId}
+              kind={datasource.kind}
+              valuesFrom={variable.valuesFrom}
+              onChange={(valuesFrom) => onChange({ valuesFrom })}
+            />
+          )}
+          {variable.valuesFrom === undefined ? (
+            <p className="field__hint">{t("dashboards.variables.queryHint")}</p>
+          ) : null}
         </>
       ) : null}
       {variable.type === "custom" || variable.type === "query" ? (

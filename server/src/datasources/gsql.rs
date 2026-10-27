@@ -307,6 +307,21 @@ fn lex(q: &str) -> Result<Vec<T>, Detail> {
                 "a quote ' is allowed only after an accumulator, as in @@total'",
             )
             .with("character", '\''));
+        } else if c == b'$' {
+            // `$name` or `${name}`: a dashboard variable written into the text, which GSQL has no
+            // place for. Variables reach a query only as its declared parameters.
+            let name: String = q[i + 1..]
+                .trim_start_matches('{')
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            return Err(reject(
+                "gsql.variable_text",
+                format!(
+                    "GSQL takes variables as query parameters: declare a parameter {name} in the query's head instead of writing ${name} in its text"
+                ),
+            )
+            .with("name", name));
         } else if let Some(sym) = SYMS.iter().find(|s| q[i..].starts_with(**s)) {
             out.push(T::Sym(sym));
             i += sym.len();
@@ -966,6 +981,15 @@ mod tests {
         check_with(&q, Form::Interpret, Some(&[])).unwrap_or_else(|e| panic!("refused: {body}: {e:?}"))
     }
 
+    /// `${name}` inside a string is text: nothing replaces it, and the variable reaches the query
+    /// only as a declared parameter.
+    #[test]
+    fn variables_in_strings_are_text() {
+        let q = "INTERPRET QUERY (STRING kunde) FOR GRAPH social { S = {Person.*};                  R = SELECT s FROM S:s WHERE s.name == \"${kunde}\" OR s.name == kunde; PRINT R; }";
+        let checked = check_with(q, Form::Interpret, Some(&[])).unwrap();
+        assert_eq!(checked.params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["kunde"]);
+    }
+
     fn refused(body: &str) -> &'static str {
         let q = format!("INTERPRET QUERY () FOR GRAPH social {{ {body} }}");
         match check_with(&q, Form::Interpret, Some(&[])) {
@@ -1066,6 +1090,7 @@ mod tests {
             ("PRINT \"offen;", "gsql.unclosed_quote"),
             ("PRINT 1; /* offen", "gsql.unclosed_comment"),
             ("PRINT 1; # Kommentar?", "gsql.unexpected_character"),
+            ("S = {Person.*}; R = SELECT s FROM S:s WHERE s.name == $kunde; PRINT R;", "gsql.variable_text"),
             ("PRINT 1;\u{00A0}", "gsql.unexpected_character"),
             ("PRINT ünïcödé;", "gsql.unexpected_character"),
             ("PRINT '\"' ; DELETE s FROM Person:s; '\"';", "gsql.unexpected_character"),
