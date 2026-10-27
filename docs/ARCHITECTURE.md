@@ -768,6 +768,12 @@ through `settings::get`; new registry entries are requested from the orchestrato
   stay in the TanStack Query cache for `RESULT_GC_MS` (5 s) once nothing shows them, and when a
   new answer arrives the older unshown ones of the same panel or of Explore are dropped
   (`api/resultCache.ts`), so a refreshing dashboard keeps one answer per panel.
+- Graph panels (`ui/src/panels/graph/`) draw with Sigma.js on Graphology (WebGL) and lay out in
+  a worker (`layout.worker.ts`, `layoutEngine.ts`): ForceAtlas2 for the network panel, and for
+  the hierarchy panel Kalzit's own layered layout (cycles broken by reversing back edges, layers
+  by longest path from the roots, barycenter sweeps against crossings). There is no ELK (elkjs)
+  in the bundle; it may come later (M5) as an optional hierarchy layout that loads only when a
+  panel chooses it, and the layered layout stays the default.
 
 ## Testing contracts
 
@@ -797,8 +803,12 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `KALZIT_E2E_MONGODB` (`host:port`) and `KALZIT_E2E_OPENSEARCH` (a base URL). Windows runners
   have no Linux containers, so there `documents.spec.ts` and `opensearch.spec.ts` skip with that
   reason and the release's Windows checklist covers them; on Linux in CI a missing service
-  fails. The HTTP JSON spec serves its fixture from a small server inside the test, on a free
-  loopback port.
+  fails. Graph sources run the same way: the job also starts Neo4j (community) and Memgraph,
+  seeds both from `ui/e2e/fixtures/graph-shop.cypher` and names them in `KALZIT_E2E_NEO4J` and
+  `KALZIT_E2E_MEMGRAPH` (`host:port`), and `graph.spec.ts` skips on Windows with that reason.
+  Neither community edition has read-only users, so the Neo4j source relies on Neo4j enforcing
+  Kalzit's read transactions and the Memgraph source has `allowWriteCapableUser` set. The HTTP
+  JSON spec serves its fixture from a small server inside the test, on a free loopback port.
   Run locally from `ui/`:
 
   ```
@@ -827,7 +837,8 @@ through `settings::get`; new registry entries are requested from the orchestrato
   through the same global setup, seeds a demo organization through the API (members, teams,
   the SQLite sales fixture, a dashboard with a variable and four panels; later pictures add a
   JSON file of orders with document panels, a panel with analysis steps and a dashboard of
-  graph styles) and writes PNGs at
+  graph styles; with `KALZIT_E2E_MONGODB` or `KALZIT_E2E_NEO4J` set, also the field distribution
+  and the graph panels with explorer mode) and writes PNGs at
   1440x900 to `docs/screenshots/`. The fixture data lies around a fixed moment and the pages run
   on a clock fixed to it; times the server records (sessions, member since, last saved) are
   moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
