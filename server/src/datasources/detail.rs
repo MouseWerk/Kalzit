@@ -85,6 +85,7 @@ mod tests {
         "distribution",
         "updates",
         "live",
+        "plugin",
         // Documented in docs/api/ai.md.
         "ai",
     ];

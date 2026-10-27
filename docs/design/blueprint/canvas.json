@@ -114,6 +114,14 @@
       "x": 4560,
       "y": 0
     },
+    "Plugins.dc.html": {
+      "expand": "fill",
+      "h": 7480,
+      "title": "Plugins (M4)",
+      "w": 1440,
+      "x": 7600,
+      "y": 0
+    },
     "AI.dc.html": {
       "expand": "fill",
       "h": 8420,
@@ -156,6 +164,7 @@
     "SavedAnalyses.dc.html",
     "Graph.dc.html",
     "Access.dc.html",
+    "Plugins.dc.html",
     "AI.dc.html"
   ],
   "pages": [],
