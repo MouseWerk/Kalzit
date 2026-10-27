@@ -702,6 +702,14 @@ pub struct AiStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub usage: Option<AiStatusUsage>,
+    /// The paragraph the administrators added to the first-use notice (`ai.notice_text`), when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub notice_text: Option<String>,
+    /// The most rows, documents or nodes of one result AI receives (`ai.max_rows_to_model`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_rows_to_model: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -710,6 +718,8 @@ pub struct AiStatus {
 pub struct AiStatusProvider {
     /// What the first-use notice is acknowledged for.
     pub id: String,
+    /// The name the administrators gave it.
+    pub name: String,
     /// `openai` or `anthropic`.
     pub kind: String,
     pub model: String,
@@ -735,7 +745,16 @@ pub struct AiStatusUsage {
 
 impl AiStatus {
     fn off() -> Self {
-        Self { enabled: false, usable: false, notice_acknowledged: None, reason: None, provider: None, usage: None }
+        Self {
+            enabled: false,
+            usable: false,
+            notice_acknowledged: None,
+            reason: None,
+            provider: None,
+            usage: None,
+            notice_text: None,
+            max_rows_to_model: None,
+        }
     }
 }
 
@@ -752,6 +771,13 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
     let acknowledged = store::notice_acknowledged(&state.db, user_id, &row.id).await?;
     let clamp = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
     let host = url::Url::parse(&row.base_url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+    let notice_text = settings::get(state, "ai.notice_text")
+        .await?
+        .as_str()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    let max_rows = i64::try_from(max_rows_to_model(state).await?).unwrap_or(i64::MAX);
     Ok(AiStatus {
         enabled: true,
         usable: true,
@@ -760,6 +786,7 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
         provider: Some(AiStatusProvider {
             scope: if row.org_id.is_some() { "org" } else { "server" }.into(),
             id: row.id,
+            name: row.name,
             kind: row.kind,
             model: row.model,
             host,
@@ -772,6 +799,8 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
             org_tokens_month: month,
             org_tokens_month_limit: clamp(limits.org_tokens_month),
         }),
+        notice_text,
+        max_rows_to_model: Some(max_rows),
     })
 }
 

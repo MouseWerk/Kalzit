@@ -195,6 +195,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "ai.max_concurrent_per_user",
       "ai.request_timeout_secs",
       "ai.chat_retention_days",
+      "ai.notice_text",
     ],
     visible: serverAdmin,
   },

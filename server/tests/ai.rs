@@ -364,8 +364,15 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
     assert_eq!(r.body["noticeAcknowledged"], false);
     assert_eq!(
         r.body["provider"],
-        json!({ "id": server_id, "kind": "openai", "model": "modell-1", "host": "127.0.0.1", "scope": "server" })
+        json!({
+            "id": server_id, "name": "openai lokal", "kind": "openai", "model": "modell-1", "host": "127.0.0.1",
+            "scope": "server"
+        })
     );
+    assert_eq!(r.body["maxRowsToModel"], 200);
+    assert!(r.body.get("noticeText").is_none(), "no addition of the administrators yet");
+    t.setting("ai.notice_text", json!("  Fragen an datenschutz@example.org.  "), &owner).await;
+    assert_eq!(t.get(&status, &viewer).await.body["noticeText"], "Fragen an datenschutz@example.org.");
     assert_eq!(r.body["usage"]["requestsLimit"], 200);
     assert_eq!(r.body["usage"]["orgTokensMonthLimit"], 20_000_000);
     assert!(!r.body.to_string().contains('€') && r.body["usage"].get("cost").is_none(), "tokens, no prices");
