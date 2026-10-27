@@ -164,8 +164,8 @@ struct Opened {
 }
 
 /// A connection on loan. It goes back only through `release`, after a clean finish; one dropped
-/// mid-query (timeout, cancelled request, a limit reached) is closed, which ends the server's
-/// transaction.
+/// mid-query (timeout, cancelled request, a limit reached) is interrupted and closed
+/// (`BoltConn::interrupt`), which stops the server's query and ends its transaction.
 struct Lease<'p> {
     pool: &'p Pool,
     opened: Option<Opened>,
@@ -183,6 +183,18 @@ impl Lease<'_> {
             && !o.conn.broken
         {
             self.pool.idle.lock().expect("pool lock").push((o, Instant::now()));
+        }
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        // Not released: given up mid-query. The interrupt runs on its own, since the request
+        // that dropped the lease may be gone already.
+        if let Some(o) = self.opened.take()
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            runtime.spawn(o.conn.interrupt());
         }
     }
 }

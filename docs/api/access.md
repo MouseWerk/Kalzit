@@ -471,6 +471,29 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 **`PATCH /admin/orgs/{orgId}`** `{ "name" }`. Errors: `404`, `validation` `name`. Audit
 `org.renamed`.
 
+## Sign-in rate limits
+
+`POST /auth/login` (`server/src/routes/auth.rs`) counts every attempt before the password is
+checked, and refuses it with `429 rate_limited` (with `Retry-After` and `retryAfterSecs`) when a
+budget is used up:
+
+- per client address (IPv6 per /64): `security.login_max_failures` attempts per
+  `security.login_window_secs` (default 10 per 15 minutes), whatever the email;
+- per account at that address: the same numbers. Wrong passwords from other addresses never use
+  it up, so they cannot lock the owner out;
+- per account from all addresses together: 5 times `security.login_max_failures` failures per
+  window (failed sign-ins and failed `POST /me/password` checks). Used up, it refuses addresses
+  that already had more than 2 failures in their own window, the right password included, with
+  the whole window as the wait (it tells nothing about the account). An address with at most 2
+  failures still signs in with the right password. A guess spread over many addresses so gets
+  3 tries per address instead of the full budget.
+
+A successful sign-in gives the address its attempt back and clears the account's budget at that
+address. The counts live in memory and are bounded: only entries whose window has ended are
+dropped, and when the table is full of running windows (100 000 keys), attempts with new keys
+are refused until the oldest window ends, so a flood of addresses never resets a budget that is
+still counting.
+
 ## Setup
 
 The first start (`server/src/routes/setup.rs`). While the server has no user, a one-time setup
@@ -490,8 +513,8 @@ are `Public`.
 the code. `fixed` when it comes from `KALZIT_SETUP_TOKEN`, `docker` when the server runs in a
 container (`/.dockerenv` or `/run/.containerenv`), else `file`. It never names a path. `fixed`
 tells a visitor that the code was chosen by a person (at least 16 letters or digits) rather than
-generated; that is acceptable only because of the shared budget below, which keeps any guess,
-however many addresses it uses, to `security.setup_max_failures` tries per window.
+generated; that is acceptable only because of the budgets below, which keep a guess slow however
+many addresses it uses.
 
 **`POST /setup/check`** `{ "token" }` checks the code alone, so the setup page can confirm it
 before asking for the rest. Errors: `403 invalid_setup_token` (wrong code), `403
@@ -509,17 +532,21 @@ with `field` `orgName`, `name`, `email`, `password`, `language`, `theme` or `tim
 `setup.completed`, and `settings.updated` per chosen setting (summary `{ "key", "version",
 "setup": true }`, never the value).
 
-Both `POST` routes share two budgets, and a code is checked only when both have room:
+Both `POST` routes share two budgets. Only wrong codes (and the code of the previous start) use
+them up, so nobody can use up the budget of the person who has the right code:
 
 - per client address (IPv6 per /64), the sign-in limits: `security.login_max_failures` wrong
-  codes per `security.login_window_secs` (default 10 per 15 minutes);
+  codes per `security.login_window_secs` (default 10 per 15 minutes). Used up, the address is
+  refused before its code is compared, the right code included;
 - for all addresses together: `security.setup_max_failures` wrong codes per
-  `security.setup_window_secs` (default 100 per hour), so a guess spread over many addresses is
-  capped as well.
+  `security.setup_window_secs` (default 100 per hour). Used up, it refuses an address that
+  already had more than 2 wrong codes in its own window, so a guess spread over many addresses
+  gets 3 tries per address instead of the full budget. A clean address (at most 2 wrong codes) is
+  still checked, and the right code opens setup.
 
-Beyond either, `429 rate_limited` with `Retry-After` and `retryAfterSecs` (the wait of the budget
-that refused). An attempt refused by the shared budget does not count for the address. A correct
-code gives its attempts back; a check after setup is done does not count.
+Refused: `429 rate_limited` with `Retry-After` and `retryAfterSecs` (the wait of the budget that
+refused). An attempt refused by the shared budget does not count for the address. A correct
+code gives its attempt back; a check after setup is done does not count.
 
 ## Self service
 
@@ -546,9 +573,10 @@ interface SessionView {
 **`PATCH /me`** `{ "name" }`. Errors: `validation` `name`. Audit `user.updated`.
 
 **`POST /me/password`** `{ "current", "new" }`. Ends every other session of the account; this one
-stays. Attempts count against a budget of their own and against the account email's sign-in
-budget (failed sign-ins and failed checks here add up); once either is used up the answer is
-`429 rate_limited`. A correct password resets both. Of two changes at the same moment with the same
+stays. Attempts count against a budget of their own (`security.login_max_failures` per window),
+and failed checks add to the account's failures from sign-ins (see Sign-in rate limits); once
+either is used up the answer is `429 rate_limited`. A correct password resets the budget of its
+own. Of two changes at the same moment with the same
 current password, the second answers `validation` `current`. Errors: `validation` `current` (not correct), `validation` `new`
 (policy), `429 rate_limited`. Audit `user.password_changed`.
 

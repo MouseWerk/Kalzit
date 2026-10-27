@@ -57,8 +57,11 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   request is HTTPS (directly or at a trusted proxy), it is `__Host-kalzit_session` with `Secure`,
   and only that name is read, so a cookie planted over HTTP
   or by a sibling subdomain is ignored. Sign-in, failed sign-in and sign-out are audited.
-- Sign-in rate limit: per email and per client address, IPv4 per address and IPv6 per /64. When
-  the table is full, address entries are dropped before account entries.
+- Sign-in rate limit: per client address and per account at that address (IPv4 per address,
+  IPv6 per /64), plus a looser count per account from all addresses that refuses only addresses
+  with failures of their own, so guesses elsewhere never lock the owner out
+  (docs/api/access.md, "Sign-in rate limits"). Only expired entries are dropped; when the table
+  is full of running windows, new keys are refused until the oldest window ends.
 - **Every query on an organization table filters by `ctx.org_id`.** Ids in the path or body
   (`datasourceId`, folder or dashboard ids) are resolved within the organization first; an id of
   another organization is `not_found`.

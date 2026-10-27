@@ -108,12 +108,15 @@ pub struct SecurityConfig {
     pub hsts_max_age_secs: u64,
     /// Reverse proxies whose `X-Forwarded-*` headers are trusted. Everyone else's are ignored.
     pub trusted_proxies: Vec<IpNet>,
-    /// Failed sign-ins per email and per client address before further attempts are refused.
+    /// Sign-in attempts per client address, and per account at one address, before further
+    /// attempts are refused; an account from all addresses together has five times as many
+    /// (`app::ACCOUNT_FAILURES_FACTOR`).
     pub login_max_failures: u32,
     /// The window in which failures are counted, in seconds.
     pub login_window_secs: u64,
     /// Wrong setup codes from all client addresses together in `setup_window_secs`, on top of
-    /// the per-address limit (`login_*`): many addresses cannot guess the code in parallel.
+    /// the per-address limit (`login_*`). Used up, each address gets only a few more tries, so
+    /// many addresses cannot guess the code in parallel; the right code still opens setup.
     pub setup_max_failures: u32,
     /// The window of `setup_max_failures`, in seconds.
     pub setup_window_secs: u64,

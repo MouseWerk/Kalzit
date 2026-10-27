@@ -1142,21 +1142,28 @@ async fn ended_sessions_are_not_listed() {
 }
 
 #[tokio::test]
-async fn failed_sign_ins_and_password_checks_share_the_email_budget() {
-    let t = test_app(None).await;
+async fn failed_sign_ins_and_password_checks_share_the_account_budget() {
+    let mut t = test_app(None).await;
     let (owner, _) = t.setup().await;
+    let own_app = t.app.clone();
     let limit = t.state.config.security.login_max_failures;
-    for _ in 0..limit {
-        let r = t
-            .send(
-                Method::POST,
-                "/api/auth/login",
-                Some(json!({ "email": "joerg@example.de", "password": "falsch falsch" })),
-                None,
-            )
-            .await;
-        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    // Wrong passwords from many addresses use up the account's budget.
+    for i in 0..kalzit::app::ACCOUNT_FAILURES_FACTOR {
+        let peer: SocketAddr = format!("192.0.2.{}:1", i + 1).parse().unwrap();
+        t.app = router(t.state.clone()).layer(MockConnectInfo(peer));
+        for _ in 0..limit {
+            let r = t
+                .send(
+                    Method::POST,
+                    "/api/auth/login",
+                    Some(json!({ "email": "joerg@example.de", "password": "falsch falsch" })),
+                    None,
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        }
     }
+    t.app = own_app;
     let r =
         t.post("/api/me/password", json!({ "current": PASSWORD, "new": "Ein neues langes Passwort" }), &owner).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);

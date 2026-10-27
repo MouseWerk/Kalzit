@@ -126,6 +126,17 @@ impl TestApp {
     async fn login(&self, email: &str, password: &str) -> Reply {
         self.post("/api/auth/login", json!({ "email": email, "password": password })).await
     }
+
+    /// The same server, asked from the client `address`.
+    fn from(&self, address: &str) -> TestApp {
+        let peer: SocketAddr = address.parse().unwrap();
+        TestApp {
+            app: router(self.state.clone()).layer(MockConnectInfo(peer)),
+            clock: self.clock.clone(),
+            state: self.state.clone(),
+            dir: self.dir.clone(),
+        }
+    }
 }
 
 /// Setup claims the one `setup_lock` row first: when another server on the same database already
@@ -749,41 +760,78 @@ async fn a_rate_limited_sign_in_names_the_wait() {
     t.finish().await;
 }
 
-/// The wait a sign-in names is the client address's only: an account whose budget is used up,
-/// asked for from a fresh address, answers the whole window, so the wait tells nothing about the
-/// account.
+/// Wrong passwords from elsewhere never lock the owner out: an attacker who used up the sign-ins
+/// of their own addresses, and the account's failures from all addresses together, leaves a
+/// clean address free to sign in with the right password.
 #[tokio::test]
-async fn a_rate_limited_sign_in_names_only_the_address_wait() {
+async fn failed_sign_ins_elsewhere_do_not_lock_the_account() {
     let t = test_app("127.0.0.1:50000", |c| {
         c.security.login_max_failures = 3;
         c.security.login_window_secs = 600;
     })
     .await;
     t.setup().await;
-    for address in ["192.0.2.1:1", "192.0.2.2:1", "192.0.2.3:1"] {
-        let peer: SocketAddr = address.parse().unwrap();
-        let client = TestApp {
-            app: router(t.state.clone()).layer(MockConnectInfo(peer)),
-            clock: t.clock.clone(),
-            state: t.state.clone(),
-            dir: t.dir.clone(),
-        };
-        assert_eq!(client.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
-        t.clock.advance_ms(100_000);
+    // Three wrong passwords from each of five addresses: the account's 15 are used up too.
+    for i in 1..=5 {
+        let attacker = t.from(&format!("192.0.2.{i}:1"));
+        for _ in 0..3 {
+            assert_eq!(
+                attacker.login("joerg@example.de", "falsch falsch falsch").await.status,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        let r = attacker.login("joerg@example.de", PASSWORD).await;
+        assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
     }
-    // The account's window ends in 400 s; the fresh address has none and hears the full window.
-    let peer: SocketAddr = "192.0.2.9:1".parse().unwrap();
-    let fresh = TestApp {
-        app: router(t.state.clone()).layer(MockConnectInfo(peer)),
-        clock: t.clock.clone(),
-        state: t.state.clone(),
-        dir: t.dir.clone(),
-    };
-    let r = fresh.login("joerg@example.de", PASSWORD).await;
-    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
-    assert_eq!(r.body["error"]["retryAfterSecs"], 600);
-    assert_eq!(r.headers.get(header::RETRY_AFTER).unwrap(), "600");
-    drop(fresh);
+    // The owner, from an address of their own, still gets in; also after mistyping twice.
+    assert_eq!(t.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    let owner = t.from("198.51.100.7:1");
+    for _ in 0..2 {
+        assert_eq!(owner.login("joerg@example.de", "vertippt vertippt").await.status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(owner.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    drop(owner);
+    t.finish().await;
+}
+
+/// Guessing stays slow: once the account's failures from all addresses are used up, an address
+/// gets only a mistyping's worth of tries instead of its full budget, the right password
+/// included, and the wait named is the whole window, which tells nothing about the account.
+#[tokio::test]
+async fn an_account_under_attack_gives_each_address_only_a_few_tries() {
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 5;
+        c.security.login_window_secs = 600;
+    })
+    .await;
+    t.setup().await;
+    for i in 1..=5 {
+        let attacker = t.from(&format!("192.0.2.{i}:1"));
+        for _ in 0..5 {
+            assert_eq!(
+                attacker.login("joerg@example.de", "falsch falsch falsch").await.status,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+    }
+    t.clock.advance_ms(100_000);
+    let next = t.from("192.0.2.6:1");
+    for _ in 0..3 {
+        assert_eq!(next.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+    }
+    // Two tries of its own budget are left, but the account is under attack.
+    for password in ["falsch falsch falsch", PASSWORD] {
+        let r = next.login("joerg@example.de", password).await;
+        assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+        assert_eq!(r.body["error"]["retryAfterSecs"], 600);
+        assert_eq!(r.headers.get(header::RETRY_AFTER).unwrap(), "600");
+    }
+    // Other accounts are not affected.
+    assert_eq!(next.login("niemand@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+    // Once the account's window is over, the address has its own budget again.
+    t.clock.advance_ms(500_000);
+    assert_eq!(next.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    drop(next);
     t.finish().await;
 }
 
@@ -842,52 +890,62 @@ async fn setup_codes_are_rate_limited_per_address() {
     t.finish().await;
 }
 
-/// All addresses together have a budget of their own: a guess spread over many addresses is
-/// capped too, and the cap names its wait.
+/// Wrong codes from all addresses together have a budget of their own. Used up, it slows a guess
+/// spread over many addresses to a few tries per address, and names its wait; but it never keeps
+/// out the person with the right code, who completes setup from a clean address.
 #[tokio::test]
-async fn setup_codes_are_capped_across_all_addresses() {
+async fn setup_codes_are_capped_across_all_addresses_but_the_right_code_gets_in() {
     let t = test_app("127.0.0.1:50000", |c| {
-        c.security.login_max_failures = 2;
+        c.security.login_max_failures = 5;
         c.security.setup_max_failures = 5;
         c.security.setup_window_secs = 3600;
     })
     .await;
-    let from = |address: &str| {
-        let peer: SocketAddr = address.parse().unwrap();
-        TestApp {
-            app: router(t.state.clone()).layer(MockConnectInfo(peer)),
-            clock: t.clock.clone(),
-            state: t.state.clone(),
-            dir: t.dir.clone(),
-        }
-    };
     let guess = json!({ "token": "falsch" });
-    // Two wrong codes each from two addresses, one from a third: five in all.
-    for address in ["192.0.2.1:1", "192.0.2.2:1"] {
-        let client = from(address);
-        for _ in 0..2 {
-            assert_eq!(client.post("/api/setup/check", guess.clone()).await.code(), "invalid_setup_token");
-        }
-        // The address's own budget is used up.
-        assert_eq!(client.post("/api/setup/check", guess.clone()).await.code(), "rate_limited");
+    // Five wrong codes from one address use up its own budget and the shared one.
+    let first = t.from("192.0.2.1:1");
+    for _ in 0..5 {
+        assert_eq!(first.post("/api/setup/check", guess.clone()).await.code(), "invalid_setup_token");
     }
-    let third = from("192.0.2.3:1");
-    assert_eq!(third.post("/api/setup/check", guess.clone()).await.code(), "invalid_setup_token");
-    // Now every address waits for the shared window, even with the right code.
+    assert_eq!(first.post("/api/setup/check", guess.clone()).await.code(), "rate_limited");
+    // Another address gets a mistyping's worth of tries, not its whole budget of five.
     t.clock.advance_ms(600_000);
-    for client in [from("192.0.2.4:1"), from("192.0.2.3:1")] {
-        let r = client.post("/api/setup/check", json!({ "token": SETUP_CODE })).await;
+    let second = t.from("192.0.2.2:1");
+    for _ in 0..3 {
+        assert_eq!(second.post("/api/setup/check", guess.clone()).await.code(), "invalid_setup_token");
+    }
+    for token in ["falsch", SETUP_CODE] {
+        let r = second.post("/api/setup/check", json!({ "token": token })).await;
         assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
         assert_eq!(r.headers.get(header::RETRY_AFTER).unwrap(), "3000");
         assert_eq!(r.body["error"]["retryAfterSecs"], 3000);
     }
-    // A refused attempt cost the address nothing: once the shared window is over, it may try.
-    t.clock.advance_ms(3_000_000);
-    assert_eq!(
-        from("192.0.2.4:1").post("/api/setup/check", json!({ "token": SETUP_CODE })).await.status,
-        StatusCode::OK
-    );
-    drop(third);
+    // The person with the code, from a clean address, checks it and completes setup.
+    let owner = t.from("198.51.100.7:1");
+    assert_eq!(owner.post("/api/setup/check", json!({ "token": SETUP_CODE })).await.status, StatusCode::OK);
+    let done = owner.setup().await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
+    drop((first, second, owner));
+    t.finish().await;
+}
+
+/// Wrong codes cannot use up the budget of the code itself: an attacker flooding the setup with
+/// wrong codes from many addresses never keeps the server's operator out.
+#[tokio::test]
+async fn a_flood_of_wrong_setup_codes_does_not_block_setup() {
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 3;
+        c.security.setup_max_failures = 10;
+    })
+    .await;
+    for i in 0..20 {
+        let attacker = t.from(&format!("[2001:db8:{i:x}::1]:1"));
+        for _ in 0..4 {
+            attacker.post("/api/setup/check", json!({ "token": "falsch" })).await;
+        }
+    }
+    let done = t.setup().await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.body);
     t.finish().await;
 }
 

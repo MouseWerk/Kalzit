@@ -25,6 +25,8 @@ const MAX_DEPTH: usize = 64;
 const MAX_CHUNK: usize = 0xFFFF;
 /// Entries reserved ahead for a list or map, whatever count the server claims.
 const PREALLOCATE: usize = 1024;
+/// How long `BoltConn::interrupt` waits for the server to confirm the RESET before it closes.
+const INTERRUPT_WAIT: Duration = Duration::from_secs(2);
 
 /// The entries to reserve for a claimed count: never more than `PREALLOCATE`, so a hostile count
 /// cannot make Kalzit ask for gigabytes before the entries arrive.
@@ -697,6 +699,25 @@ impl BoltConn {
         self.request(0x13, Vec::new()).await.map(|_| ())
     }
 
+    /// For a connection given up in the middle of a query (a timeout, a cancelled request):
+    /// asks the server to stop it with RESET, which ends the running query and rolls back its
+    /// transaction, waits a short time for the answer, and closes the connection. Closing alone
+    /// is not enough: a query that has sent nothing yet goes on until its transaction timeout.
+    pub async fn interrupt(mut self) {
+        let stop = async {
+            self.send(0x0F, Vec::new()).await?;
+            // Records and answers to the messages before RESET come first; RESET answers SUCCESS.
+            loop {
+                match self.recv(16 * 1024 * 1024).await {
+                    Ok((Response::Success(_), _)) => return Ok::<_, BoltError>(()),
+                    Ok(_) | Err(BoltError::Failure { .. }) => continue,
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+        let _ = tokio::time::timeout(INTERRUPT_WAIT, stop).await;
+    }
+
     /// Back to a clean, logged-in state after a failure. A failed reset leaves the connection
     /// broken.
     pub async fn reset(&mut self) -> Result<(), BoltError> {
@@ -793,23 +814,42 @@ mod tests {
     /// A Bolt server in a task: answers the handshake with `version`, then each request with the
     /// next canned messages.
     async fn fake_server(version: [u8; 4], responses: Vec<Vec<Bv>>) -> std::net::SocketAddr {
+        fake_server_seeing(version, responses, false).await.0
+    }
+
+    /// `fake_server`, which also hands over every request message it reads. With `linger` it
+    /// goes on reading (without answering) once the canned answers are used up, until the client
+    /// closes the connection; without, it closes the connection then.
+    async fn fake_server_seeing(
+        version: [u8; 4],
+        responses: Vec<Vec<Bv>>,
+        linger: bool,
+    ) -> (std::net::SocketAddr, tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let (seen, requests) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
             let (mut s, _) = listener.accept().await.unwrap();
             let mut hs = [0u8; 20];
             s.read_exact(&mut hs).await.unwrap();
             s.write_all(&version).await.unwrap();
-            for r in responses {
+            let mut responses = responses.into_iter().peekable();
+            while linger || responses.peek().is_some() {
                 // Read one request message.
+                let mut message = Vec::new();
                 loop {
-                    let n = s.read_u16().await.unwrap() as usize;
+                    let Ok(n) = s.read_u16().await else { return };
                     if n == 0 {
                         break;
                     }
-                    let mut buf = vec![0; n];
-                    s.read_exact(&mut buf).await.unwrap();
+                    let mut buf = vec![0; n as usize];
+                    if s.read_exact(&mut buf).await.is_err() {
+                        return;
+                    }
+                    message.extend_from_slice(&buf);
                 }
+                let _ = seen.send(message);
+                let Some(r) = responses.next() else { continue };
                 for message in r {
                     let mut bytes = Vec::new();
                     encode(&message, &mut bytes);
@@ -819,7 +859,7 @@ mod tests {
                 }
             }
         });
-        addr
+        (addr, requests)
     }
 
     fn success(entries: Vec<(&str, Bv)>) -> Bv {
@@ -919,6 +959,30 @@ mod tests {
             tls: None,
             timeout: Duration::from_secs(5),
         }
+    }
+
+    /// A connection given up in the middle of a query asks the server to stop it (RESET) before
+    /// it closes, and does not wait long for an answer.
+    #[tokio::test]
+    async fn an_interrupted_connection_sends_reset_before_closing() {
+        let (addr, mut requests) = fake_server_seeing(
+            [0, 0, 4, 4],
+            vec![vec![success(vec![])], vec![success(vec![("fields", Bv::List(vec![]))])]],
+            true,
+        )
+        .await;
+        let mut c = connect(&policy(), ConnectOptions { port: addr.port(), ..opts_copy() }).await.unwrap();
+        c.run("CALL { MATCH (a)-[*]-(b) RETURN count(*) AS n } RETURN n", vec![]).await.unwrap();
+        let started = std::time::Instant::now();
+        c.interrupt().await;
+        assert!(started.elapsed() < Duration::from_secs(4), "the interrupt waits a bounded time");
+        let mut seen = Vec::new();
+        while let Some(message) = requests.recv().await {
+            seen.push(message);
+        }
+        // HELLO, RUN, then RESET (a structure without fields, tag 0x0F); then the connection closed.
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(seen[2], [0xB0, 0x0F]);
     }
 
     #[tokio::test]

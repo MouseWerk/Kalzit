@@ -75,21 +75,22 @@ async fn change_password(
     if req.current.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(wrong_current());
     }
-    // Its own budget, and the sign-in budget of the account's email, so the two together allow
-    // no more guesses than sign-ins alone.
+    // Its own budget, and the account's failures from sign-ins and password checks together, so
+    // a session cannot add guesses to those of the sign-in page.
     let limit_key = format!("password:{}", user.id);
-    let email_key = format!("email:{}", user.email);
-    state
-        .login_limiter
-        .try_acquire(&[&limit_key, &email_key], now)
-        .map_err(|wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait))?;
+    let account_key = crate::auth::ratelimit::account_key(&user.email);
+    let refused = |wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait);
+    if let Some(wait) = state.account_limiter.wait(&account_key, now) {
+        return Err(refused(wait));
+    }
+    state.login_limiter.try_acquire(&[&limit_key], now).map_err(refused)?;
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
     if !password::verify(req.current, stored.clone()).await {
+        state.account_limiter.record(&account_key, now);
         return Err(wrong_current());
     }
     state.login_limiter.reset(&limit_key);
-    state.login_limiter.reset(&email_key);
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
     let hash = password::hash(req.new).await.map_err(|e| ApiError::internal("hashing password", e))?;
 

@@ -237,36 +237,41 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
     })
 }
 
-/// Counts one attempt for the client address (the sign-in limits, `security.login_*`) and one
-/// for all addresses together (`security.setup_*`); the key is for the refund of a correct code.
-/// The shared budget makes a guess spread over many addresses as slow as one from a single
-/// address, which keeps a fixed code from `KALZIT_SETUP_TOKEN` (16 characters at least) out of
+/// Counts one attempt for the client address (the sign-in limits, `security.login_*`); the key
+/// is for the refund of a correct code. Only wrong codes use up budgets, so no one can use up
+/// the budget of the person who has the code from elsewhere.
+///
+/// Wrong codes from all addresses together have a budget too (`security.setup_*`). Used up, it
+/// refuses every address that is not clean (`ratelimit::CLEAN_ADDRESS_FAILURES`) before its code
+/// is compared, while a clean address is still checked and gets in with the right code. A guess
+/// spread over many addresses so gets a few tries per address instead of the full per-address
+/// budget, which keeps a fixed code from `KALZIT_SETUP_TOKEN` (16 characters at least) out of
 /// reach as well.
 fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<String> {
     let key = crate::auth::ratelimit::address_key("setup", info.client_ip);
     let now = state.clock.now_ms();
     let refused = |wait| ApiError::rate_limited("too many setup code attempts, wait", wait);
-    state.setup_limiter.try_acquire(&[&key], now).map_err(refused)?;
-    if let Err(wait) = state.setup_all_limiter.try_acquire(&[ALL_ADDRESSES_KEY], now) {
+    let earlier = state.setup_limiter.try_acquire_counting(&[&key], now).map_err(refused)?;
+    if earlier[0] > crate::auth::ratelimit::CLEAN_ADDRESS_FAILURES
+        && let Some(wait) = state.setup_all_limiter.wait(ALL_ADDRESSES_KEY, now)
+    {
         state.setup_limiter.refund(&key);
         return Err(refused(wait));
     }
     Ok(key)
 }
 
-/// Gives both attempts back: the code was right, or there was nothing to guess.
-fn refund(state: &AppState, key: &str) {
-    state.setup_limiter.refund(key);
-    state.setup_all_limiter.refund(ALL_ADDRESSES_KEY);
-}
-
 /// Checks `token` against the open gate: `Ok` for the current code (the attempt is refunded),
-/// `setup_token_expired` for the code of the previous start, `invalid_setup_token` otherwise.
-/// The code is never logged or repeated.
+/// `setup_token_expired` for the code of the previous start, `invalid_setup_token` otherwise;
+/// both of these count for all addresses together. The code is never logged or repeated.
 fn verify(state: &AppState, open: &OpenGate, token: &str, limit_key: &str) -> ApiResult<()> {
-    match open.matches(token) {
+    let found = open.matches(token);
+    if !matches!(found, CodeMatch::Current) {
+        state.setup_all_limiter.record(ALL_ADDRESSES_KEY, state.clock.now_ms());
+    }
+    match found {
         CodeMatch::Current => {
-            refund(state, limit_key);
+            state.setup_limiter.refund(limit_key);
             Ok(())
         }
         CodeMatch::Previous => Err(ApiError::new(
@@ -296,7 +301,7 @@ pub async fn check(
     let gate = state.setup.state.lock().await;
     let Some(open) = gate.as_ref() else {
         // Not a guess: once setup is done, no code opens anything.
-        refund(&state, &limit_key);
+        state.setup_limiter.refund(&limit_key);
         return Err(setup_done());
     };
     verify(&state, open, &req.token, &limit_key)?;

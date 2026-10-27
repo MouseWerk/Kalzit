@@ -65,14 +65,23 @@ pub async fn login(
     if email.chars().count() > MAX_EMAIL_CHARS || req.password.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(invalid_credentials());
     }
-    let email_key = format!("email:{email}");
-    let ip_key = crate::auth::ratelimit::address_key("login", info.client_ip);
+    use crate::auth::ratelimit::{CLEAN_ADDRESS_FAILURES, account_key, address_key};
+    let ip_key = address_key("login", info.client_ip);
+    // The account's budget at this address: guesses from elsewhere never use it up, so they
+    // cannot lock the owner out of the account.
+    let pair_key = format!("account:{email}|{ip_key}");
+    let account_key = account_key(&email);
     let limiter = &state.login_limiter;
-    // The wait named is the client address's only: the account's budget is nobody's business,
-    // and a blocked account with a free address answers the whole window.
-    limiter
-        .try_acquire(&[&email_key, &ip_key], now)
-        .map_err(|_| rate_limited(limiter.wait(&ip_key, now).unwrap_or_else(|| limiter.window())))?;
+    let earlier = limiter.try_acquire_counting(&[&ip_key, &pair_key], now).map_err(rate_limited)?;
+    // The account's failures from all addresses together: used up, they refuse every address
+    // that failed more than a mistyping's worth, while a clean address still gets in. The wait
+    // named is the whole window, so it tells nothing about the account.
+    let address_failures = earlier.iter().copied().max().unwrap_or(0);
+    if address_failures > CLEAN_ADDRESS_FAILURES && state.account_limiter.wait(&account_key, now).is_some() {
+        limiter.refund(&ip_key);
+        limiter.refund(&pair_key);
+        return Err(rate_limited(limiter.window()));
+    }
 
     let row: Option<LoginRow> =
         sqlx::query_as("SELECT id, email, name, password_hash, is_server_admin, disabled FROM users WHERE email = $1")
@@ -97,6 +106,7 @@ pub async fn login(
     let known_id = row.as_ref().map(|r| r.id.clone());
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
+        state.account_limiter.record(&account_key, now);
         // The id of an existing account is recorded, never the email that was typed.
         // A failed sign-in answers the same whatever happens to its audit entry: a busy database
         // must not turn it into "try again", which would invite repeated password guesses past
@@ -110,7 +120,7 @@ pub async fn login(
         }
         return Err(invalid_credentials());
     };
-    limiter.reset(&email_key);
+    limiter.reset(&pair_key);
     limiter.refund(&ip_key);
 
     let mut tx = crate::db::begin(&state.db).await?;
