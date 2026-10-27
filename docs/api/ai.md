@@ -52,10 +52,12 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
   "enabled": true,
   "usable": true,
   "noticeAcknowledged": false,
-  "provider": { "id": "0192f0c1-...", "kind": "openai", "model": "example-model",
+  "provider": { "id": "0192f0c1-...", "name": "Lokal", "kind": "openai", "model": "example-model",
                 "host": "llm.intern", "scope": "server" },
   "usage": { "requests": 3, "tokens": 5120, "requestsLimit": 200, "tokensLimit": 200000,
-             "orgTokensMonth": 1250000, "orgTokensMonthLimit": 20000000 }
+             "orgTokensMonth": 1250000, "orgTokensMonthLimit": 20000000 },
+  "noticeText": "Fragen zum Datenschutz an datenschutz@example.org.",
+  "maxRowsToModel": 200
 }
 ```
 
@@ -63,8 +65,10 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
 goes (the host of the base URL, never the whole URL); `provider.scope` is `org` when the
 organization's own provider is in effect. `usage` holds the caller's calls and tokens today (UTC)
 in this organization and the organization's tokens this calendar month; a limit of 0 means none.
-The UI asks this once per organization and renders AI only when `enabled` and `usable` are both
-true (`ui/src/features/ai`, `AiGate`).
+`noticeText` is the administrators' own paragraph for the first-use notice (`ai.notice_text`, left
+out while empty) and `maxRowsToModel` the row limit the notice names. The UI asks this once per
+organization and renders AI only when `enabled` and `usable` are both true (`ui/src/features/ai`,
+`AiGate`).
 
 ## First-use notice
 
@@ -190,6 +194,7 @@ Server settings (`/admin/settings`):
 | `ai.max_concurrent_per_user` | 2 | calls running at once per person |
 | `ai.request_timeout_secs` | 120 | one call, including retries and the streamed answer |
 | `ai.chat_retention_days` | 30 | days chats are kept after their last message; 0 keeps none; applies once chats are stored (the chat package) |
+| `ai.notice_text` | empty | a paragraph of the administrators under the first-use notice, at most 2000 characters |
 
 Organization settings (`/orgs/{orgId}/settings`, `settings:write`): `ai.org_enabled` (default
 `true`) and, starting as `inherit`, `ai.user_requests_per_day`, `ai.user_tokens_per_day`,
@@ -249,6 +254,72 @@ may edit it: `datasources:write`, org-wide or by a grant on the source):
 `GET /orgs/{orgId}/ai/datasources` (every member): the sources open to AI among those the caller
 may read, as `{"items": [{"datasourceId": "..."}]}`.
 
+## Explain, draft and summarize
+
+The plain AI calls. Each one runs through the AI core (switch, provider in effect, notice, limits,
+audit as `ai.called` with `purpose` and `promptVersion`) with the caller's rights, and only reads.
+
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| `POST` | `/orgs/{orgId}/ai/explain` | `datasources:query` on the source | `explain_query` |
+| `POST` | `/orgs/{orgId}/ai/draft` | `datasources:query` on the source | `draft_query` |
+| `POST` | `/orgs/{orgId}/ai/summarize` | `datasources:query` on the source | `summarize_result` |
+| `POST` | `/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/ai/summarize` | `dashboards:read` on the dashboard | `summarize_result` |
+
+```json
+{ "datasourceId": "...", "query": { "sql": "SELECT ..." }, "language": "de" }
+{ "datasourceId": "...", "request": "Neukunden je Region", "query": { "sql": "..." }, "language": "de" }
+{ "query": { "refId": "A", "datasourceId": "...", "query": { "sql": "..." } },
+  "timeRange": { "from": 1800000000000, "to": 1800003600000 }, "variables": {}, "language": "en" }
+{ "timeRange": { "from": 1800000000000, "to": 1800003600000 }, "variables": {}, "language": "de" }
+```
+
+- **Explain** sends the query text and, only for a source open to AI, its schema (names and
+  types; `ai::redact`). For a closed source it sends the query text alone.
+- **Draft** sends the request (1 to 4000 characters), the query in the editor as context and,
+  only for an open source, the schema. The answer's first code block becomes `draft` in the
+  source's query form (`{sql}`, `{expr}`, `{cypher}`, `{gsql}`, `{lucene}`, MongoDB
+  `{collection, pipeline}`; `null` when it does not fit) and `draftText`. A draft is never run: the
+  UI offers it, and when the person runs it, it passes the same read-only checks as any query.
+- **Summarize** runs the query again on the server as the caller (Explore: a free query, which
+  needs `datasources:query`; a panel: the panel's stored queries with the dashboard's variables,
+  as `.../panels/{panelId}/query` runs them, so viewers can summarize panels they can read). Every
+  source involved must be open to AI, else `409 ai_unavailable` (`ai.datasource_not_readable`)
+  before anything runs. The results go through `ai::redact` (excluded values replaced, cut to
+  `ai.max_rows_to_model`), with the panel's title, the queries and the time range.
+- The switch, the provider, the notice and the daily and monthly limits are checked before a
+  query runs or a schema is read; a refusal is an ordinary JSON error (`409`, `429`, `403`).
+- `language` (`de` or `en`, default `en`) is the language of the answer.
+
+The answer is a stream of server-sent events (`text/event-stream`), so it shows as it is written.
+The existing live channel (a WebSocket for panel data) is not used: these calls are one request
+and one answer, which a `POST` with an event stream fits, and closing the request cancels the
+call (it is then counted with what arrived and audited as `cancelled`).
+
+```
+event: meta
+data: {"provider":{"id":"...","name":"Lokal","kind":"openai","model":"example-model","host":"llm.intern","scope":"server"},"schema":true}
+
+event: text
+data: {"text":"Die Abfrage summiert "}
+
+event: done
+data: {"usage":{"inputTokens":812,"outputTokens":95},"draft":{"sql":"SELECT ..."},"draftText":"SELECT ..."}
+```
+
+- `meta` comes first: the provider, and what was sent: `schema` (explain, draft) or `results`
+  (summarize: per query `refId`, `rows` sent, `truncated`, `excludedValues`) and `title`.
+- `text` carries the next part of the answer.
+- `done` ends a complete answer, with `usage` when the provider reported it and, for a draft,
+  `draft` and `draftText`.
+- `error` (`{"error": {...}}` as in the error envelope) ends a failed answer, such as
+  `ai_provider_error` with `ai.provider_timeout`.
+
+Prompts (`server/src/ai/prompts.rs`) are versioned per feature. Everything from a source or typed
+by a person goes into the user message inside `<kalzit:...>` blocks that cannot be closed from
+inside; the system prompt says the blocks are data whose instructions are never followed. The
+answer is shown as text; nothing in it is run.
+
 ## Errors
 
 `409 ai_unavailable`: AI is off, no provider is in effect, the notice is not acknowledged, or the
@@ -274,7 +345,10 @@ sources' own.
 | `ai.no_provider` | | no provider is in effect for the organization |
 | `ai.notice_required` | | the caller has not acknowledged the notice for the provider in effect |
 | `ai.notice_provider_changed` | | the acknowledged provider is not the one in effect (`409 conflict`) |
-| `ai.datasource_not_readable` | | a result of a source closed to AI was to be sent |
+| `ai.datasource_not_readable` | `name`, `datasourceId` | a result of a source closed to AI was to be sent (the params name the source where the call knows it) |
+| `ai.query_empty` | | there is no query to explain or summarize |
+| `ai.query_too_large` | `bytes` | the query is larger than `bytes` as JSON |
+| `ai.request_invalid` | `max` | the request of a draft is empty, longer than `max` characters or has control characters |
 | `ai.key_unreadable` | | the stored key cannot be decrypted (another secrets key); enter it again |
 | `ai.limit_user_requests` | `max` | the caller used their calls for today |
 | `ai.limit_user_tokens` | `max` | the caller used their tokens for today |

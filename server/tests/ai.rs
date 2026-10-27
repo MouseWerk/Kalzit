@@ -199,7 +199,13 @@ impl TestApp {
     }
 
     fn caller(&self, org: &str, who: &Session) -> Caller {
-        Caller { org_id: org.into(), user_id: who.user_id.clone(), address: None, purpose: "test_suite" }
+        Caller {
+            org_id: org.into(),
+            user_id: who.user_id.clone(),
+            address: None,
+            purpose: "test_suite",
+            prompt_version: None,
+        }
     }
 }
 

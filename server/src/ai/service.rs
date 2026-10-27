@@ -126,6 +126,8 @@ pub struct Caller {
     pub user_id: String,
     pub address: Option<String>,
     pub purpose: &'static str,
+    /// The version of the feature's system prompt (`ai::prompts`), for the audit entry.
+    pub prompt_version: Option<u32>,
 }
 
 /// `ai.enabled` of the server.
@@ -455,20 +457,42 @@ struct Admitted {
     reserved: i64,
 }
 
-/// Checks everything before a call and takes its place: the switches, the provider, the notice,
-/// the limits and the concurrency. The check and the reservation are one step (`admission`).
-async fn admit(state: &AppState, caller: &Caller, request: &ChatRequest) -> ApiResult<Admitted> {
+/// The switches, the provider in effect and the caller's notice: what a call needs before its
+/// limits are looked at.
+async fn ready_row(state: &AppState, caller: &Caller) -> ApiResult<ProviderRow> {
     if !enabled(state).await? {
         return Err(unavailable("ai.disabled", "AI is turned off on this server"));
     }
     if !enabled_in_org(state, &caller.org_id).await? {
         return Err(unavailable("ai.org_disabled", "AI is turned off in this organization"));
     }
-    let (row, provider) = provider_for(state, &caller.org_id).await?;
+    let row = in_effect(state, &caller.org_id)
+        .await?
+        .ok_or_else(|| unavailable("ai.no_provider", "no AI provider is configured"))?;
     // The person saw what leaves the server, and to which provider, before the first call.
     if !store::notice_acknowledged(&state.db, &caller.user_id, &row.id).await? {
         return Err(unavailable("ai.notice_required", "the AI notice for this provider was not acknowledged yet"));
     }
+    Ok(row)
+}
+
+/// Whether a call for `caller` would be admitted now, before a feature does work for it (such as
+/// running a query to summarize): the switches, the provider, the notice and the daily and monthly
+/// limits. Nothing is reserved; `stream` checks everything again when the call starts.
+pub async fn precheck(state: &AppState, caller: &Caller) -> ApiResult<ProviderRow> {
+    let row = ready_row(state, caller).await?;
+    let limits = limits(state, &caller.org_id).await?;
+    let (user, _) = today(state, &caller.org_id, &caller.user_id).await?;
+    let (month_used, month_reserved) = month_usage(state, &caller.org_id).await?;
+    check_limits(&limits, user, month_used + month_reserved, state.clock.now_ms())?;
+    Ok(row)
+}
+
+/// Checks everything before a call and takes its place: the switches, the provider, the notice,
+/// the limits and the concurrency. The check and the reservation are one step (`admission`).
+async fn admit(state: &AppState, caller: &Caller, request: &ChatRequest) -> ApiResult<Admitted> {
+    let row = ready_row(state, caller).await?;
+    let provider = build(state, &row).await?;
     let limits = limits(state, &caller.org_id).await?;
     let at_once = AtOnce {
         total: setting_u64(state, "ai.max_concurrent").await? as usize,
@@ -546,6 +570,9 @@ async fn finish(state: &AppState, caller: &Caller, admitted: &Admitted, used: Us
     });
     if used.estimated {
         summary["estimated"] = json!(true);
+    }
+    if let Some(version) = caller.prompt_version {
+        summary["promptVersion"] = json!(version);
     }
     if let Some(reason) = reason {
         summary["reason"] = json!(reason);
