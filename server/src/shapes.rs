@@ -216,6 +216,12 @@ impl OrderedJson {
         serde_json::value::to_raw_value(value).map(Self)
     }
 
+    /// JSON text as it is, in its own key order (a document from a plugin); fails when it is not
+    /// valid JSON.
+    pub fn from_text(text: String) -> Result<Self, serde_json::Error> {
+        serde_json::value::RawValue::from_string(text).map(Self)
+    }
+
     /// The JSON text.
     pub fn get(&self) -> &str {
         self.0.get()

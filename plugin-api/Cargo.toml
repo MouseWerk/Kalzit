@@ -1,0 +1,25 @@
+[package]
+name = "kalzit-plugin-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Kalzit plugin contract: the data source protocol (gRPC), the plugin manifest and its signing context"
+
+# Shared by the server and plugin SDKs, so it stays small: no server types, no transport. The
+# protocol is compiled from proto/ at build time with protox (a protobuf compiler in Rust), so
+# no protoc is needed on Windows or Linux.
+[dependencies]
+prost = "0.14.4"
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
+tonic = { version = "0.14.8", default-features = false, features = ["codegen"] }
+tonic-prost = "0.14.8"
+
+[build-dependencies]
+protox = "0.10.0"
+tonic-prost-build = { version = "0.14.8", default-features = false }
+
+[dev-dependencies]
+kalzit-release = { path = "../release" }

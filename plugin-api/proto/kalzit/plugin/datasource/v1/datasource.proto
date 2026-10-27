@@ -1,0 +1,397 @@
+// The data source plugin protocol, version 1 (docs/ARCHITECTURE.md, "Plugins").
+//
+// Kalzit (the host) is the gRPC client; the plugin process serves this service on the local
+// connection the host gave it (a named pipe on Windows, a Unix socket on Linux). Every call
+// carries what it needs: the plugin keeps no state the host relies on, but may keep pools per
+// data source and `Connection.revision` until `Release` or the end of the process.
+//
+// Rules every plugin keeps:
+// - A query answers in its native shape (frame, documents or graph). The plugin never converts
+//   one shape into another on its own.
+// - Data sources are read-only: a query that would write is refused with `ERROR_KIND_REJECTED`.
+// - Cancellation is the end of the call: when the host cancels a call (the viewer went away, the
+//   deadline passed), the plugin stops the work in the database too.
+// - Deadlines arrive as the gRPC deadline (`grpc-timeout`) and again as `deadline_unix_ms`, so a
+//   plugin can hand them to its driver.
+// - Network access goes only to the targets the manifest declares, through Kalzit's connector.
+//
+// Values without a fixed type in protobuf (frame values, documents, graph properties, settings,
+// variables, queries) travel as UTF-8 JSON text in the forms docs/api/datasources.md describes,
+// including the `{"$type": ..., "value": ...}` wrappers of document values. Additions within
+// version 1 only add fields and enum values; anything else is a new package version.
+syntax = "proto3";
+
+package kalzit.plugin.datasource.v1;
+
+service DataSource {
+  // What the plugin is: protocol version, kind, shapes and capabilities. The first call after
+  // start; the host refuses a plugin whose answer contradicts its manifest.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+  // Checks settings as the form sent them (no network). Field rules of the manifest's settings
+  // form are checked by the host before.
+  rpc CheckSettings(CheckSettingsRequest) returns (CheckSettingsResponse);
+  // "Test connection".
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // What the query editor offers for completion.
+  rpc Schema(SchemaRequest) returns (SchemaResponse);
+  // One query; the result streams in parts (`QueryChunk`).
+  rpc Query(QueryRequest) returns (stream QueryChunk);
+  // Capability CHECK_ON_SAVE: checks on the source itself when settings or secrets are saved.
+  rpc CheckOnSave(CheckOnSaveRequest) returns (CheckOnSaveResponse);
+  // Capability WATCH: changes that may alter a query's result, for live updates.
+  rpc Watch(WatchRequest) returns (stream WatchEvent);
+  // The host forgets a data source (settings changed, source deleted): close its pools.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+}
+
+// Optional parts of the contract. A plugin lists what it implements in `Describe`; the host
+// never calls an RPC whose capability is missing. Field distributions and graph step pushdown
+// stay with the built-in kinds for now: both depend on Kalzit's step language, which is not yet
+// a stable contract, and may come in a later version.
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_CHECK_ON_SAVE = 1;
+  CAPABILITY_WATCH = 2;
+}
+
+enum Shape {
+  SHAPE_UNSPECIFIED = 0;
+  SHAPE_FRAME = 1;
+  SHAPE_DOCUMENTS = 2;
+  SHAPE_GRAPH = 3;
+}
+
+message DescribeRequest {
+  // The protocol version the host speaks (1).
+  uint32 protocol_version = 1;
+  // Kalzit's own version, such as "0.4.0".
+  string host_version = 2;
+}
+
+message DescribeResponse {
+  uint32 protocol_version = 1;
+  // The kind id, equal to the manifest's `id`.
+  string kind = 2;
+  repeated Shape shapes = 3;
+  repeated Capability capabilities = 4;
+}
+
+// One data source as the host stored it.
+message Connection {
+  string datasource_id = 1;
+  // Changes whenever settings or secrets change; pools are kept per id and revision.
+  uint64 revision = 2;
+  // The kind's own settings as a JSON object (the common limit fields removed).
+  string settings_json = 3;
+  // Secret fields by name. Never logged, never echoed in errors.
+  map<string, string> secrets = 4;
+}
+
+// The limits a query keeps. Exceeding the rows or bytes cuts the result with a notice;
+// exceeding the time ends the call with `ERROR_KIND_TIMEOUT`.
+message Limits {
+  uint64 timeout_ms = 1;
+  uint64 max_rows = 2;
+  uint64 max_response_bytes = 3;
+}
+
+// A reason code the UI translates, its parameters and an English text.
+message Detail {
+  string reason = 1;
+  map<string, string> params = 2;
+  string message = 3;
+}
+
+enum ErrorKind {
+  ERROR_KIND_UNSPECIFIED = 0;
+  // The query is not allowed (query_rejected).
+  ERROR_KIND_REJECTED = 1;
+  // The target is refused (datasource_target_blocked).
+  ERROR_KIND_BLOCKED = 2;
+  // The query ran longer than allowed (query_timeout).
+  ERROR_KIND_TIMEOUT = 3;
+  // The source failed: connection, login, the database's own error (datasource_error).
+  ERROR_KIND_FAILED = 4;
+}
+
+message Error {
+  ErrorKind kind = 1;
+  Detail detail = 2;
+}
+
+message CheckSettingsRequest {
+  string settings_json = 1;
+}
+
+message CheckSettingsResponse {
+  // Unset when the settings are valid.
+  FieldError error = 1;
+}
+
+message FieldError {
+  // The settings field at fault.
+  string field = 1;
+  Detail detail = 2;
+}
+
+message HealthRequest {
+  Connection connection = 1;
+}
+
+message HealthResponse {
+  bool ok = 1;
+  // The error code when it failed (datasource_error, datasource_target_blocked, ...).
+  string code = 2;
+  Detail detail = 3;
+  // What works but needs attention; never makes the test fail.
+  repeated Detail warnings = 4;
+}
+
+message SchemaRequest {
+  Connection connection = 1;
+}
+
+message SchemaResponse {
+  oneof result {
+    // One of the schema forms of docs/api/datasources.md ("tables", "metrics", "indices",
+    // "fields", "collections", "graph"), as JSON.
+    string schema_json = 1;
+    Error error = 2;
+  }
+}
+
+message TimeRange {
+  int64 from_ms = 1;
+  int64 to_ms = 2;
+}
+
+message QueryRequest {
+  Connection connection = 1;
+  string ref_id = 2;
+  // The kind's own query form, as JSON.
+  string query_json = 3;
+  TimeRange range = 4;
+  uint64 interval_ms = 5;
+  optional uint32 max_data_points = 6;
+  // Dashboard variables by name, as a JSON object. Variables become bind parameters, never text
+  // in the query.
+  string variables_json = 7;
+  // Variables that may be used as identifiers; all when `identifier_variables_restricted` is
+  // false.
+  bool identifier_variables_restricted = 8;
+  repeated string identifier_variables = 9;
+  Limits limits = 10;
+  // Continues a document set from its `next_cursor`.
+  optional string cursor = 11;
+  // When the host gives up on the call, in Unix milliseconds.
+  int64 deadline_unix_ms = 12;
+}
+
+// The parts of one result, in this order: `start`, any number of batches of the started shape,
+// then `end` (success) or `error` (failure; the parts before it are dropped). A stream that ends
+// without `end` or `error` is a failed query.
+message QueryChunk {
+  oneof part {
+    ResultStart start = 1;
+    FrameRows frame_rows = 2;
+    DocumentBatch documents = 3;
+    GraphBatch graph = 4;
+    ResultEnd end = 5;
+    Error error = 6;
+  }
+}
+
+message ResultStart {
+  Shape shape = 1;
+  // The fields of a frame, without values; empty for other shapes.
+  repeated FrameField frame_fields = 2;
+}
+
+enum FieldType {
+  FIELD_TYPE_UNSPECIFIED = 0;
+  // Unix milliseconds.
+  FIELD_TYPE_TIME = 1;
+  FIELD_TYPE_NUMBER = 2;
+  // Integers as decimal strings.
+  FIELD_TYPE_INT64 = 3;
+  FIELD_TYPE_STRING = 4;
+  FIELD_TYPE_BOOL = 5;
+  FIELD_TYPE_JSON = 6;
+  // Exact decimals as decimal strings.
+  FIELD_TYPE_DECIMAL = 7;
+  // Calendar days as Unix milliseconds of midnight UTC.
+  FIELD_TYPE_DATE = 8;
+}
+
+// A string map whose presence matters (unset and empty are different).
+message StringMap {
+  map<string, string> entries = 1;
+}
+
+message FrameField {
+  string name = 1;
+  FieldType type = 2;
+  optional string unit = 3;
+  StringMap labels = 4;
+}
+
+// Consecutive rows of a frame: one JSON array per field, in the order of `ResultStart`, all of
+// the same length; `null` where a row has no value.
+message FrameRows {
+  repeated string columns_json = 1;
+}
+
+// Documents as JSON objects, each in the field order the database stored.
+message DocumentBatch {
+  repeated string documents_json = 1;
+}
+
+message Node {
+  string id = 1;
+  repeated string labels = 2;
+  // JSON object.
+  string properties_json = 3;
+}
+
+message Edge {
+  string id = 1;
+  string type = 2;
+  string from = 3;
+  string to = 4;
+  // JSON object.
+  string properties_json = 5;
+}
+
+message GraphPath {
+  repeated string nodes = 1;
+  repeated string edges = 2;
+}
+
+message GraphBatch {
+  repeated Node nodes = 1;
+  repeated Edge edges = 2;
+  repeated GraphPath paths = 3;
+}
+
+enum NoticeSeverity {
+  NOTICE_SEVERITY_UNSPECIFIED = 0;
+  NOTICE_SEVERITY_INFO = 1;
+  NOTICE_SEVERITY_WARNING = 2;
+}
+
+message Notice {
+  NoticeSeverity severity = 1;
+  string code = 2;
+  StringMap params = 3;
+  string text = 4;
+}
+
+message Truncated {
+  uint32 limit = 1;
+  optional string reason = 2;
+}
+
+message FrameMeta {
+  optional string executed_query = 1;
+  bool rows_truncated = 2;
+  repeated Notice notices = 3;
+}
+
+message TypeShare {
+  string name = 1;
+  double share = 2;
+}
+
+message FieldSchema {
+  string path = 1;
+  double coverage = 2;
+  repeated TypeShare types = 3;
+}
+
+message DocumentsEnd {
+  repeated FieldSchema schema = 1;
+  optional string next_cursor = 2;
+  Truncated truncated = 3;
+  repeated Notice notices = 4;
+  optional string executed_query = 5;
+  bool distributable = 6;
+}
+
+message StringList {
+  repeated string values = 1;
+}
+
+message GraphSchema {
+  repeated string labels = 1;
+  repeated string edge_types = 2;
+  map<string, StringList> property_keys = 3;
+}
+
+message Notices {
+  repeated Notice items = 1;
+}
+
+message GraphEnd {
+  GraphSchema schema = 1;
+  Truncated truncated = 2;
+  Notices notices = 3;
+  // The query returned paths (the batches may still hold none).
+  bool has_paths = 4;
+}
+
+message FrameEnd {
+  FrameMeta meta = 1;
+}
+
+message ResultEnd {
+  oneof meta {
+    FrameEnd frame = 1;
+    DocumentsEnd documents = 2;
+    GraphEnd graph = 3;
+  }
+}
+
+message CheckOnSaveRequest {
+  Connection connection = 1;
+}
+
+message CheckOnSaveResponse {
+  // Unset when the source may be saved. A source that cannot be reached is not refused.
+  FieldRefusal refusal = 1;
+}
+
+message FieldRefusal {
+  string field = 1;
+  Error error = 2;
+}
+
+message WatchRequest {
+  QueryRequest query = 1;
+  // Continues an earlier feed of the same query; opaque to the host.
+  optional bytes resume_token = 2;
+}
+
+message WatchEvent {
+  oneof event {
+    // A change, or only a newer position (`changed` false).
+    Change change = 1;
+    // This source or deployment cannot report changes; the host polls instead. Only as the
+    // first event.
+    Unsupported unsupported = 2;
+    // Ends the feed.
+    Error error = 3;
+  }
+}
+
+message Change {
+  bool changed = 1;
+  optional bytes token = 2;
+}
+
+message Unsupported {}
+
+message ReleaseRequest {
+  string datasource_id = 1;
+}
+
+message ReleaseResponse {}

@@ -371,8 +371,8 @@ async fn create(
     // A secret that is null on create is simply not set.
     let secrets: SecretPatch = body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect();
     kind.validate_secrets(&secrets).map_err(field_error)?;
-    precheck_targets(&state, kind, &settings).await?;
-    datasources::check_on_save(&state, kind, None, &settings, &secrets).await?;
+    precheck_targets(&state, &kind, &settings).await?;
+    datasources::check_on_save(&state, &kind, None, &settings, &secrets).await?;
     if name_taken(&state, &ctx.org_id, &name, "").await? {
         return Err(name_conflict());
     }
@@ -440,8 +440,8 @@ async fn create_sample(
         .map_err(|b| blocked(b.0, "path"))?;
     let settings = kind.validate_settings(&json!({ "path": path.to_string_lossy() })).map_err(field_error)?;
     let secrets = SecretPatch::default();
-    precheck_targets(&state, kind, &settings).await?;
-    datasources::check_on_save(&state, kind, None, &settings, &secrets).await?;
+    precheck_targets(&state, &kind, &settings).await?;
+    datasources::check_on_save(&state, &kind, None, &settings, &secrets).await?;
 
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
@@ -620,19 +620,19 @@ async fn update(
             all.dedup();
             changed
                 .extend(all.into_iter().filter(|k| new.get(k) != ds.settings.get(k)).map(|k| format!("settings.{k}")));
-            precheck_targets(&state, kind, &new).await?;
+            precheck_targets(&state, &kind, &new).await?;
             new
         }
         None => ds.settings.clone(),
     };
     kind.validate_secrets(&body.secrets).map_err(field_error)?;
-    check_target_change(&state, &ctx, kind, &ds, &settings, &body.secrets).await?;
+    check_target_change(&state, &ctx, &kind, &ds, &settings, &body.secrets).await?;
     changed.extend(body.secrets.keys().map(|k| format!("secrets.{k}")));
     if changed.is_empty() {
         return Ok(Json(view(&state, &ctx, ds).await?));
     }
     if changed.iter().any(|c| c.starts_with("settings.") || c.starts_with("secrets.")) {
-        datasources::check_on_save(&state, kind, Some(&ds.id), &settings, &body.secrets).await?;
+        datasources::check_on_save(&state, &kind, Some(&ds.id), &settings, &body.secrets).await?;
     }
     // Strictly increasing, so the connection cache sees the change even within one millisecond.
     let now = state.clock.now_ms().max(ds.updated_at + 1);
@@ -800,9 +800,9 @@ async fn test_unsaved(
     let patch: SecretPatch =
         if stored.is_some() { body.secrets } else { body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect() };
     kind.validate_secrets(&patch).map_err(field_error)?;
-    precheck_targets(&state, kind, &settings).await?;
+    precheck_targets(&state, &kind, &settings).await?;
     if let Some(ds) = &stored {
-        check_target_change(&state, &ctx, kind, ds, &settings, &patch).await?;
+        check_target_change(&state, &ctx, &kind, ds, &settings, &patch).await?;
     }
     tracing::info!(
         user = %ctx.user.id,
@@ -815,7 +815,7 @@ async fn test_unsaved(
     let report = datasources::check_unsaved(
         &state,
         &ctx.user.id,
-        kind,
+        &kind,
         stored.as_ref().map(|d| d.id.as_str()),
         &settings,
         &patch,

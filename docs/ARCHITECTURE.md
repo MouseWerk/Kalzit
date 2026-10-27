@@ -17,6 +17,8 @@ everything else is M1.
 | `server/src/saved_analyses.rs` | Saved analyses: the versioned model, its checks and dashboard links (routes in `routes/analyses.rs`, docs/api/analyses.md). |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
+| `plugin-api/` | Crate `kalzit-plugin-api`: the data source plugin protocol (`proto/`), the plugin manifest and its validator, the plugin signing context (see "Plugins"). |
+| `server/src/plugins/` | The server's side of the plugin protocol: its types on the wire and the in-process adapter (see "Plugins"). |
 | `server/src/updates/`, `release/` | Updates: signed releases, staging, installation, trial and return; the release format and the signing tool `kalzit-sign` (see "Updates"). |
 | `ui/` | React UI: `ui/src/features/<area>/` per area, `ui/src/panels/<type>/` per panel type. |
 | `ui/src/api/generated/` | Types generated from the server; a test fails when they are stale. |
@@ -196,7 +198,7 @@ type QueryResult =
 ## Data sources
 
 - A data source plugin implements one trait (built-ins are compiled in; external plugins (M4) use
-  the same contract over gRPC):
+  the same contract over gRPC, see "Plugins"). Kinds are registered in `registry::KindRegistry`:
 
   ```rust
   #[async_trait::async_trait]
@@ -207,6 +209,9 @@ type QueryResult =
       async fn health(&self, conn: &Connection) -> Health;      // "Test connection"
       async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError>;
       async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError>;
+      // Optional parts, each with a default: capabilities() names the ones a kind implements
+      // (check_on_save, watch, distribution, pushdown).
+      fn capabilities(&self) -> &'static [Capability] { &[] }
   }
   ```
 - **Targets.** Data sources may point at hosts in private networks and on localhost (self-hosting
@@ -296,6 +301,177 @@ type QueryResult =
   the optional `DataSourcePlugin::watch` (MongoDB: change streams with resume tokens, on their own
   client and pool, at most 8 per source); without one, or for a moving range, the feed polls. Slow clients are dropped instead of buffered; a stopping server
   closes every connection with a reason.
+
+## Plugins
+
+Decided by the owner on 2026-10-27. Done: the protocol, the manifest with its validator, the
+signing context, the kind registry and the in-process adapter. The host (processes, transport,
+sandbox), signature checks, the catalog and the Rust SDK follow in M4 (marked (M4) below).
+
+### Contract (`plugin-api/`, crate `kalzit-plugin-api`)
+
+- `proto/kalzit/plugin/datasource/v1/datasource.proto`: the data source protocol, version 1.
+  The build compiles it with protox, a protobuf compiler written in Rust, and tonic-prost-build,
+  so no `protoc` is needed on Windows, Linux or in the Docker build. The crate holds the
+  generated messages, the client and the server trait, without a transport.
+- `manifest.rs`: the manifest format and its validator; `signing.rs`: what plugin and catalog
+  signatures cover. The crate depends on no server type, so SDKs and the signing tool can use it.
+
+### Process model and transport (M4)
+
+- A data source plugin is a process of its own next to the server, one per installed plugin,
+  serving all data sources of its kind. Kalzit starts it with a time limit for the handshake,
+  watches it and restarts it with backoff; a crashed or hanging plugin fails only the queries
+  of its kind, never the server.
+- Kalzit is the gRPC client (tonic, HTTP/2), the plugin the server. The connection is local:
+  - Windows: a named pipe with a random name Kalzit chooses (`\\.\pipe\kalzit-plugin-<random>`).
+    The plugin creates it as first instance with an ACL for Kalzit's account only; Kalzit checks
+    that the pipe's server process (`GetNamedPipeServerProcessId`) is the child it started.
+  - Linux: a Unix socket in a directory with mode 0700 that Kalzit creates in its runtime
+    directory; Kalzit checks the peer's process id (`SO_PEERCRED`).
+  - stdio carries only the handshake (the plugin prints `kalzit-plugin 1 ready` on stdout when it
+    listens) and the plugin's log (stderr, into Kalzit's log with the plugin id). The address
+    and a per-start token arrive in the environment (`KALZIT_PLUGIN_ADDRESS`,
+    `KALZIT_PLUGIN_TOKEN`); every call carries the token as metadata and the plugin refuses
+    calls without it.
+
+### Protocol, version 1
+
+| RPC | What |
+|---|---|
+| `Describe` | Protocol version, kind (the manifest id), shapes, capabilities. First call after start; an answer that contradicts the manifest stops the plugin. |
+| `CheckSettings` | The kind's own settings checks, without network. The form rules of the manifest are checked by Kalzit before. |
+| `Health` | "Test connection". |
+| `Schema` | Completion data in one of the documented schema forms, as JSON. |
+| `Query` | One query; the result streams as parts (below). |
+| `CheckOnSave` | Capability `check_on_save`: checks on the source itself when it is saved (the login may only read). |
+| `Watch` | Capability `watch`: change feed for live updates, positions as opaque resume tokens; `unsupported` as first event means "poll". |
+| `Release` | Kalzit forgets a data source (settings changed, deleted): close its pools. |
+
+- Every call carries the data source (`Connection`: id, revision, settings, secrets); plugins
+  may keep pools per id and revision until `Release`. Secrets are never logged or echoed.
+- **Native shapes.** A result is `start` (shape; frame fields without values), batches of the
+  started shape (`frame_rows` with one JSON array per field, `documents` as JSON objects in the
+  stored key order, `graph` with nodes, edges and paths), then `end` with the shape's metadata
+  (notices, truncation, schema, cursor), or `error`. Kalzit refuses parts out of order, of
+  another shape, ragged columns or documents that are not objects (`plugins::wire::Assembler`);
+  a stream without `end` or `error` is a failed query. Values without a protobuf type travel as
+  JSON in the forms of docs/api/datasources.md; present-but-empty maps and paths keep their
+  presence, so a result survives the wire exactly (tested for all three shapes).
+- **Cancellation** is the end of the call (HTTP/2 `RST_STREAM`); the plugin stops the work in
+  the database too. **Deadlines** arrive as the gRPC deadline and as `deadline_unix_ms`, next to
+  the limits (`timeout_ms`, `max_rows`, `max_response_bytes`) the result must keep.
+- **Errors** are `Error { kind, detail }` with the kinds of `SourceError` (rejected, blocked,
+  timeout, failed) and a detail (reason, params, English text), so they reach the API with the
+  same codes as built-in errors. gRPC status codes are for broken calls only
+  (`INVALID_ARGUMENT`, `UNIMPLEMENTED` for a missing capability).
+- **Capabilities.** Version 1 has `check_on_save` and `watch`. Field distributions and graph
+  step pushdown stay with the built-in kinds: both depend on Kalzit's step language, which is not
+  yet a stable contract. `DataSourcePlugin::capabilities` declares them for every kind; Kalzit
+  never calls an RPC whose capability is missing.
+- Compatibility: version 1 grows only by new fields and enum values; anything else is a new
+  package (`kalzit.plugin.datasource.v2`). `Describe` exchanges the versions, and Kalzit refuses
+  plugins whose version it does not speak (`SUPPORTED_PROTOCOL_VERSIONS`).
+
+### Registry and the in-process adapter
+
+- `datasources::registry::KindRegistry` holds the kinds. Built-ins are registered at start
+  through the same `register` a plugin uses; nothing can take a name in use, built-ins cannot
+  be removed, and a removed plugin kind leaves its data sources stored (they answer
+  `datasource.kind_unavailable`) while running queries finish on their `Arc<Kind>`.
+- `plugins::in_process::InProcess` serves any registered kind through the generated server
+  trait. It is the protocol's reference: built-in kinds answer through it exactly what they
+  answer directly (tested with SQLite), so what the protocol cannot express shows up there
+  first, and plugin SDKs are tested against it. The query path keeps calling built-in kinds
+  directly; the host will wrap a plugin process in a `DataSourcePlugin` (M4), so routes, limits,
+  live updates and the target checks stay the same for every kind.
+
+### Manifest (`kalzit-plugin.toml`)
+
+```toml
+manifest = 1                       # format version
+id = "dev.example.redis"           # lowercase reverse domain name; the kind's name
+name = "Redis"
+version = "1.2.0"                  # semver
+kind = "datasource"                # or "panel"
+min_kalzit = "0.4.0"
+shapes = ["frame", "documents"]
+protocol = 1                       # data sources
+capabilities = ["watch"]           # check_on_save, watch
+
+[[settings]]                       # the settings form (data sources)
+name = "host"
+label = { en = "Host", de = "Host" }
+type = "string"                    # string, text, number, bool, select
+required = true
+target = true                      # decides where secrets go
+
+[[settings]]
+name = "password"
+label = { en = "Password", de = "Passwort" }
+type = "string"
+secret = true
+
+[[permissions.network]]            # the only targets the plugin can reach
+setting = "host"                   # a target field ...
+default_port = 6379
+[[permissions.network]]
+host = "license.example.dev"       # ... or a fixed host and port
+port = 443
+
+[binaries.windows-x64]             # also linux-x64, linux-arm64
+path = "bin/windows-x64/redis-plugin.exe"
+sha256 = "<64 hex digits>"
+```
+
+`manifest::parse` reports every problem at once with its path and a stable code
+(`manifest.*`): unknown keys, ids that are not reverse domain names (so a plugin can never take
+a built-in name such as `postgres`), versions that are not semver, unknown shapes,
+capabilities, platforms or setting types, repeats, secrets that are targets or have defaults,
+selects without options, network targets that are not `target` fields or that use wildcards,
+package paths that leave the package, hashes that are not SHA-256, Windows binaries without
+`.exe`, and parts of the other kind (a panel names one ES module and nothing a data source
+has). Plugin texts come from the manifest (labels in `en`, optionally `de`), not from Kalzit's
+catalogs.
+
+### Signing and trust (M4 for the checks)
+
+- A plugin signature is Ed25519 over `kalzit-plugin-manifest-v1\n` followed by the manifest's
+  exact bytes; the manifest pins every binary and file by SHA-256. A catalog index is signed
+  over `kalzit-plugin-catalog-v1\n` and its bytes. These contexts are not prefixes of the
+  release contexts (`kalzit-update-*`) or the other way round (tested), so no signature verifies
+  in the other's context.
+- Trusted for plugins: Kalzit's own plugin key and the publisher keys a server admin adds. The
+  release keys are never trusted for plugins and plugin keys never for releases. Unsigned
+  plugins install only with an explicit admin switch, off by default, and are marked as such.
+- Installing, removing and changing trust are server admin actions in the audit log.
+
+### Catalog (M4)
+
+A signed index hosted by the project lists plugins with versions, publishers and package hashes.
+It is off by default; turning it on is a server setting. Installing from a file (the package with
+its manifest and signature) always works, also offline, and runs the same checks.
+
+### Sandbox (M4)
+
+What a plugin process gets, where the operating system allows it:
+
+- Windows: a Job Object (killed with Kalzit, no breakaway, limits on memory and processes, no
+  desktop or clipboard access) and a restricted token without administrator groups or
+  privileges. Limit: a restricted token does not stop a process from opening sockets; holding
+  the network to the declared targets on Windows needs an AppContainer without network
+  capabilities or a filtering rule, to be decided with the host. Until then the network rule on
+  Windows rests on the signature.
+- Linux: user, mount, PID and network namespaces (the network namespace has no interfaces, so
+  the only way out is the socket to Kalzit), seccomp (no `ptrace`, no new privileges, no
+  kernel module or mount calls) and Landlock (read-only access to the plugin's own directory).
+  Limits: hosts that forbid unprivileged user namespaces (some distributions, many containers)
+  and kernels without Landlock get fewer layers; Kalzit says which layers are active on the
+  plugin page and in the log instead of refusing to run.
+- Network only to the targets the manifest declares and only through Kalzit: the plugin asks
+  Kalzit for a connection, and Kalzit checks the target against the manifest and the data
+  source target rules (private networks allowed, Kalzit's own database and metadata addresses
+  refused, `datasources.allowed_targets`) before it connects.
 
 ## Dashboards
 

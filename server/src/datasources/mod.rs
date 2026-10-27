@@ -26,6 +26,7 @@ pub mod mysql;
 pub mod neo4j;
 pub mod postgres;
 pub mod prometheus;
+pub mod registry;
 pub mod sample;
 pub mod sql;
 pub mod sqlite;
@@ -67,6 +68,11 @@ pub trait DataSourcePlugin: Send + Sync {
     async fn health(&self, conn: &Connection) -> Health;
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError>;
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError>;
+    /// The optional parts of this contract the kind implements. A plugin process declares the
+    /// same in its `Describe` answer; the host calls nothing a kind does not declare.
+    fn capabilities(&self) -> &'static [Capability] {
+        &[]
+    }
     /// How the values of one field path are spread over the whole result of `req`, computed in
     /// the source (`distribution::run`). Kinds that cannot answer `distribution.unsupported`; the
     /// sets of those that can say so with `DocumentSet::distributable`.
@@ -80,7 +86,7 @@ pub trait DataSourcePlugin: Send + Sync {
     }
     /// Whether `check_on_save` needs the source (and its stored secrets) when it is saved.
     fn checks_on_save(&self) -> bool {
-        false
+        self.capabilities().contains(&Capability::CheckOnSave)
     }
     /// The query that runs the graph step `step` on the result of `query` in the source itself
     /// (`analysis::pushdown`), run with `query` as any query is; `None` when the kind or the
@@ -107,6 +113,22 @@ pub trait DataSourcePlugin: Send + Sync {
     ) -> Result<Option<ChangeFeed>, SourceError> {
         Ok(None)
     }
+}
+
+/// An optional part of `DataSourcePlugin`. Plugin processes can declare `CheckOnSave` and `Watch`
+/// (protocol version 1); `Distribution` and `Pushdown` build on Kalzit's step language and stay
+/// with the built-in kinds for now (docs/ARCHITECTURE.md, "Plugins").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Capability {
+    /// `check_on_save`: checks on the source itself when it is saved.
+    CheckOnSave,
+    /// `watch`: change feeds for live updates.
+    Watch,
+    /// `distribution`: field distributions computed in the source.
+    Distribution,
+    /// `pushdown`: graph steps run in the source.
+    Pushdown,
 }
 
 /// Where a change feed continues; opaque outside the kind that made it.
@@ -704,7 +726,7 @@ pub const COMMON_SETTINGS: &[SettingField] = &[
 const MAX_SECRET_BYTES: usize = 64 * 1024;
 const MAX_SETTING_BYTES: usize = 64 * 1024;
 
-/// A registered kind: the plugin plus what a manifest would say about it.
+/// A registered kind (`registry::KindRegistry`): the plugin plus what its manifest says.
 pub struct Kind {
     pub name: &'static str,
     /// i18n key of the advice shown on the settings form (use a read-only login).
@@ -1000,7 +1022,7 @@ fn own_files(config: &Config) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBu
 
 /// The data source kinds and the live connections. One per server, in `AppState`.
 pub struct DataSources {
-    kinds: Vec<Kind>,
+    kinds: registry::KindRegistry,
     keyring: Arc<Keyring>,
     own: Arc<OwnDatabase>,
     data_dir: std::path::PathBuf,
@@ -1031,20 +1053,7 @@ impl DataSources {
     pub fn new(config: &Config, db: AnyPool, keyring: Arc<Keyring>) -> Self {
         let database_url = config.database_url();
         Self {
-            kinds: vec![
-                postgres::kind(),
-                mysql::kind(),
-                sqlite::kind(),
-                mssql::kind(),
-                prometheus::kind(),
-                elasticsearch::kind(),
-                file::kind(),
-                http_json::kind(),
-                mongodb::kind(),
-                neo4j::neo4j(),
-                neo4j::memgraph(),
-                tigergraph::kind(),
-            ],
+            kinds: registry::KindRegistry::built_in(),
             keyring,
             own: Arc::new(OwnDatabase::new(db, &database_url)),
             data_dir: config.paths.data_dir.clone(),
@@ -1063,12 +1072,18 @@ impl DataSources {
         }
     }
 
-    pub fn kinds(&self) -> &[Kind] {
-        &self.kinds
+    /// Every registered kind, built-ins first.
+    pub fn kinds(&self) -> Vec<Arc<Kind>> {
+        self.kinds.all()
     }
 
-    pub fn kind(&self, kind: &str) -> Option<&Kind> {
-        self.kinds.iter().find(|k| k.kind() == kind)
+    pub fn kind(&self, kind: &str) -> Option<Arc<Kind>> {
+        self.kinds.get(kind)
+    }
+
+    /// The kind registry, where installed plugins add their kinds.
+    pub fn registry(&self) -> &registry::KindRegistry {
+        &self.kinds
     }
 
     pub fn keyring(&self) -> &Keyring {
@@ -1980,7 +1995,7 @@ async fn run_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResu
     let policy = registry.policy(state).await?;
     // The plugin's health answer has no error code, so a target refused by the rules is
     // reported as such before the plugin runs.
-    if let Err((blocked, _)) = precheck_targets(&policy, kind, &ds.settings) {
+    if let Err((blocked, _)) = precheck_targets(&policy, &kind, &ds.settings) {
         return Ok(failed(blocked.into(), None));
     }
     let run = async {
