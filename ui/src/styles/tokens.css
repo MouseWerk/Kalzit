@@ -263,6 +263,16 @@
   }
 }
 
+/* The AI pages and answers: a request field's least width, a status tile, a table's label column, the field of a new chip. */
+@layer tokens {
+  :root {
+    --size-ai-request: 18rem;
+    --size-ai-tile: 12rem;
+    --size-ai-label: 10rem;
+    --size-ai-chip-input: 8rem;
+  }
+}
+
 /* Document panels (explorer, schema, distribution) and the pipeline editor. */
 @layer tokens {
   :root {

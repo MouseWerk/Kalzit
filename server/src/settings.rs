@@ -189,6 +189,14 @@ pub const REGISTRY: &[SettingDef] = &[
                       chats are stored (the chat package).",
     },
     SettingDef {
+        key: "ai.notice_text",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "A paragraph the administrators add to the notice about which data leaves the server, shown \
+                      before a person's first AI call.",
+    },
+    SettingDef {
         key: "ai.org_enabled",
         scope: Scope::Org,
         default: || json!(true),
@@ -630,6 +638,7 @@ fn rule(key: &str) -> Option<Rule> {
         "ai.max_tool_calls" => Rule::Int { min: 1, max: 100 },
         // 0 keeps no chats at all.
         "ai.chat_retention_days" => Rule::Int { min: 0, max: 3_650 },
+        "ai.notice_text" => Rule::Text { max_chars: 2000, multiline: true, required: false },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),

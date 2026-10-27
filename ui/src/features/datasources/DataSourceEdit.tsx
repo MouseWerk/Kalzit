@@ -10,6 +10,8 @@ import { zoneOption } from "../../lib/timeSettings";
 import { showErrorToast, showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { AiGate } from "../ai/AiGate";
+import { AiAccessSection } from "../ai/source/AiAccessSection";
 import { mayManageAccess } from "../dashboards/accessIntegration";
 import { ConfirmDialog } from "../dashboards/ui/Dialog";
 import { errorMessage } from "../dashboards/ui/errors";
@@ -392,6 +394,10 @@ function EditDataSource({ orgId }: { orgId: string }) {
               </Link>
             }
           />
+          {/* Only while AI is usable; with AI off the part is absent and what is set stays. */}
+          <AiGate>
+            <AiAccessSection orgId={orgId} datasourceId={datasourceId} canWrite={access.write} />
+          </AiGate>
           {access.write ? (
             <section className="ds-danger" aria-labelledby={`${ids}-danger`}>
               <div className="ds-danger__text">

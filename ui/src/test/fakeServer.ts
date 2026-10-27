@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
+import { aiAdminFake, handleAiAdminRoute } from "../features/ai/test/fakeAiAdmin";
 import { analysesFake } from "../features/analyses/test/fakeAnalyses";
 import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboardFeatures";
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
@@ -99,6 +100,8 @@ export interface FakeArea<State> {
  * Each gets the states of all areas, so the panel query route can run data source queries.
  */
 const AREA_FAKES = {
+  // Before datasources: it answers a data source's /ai-access.
+  aiAdmin: aiAdminFake,
   datasources: datasourcesFake,
   exploreHistory: exploreHistoryFake,
   analyses: analysesFake,
@@ -494,7 +497,11 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         }
       }
     }
-    return handleAdminRoute(server, path, method, body) ?? error(404, "not_found");
+    return (
+      handleAiAdminRoute(areaStates.aiAdmin, server, path, method, input) ??
+      handleAdminRoute(server, path, method, body) ??
+      error(404, "not_found")
+    );
   }
 
   vi.stubGlobal(

@@ -27,6 +27,7 @@ import { isComposingKey } from "../../lib/ime";
 import { zoneOption } from "../../lib/timeSettings";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { useAiReadableSources } from "../ai/source/useAiReadable";
 import { ConfirmDialog } from "../dashboards/ui/Dialog";
 import { errorMessage } from "../dashboards/ui/errors";
 import {
@@ -379,6 +380,8 @@ function SourceOverview({
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
   const ids = { search: useId(), status: useId(), sort: useId(), drawer: useId() };
+  // Sources open to AI carry a badge, only while AI is usable.
+  const aiReadable = useAiReadableSources(orgId);
   const [filter, setFilter] = useState<ListFilter>(NO_FILTER);
   const [selected, setSelected] = useState<string | null>(null);
   const [testingAll, setTestingAll] = useState(false);
@@ -675,6 +678,9 @@ function SourceOverview({
                           <span className="ds-tag">
                             {t(`datasources.tag.${kindGroup(source.kind)}`)}
                           </span>
+                          {aiReadable.has(source.id) ? (
+                            <span className="ds-tag">{t("ai.source.badge")}</span>
+                          ) : null}
                         </span>
                       </td>
                       <td {...STACK_ROLES.cell} data-label={t("datasources.column.status")}>
