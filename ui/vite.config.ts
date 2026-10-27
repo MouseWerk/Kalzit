@@ -14,7 +14,8 @@ const proxy = {
 
 export default defineConfig({
   plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
-  server: { proxy },
+  // The help pages before sign-in are the guide files in docs/guide (src/help/HelpPage.tsx).
+  server: { proxy, fs: { allow: [".", "../docs/guide"] } },
   preview: { proxy },
   build: {
     outDir: "dist",

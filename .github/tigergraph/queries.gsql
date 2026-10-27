@@ -1,0 +1,33 @@
+USE GRAPH social
+
+CREATE QUERY nachbarn(VERTEX<Person> p, INT tiefe, SET<STRING> stichworte) FOR GRAPH social {
+  SetAccum<EDGE> @@edges;
+  SumAccum<INT> @@total;
+  Start = {p};
+  R = SELECT t FROM Start:s -(Friend:e)- Person:t
+      ACCUM @@edges += e, @@total += 1;
+  PRINT R;
+  PRINT @@edges;
+  PRINT @@total, tiefe, stichworte;
+}
+
+CREATE QUERY nur_knoten() FOR GRAPH social {
+  S = {Person.*};
+  PRINT S;
+}
+
+CREATE QUERY zahlen(INT k, STRING name, DATETIME ab, LIST<INT> liste, VERTEX v) FOR GRAPH social {
+  SumAccum<INT> @@treffer;
+  S = {Person.*};
+  R = SELECT s FROM S:s WHERE s.name == name ACCUM @@treffer += 1;
+  PRINT @@treffer, k, name, ab, liste, v;
+  PRINT 1.5 AS durchschnitt;
+}
+
+CREATE QUERY loescht() FOR GRAPH social {
+  S = {Person.*};
+  DELETE s FROM S:s WHERE s.name == "Opfer";
+  PRINT S.size() AS vorher;
+}
+
+INSTALL QUERY nachbarn, nur_knoten, zahlen, loescht

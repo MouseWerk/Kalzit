@@ -112,6 +112,11 @@ pub struct SecurityConfig {
     pub login_max_failures: u32,
     /// The window in which failures are counted, in seconds.
     pub login_window_secs: u64,
+    /// Wrong setup codes from all client addresses together in `setup_window_secs`, on top of
+    /// the per-address limit (`login_*`): many addresses cannot guess the code in parallel.
+    pub setup_max_failures: u32,
+    /// The window of `setup_max_failures`, in seconds.
+    pub setup_window_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -175,6 +180,8 @@ impl Default for SecurityConfig {
             trusted_proxies: Vec::new(),
             login_max_failures: 10,
             login_window_secs: 15 * 60,
+            setup_max_failures: 100,
+            setup_window_secs: 60 * 60,
         }
     }
 }
@@ -439,6 +446,9 @@ impl Config {
         }
         if self.security.login_max_failures == 0 || self.security.login_window_secs == 0 {
             bail!("security.login_max_failures and security.login_window_secs must be at least 1");
+        }
+        if self.security.setup_max_failures == 0 || self.security.setup_window_secs == 0 {
+            bail!("security.setup_max_failures and security.setup_window_secs must be at least 1");
         }
         if self.database.max_connections == 0 {
             bail!("database.max_connections must be at least 1");
@@ -780,6 +790,8 @@ mod tests {
         for toml in [
             "[security]\nlogin_max_failures = 0\n",
             "[security]\nlogin_window_secs = 0\n",
+            "[security]\nsetup_max_failures = 0\n",
+            "[security]\nsetup_window_secs = 0\n",
             "[database]\nmax_connections = 0\n",
             "[server]\npublic_url = \"https://\"\n",
             "[server]\npublic_url = \"https://x.example/sub\"\n",

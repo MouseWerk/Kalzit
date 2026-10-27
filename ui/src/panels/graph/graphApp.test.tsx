@@ -345,6 +345,9 @@ describe("Explore with TigerGraph", () => {
     await user.click(screen.getByRole("radio", { name: "Run an installed query" }));
     const picker = await screen.findByRole("combobox", { name: "Installed query" });
     await user.selectOptions(picker, "top_customers");
+    // Its declared parameters, as the server read them from the query info.
+    expect(screen.getByText("limit")).toBeTruthy();
+    expect(screen.getByText("SET<STRING>")).toBeTruthy();
     const params = screen.getByRole("textbox", { name: "Parameters (optional)" });
     fireEvent.change(params, { target: { value: "[1]" } });
     expect(screen.getByText("Enter a JSON object, or leave the field empty.")).toBeTruthy();
@@ -353,5 +356,7 @@ describe("Explore with TigerGraph", () => {
     expect(await screen.findByRole("table", { name: "Nodes of Result: 4" })).toBeTruthy();
     const sent = server.areas.datasources.queries.at(-1) as QueryRequest;
     expect(sent.queries[0]?.query).toEqual({ installed: "top_customers", params: { limit: 5 } });
+    await user.selectOptions(picker, "neighbours");
+    expect(screen.getByText("The query has no parameters.")).toBeTruthy();
   });
 });

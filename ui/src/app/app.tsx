@@ -39,7 +39,8 @@ export function createApp(options: AppOptions = {}): KalzitApp {
     const back = safeRedirect(router.state.location.href);
     void router.navigate({
       to: "/login",
-      search: back === undefined || back === "/" ? {} : { redirect: back },
+      search:
+        back === undefined || back === "/" ? { expired: true } : { redirect: back, expired: true },
       replace: true,
     });
   }

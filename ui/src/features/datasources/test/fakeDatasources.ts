@@ -266,6 +266,8 @@ export interface StoredDatasource {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+  /** The last connection test the server kept (`lastTest`), with its warnings. */
+  lastTest?: { ok: boolean; warnings: WireHealth["warnings"]; testedAt: number };
 }
 
 export interface WireHealth {
@@ -275,6 +277,7 @@ export interface WireHealth {
   message: string;
   latencyMs: number;
   code?: string;
+  warnings?: { reason: string; params?: Record<string, string>; message: string }[];
 }
 
 export interface FakeDatasourcesState {
@@ -310,6 +313,8 @@ export interface FakeDatasourcesState {
 }
 
 export const PG_ID = "ds-pg";
+/** Where the server keeps the sample database (`<data dir>/samples`). */
+export const SAMPLE_PATH = "/var/lib/kalzit/samples/kalzit-sample.sqlite";
 export const PROM_ID = "ds-prom";
 export const MONGO_ID = "ds-mongo";
 
@@ -521,7 +526,17 @@ export function addTigerGraphSource(state: FakeDatasourcesState): void {
     createdAt: created,
     updatedAt: created,
   });
-  state.schemas[TIGERGRAPH_ID] = { ...FAKE_GRAPH_SCHEMA, queries: ["neighbours", "top_customers"] };
+  state.schemas[TIGERGRAPH_ID] = {
+    ...FAKE_GRAPH_SCHEMA,
+    queries: ["neighbours", "top_customers"],
+    queryParams: {
+      neighbours: [],
+      top_customers: [
+        { name: "limit", type: "INT" },
+        { name: "regions", type: "SET<STRING>" },
+      ],
+    },
+  };
 }
 
 /** Adds the Neo4j source "Graph DB" (NEO4J_ID) with its schema, for the graph tests. */
@@ -552,6 +567,9 @@ function publicView(ds: StoredDatasource, access?: Record<string, boolean>) {
   };
   if (ds.deletedAt !== undefined) {
     view.deletedAt = ds.deletedAt;
+  }
+  if (ds.lastTest !== undefined) {
+    view.lastTest = ds.lastTest;
   }
   if (access !== undefined) {
     view.access = access;
@@ -871,6 +889,34 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         secrets: Object.fromEntries(
           Object.entries(secrets).filter((e): e is [string, string] => typeof e[1] === "string"),
         ),
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.datasources.push(stored);
+      return json(201, view(stored));
+    }
+    // The bundled sample database: made once per organization, then answered again.
+    if (parts.length === 2 && parts[1] === "sample" && method === "POST") {
+      if (!can("datasources:write")) {
+        return error(403, "forbidden");
+      }
+      const extra = unknownKey(body, ["name"]);
+      if (extra !== undefined) {
+        return validation(extra);
+      }
+      const existing = state.datasources.find(
+        (d) => d.deletedAt === undefined && d.settings.path === SAMPLE_PATH,
+      );
+      if (existing !== undefined) {
+        return json(200, view(existing));
+      }
+      const now = Date.now();
+      const stored: StoredDatasource = {
+        id: `ds-sample-${nextId++}`,
+        name: typeof body.name === "string" ? body.name : "Sample data",
+        kind: "sqlite",
+        settings: { path: SAMPLE_PATH },
+        secrets: {},
         createdAt: now,
         updatedAt: now,
       };

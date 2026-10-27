@@ -94,7 +94,15 @@ const PATHS = {
   external: "M7 17 17 7M9 7h8v8",
   database:
     "M4.5 6c0-1.66 3.36-3 7.5-3s7.5 1.34 7.5 3-3.36 3-7.5 3-7.5-1.34-7.5-3zM4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3",
+  // Forward in a flow (Next, Open), a file, a terminal and a log of lines (where the setup code is).
+  arrowRight: "M5 12h14M13 6l6 6-6 6",
+  file: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 16h6",
+  terminal: "M3.5 4.5h17v15h-17zM7 9.5l3 2.5-3 2.5M12 15h5",
+  log: "M4.5 6h15M4.5 12h15M4.5 18h10",
 } as const;
+
+/** The Kalzit mark alone, for drawings that need it at another stroke (the sign-in backdrop). */
+export const LOGO_PATH: string = PATHS.logo;
 
 /** Icons drawn filled instead of outlined (the starred state of a star). */
 const FILLED: ReadonlySet<IconName> = new Set<IconName>(["starFilled"]);

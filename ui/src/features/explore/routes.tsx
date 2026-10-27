@@ -4,6 +4,8 @@ import { appRoute } from "../../app/baseRoutes";
 export interface ExploreSearch {
   /** A saved analysis to open (docs/api/analyses.md). */
   analysis?: string | undefined;
+  /** A data source to start with (the sample data added at the end of setup). */
+  source?: string | undefined;
 }
 
 export interface SavedSearch {
@@ -25,6 +27,7 @@ const exploreRoute = createRoute({
   path: "/explore",
   validateSearch: (search: Record<string, unknown>): ExploreSearch => ({
     analysis: text(search.analysis),
+    source: text(search.source),
   }),
   component: lazyRouteComponent(() => import("./ExplorePage"), "ExplorePage"),
 });

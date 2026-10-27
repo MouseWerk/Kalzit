@@ -974,6 +974,61 @@ async fn health_and_schema_of_a_sqlite_file() {
     t.finish().await;
 }
 
+/// The last test stays with the source for everyone who may see it, with its warnings, until the
+/// next test replaces it or the settings change; a rename keeps it.
+#[tokio::test]
+async fn the_last_test_and_its_warnings_are_kept() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let other = t.sqlite_file("andere.db", SALES).await;
+    let id = t.create_sqlite("Geprüft", &file).await;
+    assert!(t.get(&format!("/datasources/{id}")).await.body.get("lastTest").is_none(), "never tested");
+    assert_eq!(t.post(&format!("/datasources/{id}/health"), json!({})).await.body["ok"], true);
+    let v = t.get(&format!("/datasources/{id}")).await;
+    assert_eq!(
+        v.body["lastTest"],
+        json!({ "ok": true, "warnings": [], "testedAt": 1_800_000_000_000_i64 }),
+        "{}",
+        v.text
+    );
+
+    // A warning as a TigerGraph test stores it (that kind's warning is tested against its fake).
+    let warning = json!([{ "reason": "tigergraph.auth_disabled", "message": "REST++ answers without a token" }]);
+    sqlx::query("UPDATE datasource_health SET warnings = $1 WHERE datasource_id = $2")
+        .bind(warning.to_string())
+        .bind(&id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'vera@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let grant = json!({ "subjectType": "user", "subjectId": vera, "resourceType": "datasource", "resourceId": id, "level": "query" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    let seen = t.send(Method::GET, &t.path(&format!("/datasources/{id}")), None, Some(&viewer)).await;
+    assert_eq!(seen.body["lastTest"]["warnings"], warning, "{}", seen.text);
+
+    let path = t.path(&format!("/datasources/{id}"));
+    let patch = |body: Value| t.send(Method::PATCH, &path, Some(body), Some(&t.owner));
+    assert_eq!(patch(json!({ "name": "Neu" })).await.status, StatusCode::OK);
+    assert_eq!(t.get(&format!("/datasources/{id}")).await.body["lastTest"]["warnings"], warning, "a rename keeps it");
+    // The next test replaces it.
+    t.clock.advance_ms(60_000);
+    t.post(&format!("/datasources/{id}/health"), json!({})).await;
+    let v = t.get(&format!("/datasources/{id}")).await;
+    assert_eq!(
+        v.body["lastTest"],
+        json!({ "ok": true, "warnings": [], "testedAt": 1_800_000_060_000_i64 }),
+        "{}",
+        v.text
+    );
+    // New settings drop it: it checked what was stored before.
+    let r = patch(json!({ "settings": { "path": other.to_string_lossy() } })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert!(r.body.get("lastTest").is_none(), "{}", r.text);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn changed_settings_rebuild_the_connection() {
     let t = T::new().await;
@@ -2631,6 +2686,8 @@ async fn testing_unsaved_settings_is_rate_limited() {
     let r = t.post("/datasources/test", body.clone()).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.text);
     assert_eq!(r.body["error"]["reason"], "datasource.test_rate_limited");
+    let wait = r.body["error"]["retryAfterSecs"].as_u64().unwrap_or_default();
+    assert!((1..=crate::routes::datasources::PROBE_WINDOW_SECS).contains(&wait), "{}", r.text);
     // The stored source's own test is not part of it.
     let id = t.create_sqlite("Probe", &file).await;
     assert_eq!(t.post(&format!("/datasources/{id}/health"), json!({})).await.status, StatusCode::OK);
@@ -2799,5 +2856,130 @@ async fn refusals_hide_url_logins_and_viewers_do_not_burn_the_rate_limit() {
     let file = t.sqlite_file("probe.db", "CREATE TABLE t (v TEXT);").await;
     let body = json!({ "kind": "sqlite", "settings": { "path": file.to_string_lossy() } });
     assert_eq!(t.post("/datasources/test", body).await.status, StatusCode::OK, "the owner can still test");
+    t.finish().await;
+}
+
+/// The built-in sample database: added once per organization (a second call answers the same
+/// source), queried like any SQLite source, needing no allowed SQLite directory, and deleted and
+/// purged like any other source.
+#[tokio::test]
+async fn the_sample_database_is_added_once_and_answers_queries() {
+    let t = T::new().await;
+    // The sample needs no allowed directory.
+    t.set("datasources.sqlite_dirs", json!([]));
+    let r = t.post("/datasources/sample", json!({ "name": "Beispieldaten" })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    assert_eq!((r.body["name"].as_str(), r.body["kind"].as_str()), (Some("Beispieldaten"), Some("sqlite")));
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let file = crate::datasources::sample::path(&t.state.config.paths.data_dir);
+    assert!(file.is_file());
+    let stored = PathBuf::from(r.body["settings"]["path"].as_str().unwrap());
+    assert_eq!(std::fs::canonicalize(&stored).unwrap(), std::fs::canonicalize(&file).unwrap());
+
+    let q = t
+        .query(
+            &t.owner,
+            json!([{ "refId": "A", "datasourceId": id, "query": { "sql":
+                "SELECT r.name AS region, COUNT(*) AS orders FROM orders o \
+                 JOIN regions r ON r.id = o.region_id GROUP BY r.name ORDER BY r.name" } },
+                   { "refId": "B", "datasourceId": id, "query": { "sql":
+                "SELECT ordered_at, total FROM orders ORDER BY ordered_at LIMIT 3" } }]),
+        )
+        .await;
+    assert_eq!(q.status, StatusCode::OK, "{}", q.text);
+    let frame = &q.body["results"]["A"]["result"]["frame"];
+    let count = |v: &Value| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap();
+    let counts: i64 = frame["fields"][1]["values"].as_array().unwrap().iter().map(count).sum();
+    assert_eq!(counts, 600, "{}", q.text);
+    assert_eq!(frame["fields"][0]["values"].as_array().unwrap().len(), 6);
+    // The order time is a time column, for time series.
+    let series = &q.body["results"]["B"]["result"]["frame"];
+    let types = (series["fields"][0]["type"].as_str(), series["fields"][1]["type"].as_str());
+    assert_eq!(types, (Some("time"), Some("number")), "{}", q.text);
+
+    // A second call answers the same source, under any name.
+    let again = t.post("/datasources/sample", json!({ "name": "Sample data" })).await;
+    assert_eq!((again.status, again.body["id"].as_str()), (StatusCode::OK, Some(id.as_str())), "{}", again.text);
+    let audit: Vec<(String,)> =
+        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'datasource.created' AND resource_id = $1")
+            .bind(&id)
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(serde_json::from_str::<Value>(&audit[0].0).unwrap()["sample"], true);
+
+    // Deleted, it can be added again; a taken name gets a number.
+    let del = t.send(Method::DELETE, &t.path(&format!("/datasources/{id}")), None, Some(&t.owner)).await;
+    assert_eq!(del.status, StatusCode::NO_CONTENT);
+    let other = t.sqlite_file("eigen.db", "CREATE TABLE t (v TEXT);").await;
+    t.set("datasources.sqlite_dirs", json!([t.allowed_dir().to_string_lossy()]));
+    t.create_sqlite("Beispieldaten", &other).await;
+    let second = t.post("/datasources/sample", json!({ "name": "Beispieldaten" })).await;
+    assert_eq!(
+        (second.status, second.body["name"].as_str()),
+        (StatusCode::CREATED, Some("Beispieldaten 2")),
+        "{}",
+        second.text
+    );
+    assert_ne!(second.body["id"].as_str(), Some(id.as_str()));
+    // The trashed one is purged like any other; the file stays for the new one.
+    let purged = t.send(Method::DELETE, &t.path(&format!("/datasources/{id}/purge")), None, Some(&t.owner)).await;
+    assert_eq!(purged.status, StatusCode::NO_CONTENT, "{}", purged.text);
+    assert!(file.is_file());
+    t.finish().await;
+}
+
+/// Only who may add sources adds the sample; the samples directory opens nothing else of the
+/// data directory, and never to file sources.
+#[tokio::test]
+async fn the_sample_keeps_to_the_rules_of_its_directory() {
+    let t = T::new().await;
+    for role in ["viewer", "editor"] {
+        let cookie = t.session_for_role(role, Some(role)).await;
+        let r = t.send(Method::POST, &t.path("/datasources/sample"), Some(json!({ "name": "S" })), Some(&cookie)).await;
+        assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{role}: {}", r.text);
+    }
+    let bad = t.post("/datasources/sample", json!({ "name": " " })).await;
+    assert_eq!((bad.status, bad.body["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("name")));
+    let unknown = t.post("/datasources/sample", json!({ "name": "S", "path": "/etc/passwd" })).await;
+    assert_eq!(unknown.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", unknown.text);
+    assert_eq!(t.post("/datasources/sample", json!({ "name": "S" })).await.status, StatusCode::CREATED);
+
+    let data = t.state.config.paths.data_dir.clone();
+    let samples = data.join(crate::datasources::targets::SAMPLES_DIR);
+    let sqlite =
+        |path: PathBuf| json!({ "name": "X", "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
+    // Kalzit's own database and other files of the data directory stay refused.
+    std::fs::write(data.join("anderes.sqlite"), b"").unwrap();
+    for path in [data.join("kalzit.db"), data.join("anderes.sqlite"), samples.join("..").join("kalzit.db")] {
+        let r = t.post("/datasources", sqlite(path.clone())).await;
+        assert_eq!(
+            (r.status, r.code()),
+            (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"),
+            "{}",
+            path.display()
+        );
+        assert_eq!(r.body["error"]["reason"], "target.sqlite_path_refused");
+    }
+    // A link in the samples directory to the own database is not a sample.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(data.join("kalzit.db"), samples.join("own.sqlite")).unwrap();
+        let r = t.post("/datasources", sqlite(samples.join("own.sqlite"))).await;
+        assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"), "{}", r.text);
+    }
+    // File sources do not read the samples directory, even with the data directory listed.
+    t.set("datasources.file_dirs", json!([data.to_string_lossy()]));
+    std::fs::write(samples.join("daten.csv"), "a\n1\n").unwrap();
+    for path in [samples.join("daten.csv"), crate::datasources::sample::path(&data)] {
+        let r = t
+            .post(
+                "/datasources",
+                json!({ "name": "Datei", "kind": "file", "settings": { "path": path.to_string_lossy(), "format": "csv" } }),
+            )
+            .await;
+        assert_eq!(r.body["error"]["reason"], "target.file_path_refused", "{}", r.text);
+    }
     t.finish().await;
 }

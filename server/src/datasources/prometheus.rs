@@ -227,6 +227,7 @@ impl DataSourcePlugin for Prometheus {
             Ok(()) => Health {
                 ok: true,
                 code: None,
+                warnings: Vec::new(),
                 detail: Detail::new("health.prometheus_answered", "the Prometheus API answered")
                     .with("engine", "Prometheus"),
             },

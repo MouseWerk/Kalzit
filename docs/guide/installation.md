@@ -40,15 +40,22 @@ directory, and the log says where it is. The image has no shell, so print it wit
 docker exec kalzit kalzit setup-code
 ```
 
-Enter the code on the setup page, then name the organization and create the owner account, as
-described in [Getting started](getting-started.md#first-setup). Once the owner exists, the code
-is gone. To choose the code yourself (for automated installs), set `KALZIT_SETUP_TOKEN` to at
-least 16 letters or digits.
+Enter the code on the setup page; it is checked on its own step, before you create the owner
+account and name the organization, as described in
+[Getting started](getting-started.md#first-setup). Once the owner exists, the code is gone. Each
+restart before that makes a new code, and the page tells an old code from a wrong one. To choose
+the code yourself (for automated installs), set `KALZIT_SETUP_TOKEN` to at least 16 letters or
+digits; the setup page then points to that variable.
+
+Before anyone signs in, the setup page only names the default paths (`/var/lib/kalzit` in Linux
+and the image, `C:\ProgramData\Kalzit\data` on Windows) and the Docker command, never the
+paths this server really uses.
 
 ### Data and the volume
 
 Everything Kalzit keeps lives in `/var/lib/kalzit`, a volume: the SQLite database, the setup
-code, the fallback key file and the update state. Keep it in a named volume (`kalzit-data`
+code, the fallback key file, the update state and the sample database (`samples/`, written when
+someone adds the sample data). Keep it in a named volume (`kalzit-data`
 above); a new named volume takes over the right owner and mode from the image.
 
 - The container runs as the fixed user and group **65532:65532**, not as root. Runtimes that

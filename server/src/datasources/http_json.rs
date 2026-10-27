@@ -394,6 +394,7 @@ impl DataSourcePlugin for HttpJson {
             Ok(status) => Health {
                 ok: true,
                 code: None,
+                warnings: Vec::new(),
                 detail: Detail::new("health.http_json_answered", format!("the server answered {status} with JSON"))
                     .with("status", status),
             },

@@ -159,9 +159,9 @@ export function ExplorePage() {
   });
   const granted = sources.data?.some((source) => source.access?.query === true) ?? false;
   let body = null;
-  const { analysis } = exploreRoute.useSearch();
+  const { analysis, source: startSource } = exploreRoute.useSearch();
   if (org !== undefined && (orgWide || granted)) {
-    body = <Explore orgId={org.id} analysisId={analysis} />;
+    body = <Explore orgId={org.id} analysisId={analysis} startSource={startSource} />;
   } else if (permissions.loaded && (org === undefined || !sources.isPending)) {
     body = (
       <EmptyState icon="lock" title={t("explore.forbidden.title")}>
@@ -172,7 +172,16 @@ export function ExplorePage() {
   return <Page title={t("explore.title")}>{body}</Page>;
 }
 
-function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | undefined }) {
+function Explore({
+  orgId,
+  analysisId,
+  startSource,
+}: {
+  orgId: string;
+  analysisId: string | undefined;
+  /** The data source to start with, when the address names one. */
+  startSource?: string | undefined;
+}) {
   const { t, language, timeZone } = useI18n();
   const navigate = useNavigate();
   const meId = appRoute.useRouteContext().me.id;
@@ -189,7 +198,7 @@ function Explore({ orgId, analysisId }: { orgId: string; analysisId: string | un
   const [handoff] = useState(peekExploreHandoff);
   useEffect(() => clearExploreHandoff(), []);
   const [chosen, setChosen] = useState<string | null>(
-    () => handoff?.datasourceId ?? readPreference(LAST_DATASOURCE_KEY),
+    () => handoff?.datasourceId ?? startSource ?? readPreference(LAST_DATASOURCE_KEY),
   );
   const [queries, setQueries] = useState<Record<string, unknown>>(() =>
     handoff === null ? {} : { [handoff.datasourceId]: handoff.query },

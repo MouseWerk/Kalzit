@@ -184,10 +184,16 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
       `GRANT`, `REVOKE`, `CLEAR GRAPH STORE`). Globale Akkumulatoren (`@@`) gelten nur für
       einen Lauf und sind kein Schreiben.
     - Installierte Abfragen werden nur ausgeführt, wenn ihr GSQL-Text lesbar ist und die
-      Prüfung besteht. Ist er nicht lesbar, nur über eine vom Admin freigegebene Liste; dann
-      schützt allein der lesende Nutzer vor Schreibzugriffen. Ob der Text über die API lesbar
-      ist und ob `queryreader` ab 4.1 interpretierte Abfragen ausführen darf, wird zu Beginn von
-      M3 gegen eine echte Instanz geklärt.
+      Prüfung besteht. Ist er nicht lesbar, nur über eine vom Admin freigegebene Liste; eine
+      freigegebene Abfrage, die TigerGraph als schreibend kennzeichnet (`graphUpdate` in der
+      Abfrage-Info), wird trotzdem abgelehnt, sonst schützt allein der lesende Nutzer.
+    - Gegen TigerGraph 4.2.5 (Community Edition, nächtlicher Job) geklärt: `queryreader` darf
+      den eigenen Nutzer-Eintrag lesen und interpretierte Abfragen ausführen (ohne
+      `EXECUTE_QUERY`), aber den Text installierter Abfragen nicht (`READ_QUERY` fehlt), daher
+      laufen sie mit einem reinen `queryreader` nur über die Freigabeliste. Die Rolle hat in 4.2
+      zusätzlich `APP_ACCESS_DATA` und `READ_POLICY` (beides lesend). Schreibende Abfragen lehnt
+      der Server für ihn ab. REST++-Authentifizierung ist in einer frischen Community Edition
+      aus; ohne sie läuft jede installierte Abfrage für jeden, daher ist sie Voraussetzung.
     - Kalzit ruft weder Upsert- noch Lade-Endpunkte von REST++ auf.
     - Variablen gehen als typisierte Abfrageparameter an REST++, nie als Text in den GSQL-Code.
 - Limits je Datenquelle: Zeitlimit, maximale Dokumente/Knoten, maximale Antwortgröße.
@@ -328,7 +334,7 @@ zuerst in den Papierkorb mit Rückgängig.
 | Ebene | Was |
 |---|---|
 | Unit | Result Envelope, Schema-Sampling (polymorphe Felder, Umlaute/Emoji in Feldnamen), Rechteauflösung, Dashboard-Migrationen |
-| Integration | Jede Datenquelle gegen die echte Datenbank in Containern (MongoDB, Neo4j, Memgraph, PostgreSQL, MySQL, MariaDB, SQL Server, Prometheus, ...) (lokal und CI, Linux; Windows mit Dienst-Installationen oder Fakes). TigerGraph ist für den PR-Check zu groß (mehrere GB, 8 GB RAM, Entwicklerlizenz, kein Windows-Container): im PR-Check ein REST++-Fake, gegen die echte Instanz ein nächtlicher Linux-Job |
+| Integration | Jede Datenquelle gegen die echte Datenbank in Containern (MongoDB, Neo4j, Memgraph, PostgreSQL, MySQL, MariaDB, SQL Server, Prometheus, ...) (lokal und CI, Linux; Windows mit Dienst-Installationen oder Fakes). TigerGraph ist für den PR-Check zu groß (Image 2,5 GB komprimiert, Abfragen installieren dauert Minuten, kein Windows-Container): im PR-Check ein Fake, gegen die echte Community Edition (ohne Lizenz, läuft auf GitHub-Runnern) ein nächtlicher Linux-Job, auch manuell startbar |
 | Contract | Plugin-Protokoll gegen ein Test-Plugin; abstürzende und hängende Plugins |
 | E2E | Playwright gegen den Produktions-Build, auf Linux und Windows; Login einmal pro Lauf |
 | Guard | Nur-Lesen-Regeln (Mongo `$out`/`$merge`, Cypher-Schreibklauseln, GSQL-Schreibanweisungen), CSS-Design-Regeln, ein HTTP-Client, i18n-Parität, Rechteprüfung an jeder Route |
