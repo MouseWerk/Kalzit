@@ -946,8 +946,8 @@ impl DataSourcePlugin for MongoDb {
         Ok(())
     }
 
-    fn checks_on_save(&self) -> bool {
-        true
+    fn capabilities(&self) -> &'static [super::Capability] {
+        &[super::Capability::CheckOnSave, super::Capability::Watch, super::Capability::Distribution]
     }
 
     async fn check_on_save(&self, conn: &Connection) -> Result<(), (&'static str, SourceError)> {

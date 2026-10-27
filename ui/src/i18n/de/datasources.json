@@ -605,6 +605,8 @@
   "datasources.reason.graph.edge_limit": "Der Graph wurde bei {limit} Kanten abgeschnitten.",
   "datasources.reason.graph.size_limit": "Der Graph wurde beim Größenlimit einer Antwort abgeschnitten.",
   "datasources.reason.graph.columns_omitted": "{columns} enthalten keine Knoten oder Kanten und gehören nicht zum Graphen. Frage sie für eine Tabelle getrennt ab.",
+  "datasources.reason.graph.paths_cut": "{count} Pfade fehlen, weil der Graph an einer Grenze abgeschnitten wurde.",
+  "datasources.reason.plugin.part_skipped": "Das Plugin hat {count} Teile einer neueren Protokollversion geschickt, die übersprungen wurden. Aktualisiere Kalzit, um alles zu sehen.",
   "datasources.reason.cypher.function_not_allowed": "Die Funktion {name} ist nicht erlaubt. Erlaubt sind eingebaute Funktionen und eine Liste harmloser Funktionen mit Namensraum.",
   "datasources.reason.cypher.number_followed_by_letters": "Setze ein Leerzeichen zwischen eine Zahl und das Wort danach.",
   "datasources.reason.gsql.graph_missing": "Nenne den Graphen mit FOR GRAPH nach den Parametern von INTERPRET QUERY.",
