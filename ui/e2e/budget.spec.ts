@@ -1,3 +1,4 @@
+import { rmSync, writeFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import { Api, regionDashboard, SQL, unique } from "./support/api";
 import { DENSE_ROWS } from "./support/fixture-db";
@@ -8,9 +9,13 @@ import { panelAction } from "./support/ui";
 /**
  * Performance budgets for editing (docs/design/feel.md section 10, fix 5), in Chromium with the
  * CPU slowed down four times: typing 40 keys into a panel's query stays under 50 ms p95 Event
- * Timing per key (58 ms on Windows runners, see `TYPING_P95_MS`), and its longest main-thread task stays under 34 ms (the modal editor's were
- * 38 to 45 ms, this page's 27 to 30 ms, on the machine the numbers were taken on); dragging a
- * panel across the grid makes no long task over 50 ms.
+ * Timing per key (58 ms on Windows runners, see `TYPING_P95_MS`), and its longest main-thread
+ * task stays under 34 ms (the modal editor's were 38 to 45 ms, this page's 27 to 30 ms, on the
+ * machine the numbers were taken on); dragging a panel across the grid makes no long task over
+ * 50 ms.
+ *
+ * While these run, a file named by KALZIT_E2E_QUIET_FILE exists (when the variable is set): the
+ * CI's TCP watch on Windows pauses meanwhile, so it takes no CPU from the measurements.
  *
  * Event Timing comes in 8 ms steps and includes waiting for the next frame, so it hardly tells
  * the two editors apart. Two checks do: the number of components React draws per key (counted
@@ -144,6 +149,18 @@ test.skip(
 // One after the other, so the two budgets never share the CPU either.
 test.describe.configure({ mode: "serial" });
 
+const QUIET_FILE = process.env.KALZIT_E2E_QUIET_FILE ?? "";
+test.beforeAll(() => {
+  if (QUIET_FILE !== "") {
+    writeFileSync(QUIET_FILE, "performance budgets running\n");
+  }
+});
+test.afterAll(() => {
+  if (QUIET_FILE !== "") {
+    rmSync(QUIET_FILE, { force: true });
+  }
+});
+
 interface Store {
   __events: { id: number; duration: number }[];
   __long: number[];
@@ -238,7 +255,7 @@ async function openForEditing(page: Page, sourceId: string): Promise<void> {
   await expect(page.getByRole("status").filter({ hasText: t("dashboards.editing") })).toBeVisible();
 }
 
-test("typing in a panel's query stays under 50 ms p95 at 4x CPU throttling", async ({
+test(`typing in a panel's query stays under ${TYPING_P95_MS} ms p95 at 4x CPU throttling`, async ({
   page,
   browser,
   world,

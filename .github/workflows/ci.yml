@@ -473,11 +473,14 @@ jobs:
       # 1,070 loopback connections in TIME_WAIT (each closed browser context's connections, held
       # for minutes). Chromium on Windows 11 22H2 and later picks a random source port
       # (TcpPortRandomizationWin); the likely cause is a pick that meets a port still in TIME_WAIT
-      # towards the same server. A range four times as large makes such a pick four times rarer.
-      # The watch records the counts, so a failure can be read against them.
+      # towards the same server. A range more than three times as large makes such a pick that
+      # much rarer. It starts at 10000, clear of the service ports below it (WinRM 5985 and 5986,
+      # and the like); a port in use or excluded (47001 on the runner) is never handed out. The
+      # watch records the counts, so a failure can be read against them; it pauses while the
+      # performance budgets run (KALZIT_E2E_QUIET_FILE), so it adds no CPU load to them.
       - name: Widen the dynamic port range
         if: env.RUN_JOB == 'true' && runner.os == 'Windows'
-        run: netsh int ipv4 set dynamicport tcp start=1025 num=64511
+        run: netsh int ipv4 set dynamicport tcp start=10000 num=55535
       - name: Watch TCP connections
         if: env.RUN_JOB == 'true' && runner.os == 'Windows'
         shell: pwsh
@@ -486,6 +489,8 @@ jobs:
         if: env.RUN_JOB == 'true'
         timeout-minutes: 15
         working-directory: ui
+        env:
+          KALZIT_E2E_QUIET_FILE: ${{ runner.os == 'Windows' && format('{0}/tcp-watch.pause', runner.temp) || '' }}
       - name: TCP connections during the run
         if: ${{ !cancelled() && env.RUN_JOB == 'true' && runner.os == 'Windows' }}
         shell: pwsh

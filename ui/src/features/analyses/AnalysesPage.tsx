@@ -15,6 +15,7 @@ import { STACK_ROLES } from "../../components/stackTable";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { writeClipboard } from "../../lib/clipboard";
+import { stillOnRoute } from "../../lib/stillOnRoute";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useTeamContext } from "../../org/teamContext";
@@ -102,7 +103,6 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
   const search = listRoute.useSearch();
   const navigate = listRoute.useNavigate();
   const router = useRouter();
-  const listPath = listRoute.useMatch({ select: (match) => match.pathname });
   const searchId = useId();
   const teams = useTeamContext();
   const folders = useQuery({
@@ -116,7 +116,7 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
     const timer = window.setTimeout(() => {
       // An analysis opened within the pause leaves the list while it still shows (its page is
       // loading); the search must not take the person back to the list then.
-      if (query !== (search.q ?? "") && router.latestLocation.pathname === listPath) {
+      if (query !== (search.q ?? "") && stillOnRoute(router, listRoute.id)) {
         void navigate({
           search: (prev) => ({ ...prev, q: query === "" ? undefined : query }),
           replace: true,
@@ -124,7 +124,7 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
       }
     }, SEARCH_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [query, search.q, navigate, router, listPath]);
+  }, [query, search.q, navigate, router]);
   // "/" jumps to the search, as in the other lists.
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {

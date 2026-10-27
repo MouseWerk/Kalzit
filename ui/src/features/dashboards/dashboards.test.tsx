@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
@@ -138,6 +138,19 @@ describe("dashboard browser", () => {
     await user.type(screen.getByRole("searchbox", { name: "Search dashboards" }), "head");
     await waitFor(() => expect(screen.queryByRole("link", { name: "Sales" })).toBeNull());
     expect(screen.getByRole("link", { name: "Headcount" })).toBeTruthy();
+  });
+
+  it("stays on a dashboard opened before the search's pause ended", async () => {
+    setup("admin");
+    const { user, location } = renderApp("/dashboards");
+    const sales = await screen.findByRole("link", { name: "Sales" });
+    await user.type(screen.getByRole("searchbox", { name: "Search dashboards" }), "Sa");
+    await user.click(sales);
+    const opened = location().pathname;
+    expect(opened).toMatch(/^\/dashboards\/./);
+    // Longer than the pause (250 ms): a search that still landed would take us back.
+    await act(() => new Promise((done) => setTimeout(done, 400)));
+    expect(location().pathname).toBe(opened);
   });
 
   it("offers to clear a search that found nothing", async () => {

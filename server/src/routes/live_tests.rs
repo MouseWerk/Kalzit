@@ -4,7 +4,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Body;
@@ -261,12 +261,19 @@ async fn next_for(ws: &mut Ws, kind: &str, feed: &str) -> Value {
     }
 }
 
-/// Follows `feed` until its result counts `n`. The feed polls while another connection writes
-/// the file; a poll that meets the write can answer with an error (seen on Windows runners, which
-/// lock files more strictly), and the next poll answers `n`. A result
-/// without a count that is no error, and a feed that never gets to `n` (`next` waits 10 s per
-/// message), still fail.
+/// How long `follow_until` waits for its count, and how many failed polls it lets pass.
+const FOLLOW_LIMIT: Duration = Duration::from_secs(10);
+const MAX_ERRORS: usize = 3;
+
+/// Follows `feed` until its result counts `n`. Results in between may hold an older count or an
+/// error: once, on a Windows runner, the poll right after an insert answered without a count. Its
+/// error was not logged, and it did not happen again locally (no lock error either: the source
+/// waits for a writer's lock, see `BUSY_WAIT` in datasources/sqlite.rs), so each error is printed
+/// now. The test still fails on a result that has neither a count nor an error, on more than
+/// `MAX_ERRORS` errors, and when `n` does not arrive within `FOLLOW_LIMIT`.
 async fn follow_until(ws: &mut Ws, feed: &str, n: i64) {
+    let deadline = Instant::now() + FOLLOW_LIMIT;
+    let mut errors = 0;
     loop {
         let result = next_for(ws, "result", feed).await;
         let count = count_of(&result);
@@ -278,6 +285,9 @@ async fn follow_until(ws: &mut Ws, feed: &str, n: i64) {
         if failed {
             eprintln!("follow_until: a poll during the write failed: {}", result["results"]["A"]["error"]);
         }
+        errors += usize::from(failed);
+        assert!(errors <= MAX_ERRORS, "{errors} polls failed while waiting for {n}: {result}");
+        assert!(Instant::now() < deadline, "no result of {n} within {FOLLOW_LIMIT:?}, the last: {result}");
     }
 }
 
