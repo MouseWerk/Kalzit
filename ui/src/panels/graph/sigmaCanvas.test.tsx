@@ -88,7 +88,7 @@ function canvasProps(view: GraphView, camera: { current: CameraState | null }) {
     selected: new Set<number>(),
     primary: null,
     neighbours: new Set<number>(),
-    style: DEFAULT_STYLE,
+    drawStyle: DEFAULT_STYLE,
     reducedMotion: true,
     camera,
     onPick: () => undefined,

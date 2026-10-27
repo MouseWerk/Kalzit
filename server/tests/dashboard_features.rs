@@ -878,9 +878,40 @@ async fn panel_view_state_is_personal_and_follows_the_dashboard_access(t: TestAp
     assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE dashboard_id = $1", &board).await, 0);
     // Empty lists remove the row instead of keeping an empty one.
     let other = t.dashboard(None, model("Leer"), &t.owner).await;
-    assert_eq!(t.put(&path(&other, "p1"), state, &viewer).await.status, StatusCode::OK);
+    assert_eq!(t.put(&path(&other, "p1"), state.clone(), &viewer).await.status, StatusCode::OK);
     assert_eq!(t.put(&path(&other, "p1"), json!({}), &viewer).await.status, StatusCode::OK);
     assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE dashboard_id = $1", &other).await, 0);
+
+    // A panel removed by a save takes the viewers' state with it, and is not found afterwards.
+    assert_eq!(t.put(&path(&other, "p1"), state.clone(), &viewer).await.status, StatusCode::OK);
+    let saved =
+        t.put(&format!("~/dashboards/{other}"), json!({ "model": plain("Leer"), "version": 1 }), &t.owner).await;
+    assert!(saved.status.is_success(), "{}", saved.body);
+    assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE dashboard_id = $1", &other).await, 0);
+    assert_eq!(t.get(&path(&other, "p1"), &viewer).await.status, StatusCode::NOT_FOUND);
+
+    // Another organization's path does not reach this dashboard, even for its server admin.
+    let third = t.dashboard(None, model("Dritte"), &t.owner).await;
+    let (owner_id,): (String,) = sqlx::query_as("SELECT user_id FROM org_members WHERE org_id = $1 AND role = 'owner'")
+        .bind(&t.org)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    let created = t.post("/admin/orgs", json!({ "name": "Zweite GmbH", "ownerUserId": owner_id }), &t.owner).await;
+    let second = created.id();
+    let foreign = format!("/orgs/{second}/dashboards/{third}/panels/p1/view-state");
+    assert_eq!(t.get(&foreign, &t.owner).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.put(&foreign, state.clone(), &t.owner).await.status, StatusCode::NOT_FOUND);
+    // A member of only the first organization is not a member of the second one.
+    assert!(t.get(&foreign, &viewer).await.status.is_client_error());
+
+    // A member who leaves the organization leaves their state behind with it.
+    assert_eq!(t.put(&path(&third, "p1"), state, &viewer).await.status, StatusCode::OK);
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE name = $1").bind("Vera").fetch_one(&t.state.db).await.unwrap();
+    let removed = t.delete(&format!("~/members/{vera}"), &t.owner).await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.body);
+    assert_eq!(t.count("SELECT COUNT(*) FROM panel_view_state WHERE user_id = $1", &vera).await, 0);
 }
 
 async fn annotations_follow_the_dashboard_access(t: TestApp) {

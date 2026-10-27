@@ -4,6 +4,8 @@ import { edgeSummary, neighbourGroups, propertyType } from "./inspect";
 import type { Communities } from "./metrics";
 import type { GraphModel } from "./model";
 import type { GraphView } from "./view";
+import "./graph.css";
+import "../../features/dashboards/ui/shared.css";
 
 /** Neighbours listed per group before "and N more". */
 export const NEIGHBOURS_SHOWN = 5;
@@ -52,6 +54,7 @@ export function NodeSheet({
   only,
   variable,
   values,
+  capped,
   expandText,
   moreText,
   actions,
@@ -71,6 +74,8 @@ export function NodeSheet({
   variable: string | null;
   /** The multi-value variable's values from the selection. */
   values: readonly string[];
+  /** Some selected nodes' values were left out: a variable takes only so many. */
+  capped: boolean;
   /** The text of the expand button for the primary node, or null to leave it out. */
   expandText: string | null;
   /** "Ada has 312 neighbours, 25 are loaded." for the primary node, or null. */
@@ -239,6 +244,11 @@ export function NodeSheet({
             </ul>
           ) : null}
           <p className="graph__note">{t("graph.selection.hint")}</p>
+          {capped && variable !== null ? (
+            <p className="graph__note">
+              {t("graph.variable.capped", { name: variable, count: number.format(values.length) })}
+            </p>
+          ) : null}
           <div className="graph__actions">
             <button
               type="button"

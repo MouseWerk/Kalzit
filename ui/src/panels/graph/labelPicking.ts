@@ -30,9 +30,21 @@ function hasPickProgram(value: unknown): value is LabelProgram {
   return typeof value === "object" && value !== null && "pickProgram" in value;
 }
 
+/** Says so in development when Sigma no longer looks as this fix expects (an upgrade). */
+function notice(what: string): void {
+  if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
+    // biome-ignore lint/suspicious/noConsole: a note for developers only, never in a build
+    console.warn(`labelPicking: ${what}; the fix does nothing, check it against this Sigma`);
+  }
+}
+
 /** Deletes a program's picking program and leaves it without one. */
 export function dropPicking(program: unknown): void {
-  if (!hasPickProgram(program) || program.pickProgram === null) return;
+  if (!hasPickProgram(program)) {
+    notice("a label program has no pickProgram");
+    return;
+  }
+  if (program.pickProgram === null) return;
   const { gl, program: glProgram, buffer, vertexShader, fragmentShader } = program.pickProgram;
   gl.deleteShader(vertexShader);
   gl.deleteShader(fragmentShader);
@@ -51,7 +63,10 @@ export function installLabelPickingFix(): void {
   installed = true;
   const prototype = Sigma.prototype as unknown as { initPrograms?: InitPrograms };
   const original = prototype.initPrograms;
-  if (typeof original !== "function") return;
+  if (typeof original !== "function") {
+    notice("Sigma has no initPrograms");
+    return;
+  }
   prototype.initPrograms = function initPrograms(this: unknown, ...args: unknown[]) {
     const programs = original.apply(this, args);
     dropPicking(programs.labelProgram);

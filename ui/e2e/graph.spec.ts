@@ -393,11 +393,18 @@ test.describe("Neo4j drawing", () => {
       const model = graphDashboard(unique("Shop graph drawn"), sourceId);
       dashboardId = await owner.createDashboard({
         ...model,
-        panels: model.panels.filter((p) => p.id === "customers" || p.id === "orders"),
+        // Full width, so the details open beside the drawing, not over the nodes to click next.
+        panels: model.panels
+          .filter((p) => p.id === "customers" || p.id === "orders")
+          .map((p) => (p.id === "customers" ? { ...p, grid: { x: 0, y: 0, w: 24, h: 12 } } : p)),
       });
     } finally {
       await owner.dispose();
     }
+    // The canvas offers where it draws a node only to pages that ask for the test hooks.
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
     await signInOwner(page);
     await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
     const customers = page.getByRole("article", { name: PANELS.customers, exact: true });

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { FAKE_GRAPH, ID } from "../../features/datasources/test/fakeGraph";
 import {
+  capValues,
   edgeSummary,
   labelCounts,
+  MAX_SELECTION_VALUES,
   neighbourGroups,
   nodeIds,
   onlySelection,
@@ -84,6 +86,13 @@ describe("selection and pins", () => {
     const nodes = [at(ID.grace), at(ID.lamp), at(ID.ada), at(ID.grace)];
     expect(selectionValues(model, nodes, "customerId")).toEqual(["43", "42"]);
     expect(selectionValues(model, [at(ID.lamp)], "")).toEqual([ID.lamp]);
+  });
+
+  it("caps the values a selection gives a variable, and says so", () => {
+    const many = Array.from({ length: MAX_SELECTION_VALUES + 5 }, (_, i) => `v${i}`);
+    expect(capValues(many).values).toHaveLength(MAX_SELECTION_VALUES);
+    expect(capValues(many).capped).toBe(true);
+    expect(capValues(["a", "b"])).toEqual({ values: ["a", "b"], capped: false });
   });
 
   it("keeps a pinned node with the edges whose other end is still there", () => {

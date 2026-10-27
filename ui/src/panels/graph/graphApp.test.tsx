@@ -86,7 +86,7 @@ describe("graph panels on a dashboard", () => {
     await user.click(await within(panel).findByRole("button", { name: "Desk" }));
     expect(await within(nodes(panel)).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
     const sent = server.areas.datasources.queries.at(-1) as QueryRequest;
-    expect(JSON.stringify(sent.queries[0]?.query)).toContain("(n)-[]->(m)");
+    expect(JSON.stringify(sent.queries[0]?.query)).toContain("(n)-[e]->(m)");
     await user.click(within(steps).getByRole("button", { name: "Query result, 4 nodes" }));
     expect(within(nodes(panel)).queryByRole("button", { name: "Oak & Co" })).toBeNull();
   });
@@ -207,12 +207,15 @@ describe("graph panels on a dashboard", () => {
     expect(within(panel).queryByRole("button", { name: /^Desk \+/ })).toBeNull();
   });
 
-  it("says why a viewer cannot load neighbours", async () => {
-    setup("viewer", { explorer: true });
-    renderApp("/dashboards/d-shop");
+  it("says why a viewer cannot load neighbours, and a click opens the details instead", async () => {
+    setup("viewer", { explorer: true, clickDetails: false });
+    const { user } = renderApp("/dashboards/d-shop");
     expect(
       await screen.findByText("Loading neighbours needs query access to the data source."),
     ).toBeTruthy();
+    const panel = screen.getByRole("article", { name: "Purchases" });
+    await user.click(within(nodes(panel)).getByRole("button", { name: "Desk" }));
+    expect(within(panel).getByRole("region", { name: "Details of Desk" })).toBeTruthy();
   });
 
   it("sets a dashboard variable from a node, which other panels then query with", async () => {

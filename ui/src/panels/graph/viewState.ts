@@ -14,6 +14,8 @@ export interface PanelViewState {
 
 /** Ids per list, as the server keeps them (`MAX_IDS`). */
 export const MAX_VIEW_IDS = 200;
+/** Longest node id the server keeps (`MAX_ID_CHARS`); longer ones are not kept. */
+export const MAX_ID_CHARS = 512;
 /** A change is sent once the viewer pauses this long, not on every click. */
 export const SAVE_DELAY_MS = 600;
 
@@ -26,10 +28,19 @@ function viewPath(orgId: string, view: PanelView): string {
   return orgPath(orgId, "dashboards", view.dashboardId, "panels", view.panelId, "view-state");
 }
 
+/** Ids as the server keeps them: text of 1 to MAX_ID_CHARS characters, each once, at most MAX_VIEW_IDS. */
+function keepable(list: readonly unknown[]): string[] {
+  return [
+    ...new Set(
+      list.filter(
+        (v): v is string => typeof v === "string" && v.length > 0 && [...v].length <= MAX_ID_CHARS,
+      ),
+    ),
+  ].slice(0, MAX_VIEW_IDS);
+}
+
 function ids(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((v): v is string => typeof v === "string").slice(0, MAX_VIEW_IDS)
-    : [];
+  return Array.isArray(value) ? keepable(value) : [];
 }
 
 export async function fetchViewState(
@@ -49,8 +60,8 @@ export async function saveViewState(
   state: PanelViewState,
 ): Promise<void> {
   await send("PUT", viewPath(orgId, view), {
-    pinned: [...new Set(state.pinned)].slice(0, MAX_VIEW_IDS),
-    selected: [...new Set(state.selected)].slice(0, MAX_VIEW_IDS),
+    pinned: keepable(state.pinned),
+    selected: keepable(state.selected),
   });
 }
 
@@ -81,9 +92,14 @@ export function usePanelViewState(orgId: string | undefined, view: PanelView | u
   }, [orgId, dashboardId, panelId]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const last = useRef<string | null>(null);
+  // The state waiting for its pause, sent at once when the panel goes away.
+  const waiting = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
       if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+      waiting.current?.();
+      waiting.current = null;
     },
     [],
   );
@@ -95,9 +111,14 @@ export function usePanelViewState(orgId: string | undefined, view: PanelView | u
     if (text === (last.current ?? JSON.stringify(read.state))) return;
     last.current = text;
     if (timer.current !== null) clearTimeout(timer.current);
+    const send = () => {
+      void saveViewState(orgId, { dashboardId, panelId }, state).catch(() => undefined);
+    };
+    waiting.current = send;
     timer.current = setTimeout(() => {
       timer.current = null;
-      void saveViewState(orgId, { dashboardId, panelId }, state).catch(() => undefined);
+      waiting.current = null;
+      send();
     }, SAVE_DELAY_MS);
   }
   return {

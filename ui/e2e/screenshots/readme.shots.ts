@@ -992,7 +992,7 @@ for (const scheme of ["light", "dark"] as const) {
       .getByRole("button", { name: "Ben", exact: true })
       .click();
     await expect(steps.getByRole("button", { name: /^Ben \+/ })).toBeVisible();
-    await around.getByRole("button", { name: t("graph.showDrawing"), exact: true }).click();
+    await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
     await expect(page.getByRole("application")).toHaveCount(4);
     await expect(page.getByText(t("graph.layout.settling"))).toHaveCount(0);
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);

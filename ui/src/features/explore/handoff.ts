@@ -8,15 +8,19 @@ export interface ExploreHandoff {
   query: unknown;
 }
 
-let pending: ExploreHandoff | null = null;
+/** A query not picked up this soon (the navigation failed or went elsewhere) is dropped. */
+export const HANDOFF_TTL_MS = 10_000;
+
+let pending: { handoff: ExploreHandoff; at: number } | null = null;
 
 export function handOffToExplore(handoff: ExploreHandoff): void {
-  pending = handoff;
+  pending = { handoff, at: Date.now() };
 }
 
 /** The query handed over, if any, without taking it (Explore reads it while it first renders). */
 export function peekExploreHandoff(): ExploreHandoff | null {
-  return pending;
+  if (pending !== null && Date.now() - pending.at > HANDOFF_TTL_MS) pending = null;
+  return pending?.handoff ?? null;
 }
 
 /** Takes the query handed over, so a later visit to Explore starts as usual. */

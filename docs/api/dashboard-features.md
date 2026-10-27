@@ -205,7 +205,8 @@ What a viewer keeps of their own exploration of a dashboard panel (a graph panel
 selection), for them alone. Only node ids are stored, never a node's properties or any other part
 of a result; it changes neither the panel nor its query. Reading and writing need read access to
 the dashboard and a panel of that id in its current version; anything else, a trashed dashboard
-included, is `404 not_found`. The row goes with the user, organization and dashboard.
+included, is `404 not_found`. The row goes with the user, organization and dashboard, with a
+member who leaves the organization, and with a panel that a saved version no longer has.
 
 ```ts
 interface PanelViewState {

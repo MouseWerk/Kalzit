@@ -249,6 +249,12 @@ async fn remove(
         .bind(&user_id)
         .execute(&mut *tx)
         .await?;
+    // So does what they kept of panels in this organization (`panel_state.rs`).
+    sqlx::query("DELETE FROM panel_view_state WHERE org_id = $1 AND user_id = $2")
+        .bind(&ctx.org_id)
+        .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&ctx.org_id)
         .bind(&user_id)

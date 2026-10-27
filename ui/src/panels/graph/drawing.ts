@@ -38,16 +38,22 @@ export interface DrawState {
   selected: ReadonlySet<number>;
   /** Neighbours of the selection (view indexes), kept undimmed. */
   neighbours: ReadonlySet<number>;
-  style: DrawStyle;
+  drawStyle: DrawStyle;
 }
 
 /** Space around a label's text on its background, in px. */
 const LABEL_BACKGROUND_PADDING = 2;
 
-function nodeColor(group: number, lit: boolean, p: Pick<DrawState, "palette" | "style">): string {
+function nodeColor(
+  group: number,
+  lit: boolean,
+  p: Pick<DrawState, "palette" | "drawStyle">,
+): string {
   const step = rampStep(group);
   if (step !== null) {
-    return (lit ? p.palette.ramps : p.palette.dimmedRamps)[p.style.ramp][step] ?? p.palette.neutral;
+    return (
+      (lit ? p.palette.ramps : p.palette.dimmedRamps)[p.drawStyle.ramp][step] ?? p.palette.neutral
+    );
   }
   if (group < 0) return lit ? p.palette.neutral : p.palette.neutralDimmed;
   return (
@@ -76,10 +82,11 @@ export function nodeDisplay(
   const lit = !selecting || isSelected || p.neighbours.has(index);
   const color = nodeColor(node.group, lit, p);
   const rank = p.ranks[index] ?? 0;
-  const mode = p.style.labels;
+  const mode = p.drawStyle.labels;
   const allowed =
     mode === "always" ||
-    (mode === "zoom" && (rank < p.style.labelTop || labelAllowed(rank, ratio, node.cluster >= 0)));
+    (mode === "zoom" &&
+      (rank < p.drawStyle.labelTop || labelAllowed(rank, ratio, node.cluster >= 0)));
   const labelVisibility = isSelected
     ? "visible"
     : selecting && !lit
@@ -146,8 +153,8 @@ export function edgeDisplay(
   return {
     ...data,
     color: edgeColor(edge, p),
-    ...(shows(p.style.arrows) ? { head: "arrow" } : {}),
-    label: shows(p.style.edgeLabels) && edge.type !== "" ? edge.type : null,
+    ...(shows(p.drawStyle.arrows) ? { head: "arrow" } : {}),
+    label: shows(p.drawStyle.edgeLabels) && edge.type !== "" ? edge.type : null,
     labelColor: p.palette.text,
     labelBackgroundColor: p.palette.background,
   };

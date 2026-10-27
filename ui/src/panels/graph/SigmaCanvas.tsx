@@ -41,8 +41,8 @@ export interface CanvasHandle {
 
 /**
  * Where a drawn node is on the page, in CSS pixels from the viewport's top left: what a pointer
- * clicks to pick it. A hook for the end-to-end tests, on the canvas element; null for a node
- * that is not drawn.
+ * clicks to pick it. A hook for the end-to-end tests, on the canvas element (in development, or
+ * when the page sets `window.__kalzitTestHooks` first); null for a node that is not drawn.
  */
 export type NodePosition = (caption: string) => { x: number; y: number } | null;
 
@@ -62,7 +62,7 @@ export interface SigmaCanvasProps {
   primary: number | null;
   /** Neighbours of the selection (view indexes), kept undimmed. */
   neighbours: ReadonlySet<number>;
-  style: DrawStyle;
+  drawStyle: DrawStyle;
   reducedMotion: boolean;
   /**
    * Where the camera is kept between renderers. It belongs to the panel, not to the canvas: a
@@ -130,7 +130,7 @@ export function createRenderer(
       // Which labels show is decided by zoom level (labelAllowed), not by node size.
       labelRenderedSizeThreshold: 0,
       labelDensity: 0.5,
-      renderEdgeLabels: live.current.props.style.edgeLabels !== "never",
+      renderEdgeLabels: live.current.props.drawStyle.edgeLabels !== "never",
       enableNodeDrag: false,
       // Node sizes are pixels on screen (sigma 4 defaults to graph units, which makes the
       // size depend on the layout's spread).
@@ -175,7 +175,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     ranks,
     selected,
     neighbours,
-    style,
+    drawStyle,
     reducedMotion,
   } = props;
   const hostRef = useRef<CanvasHost>(null);
@@ -238,14 +238,16 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
   useEffect(() => {
     const renderer = sigmaRef.current;
     if (renderer === null) return;
-    renderer.setSetting("renderEdgeLabels", style.edgeLabels !== "never");
+    renderer.setSetting("renderEdgeLabels", drawStyle.edgeLabels !== "never");
     renderer.refresh({ skipIndexation: true });
-  }, [style]);
+  }, [drawStyle]);
 
-  // The test hook: where a node with this caption is drawn on the page.
+  // The test hook: where a node with this caption is drawn on the page. Only in development and
+  // where the end-to-end tests ask for it, never in a viewer's browser.
   useEffect(() => {
     const host = hostRef.current;
-    if (host === null) return;
+    const asked = (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks === true;
+    if (host === null || !(import.meta.env.DEV || asked)) return;
     host.kalzitNodePosition = (caption) => {
       const renderer = sigmaRef.current;
       const p = live.current.props;

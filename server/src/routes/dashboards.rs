@@ -338,6 +338,7 @@ async fn insert_version(
     .bind(now)
     .execute(&mut *conn)
     .await?;
+    forget_removed_panels(conn, dashboard_id, new.model).await?;
     if keep > 0 {
         sqlx::query("DELETE FROM dashboard_versions WHERE dashboard_id = $1 AND version <= $2")
             .bind(dashboard_id)
@@ -345,6 +346,26 @@ async fn insert_version(
             .execute(&mut *conn)
             .await?;
     }
+    Ok(())
+}
+
+/// Viewers' own state of panels the new version no longer has (`panel_state.rs`) goes with them.
+async fn forget_removed_panels(
+    conn: &mut sqlx::AnyConnection,
+    dashboard_id: &str,
+    model: &model::DashboardModel,
+) -> ApiResult<()> {
+    let ids: Vec<&str> = model.panels.iter().map(|p| p.id.as_str()).collect();
+    let mut sql = String::from("DELETE FROM panel_view_state WHERE dashboard_id = $1");
+    if !ids.is_empty() {
+        let marks: Vec<String> = (0..ids.len()).map(|i| format!("${}", i + 2)).collect();
+        sql.push_str(&format!(" AND panel_id NOT IN ({})", marks.join(", ")));
+    }
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(dashboard_id);
+    for id in ids {
+        query = query.bind(id);
+    }
+    query.execute(&mut *conn).await?;
     Ok(())
 }
 

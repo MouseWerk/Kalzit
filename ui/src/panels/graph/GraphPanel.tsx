@@ -25,6 +25,7 @@ import type { Direction, DrawStyle } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
 import { GraphTable } from "./GraphTable";
 import {
+  capValues,
   labelCounts,
   nodeIds,
   onlySelection,
@@ -475,11 +476,13 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     const m = modelIndex(i);
     return m === null ? [] : [m];
   });
-  const values = multi
-    ? selectionValues(model, selectionModel, options.variableProperty).filter(
-        (value) => host.variables?.accepts(variable as string, value) === true,
-      )
-    : [];
+  const { values, capped } = capValues(
+    multi
+      ? selectionValues(model, selectionModel, options.variableProperty).filter(
+          (value) => host.variables?.accepts(variable as string, value) === true,
+        )
+      : [],
+  );
 
   function setVariableValuesFromSelection() {
     if (variable === null || values.length === 0) return;
@@ -490,7 +493,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             name: variable,
             count: number.format(values.length),
           })
-        : t("graph.announce.variableRefused", { name: variable, value: values.join(", ") }),
+        : t("graph.announce.variableManyRefused", { name: variable }),
     );
   }
 
@@ -530,7 +533,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   function pick(index: number | null, additive: boolean) {
     select(index, additive);
     if (index === null || additive) return;
-    setSheetOpen(options.clickAction === "details" || options.clickDetails);
+    // A click whose action cannot happen here (no explorer, no rights, TigerGraph) opens the
+    // details instead of doing nothing.
+    const actionless = options.clickAction === "expand" && !explorerOn;
+    setSheetOpen(options.clickAction === "details" || options.clickDetails || actionless);
     activate(index);
   }
 
@@ -707,11 +713,19 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         });
 
   // The exploration as a Cypher query, for Explore.
+  const shownIds =
+    explorerOn && host.openInExplore !== undefined
+      ? view.nodes.flatMap((node, i) =>
+          node.node >= 0 && visibility.nodes[i] === 1 ? [model.nodes[node.node]?.id ?? ""] : [],
+        )
+      : [];
+  const queryNote =
+    shownIds.length > MAX_QUERY_NODES
+      ? t("graph.steps.tooManyForQuery", { max: number.format(MAX_QUERY_NODES) })
+      : null;
   const openQuery = (() => {
     if (!explorerOn || host.openInExplore === undefined) return null;
-    const ids = view.nodes.flatMap((node, i) =>
-      node.node >= 0 && visibility.nodes[i] === 1 ? [model.nodes[node.node]?.id ?? ""] : [],
-    );
+    const ids = shownIds;
     if (ids.length > MAX_QUERY_NODES) return null;
     const cypher = explorationQuery(explorer.kind, ids);
     if (cypher === null) return null;
@@ -771,9 +785,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             <button
               type="button"
               className="button button--ghost button--small"
+              aria-pressed={display === "table"}
               onClick={() => setDisplay(display === "graph" ? "table" : "graph")}
             >
-              {display === "graph" ? t("graph.showTable") : t("graph.showDrawing")}
+              {t("graph.showTable")}
             </button>
           </>
         ) : null}
@@ -881,6 +896,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             setAnnouncement(t("graph.announce.stepsUndone", { count: number.format(removed) }))
           }
           onOpenQuery={openQuery}
+          queryNote={queryNote}
         />
       ) : null}
       {graph.steps.length > 1 ? (
@@ -931,7 +947,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                   selected={selected}
                   primary={primary}
                   neighbours={neighbours}
-                  style={style}
+                  drawStyle={style}
                   onPick={pick}
                   onGestureHint={setGestureHint}
                   camera={camera}
@@ -967,6 +983,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             only={only}
             variable={variable}
             values={values}
+            capped={capped}
             expandText={expandText}
             moreText={moreText}
             actions={{
@@ -1082,7 +1099,7 @@ interface DrawnGraphProps {
   selected: ReadonlySet<number>;
   primary: number | null;
   neighbours: ReadonlySet<number>;
-  style: DrawStyle;
+  drawStyle: DrawStyle;
   onPick: (node: number | null, additive: boolean) => void;
   onGestureHint: (gesture: "wheel" | "touch") => void;
   camera: { current: CameraState | null };
@@ -1090,7 +1107,7 @@ interface DrawnGraphProps {
 }
 
 /** The drawing with its layout. With reduced motion, nodes jump to where the layout settles. */
-function DrawnGraph({ view, mode, ref, ...rest }: DrawnGraphProps) {
+function DrawnGraph({ view, mode, ref, drawStyle, ...rest }: DrawnGraphProps) {
   const layout = useGraphLayout(view, mode);
   const reduced = prefersReducedMotion();
   const [shown, setShown] = useState<Float32Array | null>(null);
@@ -1110,7 +1127,14 @@ function DrawnGraph({ view, mode, ref, ...rest }: DrawnGraphProps) {
   }
   return (
     <>
-      <LazySigmaCanvas ref={ref} view={view} positions={shown} reducedMotion={reduced} {...rest} />
+      <LazySigmaCanvas
+        ref={ref}
+        view={view}
+        positions={shown}
+        reducedMotion={reduced}
+        drawStyle={drawStyle}
+        {...rest}
+      />
       {mode === "hierarchy" && layout.reversed > 0 ? <CycleNote count={layout.reversed} /> : null}
       {layout.running && !progressive ? <SettlingNote /> : null}
     </>

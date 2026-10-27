@@ -167,13 +167,20 @@ export function useExplorer(
     );
   }
 
-  async function load(nodeId: string, caption: string, step: StepSettings, skipped: number) {
+  /** `known`: the node's count of neighbours from an earlier step, so it is not asked again. */
+  async function load(
+    nodeId: string,
+    caption: string,
+    step: StepSettings,
+    skipped: number,
+    known?: number | null,
+  ) {
     if (source === undefined || unavailable !== null || pending !== null) {
       return;
     }
     const request = expandQuery(source.kind, nodeId, { ...step, skip: skipped });
-    const count = countQuery(source.kind, nodeId, step);
-    if (request === null || count === null) {
+    const count = known === undefined ? countQuery(source.kind, nodeId, step) : null;
+    if (request === null) {
       return;
     }
     const controller = new AbortController();
@@ -182,10 +189,12 @@ export function useExplorer(
     setError(null);
     try {
       const response = await run(
-        [
-          { refId: EXPAND_REF, request },
-          { refId: COUNT_REF, request: count },
-        ],
+        count === null
+          ? [{ refId: EXPAND_REF, request }]
+          : [
+              { refId: EXPAND_REF, request },
+              { refId: COUNT_REF, request: count },
+            ],
         controller,
       );
       if (controller.signal.aborted) return;
@@ -197,9 +206,11 @@ export function useExplorer(
       } else {
         const counted = response.results[COUNT_REF];
         const total =
-          counted !== undefined && "result" in counted && counted.result.shape === "frame"
-            ? frameNumber(counted.result.frame)
-            : null;
+          known !== undefined
+            ? known
+            : counted !== undefined && "result" in counted && counted.result.shape === "frame"
+              ? frameNumber(counted.result.frame)
+              : null;
         const loaded = answer.graph.nodes.filter((n) => n.id !== nodeId).length;
         const id = nextId.current++;
         setSteps((current) => [

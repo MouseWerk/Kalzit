@@ -1,6 +1,8 @@
 import { useI18n } from "../../i18n/i18n";
 import type { RampName } from "./colors";
 import type { PropertyPaint } from "./paint";
+import "./graph.css";
+import "../../features/dashboards/ui/shared.css";
 
 /**
  * The legend under a graph: each label with its color and count, a click hides its nodes or

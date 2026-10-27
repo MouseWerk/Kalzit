@@ -142,7 +142,7 @@ export function graphOutcome(cypher: string, variables: Record<string, unknown>)
       },
     };
   }
-  if (new RegExp(`IN \\$${NODE_IDS_VARIABLE} RETURN n$`).test(cypher)) {
+  if (new RegExp(`\\$${NODE_IDS_VARIABLE}.* RETURN n$`).test(cypher)) {
     const ids = Array.isArray(variables[NODE_IDS_VARIABLE])
       ? (variables[NODE_IDS_VARIABLE] as string[])
       : [];

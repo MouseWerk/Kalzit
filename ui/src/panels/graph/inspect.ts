@@ -232,3 +232,21 @@ export function nodeIds(sets: readonly GraphSet[]): Set<string> {
   for (const set of sets) for (const node of set.nodes ?? []) ids.add(node.id);
   return ids;
 }
+/** At most this many values a selection gives a multi-value variable. */
+export const MAX_SELECTION_VALUES = 100;
+/** And at most this many characters in all, well below the server's limit on variable values. */
+export const MAX_SELECTION_CHARS = 16_000;
+
+/** The values cut to what a variable takes from a selection; `capped` when some were left out. */
+export function capValues(values: readonly string[]): { values: string[]; capped: boolean } {
+  const kept: string[] = [];
+  let chars = 0;
+  for (const value of values) {
+    if (kept.length >= MAX_SELECTION_VALUES || chars + value.length > MAX_SELECTION_CHARS) {
+      return { values: kept, capped: true };
+    }
+    kept.push(value);
+    chars += value.length;
+  }
+  return { values: kept, capped: false };
+}

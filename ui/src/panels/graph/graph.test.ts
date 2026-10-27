@@ -107,8 +107,8 @@ describe("adapter", () => {
     const neo = expandQuery("neo4j", "4:abc:7", { limit: 500 });
     expect(neo?.query).toEqual({
       cypher: [
-        "MATCH (n)-[]-(m) WHERE elementId(n) = $nodeId",
-        "WITH DISTINCT n, m ORDER BY size([(m)--() | 1]) DESC, elementId(m) SKIP 0 LIMIT 200",
+        "MATCH (n)-[e]-(m) WHERE elementId(n) = $nodeId",
+        "WITH DISTINCT n, m ORDER BY COUNT { (m)--() } DESC, elementId(m) SKIP 0 LIMIT 200",
         "MATCH (n)-[r]-(m)",
         "RETURN n, r, m",
       ].join("\n"),
@@ -118,21 +118,22 @@ describe("adapter", () => {
     expect(JSON.stringify(expandQuery("neo4j", "17", { limit: 5 })?.query)).toContain(
       "id(n) = toInteger",
     );
-    const memgraph = JSON.stringify(
-      expandQuery("memgraph", "17", {
-        limit: 5,
-        skip: 10,
-        types: ["KNOWS", "a`b"],
-        direction: "out",
-      })?.query,
-    );
+    const typed = expandQuery("memgraph", "17", {
+      limit: 5,
+      skip: 10,
+      types: ["KNOWS", "a`b"],
+      direction: "out",
+    });
+    const memgraph = JSON.stringify(typed?.query);
     expect(memgraph).toContain("SKIP 10 LIMIT 5");
     expect(memgraph).toContain("degree(m)");
-    // Types are quoted names, a backquote doubled.
-    expect(memgraph).toContain("(n)-[r:`KNOWS`|`a``b`]->(m)");
+    // Types are a parameter, never part of the text.
+    expect(memgraph).toContain("(n)-[r]->(m) WHERE type(r) IN $edgeTypes");
+    expect(memgraph).not.toContain("KNOWS");
+    expect(typed?.variables).toEqual({ nodeId: "17", edgeTypes: ["KNOWS", "a`b"] });
     expect(expandQuery("tigergraph", "Person:1", { limit: 5 })).toBeNull();
     expect(JSON.stringify(countQuery("neo4j", "4:a:1", { direction: "in" })?.query)).toContain(
-      "(n)<-[]-(m) WHERE elementId(n) = $nodeId RETURN count(DISTINCT m) AS total",
+      "(n)<-[e]-(m) WHERE elementId(n) = $nodeId RETURN count(DISTINCT m) AS total",
     );
   });
 
@@ -141,7 +142,10 @@ describe("adapter", () => {
       query: { cypher: "MATCH (n) WHERE elementId(n) IN $nodeIds RETURN n" },
       variables: { nodeIds: ["4:a:1"] },
     });
-    expect(JSON.stringify(nodesQuery("memgraph", ["1", "2"])?.query)).toContain("toString(id(n))");
+    // Numeric ids are matched as numbers, so the database seeks them.
+    expect(JSON.stringify(nodesQuery("memgraph", ["1", "2"])?.query)).toContain(
+      "id(n) IN [x IN $nodeIds | toInteger(x)]",
+    );
     expect(nodesQuery("tigergraph", ["a"])).toBeNull();
     expect(explorationQuery("neo4j", ["4:a:1", '4:a:"2'])).toBe(
       [
@@ -360,7 +364,7 @@ describe("drawing", () => {
       ranks: labelRanks(v),
       selected: new Set([0]),
       neighbours: new Set([1]),
-      style: DEFAULT_STYLE,
+      drawStyle: DEFAULT_STYLE,
     };
     const selected = nodeDisplay(0, base, props, 1);
     // The selection's label sits on the neutral selection tint, the others on the canvas.
@@ -394,7 +398,7 @@ describe("drawing", () => {
       ranks: labelRanks(v),
       selected: new Set([0]),
       neighbours: new Set<number>(),
-      style: { ...DEFAULT_STYLE, arrows: "selection" as const, edgeLabels: "always" as const },
+      drawStyle: { ...DEFAULT_STYLE, arrows: "selection" as const, edgeLabels: "always" as const },
     };
     const edge = { size: 1 } as never;
     const touching = v.edges.findIndex((e) => e.source === 0 || e.target === 0);
@@ -402,17 +406,20 @@ describe("drawing", () => {
     expect(edgeDisplay(touching, edge, props).head).toBe("arrow");
     expect(edgeDisplay(away, edge, props).head).toBeUndefined();
     expect(edgeDisplay(away, edge, props).label).toBe(v.edges[away]?.type);
-    const never = { ...props, style: { ...props.style, edgeLabels: "never" as const } };
+    const never = { ...props, drawStyle: { ...props.drawStyle, edgeLabels: "never" as const } };
     expect(edgeDisplay(touching, edge, never).label).toBeNull();
     // Only the selection labelled; every node labelled.
-    const onlySelected = { ...props, style: { ...DEFAULT_STYLE, labels: "selection" as const } };
+    const onlySelected = {
+      ...props,
+      drawStyle: { ...DEFAULT_STYLE, labels: "selection" as const },
+    };
     expect(
       nodeDisplay(1, base, { ...onlySelected, selected: new Set<number>() }, 1).label,
     ).toBeNull();
     const always = {
       ...props,
       selected: new Set<number>(),
-      style: { ...DEFAULT_STYLE, labels: "always" as const },
+      drawStyle: { ...DEFAULT_STYLE, labels: "always" as const },
     };
     expect(nodeDisplay(1, base, always, 100).labelVisibility).toBe("visible");
   });
@@ -427,7 +434,7 @@ describe("drawing", () => {
       ranks: labelRanks(ramped),
       selected: new Set<number>(),
       neighbours: new Set<number>(),
-      style: DEFAULT_STYLE,
+      drawStyle: DEFAULT_STYLE,
     };
     expect(nodeDisplay(0, base, props, 1).color).toBe("#b4");
     expect(nodeDisplay(1, base, { ...props, selected: new Set([0]) }, 1).color).toBe("#d4");

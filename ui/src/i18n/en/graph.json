@@ -7,7 +7,6 @@
   "graph.zoomOut": "Zoom out",
   "graph.fit": "Show all",
   "graph.showTable": "Show as table",
-  "graph.showDrawing": "Show drawing",
   "graph.roleDescription": "graph",
   "graph.keyboardHint": "Arrow keys move to the nearest node in that direction. Enter loads its neighbours in the explorer, opens a group or does the panel’s click action. Space adds the node to the selection or takes it out, P pins it, S shows only the selection, Ctrl+Z takes back a step, Escape clears the selection. Plus and minus zoom, 0 shows everything.",
   "graph.summary": "{nodes}, {edges}, {components}.",
@@ -238,5 +237,8 @@
   "graph.options.clickAction.details": "Details",
   "graph.options.clickAction.variable": "Set the variable",
   "graph.options.clickAction.expand": "Load neighbours",
-  "graph.options.clickDetails": "Open the details too"
+  "graph.options.clickDetails": "Open the details too",
+  "graph.steps.tooManyForQuery": "More than {max} nodes are shown, too many to open as a query. Show only a selection first.",
+  "graph.variable.capped": "${name} takes the first {count} values; the others of the selection are left out.",
+  "graph.announce.variableManyRefused": "${name} takes none of these values."
 }

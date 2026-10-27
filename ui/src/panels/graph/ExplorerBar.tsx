@@ -3,6 +3,8 @@ import { ConfirmDialog } from "../../features/dashboards/ui/Dialog";
 import { useI18n } from "../../i18n/i18n";
 import { type Direction, MAX_EXPAND_LIMIT } from "./adapter";
 import type { Explorer, StepSettings } from "./useExplorer";
+import "./graph.css";
+import "../../features/dashboards/ui/shared.css";
 
 /** Taking back this many steps or more at once asks first. */
 export const CONFIRM_STEPS = 3;
@@ -21,6 +23,7 @@ export function ExplorerBar({
   edgeTypes,
   onBack,
   onOpenQuery,
+  queryNote,
 }: {
   explorer: Explorer;
   /** Nodes of the query's own result, for its entry. */
@@ -31,6 +34,8 @@ export function ExplorerBar({
   onBack: (removed: number) => void;
   /** Opens the exploration as a query in Explore; absent where that is not possible. */
   onOpenQuery: (() => void) | null;
+  /** Why the exploration cannot open as a query (too many nodes), or null. */
+  queryNote: string | null;
 }) {
   const { t, language } = useI18n();
   const number = new Intl.NumberFormat(language);
@@ -203,6 +208,7 @@ export function ExplorerBar({
         {t("graph.steps.limitHint", { max: number.format(MAX_EXPAND_LIMIT) })}{" "}
         {t("graph.steps.yours")}
       </p>
+      {queryNote === null ? null : <p className="graph__note">{queryNote}</p>}
       {onOpenQuery === null ? null : (
         <div>
           <button
