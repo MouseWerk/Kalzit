@@ -765,6 +765,11 @@
     overflow-wrap: anywhere;
   }
 
+  /* A passed test's warnings below its result: the same quiet notice, a step apart. */
+  .ds-health-region .ds-warnings {
+    margin-block-start: var(--space-2);
+  }
+
   .ds-textarea {
     min-height: var(--size-textarea-min);
     resize: vertical;

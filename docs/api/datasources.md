@@ -323,6 +323,10 @@ Body: none or `{}`. Always `200`, also when the source fails:
 
 - `reason` and `params` are what the UI shows (see [Reasons](#reasons)); `message` is the English
   fallback. `params` is omitted when empty.
+- `warnings` (omitted when empty): what works but needs attention, each with `reason`, `params`
+  and `message`; the test still passed (`ok` true) and saving stays allowed. The UI keeps them in
+  view on the data source page as a quiet notice. So far only `tigergraph.auth_disabled`: REST++
+  answers a request without a token (`GET <restppUrl>/version`), so its authentication is off.
 - When `ok` is true, `reason` is `health.connected` (`engine`, `version`, and `edition` for the
   graph kinds when the server tells it), `health.connected_write_capable` (Memgraph with
   `allowWriteCapableUser`: the user may write),
@@ -432,7 +436,10 @@ Graph kinds:
 Neo4j answers `db.labels()`, `db.relationshipTypes()` and `db.propertyKeys()`; Memgraph a sample
 of up to 10,000 nodes and relationships; TigerGraph its vertex types, edge types and attribute
 names, and in `queries` the installed queries (4.x) and the approved ones. `queries` is omitted
-when empty.
+when empty. `queryParams` (TigerGraph 4.x, omitted when empty) holds the declared parameters of
+the queries whose info is readable, by query name, in their order, each `{ "name", "type" }` with
+the type as GSQL writes it (`INT`, `STRING`, `SET<INT>`, `VERTEX<Person>`, `VERTEX`):
+`"queryParams": { "nachbarn": [{ "name": "p", "type": "VERTEX<Person>" }, { "name": "tiefe", "type": "INT" }] }`.
 
 Errors: `502 datasource_error`, `422 datasource_target_blocked`, `504 query_timeout`.
 
@@ -827,8 +834,11 @@ dashboard variable of the same name.
   `DOUBLE`, `BOOL`, `STRING`, `DATETIME` (text `YYYY-MM-DD HH:MM:SS` or Unix milliseconds),
   `VERTEX<T>` (the id), `VERTEX` (`{"type": ..., "id": ...}`), `SET`/`BAG`/`LIST` of them (a list,
   sent as repeated values). A value that does not fit is refused (`tigergraph.param_type`), as is
-  a name the query does not declare. For an approved query whose text cannot be read the types
-  are unknown, and values go as given (lists repeated, `{"type", "id"}` as a vertex). A space in
+  a name the query does not declare. For an approved query whose text cannot be read, the
+  declared parameters and their types come from its info (`GET /gsql/v1/queries/info`, readable
+  for a `queryreader`), with the same typing, refusals and dashboard variables; only when the info
+  cannot be read either (3.x) are the types unknown, and values go as given (lists repeated,
+  `{"type", "id"}` as a vertex), without dashboard variables. A space in
   a value goes as `%20` and a `+` as `%2B`: REST++ keeps a literal `+` as a plus sign.
 - The query picker (`queries` in the schema) lists the graph's queries from
   `GET /gsql/v1/queries/info?graph=<graph>`, which a `queryreader` may read (4.2 answers it with
@@ -850,7 +860,7 @@ What a real TigerGraph 4.2.5 (Community Edition) does, checked every night by
 - REST++ authentication is off in a fresh Community Edition: then REST++ runs any installed query,
   writing ones too, for anyone who reaches it, and the reader user protects nothing there. Turn it
   on (`gadmin config set RESTPP.Factory.EnableAuth true`, `gadmin config apply -y`,
-  `gadmin restart restpp -y`); with it, a call without a token answers 403.
+  `gadmin restart restpp -y`); with it, a call without a token answers 403. Test connection warns (`tigergraph.auth_disabled`) when REST++ answers without a token.
 - TigerGraph's own HTTPS (`Nginx.SSL.Enable`) needs an Enterprise license; the Community Edition
   refuses it. HTTPS with `caCert` is tested through a reverse proxy in front of it.
 - 3.x is not tested against a real server (no 3.x image is published for free use); its paths
@@ -1664,6 +1674,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `tigergraph.not_an_api_response` | `status` | the server answered without a TigerGraph API response |
 | `tigergraph.error` | `status`, `detail` | TigerGraph answered an error |
 | `tigergraph.no_token` | | the token endpoint answered without a token |
+| `tigergraph.auth_disabled` | | a warning of a passed Test connection (`warnings`), not a failure: REST++ answers without a token |
 | `tigergraph.redirect_refused` | `path` | TigerGraph answered a request with a redirect |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |

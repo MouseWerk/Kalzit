@@ -620,6 +620,7 @@ impl DataSourcePlugin for Files {
             Ok((format, bytes)) => Health {
                 ok: true,
                 code: None,
+                warnings: Vec::new(),
                 detail: Detail::new(
                     "health.file_readable",
                     format!("the {} file can be read ({bytes} bytes)", format.label()),

@@ -46,8 +46,8 @@ use super::frame::{Charge, Column, FrameBuilder};
 use super::graph::{GraphBuilder, GraphLimits, float_value, int_value};
 use super::gsql::{self, Form, ParamType};
 use super::{
-    Connection, DataSourcePlugin, FieldError, Health, Kind, SettingField, SettingType, SourceError, SourceQuery,
-    SourceSchema,
+    Connection, DataSourcePlugin, FieldError, Health, Kind, QueryParam, SettingField, SettingType, SourceError,
+    SourceQuery, SourceSchema,
 };
 use crate::http::{HttpClient, HttpError, HttpOptions};
 use crate::shapes::{Edge, FieldType, Node, NoticeSeverity, QueryResult, Shape};
@@ -522,33 +522,39 @@ impl Client {
             return names.clone();
         }
         let names = match self.api {
-            Api::V4 => self.list_queries().await,
+            Api::V4 => self.list_queries().await.map(|qs| qs.into_iter().map(|q| q.name).collect()),
             Api::V3 => None,
         };
         *self.query_names.lock().expect("names lock") = Some((Instant::now(), names.clone()));
         names
     }
 
-    /// The graph's query names (4.x). `GET /gsql/v1/queries/info?graph=g` answers a `queryreader`
-    /// with every query; `GET /gsql/v1/queries?graph=g` answers it with an empty list (4.2, checked
-    /// by the nightly job), so it is only asked when the first is not available.
-    async fn list_queries(&self) -> Option<Vec<String>> {
+    /// The graph's queries with their info (4.x): `GET /gsql/v1/queries/info?graph=g` answers a
+    /// `queryreader` with every query; `GET /gsql/v1/queries?graph=g` answers it with an empty list
+    /// (4.2, checked by the nightly job), so it is only asked, for names alone, when the first is
+    /// not available.
+    async fn list_queries(&self) -> Option<Vec<QueryInfo>> {
         let graph = [("graph", self.graph.as_str())];
         if let Ok(a) = self.gsql_json(Method::GET, "gsql/v1/queries/info", &graph).await
             && a.status.is_success()
             && a.body.get("error").and_then(Value::as_bool) != Some(true)
         {
-            return Some(query_names(a.body.get("results").unwrap_or(&a.body)));
+            return Some(query_infos(a.body.get("results").unwrap_or(&a.body), &self.graph));
         }
         match self.gsql_json(Method::GET, "gsql/v1/queries", &graph).await {
-            Ok(a) if a.status.is_success() => Some(query_names(a.body.get("results").unwrap_or(&a.body))),
+            Ok(a) if a.status.is_success() => Some(
+                query_names(a.body.get("results").unwrap_or(&a.body))
+                    .into_iter()
+                    .map(|name| QueryInfo { name, updates: None, params: None })
+                    .collect(),
+            ),
             _ => None,
         }
     }
 
-    /// Whether an installed query changes data, from its info (4.x, `graphUpdate`, readable for a
-    /// `queryreader`). `None` when the info cannot be read.
-    async fn query_updates(&self, name: &str) -> Option<bool> {
+    /// The info of one installed query (4.x), readable for a `queryreader`; `None` when it cannot
+    /// be read.
+    async fn query_info(&self, name: &str) -> Option<QueryInfo> {
         let a = self
             .gsql_json(Method::GET, "gsql/v1/queries/info", &[("graph", &self.graph), ("query", name)])
             .await
@@ -556,12 +562,7 @@ impl Client {
         if !a.status.is_success() || a.body.get("error").and_then(Value::as_bool) == Some(true) {
             return None;
         }
-        let results = a.body.get("results").unwrap_or(&a.body);
-        let info = match results {
-            Value::Array(items) => items.iter().find(|i| i.get("name").and_then(Value::as_str) == Some(name))?,
-            other => other,
-        };
-        info.get("graphUpdate").and_then(Value::as_bool)
+        query_infos(a.body.get("results").unwrap_or(&a.body), &self.graph).into_iter().find(|i| i.name == name)
     }
 
     /// The checked parameters of an installed query, or why it may not run.
@@ -582,16 +583,27 @@ impl Client {
         };
         let Some(text) = text else {
             if self.approved.iter().any(|a| a == name) {
-                // TigerGraph marks a query that changes data; such a query is refused even when
-                // approved (the reader user would refuse it too, but only when REST++ checks tokens).
-                if self.api == Api::V4 && self.query_updates(name).await == Some(true) {
-                    return Err(SourceError::rejected(
+                // The info tells whether the query changes data and its parameters with their
+                // types. One that changes data is refused even when approved (the reader user
+                // would refuse it too, but only when REST++ checks tokens).
+                let info = match self.api {
+                    Api::V4 => self.query_info(name).await,
+                    Api::V3 => None,
+                };
+                let Some(info) = info else { return Ok(None) };
+                let checked = if info.updates == Some(true) {
+                    Err(Detail::new(
                         "tigergraph.query_writes",
                         format!("{name} changes data, so Kalzit does not run it"),
                     )
-                    .with("name", name));
-                }
-                return Ok(None);
+                    .with("name", name))
+                } else if let Some(params) = info.params {
+                    Ok(params)
+                } else {
+                    return Ok(None);
+                };
+                self.texts.lock().expect("text cache lock").insert(name.to_string(), (Instant::now(), checked.clone()));
+                return checked.map(Some).map_err(SourceError::Rejected);
             }
             return Err(SourceError::rejected(
                 "tigergraph.query_text_unreadable",
@@ -1136,13 +1148,31 @@ impl DataSourcePlugin for TigerGraph {
                 Api::V4 => "4",
                 Api::V3 => "3",
             };
-            Ok::<_, SourceError>((version.unwrap_or_else(|| fallback.to_string()), edition_from(&message)))
+            // The same request without a token: REST++ with authentication refuses it (403 in
+            // 4.2). When it answers, anyone who reaches REST++ can run every installed query,
+            // writing ones too, and the reader user protects nothing there.
+            let open = match c.restpp.join("version") {
+                Ok(url) => c
+                    .call(Method::GET, url, None, None, &[], MAX_SMALL_RESPONSE, None)
+                    .await
+                    .is_ok_and(|(s, _)| s.is_success()),
+                Err(_) => false,
+            };
+            Ok::<_, SourceError>((version.unwrap_or_else(|| fallback.to_string()), edition_from(&message), open))
         };
         match check.await {
-            Ok((version, edition)) => {
+            Ok((version, edition, open)) => {
                 let mut h = Health::connected("TigerGraph", &version, false);
                 if let Some(e) = edition {
                     h.detail = h.detail.with("edition", e);
+                }
+                if open {
+                    h = h.with_warning(Detail::new(
+                        "tigergraph.auth_disabled",
+                        "REST++ answers without a token, so anyone who reaches it can run every installed query, \
+                         also ones that write; turn on REST++ authentication (gadmin config set \
+                         RESTPP.Factory.EnableAuth true, gadmin config apply -y, gadmin restart restpp -y)",
+                    ));
                 }
                 h
             }
@@ -1179,10 +1209,19 @@ impl DataSourcePlugin for TigerGraph {
         keys.sort();
         keys.dedup();
         keys.truncate(MAX_SCHEMA_NAMES);
-        let mut queries = match c.api {
+        let infos = match c.api {
             Api::V4 => c.list_queries().await.unwrap_or_default(),
             Api::V3 => Vec::new(),
         };
+        let query_params: BTreeMap<String, Vec<QueryParam>> = infos
+            .iter()
+            .filter_map(|q| {
+                let params = q.params.as_ref()?;
+                let list = params.iter().map(|p| QueryParam { name: p.name.clone(), ty: type_label(&p.ty) }).collect();
+                Some((q.name.clone(), list))
+            })
+            .collect();
+        let mut queries: Vec<String> = infos.into_iter().map(|q| q.name).collect();
         for approved in &c.approved {
             if !queries.contains(approved) {
                 queries.push(approved.clone());
@@ -1194,6 +1233,7 @@ impl DataSourcePlugin for TigerGraph {
             edge_types: names("EdgeTypes"),
             property_keys: keys,
             queries,
+            query_params,
         })
     }
 
@@ -1275,6 +1315,102 @@ impl DataSourcePlugin for TigerGraph {
         // The raw answer is gone; only the result's own charge remains.
         drop(charge);
         Ok(result)
+    }
+}
+
+/// An installed query as `GET /gsql/v1/queries/info` describes it.
+#[derive(Clone, Debug, PartialEq)]
+struct QueryInfo {
+    name: String,
+    /// `graphUpdate`: whether the query changes data.
+    updates: Option<bool>,
+    /// The declared parameters in their order, `None` when the info has none to read.
+    params: Option<Vec<gsql::Param>>,
+}
+
+/// The queries in the `results` of `GET /gsql/v1/queries/info` (4.2): one object per query with
+/// `name`, `graphUpdate` and `endpoint.query.<graph>.<name>."GET/POST".parameters`.
+fn query_infos(results: &Value, graph: &str) -> Vec<QueryInfo> {
+    let items: Vec<&Value> = match results {
+        Value::Array(a) => a.iter().collect(),
+        other => vec![other],
+    };
+    let mut out: Vec<QueryInfo> = items
+        .into_iter()
+        .filter_map(|q| {
+            let name = q.get("name").and_then(Value::as_str).filter(|n| is_name(n))?.to_string();
+            let endpoint =
+                q.get("endpoint").and_then(|e| e.get("query")).and_then(|e| e.get(graph)).and_then(|e| e.get(&name));
+            let endpoint = endpoint.and_then(|e| e.get("GET/POST").or_else(|| e.as_object()?.values().next()));
+            let updates =
+                q.get("graphUpdate").or_else(|| endpoint.and_then(|e| e.get("graphUpdate"))).and_then(Value::as_bool);
+            let params = endpoint.and_then(|e| e.get("parameters")).and_then(Value::as_object).map(info_params);
+            Some(QueryInfo { name, updates, params })
+        })
+        .collect();
+    out.truncate(MAX_SCHEMA_NAMES);
+    out
+}
+
+/// The declared parameters from an info's `parameters`, in their `index` order. `query` (the
+/// endpoint's own, without an index) and the `<v>.type` companion of an untyped vertex are left
+/// out. A vertex is `is_id` with its `id_type` (`$<name>.type` when the type goes along), a list
+/// has `max_count`.
+fn info_params(params: &Map<String, Value>) -> Vec<gsql::Param> {
+    let mut indexed: Vec<(u64, gsql::Param)> = params
+        .iter()
+        .filter_map(|(name, p)| {
+            let index = p.get("index").and_then(Value::as_u64)?;
+            if let Some(base) = name.strip_suffix(".type")
+                && params.get(base).and_then(|b| b.get("id_type")).and_then(Value::as_str)
+                    == Some(format!("${name}").as_str())
+            {
+                return None;
+            }
+            let is_id = p.get("is_id").is_some_and(|v| v == "true" || v == true);
+            let ty = p.get("type").and_then(Value::as_str).unwrap_or("STRING").to_ascii_uppercase();
+            let one = if is_id {
+                match p.get("id_type").and_then(Value::as_str) {
+                    Some(t) if !t.starts_with('$') && !t.is_empty() => ParamType::Vertex(Some(t.to_string())),
+                    _ => ParamType::Vertex(None),
+                }
+            } else if ty.starts_with("UINT") {
+                ParamType::Uint
+            } else if ty.starts_with("INT") {
+                ParamType::Int
+            } else if ty == "FLOAT" || ty == "DOUBLE" {
+                ParamType::Float
+            } else if ty.starts_with("BOOL") {
+                ParamType::Bool
+            } else if ty == "DATETIME" {
+                ParamType::Datetime
+            } else {
+                ParamType::String
+            };
+            let ty = if p.get("max_count").and_then(Value::as_u64).is_some_and(|m| m > 1) {
+                ParamType::Many(Box::new(one))
+            } else {
+                one
+            };
+            Some((index, gsql::Param { name: name.clone(), ty }))
+        })
+        .collect();
+    indexed.sort_by_key(|(i, _)| *i);
+    indexed.into_iter().map(|(_, p)| p).collect()
+}
+
+/// A parameter type as GSQL writes it, for the query picker.
+fn type_label(ty: &ParamType) -> String {
+    match ty {
+        ParamType::Int => "INT".into(),
+        ParamType::Uint => "UINT".into(),
+        ParamType::Float => "FLOAT".into(),
+        ParamType::Bool => "BOOL".into(),
+        ParamType::String => "STRING".into(),
+        ParamType::Datetime => "DATETIME".into(),
+        ParamType::Vertex(Some(t)) => format!("VERTEX<{t}>"),
+        ParamType::Vertex(None) => "VERTEX".into(),
+        ParamType::Many(inner) => format!("SET<{}>", type_label(inner)),
     }
 }
 

@@ -9,7 +9,8 @@ name: TigerGraph nightly
 # 16 GB). Setup: .github/tigergraph/ (REST++ authentication on, schema, data, installed queries,
 # a queryreader and a querywriter user); probe.sh prints the raw answers of every endpoint Kalzit
 # calls; the tests are server/tests/tigergraph_real.rs, ignored unless run with --ignored and
-# KALZIT_TEST_TIGERGRAPH_URL. Last, tls.sh puts an HTTPS proxy with a private CA in front for the
+# KALZIT_TEST_TIGERGRAPH_URL. Then auth-off.sh turns REST++ authentication off for the warning
+# test, and last tls.sh puts an HTTPS proxy with a private CA in front for the
 # TLS test (TigerGraph's own HTTPS needs an Enterprise license). TigerGraph 3.x has no freely
 # available image and is tested against the fake only.
 
@@ -65,7 +66,13 @@ jobs:
       - name: Tests against the real instance
         env:
           KALZIT_TEST_TIGERGRAPH_URL: http://127.0.0.1:14240
-        run: cargo test --locked --test tigergraph_real -- --ignored --nocapture --test-threads 1 --skip tls_
+        run: cargo test --locked --test tigergraph_real -- --ignored --nocapture --test-threads 1 --skip tls_ --skip auth_off_
+      - name: REST++ authentication off, as a fresh Community Edition has it
+        run: bash .github/tigergraph/auth-off.sh
+      - name: Warning test against the real instance
+        env:
+          KALZIT_TEST_TIGERGRAPH_URL: http://127.0.0.1:14240
+        run: cargo test --locked --test tigergraph_real -- --ignored --nocapture --exact auth_off_rest_without_authentication_warns
       - name: HTTPS in front of TigerGraph with a private CA
         run: bash .github/tigergraph/tls.sh "$RUNNER_TEMP/tigergraph-ca.pem"
       - name: TLS test against the real instance

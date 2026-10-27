@@ -166,6 +166,7 @@ async fn reader_reads_graphs_and_frames() {
     assert_eq!(h["ok"], true, "{h}");
     assert_eq!(h["params"]["engine"], "TigerGraph", "{h}");
     assert!(h["params"]["version"].as_str().unwrap().starts_with('4'), "{h}");
+    assert!(h.get("warnings").is_none(), "REST++ authentication is on: {h}");
 
     let schema = t.schema(&id).await;
     eprintln!("schema: {schema}");
@@ -244,6 +245,20 @@ async fn installed_queries_with_parameters() {
     let schema = t.schema(&plain).await;
     eprintln!("schema: {schema}");
     assert_eq!(schema["queries"], json!(["loescht", "nachbarn", "nur_knoten", "zahlen"]), "{schema}");
+    // With their declared parameters from the query info, in order.
+    assert_eq!(
+        schema["queryParams"]["zahlen"],
+        json!([{ "name": "k", "type": "INT" }, { "name": "name", "type": "STRING" }, { "name": "ab", "type": "DATETIME" },
+               { "name": "liste", "type": "SET<INT>" }, { "name": "v", "type": "VERTEX" }]),
+        "{schema}"
+    );
+    assert_eq!(
+        schema["queryParams"]["nachbarn"],
+        json!([{ "name": "p", "type": "VERTEX<Person>" }, { "name": "tiefe", "type": "INT" },
+               { "name": "stichworte", "type": "SET<STRING>" }]),
+        "{schema}"
+    );
+    assert_eq!(schema["queryParams"]["nur_knoten"], json!([]), "{schema}");
 
     let id = t.source(READER, json!({ "approvedQueries": "nachbarn, zahlen, nur_knoten" })).await;
     let r = t.query(&id, json!({ "installed": "nur_knoten" })).await;
@@ -269,21 +284,28 @@ async fn installed_queries_with_parameters() {
     let r = t
         .query(
             &id,
-            json!({ "installed": "zahlen", "params": { "k": 3, "name": "Ana", "ab": "2024-01-01 00:00:00", "liste": [1, 2],
+            json!({ "installed": "zahlen", "params": { "k": 3, "ab": "2024-01-01 00:00:00", "liste": [1, 2],
                     "v": { "type": "Person", "id": "2" } } }),
         )
         .await;
     eprintln!("zahlen: {r}");
     assert_eq!(r["result"]["shape"], "frame", "{r}");
-    assert_eq!(field(&r, "@@treffer")["values"], json!(["1"]), "{r}");
+    assert_eq!(field(&r, "@@treffer")["values"], json!(["1"]), "name came from the dashboard variable: {r}");
     assert_eq!(field(&r, "name")["values"], json!(["Ana"]), "{r}");
+    // The types come from the query info: a value that does not fit never reaches the server.
+    for (bad, why) in [
+        (json!({ "k": "drei" }), "tigergraph.param_type"),
+        (json!({ "v": "2" }), "tigergraph.param_type"),
+        (json!({ "fremd": 1 }), "tigergraph.param_unknown"),
+    ] {
+        let r = t.query(&id, json!({ "installed": "zahlen", "params": bad })).await;
+        assert_eq!(r["error"]["reason"], why, "{bad}: {r}");
+    }
     assert_eq!(field(&r, "liste")["values"], json!([[1, 2]]), "{r}");
     assert_eq!(field(&r, "v")["values"], json!(["2"]), "{r}");
 
     // Spaces, plus signs and ampersands arrive as written, in installed and interpreted queries.
     let odd = "a b+c&d=e Ö";
-    // An approved query's parameters are unknown to Kalzit, so dashboard variables do not fill
-    // them: every value is given.
     let params =
         json!({ "k": 1, "name": odd, "ab": "2024-01-01 00:00:00", "liste": [5], "v": { "type": "Ort", "id": "7" } });
     let r = t.query(&id, json!({ "installed": "zahlen", "params": params })).await;
@@ -411,5 +433,21 @@ async fn tls_with_a_private_ca() {
     let id = t.source(READER, json!({ "caCert": ca, "approvedQueries": "nur_knoten" })).await;
     let r = t.query(&id, json!({ "installed": "nur_knoten" })).await;
     assert_eq!(r["result"]["shape"], "graph", "REST++ through HTTPS with a token: {r}");
+    t.finish().await;
+}
+
+/// REST++ without authentication (a fresh Community Edition): Test connection passes with the
+/// warning `tigergraph.auth_disabled`. The nightly job turns REST++ authentication off for this
+/// test after the others.
+#[tokio::test]
+#[ignore = "needs a real TigerGraph with REST++ authentication off (KALZIT_TEST_TIGERGRAPH_URL)"]
+async fn auth_off_rest_without_authentication_warns() {
+    let t = T::new().await;
+    let id = t.source(READER, json!({})).await;
+    let h = t.health(&id).await;
+    eprintln!("REST++ without authentication: {h}");
+    assert_eq!(h["ok"], true, "a warning, not a failure: {h}");
+    assert_eq!(h["warnings"][0]["reason"], "tigergraph.auth_disabled", "{h}");
+    assert_eq!(h["warnings"].as_array().unwrap().len(), 1, "{h}");
     t.finish().await;
 }

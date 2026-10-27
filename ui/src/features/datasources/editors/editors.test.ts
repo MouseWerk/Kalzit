@@ -90,6 +90,7 @@ const GRAPH: GraphSourceSchema = {
   edgeTypes: ["BOUGHT", "REVIEWED"],
   propertyKeys: ["name", "price"],
   queries: [],
+  queryParams: {},
 };
 
 describe("Cypher completion", () => {

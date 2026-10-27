@@ -696,6 +696,27 @@ describe("adding a data source", () => {
 });
 
 describe("editing a data source", () => {
+  it("keeps a passed test's warning in view as a quiet notice", async () => {
+    const { server, user } = open(`/data-sources/${PG_ID}`);
+    const passed = {
+      ok: true,
+      reason: "health.connected",
+      params: { engine: "TigerGraph", version: "4.2.5" },
+      message: "TigerGraph 4.2.5",
+      latencyMs: 12,
+      warnings: [{ reason: "tigergraph.auth_disabled", message: "REST++ answers without a token" }],
+    };
+    server.areas.datasources.health[PG_ID] = passed;
+    server.areas.datasources.testHealth = passed;
+    await screen.findByRole("textbox", { name: "Name" });
+    await user.click(screen.getAllByRole("button", { name: "Test connection" })[0] as HTMLElement);
+    const text = await screen.findByText(/REST\+\+ answers without a token, so anyone/);
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+    // Once on the page, not again inside the test's result.
+    expect(screen.getAllByText(/REST\+\+ answers without a token/)).toHaveLength(1);
+    expect(text.closest("[role=status]")).toBeNull();
+  });
+
   it("renames without sending settings, also for a source stored without defaults", async () => {
     const { server, user } = open("/data-sources/ds-lean");
     server.areas.datasources.datasources.push({

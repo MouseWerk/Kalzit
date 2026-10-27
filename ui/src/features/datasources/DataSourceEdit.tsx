@@ -35,6 +35,7 @@ import {
   ConflictDialog,
   type FormOutput,
   HealthResult,
+  HealthWarnings,
   type SaveRequest,
   SettingsForm,
   UntestedNote,
@@ -334,6 +335,8 @@ function EditDataSource({ orgId }: { orgId: string }) {
       </header>
       <div className="ds-edit__layout">
         <div className="ds-edit__main">
+          {/* The saved source's last test found something to fix: it stays in view on the page. */}
+          <HealthWarnings health={health} />
           <SettingsForm
             key={formKey}
             kind={kind}
@@ -362,6 +365,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
                 )}
                 <HealthResult
                   health={draft ?? health}
+                  warnings={draft !== null}
                   error={testForm.error ?? test.error}
                   empty={canTest ? <UntestedNote /> : null}
                 />
