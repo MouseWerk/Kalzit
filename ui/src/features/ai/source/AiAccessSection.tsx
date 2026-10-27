@@ -15,6 +15,7 @@ import {
 import { aiErrorText } from "../reasons";
 import { useAiStatus } from "../useAiStatus";
 import "../../datasources/datasources.css";
+import "../../settings/settings.css";
 import "../admin/ai-admin.css";
 
 type AccessInput = { readable: boolean; excludedFields: string[] };

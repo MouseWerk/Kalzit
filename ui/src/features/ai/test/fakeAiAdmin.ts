@@ -45,6 +45,63 @@ export interface FakeAiState {
   orgUsage: WireAiUsage[];
   /** What AI may read of each data source, by data source id; closed by default. */
   access: Record<string, { readable: boolean; excludedFields: string[] }>;
+  /** The AI calls asked for (explain, draft, summarize), with their path and body. */
+  calls: { path: string; body: Record<string, unknown> }[];
+  /**
+   * What the next calls answer: the events of the stream (`aiEvents`), or a refusal before the
+   * stream starts. A stream that never ends stays open until the request is aborted.
+   */
+  callAnswer:
+    | { events: { event: string; data: unknown }[]; hang?: boolean }
+    | {
+        refusal: { status: number; code: string; reason?: string; params?: Record<string, string> };
+      };
+}
+
+/** The events of a plain answer: what was sent, the text in two parts, the end. */
+export function aiEvents(
+  text: string,
+  meta: Record<string, unknown> = {},
+  done: Record<string, unknown> = {},
+): { event: string; data: unknown }[] {
+  const middle = Math.ceil(text.length / 2);
+  return [
+    {
+      event: "meta",
+      data: {
+        provider: { name: "Lokal", kind: "openai", model: "modell-1", host: "llm.intern" },
+        ...meta,
+      },
+    },
+    { event: "text", data: { text: text.slice(0, middle) } },
+    { event: "text", data: { text: text.slice(middle) } },
+    { event: "done", data: { usage: { inputTokens: 40, outputTokens: 8 }, ...done } },
+  ];
+}
+
+function eventStream(events: { event: string; data: unknown }[], hang: boolean): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const { event, data } of events) {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      }
+      if (!hang) {
+        controller.close();
+      }
+    },
+  });
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+function answerCall(state: FakeAiState, path: string, body: Record<string, unknown>): Response {
+  state.calls.push({ path, body });
+  const answer = state.callAnswer;
+  if ("refusal" in answer) {
+    const { status, code, ...extra } = answer.refusal;
+    return refusal(status, code, extra);
+  }
+  return eventStream(answer.events, answer.hang === true);
 }
 
 const T0 = Date.UTC(2026, 9, 20);
@@ -311,6 +368,8 @@ export function aiAdminFake(_areas: FakeAreaStates): FakeArea<FakeAiState> {
     serverUsage: [],
     orgUsage: [],
     access: {},
+    calls: [],
+    callAnswer: { events: aiEvents("Die Abfrage summiert den Umsatz je Region.") },
   };
   return {
     state,
@@ -320,6 +379,16 @@ export function aiAdminFake(_areas: FakeAreaStates): FakeArea<FakeAiState> {
         const rest = parts.slice(1);
         if (rest[0] === "status" && method === "GET") {
           return json(200, state.status);
+        }
+        if (rest[0] === "notice" && method === "POST") {
+          state.status = { ...state.status, noticeAcknowledged: true };
+          return new Response(null, { status: 204 });
+        }
+        if (
+          method === "POST" &&
+          (rest[0] === "explain" || rest[0] === "draft" || rest[0] === "summarize")
+        ) {
+          return answerCall(state, route, body);
         }
         if (rest[0] === "providers") {
           if (!permissions.has("settings:read")) {
@@ -344,6 +413,15 @@ export function aiAdminFake(_areas: FakeAreaStates): FakeArea<FakeAiState> {
           return json(200, { items, nextCursor: null });
         }
         return undefined;
+      }
+      if (
+        parts[0] === "dashboards" &&
+        parts[2] === "panels" &&
+        parts[4] === "ai" &&
+        parts[5] === "summarize" &&
+        method === "POST"
+      ) {
+        return answerCall(state, route, body);
       }
       if (parts[0] === "datasources" && parts[2] === "ai-access" && parts.length === 3) {
         const id = parts[1] ?? "";

@@ -319,6 +319,119 @@ export async function requestFile(
   }
 }
 
+/** One server-sent event: its name and its JSON data. */
+export interface StreamEvent {
+  event: string;
+  data: unknown;
+}
+
+/** Splits `buffer` into complete events and the rest that is still arriving. */
+export function parseEventStream(buffer: string): { events: StreamEvent[]; rest: string } {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const blocks = normalized.split("\n\n");
+  const rest = blocks.pop() ?? "";
+  const events: StreamEvent[] = [];
+  for (const block of blocks) {
+    let event = "message";
+    const data: string[] = [];
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) {
+        event = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        data.push(line.slice(5).replace(/^ /, ""));
+      }
+    }
+    if (data.length === 0) {
+      // A comment or keep-alive.
+      continue;
+    }
+    try {
+      events.push({ event, data: JSON.parse(data.join("\n")) });
+    } catch {
+      // Not JSON: not an event this UI asked for.
+    }
+  }
+  return { events, rest };
+}
+
+/**
+ * POSTs a JSON body and reads the answer as server-sent events (the AI calls), handing each one
+ * to `onEvent` as it arrives. A refusal before the stream starts is an ApiError from its JSON
+ * body, as with `request`; aborting `options.signal` closes the request, which cancels the call
+ * on the server, and rejects with the signal's reason.
+ */
+export async function requestStream(
+  path: string,
+  body: unknown,
+  onEvent: (event: StreamEvent) => void,
+  options?: RequestOptions,
+): Promise<void> {
+  const init: RequestInit = {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  if (options?.signal !== undefined) {
+    init.signal = options.signal;
+  }
+  const cancelled = (cause: unknown) =>
+    options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch (cause) {
+    if (cancelled(cause)) {
+      throw cause;
+    }
+    throw new ApiError("network", 0, cause instanceof Error ? cause.message : String(cause));
+  }
+  if (!response.ok) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await response.text());
+    } catch {
+      parsed = undefined;
+    }
+    throw errorFromResponse(response.status, parsed, response.headers.get("Retry-After"));
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const flush = (final: boolean) => {
+    const { events, rest } = parseEventStream(final ? `${buffer}\n\n` : buffer);
+    buffer = final ? "" : rest;
+    for (const event of events) {
+      onEvent(event);
+    }
+  };
+  try {
+    if (response.body === null) {
+      buffer = await response.text();
+    } else {
+      const reader = response.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        flush(false);
+      }
+      buffer += decoder.decode();
+    }
+  } catch (cause) {
+    if (cancelled(cause)) {
+      throw cause;
+    }
+    throw new ApiError(
+      "network",
+      response.status,
+      cause instanceof Error ? cause.message : String(cause),
+    );
+  }
+  flush(true);
+}
+
 /** Narrows a parsed body or throws `invalid_response`, so a contract mismatch fails loudly. */
 export function expectShape<T>(value: unknown, guard: (v: unknown) => v is T, what: string): T {
   if (!guard(value)) {

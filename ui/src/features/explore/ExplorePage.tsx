@@ -48,6 +48,8 @@ import { useLiveSubscription } from "../../live/useLive";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
+import { AiGate } from "../ai/AiGate";
+import { ExploreAiTools, useExploreAiSummary } from "../ai/ExploreAi";
 import {
   ANALYSES_KEY,
   ANALYSIS_SCHEMA_VERSION,
@@ -477,6 +479,25 @@ function Explore({
       onArrived(arrived);
     }
   }, [arrived]);
+
+  // "Summarize" at the result: the source and query of the run shown (board frame 9).
+  const summarySource =
+    submitted === null ? undefined : list.find((source) => source.id === submitted.datasourceId);
+  const summary = useExploreAiSummary(
+    orgId,
+    {
+      id: summarySource?.id ?? "",
+      kind: summarySource?.kind ?? "",
+      name: summarySource?.name ?? "",
+    },
+    submitted === null || summarySource === undefined
+      ? null
+      : {
+          query: submitted.query,
+          timeRange: { from: submitted.from, to: submitted.to },
+          intervalMs: intervalFor({ from: submitted.from, to: submitted.to }),
+        },
+  );
 
   if (datasources.isPending) {
     return <p className="loading">{t("common.loading")}</p>;
@@ -982,6 +1003,30 @@ function Explore({
           )}
           {rangeError === null ? null : <FormAlert>{rangeError}</FormAlert>}
           {filterError === null ? null : <FormAlert>{filterError}</FormAlert>}
+          <AiGate>
+            <ExploreAiTools
+              key={datasource.id}
+              orgId={orgId}
+              source={{ id: datasource.id, kind: datasource.kind, name: datasource.name }}
+              query={query}
+              hasQuery={hasQuery(query, datasource.kind)}
+              onApply={(draft) =>
+                setQueries((current) => ({
+                  ...current,
+                  [datasource.id]:
+                    // A search draft is a Lucene query: the index and fields of the query stay.
+                    familyOf(datasource.kind) === "search" && typeof query === "object"
+                      ? {
+                          ...Object.fromEntries(
+                            Object.entries(query ?? {}).filter(([k]) => k !== "dsl"),
+                          ),
+                          ...(draft as object),
+                        }
+                      : draft,
+                }))
+              }
+            />
+          </AiGate>
           <QueryEditor
             key={`${datasource.id}:${loads}`}
             orgId={orgId}
@@ -1041,6 +1086,7 @@ function Explore({
                     ))}
                   </select>
                 </div>
+                {summary.button}
                 {liveText === null ? null : (
                   <p className="explore__live" role="status">
                     {liveText.label}: {liveText.detail}
@@ -1052,6 +1098,7 @@ function Explore({
                   </p>
                 ) : null}
               </div>
+              {summary.card}
               {/* Both panels exist, so every tab's aria-controls points at an element. */}
               <div
                 className="explore__panel"
