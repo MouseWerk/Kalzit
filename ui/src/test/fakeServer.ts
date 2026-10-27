@@ -20,6 +20,10 @@ export interface FakeServerOptions {
   user?: Me;
   password?: string;
   setupToken?: string;
+  /** The code of the previous start, answered as expired. */
+  previousSetupToken?: string;
+  /** Where the setup page says the code is (`GET /api/setup`, while setup is needed). */
+  codeHint?: "file" | "docker" | "fixed";
   /** Permissions per role name; defaults follow the built-in roles in docs/ARCHITECTURE.md. */
   rolePermissions?: Record<string, string[]>;
 }
@@ -147,6 +151,10 @@ export interface FakeServer {
   calls: { method: string; path: string; body: unknown }[];
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
   failNext: (path: string, status: number, code: string, method?: string, field?: string) => void;
+  /** Makes the next request to `path` a rate-limited answer that names the wait. */
+  rateLimitNext: (path: string, seconds: number) => void;
+  /** Holds the next request to `path` until the returned function is called. */
+  holdNext: (path: string) => () => void;
   /** The state of every area's fake routes, for arranging data and checking what was stored. */
   areas: FakeAreaStates;
 }
@@ -172,6 +180,8 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     string,
     { status: number; code: string; method?: string | undefined; field?: string | undefined }
   >();
+  const waits = new Map<string, number>();
+  const holds = new Map<string, Promise<void>>();
   const areaStates = {} as FakeAreaStates;
   const areas = Object.entries(AREA_FAKES).map(([name, create]) => {
     const area: FakeArea<unknown> = create(areaStates);
@@ -215,7 +225,36 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     calls: [],
     failNext: (path, status, code, method, field) =>
       failures.set(path, { status, code, method, field }),
+    rateLimitNext: (path, seconds) => waits.set(path, seconds),
+    holdNext: (path) => {
+      let release = () => {};
+      holds.set(
+        path,
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      );
+      return () => release();
+    },
   };
+
+  /** Dashes, spaces and case do not matter, as on the server. */
+  const normalize = (code: unknown) =>
+    String(code ?? "")
+      .replace(/[^0-9a-z]/gi, "")
+      .toLowerCase();
+  function checkCode(token: unknown): Response | null {
+    if (normalize(token) === normalize(setupToken)) {
+      return null;
+    }
+    if (
+      options.previousSetupToken !== undefined &&
+      normalize(token) === normalize(options.previousSetupToken)
+    ) {
+      return error(403, "setup_token_expired");
+    }
+    return error(403, "invalid_setup_token");
+  }
 
   function permissionsOf(role: string): string[] {
     const roles = options.rolePermissions ?? BUILT_IN_ROLE_PERMISSIONS;
@@ -280,6 +319,24 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
   }
 
   async function handle(path: string, method: string, body: unknown): Promise<Response> {
+    const hold = holds.get(path);
+    if (hold !== undefined) {
+      holds.delete(path);
+      await hold;
+    }
+    const wait = waits.get(path);
+    if (wait !== undefined) {
+      waits.delete(path);
+      return new Response(
+        JSON.stringify({
+          error: { code: "rate_limited", message: "too many attempts", retryAfterSecs: wait },
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": String(wait) },
+        },
+      );
+    }
     const failure = failures.get(path);
     if (failure !== undefined && (failure.method === undefined || failure.method === method)) {
       failures.delete(path);
@@ -289,14 +346,27 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     const input = (body ?? {}) as Record<string, unknown>;
 
     if (path === "/api/setup" && method === "GET") {
-      return json(200, { needed: state.setupNeeded });
+      return json(
+        200,
+        state.setupNeeded
+          ? { needed: true, codeHint: options.codeHint ?? "file" }
+          : { needed: false },
+      );
+    }
+    if (path === "/api/setup/check" && method === "POST") {
+      if (!state.setupNeeded) {
+        return error(409, "setup_done");
+      }
+      const answer = checkCode(input.token);
+      return answer ?? json(200, { valid: true });
     }
     if (path === "/api/setup" && method === "POST") {
       if (!state.setupNeeded) {
         return error(409, "setup_done");
       }
-      if (input.token !== setupToken) {
-        return error(403, "invalid_setup_token");
+      const refused = checkCode(input.token);
+      if (refused !== null) {
+        return refused;
       }
       if (typeof input.password !== "string" || Array.from(input.password).length < 12) {
         return error(400, "validation");

@@ -28,6 +28,10 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub clock: Arc<dyn Clock>,
     pub login_limiter: Arc<RateLimiter>,
+    /// Setup code attempts per client address (`routes::setup`).
+    pub setup_limiter: Arc<RateLimiter>,
+    /// Wrong setup codes from all addresses together (`security.setup_*`).
+    pub setup_all_limiter: Arc<RateLimiter>,
     /// Connection tests of unsaved data source settings (`routes::datasources`).
     pub probe_limiter: Arc<RateLimiter>,
     pub setup: Arc<SetupGate>,
@@ -57,6 +61,10 @@ impl AppState {
         crate::auth::password::prewarm().await;
         let sec = &config.security;
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
+        // Setup codes per client address count like sign-ins; all addresses together have a
+        // budget of their own, so a guess spread over many addresses is capped as well.
+        let setup_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
+        let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
         let touch_limit = crate::auth::session::Touches::limit_for(&db);
@@ -72,6 +80,8 @@ impl AppState {
             config: Arc::new(config),
             clock,
             login_limiter: Arc::new(login_limiter),
+            setup_limiter: Arc::new(setup_limiter),
+            setup_all_limiter: Arc::new(setup_all_limiter),
             probe_limiter: Arc::new(RateLimiter::new(
                 crate::routes::datasources::PROBE_MAX,
                 crate::routes::datasources::PROBE_WINDOW_SECS,

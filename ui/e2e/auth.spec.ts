@@ -7,7 +7,9 @@ import { expect, test } from "./support/test";
 /** Sends the empty form, so both fields show their error; nothing reaches the server. */
 async function submitEmpty(page: Page, language: "de" | "en"): Promise<void> {
   await page.goto("/login");
-  await page.getByRole("button", { name: t("login.submit", {}, language), exact: true }).click();
+  await page
+    .getByRole("button", { name: t("access.login.submit", {}, language), exact: true })
+    .click();
   await expect(page.getByText(t("validation.passwordRequired", {}, language))).toBeVisible();
 }
 
@@ -20,8 +22,8 @@ for (const variant of [
 
     test("marks both fields and stays accessible with its errors", async ({ page }) => {
       await submitEmpty(page, variant.language);
-      const email = page.getByLabel(t("login.email", {}, variant.language));
-      const password = page.getByLabel(t("login.password", {}, variant.language), {
+      const email = page.getByLabel(t("access.login.email", {}, variant.language));
+      const password = page.getByLabel(t("access.login.password", {}, variant.language), {
         exact: true,
       });
       await expect(email).toHaveAttribute("aria-invalid", "true");
@@ -32,7 +34,7 @@ for (const variant of [
 
     test("shows the password on request and hides it again", async ({ page }) => {
       await page.goto("/login");
-      const password = page.getByLabel(t("login.password", {}, variant.language), {
+      const password = page.getByLabel(t("access.login.password", {}, variant.language), {
         exact: true,
       });
       const show = page.getByRole("button", { name: t("password.show", {}, variant.language) });
@@ -46,18 +48,31 @@ for (const variant of [
       // Sending the form hides it again.
       await show.click();
       await page
-        .getByRole("button", { name: t("login.submit", {}, variant.language), exact: true })
+        .getByRole("button", { name: t("access.login.submit", {}, variant.language), exact: true })
         .click();
       await expect(password).toHaveAttribute("type", "password");
     });
 
-    test("puts the brand panel next to the form on a wide screen", async ({ page }) => {
+    test("stands on the calm backdrop, with language, theme and help in the top bar", async ({
+      page,
+    }) => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.goto("/login");
-      await expect(page.getByText(t("auth.tagline", {}, variant.language))).toBeVisible();
+      await expect(page.locator(".access-bd__lamp")).toBeVisible();
       await expect(
-        page.getByRole("img", { name: t("auth.illustration", {}, variant.language) }),
+        page.getByRole("button", {
+          name: t(
+            "access.top.language",
+            { language: t(`language.${variant.language}`, {}, variant.language) },
+            variant.language,
+          ),
+        }),
       ).toBeVisible();
+      // Help opens the guide that ships with Kalzit, readable without an account.
+      await page.getByRole("link", { name: t("access.top.help", {}, variant.language) }).click();
+      await expect(page).toHaveURL(/\/help\/getting-started$/);
+      await expect(page.getByRole("heading", { level: 1, name: "Getting started" })).toBeVisible();
+      expect(await seriousViolations(page)).toEqual([]);
     });
   });
 
@@ -66,10 +81,8 @@ for (const variant of [
 
     test("nothing sticks out to the right, errors shown", async ({ page }) => {
       await submitEmpty(page, variant.language);
-      // The brand panel's drawing gives way to the form on a phone.
-      await expect(
-        page.getByRole("img", { name: t("auth.illustration", {}, variant.language) }),
-      ).toBeHidden();
+      // No drifting light on a phone, only the quiet grid.
+      await expect(page.locator(".access-bd__lamp")).toBeHidden();
       const overflow = await findOverflow(page);
       expect(overflow.offenders).toEqual([]);
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width);

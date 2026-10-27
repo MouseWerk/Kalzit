@@ -182,7 +182,7 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Time series graph styles | Graph styles, dark theme |
 | ![Text, grouped bar chart, bar gauge and pie panels in the light theme](docs/screenshots/dashboard-panels-light.png) | ![The same panels in the dark theme](docs/screenshots/dashboard-panels-dark.png) |
 | Text, bar chart, bar gauge and pie | The same panels, dark theme |
-| ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
+| ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page: one card on the calm backdrop, language, theme and help on top](docs/screenshots/sign-in.png) |
 | Panel editor on a phone | Sign in |
 | ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
 | Time picker, dark theme | Dashboard in edit mode, dark theme |
@@ -194,6 +194,10 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Settings, dark theme | Settings, light theme |
 | ![Settings on a phone](docs/screenshots/settings-phone.png) | ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) |
 | Settings on a phone | Updates |
+| ![First setup, step one: the setup code and where to find it](docs/screenshots/setup.png) | ![First setup, step two: the owner account with the password rules, dark theme](docs/screenshots/setup-account-dark.png) |
+| First setup: the setup code | First setup: your account, dark theme |
+| ![Sign-in page in the dark theme](docs/screenshots/sign-in-dark.png) | |
+| Sign in, dark theme | |
 | ![About Kalzit: the calcite crystal with a beam of light split in two, the build and the license, dark theme](docs/screenshots/about-dark.png) | ![About Kalzit in the light theme](docs/screenshots/about-light.png) |
 | About Kalzit, dark theme | About Kalzit, light theme |
 
@@ -275,7 +279,8 @@ The binary lands in `target/release/kalzit` (`target\release\kalzit.exe`).
    `KALZIT_PATHS_DATA_DIR`.
 2. Open `http://localhost:3000`. On the first start Kalzit asks for a one-time setup code, which
    it writes to `setup-token.txt` in the data directory (`kalzit setup-code` prints it).
-3. Enter the code, then create the first organization and its owner.
+3. Enter the code (it is checked right away), then create your owner account and the first
+   organization with its defaults. The last step offers sample data to explore.
 
 To run Kalzit as a systemd service or a Windows service with a virtual account, see
 "Running as a service" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#running-as-a-service).

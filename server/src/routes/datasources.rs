@@ -33,6 +33,13 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/datasource-kinds", Access::OrgMember, kinds),
         route(Method::GET, "/orgs/{orgId}/datasources", Access::OrgMember, list),
         route(Method::POST, "/orgs/{orgId}/datasources", Access::Org(Permission::DatasourcesWrite), create),
+        // The built-in sample database as a SQLite source; a path of its own, like `test`.
+        route(
+            Method::POST,
+            "/orgs/{orgId}/datasources/sample",
+            Access::Org(Permission::DatasourcesWrite),
+            create_sample,
+        ),
         // Settings not saved yet; no source id is involved, `test` is a path of its own.
         // Member, then the right to change: on the source when `datasourceId` names one (a grant is
         // enough there), else org-wide (as adding a source).
@@ -398,6 +405,112 @@ async fn create(
     Ok((StatusCode::CREATED, Json(answer)))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SampleBody {
+    /// The UI sends it in the user's language ("Beispieldaten", "Sample data").
+    name: String,
+}
+
+/// The most names tried with a number appended before the request gives up.
+const MAX_SAMPLE_NAME_TRIES: u32 = 100;
+
+/// Adds the built-in sample database (`datasources::sample`) as a SQLite source, through the same
+/// checks and audit as `create`. When a source of the organization already opens the sample, that
+/// one is answered (200) instead of a second; a taken name gets " 2", " 3" and so on.
+async fn create_sample(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(body): JsonBody<SampleBody>,
+) -> ApiResult<impl IntoResponse> {
+    let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
+    let kind = state.datasources.kind("sqlite").ok_or_else(|| ApiError::internal("sample", "no sqlite kind"))?;
+    let file = datasources::sample::ensure(&state.config.paths.data_dir)
+        .await
+        .map_err(|e| ApiError::internal("creating the sample database", format!("{e:#}")))?;
+    // The canonical path the target rules answer is the one stored, so it is the same for every
+    // source of the sample.
+    let policy = state.datasources.policy(&state).await?;
+    // The rules resolve the path on disk, so they run off the async workers.
+    let checked = file.to_string_lossy().to_string();
+    let path = tokio::task::spawn_blocking(move || policy.check_sqlite_path(&checked))
+        .await
+        .map_err(|e| ApiError::internal("checking the sample database", e))?
+        .map_err(|b| blocked(b.0, "path"))?;
+    let settings = kind.validate_settings(&json!({ "path": path.to_string_lossy() })).map_err(field_error)?;
+    let secrets = SecretPatch::default();
+    precheck_targets(&state, kind, &settings).await?;
+    datasources::check_on_save(&state, kind, None, &settings, &secrets).await?;
+
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    // Two requests at once must not both add the sample.
+    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    let sqlite_sources: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, settings FROM datasources WHERE org_id = $1 AND kind = 'sqlite' AND deleted_at IS NULL \
+         ORDER BY created_at, id",
+    )
+    .bind(&ctx.org_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let sample_path = path.clone();
+    let existing = tokio::task::spawn_blocking(move || {
+        let sample = std::fs::canonicalize(&sample_path).ok()?;
+        sqlite_sources.into_iter().find(|(_, stored)| {
+            serde_json::from_str::<Value>(stored)
+                .ok()
+                .and_then(|s| s.get("path").and_then(Value::as_str).map(std::path::PathBuf::from))
+                .and_then(|p| std::fs::canonicalize(p).ok())
+                .is_some_and(|p| p == sample)
+        })
+    })
+    .await
+    .map_err(|e| ApiError::internal("looking for the sample source", e))?;
+    if let Some((id, _)) = existing {
+        let ds = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &id).await?;
+        let answer = view_in(&mut tx, &ctx, ds).await?;
+        crate::db::commit(tx).await?;
+        return Ok((StatusCode::OK, Json(answer)));
+    }
+    let mut chosen = None;
+    for n in 1..=MAX_SAMPLE_NAME_TRIES {
+        let candidate = if n == 1 { name.clone() } else { format!("{name} {n}") };
+        let candidate = clean_name(&candidate, "name").map_err(|e| e.with_field("name"))?;
+        let taken: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND name = $2 AND deleted_at IS NULL")
+                .bind(&ctx.org_id)
+                .bind(&candidate)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if taken.is_none() {
+            chosen = Some(candidate);
+            break;
+        }
+    }
+    let Some(name) = chosen else { return Err(name_conflict()) };
+    let id = new_id();
+    sqlx::query(
+        "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $6)",
+    )
+    .bind(&id)
+    .bind(&ctx.org_id)
+    .bind(&name)
+    .bind(kind.kind())
+    .bind(settings.to_string())
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(conflict_on_name)?;
+    let summary = json!({ "kind": kind.kind(), "settings": ["path"], "secrets": [], "sample": true });
+    record(&mut tx, &event(&ctx, &info, "datasource.created", &id, summary, now)).await?;
+    let ds = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &id).await?;
+    let answer = view_in(&mut tx, &ctx, ds).await?;
+    crate::db::commit(tx).await?;
+    Ok((StatusCode::CREATED, Json(answer)))
+}
+
 /// A data source the caller may act on with `permission`, after the org-level rule.
 async fn resource(
     state: &AppState,
@@ -662,14 +775,10 @@ async fn test_unsaved(
     // Per user and per client address within the organization.
     let user_key = format!("datasource-test:user:{}", ctx.user.id);
     let address_key = format!("datasource-test:{}:address:{}", ctx.org_id, info.client_ip);
-    if !state.probe_limiter.try_acquire(&[&user_key, &address_key], state.clock.now_ms()) {
-        return Err(ApiError::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "rate_limited",
-            "too many connection tests; wait a minute",
-        )
-        .because("datasource.test_rate_limited")
-        .param("max", PROBE_MAX));
+    if let Err(wait) = state.probe_limiter.try_acquire(&[&user_key, &address_key], state.clock.now_ms()) {
+        return Err(ApiError::rate_limited("too many connection tests; wait a minute", wait)
+            .because("datasource.test_rate_limited")
+            .param("max", PROBE_MAX));
     }
     let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
         ApiError::validation(format!("{} is not a data source kind", body.kind))

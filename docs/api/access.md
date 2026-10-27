@@ -2,7 +2,7 @@
 
 The routes of organizations' access model, the server administration of accounts and
 organizations, and the signed-in user's own account. Everything here is implemented in
-`server/src/routes/{members,teams,roles,grants,admin_users,admin_orgs,me}.rs`; the rules behind it
+`server/src/routes/{members,teams,roles,grants,admin_users,admin_orgs,me,setup}.rs`; the rules behind it
 are in `server/src/authz.rs` and `docs/ARCHITECTURE.md` ("Authorization").
 
 ## Conventions
@@ -24,6 +24,12 @@ are in `server/src/authz.rs` and `docs/ARCHITECTURE.md` ("Authorization").
 - Every change writes an audit entry in the same transaction (action listed per route). Audit
   summaries hold ids, role keys, levels and changed field names, never emails, names or passwords.
 - `422 validation` is the status of `validation`; `409 conflict` the status of `conflict`.
+- `429 rate_limited` always says how long to wait: the header `Retry-After: <seconds>` and the
+  same number as `retryAfterSecs` in the error object
+  (`{"error": {"code": "rate_limited", "message", "retryAfterSecs": 42}}`). It is the time until
+  every budget that refused the attempt has a new window, in whole seconds rounded up, at least 1.
+  This holds for sign-in, setup, the setup code check, `POST /me/password` and the connection
+  test of unsaved data source settings.
 
 ### Role keys
 
@@ -464,6 +470,56 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 
 **`PATCH /admin/orgs/{orgId}`** `{ "name" }`. Errors: `404`, `validation` `name`. Audit
 `org.renamed`.
+
+## Setup
+
+The first start (`server/src/routes/setup.rs`). While the server has no user, a one-time setup
+code opens setup: generated into `setup-token.txt` in the data directory (never logged), or fixed
+by `KALZIT_SETUP_TOKEN`. Dashes, spaces and case do not matter. A generated code is replaced on
+every start; the code of the previous start (its file read before it is replaced) is answered as
+`setup_token_expired` and never opens setup. A fixed code has no previous code. All three routes
+are `Public`.
+
+| Method and path | Answer |
+|---|---|
+| `GET /setup` | `200 { "needed": boolean, "codeHint"?: "file" \| "docker" \| "fixed" }` |
+| `POST /setup/check` | `200 { "valid": true }` |
+| `POST /setup` | `200 Me` (as `GET /me`) and the session cookie |
+
+**`GET /setup`** carries `codeHint` only while setup is needed: where the person setting up finds
+the code. `fixed` when it comes from `KALZIT_SETUP_TOKEN`, `docker` when the server runs in a
+container (`/.dockerenv` or `/run/.containerenv`), else `file`. It never names a path. `fixed`
+tells a visitor that the code was chosen by a person (at least 16 letters or digits) rather than
+generated; that is acceptable only because of the shared budget below, which keeps any guess,
+however many addresses it uses, to `security.setup_max_failures` tries per window.
+
+**`POST /setup/check`** `{ "token" }` checks the code alone, so the setup page can confirm it
+before asking for the rest. Errors: `403 invalid_setup_token` (wrong code), `403
+setup_token_expired` (the code of the previous start), `409 setup_done`, `429 rate_limited`. The
+answer never contains the code.
+
+**`POST /setup`** `{ "token", "orgName", "name", "email", "password", "language"?, "theme"?,
+"timeZone"? }` creates the first organization and its owner (also server admin) and signs them in.
+The optional fields set the server defaults `appearance.default_language` (`de`, `en`) and
+`appearance.default_theme` (`system`, `light`, `dark`, `contrast`), and the new organization's
+`appearance.time_zone` (an IANA name such as `Europe/Berlin`), with the rules of the settings
+API; left out, they stay as they are. Everything is one transaction. Errors: `403
+invalid_setup_token`, `403 setup_token_expired`, `409 setup_done`, `429 rate_limited`, `validation`
+with `field` `orgName`, `name`, `email`, `password`, `language`, `theme` or `timeZone`. Audit
+`setup.completed`, and `settings.updated` per chosen setting (summary `{ "key", "version",
+"setup": true }`, never the value).
+
+Both `POST` routes share two budgets, and a code is checked only when both have room:
+
+- per client address (IPv6 per /64), the sign-in limits: `security.login_max_failures` wrong
+  codes per `security.login_window_secs` (default 10 per 15 minutes);
+- for all addresses together: `security.setup_max_failures` wrong codes per
+  `security.setup_window_secs` (default 100 per hour), so a guess spread over many addresses is
+  capped as well.
+
+Beyond either, `429 rate_limited` with `Retry-After` and `retryAfterSecs` (the wait of the budget
+that refused). An attempt refused by the shared budget does not count for the address. A correct
+code gives its attempts back; a check after setup is done does not count.
 
 ## Self service
 

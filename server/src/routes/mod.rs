@@ -174,6 +174,8 @@ mod access_guard {
     const PUBLIC: &[&str] = &[
         "GET /setup",
         "POST /setup",
+        // Rate-limited per address like setup itself, which checks the same code.
+        "POST /setup/check",
         "POST /auth/login",
         "POST /auth/logout",
         // What the sign-in page shows anyway: product name, logo, sign-in texts and default look.

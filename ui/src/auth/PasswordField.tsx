@@ -1,7 +1,15 @@
-import { type KeyboardEvent, type Ref, useEffect, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
-import { MIN_PASSWORD_LENGTH, passwordStrength } from "./validation";
+import { characterCount, MIN_PASSWORD_LENGTH, passwordStrength } from "./validation";
 import "./auth.css";
 
 interface PasswordFieldProps {
@@ -14,12 +22,19 @@ interface PasswordFieldProps {
   error?: string | undefined;
   /** Shows how strong a new password is while it is typed (setup, new accounts). */
   showStrength?: boolean;
+  /** Lists the rules below the field and ticks them off while the password is typed. */
+  showRules?: boolean;
+  /** Next to the label, at the end of its row ("Forgot password?"). */
+  aside?: ReactNode;
+  /** While the form is being sent: the value stays readable but cannot change. */
+  readOnly?: boolean;
   ref?: Ref<HTMLInputElement>;
 }
 
 /**
- * A password input with a show/hide toggle and a caps-lock warning. Hint, warning, strength and
- * error are all linked through aria-describedby, so a screen reader reads them with the field.
+ * A password input with a show/hide toggle and a caps-lock warning. Hint, warning, strength,
+ * rules and error are all linked through aria-describedby, so a screen reader reads them with the
+ * field.
  */
 export function PasswordField({
   label,
@@ -30,6 +45,9 @@ export function PasswordField({
   hint,
   error,
   showStrength = false,
+  showRules = false,
+  aside,
+  readOnly = false,
   ref,
 }: PasswordFieldProps) {
   const { t } = useI18n();
@@ -38,6 +56,7 @@ export function PasswordField({
   const errorId = `${id}-error`;
   const capsId = `${id}-caps`;
   const strengthId = `${id}-strength`;
+  const rulesId = `${id}-rules`;
   const [visible, setVisible] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const fieldRef = useRef<HTMLDivElement>(null);
@@ -68,6 +87,7 @@ export function PasswordField({
     capsLock ? capsId : null,
     hint === undefined ? null : hintId,
     strength === null || strength.level === "empty" ? null : strengthId,
+    showRules ? rulesId : null,
   ]
     .filter((part) => part !== null)
     .join(" ");
@@ -93,11 +113,22 @@ export function PasswordField({
   }
   const bars = strength === null ? 0 : { empty: 0, short: 1, fair: 2, strong: 3 }[strength.level];
 
+  const labelElement = (
+    <label className="field__label" htmlFor={id}>
+      {label}
+    </label>
+  );
+
   return (
     <div className="field" ref={fieldRef}>
-      <label className="field__label" htmlFor={id}>
-        {label}
-      </label>
+      {aside === undefined ? (
+        labelElement
+      ) : (
+        <div className="field__label-row">
+          {labelElement}
+          {aside}
+        </div>
+      )}
       {hint === undefined ? null : (
         <p className="field__hint" id={hintId}>
           {hint}
@@ -115,6 +146,7 @@ export function PasswordField({
           autoCorrect="off"
           spellCheck={false}
           required
+          readOnly={readOnly}
           value={value}
           onChange={(event) => onValueChange(event.currentTarget.value)}
           onKeyDown={readCapsLock}
@@ -155,6 +187,7 @@ export function PasswordField({
           <span className="strength__text">{strengthText}</span>
         </div>
       )}
+      {showRules ? <PasswordRules id={rulesId} value={value} /> : null}
       {error === undefined ? null : (
         <p className="field__error" id={errorId}>
           <Icon name="alert" />
@@ -162,5 +195,44 @@ export function PasswordField({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The rules of a new password, ticked off while it is typed: the length the server requires, and
+ * a mix of characters, which is only a recommendation and never holds the form up.
+ */
+function PasswordRules({ id, value }: { id: string; value: string }) {
+  const { t } = useI18n();
+  const count = characterCount(value);
+  const rules = [
+    {
+      key: "length",
+      met: count >= MIN_PASSWORD_LENGTH,
+      text: t("access.password.ruleLength", { min: MIN_PASSWORD_LENGTH, count }),
+    },
+    {
+      key: "mix",
+      met: passwordStrength(value).level === "strong",
+      text: t("access.password.ruleMix"),
+    },
+  ];
+  return (
+    <ul className="password-rules" id={id} aria-label={t("access.password.rules")}>
+      {rules.map((rule) => (
+        <li
+          key={rule.key}
+          className={
+            rule.met ? "password-rules__rule password-rules__rule--met" : "password-rules__rule"
+          }
+        >
+          {rule.met ? <Icon name="check" /> : <span className="password-rules__dot" />}
+          <span>{rule.text}</span>
+          <span className="visually-hidden">
+            {rule.met ? t("access.password.met") : t("access.password.open")}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }

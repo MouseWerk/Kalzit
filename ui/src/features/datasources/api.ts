@@ -481,6 +481,14 @@ export async function createDatasource(orgId: string, input: DatasourceInput): P
   return parseDatasource(await send("POST", orgPath(orgId, "datasources"), input));
 }
 
+/**
+ * Adds the sample database that ships with Kalzit (docs/api/datasources.md, "Sample data"). A
+ * second call answers the source the first one made.
+ */
+export async function addSampleDatasource(orgId: string, name: string): Promise<Datasource> {
+  return parseDatasource(await send("POST", orgPath(orgId, "datasources", "sample"), { name }));
+}
+
 export async function updateDatasource(
   orgId: string,
   id: string,

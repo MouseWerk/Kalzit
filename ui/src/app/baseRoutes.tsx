@@ -1,12 +1,19 @@
 // The routes every area hangs off: the root, setup, sign-in and the signed-in app frame. Areas
 // add their own routes under `appRoute` in `features/<area>/routes.tsx`.
 import type { QueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext, createRoute, Outlet, redirect } from "@tanstack/react-router";
+import {
+  createRootRouteWithContext,
+  createRoute,
+  notFound,
+  Outlet,
+  redirect,
+} from "@tanstack/react-router";
 import { meQuery, setupStatusQuery } from "../api/auth";
 import { ORG_QUERY_KEY } from "../api/orgs";
 import { LoginPage } from "../auth/LoginPage";
 import { safeRedirect } from "../auth/redirect";
 import { SetupPage } from "../auth/SetupPage";
+import { HELP_PAGES, HelpPage } from "../help/HelpPage";
 import { ErrorPage, NotFoundPage } from "../pages/StatusPages";
 import { AppShell } from "../shell/AppShell";
 
@@ -18,6 +25,8 @@ export interface LoginSearch {
   redirect?: string | undefined;
   /** Set by signing out, so the sign-in page confirms it. */
   signedOut?: true | undefined;
+  /** Set when a request found the session ended, so the sign-in page says why. */
+  expired?: true | undefined;
 }
 
 /**
@@ -29,6 +38,7 @@ export function parseLoginSearch(search: Record<string, unknown>): LoginSearch {
   return {
     redirect: safeRedirect(search.redirect),
     signedOut: search.signedOut === true || search.signedOut === "true" ? true : undefined,
+    expired: search.expired === true || search.expired === "true" ? true : undefined,
   };
 }
 
@@ -58,9 +68,14 @@ export const rootRoute = createRootRouteWithContext<RouterContext>()({
 export const setupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/setup",
-  beforeLoad: async ({ context }) => {
+  // Once setup is done the page only says so; someone signed in goes on to Start (a reload of
+  // the last step of setup).
+  beforeLoad: async ({ context, preload }) => {
     if (!(await isSetupNeeded(context.queryClient))) {
-      throw redirect({ to: "/login", replace: true });
+      const me = await currentUser(context.queryClient, preload);
+      if (me !== null) {
+        throw redirect({ to: "/", replace: true });
+      }
     }
   },
   component: SetupPage,
@@ -80,6 +95,21 @@ export const loginRoute = createRoute({
     }
   },
   component: LoginPage,
+});
+
+/**
+ * The guide pages needed before signing in (getting started, installation), shipped with the UI
+ * and readable without an account. Other names are not found.
+ */
+export const helpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/help/$page",
+  beforeLoad: ({ params }) => {
+    if (!HELP_PAGES.some((page) => page === params.page)) {
+      throw notFound();
+    }
+  },
+  component: HelpPage,
 });
 
 /** Everything behind sign-in. The guard hands the signed-in user to every page below it. */

@@ -42,8 +42,8 @@ pub fn routes() -> Vec<super::table::RouteDef> {
     ]
 }
 
-fn rate_limited() -> ApiError {
-    ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "too many failed sign-ins, wait a few minutes")
+fn rate_limited(wait: std::time::Duration) -> ApiError {
+    ApiError::rate_limited("too many failed sign-ins, wait a few minutes", wait)
 }
 
 fn invalid_credentials() -> ApiError {
@@ -68,9 +68,11 @@ pub async fn login(
     let email_key = format!("email:{email}");
     let ip_key = crate::auth::ratelimit::address_key("login", info.client_ip);
     let limiter = &state.login_limiter;
-    if !limiter.try_acquire(&[&email_key, &ip_key], now) {
-        return Err(rate_limited());
-    }
+    // The wait named is the client address's only: the account's budget is nobody's business,
+    // and a blocked account with a free address answers the whole window.
+    limiter
+        .try_acquire(&[&email_key, &ip_key], now)
+        .map_err(|_| rate_limited(limiter.wait(&ip_key, now).unwrap_or_else(|| limiter.window())))?;
 
     let row: Option<LoginRow> =
         sqlx::query_as("SELECT id, email, name, password_hash, is_server_admin, disabled FROM users WHERE email = $1")
