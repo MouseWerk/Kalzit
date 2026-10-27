@@ -105,6 +105,15 @@ export interface Datasource {
   updatedAt?: number;
   /** When it was added. */
   createdAt?: number;
+  /** The last connection test since the settings last changed, kept by the server for everyone. */
+  lastTest?: LastTest;
+}
+
+/** A stored connection test: whether it passed, its warnings and when it ran. */
+export interface LastTest {
+  ok: boolean;
+  warnings: HealthWarning[];
+  testedAt: number;
 }
 
 /**
@@ -382,6 +391,17 @@ function parseDatasource(value: unknown): Datasource {
     ...(summary.access === undefined ? {} : { access: summary.access }),
     ...(typeof value.updatedAt === "number" ? { updatedAt: value.updatedAt } : {}),
     createdAt: summary.createdAt,
+    ...(isRecord(value.lastTest) &&
+    typeof value.lastTest.ok === "boolean" &&
+    typeof value.lastTest.testedAt === "number"
+      ? {
+          lastTest: {
+            ok: value.lastTest.ok,
+            warnings: parseWarnings(value.lastTest.warnings),
+            testedAt: value.lastTest.testedAt,
+          },
+        }
+      : {}),
   };
 }
 

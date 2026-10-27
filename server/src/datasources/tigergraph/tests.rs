@@ -30,6 +30,8 @@ struct Fake {
     redirect_tokens: bool,
     /// REST++ without authentication (a fresh Community Edition): it answers without a token.
     restpp_open: bool,
+    /// How often `GET /gsql/v1/queries/info?query=...` was asked.
+    info_calls: Mutex<u32>,
 }
 
 type S = Arc<Fake>;
@@ -154,8 +156,11 @@ async fn query_text(Path(name): Path<String>, Query(q): Query<BTreeMap<String, S
 
 /// `GET /gsql/v1/queries/info`, which 4.2.5 answers a queryreader (shortened): every query, or
 /// the one named in `query`.
-async fn query_info(Query(q): Query<BTreeMap<String, String>>) -> Response {
+async fn query_info(State(s): State<S>, Query(q): Query<BTreeMap<String, String>>) -> Response {
     assert_eq!(q.get("graph").map(String::as_str), Some("social"));
+    if q.contains_key("query") {
+        *s.info_calls.lock().unwrap() += 1;
+    }
     // The parameters as 4.2.5 describes `geheim(INT k, STRING name, LIST<INT> liste, VERTEX v,
     // VERTEX<Person> p)`: an untyped vertex has a `v.type` companion, a list `max_count`.
     let geheim = json!({
@@ -172,8 +177,9 @@ async fn query_info(Query(q): Query<BTreeMap<String, String>>) -> Response {
         ("loescht", true, json!({ "query": { "default": "loescht", "type": "STRING" } })),
         ("geheim", false, geheim),
         ("schreibt_geheim", true, json!({ "query": { "default": "schreibt_geheim", "type": "STRING" } })),
+        ("verboten", false, json!({ "query": { "default": "verboten", "type": "STRING" } })),
     ];
-    let results: Vec<Value> = all
+    let mut results: Vec<Value> = all
         .iter()
         .filter(|(n, _, _)| q.get("query").is_none_or(|w| w == n))
         .map(|(n, update, params)| {
@@ -182,6 +188,12 @@ async fn query_info(Query(q): Query<BTreeMap<String, String>>) -> Response {
                         "graphUpdate": update, "action": "query", "parameters": params } } } } } })
         })
         .collect();
+    // An info without `graphUpdate` (an older or changed server).
+    if q.get("query").is_none_or(|w| w == "ohne_flag") {
+        results
+            .push(json!({ "name": "ohne_flag", "installed": true, "endpoint": { "query": { "social": { "ohne_flag": {
+            "GET/POST": { "parameters": { "query": { "default": "ohne_flag", "type": "STRING" } } } } } } } }));
+    }
     json_reply(200, json!({ "error": false, "message": "", "results": results }))
 }
 
@@ -224,6 +236,15 @@ async fn restpp_query(
     }
     assert!(h.get("gsql-timeout").is_some());
     *s.last_query.lock().unwrap() = raw.0.unwrap_or_default();
+    // As 4.2.5 answers a valid token that lacks a privilege the query needs: final, not a token issue.
+    if name == "verboten" {
+        return json_reply(
+            403,
+            json!({ "version": { "edition": "community", "api": "v2", "schema": 0 }, "error": true,
+                    "message": "Access Denied because the input token = 'tok-****' does not have permission to run the request",
+                    "code": "REST-10018" }),
+        );
+    }
     json_reply(
         200,
         json!({ "error": false, "message": "", "version": { "edition": "enterprise" }, "results": results_for(&name) }),
@@ -376,16 +397,23 @@ async fn installed_queries_need_a_text_that_passes_or_an_approval() {
     let r = TigerGraph.query(&conn, req(json!({ "installed": "x/../../gsql/v1/users" }), json!({}))).await;
     assert_eq!(reason(r), "tigergraph.query_name");
 
-    let approved = connection(addr, "leser", json!({ "approvedQueries": "geheim, andere, schreibt_geheim" })).await;
+    let approved =
+        connection(addr, "leser", json!({ "approvedQueries": "geheim, andere, schreibt_geheim, ohne_flag, verboten" }))
+            .await;
     // TigerGraph marks a query that changes data (graphUpdate in its info): refused even when approved.
     let r = TigerGraph.query(&approved, req(json!({ "installed": "schreibt_geheim" }), json!({}))).await;
     assert_eq!(reason(r), "tigergraph.query_writes");
-    // An approved query without info: the values go as given, untyped.
-    TigerGraph
-        .query(&approved, req(json!({ "installed": "andere", "params": { "s": "x+y z" } }), json!({})))
-        .await
-        .unwrap();
-    assert_eq!(fake.last_query.lock().unwrap().as_str(), "s=x%2By%20z", "a + stays a +, a space is %20");
+    // 4.x fails closed: without an info, or without graphUpdate in it, an approved query does
+    // not run (it would run untyped and unchecked).
+    for name in ["andere", "ohne_flag"] {
+        let r = TigerGraph.query(&approved, req(json!({ "installed": name, "params": { "s": "x" } }), json!({}))).await;
+        assert_eq!(reason(r), "tigergraph.query_info_unreadable", "{name}");
+    }
+    // A token REST++ accepts but that lacks a privilege (REST-10018) is final: no new token.
+    let before = *fake.tokens_issued.lock().unwrap();
+    let r = TigerGraph.query(&approved, req(json!({ "installed": "verboten" }), json!({}))).await;
+    assert_eq!(reason(r), "tigergraph.error");
+    assert_eq!(*fake.tokens_issued.lock().unwrap(), before + 1, "one token for the call, none after the refusal");
     // With info: typed parameters in their declared order, filled from dashboard variables too.
     let params = json!({ "k": 3, "name": "x+y z", "liste": [1, 2], "v": { "type": "Ort", "id": "7" } });
     let r = TigerGraph
@@ -523,11 +551,39 @@ async fn health_and_schema() {
     assert_eq!(edge_types, ["Friend"]);
     assert_eq!(property_keys, ["age", "name", "since"]);
     // From the query info, which a queryreader may read; the plain query list is empty for it.
-    assert_eq!(queries, ["extra", "geheim", "loescht", "nachbarn", "schreibt_geheim"]);
+    assert_eq!(queries, ["extra", "geheim", "loescht", "nachbarn", "ohne_flag", "schreibt_geheim", "verboten"]);
     let types: Vec<String> = query_params["geheim"].iter().map(|p| format!("{} {}", p.ty, p.name)).collect();
     assert_eq!(types, ["INT k", "STRING name", "SET<INT> liste", "VERTEX v", "VERTEX<Person> p"]);
     assert_eq!(query_params["nachbarn"], []);
     assert!(h.warnings.is_empty(), "REST++ refuses requests without a token: {h:?}");
+}
+
+#[tokio::test]
+async fn approved_query_info_is_read_again_while_rest_is_open() {
+    let params = json!({ "installed": "geheim", "params": { "k": 1 } });
+    // REST++ checks tokens: the clean info is kept for a minute, like a checked text.
+    let (addr, fake) = fake(false).await;
+    let conn = connection(addr, "leser", json!({ "approvedQueries": "geheim" })).await;
+    for _ in 0..2 {
+        TigerGraph.query(&conn, req(params.clone(), json!({}))).await.unwrap();
+    }
+    assert_eq!(*fake.info_calls.lock().unwrap(), 1);
+    // REST++ without authentication: the info is the only guard, so every run reads it again.
+    let (addr, fake) = fake_with(Fake { restpp_open: true, ..Fake::default() }).await;
+    let conn = connection(addr, "leser", json!({ "approvedQueries": "geheim" })).await;
+    for _ in 0..2 {
+        TigerGraph.query(&conn, req(params.clone(), json!({}))).await.unwrap();
+    }
+    assert_eq!(*fake.info_calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn query_strings_keep_plus_space_and_ampersand_apart() {
+    let mut url = Url::parse("http://tg/restpp/query/social/q").unwrap();
+    set_query(&mut url, &[("a", "x+y z&w=1"), ("b c", "ö")]);
+    assert_eq!(url.query(), Some("a=x%2By%20z%26w%3D1&b%20c=%C3%B6"));
+    set_query::<&str, &str>(&mut url, &[]);
+    assert_eq!(url.query(), None);
 }
 
 #[tokio::test]
@@ -578,6 +634,19 @@ fn rights_and_parameters() {
     .unwrap();
     assert_eq!(out, [("v[0]".to_string(), "7".to_string()), ("v[0].type".to_string(), "Person".to_string())]);
     assert!(typed_pairs("u", "u", &ParamType::Uint, &json!(-1), &mut Vec::new()).is_err());
+    // INT is i64: a larger number is refused, not wrapped; UINT takes the whole u64 range.
+    for big in [json!(9_223_372_036_854_775_808_u64), json!("9223372036854775808")] {
+        assert!(typed_pairs("i", "i", &ParamType::Int, &big, &mut Vec::new()).is_err(), "{big}");
+    }
+    let mut out = Vec::new();
+    typed_pairs("i", "i", &ParamType::Int, &json!(i64::MIN), &mut out).unwrap();
+    typed_pairs("u", "u", &ParamType::Uint, &json!(u64::MAX), &mut out).unwrap();
+    typed_pairs("u", "u", &ParamType::Uint, &json!("18446744073709551615"), &mut out).unwrap();
+    assert_eq!(
+        out.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>(),
+        ["-9223372036854775808", "18446744073709551615", "18446744073709551615"]
+    );
+    assert!(typed_pairs("u", "u", &ParamType::Uint, &json!("18446744073709551616"), &mut Vec::new()).is_err());
     assert!(typed_pairs("b", "b", &ParamType::Bool, &json!("ja"), &mut Vec::new()).is_err());
     assert_eq!(version_from("product release_3.10.1_02-01-2024"), Some("3.10.1".into()));
     assert!(kind().validate_settings(&json!({ "url": "http://tg", "graph": "a/b", "user": "u" })).is_err());

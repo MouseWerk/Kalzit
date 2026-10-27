@@ -160,8 +160,12 @@ function EditDataSource({ orgId }: { orgId: string }) {
       setHealth(result);
       setDraft(null);
       setTestedAt(Date.now());
-      // The list shows the same result.
+      // The list shows the same result; the server kept it as the source's last test.
       queryClient.setQueryData(healthQuery(orgId, datasourceId).queryKey, result);
+      void queryClient.invalidateQueries({
+        queryKey: datasourceQuery(orgId, datasourceId).queryKey,
+        exact: true,
+      });
     },
     onError: () => setTestedAt(Date.now()),
   });
@@ -253,6 +257,16 @@ function EditDataSource({ orgId }: { orgId: string }) {
     dateStyle: "medium",
     ...zoneOption(timeZone),
   });
+  // The warnings of the newest test of the saved source: this session's, or the server's kept one.
+  const stored = source.data.lastTest;
+  const fresh = health !== null && (stored === undefined || testedAt >= stored.testedAt);
+  const savedWarnings = fresh
+    ? health.ok
+      ? (health.warnings ?? [])
+      : []
+    : stored?.ok === true
+      ? stored.warnings
+      : [];
   const entry: HealthEntry | undefined =
     health === null && test.error === null && !test.isPending
       ? undefined
@@ -335,8 +349,9 @@ function EditDataSource({ orgId }: { orgId: string }) {
       </header>
       <div className="ds-edit__layout">
         <div className="ds-edit__main">
-          {/* The saved source's last test found something to fix: it stays in view on the page. */}
-          <HealthWarnings health={health} />
+          {/* The saved source's last test found something to fix: it stays in view on the page,
+              from this session's test or else the one the server kept, for everyone. */}
+          <HealthWarnings warnings={savedWarnings} />
           <SettingsForm
             key={formKey}
             kind={kind}

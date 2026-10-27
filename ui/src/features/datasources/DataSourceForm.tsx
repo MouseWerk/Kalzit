@@ -20,6 +20,7 @@ import {
   type DatasourceKind,
   datasourceQuery,
   type Health,
+  type HealthWarning,
   kindsQuery,
   type SettingSpec,
   testDatasource,
@@ -451,9 +452,8 @@ function healthText(t: Translate, health: Health) {
  * What a passed connection test found that needs attention (TigerGraph: REST++ without
  * authentication), as a quiet neutral notice: the source works, saving stays allowed.
  */
-export function HealthWarnings({ health }: { health: Health | null }) {
+export function HealthWarnings({ warnings }: { warnings: HealthWarning[] }) {
   const { t } = useI18n();
-  const warnings = health?.ok === true ? (health.warnings ?? []) : [];
   if (warnings.length === 0) return null;
   return (
     <div className="notice ds-warnings">
@@ -515,7 +515,7 @@ export function HealthResult({
       content = (
         <>
           {content}
-          <HealthWarnings health={health} />
+          <HealthWarnings warnings={health.ok ? (health.warnings ?? []) : []} />
         </>
       );
     }

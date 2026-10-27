@@ -1678,6 +1678,66 @@ pub async fn check_on_save(
 
 /// "Test connection" with the cached connection, counted against the caller's query slots.
 pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
+    let report = run_health(state, user_id, ds).await?;
+    store_last_test(&state.db, &ds.id, &report, state.clock.now_ms()).await;
+    Ok(report)
+}
+
+/// The last "Test connection" of a stored data source, as `datasource_health` keeps it: whether
+/// it passed, its warnings and when it ran (Unix milliseconds).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastTest {
+    pub ok: bool,
+    /// `{reason, params?, message}` each, as in `HealthReport::warnings`.
+    pub warnings: Vec<Value>,
+    pub tested_at: i64,
+}
+
+/// Keeps a test's outcome for the data source page. A failure to write only loses the note (the
+/// source may have been deleted meanwhile), so it is logged, not answered.
+async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthReport, at: i64) {
+    let warnings = serde_json::to_string(&report.warnings).unwrap_or_else(|_| "[]".into());
+    let stored = sqlx::query(
+        "INSERT INTO datasource_health (datasource_id, ok, warnings, tested_at) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (datasource_id) DO UPDATE SET ok = excluded.ok, warnings = excluded.warnings, \
+         tested_at = excluded.tested_at",
+    )
+    .bind(datasource_id)
+    .bind(i64::from(report.ok))
+    .bind(warnings)
+    .bind(at)
+    .execute(db)
+    .await;
+    if let Err(e) = stored {
+        tracing::warn!("could not keep the connection test of data source {datasource_id}: {e}");
+    }
+}
+
+/// The stored last test of a data source, if one ran since its settings or secrets last changed.
+pub async fn last_test(conn: &mut sqlx::AnyConnection, datasource_id: &str) -> ApiResult<Option<LastTest>> {
+    let row: Option<(i64, String, i64)> =
+        sqlx::query_as("SELECT ok, warnings, tested_at FROM datasource_health WHERE datasource_id = $1")
+            .bind(datasource_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    Ok(row.map(|(ok, warnings, tested_at)| LastTest {
+        ok: ok != 0,
+        warnings: serde_json::from_str::<Vec<Value>>(&warnings).unwrap_or_default(),
+        tested_at,
+    }))
+}
+
+/// Drops the stored last test: after the settings or secrets changed it no longer applies.
+pub async fn forget_last_test(conn: &mut sqlx::AnyConnection, datasource_id: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM datasource_health WHERE datasource_id = $1")
+        .bind(datasource_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+async fn run_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let registry = &state.datasources;
     let kind =
         registry.kind(&ds.kind).ok_or_else(|| ApiError::internal("health", format!("unknown kind {}", ds.kind)))?;

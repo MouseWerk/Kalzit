@@ -717,6 +717,21 @@ describe("editing a data source", () => {
     expect(text.closest("[role=status]")).toBeNull();
   });
 
+  it("shows the warning of the test the server kept, also to a viewer who never tested", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PG_ID] = "query";
+    const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+    if (stored === undefined) throw new Error("the fake has the PostgreSQL source");
+    stored.lastTest = {
+      ok: true,
+      warnings: [{ reason: "tigergraph.auth_disabled", message: "REST++ answers without a token" }],
+      testedAt: Date.UTC(2026, 9, 27),
+    };
+    renderApp(`/data-sources/${PG_ID}`);
+    expect(await screen.findByText(/REST\+\+ answers without a token, so anyone/)).toBeTruthy();
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+  });
+
   it("renames without sending settings, also for a source stored without defaults", async () => {
     const { server, user } = open("/data-sources/ds-lean");
     server.areas.datasources.datasources.push({

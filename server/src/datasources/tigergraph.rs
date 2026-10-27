@@ -152,6 +152,8 @@ struct Client {
     texts: Mutex<HashMap<String, CheckedText>>,
     /// The graph's query names (4.x), which a `TYPEDEF` may not take, with when they were read.
     query_names: Mutex<Option<(Instant, Option<Vec<String>>)>>,
+    /// REST++ answered without a token when the connection was set up (authentication off).
+    restpp_open: bool,
 }
 
 fn parse_url(raw: &str) -> Result<Url, Detail> {
@@ -271,9 +273,11 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             token: Mutex::new(None),
             texts: Mutex::new(HashMap::new()),
             query_names: Mutex::new(None),
+            restpp_open: false,
         };
         c.api = c.detect_api().await?;
         c.check_reader().await?;
+        c.restpp_open = c.rest_answers_without_token().await;
         Ok(c)
     })
     .await
@@ -472,6 +476,19 @@ impl Client {
         }
     }
 
+    /// Whether REST++ answers a request without a token, i.e. runs without authentication (403 in
+    /// 4.2 when it is on). `call` follows no redirect, and a redirect or any error counts as a
+    /// refusal, so only a direct 2xx answer of `<restppUrl>/version` itself says "open".
+    async fn rest_answers_without_token(&self) -> bool {
+        match self.restpp.join("version") {
+            Ok(url) => self
+                .call(Method::GET, url, None, None, &[], MAX_SMALL_RESPONSE, None)
+                .await
+                .is_ok_and(|(s, _)| s.is_success()),
+            Err(_) => false,
+        }
+    }
+
     /// A REST++ token, fetched when there is none or it is about to expire. `None` when the user
     /// has no secret and the API cannot issue one from the password (3.x): REST++ then has to run
     /// without authentication.
@@ -583,26 +600,39 @@ impl Client {
         };
         let Some(text) = text else {
             if self.approved.iter().any(|a| a == name) {
-                // The info tells whether the query changes data and its parameters with their
-                // types. One that changes data is refused even when approved (the reader user
+                // 3.x has no query info: the values go untyped and only the reader user
+                // protects the data.
+                if self.api == Api::V3 {
+                    return Ok(None);
+                }
+                // 4.x: the info tells whether the query changes data and its parameters with
+                // their types. Without it, or without `graphUpdate`, the query is refused (fail
+                // closed); one that changes data is refused even when approved (the reader user
                 // would refuse it too, but only when REST++ checks tokens).
-                let info = match self.api {
-                    Api::V4 => self.query_info(name).await,
-                    Api::V3 => None,
-                };
-                let Some(info) = info else { return Ok(None) };
-                let checked = if info.updates == Some(true) {
-                    Err(Detail::new(
+                let checked = match self.query_info(name).await {
+                    Some(QueryInfo { updates: Some(true), .. }) => Err(Detail::new(
                         "tigergraph.query_writes",
                         format!("{name} changes data, so Kalzit does not run it"),
                     )
-                    .with("name", name))
-                } else if let Some(params) = info.params {
-                    Ok(params)
-                } else {
-                    return Ok(None);
+                    .with("name", name)),
+                    Some(QueryInfo { updates: Some(false), params: Some(params), .. }) => Ok(params),
+                    _ => Err(Detail::new(
+                        "tigergraph.query_info_unreadable",
+                        format!(
+                            "TigerGraph does not say whether {name} changes data or which parameters it takes,                              so Kalzit does not run it"
+                        ),
+                    )
+                    .with("name", name)),
                 };
-                self.texts.lock().expect("text cache lock").insert(name.to_string(), (Instant::now(), checked.clone()));
+                // The outcome is kept for a minute like a checked text, except a clean one while
+                // REST++ runs without authentication: then the info is the only guard, so it is
+                // read again for every run.
+                if checked.is_err() || !self.restpp_open {
+                    self.texts
+                        .lock()
+                        .expect("text cache lock")
+                        .insert(name.to_string(), (Instant::now(), checked.clone()));
+                }
                 return checked.map(Some).map_err(SourceError::Rejected);
             }
             return Err(SourceError::rejected(
@@ -778,17 +808,23 @@ fn typed_pairs(
     out: &mut Vec<(String, String)>,
 ) -> Result<(), SourceError> {
     let text = match ty {
-        ParamType::Int | ParamType::Uint => {
+        // INT is a 64-bit signed number in TigerGraph, UINT an unsigned one: a value outside the
+        // range is refused, never wrapped.
+        ParamType::Int => {
             let i = match v {
-                Value::Number(n) => n.as_i64().or_else(|| n.as_u64().map(|u| u as i64)),
+                Value::Number(n) => n.as_i64().or_else(|| n.as_u64().and_then(|u| i64::try_from(u).ok())),
                 Value::String(s) => s.trim().parse::<i64>().ok(),
                 _ => None,
             };
-            let expected = if *ty == ParamType::Uint { "a whole number of at least 0" } else { "a whole number" };
-            match i {
-                Some(i) if *ty == ParamType::Int || i >= 0 => i.to_string(),
-                _ => return Err(param_error(name, expected)),
-            }
+            i.ok_or_else(|| param_error(name, "a whole number"))?.to_string()
+        }
+        ParamType::Uint => {
+            let u = match v {
+                Value::Number(n) => n.as_u64(),
+                Value::String(s) => s.trim().parse::<u64>().ok(),
+                _ => None,
+            };
+            u.ok_or_else(|| param_error(name, "a whole number of at least 0"))?.to_string()
         }
         ParamType::Float => match v {
             Value::Number(n) => n.to_string(),
@@ -1151,13 +1187,7 @@ impl DataSourcePlugin for TigerGraph {
             // The same request without a token: REST++ with authentication refuses it (403 in
             // 4.2). When it answers, anyone who reaches REST++ can run every installed query,
             // writing ones too, and the reader user protects nothing there.
-            let open = match c.restpp.join("version") {
-                Ok(url) => c
-                    .call(Method::GET, url, None, None, &[], MAX_SMALL_RESPONSE, None)
-                    .await
-                    .is_ok_and(|(s, _)| s.is_success()),
-                Err(_) => false,
-            };
+            let open = c.rest_answers_without_token().await;
             Ok::<_, SourceError>((version.unwrap_or_else(|| fallback.to_string()), edition_from(&message), open))
         };
         match check.await {

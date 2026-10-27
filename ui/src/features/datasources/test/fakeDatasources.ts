@@ -266,6 +266,8 @@ export interface StoredDatasource {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+  /** The last connection test the server kept (`lastTest`), with its warnings. */
+  lastTest?: { ok: boolean; warnings: WireHealth["warnings"]; testedAt: number };
 }
 
 export interface WireHealth {
@@ -563,6 +565,9 @@ function publicView(ds: StoredDatasource, access?: Record<string, boolean>) {
   };
   if (ds.deletedAt !== undefined) {
     view.deletedAt = ds.deletedAt;
+  }
+  if (ds.lastTest !== undefined) {
+    view.lastTest = ds.lastTest;
   }
   if (access !== undefined) {
     view.access = access;

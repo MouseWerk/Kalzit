@@ -54,7 +54,10 @@ gsql_file "$here/schema.gsql"
 echo "== data"
 token=$(curl -fsS -u "$admin" -H 'Content-Type: application/json' \
   -d '{"graph": "social", "lifetime": "3600"}' "$base/gsql/v1/tokens" | jq -r '.token // .results.token')
-curl -fsS -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+echo "::add-mask::$token"
+auth=$(mktemp)
+printf 'Authorization: Bearer %s\n' "$token" > "$auth"
+curl -fsS -H @"$auth" -H 'Content-Type: application/json' \
   -d @"$here/data.json" "$base/restpp/graph/social"
 echo
 

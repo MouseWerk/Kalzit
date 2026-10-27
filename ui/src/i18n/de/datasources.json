@@ -579,6 +579,7 @@
   "datasources.reason.gsql.unclosed_comment": "Ein Kommentar ist nicht geschlossen.",
   "datasources.reason.tigergraph.query_name": "„{name}“ ist kein Abfragename.",
   "datasources.reason.tigergraph.query_text_unreadable": "Kalzit kann den Text von {name} nicht lesen, um ihn zu prüfen. Ein Admin der Datenquelle kann die Abfrage per Namen freigeben.",
+  "datasources.reason.tigergraph.query_info_unreadable": "TigerGraph sagt nicht, ob {name} Daten ändert oder welche Parameter die Abfrage nimmt, deshalb führt Kalzit sie nicht aus.",
   "datasources.reason.tigergraph.query_writes": "{name} ändert Daten, deshalb führt Kalzit die Abfrage nicht aus, auch wenn sie freigegeben ist.",
   "datasources.reason.tigergraph.auth_disabled": "REST++ antwortet ohne Token, daher kann jeder, der es erreicht, jede installierte Abfrage ausführen, auch schreibende. Schalte die REST++-Authentifizierung ein: gadmin config set RESTPP.Factory.EnableAuth true, danach gadmin config apply -y und gadmin restart restpp -y.",
   "datasources.reason.tigergraph.param_type": "Der Parameter {name} muss {type} sein.",
