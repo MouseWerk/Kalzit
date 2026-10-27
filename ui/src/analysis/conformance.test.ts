@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { DocumentSet, Field, Frame } from "../api/generated/shapes";
+import type { DocumentSet, Field, Frame, GraphSchema, GraphSet } from "../api/generated/shapes";
 import type { WeekStart } from "../lib/timeSettings";
 import { compile, DetailError, FIELD_TYPE_OF, parse, toCell, UTC_CALENDAR } from "./expr";
 import { asSteps, type NamedInput, runSteps } from "./steps";
@@ -13,6 +13,7 @@ import { asSteps, type NamedInput, runSteps } from "./steps";
 interface Cases {
   frames: Record<string, Field[]>;
   documents: Record<string, DocumentSet>;
+  graphs: Record<string, GraphSet>;
   expressions: {
     frame: string;
     expression: string;
@@ -31,6 +32,7 @@ interface Cases {
       { names?: string[]; fields: { name: string; type: string; values: unknown[] }[] }
     >;
     gone?: string[];
+    expectGraphs?: Record<string, { nodes: string[]; edges: string[]; schema: GraphSchema }>;
     outputOrder?: string[];
     error?: { index: number; reason: string; params: Record<string, string> };
   }[];
@@ -64,6 +66,9 @@ function close(a: unknown, b: unknown, ulp: boolean): boolean {
     if (!ulp || Math.sign(a) !== Math.sign(b)) return false;
     const d = bits(a) - bits(b);
     return d === 1n || d === -1n;
+  }
+  if (typeof a === "object" && a !== null && typeof b === "object" && b !== null) {
+    return JSON.stringify(a) === JSON.stringify(b);
   }
   return a === b;
 }
@@ -113,9 +118,10 @@ describe("conformance with the server's engine", () => {
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([name, source]) => {
         const set = cases.documents[source];
-        return set === undefined
-          ? { name, frame: frame(source) }
-          : { name, documents: structuredClone(set) };
+        const graph = cases.graphs[source];
+        if (set !== undefined) return { name, documents: structuredClone(set) };
+        if (graph !== undefined) return { name, graph: structuredClone(graph) };
+        return { name, frame: frame(source) };
       });
     const run = runSteps(asSteps(c.steps), inputs);
     if (c.error !== undefined) {
@@ -139,6 +145,12 @@ describe("conformance with the server's engine", () => {
         expect(f?.type, field.name).toBe(field.type);
         expectValues(f?.values ?? [], field.values, `${c.name} ${field.name}`);
       }
+    }
+    for (const [name, want] of Object.entries(c.expectGraphs ?? {})) {
+      const got = run.graphs.find((g) => g.name === name)?.graph;
+      expect(got?.nodes.map((n) => n.id)).toEqual(want.nodes);
+      expect(got?.edges.map((e) => e.id)).toEqual(want.edges);
+      expect(got?.schema).toEqual(want.schema);
     }
     for (const gone of c.gone ?? []) {
       expect(run.frames.some((f) => f.name === gone)).toBe(false);

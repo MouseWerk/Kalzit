@@ -1,4 +1,4 @@
-import type { DocumentSet, Field, FieldType, Frame } from "../api/generated/shapes";
+import type { DocumentSet, Field, FieldType, Frame, GraphSet } from "../api/generated/shapes";
 import { daysFromCivil, daysInMonth, numberText, parseNumber } from "./expr";
 
 /**
@@ -207,4 +207,40 @@ export function projectDocuments(set: DocumentSet, columns: readonly ProjectionC
       ...(set.executedQuery === undefined ? {} : { executedQuery: set.executedQuery }),
     },
   };
+}
+
+/**
+ * The nodes (or edges) of a graph as a frame, read as documents: the properties, with `@id` and
+ * `@labels` (nodes), or `@id`, `@type`, `@from` and `@to` (edges), which win over properties of
+ * the same name. Only nodes with `label`, or edges of `edgeType`, when given. The server reads
+ * them the same (`server/src/analysis/projection.rs`, `project_graph`).
+ */
+export function projectGraph(
+  graph: GraphSet,
+  rows: "nodes" | "edges",
+  label: string | undefined,
+  edgeType: string | undefined,
+  columns: readonly ProjectionColumn[],
+): Frame {
+  const documents =
+    rows === "nodes"
+      ? graph.nodes
+          .filter((n) => label === undefined || n.labels.includes(label))
+          .map((n) => ({ ...n.properties, "@id": n.id, "@labels": n.labels }))
+      : graph.edges
+          .filter((e) => edgeType === undefined || e.type === edgeType)
+          .map((e) => ({
+            ...e.properties,
+            "@id": e.id,
+            "@type": e.type,
+            "@from": e.from,
+            "@to": e.to,
+          }));
+  const set: DocumentSet = {
+    documents,
+    schema: [],
+    notices: graph.notices ?? [],
+    ...(graph.truncated === undefined ? {} : { truncated: graph.truncated }),
+  };
+  return projectDocuments(set, columns);
 }

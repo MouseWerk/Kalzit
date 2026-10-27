@@ -14,7 +14,9 @@
 
 pub mod export;
 pub mod expr;
+pub mod graph;
 pub mod projection;
+pub mod pushdown;
 pub mod stats;
 pub mod steps;
 
@@ -112,12 +114,125 @@ pub enum StepKind {
     },
     /// The projection (docs/PLAN.md, section 1): the `documents` result of query `frame` as a
     /// frame, one column per field path. The steps after it work on that frame; a result that
-    /// already is a frame passes unchanged.
+    /// already is a frame passes unchanged. With `rows` it projects a `graph` result: one row per
+    /// node or per edge, optionally only nodes with `label` or edges of `edgeType`; the paths are
+    /// property keys, and `@id`, `@labels` (nodes), `@type`, `@from`, `@to` (edges).
     ToFrame {
         frame: String,
         columns: Vec<ProjectionColumn>,
+        #[serde(default)]
+        rows: Option<GraphRows>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        edge_type: Option<String>,
+    },
+    /// Graph to frame: nodes per label (`label`, `nodes`, `share` of all nodes).
+    CountLabels {
+        frame: String,
+    },
+    /// Graph to frame: edges per type and the labels of their ends (`type`, `from`, `to`, `edges`).
+    CountEdgeTypes {
+        frame: String,
+    },
+    /// Graph to frame: how many nodes have each degree (`degree`, `nodes`), zero included.
+    DegreeDistribution {
+        frame: String,
+        #[serde(default)]
+        direction: Direction,
+    },
+    /// Graph to graph: the `n` nodes with the highest degree (among those with `label`, when
+    /// given) and the edges between them.
+    TopDegree {
+        frame: String,
+        n: u32,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        direction: Direction,
+    },
+    /// Graph to frame: pairs of `label` nodes that share neighbours with the label `via` (over
+    /// edges of `edgeType`, either direction): `a`, `b`, `shared`, `neighbours`; pairs with at
+    /// least `min` shared neighbours, the `limit` with the most. Nodes are named by their text
+    /// property `name`, else by their id.
+    SharedNeighbours {
+        frame: String,
+        label: String,
+        via: String,
+        #[serde(default)]
+        edge_type: Option<String>,
+        min: u32,
+        limit: u32,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph ("Grad berechnen"): every node gets its degree as the property `name`
+    /// (`degree` when absent).
+    Degree {
+        frame: String,
+        #[serde(default)]
+        direction: Direction,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Graph to graph ("Teilgraph filtern"): the nodes with one of `labels` (all when absent) that
+    /// pass `property`, and the edges of `edgeTypes` (all when absent) between them.
+    FilterGraph {
+        frame: String,
+        #[serde(default)]
+        labels: Vec<String>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        property: Option<PropertyFilter>,
     },
 }
+
+/// A condition on a node property: `exists`, equal or not to `value`, a number compared with
+/// it, or text that contains it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PropertyFilter {
+    pub key: String,
+    pub op: PropertyOp,
+    #[serde(default)]
+    pub value: Option<Value>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PropertyOp {
+    Exists,
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
+}
+
+/// Which edges count for a node's degree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Direction {
+    #[default]
+    Both,
+    Out,
+    In,
+}
+
+/// What a graph projection makes rows of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GraphRows {
+    Nodes,
+    Edges,
+}
+
+/// Nodes a top-N step keeps, and pairs a shared-neighbours step answers at most.
+pub const MAX_TOP_NODES: u32 = 1000;
+pub const MAX_PAIRS: u32 = 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -258,8 +373,31 @@ impl StepKind {
             | StepKind::Compare { frame, .. }
             | StepKind::Group { frame, .. }
             | StepKind::Pivot { frame, .. } => vec![frame],
-            StepKind::ToFrame { frame, .. } => vec![frame],
+            StepKind::ToFrame { frame, .. }
+            | StepKind::CountLabels { frame }
+            | StepKind::CountEdgeTypes { frame }
+            | StepKind::DegreeDistribution { frame, .. }
+            | StepKind::TopDegree { frame, .. }
+            | StepKind::SharedNeighbours { frame, .. }
+            | StepKind::Degree { frame, .. }
+            | StepKind::FilterGraph { frame, .. } => vec![frame],
         }
+    }
+
+    /// Whether the step reads a graph. Graph steps run where the query runs (in the database
+    /// when the source can, else on the server), before the steps that read frames.
+    pub fn is_graph_step(&self) -> bool {
+        matches!(
+            self,
+            StepKind::CountLabels { .. }
+                | StepKind::CountEdgeTypes { .. }
+                | StepKind::DegreeDistribution { .. }
+                | StepKind::TopDegree { .. }
+                | StepKind::SharedNeighbours { .. }
+                | StepKind::Degree { .. }
+                | StepKind::FilterGraph { .. }
+                | StepKind::ToFrame { rows: Some(_), .. }
+        )
     }
 }
 
@@ -333,6 +471,15 @@ pub fn check_steps(raw: &[Value], frames: &BTreeSet<&str>, at: &str) -> Result<V
 fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
     let name = |n: &str| check_text(&format!("{at}.name"), n, MAX_NAME_CHARS);
     let field = |what: &str, f: &str| check_text(&format!("{at}.{what}"), f, MAX_NAME_CHARS);
+    // Labels, edge types and property keys of graph steps may run in the database as quoted
+    // Cypher text or names: no backslash, which only escape sequences need.
+    let graph_name = |what: &str, f: &str| {
+        field(what, f)?;
+        if f.contains('\\') {
+            return Err(format!("{at}.{what} may not contain a backslash"));
+        }
+        Ok::<(), String>(())
+    };
     match kind {
         StepKind::Calculate { name: n, expression, .. } => {
             name(n)?;
@@ -412,7 +559,84 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
             field("column", column)?;
             field("value", value)?;
         }
-        StepKind::ToFrame { columns, .. } => {
+        StepKind::CountLabels { .. } | StepKind::CountEdgeTypes { .. } | StepKind::DegreeDistribution { .. } => {}
+        StepKind::TopDegree { n, label, .. } => {
+            if !(1..=MAX_TOP_NODES).contains(n) {
+                return Err(format!("{at}.n must be 1 to {MAX_TOP_NODES}"));
+            }
+            if let Some(l) = label {
+                graph_name("label", l)?;
+            }
+        }
+        StepKind::SharedNeighbours { label, via, edge_type, min, limit, name: n, .. } => {
+            graph_name("label", label)?;
+            graph_name("via", via)?;
+            if label == via {
+                return Err(format!("{at}.via must be another label than label"));
+            }
+            if let Some(t) = edge_type {
+                graph_name("edgeType", t)?;
+            }
+            if let Some(n) = n {
+                graph_name("name", n)?;
+            }
+            if *min < 1 {
+                return Err(format!("{at}.min must be at least 1"));
+            }
+            if !(1..=MAX_PAIRS).contains(limit) {
+                return Err(format!("{at}.limit must be 1 to {MAX_PAIRS}"));
+            }
+        }
+        StepKind::Degree { name: n, .. } => {
+            if let Some(n) = n {
+                graph_name("name", n)?;
+            }
+        }
+        StepKind::FilterGraph { labels, edge_types, property, .. } => {
+            if labels.len() > MAX_STEP_FIELDS || edge_types.len() > MAX_STEP_FIELDS {
+                return Err(format!("{at}: labels and edgeTypes take at most {MAX_STEP_FIELDS} entries"));
+            }
+            for (i, l) in labels.iter().enumerate() {
+                graph_name(&format!("labels[{i}]"), l)?;
+            }
+            for (i, t) in edge_types.iter().enumerate() {
+                graph_name(&format!("edgeTypes[{i}]"), t)?;
+            }
+            if let Some(f) = property {
+                graph_name("property.key", &f.key)?;
+                let ok = matches!(
+                    (f.op, &f.value),
+                    (PropertyOp::Exists, None)
+                        | (PropertyOp::Eq | PropertyOp::Ne, Some(Value::String(_) | Value::Number(_) | Value::Bool(_)))
+                        | (PropertyOp::Gt | PropertyOp::Gte | PropertyOp::Lt | PropertyOp::Lte, Some(Value::Number(_)))
+                        | (PropertyOp::Contains, Some(Value::String(_)))
+                );
+                if !ok {
+                    return Err(format!(
+                        "{at}.property.value: exists takes none, eq and ne text, a number or true or false, \
+                         gt, gte, lt and lte a number, contains text"
+                    ));
+                }
+                if let Some(Value::String(t)) = &f.value {
+                    check_text(&format!("{at}.property.value"), t, MAX_NAME_CHARS)?;
+                }
+            }
+        }
+        StepKind::ToFrame { columns, rows, label, edge_type, .. } => {
+            match (rows, label, edge_type) {
+                (None, Some(_), _) | (None, _, Some(_)) => {
+                    return Err(format!("{at}: label and edgeType belong to a projection of a graph (rows)"));
+                }
+                (Some(GraphRows::Edges), Some(_), _) => return Err(format!("{at}.label belongs to rows of nodes")),
+                (Some(GraphRows::Nodes), _, Some(_)) => return Err(format!("{at}.edgeType belongs to rows of edges")),
+                _ => {}
+            }
+            if let Some(l) = label {
+                graph_name("label", l)?;
+            }
+            if let Some(t) = edge_type {
+                graph_name("edgeType", t)?;
+            }
             if columns.is_empty() || columns.len() > MAX_PROJECTION_COLUMNS {
                 return Err(format!("{at}.columns takes 1 to {MAX_PROJECTION_COLUMNS} entries"));
             }
@@ -517,21 +741,31 @@ mod tests {
                 .iter()
                 .map(|(n, source)| {
                     let source = source.as_str().unwrap();
-                    let input = match cases["documents"].get(source) {
-                        Some(set) => steps::Input::Documents(serde_json::from_value(set.clone()).unwrap()),
-                        None => steps::Input::Frame(frame(source)),
+                    let input = match (cases["documents"].get(source), cases["graphs"].get(source)) {
+                        (Some(set), _) => steps::Input::Documents(serde_json::from_value(set.clone()).unwrap()),
+                        (_, Some(graph)) => steps::Input::Graph(serde_json::from_value(graph.clone()).unwrap()),
+                        _ => steps::Input::Frame(frame(source)),
                     };
                     (n.clone(), input)
                 })
                 .collect();
             let list: Vec<Step> = case["steps"].as_array().unwrap().iter().map(|s| parse_step(s).unwrap()).collect();
-            match (steps::run_inputs(&list, inputs, &steps::Control::unbounded()), case.get("error")) {
-                (Ok(out), None) => {
+            let ran = steps::run_shapes(&list, inputs, &steps::Control::unbounded(), &BTreeSet::new());
+            match (ran, case.get("error")) {
+                (Ok((out, graphs)), None) => {
+                    for (graph_name, want) in case.get("expectGraphs").and_then(Value::as_object).into_iter().flatten()
+                    {
+                        let got = &graphs.iter().find(|(n, _)| n == graph_name).unwrap().1;
+                        let ids = |v: Vec<&str>| json!(v);
+                        assert_eq!(ids(got.nodes.iter().map(|n| n.id.as_str()).collect()), want["nodes"], "{name}");
+                        assert_eq!(ids(got.edges.iter().map(|e| e.id.as_str()).collect()), want["edges"], "{name}");
+                        assert_eq!(serde_json::to_value(&got.schema).unwrap(), want["schema"], "{name}");
+                    }
                     if let Some(order) = case.get("outputOrder") {
                         let got: Vec<&str> = out.iter().map(|f| f.name.as_str()).collect();
                         assert_eq!(json!(got), *order, "{name}");
                     }
-                    for (frame_name, want) in case["expect"].as_object().unwrap() {
+                    for (frame_name, want) in case.get("expect").and_then(Value::as_object).into_iter().flatten() {
                         let got = &out.iter().find(|f| &f.name == frame_name).unwrap().frame;
                         if let Some(names) = want.get("names") {
                             let got_names: Vec<&str> = got.fields().iter().map(|f| f.name.as_str()).collect();
@@ -572,7 +806,7 @@ mod tests {
             { "id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "Preis * 2" }
         ]))
         .unwrap();
-        let StepKind::ToFrame { frame, columns } = &steps[0].kind else { panic!() };
+        let StepKind::ToFrame { frame, columns, .. } = &steps[0].kind else { panic!() };
         assert_eq!((frame.as_str(), columns.len()), ("A", 2));
         assert_eq!(columns[1].field_type, Some(crate::shapes::FieldType::Number));
         let one = |columns: Value| json!([{ "id": "p", "type": "toFrame", "frame": "A", "columns": columns }]);

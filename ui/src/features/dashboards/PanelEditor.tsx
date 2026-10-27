@@ -729,6 +729,10 @@ export function PanelEditor({
             hidden={hiddenKey}
             inputs={inputs}
             run={stepsRun}
+            kindOf={(refId) => {
+              const target = preview.targets.find((x) => x.refId === refId);
+              return datasources.data?.find((d) => d.id === target?.datasourceId)?.kind;
+            }}
           />
         )
       }
@@ -882,6 +886,7 @@ function StepsTab({
   hidden,
   inputs,
   run,
+  kindOf,
 }: {
   steps: unknown[];
   /** The hidden queries' refIds, one per line. */
@@ -890,6 +895,7 @@ function StepsTab({
   refIds: readonly string[];
   inputs: ComponentProps<typeof StepsEditor>["inputs"];
   run: ComponentProps<typeof StepsEditor>["run"];
+  kindOf: ComponentProps<typeof StepsEditor>["kindOf"];
 }) {
   const { t } = useI18n();
   const list = useMemo(() => asSteps(steps), [steps]);
@@ -902,7 +908,14 @@ function StepsTab({
           {t("dashboards.editor.stepsReadHidden", { refIds: reading.join(", ") })}
         </p>
       )}
-      <StepsEditor steps={list} onChange={onChange} refIds={refIds} inputs={inputs} run={run} />
+      <StepsEditor
+        steps={list}
+        onChange={onChange}
+        refIds={refIds}
+        inputs={inputs}
+        run={run}
+        kindOf={kindOf}
+      />
     </>
   );
 }

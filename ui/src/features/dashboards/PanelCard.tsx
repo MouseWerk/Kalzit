@@ -717,7 +717,12 @@ export function PanelBody({
   if (pending) {
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
-  const graphs = graphsOf(outcomes, panel.targets);
+  // The graphs as the steps leave them: a top-N step keeps a smaller graph, a graph step that
+  // makes a table leaves none.
+  const graphs = graphsOf(
+    stepsRun.graphs.map((g) => ({ refId: g.name, result: { shape: "graph", graph: g.graph } })),
+    panel.targets,
+  );
   // Documents an enabled projection step turns into a frame are that frame now; the others stay
   // documents for the document panels.
   const projected = new Set(

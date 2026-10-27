@@ -1,5 +1,5 @@
 {
-  "about": "Cases both analysis engines must pass: server/src/analysis (Rust) and ui/src/analysis (TypeScript). Numbers compare with a relative tolerance of 1e-9; everything else exactly. A step case gives its inputs by refId (in the order of the refIds sorted), lists the fields to check per frame and, with names, the full field order; outputOrder is the order of the frames after the steps. An expression case with a calendar runs in that time zone (UTC when absent) and with that first day of the week (monday when absent).",
+  "about": "Cases both analysis engines must pass: server/src/analysis (Rust) and ui/src/analysis (TypeScript). Numbers compare with a relative tolerance of 1e-9; everything else exactly. A step case gives its inputs by refId (in the order of the refIds sorted), lists the fields to check per frame and, with names, the full field order; outputOrder is the order of the frames after the steps. An input may name a graph (graphs); expectGraphs gives the node and edge ids and the schema of a graph the steps leave. An expression case with a calendar runs in that time zone (UTC when absent) and with that first day of the week (monday when absent).",
   "frames": {
     "sales": [
       { "name": "zeit", "type": "time", "values": [1767225600000, 1767312000000, 1767398400000, 1767484800000] },
@@ -59,6 +59,10 @@
       ],
       "schema": []
     }
+  },
+  "graphs": {
+    "shop": {"nodes": [{"id": "k1", "labels": ["Kunde"], "properties": {"name": "Anna"}}, {"id": "k2", "labels": ["Kunde"], "properties": {"name": "Ben"}}, {"id": "k3", "labels": ["Kunde"], "properties": {"name": "Cem"}}, {"id": "k4", "labels": ["Kunde", "VIP"], "properties": {"name": "Dora"}}, {"id": "p1", "labels": ["Produkt"], "properties": {"name": "Abo"}}, {"id": "p2", "labels": ["Produkt"], "properties": {"name": "Dock"}}, {"id": "p3", "labels": ["Produkt"], "properties": {"name": 7}}, {"id": "h1", "labels": ["Händler"], "properties": {"name": "Hof"}}, {"id": "x9", "labels": [], "properties": {}}], "edges": [{"id": "e1", "type": "KAUFTE", "from": "k1", "to": "p1", "properties": {}}, {"id": "e2", "type": "KAUFTE", "from": "k1", "to": "p2", "properties": {}}, {"id": "e3", "type": "KAUFTE", "from": "k2", "to": "p1", "properties": {}}, {"id": "e4", "type": "KAUFTE", "from": "k2", "to": "p2", "properties": {}}, {"id": "e5", "type": "KAUFTE", "from": "k3", "to": "p1", "properties": {}}, {"id": "e6", "type": "KAUFTE", "from": "k4", "to": "p2", "properties": {}}, {"id": "e7", "type": "KAUFTE", "from": "k4", "to": "p3", "properties": {}}, {"id": "e8", "type": "KAUFTE", "from": "k1", "to": "p3", "properties": {}}, {"id": "e9", "type": "LIEFERT", "from": "h1", "to": "p1", "properties": {}}, {"id": "e10", "type": "EMPFAHL", "from": "k1", "to": "k2", "properties": {"seit": 2020}}, {"id": "e11", "type": "EMPFAHL", "from": "k3", "to": "x9", "properties": {}}, {"id": "e12", "type": "MAG", "from": "k3", "to": "k3", "properties": {}}], "schema": {"labels": ["Händler", "Kunde", "Produkt", "VIP"], "edgeTypes": ["EMPFAHL", "KAUFTE", "LIEFERT", "MAG"], "propertyKeys": {"Händler": ["name"], "Kunde": ["name"], "Produkt": ["name"], "VIP": ["name"]}}},
+    "empty": {"nodes": [], "edges": [], "schema": {"labels": [], "edgeTypes": [], "propertyKeys": {}}}
   },
   "expressions": [
     { "frame": "sales", "expression": "betrag * 2", "type": "number", "values": [20, 40, 61, null] },
@@ -385,6 +389,132 @@
       "frames": { "A": "sales" },
       "steps": [{ "id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "land / 2" }],
       "error": { "index": 0, "reason": "expression.operand_types", "params": { "operator": "/", "left": "text", "right": "number" } }
+    },
+    {
+      "name": "graph: nodes per label, largest first, with their share",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "countLabels", "frame": "A"}],
+      "expect": {"A": {"names": ["label", "nodes", "share"], "fields": [{"name": "label", "type": "string", "values": ["Kunde", "Produkt", "Händler", "VIP"]}, {"name": "nodes", "type": "number", "values": [4, 3, 1, 1]}, {"name": "share", "type": "number", "values": [0.4444444444444444, 0.3333333333333333, 0.1111111111111111, 0.1111111111111111]}]}}
+    },
+    {
+      "name": "graph: edges per type and the labels of their ends",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "countEdgeTypes", "frame": "A"}],
+      "expect": {"A": {"names": ["type", "from", "to", "edges"], "fields": [{"name": "type", "type": "string", "values": ["KAUFTE", "KAUFTE", "EMPFAHL", "EMPFAHL", "LIEFERT", "MAG"]}, {"name": "from", "type": "string", "values": ["Kunde", "Kunde:VIP", "Kunde", "Kunde", "Händler", "Kunde"]}, {"name": "to", "type": "string", "values": ["Produkt", "Produkt", "Kunde", null, "Produkt", "Kunde"]}, {"name": "edges", "type": "number", "values": [6, 2, 1, 1, 1, 1]}]}}
+    },
+    {
+      "name": "graph: degree distribution, a loop counts twice",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "degreeDistribution", "frame": "A"}],
+      "expect": {"A": {"names": ["degree", "nodes"], "fields": [{"name": "degree", "type": "number", "values": [1, 2, 3, 4]}, {"name": "nodes", "type": "number", "values": [2, 2, 2, 3]}]}}
+    },
+    {
+      "name": "graph: outgoing degree distribution with nodes of degree zero",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "degreeDistribution", "frame": "A", "direction": "out"}],
+      "expect": {"A": {"fields": [{"name": "degree", "type": "number", "values": [0, 1, 2, 3, 4]}, {"name": "nodes", "type": "number", "values": [4, 1, 2, 1, 1]}]}}
+    },
+    {
+      "name": "graph: top nodes by degree keep the edges between them",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "topDegree", "frame": "A", "n": 3}],
+      "expectGraphs": {"A": {"nodes": ["k1", "k3", "p1"], "edges": ["e1", "e5", "e12"], "schema": {"labels": ["Kunde", "Produkt"], "edgeTypes": ["KAUFTE", "MAG"], "propertyKeys": {"Kunde": ["name"], "Produkt": ["name"]}}}}
+    },
+    {
+      "name": "graph: top nodes of one label",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "topDegree", "frame": "A", "n": 2, "label": "Produkt", "direction": "in"}],
+      "expectGraphs": {"A": {"nodes": ["p1", "p2"], "edges": [], "schema": {"labels": ["Produkt"], "edgeTypes": [], "propertyKeys": {"Produkt": ["name"]}}}}
+    },
+    {
+      "name": "graph: a top-N graph read by the next graph step",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "t", "type": "topDegree", "frame": "A", "n": 3}, {"id": "c", "type": "countLabels", "frame": "A"}, {"id": "x", "type": "calculate", "frame": "A", "name": "doppelt", "expression": "nodes * 2"}],
+      "expect": {"A": {"fields": [{"name": "label", "type": "string", "values": ["Kunde", "Produkt"]}, {"name": "share", "type": "number", "values": [0.6666666666666666, 0.3333333333333333]}, {"name": "doppelt", "type": "number", "values": [4, 2]}]}}
+    },
+    {
+      "name": "graph: shared neighbours, named by a text property, else by id",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "sharedNeighbours", "frame": "A", "label": "Kunde", "via": "Produkt", "edgeType": "KAUFTE", "min": 1, "limit": 10, "name": "name"}],
+      "expect": {"A": {"names": ["a", "b", "shared", "neighbours"], "fields": [{"name": "a", "type": "string", "values": ["Anna", "Anna", "Anna", "Ben", "Ben"]}, {"name": "b", "type": "string", "values": ["Ben", "Dora", "Cem", "Cem", "Dora"]}, {"name": "shared", "type": "number", "values": [2, 2, 1, 1, 1]}, {"name": "neighbours", "type": "json", "values": [["Abo", "Dock"], ["Dock", "p3"], ["Abo"], ["Abo"], ["Dock"]]}]}}
+    },
+    {
+      "name": "graph: shared neighbours, at least two, the first pair only",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "sharedNeighbours", "frame": "A", "label": "Kunde", "via": "Produkt", "min": 2, "limit": 1}],
+      "expect": {"A": {"fields": [{"name": "a", "type": "string", "values": ["k1"]}, {"name": "b", "type": "string", "values": ["k2"]}, {"name": "shared", "type": "number", "values": [2]}, {"name": "neighbours", "type": "json", "values": [["p1", "p2"]]}]}}
+    },
+    {
+      "name": "graph: nodes of a label as a table",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "toFrame", "frame": "A", "rows": "nodes", "label": "Kunde", "columns": [{"path": "@id"}, {"path": "name", "name": "Name"}, {"path": "@labels"}]}],
+      "expect": {"A": {"names": ["@id", "Name", "@labels"], "fields": [{"name": "@id", "type": "string", "values": ["k1", "k2", "k3", "k4"]}, {"name": "Name", "type": "string", "values": ["Anna", "Ben", "Cem", "Dora"]}, {"name": "@labels", "type": "json", "values": [["Kunde"], ["Kunde"], ["Kunde"], ["Kunde", "VIP"]]}]}}
+    },
+    {
+      "name": "graph: edges of a type as a table",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "toFrame", "frame": "A", "rows": "edges", "edgeType": "EMPFAHL", "columns": [{"path": "@from"}, {"path": "@to"}, {"path": "@type"}, {"path": "seit"}]}],
+      "expect": {"A": {"fields": [{"name": "@from", "type": "string", "values": ["k1", "k3"]}, {"name": "@to", "type": "string", "values": ["k2", "x9"]}, {"name": "@type", "type": "string", "values": ["EMPFAHL", "EMPFAHL"]}, {"name": "seit", "type": "number", "values": [2020, null]}]}}
+    },
+    {
+      "name": "graph: an empty graph gives empty tables",
+      "frames": {"A": "empty"},
+      "steps": [{"id": "g", "type": "degreeDistribution", "frame": "A"}],
+      "expect": {"A": {"names": ["degree", "nodes"], "fields": [{"name": "degree", "type": "number", "values": []}, {"name": "nodes", "type": "number", "values": []}]}}
+    },
+    {
+      "name": "graph: a graph step and a table step on different queries keep the queries' order",
+      "frames": {"A": "shop", "B": "sales"},
+      "steps": [{"id": "g", "type": "countLabels", "frame": "A"}],
+      "outputOrder": ["A", "B"]
+    },
+    {
+      "name": "graph: a graph step needs a graph",
+      "frames": {"A": "sales"},
+      "steps": [{"id": "g", "type": "countLabels", "frame": "A"}],
+      "error": {"index": 0, "reason": "steps.not_graph", "params": {"frame": "A"}}
+    },
+    {
+      "name": "graph: a table step needs a step that made a table first",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "1"}],
+      "error": {"index": 0, "reason": "steps.frame_missing", "params": {"frame": "A"}}
+    },
+    {
+      "name": "graph: the degree as a node property",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "d", "type": "degree", "frame": "A", "name": "grad"}, {"id": "f", "type": "toFrame", "frame": "A", "rows": "nodes", "columns": [{"path": "@id"}, {"path": "grad"}]}],
+      "expect": {"A": {"fields": [{"name": "@id", "type": "string", "values": ["k1", "k2", "k3", "k4", "p1", "p2", "p3", "h1", "x9"]}, {"name": "grad", "type": "number", "values": [4, 3, 4, 2, 4, 3, 2, 1, 1]}]}}
+    },
+    {
+      "name": "graph: a subgraph by labels, edge types and an existing property",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "labels": ["Kunde", "Produkt"], "edgeTypes": ["KAUFTE"], "property": {"key": "name", "op": "exists"}}],
+      "expectGraphs": {"A": {"nodes": ["k1", "k2", "k3", "k4", "p1", "p2", "p3"], "edges": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"], "schema": {"labels": ["Kunde", "Produkt", "VIP"], "edgeTypes": ["KAUFTE"], "propertyKeys": {"Kunde": ["name"], "Produkt": ["name"], "VIP": ["name"]}}}}
+    },
+    {
+      "name": "graph: a subgraph of the nodes with a degree of at least 3",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "d", "type": "degree", "frame": "A"}, {"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "degree", "op": "gte", "value": 3}}],
+      "expectGraphs": {"A": {"nodes": ["k1", "k2", "k3", "p1", "p2"], "edges": ["e1", "e2", "e3", "e4", "e5", "e10", "e12"], "schema": {"labels": ["Kunde", "Produkt"], "edgeTypes": ["EMPFAHL", "KAUFTE", "MAG"], "propertyKeys": {"Kunde": ["degree", "name"], "Produkt": ["degree", "name"]}}}}
+    },
+    {
+      "name": "graph: a subgraph by equal text",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "name", "op": "eq", "value": "Anna"}}],
+      "expectGraphs": {"A": {"nodes": ["k1"], "edges": [], "schema": {"labels": ["Kunde"], "edgeTypes": [], "propertyKeys": {"Kunde": ["name"]}}}}
+    },
+    {
+      "name": "graph: a subgraph by contained text; a number is no text",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "name", "op": "contains", "value": "o"}}],
+      "expectGraphs": {"A": {"nodes": ["k4", "p1", "p2", "h1"], "edges": ["e6", "e9"], "schema": {"labels": ["Händler", "Kunde", "Produkt", "VIP"], "edgeTypes": ["KAUFTE", "LIEFERT"], "propertyKeys": {"Händler": ["name"], "Kunde": ["name"], "Produkt": ["name"], "VIP": ["name"]}}}}
+    },
+    {
+      "name": "graph: numbers compare as numbers, other values never",
+      "frames": {"A": "shop"},
+      "steps": [{"id": "g", "type": "filterGraph", "frame": "A", "property": {"key": "name", "op": "lt", "value": 10}}],
+      "expectGraphs": {"A": {"nodes": ["p3"], "edges": [], "schema": {"labels": ["Produkt"], "edgeTypes": [], "propertyKeys": {"Produkt": ["name"]}}}}
     }
   ]
 }

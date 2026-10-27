@@ -405,6 +405,7 @@ async fn change_streams_where_the_deployment_has_them() {
         query: json!({ "collection": "orders", "filter": "{\"land\": \"Schweiz\"}" }),
         cursor: None,
         limit: None,
+        steps: Vec::new(),
     };
     let user =
         kalzit::auth::SessionUser { id: "live".into(), email: String::new(), name: String::new(), is_server_admin: 0 };
