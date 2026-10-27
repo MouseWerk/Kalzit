@@ -77,7 +77,8 @@ skip or weaken a test to make a change pass.
 ## Screenshots
 
 A pull request that visibly changes the UI reruns `npm run screenshots` in `ui/` and commits the
-changed images in `docs/screenshots/`; the README shows them.
+changed images in `docs/screenshots/`; the README shows them. The gallery renders for the website
+come from the gallery workflow and are not committed; see `docs/screenshots/README.md`.
 
 ## Release notes
 
