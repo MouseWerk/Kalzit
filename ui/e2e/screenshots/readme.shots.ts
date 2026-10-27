@@ -1015,7 +1015,11 @@ for (const scheme of ["light", "dark"] as const) {
     );
     await expect(steps.getByRole("button", { name: /^Ben \+/ })).toBeVisible();
     await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
-    await expect(page.getByRole("application")).toHaveCount(4);
+    // Network, hierarchy and explorer draw; the path panel lists its paths.
+    await expect(
+      around.getByRole("application", { name: "Around Ben", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("application")).toHaveCount(3);
     await expect(page.getByText(t("graph.layout.settling"))).toHaveCount(0);
     await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
     await shoot(page, `graph-panels-${scheme}`);
