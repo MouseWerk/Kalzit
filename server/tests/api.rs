@@ -923,7 +923,7 @@ async fn full_rate_limit_tables_still_let_other_networks_in() {
         let (key, net) = (address_key("login", ip), network_key(ip));
         let _ = t.state.login_limiter.try_acquire(&key, &net, now);
         let _ = t.state.pair_limiter.try_acquire(&format!("account:a{i}@example.de|{key}"), &net, now);
-        let _ = t.state.account_limiter.record(&format!("email:a{i}@example.de"), &net, now);
+        let _ = t.state.unknown_account_limiter.record(&format!("email:a{i}@example.de"), &net, now);
         let _ = t.state.setup_limiter.try_acquire(&address_key("setup", ip), &net, now);
     }
     // A new /64 in one of the flooding /48s.
@@ -951,7 +951,7 @@ async fn tables_at_their_hard_cap_still_let_a_fresh_network_in() {
         let net = format!("net:attacker-{}", i / 10);
         let _ = t.state.login_limiter.try_acquire(&format!("ip:login:a{i}"), &net, now);
         let _ = t.state.pair_limiter.try_acquire(&format!("account:a{i}"), &net, now);
-        let _ = t.state.account_limiter.record(&format!("email:a{i}@example.de"), &net, now);
+        let _ = t.state.unknown_account_limiter.record(&format!("email:a{i}@example.de"), &net, now);
         let _ = t.state.setup_limiter.try_acquire(&format!("ip:setup:a{i}"), &net, now);
     }
     let done = t.setup().await;
@@ -959,6 +959,65 @@ async fn tables_at_their_hard_cap_still_let_a_fresh_network_in() {
     let owner = t.from("198.51.100.7:1");
     assert_eq!(owner.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
     drop(owner);
+    t.finish().await;
+}
+
+/// A flood that fills every bounded table to its cap, with guesses at made-up emails among
+/// them, never pushes out the partly used budget of an existing account: it lives in a table of
+/// its own, without a cap.
+#[tokio::test]
+async fn a_partly_used_account_budget_survives_a_flood_at_the_cap() {
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.security.login_max_failures = 3;
+        c.security.login_window_secs = 600;
+    })
+    .await;
+    t.setup().await;
+    for i in 1..=2 {
+        let attacker = t.from(&format!("[2001:db8:{i:x}::1]:1"));
+        assert_eq!(attacker.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+    }
+    let now = t.clock.monotonic_ms();
+    for i in 0..300_010 {
+        let net = format!("net:attacker-{}", i / 10);
+        let _ = t.state.login_limiter.try_acquire(&format!("ip:login:a{i}"), &net, now);
+        let _ = t.state.pair_limiter.try_acquire(&format!("account:a{i}"), &net, now);
+        let _ = t.state.unknown_account_limiter.record(&format!("email:a{i}@example.de"), &net, now);
+        let _ = t.state.network_limiter.record(&net, &net, now);
+    }
+    // Made-up emails through the API go to their own table as well.
+    for i in 0..20 {
+        let r = t.from(&format!("[2001:db8:{:x}::1]:1", 0x200 + i)).login(&format!("x{i}@example.de"), "falsch").await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    // The third failure uses the victim's budget up; then even the right password is refused.
+    let third = t.from("[2001:db8:3::1]:1");
+    assert_eq!(third.login("joerg@example.de", "falsch falsch falsch").await.status, StatusCode::UNAUTHORIZED);
+    let r = t.from("[2001:db8:4::1]:1").login("joerg@example.de", PASSWORD).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    drop(third);
+    t.finish().await;
+}
+
+/// Guesses that hold every check slot of an account cannot keep its owner out: a browser with a
+/// device cookie has slots of its own, while other browsers wait and are refused.
+#[tokio::test]
+async fn guesses_holding_the_check_slots_do_not_keep_a_known_device_out() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    t.setup().await;
+    let owner = t.from("198.51.100.7:1");
+    let signed_in = owner.login("joerg@example.de", PASSWORD).await;
+    let device = set_cookie(&signed_in, "kalzit_device");
+    // An attacker's checks in flight take both slots of the account.
+    let wait = std::time::Duration::from_secs(1);
+    let slots = &t.state.password_checks;
+    let held = (slots.enter("email:joerg@example.de", wait).await, slots.enter("email:joerg@example.de", wait).await);
+    assert!(held.0.is_some() && held.1.is_some());
+    let r = t.from("203.0.113.9:1").login("joerg@example.de", PASSWORD).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    let r = owner.login_with("joerg@example.de", PASSWORD, &device).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    drop((held, owner));
     t.finish().await;
 }
 

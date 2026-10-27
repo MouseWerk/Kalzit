@@ -477,7 +477,7 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 checked, each budget under its own lock, and refuses it with `429 rate_limited` (with
 `Retry-After` and `retryAfterSecs`) when a budget is used up. Parallel attempts therefore cannot
 all pass a budget before the first failure is counted. A correct password gives the attempts
-back. `security.login_max_failures` per `security.login_window_secs` (default 10 per 15 minutes)
+back, within the window they were counted in. `security.login_max_failures` per `security.login_window_secs` (default 10 per 15 minutes)
 applies to each of:
 
 - the client address (IPv4 per address, IPv6 per /64), whatever the email;
@@ -486,13 +486,17 @@ applies to each of:
   Used up, it refuses every sign-in of the account from a browser without a known device
   cookie, the right password included, with the whole window as the wait (it tells nothing
   about the account). A guess spread over many addresses so gets this one budget, not the
-  budget of every address.
+  budget of every address. An email without an account has the same budget, answered the same
+  way, so a refusal does not tell whether the account exists.
 
-At most 2 password checks of one account run at the same moment (sign-ins and `POST
-/me/password` together); more wait up to 2 seconds for a slot, then are refused with
-`429 rate_limited` and a wait of 1 second. All
-password hashing and checking together runs on at most one thread per CPU; further checks wait
-their turn.
+Only an attempt that passed its budgets takes a check slot: at most 2 password checks of one
+account run at the same moment; more wait up to 2 seconds for a slot, then are refused with
+`429 rate_limited` and a wait of 1 second. Sign-ins with a known device cookie, and `POST
+/me/password` of a signed-in user, have 2 slots of their own, so guesses holding the others
+cannot keep them waiting. Password hashing and checking runs on at most one thread per CPU
+(for known devices and signed-in users on a quarter of that, at least one, apart from the
+others); up to 32 checks per thread wait their turn, further ones are refused at once with
+`429 rate_limited`.
 
 Known devices: a successful sign-in sets the cookie `kalzit_device` (`__Host-kalzit_device` over
 HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 90 days, renewed with every sign-in, kept on sign
@@ -514,20 +518,23 @@ A successful sign-in gives the address its attempt back and clears the account's
 address. Windows are measured on a monotonic clock, so a change of the system time neither ends
 nor stretches them.
 
-The counts live in memory, one bounded table per kind of key (addresses, accounts at an
-address, accounts, sites, password checks, setup codes), so a flood of one kind never crowds out
-another. Entries whose window has ended are dropped. Every key belongs to a network (IPv6 /48,
-IPv4 /24):
+The counts live in memory, one table per kind of key (addresses, accounts at an address,
+accounts, emails without an account, sites, password checks, setup codes), so a flood of one
+kind never crowds out another. Entries whose window has ended are dropped. The budgets of
+existing accounts have a table without a cap (it holds at most one entry per user), from which
+nothing is dropped before its window ends, so no flood can reset them. The other tables are
+bounded (100 000 / 300 000 entries; 10 000 / 30 000 for password checks, setup codes and
+connection tests), and every key belongs to a network (IPv6 /48, IPv4 /24):
 
-- a network holding fewer than 16 entries always gets its new key. At 300 000 entries, room is
-  made by dropping the oldest entry that has not used up its attempts from the network with the
-  most such entries, so a flood pushes out its own entries. An entry that has used up its
+- a network holding fewer than 16 entries always gets its new key. At the larger number, room
+  is made by dropping the oldest entry that has not used up its attempts from the network with
+  the most such entries, so a flood pushes out its own entries. An entry that has used up its
   attempts is never dropped before its window ends;
-- a network holding 16 or more gets new keys only while the table has fewer than 100 000.
+- a network holding 16 or more gets new keys only while the table has fewer than the smaller
+  number.
 
 A client from a network that is not flooding is so always counted. Only a table holding nothing
-but used-up entries refuses new keys, until the oldest window ends; an account the table cannot
-take is refused rather than left uncounted.
+but used-up entries refuses new keys, until the oldest window ends.
 
 ## Setup
 

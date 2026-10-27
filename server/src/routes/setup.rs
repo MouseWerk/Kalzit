@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 
 use super::{clean_name, me, new_id, normalize_email};
 use crate::app::AppState;
+use crate::auth::ratelimit::Counted;
 use crate::auth::{SessionUser, password, session};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -249,32 +250,32 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
 /// spread over many addresses so gets a few tries per address instead of the full per-address
 /// budget, which keeps a fixed code from `KALZIT_SETUP_TOKEN` (16 characters at least) out of
 /// reach as well.
-fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<String> {
+fn acquire(state: &AppState, info: &RequestInfo) -> ApiResult<(String, Counted)> {
     use crate::auth::ratelimit::{CLEAN_ADDRESS_FAILURES, network_key, site_key};
     let key = site_key("setup", info.client_ip);
     let now = state.clock.monotonic_ms();
     let refused = |wait| ApiError::rate_limited("too many setup code attempts, wait", wait);
-    let earlier = state.setup_limiter.try_acquire(&key, &network_key(info.client_ip), now).map_err(refused)?;
-    if earlier > CLEAN_ADDRESS_FAILURES
+    let counted = state.setup_limiter.try_acquire(&key, &network_key(info.client_ip), now).map_err(refused)?;
+    if counted.earlier > CLEAN_ADDRESS_FAILURES
         && let Some(wait) = state.setup_all_limiter.wait(ALL_ADDRESSES_KEY, now)
     {
-        state.setup_limiter.refund(&key);
+        state.setup_limiter.refund(&key, &counted);
         return Err(refused(wait));
     }
-    Ok(key)
+    Ok((key, counted))
 }
 
 /// Checks `token` against the open gate: `Ok` for the current code (the attempt is refunded),
 /// `setup_token_expired` for the code of the previous start, `invalid_setup_token` otherwise;
 /// both of these count for all addresses together. The code is never logged or repeated.
-fn verify(state: &AppState, open: &OpenGate, token: &str, limit_key: &str) -> ApiResult<()> {
+fn verify(state: &AppState, open: &OpenGate, token: &str, limit: &(String, Counted)) -> ApiResult<()> {
     let found = open.matches(token);
     if !matches!(found, CodeMatch::Current) {
         state.setup_all_limiter.record(ALL_ADDRESSES_KEY, ALL_ADDRESSES_KEY, state.clock.monotonic_ms());
     }
     match found {
         CodeMatch::Current => {
-            state.setup_limiter.refund(limit_key);
+            state.setup_limiter.refund(&limit.0, &limit.1);
             Ok(())
         }
         CodeMatch::Previous => Err(ApiError::new(
@@ -304,7 +305,7 @@ pub async fn check(
     let gate = state.setup.state.lock().await;
     let Some(open) = gate.as_ref() else {
         // Not a guess: once setup is done, no code opens anything.
-        state.setup_limiter.refund(&limit_key);
+        state.setup_limiter.refund(&limit_key.0, &limit_key.1);
         return Err(setup_done());
     };
     verify(&state, open, &req.token, &limit_key)?;

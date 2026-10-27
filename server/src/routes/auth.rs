@@ -42,6 +42,9 @@ pub fn routes() -> Vec<super::table::RouteDef> {
     ]
 }
 
+/// How long a sign-in waits for a password check slot of its account (`ratelimit::InFlight`).
+const CHECK_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn rate_limited(wait: std::time::Duration) -> ApiError {
     ApiError::rate_limited("too many failed sign-ins, wait a few minutes", wait)
 }
@@ -72,20 +75,16 @@ pub async fn login(
     // The account's budget at this address: guesses from elsewhere never use it up.
     let pair_key = format!("account:{email}|{ip_key}");
     let account_key = account_key(&email);
-    state.login_limiter.try_acquire(&ip_key, &network, mono).map_err(rate_limited)?;
+    let ip_counted = state.login_limiter.try_acquire(&ip_key, &network, mono).map_err(rate_limited)?;
     let refuse = |wait| {
-        state.login_limiter.refund(&ip_key);
+        state.login_limiter.refund(&ip_key, &ip_counted);
         rate_limited(wait)
     };
-    let pair_failures = state.pair_limiter.try_acquire(&pair_key, &network, mono).map_err(refuse)?;
+    let pair_counted = state.pair_limiter.try_acquire(&pair_key, &network, mono).map_err(refuse)?;
     // Refused after both counted: neither attempt counts.
     let refuse = |wait| {
-        state.pair_limiter.refund(&pair_key);
+        state.pair_limiter.refund(&pair_key, &pair_counted);
         refuse(wait)
-    };
-    // At most a few checks of one account at once; more wait briefly for a slot, then are refused.
-    let Some(_checking) = state.password_checks.enter_soon(&account_key).await else {
-        return Err(refuse(std::time::Duration::from_secs(1)));
     };
 
     let row: Option<LoginRow> =
@@ -102,34 +101,53 @@ pub async fn login(
     // at this address is clean go on, so others' typos never make the owner dirty.
     let ipv6 = info.client_ip.to_canonical().is_ipv6();
     let site_counted = if !ipv6 {
-        false
-    } else if pair_failures > CLEAN_ADDRESS_FAILURES {
-        state.network_limiter.try_acquire(&network, &network, mono).map_err(|_| refuse(window))?;
-        true
+        None
+    } else if pair_counted.earlier > CLEAN_ADDRESS_FAILURES {
+        Some(state.network_limiter.try_acquire(&network, &network, mono).map_err(|_| refuse(window))?)
     } else {
         state.network_limiter.record(&network, &network, mono)
     };
     let refuse = |wait| {
-        if site_counted {
-            state.network_limiter.refund(&network);
+        if let Some(counted) = &site_counted {
+            state.network_limiter.refund(&network, counted);
         }
         refuse(wait)
     };
-    // A browser this account signed in with before is not held to the account's shared budget,
-    // but its failures count for it; everyone else is held to it, and an account the full table
-    // cannot count is refused (fail closed).
+    // The account's budget: in a table without a cap for accounts that exist, so no flood can
+    // push it out; in a bounded one for emails without an account, which answers alike. A browser
+    // the account signed in with before is not held to it, but its failures count; everyone else
+    // is held to it.
     let device = crate::auth::device::read_cookie(&headers, info.https);
     let known_device = row.as_ref().zip(device.as_deref()).is_some_and(|(r, value)| {
         crate::auth::device::is_known(&state.secrets, value, &r.id, r.password_hash.as_deref(), now)
     });
+    let accounts = if row.is_some() { &state.account_limiter } else { &state.unknown_account_limiter };
     let account_counted = if known_device {
-        state.account_limiter.record(&account_key, &network, mono)
+        accounts.record(&account_key, &network, mono)
     } else {
-        state.account_limiter.try_acquire(&account_key, &network, mono).map_err(|_| refuse(window))?;
-        true
+        Some(accounts.try_acquire(&account_key, &network, mono).map_err(|_| refuse(window))?)
+    };
+    let refuse = |wait| {
+        if let Some(counted) = &account_counted {
+            accounts.refund(&account_key, counted);
+        }
+        refuse(wait)
+    };
+    // At most a few checks of one account at once, taken only after its budgets passed; more
+    // wait briefly for a slot, then are refused. Known devices have slots of their own and their
+    // own hashing threads, so guesses holding the others cannot keep the owner out.
+    let (slot_key, lane) = if known_device {
+        (format!("device:{account_key}"), &*password::TRUSTED)
+    } else {
+        (account_key.clone(), &*password::SHARED)
+    };
+    let Some(_checking) = state.password_checks.enter(&slot_key, CHECK_SLOT_WAIT).await else {
+        return Err(refuse(std::time::Duration::from_secs(1)));
     };
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
-    let ok = password::verify(req.password, stored).await;
+    let Some(ok) = password::verify(req.password, stored, lane).await else {
+        return Err(refuse(std::time::Duration::from_secs(1)));
+    };
     let audit = |action: &'static str, user_id: Option<String>| crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: None,
@@ -160,12 +178,12 @@ pub async fn login(
         return Err(invalid_credentials());
     };
     state.pair_limiter.reset(&pair_key);
-    state.login_limiter.refund(&ip_key);
-    if site_counted {
-        state.network_limiter.refund(&network);
+    state.login_limiter.refund(&ip_key, &ip_counted);
+    if let Some(counted) = &site_counted {
+        state.network_limiter.refund(&network, counted);
     }
-    if account_counted {
-        state.account_limiter.refund(&account_key);
+    if let Some(counted) = &account_counted {
+        accounts.refund(&account_key, counted);
     }
 
     let mut tx = crate::db::begin(&state.db).await?;

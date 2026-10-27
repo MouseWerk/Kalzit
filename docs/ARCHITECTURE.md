@@ -67,11 +67,20 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   attacker cannot lock the owner out of a known browser, while distributed guessing gets one
   budget. An IPv6 /48 has a budget for all accounts that refuses only accounts not clean at the
   address. Shared budgets are counted before the password check under their lock and refunded
-  on success; at most 2 checks per account run at once, and hashing runs on at most one thread
-  per CPU. One bounded table per key class, windows on a monotonic clock. A network (/48, /24)
-  with fewer than 16 entries always gets its key; at the hard cap room is made from the network
-  with the most entries that have not used up their attempts, and used-up entries are never
-  dropped before their window ends.
+  on success, only within the window they were counted in. Only after the budgets passed does
+  a check take one of 2 slots of its account (known devices and signed-in users have slots of
+  their own) and a hashing thread: one per CPU for everyone, a quarter of that for known devices
+  and signed-in users, each with at most 32 waiting per thread; beyond, `429` at once.
+  One table per key class, windows on a monotonic clock. Existing accounts have a table without
+  a cap (bounded by the users); emails without an account a bounded one that answers alike.
+  In a bounded table a network (/48, /24) with fewer than 16 entries always gets its key; at
+  the hard cap room is made from the network with the most entries that have not used up their
+  attempts, and used-up entries are never dropped before their window ends. Caps: 100 000 /
+  300 000 entries for addresses, accounts at an address, IPv6 sites and unknown emails; 10 000 /
+  30 000 for password checks per user, setup codes and connection tests. Worst-case memory
+  (estimated; every entry in a network of its own, maps at their largest): about 350 bytes per
+  entry, so about 105 MB per large table and 420 MB for the four together, about 10 MB per small
+  table, and about 350 bytes per user with failures in the account table.
 - **Every query on an organization table filters by `ctx.org_id`.** Ids in the path or body
   (`datasourceId`, folder or dashboard ids) are resolved within the organization first; an id of
   another organization is `not_found`.

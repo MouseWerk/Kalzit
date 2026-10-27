@@ -81,13 +81,23 @@ async fn change_password(
     let mono = state.clock.monotonic_ms();
     let limit_key = format!("password:{}", user.id);
     let refused = |wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait);
-    let Some(_checking) = state.password_checks.enter_soon(&account_key(&user.email)).await else {
-        return Err(refused(std::time::Duration::from_secs(1)));
+    let counted = state.password_limiter.try_acquire(&limit_key, &limit_key, mono).map_err(refused)?;
+    let busy = || {
+        state.password_limiter.refund(&limit_key, &counted);
+        refused(std::time::Duration::from_secs(1))
     };
-    state.password_limiter.try_acquire(&limit_key, &limit_key, mono).map_err(refused)?;
+    // A signed-in user has check slots and hashing threads apart from those of sign-ins, so
+    // guesses at the sign-in page cannot keep them waiting.
+    let slot_key = format!("session:{}", account_key(&user.email));
+    let Some(_checking) = state.password_checks.enter(&slot_key, std::time::Duration::from_secs(2)).await else {
+        return Err(busy());
+    };
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
-    if !password::verify(req.current, stored.clone()).await {
+    let Some(matched) = password::verify(req.current, stored.clone(), &password::TRUSTED).await else {
+        return Err(busy());
+    };
+    if !matched {
         state.account_limiter.record(&account_key(&user.email), &network_key(info.client_ip), mono);
         return Err(wrong_current());
     }

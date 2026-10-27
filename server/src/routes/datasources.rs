@@ -777,9 +777,9 @@ async fn test_unsaved(
     let address_key = format!("datasource-test:{}:address:{}", ctx.org_id, info.client_ip);
     let mono = state.clock.monotonic_ms();
     let network = crate::auth::ratelimit::network_key(info.client_ip);
-    let counted = state.probe_limiter.try_acquire(&user_key, &user_key, mono).and_then(|_| {
+    let counted = state.probe_limiter.try_acquire(&user_key, &user_key, mono).and_then(|user| {
         state.probe_limiter.try_acquire(&address_key, &network, mono).inspect_err(|_| {
-            state.probe_limiter.refund(&user_key);
+            state.probe_limiter.refund(&user_key, &user);
         })
     });
     if let Err(wait) = counted {
