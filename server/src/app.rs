@@ -47,6 +47,10 @@ pub struct AppState {
     /// The same budget for emails without an account, so a refusal looks the same for both; a
     /// bounded table, since anyone can make up emails.
     pub unknown_account_limiter: Arc<RateLimiter>,
+    /// Successful sign-ins of known devices per account (`ratelimit::MAX_SIGN_INS`).
+    pub sign_in_account_limiter: Arc<RateLimiter>,
+    /// Successful sign-ins of known devices per client address.
+    pub sign_in_address_limiter: Arc<RateLimiter>,
     /// Checks of the current password per user (`POST /me/password`).
     pub password_limiter: Arc<RateLimiter>,
     /// Password checks in flight per account (sign-ins and `POST /me/password`).
@@ -115,6 +119,16 @@ impl AppState {
             network_limiter: Arc::new(network_limiter),
             account_limiter: Arc::new(login(Capacity::UNBOUNDED)),
             unknown_account_limiter: Arc::new(login(Capacity::LARGE)),
+            sign_in_account_limiter: Arc::new(RateLimiter::new(
+                crate::auth::ratelimit::MAX_SIGN_INS,
+                window_secs,
+                Capacity::UNBOUNDED,
+            )),
+            sign_in_address_limiter: Arc::new(RateLimiter::new(
+                crate::auth::ratelimit::MAX_SIGN_INS,
+                window_secs,
+                Capacity::LARGE,
+            )),
             password_limiter: Arc::new(login(Capacity::SMALL)),
             password_checks: Arc::default(),
             setup_limiter: Arc::new(setup_limiter),

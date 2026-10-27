@@ -89,7 +89,11 @@ async fn change_password(
     // A signed-in user has check slots and hashing threads apart from those of sign-ins, so
     // guesses at the sign-in page cannot keep them waiting.
     let slot_key = format!("session:{}", account_key(&user.email));
-    let Some(_checking) = state.password_checks.enter(&slot_key, std::time::Duration::from_secs(2)).await else {
+    let Some(_checking) = state
+        .password_checks
+        .enter(&slot_key, crate::auth::ratelimit::MAX_TRUSTED_IN_FLIGHT_PER_ACCOUNT, std::time::Duration::from_secs(2))
+        .await
+    else {
         return Err(busy());
     };
     let (stored,): (Option<String>,) =

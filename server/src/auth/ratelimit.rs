@@ -75,8 +75,14 @@ type KeyDigest = [u8; 16];
 /// who mistyped once or twice is not locked out by an attacker elsewhere.
 pub const CLEAN_ADDRESS_FAILURES: u32 = 2;
 
-/// Password checks of one account at the same moment (`InFlight`).
+/// Password checks of one account at the same moment on the shared lane (`InFlight`).
 pub const MAX_IN_FLIGHT_PER_ACCOUNT: u32 = 2;
+/// The same on the trusted lane (known devices, signed-in users): one, so one account cannot
+/// take more than its share of the trusted threads.
+pub const MAX_TRUSTED_IN_FLIGHT_PER_ACCOUNT: u32 = 1;
+/// Successful sign-ins of known devices per account and per client address in the sign-in
+/// window: an account that signs in over and over cannot keep the threads of known devices busy.
+pub const MAX_SIGN_INS: u32 = 30;
 
 /// The key of a client address for `scope` (`login`, `setup`): IPv4 (also IPv4-mapped IPv6) per
 /// address, IPv6 per /64 network.
@@ -286,6 +292,27 @@ impl RateLimiter {
         Ok(table.count(d, network, now_ms, self.max_attempts))
     }
 
+    /// `try_acquire`, except that a new key the table cannot take is not counted (`Ok(None)`)
+    /// instead of refused: for budgets whose refusal would tell something (emails without an
+    /// account must answer like accounts, whose table always takes them).
+    pub fn try_count(&self, key: &str, network: &str, now_ms: i64) -> Result<Option<Counted>, Duration> {
+        let mut table = self.lock(now_ms);
+        let (d, network) = (digest(key), digest(network));
+        match table.entries.get(&d) {
+            Some(e) => {
+                if let Some(wait) = self.blocked(e, now_ms) {
+                    return Err(wait);
+                }
+            }
+            None => {
+                if !table.make_room(&network, self.capacity) {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(table.count(d, network, now_ms, self.max_attempts)))
+    }
+
     /// Counts one attempt for `key` without refusing it, even when used up; `None` when the
     /// table cannot take a new key.
     pub fn record(&self, key: &str, network: &str, now_ms: i64) -> Option<Counted> {
@@ -340,7 +367,7 @@ impl RateLimiter {
 }
 
 /// Password checks in flight per key (an account; its known devices have a key of their own):
-/// at most `MAX_IN_FLIGHT_PER_ACCOUNT` at once, so guesses cannot tie up the hashing threads for
+/// at most the given number of slots at once, so guesses cannot tie up the hashing threads for
 /// one account. Further checks wait for a slot up to a given time.
 #[derive(Default)]
 pub struct InFlight(Mutex<HashMap<KeyDigest, Arc<Semaphore>>>);
@@ -354,11 +381,11 @@ pub struct InFlightGuard<'a> {
 
 impl InFlight {
     /// A slot for `key`, waiting up to `wait` for one; `None` when none came free in that time.
-    pub async fn enter(&self, key: &str, wait: Duration) -> Option<InFlightGuard<'_>> {
+    pub async fn enter(&self, key: &str, slots: u32, wait: Duration) -> Option<InFlightGuard<'_>> {
         let key = digest(key);
         let slots = {
             let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-            map.entry(key).or_insert_with(|| Arc::new(Semaphore::new(MAX_IN_FLIGHT_PER_ACCOUNT as usize))).clone()
+            map.entry(key).or_insert_with(|| Arc::new(Semaphore::new(slots as usize))).clone()
         };
         // Made before waiting, so a timeout or a cancelled request removes an unused entry.
         let mut guard = InFlightGuard { owner: self, key, permit: None };
@@ -585,12 +612,12 @@ mod tests {
     async fn in_flight_checks_are_capped_per_key() {
         let flight = InFlight::default();
         let soon = Duration::from_millis(50);
-        let a = flight.enter("a", soon).await.unwrap();
-        let b = flight.enter("a", soon).await.unwrap();
-        assert!(flight.enter("a", soon).await.is_none(), "no slot came free in time");
-        assert!(flight.enter("b", soon).await.is_some());
+        let a = flight.enter("a", 2, soon).await.unwrap();
+        let b = flight.enter("a", 2, soon).await.unwrap();
+        assert!(flight.enter("a", 2, soon).await.is_none(), "no slot came free in time");
+        assert!(flight.enter("b", 2, soon).await.is_some());
         // A waiter gets the slot as soon as it is given back.
-        let waiter = flight.enter("a", Duration::from_secs(5));
+        let waiter = flight.enter("a", 2, Duration::from_secs(5));
         let (got, ()) = tokio::join!(waiter, async move { drop(a) });
         assert!(got.is_some());
         drop((got, b));

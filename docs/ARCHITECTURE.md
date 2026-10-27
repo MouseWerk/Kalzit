@@ -68,8 +68,9 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   budget. An IPv6 /48 has a budget for all accounts that refuses only accounts not clean at the
   address. Shared budgets are counted before the password check under their lock and refunded
   on success, only within the window they were counted in. Only after the budgets passed does
-  a check take one of 2 slots of its account (known devices and signed-in users have slots of
-  their own) and a hashing thread: one per CPU for everyone, a quarter of that for known devices
+  a check take one of 2 slots of its account (known devices and signed-in users have 1 slot of
+  their own per account, and known devices a budget of 30 successful sign-ins per account and
+  address) and a hashing thread: one per CPU for everyone, a quarter of that for known devices
   and signed-in users, each with at most 32 waiting per thread; beyond, `429` at once.
   One table per key class, windows on a monotonic clock. Existing accounts have a table without
   a cap (bounded by the users); emails without an account a bounded one that answers alike.

@@ -122,10 +122,12 @@ pub async fn login(
         crate::auth::device::is_known(&state.secrets, value, &r.id, r.password_hash.as_deref(), now)
     });
     let accounts = if row.is_some() { &state.account_limiter } else { &state.unknown_account_limiter };
+    // A full table of emails without an account leaves the email uncounted rather than refused,
+    // since the table of accounts always takes one; the answer stays the same for both.
     let account_counted = if known_device {
         accounts.record(&account_key, &network, mono)
     } else {
-        Some(accounts.try_acquire(&account_key, &network, mono).map_err(|_| refuse(window))?)
+        accounts.try_count(&account_key, &network, mono).map_err(|_| refuse(window))?
     };
     let refuse = |wait| {
         if let Some(counted) = &account_counted {
@@ -136,12 +138,22 @@ pub async fn login(
     // At most a few checks of one account at once, taken only after its budgets passed; more
     // wait briefly for a slot, then are refused. Known devices have slots of their own and their
     // own hashing threads, so guesses holding the others cannot keep the owner out.
-    let (slot_key, lane) = if known_device {
-        (format!("device:{account_key}"), &*password::TRUSTED)
+    // Sign-ins of known devices, which are checked on threads of their own, also have a budget
+    // of successes per account and per address, so an account that signs in over and over cannot
+    // keep those threads busy for the others.
+    if known_device
+        && (state.sign_in_account_limiter.wait(&account_key, mono).is_some()
+            || state.sign_in_address_limiter.wait(&ip_key, mono).is_some())
+    {
+        return Err(refuse(window));
+    }
+    use crate::auth::ratelimit::{MAX_IN_FLIGHT_PER_ACCOUNT, MAX_TRUSTED_IN_FLIGHT_PER_ACCOUNT};
+    let (slot_key, slots, lane) = if known_device {
+        (format!("device:{account_key}"), MAX_TRUSTED_IN_FLIGHT_PER_ACCOUNT, &*password::TRUSTED)
     } else {
-        (account_key.clone(), &*password::SHARED)
+        (account_key.clone(), MAX_IN_FLIGHT_PER_ACCOUNT, &*password::SHARED)
     };
-    let Some(_checking) = state.password_checks.enter(&slot_key, CHECK_SLOT_WAIT).await else {
+    let Some(_checking) = state.password_checks.enter(&slot_key, slots, CHECK_SLOT_WAIT).await else {
         return Err(refuse(std::time::Duration::from_secs(1)));
     };
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
@@ -177,6 +189,10 @@ pub async fn login(
         }
         return Err(invalid_credentials());
     };
+    if known_device {
+        state.sign_in_account_limiter.record(&account_key, &network, mono);
+        state.sign_in_address_limiter.record(&ip_key, &network, mono);
+    }
     state.pair_limiter.reset(&pair_key);
     state.login_limiter.refund(&ip_key, &ip_counted);
     if let Some(counted) = &site_counted {

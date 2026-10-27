@@ -1011,13 +1011,93 @@ async fn guesses_holding_the_check_slots_do_not_keep_a_known_device_out() {
     // An attacker's checks in flight take both slots of the account.
     let wait = std::time::Duration::from_secs(1);
     let slots = &t.state.password_checks;
-    let held = (slots.enter("email:joerg@example.de", wait).await, slots.enter("email:joerg@example.de", wait).await);
+    let held =
+        (slots.enter("email:joerg@example.de", 2, wait).await, slots.enter("email:joerg@example.de", 2, wait).await);
     assert!(held.0.is_some() && held.1.is_some());
     let r = t.from("203.0.113.9:1").login("joerg@example.de", PASSWORD).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
     let r = owner.login_with("joerg@example.de", PASSWORD, &device).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     drop((held, owner));
+    t.finish().await;
+}
+
+/// While the table of emails without an account is full, such an email is not counted rather
+/// than refused, so a wrong password answers the same for it as for an account that exists.
+#[tokio::test]
+async fn a_full_table_of_unknown_emails_answers_like_an_account() {
+    let t = test_app("127.0.0.1:50000", |c| c.security.login_max_failures = 2).await;
+    t.setup().await;
+    let now = t.clock.monotonic_ms();
+    // Used-up entries only, so nothing can be dropped to make room.
+    for i in 0..300_000 {
+        let (key, net) = (format!("email:a{i}@example.de"), format!("net:n{i}"));
+        let _ = t.state.unknown_account_limiter.record(&key, &net, now);
+        let _ = t.state.unknown_account_limiter.record(&key, &net, now);
+    }
+    let unknown = t.from("[2001:db8:1::1]:1").login("niemand@example.de", "falsch falsch falsch").await;
+    let known = t.from("[2001:db8:2::1]:1").login("joerg@example.de", "falsch falsch falsch").await;
+    assert_eq!(unknown.status, StatusCode::UNAUTHORIZED, "{}", unknown.body);
+    assert_eq!((known.status, &known.body), (unknown.status, &unknown.body));
+    t.finish().await;
+}
+
+/// An account that signs in over and over from a known device cannot keep the threads of known
+/// devices busy for others: it has one check at a time and a budget of successes, and another
+/// account's known device still signs in meanwhile.
+#[tokio::test]
+async fn an_account_signing_in_over_and_over_cannot_crowd_out_known_devices() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let admin = t.setup().await.session_cookie();
+    let created = t
+        .send(
+            Method::POST,
+            "/api/admin/users",
+            Some(json!({ "name": "Ina Innen", "email": "ina@example.de", "password": PASSWORD })),
+            &[("cookie", &admin)],
+        )
+        .await;
+    assert!(created.status.is_success(), "{}", created.body);
+    let owner = t.from("198.51.100.7:1");
+    let owner_device = set_cookie(&owner.login("joerg@example.de", PASSWORD).await, "kalzit_device");
+    let insider = t.from("203.0.113.5:1");
+    let insider_device = set_cookie(&insider.login("ina@example.de", PASSWORD).await, "kalzit_device");
+
+    // Many sign-ins of the insider at once, and the owner's in the middle of them.
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..40 {
+        let app = insider.app.clone();
+        let cookie = insider_device.clone();
+        set.spawn(async move {
+            let body = json!({ "email": "ina@example.de", "password": PASSWORD });
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/api/auth/login")
+                .header(header::HOST, "kalzit.test")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie)
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            app.oneshot(req).await.unwrap().status()
+        });
+    }
+    let r = owner.login_with("joerg@example.de", PASSWORD, &owner_device).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let statuses = set.join_all().await;
+    assert!(statuses.iter().all(|s| *s == StatusCode::OK || *s == StatusCode::TOO_MANY_REQUESTS), "{statuses:?}");
+
+    // Signed in one after the other, the insider runs out of its budget of successes.
+    let mut refused = false;
+    for _ in 0..kalzit::auth::ratelimit::MAX_SIGN_INS + 1 {
+        if insider.login_with("ina@example.de", PASSWORD, &insider_device).await.status == StatusCode::TOO_MANY_REQUESTS
+        {
+            refused = true;
+            break;
+        }
+    }
+    assert!(refused, "the budget of successes ends the loop");
+    assert_eq!(owner.login_with("joerg@example.de", PASSWORD, &owner_device).await.status, StatusCode::OK);
+    drop((owner, insider));
     t.finish().await;
 }
 

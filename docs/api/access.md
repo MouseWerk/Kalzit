@@ -487,13 +487,16 @@ applies to each of:
   cookie, the right password included, with the whole window as the wait (it tells nothing
   about the account). A guess spread over many addresses so gets this one budget, not the
   budget of every address. An email without an account has the same budget, answered the same
-  way, so a refusal does not tell whether the account exists.
+  way, so a refusal does not tell whether the account exists. While the table of such emails is
+  full, a new one is not counted rather than refused, so its answer stays that of an account.
 
 Only an attempt that passed its budgets takes a check slot: at most 2 password checks of one
 account run at the same moment; more wait up to 2 seconds for a slot, then are refused with
 `429 rate_limited` and a wait of 1 second. Sign-ins with a known device cookie, and `POST
-/me/password` of a signed-in user, have 2 slots of their own, so guesses holding the others
-cannot keep them waiting. Password hashing and checking runs on at most one thread per CPU
+/me/password` of a signed-in user, each have 1 slot per account of their own, so guesses holding
+the others cannot keep them waiting. Successful sign-ins with a known device cookie also have a
+budget of 30 per account and per address in the window, so an account that signs in over and
+over cannot keep the threads of known devices busy for others. Password hashing and checking runs on at most one thread per CPU
 (for known devices and signed-in users on a quarter of that, at least one, apart from the
 others); up to 32 checks per thread wait their turn, further ones are refused at once with
 `429 rate_limited`.
