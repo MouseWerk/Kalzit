@@ -483,7 +483,7 @@ async function seed(): Promise<Seeded> {
           "tree",
           "hierarchy",
           PANEL.hierarchy,
-          { x: 0, y: 0, w: 24, h: 11 },
+          { x: 0, y: 0, w: 24, h: 13 },
           "MATCH (a)-[r:CONTAINS]->(b) RETURN a, r, b",
           { sizeBy: "" },
         ),
@@ -492,7 +492,7 @@ async function seed(): Promise<Seeded> {
           "uplinks",
           "path",
           PANEL.network,
-          { x: 0, y: 11, w: 12, h: 9 },
+          { x: 0, y: 13, w: 12, h: 7 },
           "MATCH p = allShortestPaths((s:Server {name: 'srv-b1-01-1'})-[:LINK|UPLINK*..4]->(c:Switch {name: 'core-1'})) RETURN p",
         ),
         graphPanel(
@@ -500,7 +500,7 @@ async function seed(): Promise<Seeded> {
           "feeds",
           "path",
           PANEL.power,
-          { x: 12, y: 11, w: 12, h: 9 },
+          { x: 12, y: 13, w: 12, h: 7 },
           "MATCH p = allShortestPaths((g:Utility)-[:FEEDS|CONTAINS*..6]->(s:Server {name: 'srv-c2-02-2'})) RETURN p",
         ),
       ],
@@ -913,6 +913,14 @@ async function openDocument(tree: Locator, fields: string[]): Promise<void> {
       .first()
       .click();
   }
+  // A click also opens the menu of the value (copy its path); the picture shows the tree alone,
+  // scrolled back to its first document.
+  await tree.page().keyboard.press("Escape");
+  await tree.evaluate((element) => {
+    for (let node: Element | null = element; node !== null; node = node.parentElement) {
+      node.scrollTop = 0;
+    }
+  });
 }
 
 for (const scheme of SCHEMES) {
@@ -931,7 +939,7 @@ for (const scheme of SCHEMES) {
     });
     await expect(preview).toBeVisible();
     await expect(preview.locator('[aria-busy="true"]')).toHaveCount(0);
-    await openDocument(preview.getByRole("tree").first(), ["location", "firmware"]);
+    await openDocument(preview.getByRole("tree").first(), ["location"]);
     await shoot(page, `documents-pipeline-${scheme}`);
     await page.context().close();
   });

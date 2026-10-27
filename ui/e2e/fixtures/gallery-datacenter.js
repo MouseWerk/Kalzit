@@ -38,7 +38,8 @@ for (let i = 0; i < 144; i += 1) {
   const row = 1 + (Math.floor(i / 3) % 4);
   const rack = 1 + (Math.floor(i / 12) % 6);
   const unit = 4 + 6 * Math.floor(i / 72);
-  const kind = vendors[(i + Math.floor(i / 7)) % vendors.length];
+  // Most servers come from one vendor, a few from the other two.
+  const kind = vendors[pick([0, 0, 0, 0, 1, 1, 2])];
   const role = pick(roles);
   const sockets = role === "storage" ? 1 : 2;
   const disks = [];
