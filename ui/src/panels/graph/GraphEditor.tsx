@@ -1,8 +1,8 @@
 import { useId, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { usePanelHost } from "../host";
-import { ClickVariableOptions } from "../variableClick";
 import type { PanelEditorProps } from "../types";
+import { ClickVariableOptions } from "../variableClick";
 import { MAX_EXPAND_LIMIT } from "./adapter";
 import { COMMUNITY_LIMIT } from "./metrics";
 import {

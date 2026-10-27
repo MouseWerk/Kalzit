@@ -13,10 +13,10 @@ import {
   currentValues,
   optionChoices,
   storedQueryVariables,
+  type ValuesFrom,
   type VariableModel,
   type VariableValue,
   type VariableValues,
-  type ValuesFrom,
   valueList,
   valueText,
 } from "./model";
