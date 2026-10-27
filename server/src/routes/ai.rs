@@ -18,7 +18,7 @@ use super::support::QueryParams;
 use super::table::{RouteDef, route};
 use crate::ai::service::{self, AiStatus};
 use crate::ai::store::{self, ProviderRow};
-use crate::ai::{ChatRequest, Message, ProviderKind};
+use crate::ai::{ChatRequest, Message, ProviderKind, TokenLimitField};
 use crate::app::AppState;
 use crate::audit::{AuditEvent, record};
 use crate::auth::SessionUser;
@@ -88,6 +88,8 @@ pub struct ProviderView {
     base_url: String,
     model: String,
     is_default: bool,
+    /// `auto`, `max_tokens` or `max_completion_tokens` (OpenAI-compatible providers).
+    token_limit_field: &'static str,
     /// Whether a key is stored; the key itself is never sent.
     api_key_set: bool,
     created_at: i64,
@@ -116,6 +118,12 @@ async fn view<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, row: Provi
         scope: if row.org_id.is_some() { "org" } else { "server" },
         api_key_set,
         last_test,
+        token_limit_field: row
+            .token_limit_field
+            .as_deref()
+            .and_then(TokenLimitField::parse)
+            .unwrap_or_default()
+            .as_str(),
         id: row.id,
         name: row.name,
         kind: row.kind,
@@ -161,6 +169,7 @@ struct CreateBody {
     api_key: Option<Zeroizing<String>>,
     #[serde(default)]
     is_default: bool,
+    token_limit_field: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -172,6 +181,7 @@ struct PatchBody {
     #[serde(default, deserialize_with = "patch_value")]
     api_key: Option<Option<Zeroizing<String>>>,
     is_default: Option<bool>,
+    token_limit_field: Option<String>,
     /// The `updatedAt` the client last read; a newer stored provider answers `version_conflict`.
     expected_updated_at: i64,
 }
@@ -249,7 +259,11 @@ fn is_kalzit_itself(state: &AppState, url: &url::Url) -> bool {
         return true;
     }
     match host.parse::<std::net::IpAddr>() {
-        Ok(ip) => ip.is_loopback() || ip.is_unspecified() || listeners.iter().any(|l| l.ip() == ip),
+        Ok(ip) => {
+            // `[::ffff:127.0.0.1]` is 127.0.0.1.
+            let ip = ip.to_canonical();
+            ip.is_loopback() || ip.is_unspecified() || listeners.iter().any(|l| l.ip().to_canonical() == ip)
+        }
         Err(_) => false,
     }
 }
@@ -325,13 +339,34 @@ async fn settle_default(
     Ok(())
 }
 
-async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResult<(StatusCode, Json<ProviderView>)> {
+/// An organization's own providers may be created, changed and tested only while the server
+/// allows them (`ai.allow_org_providers`); they can always be deleted.
+async fn org_providers_allowed(state: &AppState, actor: &Actor<'_>) -> ApiResult<()> {
     if actor.org_id.is_some() && !service::org_providers_allowed(state).await? {
         return Err(ApiError::forbidden("the server does not allow organizations their own AI provider")
             .because("ai.org_providers_not_allowed"));
     }
+    Ok(())
+}
+
+/// `tokenLimitField`: `auto` (stored as nothing), `max_tokens` or `max_completion_tokens`.
+fn token_field(raw: &str) -> ApiResult<Option<&'static str>> {
+    match TokenLimitField::parse(raw) {
+        Some(TokenLimitField::Auto) => Ok(None),
+        Some(field) => Ok(Some(field.as_str())),
+        None => {
+            Err(ApiError::validation(format!("tokenLimitField must be one of {}", TokenLimitField::NAMES.join(", ")))
+                .with_field("tokenLimitField")
+                .because("ai.token_limit_field_unknown"))
+        }
+    }
+}
+
+async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResult<(StatusCode, Json<ProviderView>)> {
+    org_providers_allowed(state, &actor).await?;
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
     let kind = kind_of(&body.kind)?;
+    let token_field = body.token_limit_field.as_deref().map(token_field).transpose()?.flatten();
     let model = check_model(&body.model)?;
     let url = check_base_url(state, &body.base_url).await?;
     match body.api_key.as_deref() {
@@ -344,7 +379,7 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "INSERT INTO ai_providers (id, org_id, name, kind, base_url, model, is_default, created_at, updated_at, \
-         updated_by) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8)",
+         updated_by, token_limit_field) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9)",
     )
     .bind(&id)
     .bind(actor.org_id)
@@ -354,6 +389,7 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
     .bind(&model)
     .bind(now)
     .bind(&actor.user.id)
+    .bind(token_field)
     .execute(&mut *tx)
     .await?;
     if let Some(key) = body.api_key.as_deref() {
@@ -373,6 +409,7 @@ async fn found(state: &AppState, org_id: Option<&str>, id: &str) -> ApiResult<Pr
 }
 
 async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -> ApiResult<Json<ProviderView>> {
+    org_providers_allowed(state, &actor).await?;
     let row = found(state, actor.org_id, id).await?;
     if body.expected_updated_at != row.updated_at {
         return Err(ApiError::version_conflict(json!(view(&state.db, row).await?)));
@@ -416,6 +453,13 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
         Some(None) if had_key => changed.push("apiKey"),
         Some(None) | None => {}
     }
+    let token_limit_field = match &body.token_limit_field {
+        Some(raw) => token_field(raw)?.map(str::to_string),
+        None => row.token_limit_field.clone(),
+    };
+    if token_limit_field != row.token_limit_field {
+        changed.push("tokenLimitField");
+    }
     let make_default = body.is_default == Some(true) && row.is_default == 0;
     if make_default {
         changed.push("isDefault");
@@ -426,14 +470,15 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
     let now = state.clock.now_ms().max(row.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
     let updated = sqlx::query(
-        "UPDATE ai_providers SET name = $1, model = $2, base_url = $3, updated_at = $4, updated_by = $5 \
-         WHERE id = $6 AND updated_at = $7",
+        "UPDATE ai_providers SET name = $1, model = $2, base_url = $3, updated_at = $4, updated_by = $5, \
+         token_limit_field = $6 WHERE id = $7 AND updated_at = $8",
     )
     .bind(&name)
     .bind(&model)
     .bind(&base_url)
     .bind(now)
     .bind(&actor.user.id)
+    .bind(token_limit_field.as_deref())
     .bind(id)
     .bind(row.updated_at)
     .execute(&mut *tx)
@@ -445,6 +490,14 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
     }
     if let Some(key) = &body.api_key {
         store::set_key(&mut tx, &state.secrets, id, key.as_deref().map(String::as_str)).await?;
+    }
+    // A pass belongs to the address, model, key and request form it was made with.
+    if changed.iter().any(|c| matches!(*c, "baseUrl" | "model" | "apiKey" | "tokenLimitField")) {
+        store::clear_test(&mut tx, id).await?;
+    }
+    // The notice named the old destination: everyone is asked again.
+    if changed.contains(&"baseUrl") {
+        store::forget_notices(&mut tx, id).await?;
     }
     if make_default {
         settle_default(&mut tx, actor.org_id, Some(id)).await?;
@@ -489,12 +542,14 @@ pub struct TestAnswer {
 
 /// The prompt of a connection test: tiny, so a test costs next to nothing.
 pub const TEST_PROMPT: &str = "Reply with the single word OK.";
-const TEST_MAX_TOKENS: u32 = 16;
+/// Room for reasoning models, which spend tokens before they answer; still cheap.
+const TEST_MAX_TOKENS: u32 = 512;
 const REPLY_CHARS: usize = 200;
 
 /// Sends a tiny prompt to the provider. Works while AI is off, so a provider can be checked
 /// before it is turned on; not counted against the limits, but audited.
 async fn test(state: &AppState, actor: Actor<'_>, id: &str) -> ApiResult<Json<TestAnswer>> {
+    org_providers_allowed(state, &actor).await?;
     let row = found(state, actor.org_id, id).await?;
     let user_key = format!("ai-test:user:{}", actor.user.id);
     if let Err(wait) = state.probe_limiter.try_acquire(&[&user_key], state.clock.now_ms()) {

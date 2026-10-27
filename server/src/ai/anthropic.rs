@@ -2,13 +2,16 @@
 //! streamed as server-sent events: `message_start` carries the input tokens, content blocks
 //! (text, tool use) arrive as `content_block_start`, `content_block_delta` and
 //! `content_block_stop`, `message_delta` carries the stop reason and output tokens, and
-//! `message_stop` ends the answer. An `error` event ends it with the provider's error.
+//! `message_stop` ends the answer. An `error` event ends it with the provider's error. The usage
+//! is passed on as soon as `message_start` and each `message_delta` bring it, so a call cut short
+//! still counts what it used.
 
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::{
@@ -145,6 +148,7 @@ impl StreamState {
                 let usage = &value["message"]["usage"];
                 self.usage.input_tokens = input_tokens(usage);
                 self.usage.output_tokens = usage.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
+                out.push(ChatEvent::Usage(self.usage));
             }
             "content_block_start" => {
                 let block = &value["content_block"];
@@ -202,6 +206,7 @@ impl StreamState {
                 if value["usage"].get("input_tokens").is_some() {
                     self.usage.input_tokens = input_tokens(&value["usage"]);
                 }
+                out.push(ChatEvent::Usage(self.usage));
             }
             "message_stop" => {
                 out.push(ChatEvent::Usage(self.usage));
@@ -232,13 +237,14 @@ impl Provider for AnthropicProvider {
     }
 
     async fn stream(&self, request: &ChatRequest, cancel: &CancellationToken) -> Result<EventStream, AiError> {
+        let deadline = Instant::now() + self.config.timeout;
         let url = messages_url(&self.config.base_url);
         let body = body(&self.config.model, request).to_string();
-        let response = send_with_retries(&self.http, &url, &self.headers()?, body.as_bytes(), cancel)
+        let response = send_with_retries(&self.http, &url, &self.headers()?, body.as_bytes(), cancel, deadline)
             .await
             .map_err(|e| e.scrubbed(self.secret()))?;
         let mut state = StreamState::default();
-        Ok(spawn_reader(response, cancel.clone(), self.config.api_key.clone(), move |event| {
+        Ok(spawn_reader(response, cancel.clone(), deadline, self.config.api_key.clone(), move |event| {
             state.on_event(&event.name, &event.data)
         }))
     }
@@ -317,8 +323,11 @@ mod tests {
         assert_eq!(
             out,
             vec![
+                // The input tokens as soon as the answer starts, so a call cut short still counts.
+                ChatEvent::Usage(Usage { input_tokens: 15, output_tokens: 1 }),
                 ChatEvent::Text("Moin".into()),
                 ChatEvent::ToolCall { id: "t1".into(), name: "count".into(), arguments: json!({"a": 5}) },
+                ChatEvent::Usage(Usage { input_tokens: 15, output_tokens: 9 }),
                 ChatEvent::Usage(Usage { input_tokens: 15, output_tokens: 9 }),
                 ChatEvent::Done(StopReason::ToolUse),
             ]

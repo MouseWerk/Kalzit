@@ -12,8 +12,13 @@
 //! Matching is deliberately broad, since results do not always name their table: an entry
 //! excludes a field whose name or dotted path equals it, or where one is a dotted suffix of the
 //! other (`kunden.email` excludes the column `email` of every result of the source, and
-//! `email` excludes `kunde.email` inside a document), case-insensitively. An excluded object or
-//! array is replaced as a whole. Graph properties match by property name or `Label.property`.
+//! `email` excludes `kunde.email` inside a document), after NFKC and case folding. An excluded
+//! object or array is replaced as a whole, also inside JSON columns. Graph properties match by
+//! property name or `Label.property`.
+//!
+//! Excluding works by name and is best effort, not a security boundary: a query that renames a
+//! column (`email AS kontakt`) or computes from it (`lower(email)`) passes its values under
+//! another name. The boundary is the opt-in of the source and the rights of the person asking.
 
 use std::collections::BTreeSet;
 
@@ -43,16 +48,23 @@ pub struct DataPolicy {
 
 impl DataPolicy {
     pub fn new(access: &DatasourceAccess, max_rows: usize) -> Self {
-        let excluded =
-            access.excluded_fields.iter().map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()).collect();
+        let excluded = access.excluded_fields.iter().map(|e| fold(e.trim())).filter(|e| !e.is_empty()).collect();
         Self { readable: access.readable, excluded, max_rows }
     }
 
     /// Whether the value at `path` (a field name or dotted path) is excluded.
     pub fn excludes(&self, path: &str) -> bool {
-        let path = path.to_lowercase();
+        let path = fold(path);
         self.excluded.iter().any(|e| *e == path || ends_with_segment(e, &path) || ends_with_segment(&path, e))
     }
+}
+
+/// A name as it is compared: NFKC, lower case, and the case foldings `to_lowercase` leaves out
+/// (`ß` as `ss`, final `ς` as `σ`), NFKC again; so `Straße`, `STRASSE` and `ｓｔｒａｓｓｅ` are one.
+fn fold(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let lower: String = s.nfkc().collect::<String>().to_lowercase().replace('ß', "ss").replace('ς', "σ");
+    lower.nfkc().collect()
 }
 
 /// `long` ends with `.short`.
@@ -91,7 +103,7 @@ pub fn clean_excluded(entries: &[String]) -> ApiResult<Vec<String>> {
             .because("ai.excluded_fields_invalid")
             .param("max", MAX_EXCLUDED));
         }
-        if seen.insert(entry.to_lowercase()) {
+        if seen.insert(fold(entry)) {
             out.push(entry.to_string());
         }
     }
@@ -145,7 +157,10 @@ pub fn result_for_model(policy: &DataPolicy, result: &QueryResult) -> ApiResult<
                                 hits += 1;
                                 json!(EXCLUDED)
                             } else {
-                                v.clone()
+                                // A JSON column holds objects whose paths can be excluded too.
+                                let mut v = v.clone();
+                                redact_value(policy, &f.name, &mut v, &mut hits);
+                                v
                             }
                         })
                         .collect();
@@ -343,6 +358,31 @@ mod tests {
         assert_eq!(out.value["edges"].as_array().unwrap().len(), 1);
         assert_eq!(out.value["nodes"][0]["properties"]["email"], EXCLUDED);
         assert!(out.truncated);
+    }
+
+    #[test]
+    fn names_match_across_case_and_unicode_forms() {
+        let p = policy(&["Kunden.Straße"], 10);
+        assert!(p.excludes("STRASSE") && p.excludes("strasse") && p.excludes("ｓｔｒａｓｓｅ"));
+        assert!(!p.excludes("strassen"));
+    }
+
+    #[test]
+    fn json_columns_lose_excluded_paths_inside() {
+        let frame = Frame::new(vec![Field {
+            name: "daten".into(),
+            field_type: FieldType::Json,
+            unit: None,
+            values: vec![json!({ "iban": "DE89", "name": "Ada" }), json!([{ "iban": "DE12" }])],
+            labels: None,
+        }])
+        .unwrap();
+        let out = result_for_model(&policy(&["iban"], 10), &QueryResult::Frame { frame }).unwrap();
+        assert_eq!(
+            out.value["fields"][0]["values"],
+            json!([{ "iban": EXCLUDED, "name": "Ada" }, [{ "iban": EXCLUDED }]])
+        );
+        assert_eq!(out.excluded_values, 2);
     }
 
     #[test]

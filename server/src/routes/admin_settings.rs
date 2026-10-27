@@ -161,6 +161,7 @@ async fn patch(
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", reason));
     }
     settings::validate(def, &body.value).map_err(|e| ApiError::validation(e).with_field("value"))?;
+    crate::ai::service::check_switch(state, org_id, key, &body.value).await?;
     let conflict = |e: Effective| ApiError::version_conflict(json!(view(def, e)));
     if body.version != before.version {
         return Err(conflict(before));
@@ -428,6 +429,7 @@ async fn batch(
         match (&change.value, change.reset) {
             (Some(value), false) => {
                 settings::validate(def, value).map_err(|e| ApiError::validation(e).with_field("changes"))?;
+                crate::ai::service::check_switch(state, org_id, def.key, value).await?;
             }
             (None, true) => {}
             _ => {

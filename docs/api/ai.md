@@ -12,6 +12,12 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
   only `{"enabled": false, "usable": false}` and every AI call is refused with
   `409 ai_unavailable` (`ai.disabled`, `ai.org_disabled`); the UI shows no AI button, menu entry or
   hint, not even greyed out.
+- AI can only be switched on (`ai.enabled` on the server, `ai.org_enabled` back on in an
+  organization) while a provider in effect passed its connection test since its base URL, model,
+  key or `tokenLimitField` last changed; for the server switch that is the server's default
+  provider (or, without one, an organization's default). Otherwise the change answers
+  `409 conflict` (`ai.enable_needs_tested_provider`). Such a change clears the provider's
+  `lastTest`; AI that is already on stays on.
 - A provider is in effect for an organization when the organization has a default provider of its
   own (and the server allows that, `ai.allow_org_providers`), else when the server has a default
   provider. Without one AI is not usable (`ai.no_provider`), and the UI shows nothing of it either.
@@ -22,9 +28,15 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
   and results only when that source was opened to AI (off by default, see "Data sources"). For a
   closed source, explain and draft send only the query text the user typed, never the schema.
 - Fields excluded on a data source keep their name and lose their value before anything goes to
-  a provider; results are cut to `ai.max_rows_to_model` rows, documents or nodes.
+  a provider; results are cut to `ai.max_rows_to_model` rows, documents or nodes. Excluding works
+  by name and is best effort, not a security boundary (see "Data sources").
 - Keys are stored encrypted like data source secrets and are write-only: answers carry
-  `apiKeySet`, never the key. Errors are scrubbed of the key, also when a provider echoes it.
+  `apiKeySet`, never the key. Errors are scrubbed of the key, also of a partial echo (its start or
+  end), when a provider repeats it.
+- Kalzit itself is never a target: besides the checks when a base URL is saved, every connection
+  to one of Kalzit's own listening ports refuses all addresses of this computer (loopback, the
+  addresses of its interfaces, unspecified, also as IPv4-mapped IPv6), whatever name resolves
+  there (`ai.base_url_kalzit`).
 - Usage is shown as token and call counts; Kalzit shows no prices or currencies.
 - Every AI call is audited (`ai.called`: purpose, provider kind and scope, model, tokens, outcome),
   never with the prompt or the answer. Configuration changes are audited as well
@@ -96,6 +108,7 @@ A provider of one scope is `404 not_found` through the routes of another.
   "baseUrl": "http://llm.intern:11434/v1",
   "model": "example-model",
   "isDefault": true,
+  "tokenLimitField": "auto",
   "apiKeySet": false,
   "createdAt": 1800000000000,
   "updatedAt": 1800000000000,
@@ -117,10 +130,17 @@ A provider of one scope is `404 not_found` through the routes of another.
   have none). On `PATCH`: absent keeps it, `null` removes it, a text sets it. Changing `baseUrl`
   needs `apiKey` in the same request (the key again, or `null`), so a key never reaches another
   server unasked (`ai.key_resend_on_target_change`).
+- `tokenLimitField` (`openai` only): the request field that carries the answer's token budget.
+  `auto` (default) sends `max_completion_tokens` to api.openai.com, whose newer models refuse
+  `max_tokens`, and `max_tokens` to every other server; `max_tokens` or `max_completion_tokens`
+  fix it. A compatible server that answers 400 to `stream_options` is asked once more without
+  it; its usage is then estimated (see "Settings, limits and usage").
 - `isDefault`: the provider used within its scope. The first provider of a scope becomes its
   default; making another one default unsets the old one; deleting the default makes the oldest
   remaining one the default.
-- `lastTest`: the outcome of the last connection test (`ok`, `reason` when it failed, `at`).
+- `lastTest`: the outcome of the last connection test (`ok`, `reason` when it failed, `at`). A
+  change of `baseUrl`, `model`, `apiKey` or `tokenLimitField` clears it, and a change of `baseUrl`
+  also clears every acknowledgement of the notice for the provider (the destination changed).
 - `PATCH` needs `expectedUpdatedAt` (the `updatedAt` last read); a provider saved in the meantime
   answers `409 version_conflict` with the stored one as `current`.
 
@@ -128,23 +148,29 @@ Base URLs follow the data source target policy (docs/ARCHITECTURE.md, "Data sour
 networks and localhost are allowed, link-local and cloud metadata addresses are refused, and
 `datasources.allowed_targets` restricts providers as it restricts data sources. The address is
 checked when it is saved and again on every connection. An address that is this Kalzit server
-itself (its public URL, or a loopback or listening address on one of its ports) is refused
-(`ai.base_url_kalzit`). Requests never follow redirects, so the key reaches only the configured
-address.
+itself is refused (`ai.base_url_kalzit`): when saved, its public URL or a loopback or listening
+address on one of its ports (IPv4-mapped IPv6 included); on every connection to one of its
+ports, every address of this computer, also behind a host name. Requests never follow
+redirects, so the key reaches only the configured address. One time limit,
+`ai.request_timeout_secs`, covers the whole call: every attempt, the waits between them and the
+streamed answer.
 
 ### Test
 
 `POST .../providers/{providerId}/test` sends a tiny prompt (`Reply with the single word OK.`,
-at most 16 tokens) and answers `200` either way:
+an answer budget of 512 tokens, room for models that reason before they answer) and answers
+`200` either way:
 
 ```json
 { "ok": true, "latencyMs": 412, "reply": "OK", "usage": { "inputTokens": 14, "outputTokens": 1 } }
-{ "ok": false, "latencyMs": 98, "reason": "ai.provider_unauthorized", "params": { "status": "401" }, "message": "..." }
+{ "ok": false, "latencyMs": 98, "reason": "ai.provider_status", "params": { "status": "400", "detail": "..." }, "message": "..." }
 ```
 
-It works while AI is off, so a provider can be checked before AI is turned on. It is not counted
-against the limits; it is audited and kept as `lastTest`. At most 20 tests per user and minute
-(`429 rate_limited`, `ai.test_rate_limited`).
+A failed test shows up to 300 characters of the provider's own error text (`detail`, from its
+`error.message` or the start of its answer), scrubbed of the key; it is meant for administrators
+and can name the provider's view of the request. It works while AI is off, so a provider can be
+checked before AI is turned on. It is not counted against the limits; it is audited and kept as
+`lastTest`. At most 20 tests per user and minute (`429 rate_limited`, `ai.test_rate_limited`).
 
 ## Settings, limits and usage
 
@@ -152,17 +178,18 @@ Server settings (`/admin/settings`):
 
 | Key | Default | What |
 |---|---|---|
-| `ai.enabled` | `false` | every AI function on or off |
-| `ai.allow_org_providers` | `true` | organizations may connect their own provider |
+| `ai.enabled` | `false` | every AI function on or off (on only with a tested provider, see "Rules") |
+| `ai.allow_org_providers` | `true` | organizations may connect, change, test and use their own provider |
 | `ai.user_requests_per_day` | 200 | calls per person and day (UTC) in one organization; 0: none |
 | `ai.user_tokens_per_day` | 200000 | tokens per person and day; 0: none |
 | `ai.org_tokens_per_month` | 20000000 | tokens of an organization per calendar month (UTC); 0: none |
 | `ai.max_rows_to_model` | 200 | rows, documents or nodes of one result AI receives |
-| `ai.max_tool_calls` | 10 | tool calls per chat answer (with the chat) |
+| `ai.max_tool_calls` | 10 | tool calls per chat answer (applies with the chat) |
 | `ai.max_concurrent` | 8 | calls running at once on the server |
+| `ai.max_concurrent_per_org` | 4 | calls running at once in one organization |
 | `ai.max_concurrent_per_user` | 2 | calls running at once per person |
-| `ai.request_timeout_secs` | 120 | one call, including the streamed answer |
-| `ai.chat_retention_days` | 30 | days chats are kept after their last message; 0 keeps none |
+| `ai.request_timeout_secs` | 120 | one call, including retries and the streamed answer |
+| `ai.chat_retention_days` | 30 | days chats are kept after their last message; 0 keeps none; applies once chats are stored (the chat package) |
 
 Organization settings (`/orgs/{orgId}/settings`, `settings:write`): `ai.org_enabled` (default
 `true`) and, starting as `inherit`, `ai.user_requests_per_day`, `ai.user_tokens_per_day`,
@@ -170,10 +197,20 @@ Organization settings (`/orgs/{orgId}/settings`, `settings:write`): `ai.org_enab
 stricter of the server's and the organization's value applies (a limit of 0 in the organization
 follows the server).
 
-A call counts when it starts, its tokens when it ends; calls running at the same time can pass a
-limit together by at most their number. A used-up daily limit answers `429 rate_limited` with
-`Retry-After` until midnight UTC, the monthly one until the month ends; a concurrency limit asks
-to retry after 5 seconds.
+A call counts and reserves its budget when it starts: its estimated input (four characters a
+token) plus its answer budget (`max_tokens`, 4096 when the feature names none). The check of the
+limits and the reservation are one step, and reservations count as used, so calls that start
+together cannot pass a limit; within one server process, that is (with several processes on one
+database each may admit one call too many). When the call ends, fails or is dropped, the
+reservation is replaced by what it used, in one statement, and the call is audited; this runs in
+a task of its own, so a caller that goes away still leaves the call counted. When a provider sent
+no usage (a compatible server without `stream_options`, or a call cut short before the usage
+came), the tokens are estimated from the request and what arrived, and the audit entry says
+`"estimated": true`; a call cut short counts at least what arrived. Usage rows stay with the
+organization when a user is deleted, so the month keeps counting.
+
+A used-up daily limit answers `429 rate_limited` with `Retry-After` until midnight UTC, the
+monthly one until the month ends; a concurrency limit asks to retry after 5 seconds.
 
 `GET /admin/ai/usage?days=7` (server administrators): calls and tokens per day and organization.
 `GET /orgs/{orgId}/ai/usage?days=7` (`settings:read`): per day and member. `days` is 1 to 90,
@@ -199,8 +236,13 @@ may edit it: `datasources:write`, org-wide or by a grant on the source):
   values with `[excluded]`; the model sees only the name. Matching is broad on purpose, since
   results do not always name their table: an entry matches a field whose name or path equals it,
   or where one is a dotted suffix of the other (`kunden.email` covers the column `email` in every
-  result of the source; `iban` covers `konto.iban` in a document), without regard to case.
-  Graph properties match by name or `Label.property`. The list is kept while the source is closed.
+  result of the source; `iban` covers `konto.iban` in a document or a JSON column), after Unicode
+  NFKC and case folding (`Straße` matches `STRASSE`). Graph properties match by name or
+  `Label.property`. The list is kept while the source is closed.
+- Excluding is best effort by name, not a security boundary: a query that renames a field
+  (`email AS kontakt`) or computes from it (`lower(email)`) returns its values under another
+  name. Whatever must never reach a provider belongs in a source that stays closed to AI, or
+  behind the database's own rights.
 - Every change is audited (`datasource.ai_access_changed`, with `readable` and the number of
   excluded fields).
 
@@ -214,7 +256,7 @@ source is closed to AI. `502 ai_provider_error` (`504` for a timeout): the provi
 `422 datasource_target_blocked`: the target policy refused the address. Calls are retried with
 backoff (0.5 s, 1 s, ...; at most 3 attempts, honouring a `Retry-After` up to 10 s) while the
 provider answers 408, 425, 429, 500, 502, 503, 504 or 529 or cannot be reached, as long as nothing
-of the answer arrived yet.
+of the answer arrived yet and the time limit leaves room for it.
 
 ## Reasons
 
@@ -226,6 +268,9 @@ sources' own.
 |---|---|---|
 | `ai.disabled` | | `ai.enabled` is off |
 | `ai.org_disabled` | | `ai.org_enabled` of the organization is off |
+| `ai.enable_needs_tested_provider` | | `409 conflict` on turning `ai.enabled` or `ai.org_enabled` on without a provider in effect that passed its test since its last change |
+| `ai.limit_org_concurrent` | `max` | the organization has `max` calls running already |
+| `ai.token_limit_field_unknown` | | `tokenLimitField` is not `auto`, `max_tokens` or `max_completion_tokens` |
 | `ai.no_provider` | | no provider is in effect for the organization |
 | `ai.notice_required` | | the caller has not acknowledged the notice for the provider in effect |
 | `ai.notice_provider_changed` | | the acknowledged provider is not the one in effect (`409 conflict`) |

@@ -97,6 +97,7 @@ mod tests {
         "ai.chat_retention_days",
         "ai.enabled",
         "ai.max_concurrent",
+        "ai.max_concurrent_per_org",
         "ai.max_concurrent_per_user",
         "ai.max_rows_to_model",
         "ai.max_tool_calls",

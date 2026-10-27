@@ -14,7 +14,11 @@ CREATE TABLE ai_providers (
     created_at  BIGINT NOT NULL,
     updated_at  BIGINT NOT NULL,
     updated_by  TEXT,
+    -- Which request field carries the answer's token budget: NULL picks it by host
+    -- (`max_completion_tokens` for api.openai.com, `max_tokens` elsewhere).
+    token_limit_field TEXT,
     -- The last connection test: passed (1) or not (0), its reason when it failed, and when.
+    -- Cleared whenever base URL, model or key change, so a pass always belongs to the settings.
     last_test_ok      BIGINT,
     last_test_reason  TEXT,
     last_tested_at    BIGINT
@@ -33,15 +37,18 @@ CREATE TABLE ai_provider_secrets (
     PRIMARY KEY (provider_id, field)
 );
 
--- Calls and tokens per day (UTC, `YYYY-MM-DD`), organization and user, for the daily limits and
--- the usage pages. A call counts when it starts; its tokens are added when it ends.
+-- Calls and tokens per day (UTC, `YYYY-MM-DD`), organization and user, for the limits and the
+-- usage pages. A call counts and reserves its token budget when it starts; when it ends, the
+-- reservation is replaced by the tokens it used. `user_id` has no foreign key: a deleted user's
+-- rows keep counting for the organization's month.
 CREATE TABLE ai_usage (
-    day            TEXT NOT NULL,
-    org_id         TEXT NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
-    user_id        TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    requests       BIGINT NOT NULL,
-    input_tokens   BIGINT NOT NULL,
-    output_tokens  BIGINT NOT NULL,
+    day              TEXT NOT NULL,
+    org_id           TEXT NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    user_id          TEXT NOT NULL,
+    requests         BIGINT NOT NULL,
+    input_tokens     BIGINT NOT NULL,
+    output_tokens    BIGINT NOT NULL,
+    reserved_tokens  BIGINT NOT NULL,
     PRIMARY KEY (day, org_id, user_id)
 );
 

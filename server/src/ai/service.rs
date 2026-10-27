@@ -1,9 +1,10 @@
 //! Whether an AI call may run, and its bookkeeping. Every call names the organization and user it
 //! runs for and its purpose; it runs only when `ai.enabled` is on and a provider is in effect for
-//! the organization (its own default, else the server's), within the daily limits per user and
-//! organization and the concurrency limits. A call counts when it starts; its tokens are added and
-//! its audit entry (who, provider, model, tokens, purpose, outcome; never the prompt or the answer)
-//! is written when it ends.
+//! the organization (its own default, else the server's), within the limits per user and
+//! organization and the concurrency limits. A call counts and reserves its token budget when it
+//! starts (checked and reserved in one step); when it ends, fails or is dropped, a task of its
+//! own replaces the reservation with the tokens used and writes the audit entry (who, provider,
+//! model, tokens, purpose, outcome; never the prompt or the answer).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -16,33 +17,51 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use super::store::{self, ProviderRow};
-use super::{AiError, ChatEvent, ChatRequest, ChatResponse, Provider, ProviderConfig, ProviderKind, Usage};
+use super::{
+    AiError, ChatEvent, ChatRequest, ChatResponse, Provider, ProviderConfig, ProviderKind, TokenLimitField, Usage,
+};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::error::{ApiError, ApiResult};
 use crate::settings;
 
-/// Calls running now, on the whole server and per user.
+/// Calls running now, on the whole server, per organization and per user, and the lock that
+/// makes the check of the limits and the reservation of a call one step.
 #[derive(Default)]
 pub struct AiRuntime {
     running: Mutex<Running>,
+    /// Held from reading the counters until the call's reservation is written, so calls that
+    /// start at the same moment see each other's reservations. Within one server process; with
+    /// several processes on one database, each may admit one call over a limit.
+    admission: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
 struct Running {
     total: usize,
+    per_org: HashMap<String, usize>,
     per_user: HashMap<String, usize>,
 }
 
 /// A place among the running calls, given back when dropped.
 pub struct Slot {
     runtime: Arc<AiRuntime>,
+    org_id: String,
     user_id: String,
 }
 
 impl std::fmt::Debug for Slot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Slot").field("user_id", &self.user_id).finish()
+        f.debug_struct("Slot").field("org_id", &self.org_id).field("user_id", &self.user_id).finish()
+    }
+}
+
+fn release(map: &mut HashMap<String, usize>, key: &str) {
+    if let Some(n) = map.get_mut(key) {
+        *n -= 1;
+        if *n == 0 {
+            map.remove(key);
+        }
     }
 }
 
@@ -50,35 +69,48 @@ impl Drop for Slot {
     fn drop(&mut self) {
         let mut running = self.runtime.running.lock().expect("AI runtime lock");
         running.total = running.total.saturating_sub(1);
-        if let Some(n) = running.per_user.get_mut(&self.user_id) {
-            *n -= 1;
-            if *n == 0 {
-                running.per_user.remove(&self.user_id);
-            }
-        }
+        release(&mut running.per_org, &self.org_id);
+        release(&mut running.per_user, &self.user_id);
     }
 }
 
 /// How long a caller refused for concurrency is asked to wait.
 const BUSY_RETRY: Duration = Duration::from_secs(5);
 
+/// The concurrency limits: on the server, per organization, per user.
+#[derive(Clone, Copy, Debug)]
+struct AtOnce {
+    total: usize,
+    org: usize,
+    user: usize,
+}
+
 impl AiRuntime {
-    /// A slot when fewer than `max_total` calls run and fewer than `max_user` of this user's.
-    fn acquire(self: &Arc<Self>, user_id: &str, max_total: usize, max_user: usize) -> ApiResult<Slot> {
+    /// A slot when every concurrency limit has room for one more call.
+    fn acquire(self: &Arc<Self>, org_id: &str, user_id: &str, max: AtOnce) -> ApiResult<Slot> {
         let mut running = self.running.lock().expect("AI runtime lock");
-        if running.per_user.get(user_id).copied().unwrap_or(0) >= max_user {
-            return Err(ApiError::rate_limited(format!("at most {max_user} AI calls per user at once"), BUSY_RETRY)
+        if running.per_user.get(user_id).copied().unwrap_or(0) >= max.user {
+            return Err(ApiError::rate_limited(format!("at most {} AI calls per user at once", max.user), BUSY_RETRY)
                 .because("ai.limit_user_concurrent")
-                .param("max", max_user));
+                .param("max", max.user));
         }
-        if running.total >= max_total {
-            return Err(ApiError::rate_limited(format!("at most {max_total} AI calls at once"), BUSY_RETRY)
+        if running.per_org.get(org_id).copied().unwrap_or(0) >= max.org {
+            return Err(ApiError::rate_limited(
+                format!("at most {} AI calls per organization at once", max.org),
+                BUSY_RETRY,
+            )
+            .because("ai.limit_org_concurrent")
+            .param("max", max.org));
+        }
+        if running.total >= max.total {
+            return Err(ApiError::rate_limited(format!("at most {} AI calls at once", max.total), BUSY_RETRY)
                 .because("ai.limit_concurrent")
-                .param("max", max_total));
+                .param("max", max.total));
         }
         running.total += 1;
+        *running.per_org.entry(org_id.to_string()).or_default() += 1;
         *running.per_user.entry(user_id.to_string()).or_default() += 1;
-        Ok(Slot { runtime: self.clone(), user_id: user_id.to_string() })
+        Ok(Slot { runtime: self.clone(), org_id: org_id.to_string(), user_id: user_id.to_string() })
     }
 
     /// Calls running now.
@@ -151,6 +183,51 @@ pub async fn in_effect(state: &AppState, org_id: &str) -> ApiResult<Option<Provi
     Ok(store::in_effect(&state.db, org_id, org_providers_allowed(state).await?).await?)
 }
 
+/// AI can only be switched on while a provider in effect passed its connection test since its
+/// address, model or key last changed: for `ai.enabled` the server's default provider (or, while
+/// the server has none, an organization's default), for `ai.org_enabled` the provider in effect
+/// for the organization. Switching off, and every other setting, is never refused here.
+pub async fn check_switch(
+    state: &AppState,
+    org_id: Option<&str>,
+    key: &str,
+    value: &serde_json::Value,
+) -> ApiResult<()> {
+    if value.as_bool() != Some(true) {
+        return Ok(());
+    }
+    let tested = match (org_id, key) {
+        (None, "ai.enabled") => {
+            let server = store::list(&state.db, None).await?.into_iter().find(|p| p.is_default != 0);
+            match server {
+                Some(p) => p.tested_ok(),
+                None => {
+                    let rows: Vec<(i64,)> = sqlx::query_as(
+                        "SELECT last_test_ok FROM ai_providers WHERE org_id IS NOT NULL AND is_default = 1 \
+                         AND last_test_ok = 1",
+                    )
+                    .fetch_all(&state.db)
+                    .await?;
+                    !rows.is_empty() && org_providers_allowed(state).await?
+                }
+            }
+        }
+        (Some(org), "ai.org_enabled") => in_effect(state, org).await?.is_some_and(|p| p.tested_ok()),
+        _ => return Ok(()),
+    };
+    if tested {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "AI can be turned on once a provider in effect passed its connection test",
+        )
+        .with_field("value")
+        .because("ai.enable_needs_tested_provider"))
+    }
+}
+
 /// The most rows, documents or nodes of one result AI receives (`ai.max_rows_to_model`).
 pub async fn max_rows_to_model(state: &AppState) -> ApiResult<usize> {
     Ok(usize::try_from(setting_u64(state, "ai.max_rows_to_model").await?).unwrap_or(usize::MAX))
@@ -167,30 +244,33 @@ fn until_next_day(ms: i64) -> Duration {
     Duration::from_millis((DAY - ms.rem_euclid(DAY)).max(1000) as u64)
 }
 
-/// Today's counts of one user in one organization, and of the organization.
+/// Today's counts of one user in one organization, or of the organization. `tokens` are the
+/// tokens used; `reserved` the budgets of calls still running.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Counts {
     pub requests: i64,
     pub tokens: i64,
+    pub reserved: i64,
 }
 
 pub async fn today(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<(Counts, Counts)> {
     let day = day_of(state.clock.now_ms());
-    let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
-        "SELECT user_id, requests, input_tokens, output_tokens FROM ai_usage WHERE day = $1 AND org_id = $2",
+    let rows: Vec<(String, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT user_id, requests, input_tokens, output_tokens, reserved_tokens FROM ai_usage \
+         WHERE day = $1 AND org_id = $2",
     )
     .bind(&day)
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
     let (mut user, mut org) = (Counts::default(), Counts::default());
-    for (who, requests, input, output) in rows {
-        org.requests += requests;
-        org.tokens += input + output;
-        if who == user_id {
-            user.requests += requests;
-            user.tokens += input + output;
+    for (who, requests, input, output, reserved) in rows {
+        let row = Counts { requests, tokens: input + output, reserved };
+        for counts in std::iter::once(&mut org).chain((who == user_id).then_some(&mut user)) {
+            counts.requests += row.requests;
+            counts.tokens += row.tokens;
+            counts.reserved += row.reserved;
         }
     }
     Ok((user, org))
@@ -212,18 +292,24 @@ fn until_next_month(ms: i64) -> Duration {
     Duration::from_millis((next - ms).max(1000) as u64)
 }
 
-/// Tokens all members of an organization used this calendar month (UTC).
-pub async fn month_tokens(state: &AppState, org_id: &str) -> ApiResult<i64> {
+/// Tokens all members of an organization used this calendar month (UTC), and the budgets of its
+/// calls still running. Rows of deleted users keep counting.
+async fn month_usage(state: &AppState, org_id: &str) -> ApiResult<(i64, i64)> {
     let now = state.clock.now_ms();
-    let (tokens,): (i64,) = sqlx::query_as(
-        "SELECT CAST(COALESCE(SUM(input_tokens + output_tokens), 0) AS BIGINT) FROM ai_usage \
-         WHERE org_id = $1 AND day >= $2",
+    let (used, reserved): (i64, i64) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(input_tokens + output_tokens), 0) AS BIGINT), \
+         CAST(COALESCE(SUM(reserved_tokens), 0) AS BIGINT) FROM ai_usage WHERE org_id = $1 AND day >= $2",
     )
     .bind(org_id)
     .bind(month_start(now))
     .fetch_one(&state.db)
     .await?;
-    Ok(tokens)
+    Ok((used, reserved))
+}
+
+/// Tokens all members of an organization used this calendar month (UTC).
+pub async fn month_tokens(state: &AppState, org_id: &str) -> ApiResult<i64> {
+    Ok(month_usage(state, org_id).await?.0)
 }
 
 /// The limits in effect for an organization; 0 is no limit.
@@ -247,12 +333,13 @@ pub async fn limits(state: &AppState, org_id: &str) -> ApiResult<Limits> {
 }
 
 /// Refuses a call when a limit is used up: the member's of today, or the organization's of
-/// this month.
+/// this month. Budgets reserved by running calls count as used, so calls that start together
+/// cannot all pass a limit.
 fn check_limits(limits: &Limits, user: Counts, org_month_tokens: i64, now: i64) -> ApiResult<()> {
     let over = |limit: u64, used: i64| limit > 0 && used >= i64::try_from(limit).unwrap_or(i64::MAX);
     let daily = [
         (limits.user_requests, user.requests, "ai.limit_user_requests"),
-        (limits.user_tokens, user.tokens, "ai.limit_user_tokens"),
+        (limits.user_tokens, user.tokens + user.reserved, "ai.limit_user_tokens"),
     ];
     for (limit, used, reason) in daily {
         if over(limit, used) {
@@ -281,6 +368,16 @@ pub async fn provider_for(state: &AppState, org_id: &str) -> ApiResult<(Provider
     Ok((row, provider))
 }
 
+/// The guard that keeps a provider from reaching Kalzit itself, when its base URL's port is one
+/// of Kalzit's own listening ports (`http::LocalGuard`).
+pub fn local_guard(state: &AppState, base_url: &url::Url) -> Option<crate::http::LocalGuard> {
+    let port = base_url.port_or_known_default()?;
+    let own = [state.config.http_addr(), state.config.https_addr()];
+    own.iter().flatten().any(|l| l.port() == port).then(|| crate::http::LocalGuard {
+        refused: crate::datasources::Detail::new("ai.base_url_kalzit", "the address is this Kalzit server"),
+    })
+}
+
 /// The client for a stored provider, with its key and the current target policy.
 pub async fn build(state: &AppState, row: &ProviderRow) -> ApiResult<Box<dyn Provider>> {
     let kind = ProviderKind::parse(&row.kind)
@@ -293,7 +390,11 @@ pub async fn build(state: &AppState, row: &ProviderRow) -> ApiResult<Box<dyn Pro
         }
     })?;
     let timeout = Duration::from_secs(setting_u64(state, "ai.request_timeout_secs").await?);
-    let config = ProviderConfig { kind, base_url, model: row.model.clone(), api_key, timeout };
+    let token_limit_field =
+        row.token_limit_field.as_deref().and_then(TokenLimitField::parse).unwrap_or(TokenLimitField::Auto);
+    let local_guard = local_guard(state, &base_url);
+    let config =
+        ProviderConfig { kind, base_url, model: row.model.clone(), api_key, timeout, token_limit_field, local_guard };
     let policy = state.datasources.policy(state).await?;
     super::provider(config, policy).map_err(|e| provider_error(&e))
 }
@@ -311,8 +412,52 @@ pub fn provider_error(e: &AiError) -> ApiError {
     error.with_reason(detail.reason, detail.params)
 }
 
-/// Checks everything before a call and takes its place: the switch, the provider, the limits.
-async fn admit(state: &AppState, caller: &Caller) -> ApiResult<(ProviderRow, Box<dyn Provider>, Slot)> {
+/// Tokens of a text, estimated at four characters each, for budgets and for calls whose provider
+/// sent no usage.
+fn estimate_tokens(chars: usize) -> u64 {
+    (chars as u64).div_ceil(4)
+}
+
+/// The characters of everything a request sends.
+fn request_chars(request: &ChatRequest) -> usize {
+    let parts: usize = request
+        .messages
+        .iter()
+        .flat_map(|m| &m.parts)
+        .map(|p| match p {
+            super::Part::Text(t) => t.chars().count(),
+            super::Part::ToolCall { name, arguments, .. } => name.len() + arguments.to_string().len(),
+            super::Part::ToolResult { content, .. } => content.chars().count(),
+        })
+        .sum();
+    let tools: usize = request
+        .tools
+        .iter()
+        .map(|t| t.name.len() + t.description.chars().count() + t.parameters.to_string().len())
+        .sum();
+    request.system.as_ref().map_or(0, |s| s.chars().count()) + parts + tools
+}
+
+/// The tokens a call may use at most: its estimated input and its answer budget. Reserved when it
+/// starts, replaced by what it used when it ends.
+fn budget(request: &ChatRequest) -> i64 {
+    let max = u64::from(request.max_tokens.unwrap_or(super::DEFAULT_MAX_TOKENS));
+    i64::try_from(estimate_tokens(request_chars(request)) + max).unwrap_or(i64::MAX)
+}
+
+/// What a running call holds: its place, and the budget reserved on its day's row.
+struct Admitted {
+    row: ProviderRow,
+    provider: Box<dyn Provider>,
+    // Held, not read: the place is given back when the call is dropped after its settlement.
+    _slot: Slot,
+    day: String,
+    reserved: i64,
+}
+
+/// Checks everything before a call and takes its place: the switches, the provider, the notice,
+/// the limits and the concurrency. The check and the reservation are one step (`admission`).
+async fn admit(state: &AppState, caller: &Caller, request: &ChatRequest) -> ApiResult<Admitted> {
     if !enabled(state).await? {
         return Err(unavailable("ai.disabled", "AI is turned off on this server"));
     }
@@ -324,35 +469,32 @@ async fn admit(state: &AppState, caller: &Caller) -> ApiResult<(ProviderRow, Box
     if !store::notice_acknowledged(&state.db, &caller.user_id, &row.id).await? {
         return Err(unavailable("ai.notice_required", "the AI notice for this provider was not acknowledged yet"));
     }
+    let limits = limits(state, &caller.org_id).await?;
+    let at_once = AtOnce {
+        total: setting_u64(state, "ai.max_concurrent").await? as usize,
+        org: setting_u64(state, "ai.max_concurrent_per_org").await? as usize,
+        user: setting_u64(state, "ai.max_concurrent_per_user").await? as usize,
+    };
+    let reserved = budget(request);
+    let _admission = state.ai.admission.lock().await;
     let now = state.clock.now_ms();
     let (user, _) = today(state, &caller.org_id, &caller.user_id).await?;
-    let month = month_tokens(state, &caller.org_id).await?;
-    check_limits(&limits(state, &caller.org_id).await?, user, month, now)?;
-    let max_total = setting_u64(state, "ai.max_concurrent").await? as usize;
-    let max_user = setting_u64(state, "ai.max_concurrent_per_user").await? as usize;
-    let slot = state.ai.acquire(&caller.user_id, max_total, max_user)?;
-    // Counted at the start, so calls that run at once cannot all pass the limit.
-    count(state, caller, now, 1, Usage::default()).await?;
-    Ok((row, provider, slot))
-}
-
-async fn count(state: &AppState, caller: &Caller, now: i64, requests: i64, usage: Usage) -> Result<(), sqlx::Error> {
+    let (month_used, month_reserved) = month_usage(state, &caller.org_id).await?;
+    check_limits(&limits, user, month_used + month_reserved, now)?;
+    let slot = state.ai.acquire(&caller.org_id, &caller.user_id, at_once)?;
+    let day = day_of(now);
     sqlx::query(
-        "INSERT INTO ai_usage (day, org_id, user_id, requests, input_tokens, output_tokens) \
-         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (day, org_id, user_id) DO UPDATE SET \
-         requests = ai_usage.requests + excluded.requests, \
-         input_tokens = ai_usage.input_tokens + excluded.input_tokens, \
-         output_tokens = ai_usage.output_tokens + excluded.output_tokens",
+        "INSERT INTO ai_usage (day, org_id, user_id, requests, input_tokens, output_tokens, reserved_tokens) \
+         VALUES ($1, $2, $3, 1, 0, 0, $4) ON CONFLICT (day, org_id, user_id) DO UPDATE SET \
+         requests = ai_usage.requests + 1, reserved_tokens = ai_usage.reserved_tokens + excluded.reserved_tokens",
     )
-    .bind(day_of(now))
+    .bind(&day)
     .bind(&caller.org_id)
     .bind(&caller.user_id)
-    .bind(requests)
-    .bind(i64::try_from(usage.input_tokens).unwrap_or(i64::MAX))
-    .bind(i64::try_from(usage.output_tokens).unwrap_or(i64::MAX))
+    .bind(reserved)
     .execute(&state.db)
     .await?;
-    Ok(())
+    Ok(Admitted { row, provider, _slot: slot, day, reserved })
 }
 
 /// How a call ended, for its audit entry.
@@ -364,123 +506,175 @@ fn outcome(result: &Result<(), AiError>) -> (&'static str, Option<&'static str>)
     }
 }
 
-/// Adds the tokens and writes the audit entry of a call that ended.
-async fn finish(
-    state: &AppState,
-    caller: &Caller,
-    row: &ProviderRow,
+/// What a call used, as the provider said or, without its word, estimated.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Used {
     usage: Usage,
-    result: &Result<(), AiError>,
-) -> ApiResult<()> {
+    estimated: bool,
+}
+
+/// Replaces the call's reservation by what it used, in one statement on the day it started, and
+/// writes its audit entry.
+async fn finish(state: &AppState, caller: &Caller, admitted: &Admitted, used: Used, result: &Result<(), AiError>) {
     let now = state.clock.now_ms();
-    count(state, caller, now, 0, usage).await?;
+    let clamp = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+    let settled = sqlx::query(
+        "UPDATE ai_usage SET reserved_tokens = reserved_tokens - $1, input_tokens = input_tokens + $2, \
+         output_tokens = output_tokens + $3 WHERE day = $4 AND org_id = $5 AND user_id = $6",
+    )
+    .bind(admitted.reserved)
+    .bind(clamp(used.usage.input_tokens))
+    .bind(clamp(used.usage.output_tokens))
+    .bind(&admitted.day)
+    .bind(&caller.org_id)
+    .bind(&caller.user_id)
+    .execute(&state.db)
+    .await;
+    if let Err(e) = settled {
+        tracing::warn!("counting the tokens of an AI call failed: {e}");
+    }
     let (outcome, reason) = outcome(result);
+    let row = &admitted.row;
     let mut summary = json!({
         "purpose": caller.purpose,
         "providerKind": row.kind,
         "providerScope": if row.org_id.is_some() { "org" } else { "server" },
         "model": row.model,
-        "inputTokens": usage.input_tokens,
-        "outputTokens": usage.output_tokens,
+        "inputTokens": used.usage.input_tokens,
+        "outputTokens": used.usage.output_tokens,
         "outcome": outcome,
     });
+    if used.estimated {
+        summary["estimated"] = json!(true);
+    }
     if let Some(reason) = reason {
         summary["reason"] = json!(reason);
     }
-    let mut tx = crate::db::begin(&state.db).await?;
-    audit::record(
-        &mut tx,
-        &AuditEvent {
-            org_id: Some(&caller.org_id),
-            actor_user_id: Some(&caller.user_id),
-            actor_address: caller.address.clone(),
-            action: "ai.called",
-            resource_type: Some("ai_provider"),
-            resource_id: Some(&row.id),
-            summary,
-            at_ms: now,
-        },
-    )
-    .await?;
-    crate::db::commit(tx).await?;
-    Ok(())
+    let event = AuditEvent {
+        org_id: Some(&caller.org_id),
+        actor_user_id: Some(&caller.user_id),
+        actor_address: caller.address.clone(),
+        action: "ai.called",
+        resource_type: Some("ai_provider"),
+        resource_id: Some(&row.id),
+        summary,
+        at_ms: now,
+    };
+    let audited = async {
+        let mut tx = crate::db::begin(&state.db).await?;
+        audit::record(&mut tx, &event).await?;
+        crate::db::commit(tx).await
+    };
+    if let Err(e) = audited.await {
+        tracing::warn!("auditing an AI call failed: {e}");
+    }
 }
 
-/// Runs a whole call for `caller` and returns the answer.
+/// Runs a whole call for `caller` and returns the answer. Built on `stream`, so a caller that
+/// goes away (a dropped request) still leaves the call counted and audited.
 pub async fn complete(
     state: &AppState,
     caller: &Caller,
     request: &ChatRequest,
     cancel: &CancellationToken,
 ) -> ApiResult<ChatResponse> {
-    let (row, provider, slot) = admit(state, caller).await?;
-    let result = super::complete(provider.as_ref(), request, cancel).await;
-    drop(slot);
-    let usage = result.as_ref().map(|r| r.usage).unwrap_or_default();
-    finish(state, caller, &row, usage, &result.as_ref().map(|_| ()).map_err(Clone::clone)).await?;
-    result.map_err(|e| provider_error(&e))
+    let mut events = std::pin::pin!(stream(state, caller, request, cancel).await?);
+    let mut out = ChatResponse::default();
+    while let Some(event) = events.next().await {
+        out.add(event?);
+    }
+    Ok(out)
 }
 
-/// A streamed call for `caller`. The events come as the provider sends them; when the stream ends
-/// or is dropped, the call is counted and audited, and its place among the running calls freed.
-/// Dropping the stream cancels the call.
+/// A streamed call for `caller`. Everything after the admission runs in a task of its own: the
+/// events come as the provider sends them, and when the answer ends, fails, or the stream is
+/// dropped (which cancels the call), the task gives back the place, settles the tokens and writes
+/// the audit entry. A provider that sent no usage is counted by estimate: its input from the
+/// request, its output from what arrived; a call cut short counts at least what arrived.
 pub async fn stream(
     state: &AppState,
     caller: &Caller,
     request: &ChatRequest,
     cancel: &CancellationToken,
 ) -> ApiResult<impl Stream<Item = Result<ChatEvent, ApiError>> + Send + use<>> {
-    let (row, provider, slot) = admit(state, caller).await?;
+    let admitted = admit(state, caller, request).await?;
     // A token of its own, so dropping the stream stops the provider without touching the caller's.
     let call = cancel.child_token();
-    let started = provider.stream(request, &call).await;
-    let mut events = match started {
-        Ok(events) => events,
-        Err(e) => {
-            drop(slot);
-            finish(state, caller, &row, Usage::default(), &Err(e.clone())).await?;
-            return Err(provider_error(&e));
-        }
-    };
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<ChatEvent, ApiError>>(64);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<Result<(), ApiError>>();
     let state = state.clone();
     let caller = caller.clone();
+    let request = request.clone();
     tokio::spawn(async move {
-        let _slot = slot;
         let _stop = call.clone().drop_guard();
-        let mut usage = Usage::default();
+        let input_estimate = estimate_tokens(request_chars(&request));
+        let mut reported: Option<Usage> = None;
+        let mut received_chars = 0usize;
         let mut result = Ok(());
-        loop {
-            let next = tokio::select! {
-                () = tx.closed() => {
-                    result = Err(AiError::Cancelled);
-                    break;
-                }
-                n = events.next() => n,
-            };
-            match next {
-                None => break,
-                Some(Ok(event)) => {
-                    if let ChatEvent::Usage(u) = &event {
-                        usage = *u;
+        let mut started = false;
+        match admitted.provider.stream(&request, &call).await {
+            Err(e) => {
+                let _ = started_tx.send(Err(provider_error(&e)));
+                result = Err(e);
+            }
+            Ok(mut events) => {
+                started = true;
+                let _ = started_tx.send(Ok(()));
+                loop {
+                    let next = tokio::select! {
+                        () = tx.closed() => {
+                            result = Err(AiError::Cancelled);
+                            break;
+                        }
+                        n = events.next() => n,
+                    };
+                    match next {
+                        None => break,
+                        Some(Ok(event)) => {
+                            match &event {
+                                ChatEvent::Usage(u) => reported = Some(*u),
+                                ChatEvent::Text(t) => received_chars += t.chars().count(),
+                                ChatEvent::ToolCall { name, arguments, .. } => {
+                                    received_chars += name.len() + arguments.to_string().len();
+                                }
+                                ChatEvent::Done(_) => {}
+                            }
+                            if tx.send(Ok(event)).await.is_err() {
+                                result = Err(AiError::Cancelled);
+                                break;
+                            }
+                        }
+                        Some(Err(e)) => {
+                            let _ = tx.send(Err(provider_error(&e))).await;
+                            result = Err(e);
+                            break;
+                        }
                     }
-                    if tx.send(Ok(event)).await.is_err() {
-                        result = Err(AiError::Cancelled);
-                        break;
-                    }
-                }
-                Some(Err(e)) => {
-                    let _ = tx.send(Err(provider_error(&e))).await;
-                    result = Err(e);
-                    break;
                 }
             }
         }
-        drop(events);
-        if let Err(e) = finish(&state, &caller, &row, usage, &result).await {
-            tracing::warn!("recording an AI call failed: {}", e.message);
-        }
+        let output_estimate = estimate_tokens(received_chars);
+        let used = match reported {
+            // Refused before the provider answered: nothing was used.
+            _ if !started => Used::default(),
+            // A call cut short counts at least what arrived, though its last usage was earlier.
+            Some(u) if result.is_err() => {
+                Used { usage: Usage { output_tokens: u.output_tokens.max(output_estimate), ..u }, estimated: false }
+            }
+            Some(u) => Used { usage: u, estimated: false },
+            None => {
+                Used { usage: Usage { input_tokens: input_estimate, output_tokens: output_estimate }, estimated: true }
+            }
+        };
+        // The place is given back only after the call is settled and audited.
+        finish(&state, &caller, &admitted, used, &result).await;
+        drop(admitted);
     });
+    match started_rx.await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e),
+        Err(_) => return Err(ApiError::internal("ai", "the AI call ended before it started")),
+    }
     Ok(futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|item| (item, rx)) }))
 }
 
@@ -596,12 +790,12 @@ mod tests {
     #[test]
     fn limits_of_zero_are_no_limit() {
         let none = Limits { user_requests: 0, user_tokens: 0, org_tokens_month: 0 };
-        let used = Counts { requests: 1_000_000, tokens: 1_000_000_000 };
+        let used = Counts { requests: 1_000_000, tokens: 1_000_000_000, reserved: 0 };
         assert!(check_limits(&none, used, i64::MAX, 0).is_ok());
         let some = Limits { user_requests: 2, user_tokens: 0, org_tokens_month: 100 };
-        let e = check_limits(&some, Counts { requests: 2, tokens: 0 }, 0, 0).unwrap_err();
+        let e = check_limits(&some, Counts { requests: 2, tokens: 0, reserved: 0 }, 0, 0).unwrap_err();
         assert_eq!(e.reason.unwrap().code, "ai.limit_user_requests");
-        let e = check_limits(&some, Counts { requests: 1, tokens: 0 }, 100, 0).unwrap_err();
+        let e = check_limits(&some, Counts { requests: 1, tokens: 0, reserved: 0 }, 100, 0).unwrap_err();
         assert_eq!(e.reason.as_ref().unwrap().code, "ai.limit_org_tokens");
         assert!(e.retry_after_secs.unwrap().get() > 24 * 60 * 60, "until the month ends");
     }
@@ -628,13 +822,26 @@ mod tests {
     #[test]
     fn slots_are_given_back() {
         let runtime = Arc::new(AiRuntime::default());
-        let a = runtime.acquire("u1", 2, 1).unwrap();
-        assert_eq!(runtime.acquire("u1", 2, 1).unwrap_err().reason.unwrap().code, "ai.limit_user_concurrent");
-        let b = runtime.acquire("u2", 2, 1).unwrap();
-        assert_eq!(runtime.acquire("u3", 2, 1).unwrap_err().reason.unwrap().code, "ai.limit_concurrent");
-        drop(a);
-        drop(b);
+        let max = AtOnce { total: 3, org: 2, user: 1 };
+        let code = |e: ApiError| e.reason.unwrap().code;
+        let a = runtime.acquire("o1", "u1", max).unwrap();
+        assert_eq!(code(runtime.acquire("o1", "u1", max).unwrap_err()), "ai.limit_user_concurrent");
+        let b = runtime.acquire("o1", "u2", max).unwrap();
+        assert_eq!(code(runtime.acquire("o1", "u3", max).unwrap_err()), "ai.limit_org_concurrent");
+        let c = runtime.acquire("o2", "u4", max).unwrap();
+        assert_eq!(code(runtime.acquire("o3", "u5", max).unwrap_err()), "ai.limit_concurrent");
+        drop((a, b, c));
         assert_eq!(runtime.running(), 0);
-        assert!(runtime.acquire("u1", 2, 1).is_ok());
+        assert!(runtime.acquire("o1", "u1", max).is_ok());
+    }
+
+    #[test]
+    fn budgets_cover_the_input_and_the_answer() {
+        let request = ChatRequest { messages: vec![super::super::Message::user("x".repeat(40))], ..Default::default() };
+        assert_eq!(budget(&request), 10 + i64::from(super::super::DEFAULT_MAX_TOKENS));
+        let small = ChatRequest { max_tokens: Some(16), ..request };
+        assert_eq!(budget(&small), 26);
+        assert_eq!(estimate_tokens(0), 0);
+        assert_eq!(estimate_tokens(5), 2);
     }
 }

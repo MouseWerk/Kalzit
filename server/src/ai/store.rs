@@ -28,13 +28,39 @@ pub struct ProviderRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub updated_by: Option<String>,
+    pub token_limit_field: Option<String>,
     pub last_test_ok: Option<i64>,
     pub last_test_reason: Option<String>,
     pub last_tested_at: Option<i64>,
 }
 
+impl ProviderRow {
+    /// Its last connection test passed, and nothing that test depends on changed since.
+    pub fn tested_ok(&self) -> bool {
+        self.last_test_ok == Some(1)
+    }
+}
+
 const COLUMNS: &str = "id, org_id, name, kind, base_url, model, is_default, created_at, updated_at, updated_by, \
-                       last_test_ok, last_test_reason, last_tested_at";
+                       token_limit_field, last_test_ok, last_test_reason, last_tested_at";
+
+/// Forgets the last connection test (its address, model or key changed).
+pub async fn clear_test(conn: &mut sqlx::AnyConnection, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE ai_providers SET last_test_ok = NULL, last_test_reason = NULL, last_tested_at = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Forgets every acknowledgement of the notice for a provider (its address changed, so the
+/// notice would name another destination).
+pub async fn forget_notices(conn: &mut sqlx::AnyConnection, provider_id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM ai_notice_acks WHERE provider_id = $1").bind(provider_id).execute(conn).await?;
+    Ok(())
+}
 
 /// Keeps the outcome of a connection test on the provider.
 pub async fn record_test(

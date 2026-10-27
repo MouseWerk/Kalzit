@@ -1924,6 +1924,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ts-rs",
+ "unicode-normalization",
  "url",
  "uuid",
  "windows",

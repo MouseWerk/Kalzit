@@ -459,12 +459,20 @@ query, summarize a result, the agent chat) come after it and must go through it.
 - **Transport.** Every request uses the one HTTP client factory (`crate::http`), so the base URL
   passes the data source target policy on every connection (private networks and localhost
   allowed, link-local and metadata addresses refused, `datasources.allowed_targets` applied),
-  plus a check that refuses Kalzit's own addresses. Requests are sent with `send_once`: no
-  redirects, so the key reaches exactly the configured URL. Retries with backoff (0.5 s, 1 s,
-  jitter, at most 3 attempts, `Retry-After` up to 10 s) on passing failures before anything
-  of the answer arrived; one time limit for the whole call (`ai.request_timeout_secs`); a
+  plus a refusal of Kalzit itself: when saved, its public URL and loopback or listening addresses
+  on its ports (IPv4-mapped IPv6 normalised); at connect time, when the base URL's port is one of
+  Kalzit's listening ports, `http::LocalGuard` refuses every address of this computer (loopback,
+  unspecified, any address a socket can be bound to) in the resolver and for address literals,
+  so no host name can lead back to Kalzit. Requests are sent with `send_once`: no redirects, so
+  the key reaches exactly the configured URL. Retries with backoff (0.5 s, 1 s, jitter, at most 3
+  attempts, `Retry-After` up to 10 s) on passing failures before anything of the answer arrived;
+  one deadline for the whole call, retries and waits included (`ai.request_timeout_secs`); a
   `CancellationToken` stops a call at once, and dropping its stream cancels it. Answers are
-  capped at 16 MiB. The last connection test of a provider is kept on it (`lastTest`).
+  capped at 16 MiB. The last connection test of a provider is kept on it (`lastTest`) and cleared
+  by a change of address, model, key or token field; AI is switched on (server or organization)
+  only while a provider in effect has a pass (`service::check_switch`). OpenAI-compatible
+  requests carry the answer budget as `max_completion_tokens` for api.openai.com and
+  `max_tokens` elsewhere (`TokenLimitField`), and drop `stream_options` once on a 400.
 - **Configuration.** `ai_providers` (migration 0019): server-wide rows (`org_id` NULL) and an
   organization's own rows, which override the server's for its members. One default per scope.
   Keys live in `ai_provider_secrets`, encrypted with the secrets key like data source secrets
@@ -484,7 +492,10 @@ query, summarize a result, the agent chat) come after it and must go through it.
   Open, its schema and results go in, with the values of its excluded fields
   (`excluded_fields`, "Felder ausnehmen") replaced by `[excluded]` (names stay) and results cut
   to `ai.max_rows_to_model`. Matching of excluded fields is broad on purpose (dotted suffixes in
-  both directions, any case), since results do not always name their table. Secrets, connection
+  both directions, NFKC and case folding, JSON columns included), since results do not always
+  name their table. It works by name and is best effort, not a security boundary: an alias or an
+  expression passes values under another name; the boundary is the opt-in and the user's rights.
+  Secrets, connection
   settings and Kalzit's own data never go into a prompt. A local provider (Ollama) keeps
   everything on the network of the installation.
 - **First-use notice.** Before a person's first call through a provider the UI shows what leaves
@@ -496,12 +507,19 @@ query, summarize a result, the agent chat) come after it and must go through it.
   tokens (`ai.org_tokens_per_month`); 0 is no limit. An organization may lower each of them and
   the chat retention in its own settings (`inherit` by default; the stricter value applies), and
   turn AI off for its members (`ai.org_enabled`). `ai.allow_org_providers` decides whether its own
-  providers are allowed and used. At once: on the server (`ai.max_concurrent`) and per user
-  (`ai.max_concurrent_per_user`), held in memory (`ai::service::AiRuntime`) and given back when a
-  call ends or its stream is dropped. Counters are `ai_usage` rows per day, organization and
-  user: a call counts when it starts (so calls at once cannot all pass a limit), its tokens when
-  it ends. Refusals are `429 rate_limited` with `Retry-After`. Usage is shown in tokens and calls,
-  never in money.
+  providers are allowed, changed, tested and used. At once: on the server (`ai.max_concurrent`),
+  per organization (`ai.max_concurrent_per_org`) and per user (`ai.max_concurrent_per_user`),
+  held in memory (`ai::service::AiRuntime`). Counters are `ai_usage` rows per day, organization
+  and user (no foreign key to the user, so a deleted user's tokens keep counting for the month).
+  Admission is one step under `AiRuntime::admission`: read the counters, with running calls'
+  reservations counted as used, check, take a place, then add the call and reserve its budget
+  (estimated input plus `max_tokens`). Everything after admission runs in a spawned task that
+  always ends with `finish`: one `UPDATE` swaps the reservation for the tokens used (as the
+  provider reported them, else estimated at four characters a token and marked
+  `"estimated": true`), the audit entry is written, and only then is the place given back. So a
+  dropped stream or a dropped request still counts and audits its call. With several server
+  processes on one database, each process may admit one call over a limit. Refusals are
+  `429 rate_limited` with `Retry-After`. Usage is shown in tokens and calls, never in money.
 - **Audit.** Every call writes `ai.called` (purpose, provider kind and scope, model, input and
   output tokens, outcome `ok`, `failed` with its reason, or `cancelled`), never the prompt or the
   answer. Configuration writes `ai.provider_created|updated|deleted|tested`,
@@ -514,6 +532,16 @@ query, summarize a result, the agent chat) come after it and must go through it.
 - **Screens.** The approved board is `docs/design/blueprint/AI.dc.html` (Verwaltung > KI, KI der
   Organisation, the source's KI tab with "Felder ausnehmen", the notice, explain and draft in
   Explore). Until its package lands, the settings page shows a planned AI section.
+- **Prompt injection (for the tool use that comes with the chat).** Everything that comes back
+  from a data source, a document or a web page is untrusted input to the model: it may contain
+  text written to steer it. So tools are read-only by construction (they run queries through the
+  normal read-only query path with the asking user's rights, never anything that writes, sends or
+  changes settings); tool calls are capped (`ai.max_tool_calls`) and each one is audited; a tool
+  never sees keys or connection settings; results go through `ai::redact` like any other data;
+  and anything that would change state (saving a dashboard or analysis the model drafted) is
+  only offered to the user and happens after their explicit confirmation in the UI, never as a
+  tool call. The model's answer is shown as text; the UI never runs it as code or follows a link
+  in it on its own.
 - **Calling AI from a feature:** `ai::service::complete` or `ai::service::stream` with a
   `Caller` (organization, user, address, a short stable purpose such as `explain_query`). They
   check the switch, the provider, the limits and the concurrency, then count and audit; a feature

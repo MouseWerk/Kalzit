@@ -174,11 +174,19 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "AI calls one user may have running at once.",
     },
     SettingDef {
+        key: "ai.max_concurrent_per_org",
+        scope: Scope::Server,
+        default: || json!(4),
+        ui_editable: true,
+        description: "AI calls all members of one organization together may have running at once.",
+    },
+    SettingDef {
         key: "ai.chat_retention_days",
         scope: Scope::Server,
         default: || json!(30),
         ui_editable: true,
-        description: "AI chats are deleted this many days after their last message; 0 keeps no chats.",
+        description: "AI chats are deleted this many days after their last message; 0 keeps no chats. Applies once \
+                      chats are stored (the chat package).",
     },
     SettingDef {
         key: "ai.org_enabled",
@@ -617,6 +625,7 @@ fn rule(key: &str) -> Option<Rule> {
         "ai.user_tokens_per_day" | "ai.org_tokens_per_month" => Rule::Int { min: 0, max: 100_000_000_000 },
         "ai.max_concurrent" => Rule::Int { min: 1, max: 1_000 },
         "ai.max_concurrent_per_user" => Rule::Int { min: 1, max: 100 },
+        "ai.max_concurrent_per_org" => Rule::Int { min: 1, max: 1_000 },
         "ai.max_rows_to_model" => Rule::Int { min: 1, max: 10_000 },
         "ai.max_tool_calls" => Rule::Int { min: 1, max: 100 },
         // 0 keeps no chats at all.

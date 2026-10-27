@@ -25,6 +25,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::time::Instant;
+
 use async_trait::async_trait;
 use futures_util::Stream;
 use reqwest::header::HeaderMap;
@@ -75,8 +77,58 @@ pub struct ProviderConfig {
     pub base_url: Url,
     pub model: String,
     pub api_key: Option<Arc<Zeroizing<String>>>,
-    /// Whole call, including the streamed answer.
+    /// Whole call, including the streamed answer and every retry.
     pub timeout: Duration,
+    /// The OpenAI-compatible request field of the answer's token budget.
+    pub token_limit_field: TokenLimitField,
+    /// Set when the base URL's port is one of Kalzit's own listening ports: then no local
+    /// address may be connected to (`http::LocalGuard`).
+    pub local_guard: Option<crate::http::LocalGuard>,
+}
+
+/// Which field of an OpenAI-compatible request carries `max_tokens`. OpenAI's own API wants
+/// `max_completion_tokens` (its reasoning models refuse `max_tokens`); compatible servers
+/// (LiteLLM, Ollama, vLLM) mostly know only `max_tokens`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TokenLimitField {
+    /// `max_completion_tokens` for api.openai.com, `max_tokens` elsewhere.
+    #[default]
+    Auto,
+    MaxTokens,
+    MaxCompletionTokens,
+}
+
+impl TokenLimitField {
+    pub const NAMES: [&str; 3] = ["auto", "max_tokens", "max_completion_tokens"];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "auto" => Some(Self::Auto),
+            "max_tokens" => Some(Self::MaxTokens),
+            "max_completion_tokens" => Some(Self::MaxCompletionTokens),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::MaxTokens => "max_tokens",
+            Self::MaxCompletionTokens => "max_completion_tokens",
+        }
+    }
+
+    /// The field name to send to `base`.
+    pub fn field_for(self, base: &Url) -> &'static str {
+        match self {
+            Self::MaxTokens => "max_tokens",
+            Self::MaxCompletionTokens => "max_completion_tokens",
+            Self::Auto if base.host_str().is_some_and(|h| h.eq_ignore_ascii_case("api.openai.com")) => {
+                "max_completion_tokens"
+            }
+            Self::Auto => "max_tokens",
+        }
+    }
 }
 
 impl fmt::Debug for ProviderConfig {
@@ -235,8 +287,11 @@ pub async fn complete(
 
 /// The client for `config`, its requests checked by `policy`.
 pub fn provider(config: ProviderConfig, policy: Arc<TargetPolicy>) -> Result<Box<dyn Provider>, AiError> {
-    let http = crate::http::client(HttpOptions { timeout: config.timeout, extra_root_pem: None, policy })
-        .map_err(AiError::from_http)?;
+    let http = crate::http::client_guarded(
+        HttpOptions { timeout: config.timeout, extra_root_pem: None, policy },
+        config.local_guard.clone(),
+    )
+    .map_err(AiError::from_http)?;
     Ok(match config.kind {
         ProviderKind::OpenAi => Box::new(openai::OpenAiProvider::new(config, http)),
         ProviderKind::Anthropic => Box::new(anthropic::AnthropicProvider::new(config, http)),
@@ -301,23 +356,45 @@ impl AiError {
         }
     }
 
-    /// The same error with `secret` replaced wherever an answer could have echoed it.
+    /// The same error with `secret` replaced wherever an answer could have echoed it, also in
+    /// part: providers often repeat the start and the end of a key (`sk-ab...wxyz`).
     fn scrubbed(self, secret: Option<&str>) -> Self {
-        let Some(secret) = secret.filter(|s| s.len() >= 4) else { return self };
-        let clean = |s: String| s.replace(secret, "***");
+        let Some(secret) = secret.filter(|s| s.chars().count() >= 4) else { return self };
+        let clean = |s: String| scrub(&s, secret);
         match self {
             Self::Unreachable(m) => Self::Unreachable(clean(m)),
             Self::Overloaded { status, message } => Self::Overloaded { status, message: clean(message) },
             Self::Status { status, message } => Self::Status { status, message: clean(message) },
             Self::Protocol(m) => Self::Protocol(clean(m)),
-            Self::Blocked(d) => Self::Blocked(d.scrubbed(clean_ref(secret))),
+            Self::Blocked(d) => Self::Blocked(d.scrubbed(|s| scrub(s, secret))),
             other => other,
         }
     }
 }
 
-fn clean_ref(secret: &str) -> impl Fn(&str) -> String + '_ {
-    move |s: &str| s.replace(secret, "***")
+/// The shortest start of a key that counts as an echo of it, and the shortest end.
+const ECHO_PREFIX: usize = 6;
+const ECHO_SUFFIX: usize = 4;
+
+/// `text` with `secret` and every start (from `ECHO_PREFIX` characters) and end (from
+/// `ECHO_SUFFIX` characters) of it replaced by `***`, longest first. Ends shorter than the key's
+/// own length are taken only for keys of at least 12 characters, so a short key does not blank
+/// ordinary text.
+pub fn scrub(text: &str, secret: &str) -> String {
+    let mut out = text.replace(secret, "***");
+    let chars: Vec<char> = secret.chars().collect();
+    if chars.len() < 12 {
+        return out;
+    }
+    for n in (ECHO_PREFIX..chars.len()).rev() {
+        let start: String = chars[..n].iter().collect();
+        out = out.replace(&start, "***");
+    }
+    for n in (ECHO_SUFFIX..chars.len()).rev() {
+        let end: String = chars[chars.len() - n..].iter().collect();
+        out = out.replace(&end, "***");
+    }
+    out
 }
 
 /// The most bytes one answer may have; a stream that goes on beyond is cut off as an error.
@@ -360,12 +437,14 @@ async fn send_with_retries(
     headers: &HeaderMap,
     body: &[u8],
     cancel: &CancellationToken,
+    deadline: Instant,
 ) -> Result<reqwest::Response, AiError> {
     let mut attempt = 0;
     loop {
         attempt += 1;
         let sent = tokio::select! {
             () = cancel.cancelled() => return Err(AiError::Cancelled),
+            () = tokio::time::sleep_until(deadline) => return Err(AiError::Timeout),
             r = http.send_once(Method::POST, url.clone(), headers.clone(), Some(body.to_vec())) => r,
         };
         let wait = match sent {
@@ -380,6 +459,7 @@ async fn send_with_retries(
                     .map(Duration::from_secs);
                 let body = tokio::select! {
                     () = cancel.cancelled() => return Err(AiError::Cancelled),
+                    () = tokio::time::sleep_until(deadline) => return Err(AiError::Timeout),
                     b = crate::http::read_limited(response, 64 * 1024) => b.unwrap_or_default(),
                 };
                 let message = error_message(&body);
@@ -388,13 +468,16 @@ async fn send_with_retries(
                     429 | 503 | 529 => AiError::Overloaded { status: status.as_u16(), message },
                     _ => AiError::Status { status: status.as_u16(), message },
                 };
+                let wait = retry_after.unwrap_or_else(|| backoff(attempt));
+                // The time limit covers every attempt: no retry that could not finish within it.
+                let past_deadline = Instant::now() + wait >= deadline;
                 let too_long = retry_after.is_some_and(|w| w > MAX_RETRY_AFTER);
-                if !retryable(status) || attempt >= ATTEMPTS || too_long {
+                if !retryable(status) || attempt >= ATTEMPTS || too_long || past_deadline {
                     return Err(error);
                 }
-                retry_after.unwrap_or_else(|| backoff(attempt))
+                wait
             }
-            Err(HttpError::Other(message)) if attempt < ATTEMPTS => {
+            Err(HttpError::Other(message)) if attempt < ATTEMPTS && Instant::now() + backoff(attempt) < deadline => {
                 tracing::debug!("AI provider request failed, trying again: {message}");
                 backoff(attempt)
             }
@@ -430,6 +513,7 @@ fn endpoint(base: &Url, path: &str) -> Url {
 fn spawn_reader<F>(
     response: reqwest::Response,
     cancel: CancellationToken,
+    deadline: Instant,
     secret: Option<Arc<Zeroizing<String>>>,
     mut on_event: F,
 ) -> EventStream
@@ -450,6 +534,10 @@ where
                     return;
                 }
                 () = tx.closed() => return,
+                () = tokio::time::sleep_until(deadline) => {
+                    let _ = tx.send(Err(AiError::Timeout)).await;
+                    return;
+                }
                 c = response.chunk() => c,
             };
             let (events, ended) = match chunk {
@@ -525,6 +613,17 @@ mod tests {
     }
 
     #[test]
+    fn partial_echoes_of_the_key_are_scrubbed() {
+        let key = "sk-proj-abcdefghijklmnop4711";
+        let echoed = "Incorrect API key provided: sk-proj-***********4711. Key sk-proj-abcd... was refused";
+        let clean = scrub(echoed, key);
+        assert!(!clean.contains("sk-proj-a") && !clean.contains("4711") && !clean.contains("sk-proj-"), "{clean}");
+        assert!(clean.starts_with("Incorrect API key provided: "));
+        // A short key is replaced only as a whole, so it cannot blank ordinary words.
+        assert_eq!(scrub("token abcd in text abc", "abcd"), "token *** in text abc");
+    }
+
+    #[test]
     fn the_key_is_not_printed() {
         let config = ProviderConfig {
             kind: ProviderKind::OpenAi,
@@ -532,6 +631,8 @@ mod tests {
             model: "m".into(),
             api_key: Some(Arc::new(Zeroizing::new("sk-geheim".into()))),
             timeout: Duration::from_secs(1),
+            token_limit_field: TokenLimitField::Auto,
+            local_guard: None,
         };
         assert!(!format!("{config:?}").contains("sk-geheim"));
     }

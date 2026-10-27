@@ -191,6 +191,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "ai.max_rows_to_model",
       "ai.max_tool_calls",
       "ai.max_concurrent",
+      "ai.max_concurrent_per_org",
       "ai.max_concurrent_per_user",
       "ai.request_timeout_secs",
       "ai.chat_retention_days",

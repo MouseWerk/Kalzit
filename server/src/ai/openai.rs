@@ -1,14 +1,18 @@
 //! The OpenAI chat completions API (`POST {base}/chat/completions`), which OpenAI, LiteLLM,
 //! Ollama (`http://localhost:11434/v1`), vLLM and LM Studio all speak. The base URL includes the
 //! version path (`https://api.openai.com/v1`). Answers stream as server-sent events ending with
-//! `data: [DONE]`; usage comes in the last chunk when the server supports `stream_options`. A
-//! server that answers with one JSON document instead of a stream is read as well.
+//! `data: [DONE]`; usage comes in the last chunk when the server supports `stream_options` (a
+//! server that answers 400 to it is asked once more without). A server that answers with one JSON
+//! document instead of a stream is read as well. The answer's token budget goes into
+//! `max_completion_tokens` for OpenAI itself and `max_tokens` for compatible servers, unless the
+//! provider names the field (`TokenLimitField`).
 
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::{
@@ -45,8 +49,9 @@ impl OpenAiProvider {
     }
 }
 
-/// The request body for `request`, streamed.
-pub fn body(model: &str, request: &ChatRequest) -> Value {
+/// The request body for `request`, streamed; `token_field` carries `max_tokens`, and
+/// `with_usage` asks for the usage in the last chunk.
+pub fn body(model: &str, request: &ChatRequest, token_field: &str, with_usage: bool) -> Value {
     let mut messages = Vec::new();
     if let Some(system) = &request.system {
         messages.push(json!({ "role": "system", "content": system }));
@@ -98,10 +103,12 @@ pub fn body(model: &str, request: &ChatRequest) -> Value {
         "model": model,
         "messages": messages,
         "stream": true,
-        "stream_options": { "include_usage": true },
     });
+    if with_usage {
+        body["stream_options"] = json!({ "include_usage": true });
+    }
     if let Some(max) = request.max_tokens {
-        body["max_tokens"] = json!(max);
+        body[token_field] = json!(max);
     }
     if let Some(t) = request.temperature {
         body["temperature"] = json!(t);
@@ -242,11 +249,21 @@ impl Provider for OpenAiProvider {
     }
 
     async fn stream(&self, request: &ChatRequest, cancel: &CancellationToken) -> Result<EventStream, AiError> {
+        let deadline = Instant::now() + self.config.timeout;
         let url = endpoint(&self.config.base_url, "chat/completions");
-        let body = body(&self.config.model, request).to_string();
-        let response = send_with_retries(&self.http, &url, &self.headers()?, body.as_bytes(), cancel)
-            .await
-            .map_err(|e| e.scrubbed(self.secret()))?;
+        let field = self.config.token_limit_field.field_for(&self.config.base_url);
+        let headers = self.headers()?;
+        let mut with_usage = true;
+        let response = loop {
+            let body = body(&self.config.model, request, field, with_usage).to_string();
+            match send_with_retries(&self.http, &url, &headers, body.as_bytes(), cancel, deadline).await {
+                Ok(response) => break response,
+                // Some compatible servers refuse `stream_options`; once more without it (the
+                // usage is then estimated by `ai::service`).
+                Err(AiError::Status { status: 400, .. }) if with_usage => with_usage = false,
+                Err(e) => return Err(e.scrubbed(self.secret())),
+            }
+        };
         let is_json = response
             .headers()
             .get(CONTENT_TYPE)
@@ -255,13 +272,16 @@ impl Provider for OpenAiProvider {
         if is_json {
             let bytes = tokio::select! {
                 () = cancel.cancelled() => return Err(AiError::Cancelled),
+                () = tokio::time::sleep_until(deadline) => return Err(AiError::Timeout),
                 b = crate::http::read_limited(response, super::MAX_ANSWER_BYTES) => b.map_err(AiError::from_http)?,
             };
             let events = whole_answer(&bytes).map_err(|e| e.scrubbed(self.secret()))?;
             return Ok(Box::pin(futures_util::stream::iter(events.into_iter().map(Ok))));
         }
         let mut state = StreamState::default();
-        Ok(spawn_reader(response, cancel.clone(), self.config.api_key.clone(), move |event| state.on_data(&event.data)))
+        Ok(spawn_reader(response, cancel.clone(), deadline, self.config.api_key.clone(), move |event| {
+            state.on_data(&event.data)
+        }))
     }
 }
 
@@ -293,7 +313,7 @@ mod tests {
             max_tokens: Some(16),
             temperature: None,
         };
-        let b = body("llama3", &request);
+        let b = body("llama3", &request, "max_tokens", true);
         assert_eq!(b["model"], "llama3");
         assert_eq!(b["messages"][0], json!({ "role": "system", "content": "Sei knapp." }));
         assert_eq!(b["messages"][2]["tool_calls"][0]["function"]["arguments"], "{\"a\":1}");
@@ -301,6 +321,21 @@ mod tests {
         assert_eq!(b["tools"][0]["function"]["name"], "count");
         assert_eq!(b["max_tokens"], 16);
         assert_eq!(b["stream"], true);
+        assert_eq!(b["stream_options"]["include_usage"], true);
+        let b = body("m", &request, "max_completion_tokens", false);
+        assert_eq!((b["max_completion_tokens"].as_u64(), b.get("max_tokens")), (Some(16), None));
+        assert!(b.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn the_token_field_follows_the_host() {
+        use crate::ai::TokenLimitField;
+        let openai = url::Url::parse("https://API.openai.com/v1").unwrap();
+        let ollama = url::Url::parse("http://localhost:11434/v1").unwrap();
+        assert_eq!(TokenLimitField::Auto.field_for(&openai), "max_completion_tokens");
+        assert_eq!(TokenLimitField::Auto.field_for(&ollama), "max_tokens");
+        assert_eq!(TokenLimitField::MaxTokens.field_for(&openai), "max_tokens");
+        assert_eq!(TokenLimitField::MaxCompletionTokens.field_for(&ollama), "max_completion_tokens");
     }
 
     #[test]

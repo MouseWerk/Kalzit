@@ -158,6 +158,16 @@ impl TestApp {
         assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
     }
 
+    /// Turns AI on, after marking every stored provider as tested (the switch needs a passed
+    /// connection test; the tests of that rule are their own).
+    async fn enable(&self, admin: &Session) {
+        sqlx::query("UPDATE ai_providers SET last_test_ok = 1, last_tested_at = 0")
+            .execute(&self.state.db)
+            .await
+            .unwrap();
+        self.setting("ai.enabled", json!(true), admin).await;
+    }
+
     async fn org_setting(&self, org: &str, key: &str, value: Value, admin: &Session) {
         let current = self.get(&format!("/api/orgs/{org}/settings"), admin).await;
         let version = current.body["items"]
@@ -203,6 +213,10 @@ enum Mode {
     Unauthorized,
     /// The first event, then nothing more.
     Hang,
+    /// The answer after 1.5 seconds.
+    Delay,
+    /// 400 to a request with `stream_options`, the answer without.
+    RejectStreamOptions,
 }
 
 #[derive(Default)]
@@ -269,9 +283,20 @@ async fn mock(path: &'static str, stream: &'static str, mode: Mode) -> Mock {
         axum::routing::post(move |headers: HeaderMap, body: Bytes| {
             let seen = handler_seen.clone();
             async move {
+                let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                if mode == Mode::Delay {
+                    seen.lock().unwrap().requests.push((headers, body));
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                    return sse(stream, false);
+                }
                 let mut s = seen.lock().unwrap();
-                s.requests.push((headers, serde_json::from_slice(&body).unwrap_or(Value::Null)));
+                let asks_usage = body.get("stream_options").is_some();
+                s.requests.push((headers, body));
                 match mode {
+                    Mode::RejectStreamOptions if asks_usage => Response::builder()
+                        .status(400)
+                        .body(Body::from("{\"error\":{\"message\":\"unknown field stream_options\"}}"))
+                        .unwrap(),
                     Mode::FailOnce if !s.failed => {
                         s.failed = true;
                         Response::builder().status(503).body(Body::from("{\"error\":{\"message\":\"busy\"}}")).unwrap()
@@ -333,7 +358,7 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
     assert_eq!(t.get(&status, &viewer).await.body, json!({ "enabled": false, "usable": false }));
 
     let server_id = r.body["id"].as_str().unwrap().to_string();
-    t.setting("ai.enabled", json!(true), &owner).await;
+    t.enable(&owner).await;
     let r = t.get(&status, &viewer).await;
     assert_eq!(r.body["usable"], true);
     assert_eq!(r.body["noticeAcknowledged"], false);
@@ -481,10 +506,10 @@ async fn the_key_is_stored_encrypted_and_never_answered_logged_or_audited() {
 async fn openai_compatible_calls_stream_retry_and_are_counted_and_audited() {
     let t = test_app().await;
     let (owner, org) = t.setup().await;
-    t.setting("ai.enabled", json!(true), &owner).await;
     let mock = openai(Mode::FailOnce).await;
     let r = t.post("/api/admin/ai/providers", provider_body("openai", mock.url("/v1/"), Some(KEY)), &owner).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    t.enable(&owner).await;
     t.ack(&org, &owner).await;
 
     let caller = t.caller(&org, &owner);
@@ -545,7 +570,6 @@ async fn openai_compatible_calls_stream_retry_and_are_counted_and_audited() {
 async fn anthropic_calls_send_the_version_and_key_headers() {
     let t = test_app().await;
     let (owner, org) = t.setup().await;
-    t.setting("ai.enabled", json!(true), &owner).await;
     let mock = anthropic(Mode::Ok).await;
     let r = t.post("/api/admin/ai/providers", provider_body("anthropic", mock.url(""), None), &owner).await;
     assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "ai.key_required"), "{}", r.body);
@@ -560,11 +584,13 @@ async fn anthropic_calls_send_the_version_and_key_headers() {
     let (headers, body) = mock.last();
     assert_eq!(headers["x-api-key"], KEY);
     assert_eq!(headers["anthropic-version"], "2023-06-01");
-    assert_eq!(body["max_tokens"], 16);
+    assert_eq!(body["max_tokens"], 512);
     assert_eq!(body["messages"][0]["content"][0]["text"], "Reply with the single word OK.");
     let listed = t.get("/api/admin/ai/providers", &owner).await;
     assert_eq!(listed.body["items"][0]["lastTest"]["ok"], true, "{}", listed.body);
 
+    // The passed test is what allows the switch.
+    t.setting("ai.enabled", json!(true), &owner).await;
     t.ack(&org, &owner).await;
     let answer =
         service::complete(&t.state, &t.caller(&org, &owner), &hello(), &CancellationToken::new()).await.unwrap();
@@ -578,10 +604,10 @@ async fn daily_and_concurrent_limits_refuse_calls() {
     let t = test_app().await;
     let (owner, org) = t.setup().await;
     let ada = t.member(&owner, &org, "ada@example.de", "editor").await;
-    t.setting("ai.enabled", json!(true), &owner).await;
     t.setting("ai.user_requests_per_day", json!(2), &owner).await;
     let mock = openai(Mode::Ok).await;
     t.post("/api/admin/ai/providers", provider_body("openai", mock.url("/v1"), None), &owner).await;
+    t.enable(&owner).await;
     t.ack(&org, &ada).await;
     t.ack(&org, &owner).await;
 
@@ -608,10 +634,10 @@ async fn daily_and_concurrent_limits_refuse_calls() {
 async fn a_running_call_holds_its_place_until_it_is_cancelled_or_dropped() {
     let t = test_app().await;
     let (owner, org) = t.setup().await;
-    t.setting("ai.enabled", json!(true), &owner).await;
     t.setting("ai.max_concurrent_per_user", json!(1), &owner).await;
     let mock = openai(Mode::Hang).await;
     t.post("/api/admin/ai/providers", provider_body("openai", mock.url("/v1"), None), &owner).await;
+    t.enable(&owner).await;
     t.ack(&org, &owner).await;
     let caller = t.caller(&org, &owner);
 
@@ -787,5 +813,244 @@ async fn only_admins_configure_and_only_source_admins_open_a_source_to_ai() {
         t.audit().await.into_iter().filter(|(a, _)| a == "datasource.ai_access_changed").map(|(_, s)| s).collect();
     assert_eq!(changes.len(), 2);
     assert!(changes.iter().all(|s| !s.contains("iban")), "field names are not logged: {changes:?}");
+    t.finish().await;
+}
+
+/// The `ai.called` summaries, oldest first.
+async fn calls(t: &TestApp) -> Vec<Value> {
+    t.audit()
+        .await
+        .into_iter()
+        .filter(|(a, _)| a == "ai.called")
+        .map(|(_, s)| serde_json::from_str(&s).unwrap())
+        .collect()
+}
+
+impl TestApp {
+    /// Patches a setting without asserting success, for refusals.
+    async fn try_setting(&self, path: &str, list: &str, key: &str, value: Value, admin: &Session) -> Reply {
+        let version = self.get(list, admin).await.body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["key"] == key)
+            .map(|s| s["version"].as_i64().unwrap())
+            .unwrap();
+        self.patch(&format!("{path}/{key}"), json!({ "value": value, "version": version }), admin).await
+    }
+}
+
+#[tokio::test]
+async fn ai_turns_on_only_with_a_tested_provider_and_a_changed_one_needs_a_new_test() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let (admin_path, admin_list) = ("/api/admin/settings", "/api/admin/settings");
+    let r = t.try_setting(admin_path, admin_list, "ai.enabled", json!(true), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "ai.enable_needs_tested_provider"), "no provider");
+    let mock = openai(Mode::Ok).await;
+    let r = t.post("/api/admin/ai/providers", provider_body("openai", mock.url("/v1"), None), &owner).await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let r = t.try_setting(admin_path, admin_list, "ai.enabled", json!(true), &owner).await;
+    assert_eq!(r.reason(), "ai.enable_needs_tested_provider", "not tested yet");
+    let batch = json!({ "changes": [{ "key": "ai.enabled", "value": true, "version": 0 }] });
+    assert_eq!(t.post("/api/admin/settings/batch", batch, &owner).await.reason(), "ai.enable_needs_tested_provider");
+
+    let r = t.post(&format!("/api/admin/ai/providers/{id}/test"), json!({}), &owner).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    let r = t.try_setting(admin_path, admin_list, "ai.enabled", json!(true), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.ack(&org, &viewer).await;
+
+    // A new name keeps the pass; a new model drops it; a new address also asks for the notice again.
+    let p = t.get("/api/admin/ai/providers", &owner).await.body["items"][0].clone();
+    let path = format!("/api/admin/ai/providers/{id}");
+    let r = t.patch(&path, json!({ "name": "Umbenannt", "expectedUpdatedAt": p["updatedAt"] }), &owner).await;
+    assert_eq!(r.body["lastTest"]["ok"], true, "{}", r.body);
+    let r = t.patch(&path, json!({ "model": "modell-2", "expectedUpdatedAt": r.body["updatedAt"] }), &owner).await;
+    assert!(r.body.get("lastTest").is_none(), "{}", r.body);
+    let status = format!("/api/orgs/{org}/ai/status");
+    assert_eq!(t.get(&status, &viewer).await.body["noticeAcknowledged"], true);
+    let other = openai(Mode::Ok).await;
+    let r =
+        t.patch(&path, json!({ "baseUrl": other.url("/v1"), "expectedUpdatedAt": r.body["updatedAt"] }), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.get(&status, &viewer).await.body["noticeAcknowledged"], false);
+
+    // Turning an organization's AI back on needs a tested provider in effect as well.
+    t.org_setting(&org, "ai.org_enabled", json!(false), &owner).await;
+    let (org_path, org_list) = (format!("/api/orgs/{org}/settings"), format!("/api/orgs/{org}/settings"));
+    let r = t.try_setting(&org_path, &org_list, "ai.org_enabled", json!(true), &owner).await;
+    assert_eq!(r.reason(), "ai.enable_needs_tested_provider", "{}", r.body);
+    t.post(&format!("{path}/test"), json!({}), &owner).await;
+    t.org_setting(&org, "ai.org_enabled", json!(true), &owner).await;
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn kalzit_itself_is_refused_at_connect_time_in_every_form() {
+    let t = test_app().await;
+    let (owner, _org) = t.setup().await;
+    let create = |url: String| provider_body("openai", url, None);
+    // Saving refuses the forms it can see.
+    let r = t.post("/api/admin/ai/providers", create("http://[::ffff:127.0.0.1]:3999/v1".into()), &owner).await;
+    assert_eq!(r.reason(), "ai.base_url_kalzit", "{}", r.body);
+    // A host name passes the save but not the connection: it resolves to this computer.
+    let r = t.post("/api/admin/ai/providers", create("http://localhost.:3999/v1".into()), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap();
+    let r = t.post(&format!("/api/admin/ai/providers/{id}/test"), json!({}), &owner).await;
+    assert_eq!(
+        (r.body["ok"].as_bool(), r.body["reason"].as_str()),
+        (Some(false), Some("ai.base_url_kalzit")),
+        "{}",
+        r.body
+    );
+    // Another port of this computer is a local model server, which is fine.
+    let mock = openai(Mode::Ok).await;
+    let r = t.post("/api/admin/ai/providers", create(mock.url("/v1").replace("127.0.0.1", "localhost.")), &owner).await;
+    let id = r.body["id"].as_str().unwrap();
+    assert_eq!(t.post(&format!("/api/admin/ai/providers/{id}/test"), json!({}), &owner).await.body["ok"], true);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn a_dropped_call_is_still_counted_and_audited() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let slow_openai = openai(Mode::Hang).await;
+    t.post("/api/admin/ai/providers", provider_body("openai", slow_openai.url("/v1"), None), &owner).await;
+    t.enable(&owner).await;
+    t.ack(&org, &owner).await;
+    let caller = t.caller(&org, &owner);
+
+    // No usage from the provider: estimated from the request and what arrived.
+    let mut events = Box::pin(service::stream(&t.state, &caller, &hello(), &CancellationToken::new()).await.unwrap());
+    assert_eq!(events.next().await.unwrap().unwrap(), ChatEvent::Text("Hallo".into()));
+    drop(events);
+    wait_idle(&t.state).await;
+    // A whole call whose caller went away (a dropped request).
+    let gone = tokio::time::timeout(
+        Duration::from_millis(300),
+        service::complete(&t.state, &caller, &hello(), &CancellationToken::new()),
+    )
+    .await;
+    assert!(gone.is_err());
+    wait_idle(&t.state).await;
+    let audited = calls(&t).await;
+    assert_eq!(audited.len(), 2, "{audited:?}");
+    for call in &audited {
+        assert_eq!(call["outcome"], "cancelled");
+        assert_eq!(call["estimated"], true);
+        assert_eq!(call["inputTokens"], 8, "30 characters of prompt");
+    }
+    assert_eq!(audited[0]["outputTokens"], 2, "5 characters arrived");
+    let (user, _) = service::today(&t.state, &org, &owner.user_id).await.unwrap();
+    assert_eq!(user.reserved, 0, "every reservation was settled");
+    assert_eq!(user.requests, 2);
+
+    // Anthropic tells the input tokens at once; a call cut short keeps them.
+    let slow_anthropic = anthropic(Mode::Hang).await;
+    let body = provider_body("anthropic", slow_anthropic.url(""), Some(KEY));
+    let r = t.post(&format!("/api/orgs/{org}/ai/providers"), body, &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    t.ack(&org, &owner).await;
+    let mut events = Box::pin(service::stream(&t.state, &caller, &hello(), &CancellationToken::new()).await.unwrap());
+    let first = events.next().await.unwrap().unwrap();
+    assert_eq!(first, ChatEvent::Usage(Usage { input_tokens: 9, output_tokens: 1 }));
+    drop(events);
+    wait_idle(&t.state).await;
+    let last = calls(&t).await.pop().unwrap();
+    assert_eq!((last["inputTokens"].as_u64(), last["outputTokens"].as_u64()), (Some(9), Some(1)));
+    assert!(last.get("estimated").is_none());
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn calls_starting_together_cannot_overshoot_a_token_limit() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let mock = openai(Mode::Delay).await;
+    t.post("/api/admin/ai/providers", provider_body("openai", mock.url("/v1"), None), &owner).await;
+    t.enable(&owner).await;
+    t.setting("ai.user_tokens_per_day", json!(100), &owner).await;
+    t.setting("ai.max_concurrent_per_user", json!(10), &owner).await;
+    t.ack(&org, &owner).await;
+    let mut tasks = Vec::new();
+    for _ in 0..4 {
+        let (state, caller) = (t.state.clone(), t.caller(&org, &owner));
+        tasks.push(tokio::spawn(async move {
+            let cancel = CancellationToken::new();
+            service::complete(&state, &caller, &hello(), &cancel).await.map_err(|e| e.reason.map(|r| r.code))
+        }));
+    }
+    let mut ok = 0;
+    for task in tasks {
+        match task.await.unwrap() {
+            Ok(_) => ok += 1,
+            Err(reason) => assert_eq!(reason.as_deref(), Some("ai.limit_user_tokens")),
+        }
+    }
+    assert_eq!(ok, 1, "the first call's budget is reserved while it runs");
+    assert_eq!(mock.requests(), 1);
+    let (user, _) = service::today(&t.state, &org, &owner.user_id).await.unwrap();
+    assert_eq!((user.tokens, user.reserved), (13, 0), "the reservation became the real use");
+    // Under the limit again: the next call may start.
+    service::complete(&t.state, &t.caller(&org, &owner), &hello(), &CancellationToken::new()).await.unwrap();
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn compatible_servers_get_their_token_field_and_a_retry_without_stream_options() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let mock = openai(Mode::RejectStreamOptions).await;
+    let r = t.post("/api/admin/ai/providers", provider_body("openai", mock.url("/v1"), None), &owner).await;
+    assert_eq!(r.body["tokenLimitField"], "auto");
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let path = format!("/api/admin/ai/providers/{id}");
+    let r = t.post(&format!("{path}/test"), json!({}), &owner).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    assert_eq!(mock.requests(), 2, "once with stream_options, once without");
+    let (_, body) = mock.last();
+    assert!(body.get("stream_options").is_none());
+    assert_eq!((body["max_tokens"].as_u64(), body.get("max_completion_tokens")), (Some(512), None));
+
+    let updated_at = t.get("/api/admin/ai/providers", &owner).await.body["items"][0]["updatedAt"].clone();
+    let change = json!({ "tokenLimitField": "max_completion_tokens", "expectedUpdatedAt": updated_at });
+    let r = t.patch(&path, change, &owner).await;
+    assert_eq!(r.body["tokenLimitField"], "max_completion_tokens", "{}", r.body);
+    t.post(&format!("{path}/test"), json!({}), &owner).await;
+    let (_, body) = mock.last();
+    assert_eq!((body["max_completion_tokens"].as_u64(), body.get("max_tokens")), (Some(512), None));
+    let bad = json!({ "tokenLimitField": "tokens", "expectedUpdatedAt": r.body["updatedAt"] });
+    assert_eq!(t.patch(&path, bad, &owner).await.reason(), "ai.token_limit_field_unknown");
+
+    // Calls go through the same retry without stream_options.
+    t.enable(&owner).await;
+    t.ack(&org, &owner).await;
+    service::complete(&t.state, &t.caller(&org, &owner), &hello(), &CancellationToken::new()).await.unwrap();
+    assert_eq!(calls(&t).await.pop().unwrap()["outcome"], "ok");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn org_providers_are_not_changed_tested_or_used_while_disallowed() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let mock = openai(Mode::Ok).await;
+    let body = provider_body("openai", mock.url("/v1"), None);
+    let r = t.post(&format!("/api/orgs/{org}/ai/providers"), body, &owner).await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let updated_at = r.body["updatedAt"].clone();
+    t.setting("ai.allow_org_providers", json!(false), &owner).await;
+    let path = format!("/api/orgs/{org}/ai/providers/{id}");
+    let r = t.patch(&path, json!({ "name": "x", "expectedUpdatedAt": updated_at }), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "ai.org_providers_not_allowed"));
+    let r = t.post(&format!("{path}/test"), json!({}), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "ai.org_providers_not_allowed"));
+    assert!(service::in_effect(&t.state, &org).await.unwrap().is_none(), "not used either");
+    let r = t.send(Method::DELETE, &path, None, Some(&owner)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "removing stays possible");
     t.finish().await;
 }
