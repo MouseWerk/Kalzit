@@ -578,6 +578,7 @@
   "datasources.reason.gsql.unclosed_comment": "A comment is not closed.",
   "datasources.reason.tigergraph.query_name": "“{name}” is no query name.",
   "datasources.reason.tigergraph.query_text_unreadable": "Kalzit cannot read the text of {name} to check it. A data source admin can approve the query by name.",
+  "datasources.reason.tigergraph.query_writes": "{name} changes data, so Kalzit does not run it, even when it is approved.",
   "datasources.reason.tigergraph.param_type": "The parameter {name} must be {type}.",
   "datasources.reason.tigergraph.param_unknown": "The query has no parameter {name}.",
   "datasources.reason.bolt.protocol": "The server did not answer as Kalzit expects over Bolt: {detail}",

@@ -106,7 +106,7 @@ impl T {
         for (k, v) in extra.as_object().unwrap() {
             settings[k] = v.clone();
         }
-        let body = json!({ "name": format!("TigerGraph {user}"), "kind": "tigergraph", "settings": settings,
+        let body = json!({ "name": format!("TigerGraph {user} {}", uuid::Uuid::now_v7().simple()), "kind": "tigergraph", "settings": settings,
                            "secrets": { "password": password } });
         let (status, body) = self.send(Method::POST, "/datasources", Some(body)).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -380,5 +380,32 @@ async fn users_who_may_write_are_refused() {
     eprintln!("wrong password: {h}");
     assert_eq!(h["ok"], false, "{h}");
     assert!(!h.to_string().contains("falsch"), "{h}");
+    t.finish().await;
+}
+
+/// HTTPS with a certificate from a private CA: refused without `caCert`, read with it. The
+/// nightly job switches the server to HTTPS after the other tests and sets
+/// `KALZIT_TEST_TIGERGRAPH_CA` to the CA certificate's file.
+#[tokio::test]
+#[ignore = "needs a real TigerGraph with HTTPS (KALZIT_TEST_TIGERGRAPH_URL, KALZIT_TEST_TIGERGRAPH_CA)"]
+async fn tls_with_a_private_ca() {
+    let ca = std::env::var("KALZIT_TEST_TIGERGRAPH_CA").expect("KALZIT_TEST_TIGERGRAPH_CA names the CA file");
+    let ca = std::fs::read_to_string(ca).unwrap();
+    assert!(url().starts_with("https://"), "{}", url());
+    let t = T::new().await;
+    let unknown = t.source(READER, json!({})).await;
+    let h = t.health(&unknown).await;
+    eprintln!("without caCert: {h}");
+    assert_eq!(h["ok"], false, "the certificate is not trusted without caCert: {h}");
+
+    let id = t.source(READER, json!({ "caCert": ca })).await;
+    let h = t.health(&id).await;
+    eprintln!("with caCert: {h}");
+    assert_eq!(h["ok"], true, "{h}");
+    let r = t.query(&id, json!({ "gsql": "INTERPRET QUERY () FOR GRAPH social { S = {Person.*}; PRINT S; }" })).await;
+    assert_eq!(r["result"]["shape"], "graph", "{r}");
+    let id = t.source(READER, json!({ "caCert": ca, "approvedQueries": "nur_knoten" })).await;
+    let r = t.query(&id, json!({ "installed": "nur_knoten" })).await;
+    assert_eq!(r["result"]["shape"], "graph", "REST++ through HTTPS with a token: {r}");
     t.finish().await;
 }

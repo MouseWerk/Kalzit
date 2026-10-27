@@ -192,8 +192,13 @@ async fn restpp_query(
     let valid = s.valid_token.lock().unwrap().clone();
     let bearer =
         h.get("authorization").and_then(|v| v.to_str().ok()).map(|v| v.trim_start_matches("Bearer ").to_string());
+    // As 4.2.5 answers a missing or unknown token, with REST++ authentication on.
     if valid.is_none() || bearer != valid {
-        return json_reply(401, json!({ "error": true, "message": "token expired" }));
+        return json_reply(
+            403,
+            json!({ "version": { "edition": "community", "api": "v2", "schema": 0 }, "error": true,
+                    "message": "Access Denied because the input token = 'tok-****' is not in correct format", "code": "REST-10016" }),
+        );
     }
     assert!(h.get("gsql-timeout").is_some());
     *s.last_query.lock().unwrap() = raw.0.unwrap_or_default();
@@ -325,7 +330,7 @@ async fn installed_queries_run_with_typed_parameters_and_become_a_graph() {
     *fake.valid_token.lock().unwrap() = Some("tok-neu".into());
     let again = json!({ "installed": "nachbarn", "params": { "p": "1" } });
     assert!(TigerGraph.query(&conn, req(again.clone(), json!({}))).await.is_ok(), "{:?}", fake.valid_token);
-    assert_eq!(*fake.tokens_issued.lock().unwrap(), 2, "a new token was fetched after the 401");
+    assert_eq!(*fake.tokens_issued.lock().unwrap(), 2, "a new token was fetched after REST++ refused the old one");
     assert!(TigerGraph.query(&conn, req(again, json!({}))).await.is_ok());
     assert_eq!(*fake.tokens_issued.lock().unwrap(), 2, "and kept");
 }

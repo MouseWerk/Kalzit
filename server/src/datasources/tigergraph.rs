@@ -11,17 +11,20 @@
 //!
 //! TigerGraph has no read transaction, so two things keep it read-only (docs/PLAN.md, section 5):
 //!
-//! 1. The user must be a reader: only `queryreader` (or a role with no more than `READ_SCHEMA`,
-//!    `READ_LOADINGJOB`, `EXECUTE_LOADINGJOB`, `READ_DATA`, `READ_QUERY` and, from 4.1, the
-//!    per-query `EXECUTE_QUERY`). Kalzit reads the user's roles and privileges when it sets up the
+//! 1. The user must be a reader: only `queryreader` (or a role with no more than
+//!    `READ_PRIVILEGES`). Kalzit reads the user's roles and privileges when it sets up the
 //!    connection (after every change of the source, and every ten minutes) and in Test connection,
 //!    and refuses the source when the user may do more. 4.x: `GET /gsql/v1/users/{name}`; when
 //!    that is not allowed, and on 3.x, the fixed command `SHOW USER`.
 //! 2. The query text is checked by `gsql.rs`. An installed query runs only when its text is
 //!    readable (4.x `GET /gsql/v1/queries/{name}?graph=g`, which needs `READ_QUERY`; 3.x has no
 //!    such endpoint) and passes the check, or, when the text cannot be read, when its name is in
-//!    the source's `approvedQueries`, which a data source admin keeps. Then only the reader user
-//!    protects the data.
+//!    the source's `approvedQueries`, which a data source admin keeps. An approved query that
+//!    TigerGraph marks as changing data (`graphUpdate` in `GET /gsql/v1/queries/info`) is still
+//!    refused; otherwise only the reader user protects the data, which needs REST++
+//!    authentication on (a fresh Community Edition has it off).
+//!
+//! `.github/workflows/tigergraph-nightly.yml` checks these rules against a real 4.2 server.
 //!
 //! Kalzit never calls REST++ upsert, delete or loading endpoints.
 //!
@@ -610,6 +613,18 @@ impl Client {
         });
         self.texts.lock().expect("text cache lock").insert(name.to_string(), (Instant::now(), checked.clone()));
         checked.map(Some).map_err(SourceError::Rejected)
+    }
+}
+
+/// Whether REST++ refused the token itself (not the query): 401, or 403 with `REST-10016`.
+/// A 403 for missing privileges (`REST-10018`) is final.
+fn token_refused(status: StatusCode, body: &[u8]) -> bool {
+    match status {
+        StatusCode::UNAUTHORIZED => true,
+        StatusCode::FORBIDDEN => serde_json::from_slice::<Value>(body)
+            .ok()
+            .is_some_and(|v| v.get("code").and_then(Value::as_str) == Some("REST-10016")),
+        _ => false,
     }
 }
 
@@ -1234,8 +1249,9 @@ impl DataSourcePlugin for TigerGraph {
                     let auth = token.and_then(|t| HeaderValue::from_str(&format!("Bearer {t}")).ok());
                     let (s, b) =
                         c.call(Method::GET, url.clone(), auth, None, &headers, max_bytes, Some(&mut charge)).await?;
-                    // An expired or revoked token: fetch a new one once.
-                    if s == StatusCode::UNAUTHORIZED && !renew && had_token {
+                    // An expired or revoked token: fetch a new one once. 4.2 answers a token it
+                    // does not accept with 403 and the code REST-10016 (the nightly job checks it).
+                    if token_refused(s, &b) && !renew && had_token {
                         renew = true;
                         continue;
                     }

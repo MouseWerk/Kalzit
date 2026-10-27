@@ -828,17 +828,31 @@ dashboard variable of the same name.
   `VERTEX<T>` (the id), `VERTEX` (`{"type": ..., "id": ...}`), `SET`/`BAG`/`LIST` of them (a list,
   sent as repeated values). A value that does not fit is refused (`tigergraph.param_type`), as is
   a name the query does not declare. For an approved query whose text cannot be read the types
-  are unknown, and values go as given (lists repeated, `{"type", "id"}` as a vertex).
+  are unknown, and values go as given (lists repeated, `{"type", "id"}` as a vertex). A space in
+  a value goes as `%20` and a `+` as `%2B`: REST++ keeps a literal `+` as a plus sign.
+- The query picker (`queries` in the schema) lists the graph's queries from
+  `GET /gsql/v1/queries/info?graph=<graph>`, which a `queryreader` may read (4.2 answers it with
+  an empty list from `GET /gsql/v1/queries`), plus the approved names.
 
-What Kalzit found in the TigerGraph documentation (October 2026) about reading a query's text:
-4.x has `GET /gsql/v1/queries/{name}?graph=<graph>` (field `queryContent`) and
-`GET /gsql/v1/queries/info?graph=<graph>&query=<name>` (field `code`); both need the
-`READ_QUERY` privilege, which the built-in `queryreader` role does not have. 3.x has no REST
-endpoint for it, only the GSQL command `SHOW QUERY`, which Kalzit does not send (it sends no GSQL
-commands made from input). So with a plain `queryreader` user, installed queries run only when
-approved by name. Whether `queryreader` may run interpreted queries in 4.1+ (the per-query
-`EXECUTE_QUERY` privilege) is checked against a real instance by the nightly job; if the server
-refuses, the query answers `tigergraph.error`.
+What a real TigerGraph 4.2.5 (Community Edition) does, checked every night by
+`.github/workflows/tigergraph-nightly.yml` (setup in `.github/tigergraph/`, tests in
+`server/tests/tigergraph_real.rs`):
+
+- A `queryreader` may read its own user record (`GET /gsql/v1/users/<user>`; `results` is one
+  object with `roles` and `privileges` per graph, `"1"` for global) and run `SHOW USER`. Its
+  privileges are `READ_SCHEMA`, `READ_LOADINGJOB`, `EXECUTE_LOADINGJOB`, `READ_DATA`,
+  `APP_ACCESS_DATA` and `READ_POLICY`.
+- It may run interpreted queries; no `EXECUTE_QUERY` grant is needed. A query that writes is
+  refused by the server (403, `DELETE_DATA [MISSING]`), both interpreted and installed.
+- It may not read a query's text (`GET /gsql/v1/queries/<name>` answers 403,
+  `READ_QUERY [MISSING]`), so with a plain `queryreader` installed queries run only when approved
+  by name. It may read the query info, whose `graphUpdate` tells whether a query changes data.
+- REST++ authentication is off in a fresh Community Edition: then REST++ runs any installed query,
+  writing ones too, for anyone who reaches it, and the reader user protects nothing there. Turn it
+  on (`gadmin config set RESTPP.Factory.EnableAuth true`, `gadmin config apply -y`,
+  `gadmin restart restpp -y`); with it, a call without a token answers 403.
+- 3.x is not tested against a real server (no 3.x image is published for free use); its paths
+  are tested against the fake only.
 
 Read-only rules:
 
@@ -846,7 +860,8 @@ Read-only rules:
   connection (after every change of the source and every ten minutes) and in Test connection:
   4.x `GET /gsql/v1/users/<user>`, and when that is not allowed, and on 3.x, the fixed command
   `SHOW USER`. Allowed are only the privileges `READ_SCHEMA`, `READ_LOADINGJOB`,
-  `EXECUTE_LOADINGJOB`, `READ_DATA`, `READ_QUERY` and `EXECUTE_QUERY` (on any graph), or, when
+  `EXECUTE_LOADINGJOB`, `READ_DATA`, `APP_ACCESS_DATA`, `READ_POLICY`, `READ_QUERY` and
+  `EXECUTE_QUERY` (on any graph, per-query grants included), or, when
   only roles are known, the role `queryreader` (global roles and roles on the source's graph).
   Anything else, or a superuser, refuses the source (`tigergraph.user_can_write`). The built-in
   `queryreader` role includes `EXECUTE_LOADINGJOB`; Kalzit never runs loading jobs, but a custom
@@ -866,7 +881,9 @@ Read-only rules:
   one run and are allowed.
 - An installed query runs only when its text can be read and passes the check (the result of a
   check is kept for a minute), or when its text cannot be read and its name is in
-  `approvedQueries`. Then only the reader user protects the data.
+  `approvedQueries`. An approved query that TigerGraph marks as changing data (`graphUpdate` in
+  its info, 4.x) is refused (`tigergraph.query_writes`); otherwise only the reader user protects
+  the data, which needs REST++ authentication on.
 - Kalzit never calls REST++ upsert, delete or loading endpoints.
 
 ### Graph results
@@ -1500,6 +1517,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `gsql.unclosed_quote`, `gsql.unclosed_comment` | | an unclosed string or comment |
 | `tigergraph.query_name` | `name` | `installed` is not a query name |
 | `tigergraph.query_text_unreadable` | `name` | the installed query's text cannot be read and the query is not approved |
+| `tigergraph.query_writes` | `name` | the approved installed query changes data (`graphUpdate` in its info) |
 | `tigergraph.param_type` | `name`, `type` | a parameter value does not fit its declared type |
 | `tigergraph.param_unknown` | `name` | `params` names a parameter the query does not declare |
 
