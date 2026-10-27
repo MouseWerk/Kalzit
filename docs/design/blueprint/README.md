@@ -23,5 +23,6 @@ titles and heights.
 | `DataSourceNew.dc.html` | Add and configure a data source, advanced options per type |
 | `DataChat.dc.html` | "Fragen", a planned data chat; not scheduled yet |
 | `SavedAnalyses.dc.html` | Saved analyses: save dialog and saved state in Explore, the list under Explore, the panel editor's "From saved analysis", and the conflict on save |
+| `Access.dc.html` | Sign in and first-run setup on the calm backdrop: every state of both, 360 px layouts, light and dark, notes on motion and accessibility |
 
 The boards contain sample data only.

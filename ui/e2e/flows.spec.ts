@@ -104,10 +104,12 @@ test("after signing out, going back does not show the signed-in pages", async ({
   await expect(page.getByRole("heading", { name: t("admin.members.title") })).toBeVisible();
   await page.getByRole("button", { name: t("userMenu.label") }).click();
   await page.getByRole("menuitem", { name: t("userMenu.signOut") }).click();
-  await expect(page.getByRole("heading", { name: t("login.title") })).toBeVisible();
-  await expect(page.getByRole("status").filter({ hasText: t("login.signedOut") })).toBeVisible();
+  await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: t("access.login.signedOut") }),
+  ).toBeVisible();
   await page.goBack();
-  await expect(page.getByRole("heading", { name: t("login.title") })).toBeVisible();
+  await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
   await expect(page.getByRole("heading", { name: t("admin.members.title") })).toHaveCount(0);
 });
 

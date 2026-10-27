@@ -7,19 +7,47 @@ the server is described in [Installation](installation.md) (the container image)
 
 ## First setup
 
-On the first start Kalzit asks for a one-time **setup code**.
+On the first start Kalzit asks for a one-time **setup code**. Open the server's address, by
+default `http://localhost:3000`. Setup has four steps; **Back** keeps everything you entered.
 
-1. Open the server's address, by default `http://localhost:3000`.
-2. Read the code from the file `setup-token.txt` in the data directory, or print it with
-   `kalzit setup-code` (in a container: `docker exec kalzit kalzit setup-code`), or use the value
-   of `KALZIT_SETUP_TOKEN`, if one is set. The page has three steps:
-   - **Confirm this server**: enter the **Setup code**.
-   - **Name the organization**: the **Organization name**. More organizations can be added later.
-   - **Create the owner account**: your name, email address and a password of at least the shown
-     length. A strength hint appears while you type.
-3. Press **Set up**. You are the owner of the first organization.
+1. **Setup code** (Einrichtungscode): enter the code and press **Next**. It is checked right
+   away. **Where do I find the code?** shows the way for each kind of installation, the one that
+   fits this server first:
+   - **File**: `setup-token.txt` in the data directory, by default
+     `C:\ProgramData\Kalzit\data\setup-token.txt` on Windows and
+     `/var/lib/kalzit/setup-token.txt` on Linux.
+   - **Server log**: the log says at start where the file is; it never contains the code.
+   - **Docker**: `docker exec kalzit kalzit setup-code` (with Compose:
+     `docker compose exec kalzit kalzit setup-code`).
+   - **Fixed code**: the value of `KALZIT_SETUP_TOKEN`, for automated installs.
 
-If Kalzit is already set up, the page says so and links to sign-in.
+   Case, spaces and dashes do not matter. After 5 wrong codes you wait a minute; the button
+   counts down the time. A restart of the server makes a new code: the page then says that the
+   code you entered is no longer valid, rather than wrong.
+2. **Your account**: your name, email address and a password of at least 12 characters. The
+   rules below the field are ticked off while you type; a mix of characters is recommended, not
+   required. This account becomes the owner of the first organization and a server admin.
+3. **Organization**: the organization's name, and the defaults for everyone who has not chosen
+   otherwise: **Language**, **Theme** and **Time zone** (taken from your browser). Language and
+   theme are the server's defaults, the time zone the organization's. Press **Finish setup**:
+   only now are the organization and the account created, and you are signed in.
+4. **Done**: the next steps as tiles. **Add a data source** opens the dialog to connect one,
+   **Explore with sample data** adds the sample database that ships with Kalzit (see below) and
+   opens Explore on it, **Invite people** leads to the members. **Go to Home** opens Start.
+
+If Kalzit is already set up, the setup page only says so and leads to sign-in. If someone else
+finished setup while you filled in the form, the last step says so; if the server was restarted
+in between, you go back to the code with everything else kept.
+
+![The first setup step](../screenshots/setup.png)
+
+### Sample data
+
+Kalzit ships a small, read-only SQLite database with orders, products, customers and regions
+for trying things out. **Explore with sample data** on the last setup step adds it as a data
+source named **Sample data** (Beispieldaten), once per organization; it needs the right to add
+data sources. Kalzit writes the file to the `samples` folder of its data directory, the one
+place there a SQLite source may read. Remove the source like any other; the file stays.
 
 ![The sign-in page](../screenshots/sign-in.png)
 
@@ -27,11 +55,15 @@ If Kalzit is already set up, the page says so and links to sign-in.
 
 Enter the **Email address** and **Password** of your account and press **Sign in**. The password
 field can show what you typed and warns when Caps Lock is on. After too many failed sign-ins you
-have to wait a few minutes. Accounts are local for now; sign-in through OIDC or LDAP is planned
-(M5).
+have to wait: the page says how long, and the button counts down until you can try again.
+**Forgot password?** explains that an admin of your organization can reset it. When your
+session ended while you worked, the page says so and takes you back to where you were after
+signing in. Accounts are local for now; sign-in through OIDC or LDAP is planned (M5). There is
+no "Stay signed in" choice yet: a session lasts as long as the server's session settings allow.
 
-A language or theme you choose on the sign-in page becomes your preference when you sign in,
-unless you already have one.
+The bar on top has **Language**, **Theme** and **Help**. A language or theme you choose there
+becomes your preference when you sign in, unless you already have one. **Help** opens this page
+and [Installation](installation.md); both ship with Kalzit and can be read without an account.
 
 ## Your first data source
 

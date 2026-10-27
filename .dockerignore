@@ -1,11 +1,15 @@
-# The image is built from the workspace manifests, the server, the release crate and the UI
-# sources; everything else stays out of the build context.
+# The image is built from the workspace manifests, the server, the release crate, the UI
+# sources and the guide pages the UI ships as help; everything else stays out of the build
+# context.
 *
 !Cargo.toml
 !Cargo.lock
 !server/
 !release/
 !ui/
+!docs/
+docs/*
+!docs/guide/
 
 **/target/
 **/node_modules/

@@ -92,9 +92,9 @@ async function signIn(
   account: { email: string; password: string } = DEMO_OWNER,
 ): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel(t("login.email")).fill(account.email);
-  await page.getByLabel(t("login.password"), { exact: true }).fill(account.password);
-  await page.getByRole("button", { name: t("login.submit") }).click();
+  await page.getByLabel(t("access.login.email")).fill(account.email);
+  await page.getByLabel(t("access.login.password"), { exact: true }).fill(account.password);
+  await page.getByRole("button", { name: t("access.login.submit") }).click();
   await expect(page.getByRole("navigation", { name: t("nav.label") })).toBeVisible();
 }
 
@@ -132,8 +132,16 @@ async function dashboardReady(page: Page): Promise<void> {
 test("sign-in", async ({ browser }) => {
   const page = await openPage(browser);
   await page.goto("/login");
-  await expect(page.getByRole("heading", { name: t("login.title") })).toBeVisible();
+  await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
   await shoot(page, "sign-in");
+  await page.context().close();
+});
+
+test("sign-in, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
+  await shoot(page, "sign-in-dark");
   await page.context().close();
 });
 

@@ -186,6 +186,9 @@ describe("catalogs", () => {
       "Panels",
       "Live",
       "(optional)",
+      "Log",
+      "Docker",
+      "Installation",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");
@@ -333,8 +336,8 @@ describe("glossary", () => {
   });
 
   it("names the setup code as the glossary does", () => {
-    expect(de["setup.token"]).toBe("Einrichtungscode");
-    expect(en["setup.token"]).toBe("Setup code");
+    expect(de["access.setup.code.label"]).toBe("Einrichtungscode");
+    expect(en["access.setup.code.label"]).toBe("Setup code");
     expect(de["datasources.nav"]).toBe("Datenquellen");
     expect(en["datasources.nav"]).toBe("Data sources");
   });

@@ -93,7 +93,12 @@ function cellsOf(line: string): string[] {
  * Block Markdown to React elements. Variables are filled in after parsing and only into text,
  * so a value can never add a link, emphasis or anything else.
  */
-export function markdown(source: string, variables: Variables = NONE): ReactNode[] {
+export function markdown(
+  source: string,
+  variables: Variables = NONE,
+  /** How many levels headings move down; panel text sits below the panel's own title. */
+  headingShift = 2,
+): ReactNode[] {
   const text = (part: string, key?: string) => inline(part, key, variables);
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
@@ -124,8 +129,7 @@ export function markdown(source: string, variables: Variables = NONE): ReactNode
     }
     const heading = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
     if (heading !== null) {
-      // Panel text sits below the panel's own title, so its headings start one level lower.
-      const level = Math.min(6, (heading[1] as string).length + 2);
+      const level = Math.min(6, (heading[1] as string).length + headingShift);
       const Tag = `h${level}` as "h3";
       blocks.push(<Tag key={key()}>{text(heading[2] as string)}</Tag>);
       i++;

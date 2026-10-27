@@ -303,9 +303,9 @@ export async function signIn(
   language: "de" | "en" = "en",
 ): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel(t("login.email", {}, language)).fill(email);
-  await page.getByLabel(t("login.password", {}, language), { exact: true }).fill(password);
-  await page.getByRole("button", { name: t("login.submit", {}, language) }).click();
+  await page.getByLabel(t("access.login.email", {}, language)).fill(email);
+  await page.getByLabel(t("access.login.password", {}, language), { exact: true }).fill(password);
+  await page.getByRole("button", { name: t("access.login.submit", {}, language) }).click();
   await expect(page.getByRole("navigation", { name: t("nav.label", {}, language) })).toBeVisible();
 }
 

@@ -53,6 +53,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY server server
 COPY release release
 COPY ui ui
+# The help pages shown before sign-in are guide pages, bundled into the web interface.
+COPY docs/guide docs/guide
 RUN --mount=type=cache,id=kalzit-cargo-registry-$TARGETARCH,target=/usr/local/cargo/registry,sharing=locked \
     cargo fetch --locked \
     && cd ui \
