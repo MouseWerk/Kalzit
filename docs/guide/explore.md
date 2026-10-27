@@ -127,6 +127,18 @@ other: calculated fields, joins, statistics, trend, moving average, correlation,
 the previous period, group, pivot and the documents projection. The queries stay as they are. See
 [Calculated fields and statistics](calculated-fields.md).
 
+### Graph steps
+
+When the query answers a graph, "Add step" offers graph steps first: "Count per label",
+"Count per edge type", "Degree distribution", "Top N by degree", "Shared neighbours" (such as
+customers who bought the same products) and "Turn into a table" (nodes or edges with the
+properties you pick as rows). Each step shows the shape it reads and makes ("Graph → Table") and
+where it runs: "Runs in Neo4j (Cypher)" for the first graph step of a Neo4j or Memgraph query,
+which then counts over the whole result, not only the nodes drawn; "Runs on the server" for the
+others. "Shapes of the steps" under the list follows the result from step to step. Table steps
+such as "Group" become available once a step made a table. The drawing keeps showing the query's
+own graph.
+
 ## Add to dashboard
 
 **Add to dashboard...** puts the query, its data source, the visualization and the steps into a

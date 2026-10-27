@@ -97,6 +97,14 @@
       "w": 1440,
       "x": 3040,
       "y": 2360
+    },
+    "Graph.dc.html": {
+      "expand": "fill",
+      "h": 7560,
+      "title": "Graph native (M3)",
+      "w": 1440,
+      "x": 6080,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -129,7 +137,8 @@
     "DataSources.dc.html",
     "DataSourceNew.dc.html",
     "DataChat.dc.html",
-    "SavedAnalyses.dc.html"
+    "SavedAnalyses.dc.html",
+    "Graph.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

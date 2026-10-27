@@ -617,8 +617,8 @@ steps: explicit, ordered steps on the results of the panel's queries, each of wh
 off; the queries' own results stay as they are. Nothing is converted unless a step asks for it.
 The browser runs them for what it shows (`ui/src/analysis/`); the server runs the same steps for
 exports (`server/src/analysis/`), and both engines pass `server/src/analysis/conformance.json`.
-Steps work on results in memory, bounded by the queries' row limit; moving heavy grouping into
-the database (pushdown) comes later.
+Steps work on results in memory, bounded by the queries' row limit. Graph steps (below) are the
+exception: they run with their query, in the database where the source can.
 
 Every step is `{ "id": string, "type": ..., "disabled"?: boolean, ... }`: `id` 1 to 64
 characters, unique in the list; at most 50 steps. A step reads results by the `refId` of their
@@ -646,7 +646,18 @@ type Step = { id: string; disabled?: boolean } & (
   | { type: "group"; frame: string; by: string[];                           // 1 to 10 fields
       aggregations: { field: string; op: Agg; name?: string }[] }           // up to 50
   | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
+  // Graph steps: they read the graph result of `frame`.
+  | { type: "toFrame"; frame: string; rows: "nodes" | "edges";              // a graph to a frame
+      label?: string; edgeType?: string;                                    // label with nodes, edgeType with edges
+      columns: { path: string; name?: string; type?: "string" | "number" | "int64" | "bool" | "time" }[] }
+  | { type: "countLabels"; frame: string }
+  | { type: "countEdgeTypes"; frame: string }
+  | { type: "degreeDistribution"; frame: string; direction?: Direction }
+  | { type: "topDegree"; frame: string; n: number; label?: string; direction?: Direction }  // n 1 to 1000
+  | { type: "sharedNeighbours"; frame: string; label: string; via: string;  // via differs from label
+      edgeType?: string; min: number; limit: number; name?: string }        // min at least 1, limit 1 to 1000
 );
+type Direction = "both" | "out" | "in";                                     // default "both"
 type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "first" | "last";
 ```
 
@@ -681,6 +692,39 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "fir
   field. **pivot** answers one row per value of `row` and one field per value of `column` (at most
   500).
 - Empty values are left out of every statistic and aggregation.
+
+### Graph steps
+
+Graph steps read the `graph` result of a query (Neo4j, Memgraph, TigerGraph) and make a frame or
+a smaller graph; every change of shape is one of these visible steps. Steps that read a frame
+work only after a step that made one; a frame step on a graph answers `steps.frame_missing`, a
+graph step on anything else `steps.not_graph`.
+
+- **countLabels** answers `label`, `nodes` and `share` (of all nodes, 0 to 1), most nodes first,
+  then by label. A node with several labels counts once for each.
+- **countEdgeTypes** answers `type`, `from`, `to` (the labels of the edge's ends joined with `:`,
+  empty for a node without labels) and `edges`, most edges first, then by type, `from`, `to`.
+- **degreeDistribution** answers `degree` and `nodes`: how many nodes have how many edges
+  (`out`: edges that start there, `in`: that end there, `both`: either; a loop counts twice),
+  nodes without edges included, by degree.
+- **topDegree** keeps the `n` nodes with the highest degree (only those with `label`, when
+  given; ties by node id) and the edges between them. The result stays a graph.
+- **sharedNeighbours** answers pairs of `label` nodes with neighbours of the label `via` in
+  common, over edges of `edgeType` (all types when absent) in either direction: `a`, `b`, `shared`
+  (how many) and `neighbours` (a list). Pairs with at least `min` shared neighbours, the `limit`
+  with the most, then by the ids of `a` and `b`. Nodes are named by their text property `name`,
+  else by their id; neighbours are listed by id. Such as customers who bought the same products.
+- **toFrame** with `rows` makes one row per node (only those with `label`) or per edge (only
+  those of `edgeType`); the column paths are property keys, and `@id`, `@labels` (nodes) or
+  `@id`, `@type`, `@from`, `@to` (edges), which win over properties of the same name. The rest is
+  as for documents.
+
+Text and ids compare by UTF-16 code units, as Neo4j compares them, so every engine answers the
+same rows in the same order. Where they run: the enabled graph steps of a query go with it
+(`QueryItem.steps`, docs/api/datasources.md, "Graph steps"); the panel route sends a panel's
+stored ones itself. For Neo4j and Memgraph the first one runs in the database, as read-only
+Cypher around the query; the others run on the server. The answer says where each ran. The
+browser runs them only as a preview, on the graph it holds, until that answer is there.
 - Bounds, the same in the browser and on the server: a step makes at most 5,000,000 cells (rows
   times fields, checked before it builds them: `steps.too_many_cells`); the steps of one run make
   at most 67,108,864 UTF-16 units of text, calculated text and the copies a join makes
