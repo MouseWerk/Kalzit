@@ -39,6 +39,7 @@ interface Seeded {
   overview: string;
   topology: string;
   graphViews: string;
+  explorer: string;
   documents: string;
   allSources: string;
   live: string;
@@ -292,7 +293,7 @@ function overviewDashboard(sql: string): Record<string, unknown> {
         id: "power",
         type: "timeseries",
         title: "IT power per hall",
-        grid: { x: 0, y: 4, w: 14, h: 8 },
+        grid: { x: 0, y: 4, w: 14, h: 9 },
         targets: sqlTarget(sql, PER_HALL_POWER),
         options: {},
         fieldConfig: { defaults: { unit: "watt", fillOpacity: 12 }, overrides: [] },
@@ -301,7 +302,7 @@ function overviewDashboard(sql: string): Record<string, unknown> {
         id: "inlet",
         type: "timeseries",
         title: "Inlet temperature per row",
-        grid: { x: 14, y: 4, w: 10, h: 8 },
+        grid: { x: 14, y: 4, w: 10, h: 9 },
         targets: sqlTarget(sql, INLET_PER_ROW),
         options: {},
         fieldConfig: { defaults: { unit: "celsius", decimals: 1 }, overrides: [] },
@@ -310,20 +311,20 @@ function overviewDashboard(sql: string): Record<string, unknown> {
         id: "rows",
         type: "bar",
         title: "Average power per row",
-        grid: { x: 0, y: 12, w: 7, h: 8 },
+        grid: { x: 0, y: 13, w: 7, h: 8 },
         targets: sqlTarget(
           sql,
           "SELECT 'Row ' || row AS row, ROUND(AVG(total) / 1000.0, 1) AS power FROM (SELECT ts, row, SUM(power_w) AS total FROM rack_metrics WHERE hall = $hall AND $__timeFilter(ts) GROUP BY ts, row) GROUP BY row ORDER BY row",
         ),
         options: { legend: { mode: "hidden", placement: "bottom", values: [] } },
         // In kW with a custom suffix: the watt unit writes the axis' zero as "0 nW".
-        fieldConfig: { defaults: { unit: "suffix:kW" }, overrides: [] },
+        fieldConfig: { defaults: { unit: "suffix:kW", color: "chart-1" }, overrides: [] },
       },
       {
         id: "pue-halls",
         type: "bargauge",
         title: "PUE per hall",
-        grid: { x: 7, y: 12, w: 6, h: 8 },
+        grid: { x: 7, y: 13, w: 6, h: 8 },
         targets: sqlTarget(
           sql,
           "SELECT hall, ROUND(AVG(facility_w * 1.0 / it_w), 3) AS PUE FROM hall_power WHERE $__timeFilter(ts) GROUP BY hall ORDER BY hall",
@@ -350,14 +351,26 @@ function overviewDashboard(sql: string): Record<string, unknown> {
         id: "racks",
         type: "table",
         title: "Racks with the highest power draw",
-        grid: { x: 13, y: 12, w: 11, h: 8 },
+        grid: { x: 13, y: 13, w: 11, h: 8 },
         targets: sqlTarget(
           sql,
           'SELECT rack AS Rack, hall AS Hall, ROUND(AVG(power_w) / 1000.0, 1) AS "Avg kW", ROUND(MAX(inlet_c), 1) AS "Max inlet °C", ROUND(AVG(cpu_pct)) AS "Avg CPU %" FROM rack_metrics WHERE $__timeFilter(ts) GROUP BY rack, hall ORDER BY 3 DESC LIMIT 8',
         ),
         options: {},
+        fieldConfig: oneDecimal(["Avg kW", "Max inlet °C"]),
       },
     ],
+  };
+}
+
+/** One decimal for these table columns, so 7 reads 7.0 beside 7.3. */
+function oneDecimal(names: string[]): Record<string, unknown> {
+  return {
+    defaults: {},
+    overrides: names.map((value) => ({
+      matcher: { type: "name", value },
+      properties: { decimals: 1 },
+    })),
   };
 }
 
@@ -383,6 +396,7 @@ function graphPanel(
 const TOPOLOGY = "Network and power topology";
 const TOPOLOGY_PANEL = "Switches, servers, racks, power and cooling";
 const GRAPH_VIEWS = "Site Basalt structure";
+const EXPLORER = "Explore the topology";
 const PANEL = {
   hierarchy: "Site, halls, rows, racks and servers",
   network: "srv-b1-01-1 to core-1",
@@ -395,6 +409,11 @@ const ALL_SOURCES = "Site Basalt, all sources";
 const LIVE = "Rack temperatures, live";
 const PIPELINE = "In-service servers of hall B";
 const STEPS = "Inlet temperature hall B with trend";
+
+/** A pipeline as a person writes it: each stage indented on lines of its own. */
+function pipelineText(stages: unknown[]): string {
+  return `[\n${stages.map((stage) => JSON.stringify(stage, null, 2)).join(",\n")}\n]`;
+}
 
 async function seed(): Promise<Seeded> {
   const dbFile = join(fixturesDir(), "datacenter.db");
@@ -448,7 +467,7 @@ async function seed(): Promise<Seeded> {
           "network",
           TOPOLOGY_PANEL,
           { x: 0, y: 0, w: 24, h: 20 },
-          "MATCH (a)-[r:LINK|UPLINK|FEEDS|BACKS_UP|COOLS|MOUNTED_IN]->(b) RETURN a, r, b",
+          "MATCH (a)-[r:LINK|UPLINK|FEEDS|BACKS_UP|COOLS|MOUNTED_IN|CONTAINS]->(b) WHERE NOT a:Site AND NOT a:Hall RETURN a, r, b",
         ),
       ],
     });
@@ -464,15 +483,16 @@ async function seed(): Promise<Seeded> {
           "tree",
           "hierarchy",
           PANEL.hierarchy,
-          { x: 0, y: 0, w: 12, h: 11 },
+          { x: 0, y: 0, w: 24, h: 11 },
           "MATCH (a)-[r:CONTAINS]->(b) RETURN a, r, b",
+          { sizeBy: "" },
         ),
         graphPanel(
           graph,
           "uplinks",
           "path",
           PANEL.network,
-          { x: 12, y: 0, w: 12, h: 11 },
+          { x: 0, y: 11, w: 12, h: 9 },
           "MATCH p = allShortestPaths((s:Server {name: 'srv-b1-01-1'})-[:LINK|UPLINK*..4]->(c:Switch {name: 'core-1'})) RETURN p",
         ),
         graphPanel(
@@ -480,15 +500,24 @@ async function seed(): Promise<Seeded> {
           "feeds",
           "path",
           PANEL.power,
-          { x: 0, y: 11, w: 12, h: 9 },
+          { x: 12, y: 11, w: 12, h: 9 },
           "MATCH p = allShortestPaths((g:Utility)-[:FEEDS|CONTAINS*..6]->(s:Server {name: 'srv-c2-02-2'})) RETURN p",
         ),
+      ],
+    });
+
+    const explorer = await owner.createDashboard({
+      schemaVersion: 2,
+      title: EXPLORER,
+      timeRange: { from: "now-24h", to: "now" },
+      variables: [],
+      panels: [
         graphPanel(
           graph,
           "explorer",
           "network",
           PANEL.explorer,
-          { x: 12, y: 11, w: 12, h: 9 },
+          { x: 0, y: 0, w: 24, h: 20 },
           "MATCH (s:Switch {name: 'spine-a1'}) RETURN s",
           { explorer: true, expandLimit: 12 },
         ),
@@ -499,7 +528,7 @@ async function seed(): Promise<Seeded> {
       {
         refId: "A",
         datasourceId: mongo,
-        query: { collection, pipeline: JSON.stringify(stages) },
+        query: { collection, pipeline: pipelineText(stages) },
       },
     ];
     const lastWeek = { $gte: { $date: new Date(GALLERY_NOW - 7 * DAY).toISOString() } };
@@ -513,7 +542,7 @@ async function seed(): Promise<Seeded> {
           id: "incidents",
           type: "documents",
           title: "Incidents, newest first",
-          grid: { x: 0, y: 0, w: 12, h: 20 },
+          grid: { x: 0, y: 0, w: 11, h: 20 },
           targets: mongoTarget("incidents", [
             { $match: { openedAt: lastWeek } },
             { $sort: { openedAt: -1 } },
@@ -524,23 +553,23 @@ async function seed(): Promise<Seeded> {
           id: "schema",
           type: "schema",
           title: "Fields of the asset records",
-          grid: { x: 12, y: 0, w: 12, h: 11 },
+          grid: { x: 11, y: 0, w: 13, h: 8 },
           targets: mongoTarget("assets", []),
           options: {},
         },
         {
           id: "bios",
           type: "distribution",
-          title: "BIOS firmware versions",
-          grid: { x: 12, y: 11, w: 6, h: 9 },
+          title: "BMC firmware versions",
+          grid: { x: 11, y: 8, w: 6, h: 12 },
           targets: mongoTarget("assets", []),
-          options: { path: "firmware.bios" },
+          options: { path: "firmware.bmc" },
         },
         {
           id: "vendor",
           type: "distribution",
           title: "Servers per vendor",
-          grid: { x: 18, y: 11, w: 6, h: 9 },
+          grid: { x: 17, y: 8, w: 7, h: 12 },
           targets: mongoTarget("assets", []),
           options: { path: "vendor" },
         },
@@ -588,6 +617,7 @@ async function seed(): Promise<Seeded> {
             },
           ],
           options: { legend: { mode: "hidden", placement: "bottom", values: [] } },
+          fieldConfig: { defaults: { color: "chart-3" }, overrides: [] },
         },
         {
           id: "severity",
@@ -657,6 +687,7 @@ async function seed(): Promise<Seeded> {
             'SELECT rack AS Rack, row AS Row, inlet_c AS "Inlet °C", outlet_c AS "Outlet °C", ROUND(power_w / 1000.0, 1) AS kW, cpu_pct AS "CPU %" FROM rack_metrics WHERE hall = \'Hall B\' AND ts = (SELECT MAX(ts) FROM rack_metrics WHERE $__timeFilter(ts)) ORDER BY inlet_c DESC LIMIT 8',
           ),
           options: {},
+          fieldConfig: oneDecimal(["Inlet °C", "Outlet °C", "kW", "CPU %"]),
         },
       ],
     });
@@ -675,7 +706,6 @@ async function seed(): Promise<Seeded> {
             hostname: 1,
             role: 1,
             vendor: 1,
-            model: 1,
             location: 1,
             firmware: 1,
             powerDrawW: 1,
@@ -689,11 +719,11 @@ async function seed(): Promise<Seeded> {
     const steps = await owner.createAnalysis({
       schemaVersion: 1,
       title: STEPS,
-      description: "The warmest rack inlet in hall B, smoothed over an hour, with its trend.",
+      description: "The average rack inlet in hall B, smoothed over an hour, with its trend.",
       timeRange: { from: "now-24h", to: "now" },
       targets: sqlTarget(
         sql,
-        "SELECT ts AS time, MAX(inlet_c) AS inlet FROM rack_metrics WHERE hall = 'Hall B' AND $__timeFilter(ts) GROUP BY ts ORDER BY ts",
+        "SELECT ts AS time, ROUND(AVG(inlet_c), 2) AS inlet FROM rack_metrics WHERE hall = 'Hall B' AND $__timeFilter(ts) GROUP BY ts ORDER BY ts",
       ),
       steps: [
         {
@@ -717,6 +747,7 @@ async function seed(): Promise<Seeded> {
       overview,
       topology,
       graphViews,
+      explorer,
       documents,
       allSources,
       live,
@@ -789,6 +820,18 @@ for (const scheme of SCHEMES) {
 }
 
 for (const scheme of SCHEMES) {
+  test(`graph network, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await openDashboard(page, seeded().topology, TOPOLOGY);
+    await graphDrawn(card(page, TOPOLOGY_PANEL), TOPOLOGY_PANEL);
+    await noEmptyPanels(page);
+    await shoot(page, `graph-network-${scheme}`);
+    await page.context().close();
+  });
+}
+
+for (const scheme of SCHEMES) {
   test(`graph network with the node inspector, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
@@ -800,13 +843,13 @@ for (const scheme of SCHEMES) {
       panel.getByRole("region", { name: t("graph.details", { name: "srv-b1-01-1" }) }),
     ).toBeVisible();
     await noEmptyPanels(page);
-    await shoot(page, `graph-network-${scheme}`);
+    await shoot(page, `graph-inspector-${scheme}`);
     await page.context().close();
   });
 }
 
 for (const scheme of SCHEMES) {
-  test(`graph hierarchy, paths and explorer, ${scheme}`, async ({ browser }) => {
+  test(`graph hierarchy and paths, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
     await openDashboard(page, seeded().graphViews, GRAPH_VIEWS);
@@ -821,31 +864,55 @@ for (const scheme of SCHEMES) {
         name: t("graph.path.title", { number: 1, count: 4 }),
       }),
     ).toBeVisible();
-    // Explorer mode: the spine's neighbours loaded, then one of its leaf switches selected.
-    const around = card(page, PANEL.explorer);
-    await selectNode(around, PANEL.explorer, "spine-a1");
-    const load = around.getByRole("button", { name: t("graph.explorer.expand"), exact: true });
-    await expect(load).toBeVisible();
-    if (await load.isEnabled()) await load.click();
-    const undo = around.getByRole("button", {
-      name: t("graph.explorer.undo", { name: "spine-a1" }),
-      exact: true,
-    });
-    await expect(undo).toBeVisible();
-    await around.getByRole("button", { name: "leaf-a1-01", exact: true }).click();
-    await expect(load).toBeVisible();
-    if (await load.isEnabled()) await load.click();
-    await expect(
-      around.getByRole("button", {
-        name: t("graph.explorer.undo", { name: "leaf-a1-01" }),
-        exact: true,
-      }),
-    ).toBeVisible();
-    await showDrawing(around, PANEL.explorer);
     await noEmptyPanels(page);
-    await shoot(page, `graph-views-${scheme}`);
+    await shoot(page, `graph-hierarchy-paths-${scheme}`);
     await page.context().close();
   });
+}
+
+/** Loads the neighbours of a node in explorer mode, from the node's row in the panel's table. */
+async function expand(around: Locator, node: string): Promise<void> {
+  await around.getByRole("button", { name: node, exact: true }).click();
+  // The click loads the neighbours at once once the panel knows the source may be queried;
+  // before that it only selects, and the details offer the same action.
+  const load = around.getByRole("button", { name: t("graph.explorer.expand"), exact: true });
+  await expect(load).toBeVisible();
+  if (await load.isEnabled()) await load.click();
+  await expect(
+    around.getByRole("button", { name: t("graph.explorer.undo", { name: node }), exact: true }),
+  ).toBeVisible();
+}
+
+for (const scheme of SCHEMES) {
+  test(`graph explorer mid-expansion, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await openDashboard(page, seeded().explorer, EXPLORER);
+    // From a spine switch to its leaves and cores, then from one leaf to its rack and servers.
+    const around = card(page, PANEL.explorer);
+    await graphDrawn(around, PANEL.explorer);
+    await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
+    await expand(around, "spine-a1");
+    await expand(around, "leaf-a1-01");
+    await showDrawing(around, PANEL.explorer);
+    await noEmptyPanels(page);
+    await shoot(page, `graph-explorer-${scheme}`);
+    await page.context().close();
+  });
+}
+
+/** Opens the first document of a tree and some of its nested fields. */
+async function openDocument(tree: Locator, fields: string[]): Promise<void> {
+  await tree
+    .getByRole("treeitem", { name: /^Document 1\b/ })
+    .first()
+    .click();
+  for (const field of fields) {
+    await tree
+      .getByRole("treeitem", { name: new RegExp(`^${field}\\b`) })
+      .first()
+      .click();
+  }
 }
 
 for (const scheme of SCHEMES) {
@@ -864,6 +931,7 @@ for (const scheme of SCHEMES) {
     });
     await expect(preview).toBeVisible();
     await expect(preview.locator('[aria-busy="true"]')).toHaveCount(0);
+    await openDocument(preview.getByRole("tree").first(), ["location", "firmware"]);
     await shoot(page, `documents-pipeline-${scheme}`);
     await page.context().close();
   });
@@ -874,7 +942,9 @@ for (const scheme of SCHEMES) {
     const page = await openPage(browser, scheme);
     await signIn(page);
     await openDashboard(page, seeded().documents, DOCUMENTS);
-    await expect(card(page, "Incidents, newest first").getByRole("tree").first()).toBeVisible();
+    const incidents = card(page, "Incidents, newest first").getByRole("tree").first();
+    await expect(incidents).toBeVisible();
+    await openDocument(incidents, ["source", "measurement", "timeline"]);
     await expect(card(page, "Fields of the asset records")).toContainText("hardware");
     await noEmptyPanels(page);
     await shoot(page, `documents-dashboard-${scheme}`);

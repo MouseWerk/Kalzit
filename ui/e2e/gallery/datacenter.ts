@@ -45,6 +45,8 @@ interface Rack {
   basePowerW: number;
   inletOffset: number;
   cpuBase: number;
+  /** Where the rack's slow drift starts, so the racks do not move in step. */
+  phase: number;
 }
 
 function racks(random: () => number): Rack[] {
@@ -62,6 +64,7 @@ function racks(random: () => number): Rack[] {
           // The racks at the row ends sit next to the warm aisle return.
           inletOffset: (k === RACKS_PER_ROW ? 1.6 : 0) + (h === 1 ? 1.1 : 0) + random() * 1.4,
           cpuBase: 28 + random() * 22,
+          phase: random() * 2 * Math.PI,
         });
       }
     }
@@ -129,12 +132,16 @@ export function writeDatacenterDatabase(file: string, now = GALLERY_NOW): void {
       const load = dailyLoad(t);
       const itPerHall = new Map<string, number>();
       for (const rack of all) {
-        const jitter = (random() - 0.5) * 0.08;
-        const power = rack.basePowerW * (load + jitter);
-        const inlet = 21.4 + rack.inletOffset + 2.2 * load + (random() - 0.5) * 0.5;
-        // One rack in hall B runs warm for a while in the afternoon: the stat shows it.
-        const warm = rack.name === "B2-06" && n > 190 && n < 260 ? 2.4 : 0;
-        const cpu = Math.min(98, rack.cpuBase + 48 * (load - 0.6) * 1.6 + (random() - 0.5) * 6);
+        // A slow drift of its own and a little noise, as real sensors read.
+        const drift = 0.6 * Math.sin(n / 9 + rack.phase) + 0.4 * Math.sin(n / 23 + 2 * rack.phase);
+        const power = rack.basePowerW * (load + 0.025 * drift + (random() - 0.5) * 0.02);
+        const inlet = 21.4 + rack.inletOffset + 2.2 * load + 0.3 * drift + (random() - 0.5) * 0.12;
+        // One rack in hall B runs warm for a few hours before noon, then cools down again.
+        const warm = rack.name === "B2-06" ? 2.6 * Math.exp(-(((n - 205) / 32) ** 4)) : 0;
+        const cpu = Math.min(
+          98,
+          rack.cpuBase + 48 * (load - 0.6) * 1.6 + 3 * drift + (random() - 0.5) * 2,
+        );
         rackRow.run(
           time,
           rack.hall,
@@ -150,9 +157,15 @@ export function writeDatacenterDatabase(file: string, now = GALLERY_NOW): void {
       HALLS.forEach((hall, h) => {
         const it = itPerHall.get(hall) ?? 0;
         // Cooling works harder in the warm afternoon; hall C has the newer chillers.
-        const pue = 1.24 + h * 0.035 - (h === 2 ? 0.09 : 0) + 0.07 * load + (random() - 0.5) * 0.01;
+        const pue =
+          1.24 +
+          h * 0.035 -
+          (h === 2 ? 0.09 : 0) +
+          0.07 * load +
+          0.004 * Math.sin(n / 11 + h) +
+          (random() - 0.5) * 0.002;
         hallRow.run(time, hall, Math.round(it), Math.round(it * pue));
-        const gbps = (h === 1 ? 92 : 58) * (0.45 + load) + random() * 6;
+        const gbps = (h === 1 ? 92 : 58) * (0.45 + load) + 3 * Math.sin(n / 8 + h) + random() * 1.5;
         netRow.run(time, hall, Math.round(gbps * 1e9), Math.round(gbps * 0.72 * 1e9));
       });
     }

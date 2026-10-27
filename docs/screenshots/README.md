@@ -25,8 +25,10 @@ WebP (quality 90), mostly in dark and light:
 | `sign-in-*` | the sign-in page |
 | `dashboard-overview-*` | site overview: stats, time series, bar chart, bar gauge, table, a hall variable |
 | `dashboard-phone-*` | the overview on a phone (390 x 844) |
-| `graph-network-*` | the network and power topology with label colors and the node inspector on a server |
-| `graph-views-*` | the site hierarchy, two path panels (uplinks, A and B power feeds) and explorer mode mid-expansion |
+| `graph-network-*` | the network and power topology in one network panel, colored by label |
+| `graph-inspector-*` | the same with a server selected and the node inspector open |
+| `graph-hierarchy-paths-*` | site > hall > row > rack > server as a hierarchy, and two path panels (uplinks to a core switch, the A and B power feeds of a server) |
+| `graph-explorer-*` | explorer mode mid-expansion: a spine switch, then one of its leaves expanded |
 | `documents-pipeline-*` | Explore on MongoDB: a saved pipeline, the preview after stage 1, the document tree |
 | `documents-dashboard-*` | incidents as documents, the schema of the asset records, two field distributions |
 | `explore-steps-*` | Explore with a saved analysis and its steps (moving average, trend) |
