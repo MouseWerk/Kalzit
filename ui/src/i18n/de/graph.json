@@ -114,6 +114,7 @@
   "graph.steps.cancel": "Abbrechen",
   "graph.steps.undo": "Rückgängig",
   "graph.steps.reset": "Von vorn",
+  "graph.steps.next": "Nächster Schritt",
   "graph.steps.limit": "Nachbarn pro Schritt",
   "graph.steps.types": "Kantentypen",
   "graph.steps.allTypes": "Alle ({count})",

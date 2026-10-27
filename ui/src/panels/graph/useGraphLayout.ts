@@ -47,6 +47,16 @@ export interface LayoutState {
   worker: boolean;
 }
 
+/** Average width of a label's character in px, at the renderer's label size. */
+const LABEL_CHAR_PX = 8;
+/** Longer labels count as this many characters: a layer is not spread for one long name. */
+const LABEL_CHARS = 24;
+
+/** The width a node's label takes beside it, estimated from its length. */
+export function labelWidth(caption: string): number {
+  return Math.min(caption.length, LABEL_CHARS) * LABEL_CHAR_PX;
+}
+
 /** The layout input of a view, with nodes already placed starting where they were. */
 export function layoutRequest(
   view: GraphView,
@@ -62,6 +72,7 @@ export function layoutRequest(
     targets[i] = edge.target;
   });
   const sizes = Float32Array.from(view.nodes, (node) => node.size);
+  const labels = Float32Array.from(view.nodes, (node) => labelWidth(node.caption));
   const start = seedPositions(count);
   if (placed.size > 0) {
     // A node seen before starts where it was; a new one next to a placed neighbour.
@@ -97,6 +108,7 @@ export function layoutRequest(
     targets,
     weights: new Float32Array(view.edges.length).fill(1),
     sizes,
+    labels,
     start,
   };
 }
@@ -145,6 +157,7 @@ export function useGraphLayout(view: GraphView, mode: LayoutMode): LayoutState {
         request.targets.buffer,
         request.weights.buffer,
         request.sizes.buffer,
+        request.labels.buffer,
         request.start.buffer,
       ]);
       return () => {

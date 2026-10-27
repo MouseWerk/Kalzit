@@ -12,8 +12,13 @@ export interface LayoutGraph {
   targets: Uint32Array;
   /** Per edge; 1 when the panel weighs edges equally. */
   weights: Float32Array;
-  /** Per node, for the force layout's size adjustment. */
+  /** Per node, for the force layout's size adjustment and the hierarchy's spacing; px. */
   sizes: Float32Array;
+  /**
+   * Per node, the width its label takes beside it in px (an estimate); the hierarchy spaces the
+   * nodes of a layer by it. Absent: no labels.
+   */
+  labels?: Float32Array;
 }
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
@@ -121,9 +126,36 @@ export interface HierarchyResult {
   layers: number;
 }
 
-const LAYER_GAP = 60;
+/**
+ * Distances in px at a zoom that shows the drawing at its natural size: the renderer draws node
+ * sizes and labels in px, so a layer whose nodes stand at least their size and label apart has
+ * no label over a neighbour whenever the drawing is shown at that size or larger.
+ */
+const LAYER_GAP = 80;
 const NODE_GAP = 30;
+/** Space between a label's end and the next node in the layer. */
+const LABEL_GAP = 12;
 const SWEEPS = 4;
+
+/** Where a layer's nodes stand along it: each one its size and label away from the one before. */
+function rowOffsets(row: readonly number[], graph: LayoutGraph): number[] {
+  const out: number[] = [];
+  let x = 0;
+  row.forEach((node, i) => {
+    if (i > 0) {
+      const prev = row[i - 1] as number;
+      const before = graph.sizes[prev] ?? 0;
+      const label = graph.labels?.[prev] ?? 0;
+      const own = graph.sizes[node] ?? 0;
+      x += Math.max(NODE_GAP, before + (label > 0 ? label + LABEL_GAP : 0) + own + LABEL_GAP);
+    }
+    out.push(x);
+  });
+  // Centred on the node in the middle of the span, label included.
+  const last = row.at(-1);
+  const end = last === undefined ? 0 : (out.at(-1) ?? 0) + (graph.labels?.[last] ?? 0);
+  return out.map((at) => at - end / 2);
+}
 
 /**
  * A layered layout for directed graphs (dependencies, org charts): edges point down. Cycles are
@@ -226,9 +258,9 @@ export function hierarchyLayout(graph: LayoutGraph): HierarchyResult {
 
   const positions = new Float32Array(count * 2);
   for (const row of rows) {
-    const offset = ((row.length - 1) * NODE_GAP) / 2;
+    const offsets = rowOffsets(row, graph);
     row.forEach((node, i) => {
-      positions[2 * node] = i * NODE_GAP - offset;
+      positions[2 * node] = offsets[i] as number;
       // Graph coordinates grow upwards; the first layer goes on top.
       positions[2 * node + 1] = -(layer[node] as number) * LAYER_GAP;
     });

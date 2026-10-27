@@ -12,6 +12,8 @@ export interface LayoutRequest {
   targets: Uint32Array;
   weights: Float32Array;
   sizes: Float32Array;
+  /** Estimated label widths in px (layoutEngine.ts, LayoutGraph). */
+  labels: Float32Array;
   /** Where nodes start (the previous layout for nodes already placed). */
   start: Float32Array;
 }
