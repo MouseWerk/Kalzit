@@ -127,13 +127,14 @@ test("an admin connects a provider and turns AI on; Explore explains a query and
     // The server switch turns on now that a provider in effect passed its test.
     await page.goto("/settings/ai");
     const enabled = page.getByRole("switch", { name: t("admin.settings.ai.enabled.label") });
-    await enabled.check();
+    // The row applies on the server's answer, so the box turns on after it, not on the click.
+    await enabled.click();
     await expect(enabled).toBeChecked();
 
     // The source is opened to AI where it is configured.
     await page.goto(`/data-sources/${sourceId}`);
     const access = page.getByRole("switch", { name: t("ai.source.readable") });
-    await access.check();
+    await access.click();
     await expect(access).toBeChecked();
 
     // Explain: the first call shows the notice, then the answer streams in.
