@@ -126,11 +126,22 @@ fn is_type(var: &str, ty: &str) -> String {
 /// The user's query, and every distinct node and relationship it returned, as `__kz_nodes` and
 /// `__kz_rels`: nodes, relationships with both their ends, paths, and lists of these.
 fn prelude(query: &str, columns: &[String], dialect: Dialect) -> String {
-    let row = columns.iter().map(|c| quoted(c)).collect::<Vec<_>>().join(", ");
+    // Neo4j types the columns while planning and refuses `nodes()` on a column that cannot be a
+    // path; read through a map with a key known only when running, a value has no known type.
+    let values = match dialect {
+        Dialect::Neo4j => {
+            let map = columns.iter().map(|c| format!("{}: {}", quoted(c), quoted(c))).collect::<Vec<_>>().join(", ");
+            let keys = columns.iter().map(|c| text(c)).collect::<Vec<_>>().join(", ");
+            format!("WITH {{{map}}} AS __kz_row\nUNWIND [{keys}] AS __kz_k\nWITH __kz_row[__kz_k] AS __kz_v\n")
+        }
+        Dialect::Memgraph => {
+            let row = columns.iter().map(|c| quoted(c)).collect::<Vec<_>>().join(", ");
+            format!("WITH [{row}] AS __kz_row\nUNWIND __kz_row AS __kz_v\n")
+        }
+    };
     format!(
         "{call}\n{query}\n}}\n\
-         WITH [{row}] AS __kz_row\n\
-         UNWIND __kz_row AS __kz_v\n\
+         {values}\
          UNWIND CASE WHEN {list} THEN __kz_v ELSE [__kz_v] END AS __kz_e\n\
          UNWIND CASE\n  \
          WHEN {node} THEN [__kz_e]\n  \
