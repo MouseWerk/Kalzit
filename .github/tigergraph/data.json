@@ -1,0 +1,21 @@
+{
+  "vertices": {
+    "Person": {
+      "1": { "name": { "value": "Ana" }, "age": { "value": 31 }, "gross": { "value": 9007199254740993 }, "seit": { "value": "2024-01-01 00:00:00" } },
+      "2": { "name": { "value": "Bo" }, "age": { "value": 27 } },
+      "3": { "name": { "value": "Cem" }, "age": { "value": 45 } },
+      "9": { "name": { "value": "Opfer" } }
+    },
+    "Ort": {
+      "7": { "name": { "value": "Wien" } }
+    }
+  },
+  "edges": {
+    "Person": {
+      "1": {
+        "Friend": { "Person": { "2": { "since": { "value": 2020 } }, "3": { "since": { "value": 2021 } } } },
+        "Lebt": { "Ort": { "7": {} } }
+      }
+    }
+  }
+}
