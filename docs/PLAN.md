@@ -481,6 +481,10 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 8. **M7 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
    (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase).
+9. **M8 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
+   (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
+   Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
+   Rücknahmen; der signierte Katalog dort ist die Quelle für den Katalog in Kalzit (M4).
 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
 und einem Durchgang nach `quality/perfection-pass.md`.

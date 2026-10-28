@@ -435,6 +435,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, InfluxDB, Loki, ClickHouse | Planned |
 | M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs | Planned |
 | M7 Expansion | Alerting, public links, provisioning as code, further sources (Graphite, Redis, Oracle, traces) | Planned |
+| M8 Plugin store | Community store for plugins: a site with every plugin, submissions by community authors, review and signing, revocations; the source of the catalog in Kalzit | Planned |
 
 ## Documentation
 
