@@ -1937,6 +1937,7 @@ dependencies = [
  "hyper-util",
  "ipnet",
  "kalzit-plugin-api",
+ "kalzit-plugin-tool",
  "kalzit-release",
  "libc",
  "mime_guess",
@@ -1981,9 +1982,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalzit-csv-http"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "kalzit-plugin-sdk",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "url",
+]
+
+[[package]]
 name = "kalzit-plugin-api"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "ed25519-dalek",
  "hex",
  "kalzit-release",
@@ -1999,6 +2018,37 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "kalzit-plugin-sdk"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hyper-util",
+ "kalzit-plugin-api",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tower",
+ "windows",
+]
+
+[[package]]
+name = "kalzit-plugin-tool"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "hex",
+ "kalzit-plugin-api",
+ "kalzit-release",
+ "serde_json",
+ "sha2 0.11.1",
+ "toml",
+ "zeroize",
+ "zip",
 ]
 
 [[package]]

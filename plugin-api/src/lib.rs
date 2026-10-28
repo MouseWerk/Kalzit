@@ -1,11 +1,12 @@
 //! The Kalzit plugin contract (docs/ARCHITECTURE.md, "Plugins"): the data source protocol that
 //! plugin processes serve over gRPC, the plugin manifest with its validator, the signing and
-//! trust rules, and the catalog index. The server and plugin SDKs share this crate; the host
-//! itself (processes, sandbox, catalog downloads) lives in the server.
+//! trust rules, the catalog index, and the panel message API. The server and plugin SDKs share
+//! this crate; the host itself (processes, sandbox, catalog downloads) lives in the server.
 
 pub mod catalog;
 pub mod connector;
 pub mod manifest;
+pub mod panel;
 pub mod signing;
 
 /// The data source protocol, version 1, generated from

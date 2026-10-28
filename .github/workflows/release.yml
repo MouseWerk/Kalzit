@@ -45,6 +45,11 @@ jobs:
             exe: .exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    # The binary's SHA-256 per platform, checked in `publish` before signing; a leg leaves the
+    # other's output empty, which does not overwrite it.
+    outputs:
+      sha256-linux-x64: ${{ steps.package.outputs.sha256-linux-x64 }}
+      sha256-windows-x64: ${{ steps.package.outputs.sha256-windows-x64 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -90,22 +95,274 @@ jobs:
         env:
           KALZIT_UPDATE_PUBLIC_KEYS: ${{ vars.KALZIT_UPDATE_PUBLIC_KEYS }}
       - name: Package
+        id: package
         shell: bash
         run: |
+          set -euo pipefail
           mkdir dist
           name="kalzit-${{ steps.version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.exe }}"
           cp "target/release/kalzit${{ matrix.exe }}" "dist/$name"
           # The same check a server makes before it installs: the binary runs and names its version.
           "dist/$name" --version | grep -qw "${{ steps.version.outputs.version }}"
+          echo "sha256-${{ matrix.platform }}-${{ matrix.arch }}=$(sha256sum "dist/$name" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kalzit-${{ matrix.platform }}-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
+  # The example plugins (examples/plugins) for Windows and Linux. Building them needs no key; the
+  # hash of each binary goes on as a job output and is checked where the binary is used.
+  plugin-build:
+    name: plugin build (${{ matrix.platform }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            exe: ""
+          - os: windows-latest
+            platform: windows-x64
+            exe: .exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    # One output per platform; a leg leaves the other's empty, which does not overwrite it.
+    outputs:
+      sha256-linux-x64: ${{ steps.collect.outputs.sha256-linux-x64 }}
+      sha256-windows-x64: ${{ steps.collect.outputs.sha256-windows-x64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag on main
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME does not point at a commit of main"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - run: cargo build --release --locked -p kalzit-csv-http
+      - name: Collect
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p plugin-bin/${{ matrix.platform }}
+          cp "target/release/kalzit-csv-http${{ matrix.exe }}" plugin-bin/${{ matrix.platform }}/
+          sum="$(sha256sum "plugin-bin/${{ matrix.platform }}/kalzit-csv-http${{ matrix.exe }}" | cut -d' ' -f1)"
+          echo "sha256-${{ matrix.platform }}=$sum" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-bin-${{ matrix.platform }}
+          path: plugin-bin/
+          if-no-files-found: error
+
+  # Builds the example packages unsigned (one package with both binaries for the data source, one
+  # for the panel) and writes their exact manifests, for signing in `plugin-sign`. No key here,
+  # so the plugin crates and their dependencies never run next to it.
+  plugin-package:
+    name: package plugins
+    needs: plugin-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      sums: ${{ steps.package.outputs.sums }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-bin-linux-x64
+          path: plugin-bin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-bin-windows-x64
+          path: plugin-bin
+      - name: Check the binaries
+        shell: bash
+        env:
+          LINUX: ${{ needs.plugin-build.outputs.sha256-linux-x64 }}
+          WINDOWS: ${{ needs.plugin-build.outputs.sha256-windows-x64 }}
+        run: |
+          set -euo pipefail
+          test -n "$LINUX" && test -n "$WINDOWS"
+          printf '%s  %s\n' "$LINUX" plugin-bin/linux-x64/kalzit-csv-http \
+            "$WINDOWS" plugin-bin/windows-x64/kalzit-csv-http.exe | sha256sum -c -
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - run: cargo build --release --locked -p kalzit-plugin-tool --bin kalzit-plugin
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p plugins
+          tool=target/release/kalzit-plugin
+          version="$(grep -m1 '^version = ' examples/plugins/csv-http/kalzit-plugin.toml | cut -d'"' -f2)"
+          "$tool" package --manifest examples/plugins/csv-http/kalzit-plugin.toml \
+            --file bin/linux-x64/kalzit-csv-http=plugin-bin/linux-x64/kalzit-csv-http \
+            --file bin/windows-x64/kalzit-csv-http.exe=plugin-bin/windows-x64/kalzit-csv-http.exe \
+            --file README.md=examples/plugins/csv-http/README.md \
+            --unsigned --out "plugins/dev.kalzit.csv-http-$version.zip" \
+            --manifest-out "plugins/dev.kalzit.csv-http-$version.toml"
+          version="$(grep -m1 '^version = ' examples/plugins/panel-kpi/kalzit-plugin.toml | cut -d'"' -f2)"
+          "$tool" package --manifest examples/plugins/panel-kpi/kalzit-plugin.toml \
+            --file panel.js=examples/plugins/panel-kpi/panel.js \
+            --file README.md=examples/plugins/panel-kpi/README.md \
+            --unsigned --out "plugins/dev.kalzit.panel-kpi-$version.zip" \
+            --manifest-out "plugins/dev.kalzit.panel-kpi-$version.toml"
+          {
+            echo "sums<<SUMS"
+            (cd plugins && sha256sum -- *)
+            echo "SUMS"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-unsigned
+          path: plugins/
+          if-no-files-found: error
+
+  # Signs the plugin manifests with Kalzit's plugin key: KALZIT_PLUGIN_SIGNING_KEY in the
+  # `release` environment (reviewers approve each run); only release tags reach it, pull requests
+  # sign with a throwaway key (ci.yml, job `plugins`). It builds only the small release crate
+  # (kalzit-sign) and signs only the manifests' bytes, which pin every file by its hash.
+  plugin-sign:
+    name: sign plugins
+    needs: plugin-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    outputs:
+      sums: ${{ steps.sign.outputs.sums }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag on main
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME does not point at a commit of main"
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-unsigned
+          path: plugins
+      - name: Check the packages
+        shell: bash
+        env:
+          SUMS: ${{ needs.plugin-package.outputs.sums }}
+        run: |
+          set -euo pipefail
+          cd plugins
+          printf '%s\n' "$SUMS" | sha256sum -c -
+          test "$(ls | wc -l)" -eq "$(printf '%s\n' "$SUMS" | grep -c .)"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - run: cargo build --release --locked -p kalzit-release --bin kalzit-sign
+      - name: Sign
+        id: sign
+        shell: bash
+        env:
+          KALZIT_PLUGIN_SIGNING_KEY: ${{ secrets.KALZIT_PLUGIN_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KALZIT_PLUGIN_SIGNING_KEY" ]; then
+            echo "::error::KALZIT_PLUGIN_SIGNING_KEY is not set in the release environment (docs/plugins/authoring.md)"
+            exit 1
+          fi
+          args=()
+          for manifest in plugins/*.toml; do args+=(--manifest "$manifest"); done
+          target/release/kalzit-sign sign-plugin-manifest "${args[@]}"
+          mkdir -p signatures
+          mv plugins/*.toml.sig signatures/
+          {
+            echo "sums<<SUMS"
+            (cd signatures && sha256sum -- *)
+            echo "SUMS"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-signatures
+          path: signatures/
+          if-no-files-found: error
+
+  # Adds the signatures to the packages and checks them against the main public key compiled
+  # into Kalzit (server/src/plugins/package.rs, KALZIT_PLUGIN_MAIN_KEY), so a wrong secret fails
+  # here, before anything is published. No key here.
+  plugin-finish:
+    name: finish plugins
+    needs: [plugin-package, plugin-sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      sums: ${{ steps.finish.outputs.sums }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-unsigned
+          path: plugins
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-signatures
+          path: signatures
+      - name: Check the packages and signatures
+        shell: bash
+        env:
+          PACKAGES: ${{ needs.plugin-package.outputs.sums }}
+          SIGNATURES: ${{ needs.plugin-sign.outputs.sums }}
+        run: |
+          set -euo pipefail
+          (cd plugins && printf '%s\n' "$PACKAGES" | sha256sum -c -)
+          (cd signatures && printf '%s\n' "$SIGNATURES" | sha256sum -c -)
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - run: cargo build --release --locked -p kalzit-plugin-tool --bin kalzit-plugin
+      - name: Attach and check against Kalzit's compiled key
+        id: finish
+        shell: bash
+        run: |
+          set -euo pipefail
+          public="$(sed -n 's/^pub const KALZIT_PLUGIN_MAIN_KEY: &str = "\([A-Za-z0-9+/=]*\)";$/\1/p' server/src/plugins/package.rs)"
+          test -n "$public"
+          mkdir -p dist
+          for package in plugins/*.zip; do
+            name="$(basename "$package" .zip)"
+            target/release/kalzit-plugin attach-signature --package "$package" \
+              --signature "signatures/$name.toml.sig" --public-key "$public" --out "dist/$name.zip"
+            target/release/kalzit-plugin verify --package "dist/$name.zip" --public-key "$public"
+          done
+          {
+            echo "sums<<SUMS"
+            (cd dist && sha256sum -- *)
+            echo "SUMS"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-packages
+          path: dist/
+          if-no-files-found: error
+
+  # Waits for the plugin packages, so a release is never published without them.
   publish:
     name: sign and publish
-    needs: build
+    needs: [build, plugin-finish]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Holds KALZIT_RELEASE_SIGNING_KEY; required reviewers approve every run
@@ -126,10 +383,34 @@ jobs:
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main"
             exit 1
           fi
+      # Exactly the artifacts of this run by name, each checked against the hash its job reported.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: kalzit-linux-x64
           path: dist
-          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kalzit-windows-x64
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-packages
+          path: dist
+      - name: Check the downloads
+        shell: bash
+        env:
+          LINUX: ${{ needs.build.outputs.sha256-linux-x64 }}
+          WINDOWS: ${{ needs.build.outputs.sha256-windows-x64 }}
+          PLUGINS: ${{ needs.plugin-finish.outputs.sums }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          test -n "$LINUX" && test -n "$WINDOWS" && test -n "$PLUGINS"
+          cd dist
+          printf '%s  %s\n' "$LINUX" "kalzit-$version-linux-x64" \
+            "$WINDOWS" "kalzit-$version-windows-x64.exe" | sha256sum -c -
+          printf '%s\n' "$PLUGINS" | sha256sum -c -
+          test "$(ls | wc -l)" -eq "$((2 + $(printf '%s\n' "$PLUGINS" | grep -c .)))"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -156,6 +437,8 @@ jobs:
             --package "linux:x64:dist/kalzit-$version-linux-x64" \
             --package "windows:x64:dist/kalzit-$version-windows-x64.exe" \
             --out-dir dist
+      # The release with the server binaries, their signed manifest and offline packages, and
+      # the signed plugin packages.
       - name: Publish
         shell: bash
         env:

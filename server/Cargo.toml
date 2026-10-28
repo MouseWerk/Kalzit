@@ -80,6 +80,8 @@ windows = { version = "0.62.2", features = [
 
 [dev-dependencies]
 http-body-util = "0.1.5"
+# Packages the example plugin in the plugin contract tests.
+kalzit-plugin-tool = { path = "../plugin-tool" }
 rcgen = "0.14.10"
 # A WebSocket client for the live update tests; the version axum's server side uses.
 tokio-tungstenite = "0.29.0"

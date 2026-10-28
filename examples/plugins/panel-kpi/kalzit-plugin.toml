@@ -1,0 +1,14 @@
+manifest = 1
+id = "dev.kalzit.panel-kpi"
+name = "KPI tile"
+version = "0.1.0"
+kind = "panel"
+min_kalzit = "0.4.0"
+shapes = ["frame"]
+description = "The latest value of a number field, its change and a sparkline."
+publisher = "Kalzit"
+license = "AGPL-3.0-only"
+
+[panel]
+path = "panel.js"
+api = 1

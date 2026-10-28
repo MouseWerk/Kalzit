@@ -22,10 +22,10 @@ env:
 
 # Which jobs run: on a pull request only those for the areas it changes (job `changes`, rules in
 # .github/scripts/changes.sh and docs/ARCHITECTURE.md, "CI"); on main and in the merge queue all
-# of them. A job without work still reports its check: the matrix jobs (server, ui, e2e) run and
-# skip their steps, because a matrix job skipped as a whole reports no check per matrix value;
-# the other jobs are skipped as a whole, which counts as passed. If `changes` fails, everything
-# runs.
+# of them. A job without work still reports its check: the matrix jobs (server, plugins, ui,
+# e2e) run and skip their steps, because a matrix job skipped as a whole reports no check per
+# matrix value; the other jobs are skipped as a whole, which counts as passed. If `changes`
+# fails, everything runs.
 jobs:
   changes:
     name: changes
@@ -89,6 +89,79 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - if: env.RUN_JOB == 'true'
         run: cargo test --locked
+
+  # The example plugins (examples/plugins), built, packaged and signed per system the way a
+  # release does (release.yml, jobs `plugin-*`), but with a throwaway key made in the job: pull
+  # requests never see Kalzit's plugin key. The packages are then checked against that key.
+  plugins:
+    name: plugins (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            exe: ""
+          - os: windows-latest
+            platform: windows-x64
+            exe: .exe
+    runs-on: ${{ matrix.os }}
+    env:
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.server == 'true' }}
+    steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        run: echo "No server change in this pull request; the plugin packages are skipped."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.RUN_JOB == 'true'
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        if: env.RUN_JOB == 'true'
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: env.RUN_JOB == 'true'
+        with:
+          key: plugins
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - if: env.RUN_JOB == 'true'
+        run: cargo build --release --locked -p kalzit-csv-http -p kalzit-plugin-tool -p kalzit-release
+      # The release's steps: packages built unsigned, their manifests signed by kalzit-sign (here
+      # with a throwaway key in place of the release environment's), the signatures attached and
+      # checked.
+      - name: Package, sign with a throwaway key, attach and verify
+        if: env.RUN_JOB == 'true'
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          set -euo pipefail
+          tool="target/release/kalzit-plugin$EXE"
+          key="$RUNNER_TEMP/throwaway-plugin-key"
+          public="$("$tool" keygen --out "$key" | sed -n 's/^public key: //p')"
+          test -n "$public"
+          mkdir -p dist
+          "$tool" package --manifest examples/plugins/csv-http/kalzit-plugin.toml \
+            --file "bin/$PLATFORM/kalzit-csv-http$EXE=target/release/kalzit-csv-http$EXE" \
+            --file README.md=examples/plugins/csv-http/README.md \
+            --platform "$PLATFORM" --unsigned \
+            --out dist/csv-http.zip --manifest-out dist/csv-http.toml
+          "$tool" package --manifest examples/plugins/panel-kpi/kalzit-plugin.toml \
+            --file panel.js=examples/plugins/panel-kpi/panel.js \
+            --file README.md=examples/plugins/panel-kpi/README.md \
+            --unsigned --out dist/panel-kpi.zip --manifest-out dist/panel-kpi.toml
+          KALZIT_PLUGIN_SIGNING_KEY="$(cat "$key")" "target/release/kalzit-sign$EXE" sign-plugin-manifest \
+            --manifest dist/csv-http.toml --manifest dist/panel-kpi.toml
+          rm -f "$key"
+          for name in csv-http panel-kpi; do
+            "$tool" attach-signature --package "dist/$name.zip" --signature "dist/$name.toml.sig" \
+              --public-key "$public"
+            "$tool" verify --package "dist/$name.zip" --public-key "$public"
+          done
 
   postgres:
     name: postgres

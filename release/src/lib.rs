@@ -158,6 +158,19 @@ fn sign(key: &SigningKey, message: &[u8]) -> DetachedSignature {
     DetachedSignature { key_id: key_id(&key.verifying_key()), signature: BASE64.encode(key.sign(message).to_bytes()) }
 }
 
+/// What a plugin signature covers starts with this line (`kalzit_plugin_api::signing::MANIFEST_CONTEXT`,
+/// tested there to be the same). The release keys never sign plugins; `kalzit-sign
+/// sign-plugin-manifest` signs with the plugin key, so the release job need not build the plugin
+/// crates next to it.
+pub const PLUGIN_MANIFEST_CONTEXT: &[u8] = b"kalzit-plugin-manifest-v1\n";
+
+/// The detached signature of a plugin manifest's exact bytes (`kalzit-plugin.sig`).
+pub fn sign_plugin_manifest(key: &SigningKey, manifest: &[u8]) -> DetachedSignature {
+    let mut message = PLUGIN_MANIFEST_CONTEXT.to_vec();
+    message.extend_from_slice(manifest);
+    sign(key, &message)
+}
+
 /// The detached signature of a manifest's exact bytes.
 pub fn sign_manifest(key: &SigningKey, manifest: &[u8]) -> DetachedSignature {
     sign(key, &manifest_message(manifest))

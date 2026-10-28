@@ -34,4 +34,5 @@ protox = "0.10.0"
 tonic-prost-build = { version = "0.14.8", default-features = false }
 
 [dev-dependencies]
+base64 = "0.23.1"
 kalzit-release = { path = "../release" }
