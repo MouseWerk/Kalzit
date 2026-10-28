@@ -196,6 +196,26 @@ mod tests {
 
     use super::*;
 
+    /// `kalzit-sign sign-plugin-manifest` signs in this crate's context, so its signatures verify
+    /// here and nowhere else.
+    #[test]
+    fn kalzit_sign_signs_plugin_manifests_as_the_host_checks_them() {
+        assert_eq!(kalzit_release::PLUGIN_MANIFEST_CONTEXT, MANIFEST_CONTEXT);
+        let k = key(11);
+        let manifest = b"manifest = 1\n";
+        let sig = kalzit_release::sign_plugin_manifest(&k, manifest);
+        assert_eq!(sig.key_id, key_id(&k.verifying_key()));
+        use base64::Engine as _;
+        let raw = base64::engine::general_purpose::STANDARD.decode(&sig.signature).unwrap();
+        let signature = Signature::from_bytes(&raw.try_into().unwrap());
+        assert!(verify_manifest(&k.verifying_key(), manifest, &signature));
+        assert!(!kalzit_release::signature_matches(
+            &k.verifying_key(),
+            &kalzit_release::manifest_message(manifest),
+            &sig
+        ));
+    }
+
     fn key(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
     }

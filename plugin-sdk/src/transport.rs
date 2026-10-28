@@ -138,35 +138,49 @@ mod windows_pipe {
         let sddl = sddl(&user_sid()?);
         let first = create(address, &sddl, true)?;
         let address = address.to_string();
-        Ok(futures_util::stream::unfold(Some(first), move |server| {
+        Ok(futures_util::stream::unfold(Some(first), move |waiting| {
             let (address, sddl) = (address.clone(), sddl.clone());
             async move {
-                let mut server = server?;
+                let mut waiting = waiting;
                 loop {
-                    if let Err(e) = server.connect().await {
-                        return Some((Err(e), None));
-                    }
-                    if client_pid(&server) == Some(host) {
-                        break;
-                    }
-                    log::warn("a connection from another process was refused");
-                    server = match create(&address, &sddl, false) {
-                        Ok(next) => next,
-                        Err(e) => return Some((Err(e), None)),
+                    let server = match waiting.take() {
+                        Some(server) => server,
+                        None => next_instance(&address, &sddl).await,
                     };
-                }
-                let next = match create(&address, &sddl, false) {
-                    Ok(next) => Some(next),
-                    Err(e) => {
-                        log::error(&format!("the next pipe instance could not be created: {e}"));
-                        None
+                    if let Err(e) = server.connect().await {
+                        log::warn(&format!("a pipe connection failed: {e}"));
+                        continue;
                     }
-                };
-                Some((Ok(Pipe(server)), next))
+                    if client_pid(&server) != Some(host) {
+                        log::warn("a connection from another process was refused");
+                        continue;
+                    }
+                    // The next instance waits before this one is handed on; when it cannot be
+                    // created now, the next round tries again.
+                    let next = create(&address, &sddl, false)
+                        .inspect_err(|e| log::error(&format!("the next pipe instance could not be created: {e}")))
+                        .ok();
+                    return Some((Ok(Pipe(server)), next));
+                }
             }
         }))
     }
 
+    /// A new pipe instance, retried until it can be created (handles or memory may be short for
+    /// a moment), so the plugin keeps serving.
+    async fn next_instance(address: &str, sddl: &str) -> NamedPipeServer {
+        let mut wait = std::time::Duration::from_millis(50);
+        loop {
+            match create(address, sddl, false) {
+                Ok(server) => return server,
+                Err(e) => {
+                    log::error(&format!("a pipe instance could not be created: {e}; retrying"));
+                    tokio::time::sleep(wait).await;
+                    wait = (wait * 2).min(std::time::Duration::from_secs(5));
+                }
+            }
+        }
+    }
     #[cfg(test)]
     mod tests {
         #[test]
@@ -202,7 +216,12 @@ mod unix_socket {
                         }
                         log::warn("a connection from another process was refused");
                     }
-                    Err(e) => return Some((Err(e), listener)),
+                    Err(e) => {
+                        // Out of descriptors for a moment, or a connection gone before it was
+                        // accepted: keep listening.
+                        log::warn(&format!("a connection could not be accepted: {e}"));
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
                 }
             }
         }))

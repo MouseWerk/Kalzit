@@ -30,14 +30,30 @@ pub fn format(setting: Option<&str>, content_type: &str, body: &str) -> Format {
     }
 }
 
-/// Splits CSV text (RFC 4180: quoted fields with doubled quotes, CRLF or LF) into records.
-fn records(text: &str, delimiter: char) -> Result<Vec<Vec<String>>, String> {
+/// The most columns a file may have; a wider one is refused before its rows are read.
+pub const MAX_COLUMNS: usize = 10_000;
+
+fn too_wide() -> String {
+    format!("the file has more than {MAX_COLUMNS} columns")
+}
+
+/// Splits CSV text (RFC 4180: quoted fields with doubled quotes, CRLF or LF) into at most
+/// `max_records` records (blank lines carry none); a record of more than `MAX_COLUMNS` fields is
+/// refused as soon as it gets there.
+fn records(text: &str, delimiter: char, max_records: usize) -> Result<Vec<Vec<String>>, String> {
     let mut out = Vec::new();
     let mut record = Vec::new();
     let mut field = String::new();
     let mut quoted = false;
     let mut chars = text.strip_prefix('\u{feff}').unwrap_or(text).chars().peekable();
     let mut at_start = true;
+    let end_field = |record: &mut Vec<String>, field: &mut String| -> Result<(), String> {
+        if record.len() >= MAX_COLUMNS {
+            return Err(too_wide());
+        }
+        record.push(std::mem::take(field));
+        Ok(())
+    };
     while let Some(c) = chars.next() {
         if quoted {
             match c {
@@ -54,12 +70,18 @@ fn records(text: &str, delimiter: char) -> Result<Vec<Vec<String>>, String> {
             '"' if field.is_empty() => quoted = true,
             '\r' if chars.peek() == Some(&'\n') => {}
             '\n' | '\r' => {
-                record.push(std::mem::take(&mut field));
-                out.push(std::mem::take(&mut record));
+                end_field(&mut record, &mut field)?;
+                let done = std::mem::take(&mut record);
+                if !(done.len() == 1 && done[0].is_empty()) {
+                    out.push(done);
+                    if out.len() >= max_records {
+                        return Ok(out);
+                    }
+                }
                 at_start = true;
                 continue;
             }
-            c if c == delimiter => record.push(std::mem::take(&mut field)),
+            c if c == delimiter => end_field(&mut record, &mut field)?,
             _ => field.push(c),
         }
         at_start = false;
@@ -68,32 +90,40 @@ fn records(text: &str, delimiter: char) -> Result<Vec<Vec<String>>, String> {
         return Err("a quoted field is not closed".into());
     }
     if !at_start || !field.is_empty() || !record.is_empty() {
-        record.push(field);
-        out.push(record);
+        end_field(&mut record, &mut field)?;
+        if !(record.len() == 1 && record[0].is_empty()) {
+            out.push(record);
+        }
     }
-    // Blank lines carry no row.
-    out.retain(|r| !(r.len() == 1 && r[0].is_empty()));
     Ok(out)
 }
 
 /// Unique, non-empty column names.
 fn names(raw: impl Iterator<Item = String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    let mut taken = std::collections::HashSet::new();
     for (i, name) in raw.enumerate() {
         let base = if name.trim().is_empty() { format!("c{}", i + 1) } else { name.trim().to_string() };
         let mut candidate = base.clone();
         let mut n = 2;
-        while out.contains(&candidate) {
+        while taken.contains(&candidate) {
             candidate = format!("{base}_{n}");
             n += 1;
         }
+        taken.insert(candidate.clone());
         out.push(candidate);
     }
     out
 }
 
-pub fn parse_csv(text: &str, delimiter: char, header: bool) -> Result<Table, String> {
-    let mut records = records(text, delimiter)?;
+/// The rows to read for a row limit (0: none): one more than the limit, so the host sees that
+/// the result was cut and says so.
+fn wanted(max_rows: u64) -> usize {
+    if max_rows == 0 { usize::MAX } else { usize::try_from(max_rows).unwrap_or(usize::MAX).saturating_add(1) }
+}
+
+pub fn parse_csv(text: &str, delimiter: char, header: bool, max_rows: u64) -> Result<Table, String> {
+    let mut records = records(text, delimiter, wanted(max_rows).saturating_add(usize::from(header)))?;
     if records.is_empty() {
         return Ok(Table { names: vec![], types: vec![], rows: vec![] });
     }
@@ -117,21 +147,26 @@ pub fn parse_csv(text: &str, delimiter: char, header: bool) -> Result<Table, Str
 }
 
 /// The array at `pointer` (a JSON pointer such as `/data/items`; the whole document when
-/// empty), each element an object: one column per key.
-pub fn parse_json(text: &str, pointer: &str) -> Result<Table, String> {
+/// empty), each element an object: one column per key. Reads the elements up to the row limit.
+pub fn parse_json(text: &str, pointer: &str, max_rows: u64) -> Result<Table, String> {
     let doc: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
     let at = if pointer.is_empty() { Some(&doc) } else { doc.pointer(pointer) };
     let items = at
         .and_then(Value::as_array)
         .ok_or_else(|| format!("no array at {:?}", if pointer.is_empty() { "/" } else { pointer }))?;
+    let items = &items[..items.len().min(wanted(max_rows))];
     let mut objects: Vec<&Map<String, Value>> = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
         objects.push(item.as_object().ok_or_else(|| format!("element {i} is not an object"))?);
     }
     let mut names: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for o in &objects {
         for k in o.keys() {
-            if !names.contains(k) {
+            if seen.insert(k.as_str()) {
+                if names.len() >= MAX_COLUMNS {
+                    return Err(too_wide());
+                }
                 names.push(k.clone());
             }
         }
@@ -344,7 +379,7 @@ mod tests {
     #[test]
     fn csv_columns_get_their_types() {
         let text = "\u{feff}time,host,cpu,up,note\r\n2026-10-28T10:00:00Z,a,0.5,true,\"x, \"\"y\"\"\"\n2026-10-28T10:01:00Z,b,12,false,\n\n";
-        let t = parse_csv(text, ',', true).unwrap();
+        let t = parse_csv(text, ',', true, 0).unwrap();
         assert_eq!(t.names, ["time", "host", "cpu", "up", "note"]);
         assert_eq!(
             t.types,
@@ -357,24 +392,24 @@ mod tests {
 
     #[test]
     fn csv_without_header_and_other_delimiters() {
-        let t = parse_csv("1;2\n3;\n", ';', false).unwrap();
+        let t = parse_csv("1;2\n3;\n", ';', false, 0).unwrap();
         assert_eq!(t.names, ["c1", "c2"]);
         assert_eq!(t.rows, [vec![json!(1), json!(2)], vec![json!(3), Value::Null]]);
-        assert!(parse_csv("a\n\"open\n", ',', true).is_err());
-        assert!(parse_csv("a\n1,2\n", ',', true).unwrap_err().contains("row 2"));
-        let t = parse_csv("a,a,\n1,2,3\n", ',', true).unwrap();
+        assert!(parse_csv("a\n\"open\n", ',', true, 0).is_err());
+        assert!(parse_csv("a\n1,2\n", ',', true, 0).unwrap_err().contains("row 2"));
+        let t = parse_csv("a,a,\n1,2,3\n", ',', true, 0).unwrap();
         assert_eq!(t.names, ["a", "a_2", "c3"]);
     }
 
     #[test]
     fn json_arrays_of_objects() {
         let text = r#"{"data":{"items":[{"day":"2026-10-28","n":1,"tags":["x"]},{"day":"2026-10-29","n":2.5,"tags":null,"extra":true}]}}"#;
-        let t = parse_json(text, "/data/items").unwrap();
+        let t = parse_json(text, "/data/items", 0).unwrap();
         assert_eq!(t.names, ["day", "n", "tags", "extra"]);
         assert_eq!(t.types, [FieldType::Date, FieldType::Number, FieldType::Json, FieldType::Bool]);
         assert_eq!(t.rows[1], [json!(1_793_232_000_000_i64), json!(2.5), Value::Null, json!(true)]);
-        assert!(parse_json(text, "/nope").is_err());
-        assert!(parse_json("[1]", "").unwrap_err().contains("element 0"));
+        assert!(parse_json(text, "/nope", 0).is_err());
+        assert!(parse_json("[1]", "", 0).unwrap_err().contains("element 0"));
     }
 
     #[test]
@@ -394,5 +429,28 @@ mod tests {
         assert_eq!(format(None, "text/plain", " [1]"), Format::Json);
         assert_eq!(format(None, "text/csv", "a,b"), Format::Csv);
         assert_eq!(format(Some("csv"), "application/json", "[]"), Format::Csv);
+    }
+
+    #[test]
+    fn reading_stops_at_the_row_limit() {
+        let text: String = std::iter::once("n\n".to_string()).chain((0..100_000).map(|i| format!("{i}\n"))).collect();
+        let t = parse_csv(&text, ',', true, 10).unwrap();
+        assert_eq!(t.rows.len(), 11, "one row more than the limit");
+        let json = format!("[{}]", (0..1000).map(|i| format!("{{\"n\":{i}}}")).collect::<Vec<_>>().join(","));
+        assert_eq!(parse_json(&json, "", 5).unwrap().rows.len(), 6);
+    }
+
+    #[test]
+    fn a_huge_single_line_is_refused_at_the_column_cap() {
+        // One line of 20,000 fields and no newline: refused once the cap is passed, also
+        // without a header, and the columns of a JSON file count the same.
+        let line = vec!["x"; 2 * MAX_COLUMNS].join(",");
+        assert!(parse_csv(&line, ',', true, 0).unwrap_err().contains("columns"));
+        assert!(parse_csv(&line, ',', false, 1).unwrap_err().contains("columns"));
+        let wide: String = (0..=MAX_COLUMNS).map(|i| format!("\"k{i}\":1")).collect::<Vec<_>>().join(",");
+        assert!(parse_json(&format!("[{{{wide}}}]"), "", 0).unwrap_err().contains("columns"));
+        // A long single field is fine.
+        let t = parse_csv(&"y".repeat(5 * 1024 * 1024), ',', false, 0).unwrap();
+        assert_eq!(t.rows.len(), 1);
     }
 }

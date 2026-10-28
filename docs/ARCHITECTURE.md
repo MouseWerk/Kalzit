@@ -486,12 +486,14 @@ process, a network target or the gRPC protocol.
   being built separately); until it lands it connects directly.
 - `plugin-tool/` (binary `kalzit-plugin`): `keygen`, `package` (writes `[files]` with the
   hashes, checks the manifest as the host does, signs with a key file or
-  `KALZIT_PLUGIN_SIGNING_KEY`), `sign` and `verify`. A tool of its own, so `kalzit-sign` stays
+  `KALZIT_PLUGIN_SIGNING_KEY`), `sign`, `attach-signature` and `verify`. A tool of its own, so `kalzit-sign` stays
   small next to the release key.
 - `examples/plugins/csv-http` (`dev.kalzit.csv-http`, a CSV or JSON file over HTTP as a frame)
-  and `examples/plugins/panel-kpi`. CI builds and packages them per system with a throwaway key;
-  release tags sign them with Kalzit's plugin key (`release` environment) and attach them to
-  the release. The contract test installs the data source example signed with a key trusted as
+  and `examples/plugins/panel-kpi`. CI builds, packages and signs them per system with a
+  throwaway key. Release tags package them unsigned in a job without the key, sign only the
+  manifests with `kalzit-sign sign-plugin-manifest` (plugin key in the `release` environment),
+  attach the signatures and check them against the compiled main key, then publish them with
+  the release; every artifact is fetched by name and checked against the hash its job reported. The contract test installs the data source example signed with a key trusted as
   Kalzit's and queries it through the host on Windows and Linux.
 
 ### Registry and the in-process adapter

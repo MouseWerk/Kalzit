@@ -5,12 +5,16 @@
 //! kalzit-sign release --version <v> [--channel stable|preview] [--notes <file>] [--notes-url <https url>]
 //!                     [--minimum-version <v>] --package <platform>:<arch>:<path>... [--out-dir <dir>]
 //! kalzit-sign verify --public-key <base64> --manifest <file> --signature <file> [--package <path>]...
+//! kalzit-sign sign-plugin-manifest (--manifest <kalzit-plugin.toml>)...
 //! ```
 //!
 //! `keygen` writes the private key into a new file readable only by its owner and prints the
 //! public key; the private key is never printed. `release` signs with the key in the environment
 //! variable `KALZIT_RELEASE_SIGNING_KEY` and writes the manifest, its signature and one offline
-//! package per binary. `verify` checks a release the way a server does.
+//! package per binary. `verify` checks a release the way a server does. `sign-plugin-manifest`
+//! signs plugin manifests with the plugin key in `KALZIT_PLUGIN_SIGNING_KEY` and writes
+//! `<manifest>.sig` next to each (the package's `kalzit-plugin.sig`, which
+//! `kalzit-plugin attach-signature` adds), so the job holding the plugin key builds only this crate.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -19,12 +23,13 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use kalzit_release::{
     BUNDLE_EXTENSION, Channel, DetachedSignature, Manifest, highlights_from_notes, key_id, manifest_message,
-    package_message, parse_public_key, public_key_base64, sha256_hex, sign_manifest, sign_package, signature_matches,
-    signing_key_from_base64, write_bundle,
+    package_message, parse_public_key, public_key_base64, sha256_hex, sign_manifest, sign_package,
+    sign_plugin_manifest, signature_matches, signing_key_from_base64, write_bundle,
 };
 use zeroize::Zeroizing;
 
 const KEY_ENV: &str = "KALZIT_RELEASE_SIGNING_KEY";
+const PLUGIN_KEY_ENV: &str = "KALZIT_PLUGIN_SIGNING_KEY";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -72,7 +77,8 @@ impl Options {
 }
 
 fn run(args: &[String]) -> Result<String, String> {
-    let (command, rest) = args.split_first().ok_or("usage: kalzit-sign keygen|release|verify ...")?;
+    let (command, rest) =
+        args.split_first().ok_or("usage: kalzit-sign keygen|release|verify|sign-plugin-manifest ...")?;
     match command.as_str() {
         "keygen" => {
             let o = Options::parse(rest, &["out"])?;
@@ -89,7 +95,11 @@ fn run(args: &[String]) -> Result<String, String> {
             let o = Options::parse(rest, &["public-key", "manifest", "signature", "package"])?;
             verify(&o)
         }
-        other => Err(format!("unknown command {other}; use keygen, release or verify")),
+        "sign-plugin-manifest" => {
+            let o = Options::parse(rest, &["manifest"])?;
+            sign_plugin_manifests(&o.all("manifest"))
+        }
+        other => Err(format!("unknown command {other}; use keygen, release, verify or sign-plugin-manifest")),
     }
 }
 
@@ -227,6 +237,24 @@ fn check(public_key: &str, manifest: &[u8], signature: &[u8], files: &[(PathBuf,
         }
     }
     Ok(format!("{} verified ({} packages listed, {} checked)", m.version, m.packages.len(), files.len()))
+}
+
+/// Signs each plugin manifest's exact bytes with the plugin key; writes `<manifest>.sig`.
+fn sign_plugin_manifests(manifests: &[&str]) -> Result<String, String> {
+    if manifests.is_empty() {
+        return Err("at least one --manifest is required".into());
+    }
+    let secret = Zeroizing::new(std::env::var(PLUGIN_KEY_ENV).map_err(|_| format!("{PLUGIN_KEY_ENV} is not set"))?);
+    let key = signing_key_from_base64(&secret)?;
+    let mut written = Vec::new();
+    for path in manifests {
+        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let signature = serde_json::to_vec(&sign_plugin_manifest(&key, &bytes)).map_err(|e| e.to_string())?;
+        let out = format!("{path}.sig");
+        std::fs::write(&out, signature).map_err(|e| format!("{out}: {e}"))?;
+        written.push(out);
+    }
+    Ok(format!("wrote {}, signed with plugin key {}", written.join(", "), key_id(&key.verifying_key())))
 }
 
 fn verify(o: &Options) -> Result<String, String> {

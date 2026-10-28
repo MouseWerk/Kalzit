@@ -3,8 +3,9 @@
 //! The TypeScript types are `panel/v1/kalzit-panel.d.ts` next to this crate.
 //!
 //! Into the frame go data (options, size, theme, results in their native shapes); out of the
-//! frame come only events. Kalzit checks every event with [`parse_event`] and drops what does
-//! not fit; the parsed [`Event`] is all that goes further, so unknown fields never pass.
+//! frame come only events. The panel host (not built yet) checks every event with
+//! [`parse_event`], keeps the rate limit, and drops what does not fit; the parsed [`Event`] is all
+//! that goes further, so unknown fields never pass.
 
 use serde_json::{Map, Value, json};
 

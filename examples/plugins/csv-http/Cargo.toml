@@ -12,6 +12,8 @@ kalzit-plugin-sdk = { path = "../../../plugin-sdk" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde_json = "1.0.154"
+# Parsing runs on a blocking thread (spawn_blocking).
+tokio = { version = "1.54.1", features = ["rt"] }
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["rt", "macros"] }

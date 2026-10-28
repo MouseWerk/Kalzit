@@ -3,8 +3,10 @@
 //! ```text
 //! kalzit-plugin keygen --out <file>
 //! kalzit-plugin package --manifest <template> (--file <package path>=<file>)... [--dir <directory>]...
-//!                       [--platform <platform>]... --out <zip> [--key-file <file> | --unsigned]
+//!                       [--platform <platform>]... --out <zip> [--manifest-out <file>]
+//!                       [--key-file <file> | --unsigned]
 //! kalzit-plugin sign --package <zip> --key-file <file> [--out <zip>]
+//! kalzit-plugin attach-signature --package <zip> --signature <file> [--public-key <key>] [--out <zip>]
 //! kalzit-plugin verify --package <zip> [--public-key <base64 or hex>]
 //! ```
 //!
@@ -12,7 +14,9 @@
 //! Kalzit does, and signs it with the key from `--key-file` or the environment variable
 //! `KALZIT_PLUGIN_SIGNING_KEY` (32 bytes, base64); `--unsigned` builds a package without a
 //! signature. `--dir` adds every file below a directory under its relative path. `--platform`
-//! keeps only those entries of `[binaries]`. Private keys are never printed.
+//! keeps only those entries of `[binaries]`; `--manifest-out` also writes the exact manifest, for
+//! signing elsewhere (`kalzit-sign sign-plugin-manifest`), whose signature
+//! `attach-signature` adds to the package. Private keys are never printed.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -86,7 +90,8 @@ fn run(args: &[String]) -> Result<String, String> {
         }
         "sign" => sign(&Options::parse(rest, &["package", "key-file", "out"], &[])?),
         "verify" => verify(&Options::parse(rest, &["package", "public-key"], &[])?),
-        other => Err(format!("unknown command {other}; use keygen, package, sign or verify")),
+        "attach-signature" => attach(&Options::parse(rest, &["package", "signature", "public-key", "out"], &[])?),
+        other => Err(format!("unknown command {other}; use keygen, package, sign, attach-signature or verify")),
     }
 }
 
@@ -125,7 +130,12 @@ fn keygen(out: &Path) -> Result<String, String> {
         options.mode(0o600);
     }
     let mut file = options.open(out).map_err(|e| format!("{}: {e}", out.display()))?;
-    restrict_to_owner(out)?;
+    if let Err(e) = restrict_to_owner(out) {
+        // Nothing is written yet; a key file others could read is not left behind.
+        drop(file);
+        let _ = std::fs::remove_file(out);
+        return Err(e);
+    }
     std::io::Write::write_all(&mut file, encoded.as_bytes()).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
     Ok(format!(
@@ -136,14 +146,34 @@ fn keygen(out: &Path) -> Result<String, String> {
     ))
 }
 
-/// Windows: the new key file keeps only an entry for the current user (no inherited ones).
+/// The SID of the account this process runs as (`whoami /user`), not a name from the
+/// environment, which another account could match.
+#[cfg(windows)]
+fn own_sid() -> Result<String, String> {
+    let out = std::process::Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .output()
+        .map_err(|e| format!("running whoami: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.trim()
+        .rsplit(',')
+        .next()
+        .map(|s| s.trim().trim_matches('"').to_string())
+        .filter(|s| {
+            out.status.success() && s.starts_with("S-1-") && s[4..].bytes().all(|b| b.is_ascii_digit() || b == b'-')
+        })
+        .ok_or_else(|| "the account's SID could not be read".to_string())
+}
+
+/// Windows: the new key file keeps only an entry for the current account, by its SID (no
+/// inherited ones).
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> Result<(), String> {
-    let user = std::env::var("USERNAME").map_err(|_| "USERNAME is not set".to_string())?;
+    let sid = own_sid()?;
     let status = std::process::Command::new("icacls")
         .arg(path)
         .args(["/inheritance:r", "/grant:r"])
-        .arg(format!("{user}:F"))
+        .arg(format!("*{sid}:F"))
         .stdout(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("running icacls: {e}"))?;
@@ -192,6 +222,10 @@ fn package(o: &Options) -> Result<String, String> {
     let bytes = tool::package(&template, &files, &platforms, key.as_ref())?;
     let out = PathBuf::from(o.required("out")?);
     std::fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    if let Some(path) = o.one("manifest-out") {
+        let text = tool::read(&bytes)?.manifest_text;
+        std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))?;
+    }
     let checked = tool::verify(&bytes, key.as_ref().map(|k| k.verifying_key()).as_ref())?;
     Ok(format!("wrote {} ({} bytes): {checked}", out.display(), bytes.len()))
 }
@@ -203,6 +237,16 @@ fn sign(o: &Options) -> Result<String, String> {
     let out = o.one("out").unwrap_or(path);
     std::fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
     Ok(format!("wrote {out}: {}", tool::verify(&bytes, Some(&key.verifying_key()))?))
+}
+
+fn attach(o: &Options) -> Result<String, String> {
+    let path = o.required("package")?;
+    let signature = read(o.required("signature")?)?;
+    let key = o.one("public-key").map(tool::public_key).transpose()?;
+    let bytes = tool::attach_signature(&read(path)?, &signature, key.as_ref())?;
+    let out = o.one("out").unwrap_or(path);
+    std::fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
+    Ok(format!("wrote {out}: {}", tool::verify(&bytes, key.as_ref())?))
 }
 
 fn verify(o: &Options) -> Result<String, String> {

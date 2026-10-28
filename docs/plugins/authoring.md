@@ -233,7 +233,10 @@ or install it with `cargo install --git https://github.com/MouseWerk/Kalzit kalz
 
 In CI, keep the key in a protected secret that only release builds see, and sign pull request
 builds with a throwaway key (`kalzit-plugin keygen` in the job), as Kalzit's own workflows do
-(`.github/workflows/ci.yml` and `release.yml`, jobs `plugins`).
+(`.github/workflows/ci.yml`, job `plugins`, and `release.yml`, jobs `plugin-*`): there the
+packages are built unsigned without the key, only the manifests are signed with `kalzit-sign
+sign-plugin-manifest` in the job that holds it, and `kalzit-plugin attach-signature` adds the
+signatures afterwards.
 
 ## Install
 

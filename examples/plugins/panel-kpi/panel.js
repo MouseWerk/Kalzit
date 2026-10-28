@@ -131,8 +131,13 @@ function render() {
     const change = last.n - numbers[numbers.length - 2].n;
     delta.textContent = `${change > 0 ? "+" : ""}${format(change)}`;
     if (change !== 0) delta.setAttribute("data-sign", change > 0 ? "up" : "down");
-    const min = Math.min(...numbers.map((p) => p.n));
-    const max = Math.max(...numbers.map((p) => p.n));
+    // A loop, not Math.min(...values): a long series would overflow the argument list.
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const p of numbers) {
+      if (p.n < min) min = p.n;
+      if (p.n > max) max = p.n;
+    }
     const span = max - min || 1;
     const points = numbers.map((p, k) => `${((k / (numbers.length - 1)) * 100).toFixed(2)},${(28 - ((p.n - min) / span) * 26).toFixed(2)}`);
     line.setAttribute("points", points.join(" "));

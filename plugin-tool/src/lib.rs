@@ -216,6 +216,18 @@ pub fn sign(bytes: &[u8], key: &SigningKey) -> Result<Vec<u8>, String> {
     zip(&c.manifest_text, Some(&sig), &c.files)
 }
 
+/// Adds a signature made elsewhere (`kalzit-sign sign-plugin-manifest`) to a package, replacing
+/// any signature. Checked against `key` when given.
+pub fn attach_signature(bytes: &[u8], signature: &[u8], key: Option<&VerifyingKey>) -> Result<Vec<u8>, String> {
+    let c = read(bytes)?;
+    parse_signature(signature)?;
+    let out = zip(&c.manifest_text, Some(signature), &c.files)?;
+    if key.is_some() {
+        verify(&out, key)?;
+    }
+    Ok(out)
+}
+
 /// A signing key from its text: 32 bytes in base64, as `kalzit-plugin keygen` writes it.
 pub fn signing_key(text: &str) -> Result<SigningKey, String> {
     kalzit_release::signing_key_from_base64(text.trim())
@@ -230,7 +242,11 @@ pub fn public_key(text: &str) -> Result<VerifyingKey, String> {
         BASE64.decode(text).map_err(|e| format!("the public key is not base64: {e}"))?
     };
     let bytes: [u8; 32] = bytes.try_into().map_err(|_| "a public key is 32 bytes".to_string())?;
-    VerifyingKey::from_bytes(&bytes).map_err(|e| format!("not an Ed25519 public key: {e}"))
+    let key = VerifyingKey::from_bytes(&bytes).map_err(|e| format!("not an Ed25519 public key: {e}"))?;
+    if key.is_weak() {
+        return Err("a weak (small order) key cannot be trusted".into());
+    }
+    Ok(key)
 }
 
 #[cfg(test)]
@@ -283,6 +299,29 @@ linux-x64 = "bin/linux-x64/tool"
         assert!(verify(&unsigned, Some(&key(1).verifying_key())).is_err());
         let signed = sign(&unsigned, &key(1)).unwrap();
         assert!(verify(&signed, Some(&key(1).verifying_key())).is_ok());
+    }
+
+    #[test]
+    fn a_signature_made_by_kalzit_sign_is_attached_and_checked() {
+        let unsigned = package(TEMPLATE, &files(), &[], None).unwrap();
+        let text = read(&unsigned).unwrap().manifest_text;
+        let k = key(3);
+        let sig = serde_json::to_vec(&kalzit_release::sign_plugin_manifest(&k, text.as_bytes())).unwrap();
+        let signed = attach_signature(&unsigned, &sig, Some(&k.verifying_key())).unwrap();
+        assert!(verify(&signed, Some(&k.verifying_key())).is_ok());
+        // Another key, or a signature over other bytes, does not pass.
+        assert!(attach_signature(&unsigned, &sig, Some(&key(4).verifying_key())).is_err());
+        let other = serde_json::to_vec(&kalzit_release::sign_plugin_manifest(&k, b"other")).unwrap();
+        assert!(attach_signature(&unsigned, &other, Some(&k.verifying_key())).is_err());
+        assert!(attach_signature(&unsigned, b"not json", None).is_err());
+    }
+
+    #[test]
+    fn weak_public_keys_are_refused() {
+        // The identity point: a small-order key that "verifies" forged signatures.
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        assert!(public_key(&hex::encode(identity)).unwrap_err().contains("weak"));
     }
 
     #[test]

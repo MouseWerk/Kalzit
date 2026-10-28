@@ -90,9 +90,9 @@ jobs:
       - if: env.RUN_JOB == 'true'
         run: cargo test --locked
 
-  # The example plugins (examples/plugins), built and packaged per system the way a release does
-  # (release.yml, job `plugins`), but signed with a throwaway key made in the job: pull requests
-  # never see Kalzit's plugin key. The package is then checked against that key.
+  # The example plugins (examples/plugins), built, packaged and signed per system the way a
+  # release does (release.yml, jobs `plugin-*`), but with a throwaway key made in the job: pull
+  # requests never see Kalzit's plugin key. The packages are then checked against that key.
   plugins:
     name: plugins (${{ matrix.os }})
     needs: changes
@@ -114,18 +114,25 @@ jobs:
       - name: Nothing to check
         if: env.RUN_JOB != 'true'
         run: echo "No server change in this pull request; the plugin packages are skipped."
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         if: env.RUN_JOB == 'true'
-      - uses: Swatinem/rust-cache@v2
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: env.RUN_JOB == 'true'
         with:
           key: plugins
           save-if: ${{ github.event_name != 'merge_group' }}
       - if: env.RUN_JOB == 'true'
-        run: cargo build --release --locked -p kalzit-csv-http -p kalzit-plugin-tool
-      - name: Package and sign with a throwaway key
+        run: cargo build --release --locked -p kalzit-csv-http -p kalzit-plugin-tool -p kalzit-release
+      # The release's steps: packages built unsigned, their manifests signed by kalzit-sign (here
+      # with a throwaway key in place of the release environment's), the signatures attached and
+      # checked.
+      - name: Package, sign with a throwaway key, attach and verify
         if: env.RUN_JOB == 'true'
         shell: bash
         env:
@@ -141,15 +148,19 @@ jobs:
           "$tool" package --manifest examples/plugins/csv-http/kalzit-plugin.toml \
             --file "bin/$PLATFORM/kalzit-csv-http$EXE=target/release/kalzit-csv-http$EXE" \
             --file README.md=examples/plugins/csv-http/README.md \
-            --platform "$PLATFORM" --key-file "$key" \
-            --out "dist/dev.kalzit.csv-http-$PLATFORM.zip"
+            --platform "$PLATFORM" --unsigned \
+            --out dist/csv-http.zip --manifest-out dist/csv-http.toml
           "$tool" package --manifest examples/plugins/panel-kpi/kalzit-plugin.toml \
             --file panel.js=examples/plugins/panel-kpi/panel.js \
             --file README.md=examples/plugins/panel-kpi/README.md \
-            --key-file "$key" --out dist/dev.kalzit.panel-kpi.zip
+            --unsigned --out dist/panel-kpi.zip --manifest-out dist/panel-kpi.toml
+          KALZIT_PLUGIN_SIGNING_KEY="$(cat "$key")" "target/release/kalzit-sign$EXE" sign-plugin-manifest \
+            --manifest dist/csv-http.toml --manifest dist/panel-kpi.toml
           rm -f "$key"
-          for package in dist/*.zip; do
-            "$tool" verify --package "$package" --public-key "$public"
+          for name in csv-http panel-kpi; do
+            "$tool" attach-signature --package "dist/$name.zip" --signature "dist/$name.toml.sig" \
+              --public-key "$public"
+            "$tool" verify --package "dist/$name.zip" --public-key "$public"
           done
 
   postgres:
