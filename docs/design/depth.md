@@ -62,7 +62,7 @@ several times the controls Kalzit has. The fifteen largest gaps, in the order th
 | 12 | Explore: several queries, mixed sources, split view with linked time, query history with stars and search, result tabs | M | P2-8 |
 | 13 | Analysis step catalog: organize (rename, reorder, hide), filter rows, filter fields, sort, limit, convert type, format, labels to fields, merge and concatenate, extract JSON, partition, histogram, config from results; a per-step preview | L | P2-9 |
 | 14 | Dashboard layout: tabs, an automatic grid, show and hide rules for panels and rows, an outline of the dashboard (rows, repeats and library panels are in #32) | M | P3-1 |
-| 15 | Sharing: link with time and variables, image export, snapshots, public links (M6), embed; plus service accounts and a plugin catalog in administration | L | P3-2 to P3-4, P3-9, M4 to M6 |
+| 15 | Sharing: link with time and variables, image export, snapshots, public links (M7), embed; plus service accounts and a plugin catalog in administration | L | P3-2 to P3-4, P3-9, M4 to M7 |
 
 ## 3. Matrices
 
@@ -71,7 +71,7 @@ several times the controls Kalzit has. The fifteen largest gaps, in the order th
 | Grafana capability | Kalzit today | Gap | Recommendation |
 |---|---|---|---|
 | Full-page editor: preview on top, queries below, options on the right; splits resizable and collapsible | Partial: modal dialog with preview, settings, queries and steps stacked (`ui/src/features/dashboards/PanelEditor.tsx`) | L | Full-page route as `feel.md` section 5 plans. Splits remember their size per user. Round 3 |
-| Lower pane tabs for queries, transformations and alert rules, with counts | Partial: queries and steps both shown, no tabs (`PanelEditor.tsx`, `ui/src/analysis/StepsEditor.tsx`) | M | Tabs "Queries (n)", "Steps (n)"; a third "Rules" tab arrives with M6 alerting. Counts in the tab, no colored badges |
+| Lower pane tabs for queries, transformations and alert rules, with counts | Partial: queries and steps both shown, no tabs (`PanelEditor.tsx`, `ui/src/analysis/StepsEditor.tsx`) | M | Tabs "Queries (n)", "Steps (n)"; a third "Rules" tab arrives with M7 alerting. Counts in the tab, no colored badges |
 | Options pane search that matches across groups and shows "n of m options" | No | M | Search over every option label and hint in both languages; matches show with their group path. Round 3 |
 | Collapsible option groups | Partial: field option sections are `<details>` (`ui/src/panels/fieldConfig/FieldConfigEditor.tsx`); the panel's own options are a flat list | S | One group component for both; groups remember open state per panel type |
 | Views "All", "Overrides" and a filter for changed options | No | M | Three views: All, Changed (only non-default values, with reset per option), Overrides. Kalzit goes further with "Changed", which the reference lacks as a view |
@@ -113,7 +113,7 @@ several times the controls Kalzit has. The fifteen largest gaps, in the order th
 | Stat: color mode, graph mode, text mode, orientation, text size, justify, show percent change | Partial: reducer, color mode, graph mode, text mode (`ui/src/panels/stat/index.tsx`) | S | Percent change against the previous period (from the `compare` step), orientation, text size |
 | Table: column filter, pagination, cell display (color text, background, gauge, link, image, JSON, sparkline), column width, footer with reducers, sort, frozen header, wrap | Partial: filters, pagination, cell display (auto, color text and background, gauge, link), width (`ui/src/panels/table/index.tsx`) | M | Footer with reducers, sparkline and JSON cells, wrap, column reorder, row height, frozen first column |
 | Bar chart, gauge, bar gauge, pie, histogram, heatmap, state timeline, status history, text | Yes, with basic options each (`ui/src/panels/*/index.tsx`) | S to M each | Fill per type as the shared groups above land; heatmap color scales and bucket bounds; bar chart orientation, grouping and stacking |
-| Further panel types: logs, traces, node graph, geomap, candlestick, XY chart, trend, flame graph, canvas, news, dashboard list, annotations list, alert list | Partial: network, hierarchy and path cover graphs; others no | L | Next by value for Kalzit's audience: XY chart (correlation), dashboard list, geo (with #27 documents), logs (M5 with Loki), traces as a graph of spans (M6). Canvas and news are low priority |
+| Further panel types: logs, traces, node graph, geomap, candlestick, XY chart, trend, flame graph, canvas, news, dashboard list, annotations list, alert list | Partial: network, hierarchy and path cover graphs; others no | L | Next by value for Kalzit's audience: XY chart (correlation), dashboard list, geo (with #27 documents), logs (M5 with Loki), traces as a graph of spans (M7). Canvas and news are low priority |
 | Panel styles: one-click presets of option sets | No | S | "Looks" in the picker: two or three presets per panel type built from Kalzit's defaults |
 
 ### 3.4 Transformations and analysis steps
@@ -181,7 +181,7 @@ The reference catalog (about forty entries) next to Kalzit's steps (`ui/src/anal
 | Tabs, automatic grid, show and hide rules, outline | No | M | P3-1 |
 | Dashboard browse: folders tree, search, tags, starred, recently viewed, list and folder views, sort, trash | Partial: folder tree, search, starred, recent on start page, trash (`DashboardsPage.tsx`, `FolderTree.tsx`, `TrashPage.tsx`) | S | Tags, sort, a filter by owner and "shared with me" |
 | Playlists, kiosk and TV modes, single panel view | No (#32) | after #32 | |
-| Share: link with time and variables, short link, export JSON with source mapping, image export, embed, snapshot, public link | Partial: org-internal grants; export of data (`ui/src/analysis/ExportDialog.tsx`); JSON export and import in #32 | L | P3-2. Public links are M6 and a separate permission (CLAUDE.md) |
+| Share: link with time and variables, short link, export JSON with source mapping, image export, embed, snapshot, public link | Partial: org-internal grants; export of data (`ui/src/analysis/ExportDialog.tsx`); JSON export and import in #32 | L | P3-2. Public links are M7 and a separate permission (CLAUDE.md) |
 | Keyboard shortcuts | Yes: palette, help, panel move and resize, run, undo (`ui/src/shell/ShortcutsHelp.tsx`) | S | Add `e`, `v`, `i` on the hovered panel, `t` with arrows to shift time, `t z` to zoom out, `d r` to refresh, Ctrl+S to save |
 
 ### 3.8 Explore
@@ -194,7 +194,7 @@ The reference catalog (about forty entries) next to Kalzit's steps (`ui/src/anal
 | Result tabs and outline: graph, table, logs, traces, raw | Partial: one panel chosen from the result, steps available | S | Tabs by shape: Chart and Table for frames, Tree and Schema for documents (#27), Network and Tables for graphs |
 | Add to dashboard, create a panel from the result | Yes (`AddToDashboardDialog.tsx`) | none | |
 | Logs UI: volume histogram, level filter, dedup, wrap, prettify, details with field links, live tail | No | L | M5 with Loki. Logs arrive as frames with log lines; the logs view is a panel, so it works in dashboards too |
-| Traces UI: waterfall, span details, service graph | No | L | M6. Traces become `graph` (span tree); the waterfall is a graph panel layout, the service graph is the network panel |
+| Traces UI: waterfall, span details, service graph | No | L | M7. Traces become `graph` (span tree); the waterfall is a graph panel layout, the service graph is the network panel |
 | Correlations: links from a field in one source to a query in another | No | M | Data links with "open in Explore with this query" cover the core; an admin-level correlation registry later |
 
 ### 3.9 Data sources and administration
@@ -210,13 +210,13 @@ The reference catalog (about forty entries) next to Kalzit's steps (`ui/src/anal
 | Auth providers: OIDC, LDAP, SAML | No (M5) | L | Per PLAN M5, with the explicit Save and per-field errors that CLAUDE.md requires |
 | Plugin catalog: browse, install, update, configure | No (M4) | L | Per PLAN M4, signatures enforced |
 | Server stats and usage insights | No | S | Counts and a health page under "Verwaltung", no telemetry |
-| Provisioning as code | No (M6) | M | Per PLAN M6 |
+| Provisioning as code | No (M7) | M | Per PLAN M7 |
 
 ### 3.10 Alerting (summary)
 
 The reference has alert rules with a query and condition editor in the panel editor, contact
 points, notification policies with label routing, silences, mute timings, grouping, rule state
-history and a list per folder. Kalzit plans alerting in M6 (PLAN section 12). Design notes for then:
+history and a list per folder. Kalzit plans alerting in M7 (PLAN section 12). Design notes for then:
 rules reuse the panel's queries and steps (so a condition is a visible step), evaluate on the
 server with the rule owner's rights checked at save like stored panel queries, and document and
 graph conditions are native (a document count matching a filter, a node degree over a threshold).
@@ -410,12 +410,12 @@ Acceptance: without the setting every page answers with framing denied (header t
 links resolve only for members who may read the dashboard.
 
 **P3-3 Image export.** PNG and SVG of a panel or dashboard rendered in the browser (decision 3;
-a server renderer follows in M6 with reports and alerting).
+a server renderer follows in M7 with reports and alerting).
 Acceptance: both formats work in both schemes and the contrast theme and need no server
 dependency.
 
 **P3-4 Snapshots.** Snapshots with data frozen and stored under the dashboard's permissions.
-Public links stay M6.
+Public links stay M7.
 Acceptance: snapshots respect `dashboards:share` and the org boundary; a snapshot never contains
 secrets or queries the viewer could not run.
 
@@ -445,4 +445,4 @@ says when it cannot read the text).
    retention is a server setting with 30 days as default; starred queries are kept beyond it.
    Admins cannot see other users' history. The audit log is unaffected. (P2-8)
 3. **Image export: in the browser now.** PNG and SVG are rendered in the browser. A server
-   renderer comes later together with reports and alerting (M6). (P3-3)
+   renderer comes later together with reports and alerting (M7). (P3-3)

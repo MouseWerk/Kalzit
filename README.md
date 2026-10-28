@@ -119,7 +119,7 @@ again at an interval.
 | Neo4j, Memgraph (Cypher over Bolt) | graph | Supported |
 | TigerGraph 3.10+ and 4.x (GSQL) | graph | Supported |
 | InfluxDB, Loki, ClickHouse | frame | Planned (M5) |
-| Graphite, Redis, Oracle, Tempo, Jaeger | various | Planned (M6) |
+| Graphite, Redis, Oracle, Tempo, Jaeger | various | Planned (M7) |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and
 never returned by the API.
@@ -431,9 +431,10 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M1 Core | Organizations, teams, roles and permissions, administration, audit log, dashboards, SQL and Prometheus sources, Explore, analysis steps, export | Done |
 | M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, saved analyses, live updates with change streams, Docker image | Done |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels with node details, explorer mode, graph steps, variables across result shapes, new sign-in and setup with sample data | Done |
-| M4 Plugins | External plugin processes, manifest, signatures, catalog, Rust SDK | Planned |
+| M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | In progress |
 | M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, InfluxDB, Loki, ClickHouse | Planned |
-| M6 Expansion | Alerting, public links, provisioning as code, further sources (Graphite, Redis, Oracle, traces) | Planned |
+| M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs | Planned |
+| M7 Expansion | Alerting, public links, provisioning as code, further sources (Graphite, Redis, Oracle, traces) | Planned |
 
 ## Documentation
 
