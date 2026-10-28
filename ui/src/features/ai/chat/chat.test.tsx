@@ -1,0 +1,283 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { installFakeServer, TEST_USER } from "../../../test/fakeServer";
+import { renderApp } from "../../../test/renderApp";
+import { PG_ID, PROM_ID } from "../../datasources/test/fakeDatasources";
+import type { ToolRecord, Turn } from "./api";
+import { CHAT_T0, chatMessages, fakeChat } from "./test/fakeAiChat";
+import { addCall, addText, daysLeft, queriesRun, queryText, setRecord, stepsOf } from "./turn";
+
+const USABLE = {
+  enabled: true,
+  usable: true,
+  orgProvidersAllowed: true,
+  noticeAcknowledged: true,
+  provider: {
+    id: "p1",
+    name: "Lokal",
+    kind: "openai",
+    model: "modell-1",
+    host: "llm.intern",
+    scope: "server",
+  },
+  usage: {
+    requests: 46,
+    tokens: 500,
+    requestsLimit: 200,
+    tokensLimit: 0,
+    orgTokensMonth: 0,
+    orgTokensMonthLimit: 0,
+  },
+  maxRowsToModel: 200,
+};
+
+const QUERY_RECORD: ToolRecord = {
+  status: "ok",
+  datasource: { id: PG_ID, name: "Sales DB", kind: "postgres" },
+  query: { sql: "SELECT region, sum(betrag) AS umsatz FROM bestellungen GROUP BY region" },
+  results: [
+    {
+      refId: "A",
+      datasourceId: PG_ID,
+      rows: 2,
+      truncated: false,
+      excludedValues: 1,
+      data: {
+        shape: "frame",
+        fields: [
+          { name: "region", values: ["Nord", "Süd"] },
+          { name: "umsatz", values: [412, 538] },
+        ],
+      },
+    },
+  ],
+  durationMs: 84,
+};
+
+const TURN: Turn = {
+  rounds: [
+    {
+      text: "",
+      calls: [
+        { id: "c1", name: "run_query", arguments: { datasourceId: PG_ID }, record: QUERY_RECORD },
+      ],
+    },
+    { text: "Süd liegt vorn.", calls: [] },
+  ],
+  usage: { inputTokens: 1200, outputTokens: 34 },
+  provider: { name: "Lokal", kind: "openai", model: "modell-1", host: "llm.intern" },
+  outcome: "ok",
+};
+
+function open(path: string, status: Record<string, unknown> | null, role = "owner") {
+  const server = installFakeServer({
+    signedIn: true,
+    user: { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] },
+  });
+  if (status !== null) {
+    server.areas.aiAdmin.status = status;
+  }
+  server.areas.aiAdmin.access = {
+    [PG_ID]: { readable: true, excludedFields: ["kunden.email"] },
+  };
+  return { server, ...renderApp(path) };
+}
+
+describe("Fragen: parts", () => {
+  it("builds the same steps from a stored answer and from streamed events", () => {
+    const stored = stepsOf(TURN);
+    expect(stored.map((step) => step.kind)).toEqual(["call", "text"]);
+    let live = addCall([], { id: "c1", name: "run_query", arguments: { datasourceId: PG_ID } });
+    expect(queriesRun(live)).toBe(0);
+    live = setRecord(live, "c1", QUERY_RECORD);
+    live = addText(addText(live, "Süd liegt "), "vorn.");
+    expect(live).toEqual(stored);
+    expect(queriesRun(live)).toBe(1);
+  });
+
+  it("reads the query text and the days a chat has left", () => {
+    expect(queryText({ sql: "SELECT 1" })).toBe("SELECT 1");
+    expect(queryText({ collection: "orders", pipeline: "[]" })).toContain('"collection"');
+    const day = 24 * 3600 * 1000;
+    expect(daysLeft(CHAT_T0 + 3 * day, CHAT_T0)).toBe(3);
+    expect(daysLeft(CHAT_T0 + 1, CHAT_T0)).toBe(1);
+    expect(daysLeft(CHAT_T0 - 1, CHAT_T0)).toBe(0);
+  });
+});
+
+describe("Fragen", () => {
+  it("has no entry and no page while AI is off", async () => {
+    const { server } = open("/ask", null);
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeTruthy();
+    await waitFor(() =>
+      expect(server.calls.some((call) => call.path.endsWith("/ai/status"))).toBe(true),
+    );
+    expect(screen.queryByRole("link", { name: /^Ask/ })).toBeNull();
+  });
+
+  it("shows the entry with Beta, the provider, today's requests and the allowed sources", async () => {
+    open("/ask", USABLE);
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    expect(await within(nav).findByRole("link", { name: "Ask Beta" })).toBeTruthy();
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(within(pane).getByText("Lokal · modell-1")).toBeTruthy();
+    expect(within(pane).getByText("llm.intern")).toBeTruthy();
+    const open_ = await within(pane).findByRole("checkbox", { name: "Allow Sales DB" });
+    expect((open_ as HTMLInputElement).disabled).toBe(false);
+    const closed = within(pane)
+      .getAllByRole("checkbox")
+      .find((box) => box.getAttribute("aria-describedby")?.endsWith(PROM_ID));
+    expect((closed as HTMLInputElement).disabled).toBe(true);
+    expect(within(pane).getByText("AI may not read")).toBeTruthy();
+    expect(screen.getByText("Today 46 of 200 requests")).toBeTruthy();
+  });
+
+  it("asks for the notice, then streams every tool call and the answer, and keeps the chat", async () => {
+    const { server, user, location } = open("/ask", { ...USABLE, noticeAcknowledged: false });
+    server.areas.aiChat.answer = {
+      events: [
+        { event: "meta", data: { chatId: "chat-1", provider: USABLE.provider } },
+        {
+          event: "tool",
+          data: { id: "c1", name: "run_query", arguments: { datasourceId: PG_ID } },
+        },
+        { event: "toolResult", data: { id: "c1", record: QUERY_RECORD } },
+        { event: "text", data: { text: "Süd liegt " } },
+        { event: "text", data: { text: "vorn." } },
+        { event: "done", data: { usage: TURN.usage, outcome: "ok", toolCalls: 1 } },
+      ],
+      turn: TURN,
+    };
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    await user.click(await within(pane).findByRole("checkbox", { name: "Allow Sales DB" }));
+    const question = screen.getByRole("textbox", { name: "Question about your data" });
+    await user.type(question, "Wie entwickelt sich der Umsatz je Region?{Enter}");
+    const notice = await screen.findByRole("dialog", { name: "Before you use AI" });
+    expect(within(notice).getByText(/For “Ask”, your questions/)).toBeTruthy();
+    expect(server.areas.aiChat.asks).toHaveLength(0);
+    await user.click(within(notice).getByRole("button", { name: "Got it" }));
+
+    const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
+    expect(await within(answer).findByText("Süd liegt vorn.")).toBeTruthy();
+    expect(within(answer).getByText("Ran a query")).toBeTruthy();
+    expect(within(answer).getByText(/1 query, read-only/)).toBeTruthy();
+    expect(within(answer).getByRole("cell", { name: "Süd" })).toBeTruthy();
+    expect(within(answer).getByText("Excluded values: 1.")).toBeTruthy();
+    expect(within(answer).getByText(/SELECT region, sum\(betrag\)/)).toBeTruthy();
+    expect(within(answer).getByRole("button", { name: "Open in Explore" })).toBeTruthy();
+    expect(within(answer).getByText("1,234 tokens")).toBeTruthy();
+    expect(server.areas.aiChat.asks).toEqual([
+      {
+        chatId: "chat-1",
+        body: {
+          text: "Wie entwickelt sich der Umsatz je Region?",
+          datasourceIds: [PG_ID],
+          language: "en",
+        },
+      },
+    ]);
+    // The new chat gets its address and shows what the server stored.
+    await waitFor(() => expect(location().search).toEqual({ chat: "chat-1" }));
+    expect(
+      await screen.findByText("Wie entwickelt sich der Umsatz je Region?", {
+        selector: ".ask-question__text",
+      }),
+    ).toBeTruthy();
+    expect(await screen.findByText("Süd liegt vorn.")).toBeTruthy();
+  });
+
+  it("opens a query of an answer in Explore without running it", async () => {
+    const { server, user, location } = open("/ask?chat=c-old", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-old", title: "Umsatz", messages: chatMessages("Umsatz?", TURN) }),
+    ];
+    const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
+    const before = server.areas.datasources.queries.length;
+    await user.click(within(answer).getByRole("button", { name: "Open in Explore" }));
+    await waitFor(() => expect(location().pathname).toBe("/explore"));
+    expect(server.areas.datasources.queries.length).toBe(before);
+  });
+
+  it("gives a refused question back to the composer with the reason", async () => {
+    const { server, user } = open("/ask", USABLE);
+    server.areas.aiChat.answer = {
+      refusal: {
+        status: 429,
+        code: "rate_limited",
+        reason: "ai.limit_user_requests",
+        params: { max: "200" },
+      },
+    };
+    const question = await screen.findByRole("textbox", { name: "Question about your data" });
+    await user.type(question, "Noch eine Frage{Enter}");
+    expect(await screen.findByText(/You used your 200 AI calls for today/)).toBeTruthy();
+    expect((question as HTMLTextAreaElement).value).toBe("Noch eine Frage");
+  });
+
+  it("locks Send with the reason when the daily limit is used up", async () => {
+    open("/ask", { ...USABLE, usage: { ...USABLE.usage, requests: 200 } });
+    const send = await screen.findByRole("button", { name: "Send" });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/You used your 200 AI calls for today/)).toBeTruthy();
+  });
+
+  it("shows a withheld result and a stopped call as such", async () => {
+    const stopped: Turn = {
+      rounds: [
+        {
+          text: "",
+          calls: [
+            {
+              id: "c1",
+              name: "run_query",
+              arguments: {},
+              record: { ...QUERY_RECORD, withheld: true, results: [] },
+            },
+            { id: "c2", name: "get_schema", arguments: {} },
+          ],
+        },
+      ],
+      outcome: "stopped",
+    };
+    const { server } = open("/ask?chat=c-w", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-w", title: "Alt", messages: chatMessages("Alt?", stopped) }),
+    ];
+    expect(await screen.findByText(/No longer available/)).toBeTruthy();
+    expect(screen.getByText("Stopped. What arrived until then is kept.")).toBeTruthy();
+  });
+});
+
+describe("Fragen: history", () => {
+  it("lists the chats with when they are deleted, and deletes one after a confirmation", async () => {
+    const { server, user } = open("/ask/history", USABLE);
+    const day = 24 * 3600 * 1000;
+    server.areas.aiChat.chats = [
+      fakeChat({
+        id: "a",
+        title: "Umsatz je Region",
+        expiresAt: Date.now() + 29.5 * day,
+        datasources: [{ id: PG_ID, name: "Sales DB", kind: "postgres" }],
+      }),
+      fakeChat({ id: "b", title: "Retouren im September", expiresAt: Date.now() + 2.5 * day }),
+    ];
+    expect(await screen.findByRole("heading", { name: "History", level: 1 })).toBeTruthy();
+    expect(
+      await screen.findByText(/Chats are deleted 30 days after their last message/),
+    ).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "Umsatz je Region" })).toBeTruthy();
+    expect(screen.getByText("30 days left")).toBeTruthy();
+    expect(screen.getByText("3 days left")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Delete Retouren im September" }));
+    const confirm = await screen.findByRole("dialog", { name: "Delete the chat?" });
+    await user.click(within(confirm).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(server.areas.aiChat.chats.map((chat) => chat.id)).toEqual(["a"]));
+    await waitFor(() => expect(screen.queryByText("Retouren im September")).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "Delete all" }));
+    const all = await screen.findByRole("dialog", { name: "Delete all chats?" });
+    await user.click(within(all).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(server.areas.aiChat.chats).toEqual([]));
+    expect(await screen.findByText("No chats yet.")).toBeTruthy();
+  });
+});

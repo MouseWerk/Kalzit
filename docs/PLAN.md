@@ -455,7 +455,7 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Tokens und Aufrufe, keine Kosten oder Währungen.
    - Chat-Verläufe werden pro Benutzer gespeichert, mit einstellbarer Aufbewahrung (Standard
      30 Tage, `ai.chat_retention_days`); eine Organisation kann eine kürzere Aufbewahrung
-     wählen. Die Speicherung kommt mit dem Chat-Paket.
+     wählen. Gespeichert werden sie mit „Fragen“; ein stündlicher Lauf löscht abgelaufene Chats.
    - Pro Datenquelle wird freigegeben, ob KI sie lesen darf (Standard: nein); das entscheidet,
      wer die Quelle bearbeiten darf. „Erklären“ und „Entwerfen“ lesen das Schema einer Quelle
      nur nach dieser Freigabe, sonst nur den eingegebenen Abfragetext.

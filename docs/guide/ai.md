@@ -1,7 +1,7 @@
 # AI
 
-Kalzit can explain a query, draft one from a description and summarize a result with a language
-model of your choice: a model in your own network (Ollama, LiteLLM, vLLM, LM Studio or another
+Kalzit can explain a query, draft one from a description, summarize a result and answer questions
+about your data (**Ask**, Fragen) with a language model of your choice: a model in your own network (Ollama, LiteLLM, vLLM, LM Studio or another
 OpenAI-compatible server) or a cloud provider (OpenAI, Anthropic). AI is off until a server
 administrator connects a provider and turns it on; until then no AI button, menu entry or hint
 appears anywhere. API: [AI](../api/ai.md).
@@ -27,7 +27,7 @@ without the question, the answer or any result.
    in effect has passed its test since its address, model, key or token field last changed.
 
 The page also shows the providers with where their data goes, the usage per day and organization
-(calls and tokens, never money), the limits, the chat retention for the later chat, and the text
+(calls and tokens, never money), the limits, how long chats are kept, and the text
 "Which data leaves the server" (Welche Daten den Server verlassen) with a paragraph of your own
 (**Edit own addition**, Eigenen Zusatz bearbeiten).
 
@@ -112,6 +112,40 @@ Both need every data source involved to be opened to AI; otherwise the button is
 or the summary says which source AI may not read. The note under a summary says what was sent: the
 queries, how many rows, whether the result was cut to the row limit and how many excluded values
 were left out.
+
+## Ask (Fragen)
+
+**Ask** (Fragen, marked Beta) in the navigation is a chat about your data. It appears only while
+AI is on and a provider is connected. Ask a question in plain words; the assistant works it out
+with tools, each with your rights and only reading:
+
+- it looks up the data sources you may read and reads the schema of those open to AI,
+- it runs read-only queries on them (free queries need the right to query the source, as in
+  Explore; a writing query is refused by the server),
+- it finds the panels of dashboards you may read and runs their saved queries, so viewers can ask
+  about what their dashboards show,
+- it proposes a query you can open in Explore, where you check it and save it as a panel.
+
+Every step appears in the answer as it happens: what the assistant did, on which source, the query
+(read-only) and the result in its own shape (a table, documents, a graph), cut to the row limit
+with excluded values replaced. **Open in Explore** (In Explore öffnen) opens a query in Explore
+without running it; **Copy** copies it. **Stop** (Abbrechen, or Escape) ends an answer; what
+arrived is kept. The answer ends with the tokens it used. At most 10 tool calls run per answer
+(Settings > AI); after that the assistant answers with what it has.
+
+**Sources** in the composer and **Allowed sources** (Erlaubte Quellen) in the side pane choose
+which sources the assistant may use; none chosen means all sources open to AI. Sources AI may not
+read appear greyed out with "AI may not read". The side pane also shows the provider and where data
+goes, your requests today, your recent chats and a few suggested questions.
+
+Chats are yours alone; nobody else can read them, administrators included. **Ask > History**
+(Verlauf) lists them with the days until they are deleted: 30 days after their last message by
+default, shorter if your organization chose so. Delete one chat, the chosen ones or all of them at
+any time. A result of a source you may no longer read, or that was closed to AI since, is no longer
+shown in a stored chat and not sent to the model again.
+
+Every tool call is in the audit log with the source or dashboard, the query and the number of rows,
+never with result data, your question or the answer.
 
 ## Prompt safety
 

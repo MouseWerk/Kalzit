@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
+import { aiChatFake } from "../features/ai/chat/test/fakeAiChat";
 import { aiAdminFake, handleAiAdminRoute } from "../features/ai/test/fakeAiAdmin";
 import { analysesFake } from "../features/analyses/test/fakeAnalyses";
 import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboardFeatures";
@@ -101,6 +102,7 @@ export interface FakeArea<State> {
  * Each gets the states of all areas, so the panel query route can run data source queries.
  */
 const AREA_FAKES = {
+  aiChat: aiChatFake,
   // Before datasources: it answers a data source's /ai-access.
   aiAdmin: aiAdminFake,
   datasources: datasourcesFake,
