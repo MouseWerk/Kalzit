@@ -395,7 +395,10 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       state.signedIn = true;
       return json(200, state.user);
     }
-    if (path === "/api/auth/logout" && method === "POST") {
+    if (
+      (path === "/api/auth/logout" || path === "/api/auth/logout?forgetBrowser=true") &&
+      method === "POST"
+    ) {
       state.signedIn = false;
       return new Response(null, { status: 204 });
     }

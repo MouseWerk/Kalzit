@@ -101,7 +101,7 @@ async fn create(
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
     let email = super::normalize_email(&req.email).map_err(|e| e.with_field("email"))?;
     password::check_policy(&req.password).map_err(|e| ApiError::validation(e).with_field("password"))?;
-    let hash = password::hash(req.password).await.map_err(|e| ApiError::internal("hashing password", e))?;
+    let hash = password::hash(req.password).await?;
 
     let id = super::new_id();
     let now = state.clock.now_ms();
@@ -149,7 +149,7 @@ async fn update(
     let hash = match req.password {
         Some(new) => {
             password::check_policy(&new).map_err(|e| ApiError::validation(e).with_field("password"))?;
-            Some(password::hash(new).await.map_err(|e| ApiError::internal("hashing password", e))?)
+            Some(password::hash(new).await?)
         }
         None => None,
     };

@@ -50,6 +50,16 @@ fn key_from_hex(text: &str) -> Option<VerifyingKey> {
     VerifyingKey::from_bytes(&bytes).ok()
 }
 
+/// A reinstall whose key differs from the one that signed the removed plugin of the same id
+/// (or whose former key is unknown), confirmed by the administrator where it matters.
+struct Takeover {
+    /// The key that signed the removed plugin, if it was signed and is known.
+    from_key: Option<String>,
+    removed_version: Option<String>,
+    /// The data sources of the kind, whose stored secrets are cleared.
+    datasources: Vec<String>,
+}
+
 /// Settings forms by plugin id and version.
 type Forms = HashMap<(String, String), &'static [SettingField]>;
 
@@ -321,14 +331,22 @@ impl PluginHost {
     /// Installs or updates from the zip file `archive`. A new plugin is installed disabled and
     /// waits for the approval of its permissions. An update of an approved plugin replaces it
     /// at once when it adds no permissions; otherwise it waits for approval while the installed
-    /// version keeps running.
-    pub async fn install(&self, state: &AppState, archive: &Path, actor: &Actor<'_>) -> ApiResult<PluginRow> {
+    /// version keeps running. A plugin installed again after its removal must be signed like an
+    /// update of the removed one; another key needs `confirm_publisher_change` when data sources
+    /// of the kind exist, and then clears their stored secrets.
+    pub async fn install(
+        &self,
+        state: &AppState,
+        archive: &Path,
+        confirm_publisher_change: bool,
+        actor: &Actor<'_>,
+    ) -> ApiResult<PluginRow> {
         let _changes = self.changes.lock().await;
         self.prepare().map_err(|e| HostError::from(e).api())?;
         let dir_name = format!("{}", uuid::Uuid::now_v7().simple());
         let dir = self.dir("packages").join(&dir_name);
-        let checked = self.check_package(state, archive, &dir).await;
-        let (unpacked, verified, existing) = match checked {
+        let checked = self.check_package(state, archive, &dir, confirm_publisher_change).await;
+        let (unpacked, verified, existing, takeover) = match checked {
             Ok(c) => c,
             Err(e) => {
                 remove_dir(&dir);
@@ -341,6 +359,7 @@ impl PluginHost {
         let key_hex = verified.key.as_ref().map(signing::key_hex);
         let signer = signer_name(verified.signer).to_string();
         let mut tx = crate::db::begin(&state.db).await?;
+        let fresh = existing.is_none();
         let (row, action, old_dirs) = match existing {
             None => {
                 let row = PluginRow {
@@ -388,6 +407,26 @@ impl PluginHost {
             }
         };
         store::put(&mut tx, &row, actor.user_id).await?;
+        if fresh {
+            store::delete_tombstone(&mut tx, &row.id).await?;
+        }
+        let mut cleared = Vec::new();
+        if let Some(t) = &takeover {
+            // A new publisher starts a new line of keys, and the secrets entered for the former
+            // publisher's plugin never reach the new one: they must be entered again.
+            store::delete_handovers(&mut tx, &row.id).await?;
+            let secrets = store::clear_secrets_of_kind(&mut tx, &row.id).await?;
+            let summary = json!({
+                "fromKeyId": t.from_key.as_deref().and_then(key_from_hex).map(|k| signing::key_id(&k)),
+                "toKeyId": verified.key.as_ref().map(signing::key_id),
+                "removedVersion": t.removed_version,
+                "version": m.version,
+                "datasources": t.datasources,
+                "secretsCleared": secrets,
+            });
+            self.record(&mut tx, actor, "plugins.publisher_changed", &row.id, summary, now).await?;
+            cleared.clone_from(&t.datasources);
+        }
         let summary = json!({
             "version": m.version,
             "signer": row.signer,
@@ -396,6 +435,9 @@ impl PluginHost {
         });
         self.record(&mut tx, actor, action, &row.id, summary, now).await?;
         crate::db::commit(tx).await?;
+        for id in &cleared {
+            state.datasources.forget(id);
+        }
         if action == "plugins.updated" {
             self.unregister(&row.id, &state.datasources).await;
             self.reregister(state, &row.id).await;
@@ -424,13 +466,14 @@ impl PluginHost {
     /// Every check, in this order: the manifest and the signature read from the archive (trust,
     /// reserved ids, the update rules, fixed targets), and only then the archive unpacked into
     /// `dir` and compared with the manifest; the binary is made executable last. Answers the
-    /// installed plugin of the same id, if any.
+    /// installed plugin of the same id, if any, and a change of publisher after a removal.
     async fn check_package(
         &self,
         state: &AppState,
         archive: &Path,
         dir: &Path,
-    ) -> ApiResult<(package::Unpacked, Verified, Option<PluginRow>)> {
+        confirm_publisher_change: bool,
+    ) -> ApiResult<(package::Unpacked, Verified, Option<PluginRow>, Option<Takeover>)> {
         let path = archive.to_path_buf();
         let signed = tokio::task::spawn_blocking(move || package::read_from_zip(&path))
             .await
@@ -448,6 +491,7 @@ impl PluginHost {
         let verified =
             package::verify(&signed, &self.trusted(&keys), switches.allow_unsigned).map_err(HostError::api)?;
         let existing = store::get(&state.db, &m.id).await?;
+        let mut takeover = None;
         if let Some(old) = &existing {
             let old_manifest = manifest::parse(&old.manifest).map_err(|e| ApiError::internal("plugin manifest", e))?;
             let old_key = old.public_key.as_deref().and_then(key_from_hex);
@@ -456,6 +500,8 @@ impl PluginHost {
             signing::check_update(&installed, m, verified.key.as_ref()).map_err(|r| package::refusal(&r).api())?;
         } else if datasources_has_kind(&state.datasources, &m.id) {
             return Err(HostError::new("plugin.kind_taken", format!("the data source kind {} is taken", m.id)).api());
+        } else {
+            takeover = self.check_reinstall(state, m, verified.key.as_ref(), confirm_publisher_change).await?;
         }
         let policy = state.datasources.policy(state).await?;
         for target in &m.permissions.network {
@@ -484,7 +530,67 @@ impl PluginHost {
                 .api());
         }
         package::make_executable(&program).map_err(|e| HostError::from(e).api())?;
-        Ok((unpacked, verified, existing))
+        Ok((unpacked, verified, existing, takeover))
+    }
+
+    /// A plugin installed again after its removal: its tombstone stands for the removed version,
+    /// and the package must be signed as an update of it would be (the same key or one it was
+    /// handed over to; an older version may come back). Only that unchanged signed key keeps the
+    /// secrets of the kind's data sources: a removed unsigned plugin vouches for nobody, and a
+    /// plugin removed before tombstones were kept has no known key, so with data sources left any
+    /// reinstall of those (signed or unsigned) counts as a change. A change with data sources of
+    /// the kind needs the administrator's confirmation, since their secrets would otherwise reach
+    /// a binary nobody vouched for.
+    async fn check_reinstall(
+        &self,
+        state: &AppState,
+        m: &Manifest,
+        key: Option<&VerifyingKey>,
+        confirm: bool,
+    ) -> ApiResult<Option<Takeover>> {
+        let tombstone = store::tombstone(&state.db, &m.id).await?;
+        let datasources = store::datasources_of_kind(&state.db, &m.id).await?;
+        let changed = match &tombstone {
+            Some(t) if t.public_key.is_some() => {
+                let removed = Manifest { version: m.version.clone(), ..m.clone() };
+                let old_key = t.public_key.as_deref().and_then(key_from_hex);
+                let handovers = self.handovers(state, &m.id).await?;
+                let installed = Installed { manifest: &removed, key: old_key.as_ref(), handovers: &handovers };
+                // A stored key that no longer reads as one cannot vouch for anything.
+                old_key.is_none()
+                    || match signing::check_update(&installed, m, key) {
+                        Ok(()) => false,
+                        Err(signing::Refusal::KeyChanged) => true,
+                        Err(r) => return Err(package::refusal(&r).api()),
+                    }
+            }
+            // Unsigned, or unknown: nothing ties the new package to the removed one.
+            _ => !datasources.is_empty(),
+        };
+        if !changed {
+            return Ok(None);
+        }
+        let from_key = tombstone.as_ref().and_then(|t| t.public_key.clone());
+        if !datasources.is_empty() && !confirm {
+            let mut e = HostError::new(
+                "plugin.publisher_changed",
+                format!(
+                    "this package is not signed with the key of the removed plugin {}; installing it clears the \
+                     stored secrets of its {} data sources (repeat with confirmPublisherChange=true)",
+                    m.id,
+                    datasources.len()
+                ),
+            )
+            .with("datasources", datasources.len());
+            if let Some(previous) = from_key.as_deref().and_then(key_from_hex) {
+                e = e.with("previousKeyId", signing::key_id(&previous));
+            }
+            if let Some(t) = &tombstone {
+                e = e.with("removedVersion", &t.version);
+            }
+            return Err(e.api());
+        }
+        Ok(Some(Takeover { from_key, removed_version: tombstone.map(|t| t.version), datasources }))
     }
 
     /// The verified hand-overs kept for `id`.
@@ -612,13 +718,14 @@ impl PluginHost {
     }
 
     /// Removes a plugin: its kind, process, files and row. Its data sources stay and answer
-    /// `datasource.kind_unavailable`; blocks of organizations stay for a reinstall.
+    /// `datasource.kind_unavailable`; blocks of organizations, hand-overs and a tombstone with
+    /// the version and key stay for a reinstall (`check_reinstall`).
     pub async fn remove(&self, state: &AppState, id: &str, actor: &Actor<'_>) -> ApiResult<()> {
         let _changes = self.changes.lock().await;
         let row = self.row(state, id).await?;
         let now = state.clock.now_ms();
         let mut tx = crate::db::begin(&state.db).await?;
-        store::delete(&mut tx, id).await?;
+        store::delete(&mut tx, &row, actor.user_id, now).await?;
         self.record(&mut tx, actor, "plugins.removed", id, json!({ "version": row.version }), now).await?;
         crate::db::commit(tx).await?;
         self.unregister(id, &state.datasources).await;

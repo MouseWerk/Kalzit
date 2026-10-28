@@ -1,5 +1,6 @@
-//! The plugin host's tables (migration 0020): installed plugins, trusted publisher keys, key
-//! hand-overs, organization blocks and the host's switches.
+//! The plugin host's tables (migrations 0020 and 0021): installed plugins, what removed ones
+//! leave behind, trusted publisher keys, key hand-overs, organization blocks and the host's
+//! switches.
 
 use sqlx::AnyConnection;
 
@@ -135,10 +136,75 @@ pub async fn put(conn: &mut AnyConnection, p: &PluginRow, by: &str) -> ApiResult
     Ok(())
 }
 
-pub async fn delete(conn: &mut AnyConnection, id: &str) -> ApiResult<()> {
-    sqlx::query("DELETE FROM plugins WHERE id = $1").bind(id).execute(&mut *conn).await?;
+/// Removes an installed plugin and keeps its tombstone; its hand-overs stay with the id.
+pub async fn delete(conn: &mut AnyConnection, p: &PluginRow, by: &str, at: i64) -> ApiResult<()> {
+    sqlx::query("DELETE FROM plugins WHERE id = $1").bind(&p.id).execute(&mut *conn).await?;
+    sqlx::query(
+        "INSERT INTO plugin_tombstones (plugin_id, version, signer, public_key, removed_at, removed_by)          VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (plugin_id) DO UPDATE SET version = excluded.version,          signer = excluded.signer, public_key = excluded.public_key, removed_at = excluded.removed_at,          removed_by = excluded.removed_by",
+    )
+    .bind(&p.id)
+    .bind(&p.version)
+    .bind(&p.signer)
+    .bind(&p.public_key)
+    .bind(at)
+    .bind(by)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// What a removed plugin left behind: the last installed version and the key that signed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tombstone {
+    pub version: String,
+    pub signer: String,
+    /// 32 bytes in lowercase hex; `None` when it was unsigned.
+    pub public_key: Option<String>,
+}
+
+pub async fn tombstone<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
+    id: &str,
+) -> ApiResult<Option<Tombstone>> {
+    let row: Option<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT version, signer, public_key FROM plugin_tombstones WHERE plugin_id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map(|(version, signer, public_key)| Tombstone { version, signer, public_key }))
+}
+
+pub async fn delete_tombstone(conn: &mut AnyConnection, id: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM plugin_tombstones WHERE plugin_id = $1").bind(id).execute(&mut *conn).await?;
+    Ok(())
+}
+
+/// Forgets the hand-overs of an id, when another publisher takes it over.
+pub async fn delete_handovers(conn: &mut AnyConnection, id: &str) -> ApiResult<()> {
     sqlx::query("DELETE FROM plugin_handovers WHERE plugin_id = $1").bind(id).execute(&mut *conn).await?;
     Ok(())
+}
+
+/// The data sources of a kind, in every organization and in the trash too (their secrets stay
+/// until they are purged).
+pub async fn datasources_of_kind<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
+    kind: &str,
+) -> ApiResult<Vec<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM datasources WHERE kind = $1 ORDER BY id").bind(kind).fetch_all(db).await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// Removes the stored secrets of every data source of a kind; answers how many were removed.
+pub async fn clear_secrets_of_kind(conn: &mut AnyConnection, kind: &str) -> ApiResult<u64> {
+    let n = sqlx::query(
+        "DELETE FROM datasource_secrets WHERE datasource_id IN (SELECT id FROM datasources WHERE kind = $1)",
+    )
+    .bind(kind)
+    .execute(&mut *conn)
+    .await?;
+    Ok(n.rows_affected())
 }
 
 /// A publisher key an administrator trusts.

@@ -265,11 +265,20 @@ impl Drop for Upload {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallQuery {
+    /// `true`: install a removed plugin's id signed with another key, clearing the stored
+    /// secrets of its data sources (the count `plugin.publisher_changed` named).
+    confirm_publisher_change: Option<bool>,
+}
+
 /// `POST /admin/plugins`: the package (a zip file) is the request body.
 async fn install(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    Query(query): Query<InstallQuery>,
     body: Body,
 ) -> ApiResult<impl IntoResponse> {
     let upload = Upload(state.plugins.upload_path().map_err(|e| e.api())?);
@@ -295,7 +304,10 @@ async fn install(
         return Err(ApiError::validation("send the plugin package (a zip file) as the request body")
             .because("plugin.package_unreadable"));
     }
-    let row = state.plugins.install(&state, &upload.0, &actor(&user, &info, None)).await?;
+    let row = state
+        .plugins
+        .install(&state, &upload.0, query.confirm_publisher_change.unwrap_or(false), &actor(&user, &info, None))
+        .await?;
     let id = row.id.clone();
     Ok((StatusCode::CREATED, one(&state, &id).await?))
 }

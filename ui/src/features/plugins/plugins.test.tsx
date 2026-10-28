@@ -279,6 +279,74 @@ describe("Plugins, install from file", () => {
     expect(await screen.findByText("Snowflake 2.3.1 is installed.")).toBeTruthy();
   });
 
+  it("installs a removed plugin's id from another publisher only after the typed server name", async () => {
+    const previous = "7f3a91c20d5be4a8";
+    const { user, server } = await openPlugins("/settings/plugins", (s) => {
+      s.areas.plugins.installAnswer = {
+        status: 409,
+        code: "conflict",
+        reason: "plugin.publisher_changed",
+        params: { datasources: "3", previousKeyId: previous, removedVersion: "2.3.1" },
+      };
+      s.areas.plugins.confirmedInstallAnswer = {
+        plugin: fakePlugin({ approved: false, enabled: false, running: false, process: undefined }),
+      };
+    });
+    await user.click(await screen.findByRole("button", { name: "Install from file…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Install from file" });
+    await user.upload(within(dialog).getByLabelText(/Drop the package here/), packageFile());
+
+    const change = await screen.findByRole("dialog", { name: "Install from another publisher?" });
+    expect(
+      within(change).getByText(
+        "Data sources of this plugin, in every organization and in the trash: 3",
+      ),
+    ).toBeTruthy();
+    expect(
+      within(change).getByText(`Key of the removed plugin: ${groupedKeyId(previous)}`),
+    ).toBeTruthy();
+    expect(within(change).getByText("Removed version: 2.3.1")).toBeTruthy();
+    expect(within(change).getByText(/clears the stored passwords and keys/)).toBeTruthy();
+
+    // Not without the server's name.
+    const name = window.location.hostname;
+    const input = within(change).getByRole("textbox", {
+      name: `To confirm, type the server’s name: ${name}`,
+    });
+    await user.type(input, "wrong");
+    await user.click(within(change).getByRole("button", { name: "Install and clear passwords" }));
+    expect(await within(change).findByText("That is not the server’s name.")).toBeTruthy();
+    expect(calls(server, "POST", "/api/admin/plugins")).toHaveLength(1);
+
+    await user.clear(input);
+    await user.type(input, name);
+    await user.click(within(change).getByRole("button", { name: "Install and clear passwords" }));
+    await screen.findByRole("dialog", { name: "Install Snowflake 2.3.1" });
+    expect(calls(server, "POST", "/api/admin/plugins").map((call) => call.path)).toEqual([
+      "/api/admin/plugins",
+      "/api/admin/plugins?confirmPublisherChange=true",
+    ]);
+  });
+
+  it("names an unknown former key when a removed unsigned plugin comes back", async () => {
+    const { user } = await openPlugins("/settings/plugins", (s) => {
+      s.areas.plugins.installAnswer = {
+        status: 409,
+        code: "conflict",
+        reason: "plugin.publisher_changed",
+        params: { datasources: "1" },
+      };
+    });
+    await user.click(await screen.findByRole("button", { name: "Install from file…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Install from file" });
+    await user.upload(within(dialog).getByLabelText(/Drop the package here/), packageFile());
+    const change = await screen.findByRole("dialog", { name: "Install from another publisher?" });
+    expect(
+      within(change).getByText("Key of the removed plugin: unsigned or not known"),
+    ).toBeTruthy();
+    expect(within(change).queryByText(/Removed version/)).toBeNull();
+  });
+
   it("marks the targets an update adds and approves the waiting version", async () => {
     const installed = fakePlugin();
     const { user, server } = await openPlugins("/settings/plugins", (s) => {
