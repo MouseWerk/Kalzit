@@ -220,8 +220,37 @@ async fn one(state: &AppState, id: &str) -> ApiResult<Json<PluginView>> {
     Ok(Json(view(state, row).await?))
 }
 
-async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) -> ApiResult<Json<PluginView>> {
-    one(&state, &path.plugin_id).await
+/// A data source of the plugin's kind, for "Used in" and the question before removing it.
+#[derive(Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+struct UsedIn {
+    id: String,
+    name: String,
+    org_id: String,
+    org_name: String,
+}
+
+/// One plugin with what the list leaves out: the manifest as signed and the data sources of its
+/// kind in every organization (not in the trash).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginDetail {
+    #[serde(flatten)]
+    view: PluginView,
+    manifest: String,
+    used_in: Vec<UsedIn>,
+}
+
+async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) -> ApiResult<Json<PluginDetail>> {
+    let row = store::get(&state.db, &path.plugin_id).await?.ok_or_else(ApiError::not_found)?;
+    let manifest = row.manifest.clone();
+    let used_in: Vec<UsedIn> = sqlx::query_as(
+        "SELECT d.id, d.name, d.org_id, o.name AS org_name FROM datasources d JOIN orgs o ON o.id = d.org_id          WHERE d.kind = $1 AND d.deleted_at IS NULL ORDER BY o.name, d.name, d.id",
+    )
+    .bind(&row.id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
 }
 
 /// Removes the uploaded file when the request ends, however it ends.
