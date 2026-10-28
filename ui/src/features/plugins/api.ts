@@ -43,6 +43,9 @@ export interface ProcessStatus {
   retryAt?: number;
   sandbox: string[];
   sandboxMissing: string[];
+  /** What an administrator should know: Kalzit's files with secrets other accounts may read, a
+   * plugin running without Landlock. */
+  warnings: { reason: string; params: Record<string, string>; message: string }[];
 }
 
 export interface Plugin {
@@ -184,6 +187,25 @@ function processStatus(value: unknown): ProcessStatus | undefined {
     failures: typeof value.failures === "number" ? value.failures : 0,
     sandbox: strings(value.sandbox),
     sandboxMissing: strings(value.sandboxMissing),
+    warnings: Array.isArray(value.warnings)
+      ? value.warnings.filter(isRecord).flatMap((w) =>
+          typeof w.reason === "string"
+            ? [
+                {
+                  reason: w.reason,
+                  params: isRecord(w.params)
+                    ? Object.fromEntries(
+                        Object.entries(w.params).filter(
+                          (e): e is [string, string] => typeof e[1] === "string",
+                        ),
+                      )
+                    : {},
+                  message: text(w.message) ?? "",
+                },
+              ]
+            : [],
+        )
+      : [],
   };
   if (typeof value.pid === "number") status.pid = value.pid;
   if (typeof value.startedAt === "number") status.startedAt = value.startedAt;

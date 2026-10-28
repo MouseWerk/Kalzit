@@ -32,11 +32,13 @@
 //!
 //! What the SDK does for the plugin (docs/api/plugins.md, "Processes"):
 //!
-//! - Reads `KALZIT_PLUGIN_ADDRESS`, `KALZIT_PLUGIN_TOKEN` and `KALZIT_PLUGIN_HOST_PID`, listens on
-//!   the address (a named pipe on Windows, created as its first instance with a DACL for Kalzit's
-//!   account and `RESTRICTED`; a Unix socket on Linux), and prints the handshake
-//!   `kalzit-plugin 1 ready` on stdout once it listens. Connections from any process other than
-//!   Kalzit's are closed, calls without the start's token are refused.
+//! - Reads `KALZIT_PLUGIN_ADDRESS`, `KALZIT_PLUGIN_TOKEN`, `KALZIT_PLUGIN_HOST_PID` and
+//!   `KALZIT_PLUGIN_CONNECTOR`, serves on the address (Windows: connects to the named pipe Kalzit
+//!   created, as an AppContainer cannot create one; Linux: listens on the Unix socket), and prints
+//!   the handshake `kalzit-plugin 1 ready` on stdout once it serves. Only Kalzit's process is
+//!   served, calls without the start's token are refused.
+//! - Network connections go through Kalzit's connector ([`net::connect`]); the plugin has no
+//!   network of its own.
 //! - Answers `Describe` from [`DataSource::describe`] and keeps what the host announced
 //!   ([`HostInfo`], through [`Context::host`]).
 //! - Turns the gRPC deadline and `deadline_unix_ms` into one deadline per call: a call that runs
@@ -525,9 +527,11 @@ impl Config {
 }
 
 /// Serves `plugin` as Kalzit started it, until Kalzit ends the process. Call it first in `main`,
-/// before any thread starts: it takes the token out of the environment (so processes the plugin
-/// starts do not inherit it) and builds the async runtime itself. Fails when the environment is
-/// not Kalzit's or the address cannot be listened on.
+/// before any thread starts: it takes the token out of the process's environment variables, so
+/// processes the plugin starts do not inherit it, and builds the async runtime itself. The
+/// environment the process started with stays readable to the plugin's own processes
+/// (`/proc/<pid>/environ` on Linux); the token is worth nothing outside this start of this
+/// plugin. Fails when the environment is not Kalzit's or the address cannot be served on.
 pub fn run<P: DataSource>(plugin: P) -> ExitCode {
     let config = match Config::from_env() {
         Ok(config) => config,
@@ -536,6 +540,8 @@ pub fn run<P: DataSource>(plugin: P) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The network connector keeps the token it needs before the environment loses it.
+    net::init(kalzit_plugin_api::connector::Connector::from_env());
     // SAFETY: `run` is documented to be called before any other thread exists, so nothing reads
     // the environment concurrently.
     unsafe { std::env::remove_var(TOKEN_ENV) };

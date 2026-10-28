@@ -162,6 +162,9 @@ fn fast_options() -> Options {
         probe_interval: Duration::from_secs(600),
         probe_timeout: Duration::from_secs(5),
         limits: Default::default(),
+        max_connections: 64,
+        connection_idle: Duration::from_secs(600),
+        connect_timeout: Duration::from_secs(5),
     }
 }
 
@@ -258,10 +261,14 @@ impl TestApp {
     }
 
     async fn datasource(&self, kind: &str, timeout_secs: u64) -> String {
+        self.datasource_with(kind, json!({ "host": "db.example.test", "queryTimeoutSecs": timeout_secs })).await
+    }
+
+    async fn datasource_with(&self, kind: &str, settings: Value) -> String {
         let body = json!({
             "name": format!("Quelle {}", uuid::Uuid::now_v7()),
             "kind": kind,
-            "settings": { "host": "db.example.test", "queryTimeoutSecs": timeout_secs },
+            "settings": settings,
             "secrets": { "password": "geheim-4711" }
         });
         let r = self.send(Method::POST, &format!("/orgs/{}/datasources", self.org), Some(body)).await;
@@ -284,6 +291,18 @@ impl TestApp {
         let r = self.send(Method::POST, &format!("/orgs/{}/query", self.org), Some(body)).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
         r.body["results"]["A"].clone()
+    }
+
+    /// The first document a query of the test plugin answers; fails with the plugin's state and
+    /// output when there is none.
+    async fn doc(&self, ds: &str, id: &str, query: Value) -> Value {
+        let r = self.query(ds, query).await;
+        let doc = r["result"]["documents"]["documents"][0].clone();
+        if !doc.is_object() {
+            let logs = self.send(Method::GET, &format!("/admin/plugins/{id}/logs"), None).await;
+            panic!("no answer: {r}; the plugin: {}; its output: {}", self.plugin(id).await, logs.body);
+        }
+        doc
     }
 
     async fn plugin(&self, id: &str) -> Value {
@@ -824,8 +843,11 @@ async fn the_sandbox_holds() {
     let first = |r: Value| r["result"]["documents"]["documents"][0].clone();
 
     // Nothing of Kalzit's environment reaches the plugin.
-    let env = first(t.query(&ds, json!({ "do": "env" })).await);
-    let names: Vec<&str> = env["names"].as_array().unwrap().iter().map(|n| n.as_str().unwrap()).collect();
+    let r = t.query(&ds, json!({ "do": "env" })).await;
+    let env = first(r.clone());
+    let plugin = t.plugin(ID).await;
+    let names = env["names"].as_array().unwrap_or_else(|| panic!("{r}; the plugin: {plugin}"));
+    let names: Vec<&str> = names.iter().map(|n| n.as_str().unwrap()).collect();
     assert!(names.contains(&"KALZIT_PLUGIN_TOKEN"), "{names:?}");
     assert!(!names.iter().any(|n| n.starts_with("CARGO") || n.starts_with("RUST")), "{names:?}");
 
@@ -847,6 +869,24 @@ async fn the_sandbox_holds() {
         let db = t.dir.path().join("kalzit.db");
         let r = first(t.query(&ds, json!({ "do": "read", "path": db })).await);
         assert_eq!(r["ok"], false, "the plugin read Kalzit's database: {r} ({layers:?})");
+        // A configuration file that every local account may read, as `kalzit.toml` in
+        // ProgramData is: the plugin still cannot.
+        let config_dir = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        {
+            let me = kalzit::data_dir::acl::current_user().unwrap();
+            kalzit::data_dir::acl::restrict(
+                config_dir.path(),
+                &format!(
+                    "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{me})(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;WD)"
+                ),
+            )
+            .unwrap();
+        }
+        let config = config_dir.path().join("kalzit.toml");
+        std::fs::write(&config, "[database]\nurl = \"postgres://kalzit:geheim@db/kalzit\"\n").unwrap();
+        let r = first(t.query(&ds, json!({ "do": "read", "path": config })).await);
+        assert_eq!(r["ok"], false, "the plugin read a configuration file readable by Users: {r} ({layers:?})");
     } else {
         eprintln!("Landlock is not available on this host; layers: {layers:?}");
     }
@@ -903,6 +943,149 @@ async fn the_sandbox_holds() {
     assert_eq!(r.status, StatusCode::OK);
     assert!(!alive(plugin), "the plugin process ended");
     assert!(!alive(child), "the plugin's child ended with it");
+    t.finish().await;
+}
+
+/// A TCP server on loopback that answers every line with `pong`.
+async fn echo_server() -> u16 {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                let mut lines = tokio::io::BufReader::new(read).lines();
+                while let Ok(Some(_)) = lines.next_line().await {
+                    if write.write_all(b"pong\n").await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn the_network_goes_only_through_the_connector() {
+    let port = echo_server().await;
+    let t = test_app().await;
+    t.state.plugins.set_options(Options {
+        max_connections: 3,
+        connection_idle: Duration::from_secs(2),
+        ..fast_options()
+    });
+    t.send(Method::PATCH, "/admin/plugin-host", Some(json!({ "allowUnsigned": true }))).await;
+    let extra = "[[settings]]\nname = \"port\"\nlabel = { en = \"Port\" }\ntype = \"number\"\ntarget = true\n\n\
+                 [[permissions.network]]\nsetting = \"host\"\nform = \"host\"\nport_setting = \"port\"\n";
+    // A version of its own: settings forms are kept per id and version for the whole process.
+    t.ready(&Pkg { version: "2.0.0", extra, ..Default::default() }).await;
+    let ds = t.datasource_with(ID, json!({ "host": "127.0.0.1", "port": port })).await;
+
+    // The sandbox has no network of its own: a direct connection fails, also to loopback.
+    let status = t.plugin(ID).await["process"].clone();
+    let layers: Vec<&str> = status["sandbox"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect();
+    assert!(layers.contains(&"network"), "{layers:?}");
+    if cfg!(windows) {
+        assert!(layers.contains(&"app_container"), "{layers:?}");
+    }
+    let r = t.doc(&ds, ID, json!({ "do": "net_direct", "host": "127.0.0.1", "port": port })).await;
+    assert_eq!(r["ok"], false, "the plugin connected past the connector: {r} ({layers:?})");
+    #[cfg(unix)]
+    {
+        // Nor a Unix socket of the host (a database's, Docker's), whatever its file mode.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        let path = dir.path().join("host.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let r = t.doc(&ds, ID, json!({ "do": "unix_connect", "path": path })).await;
+        assert_eq!(r["ok"], false, "the plugin reached a Unix socket of the host: {r} ({layers:?})");
+        // Nor a datagram socket pair, which could send to a datagram socket of the host.
+        if cfg!(target_os = "linux") {
+            let r = t.doc(&ds, ID, json!({ "do": "dgram_pair" })).await;
+            assert_eq!((r["ok"].clone(), r["errno"].clone()), (json!(false), json!(13)), "{r}");
+            // A connection the connector handed over cannot be pointed elsewhere: it is a socket
+            // pair Kalzit relays, and `connect` is refused anyway.
+            let r = t.doc(&ds, ID, json!({ "do": "net_repoint", "host": "127.0.0.1", "port": port })).await;
+            assert_eq!(
+                (r["ok"].clone(), r["unspec"].clone(), r["inet"].clone()),
+                (json!(false), json!(13), json!(13)),
+                "{r}"
+            );
+        }
+    }
+
+    // Through the connector the declared target answers.
+    let r = t.doc(&ds, ID, json!({ "do": "net_connect", "host": "127.0.0.1", "port": port })).await;
+    assert_eq!((r["ok"].clone(), r["reply"].clone()), (json!(true), json!("pong")), "{r}");
+    assert_eq!(r["address"], format!("127.0.0.1:{port}"), "{r}");
+
+    // Undeclared: another port, another protocol, another host, a metadata address.
+    for (host, p, protocol) in [
+        ("127.0.0.1", port.wrapping_add(1), "tcp"),
+        ("127.0.0.1", port, "tls"),
+        ("localhost", port, "tcp"),
+        ("169.254.169.254", 80, "tcp"),
+    ] {
+        let q = json!({ "do": "net_connect", "host": host, "port": p, "protocol": protocol });
+        let r = t.doc(&ds, ID, q).await;
+        assert_eq!(
+            (r["ok"].clone(), r["reason"].clone()),
+            (json!(false), json!("plugin.target_undeclared")),
+            "{host}:{p} {protocol}: {r}"
+        );
+    }
+
+    // Kalzit's own port, even as the data source's declared target.
+    let own = t.datasource_with(ID, json!({ "host": "127.0.0.1", "port": 3999 })).await;
+    let r = t.doc(&own, ID, json!({ "do": "net_connect", "host": "127.0.0.1", "port": 3999 })).await;
+    assert_eq!(r["reason"], "target.own_address", "{r}");
+
+    // "Test connection" reaches the target through the connector: of the saved settings, of
+    // settings not saved yet, and of a saved source's edited settings.
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/{ds}/health", t.org), Some(json!({}))).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    let other = echo_server().await;
+    let draft = json!({ "kind": ID, "settings": { "host": "127.0.0.1", "port": other } });
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/test", t.org), Some(draft)).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    // A changed target needs its secrets sent again.
+    let edited = json!({
+        "kind": ID, "datasourceId": ds,
+        "settings": { "host": "127.0.0.1", "port": other }, "secrets": { "password": "geheim-4711" },
+    });
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/test", t.org), Some(edited)).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    // An unsaved target that is Kalzit's own port is refused all the same.
+    let refused = json!({ "kind": ID, "settings": { "host": "127.0.0.1", "port": 3999 } });
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/test", t.org), Some(refused)).await;
+    assert_eq!(r.body["ok"], false, "{}", r.body);
+
+    // At most three connections at once; closed ones free their place.
+    let q = json!({ "do": "net_many", "host": "127.0.0.1", "port": port, "n": 5 });
+    let r = t.doc(&ds, ID, q.clone()).await;
+    assert_eq!(
+        (r["opened"].clone(), r["refused"]["reason"].clone()),
+        (json!(3), json!("plugin.connections_exhausted")),
+        "{r}"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let r = t.doc(&ds, ID, q).await;
+    assert_eq!(r["opened"], 3, "{r}");
+
+    // A connection without traffic is closed.
+    let r = t.doc(&ds, ID, json!({ "do": "net_connect", "host": "127.0.0.1", "port": port, "wait": 8 })).await;
+    assert_eq!((r["ok"].clone(), r["closed"].clone()), (json!(true), json!(true)), "{r}");
+
+    // Refusals are in the plugin's log and the audit log.
+    let logs = t.send(Method::GET, &format!("/admin/plugins/{ID}/logs"), None).await;
+    assert!(logs.body["lines"].to_string().contains("plugin.target_undeclared"), "{}", logs.body);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let actions = t.audit_actions().await;
+    assert!(actions.iter().any(|a| a == "plugins.connect_refused"), "{actions:?}");
     t.finish().await;
 }
 
@@ -1029,7 +1212,8 @@ async fn the_example_plugin_built_with_the_sdk_installs_and_answers() {
     let ds = r.body["id"].as_str().unwrap().to_string();
     let r = t.query(&ds, json!({})).await;
     let frame = &r["result"]["frame"];
-    let names: Vec<&str> = frame["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    let fields = frame["fields"].as_array().unwrap_or_else(|| panic!("no frame: {r}"));
+    let names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["time", "host", "cpu"], "{r}");
     assert_eq!(frame["fields"][0]["type"], "time", "{r}");
     assert_eq!(frame["fields"][2]["values"], json!([0.5, 1.5, 2]), "{r}");

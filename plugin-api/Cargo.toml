@@ -20,6 +20,17 @@ sha2 = "0.11.1"
 toml = "1.1.8"
 tonic = { version = "0.14.8", default-features = false, features = ["codegen"] }
 tonic-prost = "0.14.8"
+# The plugin side of the network connector (`connector::Connector`), for plugins only.
+tokio = { version = "1.54.1", features = ["net", "io-util", "time", "rt", "sync"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2.191", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Pipes"], optional = true }
+
+[features]
+connector = ["dep:tokio", "dep:libc", "dep:windows"]
 
 [build-dependencies]
 protox = "0.10.0"

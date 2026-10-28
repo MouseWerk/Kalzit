@@ -1,5 +1,6 @@
-//! The SDK as Kalzit sees it: a plugin served on a real pipe (Windows) or Unix socket (Linux),
-//! called through the generated client with the token, as the host calls it.
+//! The SDK as Kalzit sees it: a plugin served on a real pipe (Windows, created by the host as
+//! Kalzit does) or Unix socket (Linux), called through the generated client with the token, as
+//! the host calls it.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -72,27 +73,54 @@ fn address() -> String {
         .into_owned()
 }
 
+/// A channel over `connector`, retried while the plugin starts.
+macro_rules! connect {
+    ($connector:expr) => {{
+        let connector = $connector;
+        let mut channel = None;
+        for _ in 0..100 {
+            if let Ok(c) = tonic::transport::Endpoint::from_static("http://kalzit-plugin.invalid")
+                .connect_with_connector(connector.clone())
+                .await
+            {
+                channel = Some(c);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        channel.expect("the plugin does not listen")
+    }};
+}
+
+/// Windows: Kalzit creates the pipe and waits for the plugin to connect, as the host does.
+#[cfg(windows)]
+async fn channel(address: String) -> Channel {
+    use tokio::net::windows::named_pipe::ServerOptions;
+    let first = std::sync::Arc::new(std::sync::Mutex::new(Some(
+        ServerOptions::new().first_pipe_instance(true).create(&address).unwrap(),
+    )));
+    let connector = tower::service_fn(move |_: tonic::transport::Uri| {
+        let (address, first) = (address.clone(), first.clone());
+        async move {
+            let waiting = first.lock().unwrap().take();
+            let server = match waiting {
+                Some(server) => server,
+                None => ServerOptions::new().create(&address)?,
+            };
+            server.connect().await?;
+            Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(server))
+        }
+    });
+    connect!(connector)
+}
+
+#[cfg(unix)]
 async fn channel(address: String) -> Channel {
     let connector = tower::service_fn(move |_: tonic::transport::Uri| {
         let address = address.clone();
-        async move {
-            #[cfg(windows)]
-            let io = tokio::net::windows::named_pipe::ClientOptions::new().open(&address);
-            #[cfg(unix)]
-            let io = tokio::net::UnixStream::connect(&address).await;
-            io.map(hyper_util::rt::TokioIo::new)
-        }
+        async move { tokio::net::UnixStream::connect(&address).await.map(hyper_util::rt::TokioIo::new) }
     });
-    for _ in 0..100 {
-        if let Ok(c) = tonic::transport::Endpoint::from_static("http://kalzit-plugin.invalid")
-            .connect_with_connector(connector.clone())
-            .await
-        {
-            return c;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("the plugin does not listen");
+    connect!(connector)
 }
 
 fn with_token<T>(message: T, token: &str) -> tonic::Request<T> {

@@ -1031,6 +1031,9 @@ fn own_files(config: &Config) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBu
 }
 
 /// The data source kinds and the live connections. One per server, in `AppState`.
+/// A callback of `DataSources::on_forget`.
+pub type ForgetHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 pub struct DataSources {
     kinds: registry::KindRegistry,
     keyring: Arc<Keyring>,
@@ -1053,6 +1056,9 @@ pub struct DataSources {
     closed: std::sync::atomic::AtomicBool,
     /// Plugin kinds organizations blocked, as (organization, kind) (`plugins::host`).
     blocked: std::sync::RwLock<std::collections::HashSet<(String, String)>>,
+    /// Called with a data source's id whenever it changes or goes to the trash (`forget`): the
+    /// plugin host revokes what plugins were given for it.
+    forget_hooks: std::sync::RwLock<Vec<ForgetHook>>,
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
     pub(crate) test_settings: Mutex<BTreeMap<String, Value>>,
@@ -1078,6 +1084,7 @@ impl DataSources {
             policy_cache: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             blocked: std::sync::RwLock::default(),
+            forget_hooks: std::sync::RwLock::default(),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
@@ -1148,8 +1155,16 @@ impl DataSources {
         }
     }
 
+    /// Calls `hook` with every data source `forget` drops.
+    pub fn on_forget(&self, hook: ForgetHook) {
+        self.forget_hooks.write().unwrap_or_else(|e| e.into_inner()).push(hook);
+    }
+
     /// Drops the cached connection after the source changed or went to the trash.
     pub fn forget(&self, datasource_id: &str) {
+        for hook in self.forget_hooks.read().unwrap_or_else(|e| e.into_inner()).iter() {
+            hook(datasource_id);
+        }
         let removed = self.connections.lock().expect("connection cache lock").remove(datasource_id);
         // A SQLite pool closes its file now, not whenever the last query holding it ends.
         if let (Some(conn), Ok(rt)) =

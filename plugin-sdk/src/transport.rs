@@ -1,6 +1,12 @@
-//! The local connection Kalzit opens to the plugin, per operating system. Only Kalzit's process
-//! (`KALZIT_PLUGIN_HOST_PID`) may connect; connections from any other process are closed before
-//! a byte is read.
+//! The local connection between Kalzit and the plugin, per operating system. Only Kalzit's
+//! process (`KALZIT_PLUGIN_HOST_PID`) is served.
+//!
+//! - Linux: `KALZIT_PLUGIN_ADDRESS` is `fd:<n>`, one end of a socket pair Kalzit made: the plugin
+//!   serves the protocol on that one connection (its sandbox lets it open no socket).
+//! - Windows: the plugin runs in an AppContainer, which cannot create named pipes. Kalzit creates
+//!   the pipe `KALZIT_PLUGIN_ADDRESS` and keeps an instance waiting; the plugin connects to it as
+//!   a client, checks that the server is Kalzit's process, and serves the protocol over every
+//!   connection it makes, with one always ready for Kalzit's next call.
 
 #[cfg(windows)]
 pub(crate) use windows_pipe::incoming;
@@ -18,83 +24,25 @@ pub(crate) fn incoming(
 
 #[cfg(windows)]
 mod windows_pipe {
+    use std::os::windows::io::AsRawHandle;
     use std::pin::Pin;
     use std::task::{Context, Poll};
+    use std::time::Duration;
 
     use futures_util::Stream;
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-    use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
-    use windows::Win32::Security::Authorization::{
-        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-    };
-    use windows::Win32::Security::{
-        GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
-    };
-    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-    use windows::core::{HSTRING, PWSTR};
+    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+    use windows::core::HSTRING;
 
     use crate::log;
 
-    fn os_error(e: windows::core::Error) -> std::io::Error {
-        std::io::Error::other(e.to_string())
-    }
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const ERROR_PIPE_BUSY: i32 = 231;
 
-    /// The SID of the account this process runs as: Kalzit's account (a plugin's restricted
-    /// token keeps the user).
-    pub(crate) fn user_sid() -> std::io::Result<String> {
-        // SAFETY: token queries into a buffer of the size asked for; the token handle and the
-        // string are released before returning.
-        unsafe {
-            let mut token = HANDLE::default();
-            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).map_err(os_error)?;
-            let mut needed = 0u32;
-            let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
-            let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
-            let read = GetTokenInformation(token, TokenUser, Some(buffer.as_mut_ptr().cast()), needed, &mut needed);
-            let _ = windows::Win32::Foundation::CloseHandle(token);
-            read.map_err(os_error)?;
-            let mut text = PWSTR::null();
-            ConvertSidToStringSidW((*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid, &mut text).map_err(os_error)?;
-            let sid = text.to_string().map_err(|e| std::io::Error::other(e.to_string()));
-            LocalFree(Some(HLOCAL(text.0.cast())));
-            sid
-        }
-    }
-
-    /// The pipe's DACL: full access for Kalzit's account, and for `RESTRICTED`, which the
-    /// plugin's restricted token needs to create the next instance. Protected, so nothing is
-    /// inherited.
-    pub(crate) fn sddl(user: &str) -> String {
-        format!("D:P(A;;GA;;;{user})(A;;GA;;;RC)")
-    }
-
-    /// Creates one pipe instance; the first one must be the first of its name, so no other
-    /// process can own the name before the plugin.
-    fn create(address: &str, sddl: &str, first: bool) -> std::io::Result<NamedPipeServer> {
-        let mut sd = PSECURITY_DESCRIPTOR::default();
-        // SAFETY: the descriptor is converted from SDDL, used while the pipe is created and
-        // freed after.
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(sddl), SDDL_REVISION_1, &mut sd, None)
-                .map_err(os_error)?;
-            let mut attributes = SECURITY_ATTRIBUTES {
-                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                lpSecurityDescriptor: sd.0,
-                bInheritHandle: false.into(),
-            };
-            let pipe = ServerOptions::new()
-                .first_pipe_instance(first)
-                .reject_remote_clients(true)
-                .create_with_security_attributes_raw(address, (&raw mut attributes).cast());
-            LocalFree(Some(HLOCAL(sd.0)));
-            pipe
-        }
-    }
-
-    /// One accepted pipe instance, as tonic serves a connection.
-    pub struct Pipe(NamedPipeServer);
+    /// One connection to Kalzit's pipe, as tonic serves a connection.
+    pub struct Pipe(NamedPipeClient);
 
     impl tonic::transport::server::Connected for Pipe {
         type ConnectInfo = ();
@@ -123,88 +71,84 @@ mod windows_pipe {
         }
     }
 
-    /// The process id of the pipe's client.
-    fn client_pid(server: &NamedPipeServer) -> Option<u32> {
-        use std::os::windows::io::AsRawHandle;
+    /// The process id of the pipe's server.
+    fn server_pid(client: &NamedPipeClient) -> Option<u32> {
         let mut pid = 0u32;
         // SAFETY: the handle is open for the call; `pid` is a valid out pointer.
-        unsafe { GetNamedPipeClientProcessId(HANDLE(server.as_raw_handle()), &mut pid) }.ok()?;
+        unsafe { GetNamedPipeServerProcessId(HANDLE(client.as_raw_handle()), &mut pid) }.ok()?;
         Some(pid)
     }
 
-    /// Creates the pipe as its first instance and yields every client that is the host, with a
-    /// fresh instance waiting for the next one.
-    pub(crate) fn incoming(address: &str, host: u32) -> std::io::Result<impl Stream<Item = std::io::Result<Pipe>>> {
-        let sddl = sddl(&user_sid()?);
-        let first = create(address, &sddl, true)?;
-        let address = address.to_string();
-        Ok(futures_util::stream::unfold(Some(first), move |waiting| {
-            let (address, sddl) = (address.clone(), sddl.clone());
-            async move {
-                let mut waiting = waiting;
-                loop {
-                    let server = match waiting.take() {
-                        Some(server) => server,
-                        None => next_instance(&address, &sddl).await,
-                    };
-                    if let Err(e) = server.connect().await {
-                        log::warn(&format!("a pipe connection failed: {e}"));
-                        continue;
-                    }
-                    if client_pid(&server) != Some(host) {
-                        log::warn("a connection from another process was refused");
-                        continue;
-                    }
-                    // The next instance waits before this one is handed on; when it cannot be
-                    // created now, the next round tries again.
-                    let next = create(&address, &sddl, false)
-                        .inspect_err(|e| log::error(&format!("the next pipe instance could not be created: {e}")))
-                        .ok();
-                    return Some((Ok(Pipe(server)), next));
+    /// The next connection to Kalzit: waits in the kernel (a second at a time) while every
+    /// instance is taken, and a moment while the pipe has none yet.
+    async fn dial(address: &str, host: u32) -> Pipe {
+        loop {
+            match ClientOptions::new().open(address) {
+                Ok(client) if server_pid(&client) == Some(host) => return Pipe(client),
+                Ok(_) => {
+                    log::warn("the pipe's server is not Kalzit's process; the connection was closed");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                    let name = HSTRING::from(address);
+                    // SAFETY: a plain wait on the pipe's name, which lives for the call.
+                    let _ = tokio::task::spawn_blocking(move || unsafe { WaitNamedPipeW(&name, 1000) }).await;
+                }
+                Err(e) if e.raw_os_error() == Some(ERROR_FILE_NOT_FOUND) => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(e) => {
+                    log::warn(&format!("Kalzit's pipe cannot be opened: {e}"));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
-        }))
+        }
     }
 
-    /// A new pipe instance, retried until it can be created (handles or memory may be short for
-    /// a moment), so the plugin keeps serving.
-    async fn next_instance(address: &str, sddl: &str) -> NamedPipeServer {
-        let mut wait = std::time::Duration::from_millis(50);
-        loop {
-            match create(address, sddl, false) {
-                Ok(server) => return server,
-                Err(e) => {
-                    log::error(&format!("a pipe instance could not be created: {e}; retrying"));
-                    tokio::time::sleep(wait).await;
-                    wait = (wait * 2).min(std::time::Duration::from_secs(5));
-                }
-            }
-        }
-    }
-    #[cfg(test)]
-    mod tests {
-        #[test]
-        fn the_dacl_names_the_account_and_restricted_only() {
-            let sid = super::user_sid().unwrap();
-            assert!(sid.starts_with("S-1-"), "{sid}");
-            assert_eq!(super::sddl(&sid), format!("D:P(A;;GA;;;{sid})(A;;GA;;;RC)"));
-        }
+    /// Every connection to Kalzit's pipe, one after the other.
+    pub(crate) fn incoming(address: &str, host: u32) -> std::io::Result<impl Stream<Item = std::io::Result<Pipe>>> {
+        let address = address.to_string();
+        Ok(futures_util::stream::unfold(address, move |address| async move {
+            let pipe = dial(&address, host).await;
+            Some((Ok(pipe), address))
+        }))
     }
 }
 
 #[cfg(unix)]
 mod unix_socket {
-    use futures_util::Stream;
     use tokio::net::{UnixListener, UnixStream};
 
     use crate::log;
 
-    /// Listens on the socket in the start's private run directory and yields every connection
-    /// from the host process (`SO_PEERCRED`); others are closed.
+    /// `fd:<n>` (as Kalzit starts a plugin): the one connection Kalzit handed over, connected
+    /// already, so the plugin needs no socket of its own (its sandbox allows none). A path (tests
+    /// and tools): listens there and yields every connection from the host process
+    /// (`SO_PEERCRED`); others are closed.
     pub(crate) fn incoming(
         address: &str,
         host: u32,
-    ) -> std::io::Result<impl Stream<Item = std::io::Result<UnixStream>>> {
+    ) -> std::io::Result<futures_util::stream::BoxStream<'static, std::io::Result<UnixStream>>> {
+        use futures_util::StreamExt;
+        if let Some(fd) = address.strip_prefix("fd:") {
+            let fd: std::os::fd::RawFd = fd.parse().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "KALZIT_PLUGIN_ADDRESS is not fd:<n>")
+            })?;
+            // SAFETY: the inherited descriptor belongs to this process and is taken over once.
+            let stream = unsafe { <std::os::unix::net::UnixStream as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+            // A copy that closes on exec, so programs the plugin starts do not get the connection.
+            let stream = {
+                let copy = stream.try_clone()?;
+                drop(stream);
+                copy
+            };
+            stream.set_nonblocking(true)?;
+            let stream = UnixStream::from_std(stream)?;
+            // One connection, then none: the server keeps serving it until Kalzit ends it.
+            return Ok(futures_util::stream::once(async move { Ok(stream) })
+                .chain(futures_util::stream::pending())
+                .boxed());
+        }
         let listener = UnixListener::bind(address)?;
         Ok(futures_util::stream::unfold(listener, move |listener| async move {
             loop {
@@ -224,6 +168,7 @@ mod unix_socket {
                     }
                 }
             }
-        }))
+        })
+        .boxed())
     }
 }

@@ -8,12 +8,14 @@
 //!   manifest and signature; `store`: installed plugins, trusted keys, hand-overs and blocks.
 //! - `process` and `sandbox`: starting a plugin process in the operating system's sandbox, and
 //!   the local connection to it; `supervisor`: start on demand, handshake, health, restarts
-//!   with backoff, logs.
+//!   with backoff, logs; `connector`: the network connections a plugin asks Kalzit for, checked
+//!   against its manifest and the target rules.
 //! - `remote`: a plugin process as a `DataSourcePlugin`; `host`: the plugins of this server,
 //!   their kinds in the registry and the administrator's actions on them.
 //!
 //! The panel message API and the catalog follow in M4.
 
+pub mod connector;
 pub mod host;
 pub mod in_process;
 pub mod package;
