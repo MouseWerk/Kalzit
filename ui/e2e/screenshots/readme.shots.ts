@@ -1090,7 +1090,8 @@ test("plugins", async ({ browser }) => {
     BINARY === "",
     "KALZIT_E2E_PLUGIN_BINARY is not set; the pictures need the test plugin",
   );
-  const owner = demo.owner;
+  // A session of its own: earlier pictures sign the owner out elsewhere ("account").
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
   const id = "dev.example.numbers";
   const host = (await (await owner.context.get("/api/admin/plugin-host")).json()) as {
     landlockAvailable: boolean;
@@ -1145,5 +1146,6 @@ test("plugins", async ({ browser }) => {
   await page.getByRole("link", { name: "Numbers", exact: true }).click();
   await expect(page.getByText(t("datasources.kinds.plugin.hint"))).toBeVisible();
   await shoot(page, "data-source-plugin");
+  await owner.dispose();
   await page.context().close();
 });
