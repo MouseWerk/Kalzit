@@ -55,19 +55,6 @@ pub const GENERIC: &[&str] = &[
     "updated_at",
 ];
 
-/// Whether `qualifier` in the (folded) query `text` names a table of its own: it follows FROM or
-/// JOIN (with a schema or not), and the entry's `table` is not aliased to it (`kunden k`,
-/// `kunden AS k`). Anything less clear counts as the entry's table.
-fn other_table(text: &str, table: &str, qualifier: &str) -> bool {
-    let (t, q) = (regex::escape(table), regex::escape(qualifier));
-    let read = regex::Regex::new(&format!(r"\b(?:from|join)\s+(?:[\w]+\.)?{q}\b"));
-    let alias = regex::Regex::new(&format!(r"\b{t}\s+(?:as\s+)?{q}\b"));
-    match (read, alias) {
-        (Ok(read), Ok(alias)) => read.is_match(text) && !alias.is_match(text),
-        _ => false,
-    }
-}
-
 /// The rules for one data source, loaded once per AI call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataPolicy {
@@ -110,9 +97,10 @@ impl DataPolicy {
     ///
     /// Best effort, like excluding itself: a query can still reach a value without naming its
     /// field (a whole-row cast, `FOR JSON`, `$$ROOT`, `keys(n)`, escapes in identifiers). To keep
-    /// false refusals rare, an entry qualified by a table (`kunden.email`) is not matched by the
-    /// field under another qualifier (`users.email`), and a very generic field name (`GENERIC`)
-    /// counts only where it is qualified by the entry's own table; a bare generic entry (`id`)
+    /// false refusals rare without a way around: for an entry with a table (`kunden.email`), a
+    /// query that never names that table lets the field through under another qualifier
+    /// (`users.email`), and a very generic field name (`GENERIC`) unqualified; a query that names
+    /// the table anywhere is refused for any mention of the field. A bare generic entry (`id`)
     /// never refuses a query.
     pub fn excluded_named_in(&self, text: &str) -> Option<String> {
         let text = fold(text);
@@ -145,13 +133,16 @@ impl DataPolicy {
             if generic && table.is_none() {
                 continue;
             }
+            // Where the entry's table is named anywhere in the query, every mention of the field
+            // refuses it: an alias, a CTE or a subquery could stand for the table under any name.
+            let table_named = table.is_some_and(|t| !mentions(t).is_empty());
             for qualifier in mentions(field) {
-                let refused = match (table, qualifier.as_deref()) {
-                    // Another qualifier is let through only when it is clearly another table: one
-                    // read after FROM or JOIN by that name, and not an alias of the entry's table.
-                    (Some(table), Some(qualifier)) => qualifier == table || !other_table(&text, table, qualifier),
-                    (Some(_), None) => !generic,
-                    (None, _) => true,
+                let refused = match table {
+                    Some(_) if table_named => true,
+                    // The table is not read: another table's field passes, a bare one does not
+                    // (unless its name is generic).
+                    Some(_) => qualifier.is_none() && !generic,
+                    None => true,
                 };
                 if refused {
                     return Some(entry.clone());
@@ -506,21 +497,24 @@ mod tests {
         assert_eq!(p.excluded_named_in("select k.iban from k").as_deref(), Some("iban"));
         assert_eq!(p.excluded_named_in("SELECT emails, xemail, iban_count FROM k"), None);
         assert_eq!(policy(&[], 10).excluded_named_in("SELECT email"), None);
-        // Another table's field of the same name, and generic names, do not refuse a query.
+        // Another table's field passes while the entry's table is not named in the query.
         assert_eq!(p.excluded_named_in("SELECT users.email FROM users"), None);
-        assert_eq!(p.excluded_named_in("SELECT u.email FROM kunden k JOIN public.u ON true"), None);
-        // An alias of the entry's table, or a qualifier that is no table read, still refuses.
+        assert_eq!(p.excluded_named_in("SELECT u.email FROM users u JOIN orders o ON true"), None);
+        // Once the table is named anywhere, every mention refuses: aliases, subqueries, CTEs.
         for aliased in [
             "SELECT k.email AS kontakt FROM kunden k",
             "SELECT k.email FROM kunden AS k",
             "SELECT x.email FROM (SELECT * FROM kunden) x",
+            "WITH k AS (SELECT * FROM kunden) SELECT k.email AS kontakt FROM k",
+            "SELECT u.email FROM kunden k JOIN users u ON true",
+            "SELECT kunden.email FROM kunden",
         ] {
             assert_eq!(p.excluded_named_in(aliased).as_deref(), Some("kunden.email"), "{aliased}");
         }
-        assert_eq!(p.excluded_named_in("SELECT kunden.email FROM kunden").as_deref(), Some("kunden.email"));
         let generic = policy(&["id", "kunden.name"], 10);
-        assert_eq!(generic.excluded_named_in("SELECT id, name FROM kunden"), None);
-        assert_eq!(generic.excluded_named_in("SELECT kunden.name FROM kunden").as_deref(), Some("kunden.name"));
+        assert_eq!(generic.excluded_named_in("SELECT id, name FROM users"), None, "generic names stay usable");
+        assert_eq!(generic.excluded_named_in("SELECT id, name FROM kunden").as_deref(), Some("kunden.name"));
+        assert_eq!(generic.excluded_named_in("SELECT k.name FROM KUNDEN k").as_deref(), Some("kunden.name"));
     }
 
     #[test]
