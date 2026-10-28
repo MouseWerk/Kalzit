@@ -36,6 +36,7 @@ import {
   fetchDatasourcePage,
   type Health,
   kindsQuery,
+  type PluginKindInfo,
   purgeDatasource,
   restoreDatasource,
   sourceAccess,
@@ -265,6 +266,7 @@ function DataSourceList({
         items={items}
         kindName={kindName}
         shapesOf={(kind) => kinds.data?.find((k) => k.kind === kind)?.shapes ?? []}
+        pluginOf={(kind) => kinds.data?.find((k) => k.kind === kind)?.plugin}
         added={(source) => dateFormat.format(source.createdAt)}
         more={more}
         partial={list.hasNextPage}
@@ -358,6 +360,7 @@ function SourceOverview({
   items,
   kindName,
   shapesOf,
+  pluginOf,
   added,
   more,
   partial,
@@ -368,6 +371,8 @@ function SourceOverview({
   items: readonly DatasourceSummary[];
   kindName: (kind: string) => string;
   shapesOf: (kind: string) => readonly ("frame" | "documents" | "graph")[];
+  /** A plugin kind's plugin, for its neutral publisher badge. */
+  pluginOf: (kind: string) => PluginKindInfo | undefined;
   added: (source: DatasourceSummary) => string;
   more: ReactNode;
   /** More pages exist: counts and filters cover the loaded rows only. */
@@ -659,7 +664,15 @@ function SourceOverview({
                     >
                       <td {...STACK_ROLES.cell}>
                         <span className="ds-table__name">
-                          <KindMark kind={source.kind} small />
+                          <KindMark
+                            kind={source.kind}
+                            small
+                            name={
+                              pluginOf(source.kind) === undefined
+                                ? undefined
+                                : kindName(source.kind)
+                            }
+                          />
                           {access.write ? (
                             <Link
                               to="/data-sources/$datasourceId"
@@ -675,9 +688,19 @@ function SourceOverview({
                       <td {...STACK_ROLES.cell} data-label={t("datasources.column.kind")}>
                         <span className="ds-table__kind">
                           <span>{kindName(source.kind)}</span>
-                          <span className="ds-tag">
-                            {t(`datasources.tag.${kindGroup(source.kind)}`)}
-                          </span>
+                          {pluginOf(source.kind) === undefined ? (
+                            <span className="ds-tag">
+                              {t(`datasources.tag.${kindGroup(source.kind)}`)}
+                            </span>
+                          ) : (
+                            <span className="ds-tag">
+                              {t("datasources.plugin.badge", {
+                                publisher:
+                                  pluginOf(source.kind)?.publisher ??
+                                  t("datasources.plugin.noPublisher"),
+                              })}
+                            </span>
+                          )}
                           {aiReadable.has(source.id) ? (
                             <span className="ds-tag">{t("ai.source.badge")}</span>
                           ) : null}

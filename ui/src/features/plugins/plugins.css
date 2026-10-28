@@ -1,0 +1,700 @@
+@layer components {
+  /*
+   * Verwaltung > Plugins after the board docs/design/blueprint/Plugins.dc.html: the tabs, the
+   * status strip, the plugin table, the details, the install check and the trusted keys.
+   * Tokens only; publisher badges are neutral, red only for real errors, and no state is framed
+   * in an accent or status color.
+   */
+  .plugins {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .plugins__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .plugins__bar .tabs {
+    flex: 1 1 auto;
+  }
+
+  .plugins__count {
+    margin-inline-start: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* The band while unsigned plugins are allowed: the warning tint, no frame. */
+  .plugins-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--warning-bg);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
+
+  .plugins-banner .icon {
+    flex: none;
+    color: var(--warning-text);
+  }
+
+  .plugins-banner__text {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .plugins-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-ai-tile), 100%), 1fr));
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .plugins-strip__cell {
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border-inline-end: var(--border-width) solid var(--border);
+  }
+
+  .plugins-strip__cell:last-child {
+    border-inline-end: 0;
+  }
+
+  .plugins-strip__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .plugins-strip__value {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .plugins-strip__sub {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .plugins-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .plugins-filters__group {
+    display: inline-flex;
+    gap: var(--space-1);
+  }
+
+  .plugins-filter {
+    min-height: var(--control-height);
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .plugins-filter:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .plugins-filter[aria-pressed="true"] {
+    background: var(--bg-hover);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .plugins-filter:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .plugins-filters__platform {
+    margin-inline-start: auto;
+  }
+
+  .plugins-card {
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .plugins-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .plugins-card__title {
+    display: grid;
+    flex: 1 1 var(--size-ai-request);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .plugins-card__title h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .plugins-card__body {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .plugins-hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .plugins-table-wrap {
+    overflow-x: auto;
+  }
+
+  .plugins-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .plugins-table th,
+  .plugins-table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .plugins-table thead th {
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+  }
+
+  .plugins-table tbody tr:last-child th,
+  .plugins-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .plugins-table__actions {
+    white-space: nowrap;
+    text-align: end;
+  }
+
+  .plugins-table th.plugins-table__actions {
+    text-align: end;
+  }
+
+  .plugins-name {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .plugins-name__text {
+    display: grid;
+    gap: var(--space-half);
+    min-width: 0;
+  }
+
+  .plugins-name__link {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    text-decoration: none;
+  }
+
+  .plugins-name__link:hover {
+    text-decoration: underline;
+  }
+
+  .plugins-name__link:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .plugins-stack {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .plugins-muted {
+    color: var(--text-muted);
+  }
+
+  .plugins-small {
+    font-size: var(--font-size-xs);
+  }
+
+  .plugins-mono {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  /* The letters of a plugin in a quiet tile, where a built-in kind has its logo. */
+  .plugin-mark {
+    display: grid;
+    flex: none;
+    width: var(--size-kind-mark-small);
+    height: var(--size-kind-mark-small);
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+    color: var(--text);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .plugin-mark--large {
+    width: var(--size-kind-mark);
+    height: var(--size-kind-mark);
+    font-size: var(--font-size-sm);
+  }
+
+  /* A neutral pill: the publisher, the kind, "new in 2.4.0", a sandbox layer. */
+  .plugins-chip {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-1);
+    max-width: 100%;
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    white-space: nowrap;
+  }
+
+  .plugins-chip--strong {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .plugins-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  /* Signature: a symbol and a word, red only when it is broken. */
+  .plugins-signature {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .plugins-signature .icon {
+    width: var(--icon-size);
+    height: var(--icon-size);
+    color: var(--text-muted);
+  }
+
+  /* Notes inside cards: quiet, warning or danger tint, never a frame in a status color. */
+  .plugins-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height);
+  }
+
+  .plugins-note .icon {
+    flex: none;
+  }
+
+  .plugins-note strong {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .plugins-note--warning {
+    background: var(--warning-bg);
+    color: var(--text);
+  }
+
+  .plugins-note--warning .icon {
+    color: var(--warning-text);
+  }
+
+  .plugins-note--danger {
+    background: var(--danger-bg);
+    color: var(--text);
+  }
+
+  .plugins-note--danger .icon {
+    color: var(--danger-text);
+  }
+
+  /* The details page. */
+  .plugin-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-3) var(--space-4);
+  }
+
+  .plugin-head__text {
+    display: grid;
+    flex: 1 1 var(--size-ai-request);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .plugin-head__title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .plugin-head__title h2 {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .plugin-head__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .plugin-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .plugin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-plugin-column), 100%), 1fr));
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  .plugin-defs {
+    display: grid;
+    grid-template-columns: minmax(0, var(--size-ai-label)) minmax(0, 1fr);
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .plugin-defs dt {
+    color: var(--text-muted);
+  }
+
+  .plugin-defs dd {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .plugin-manifest {
+    max-height: var(--size-plugin-log);
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+    overflow: auto;
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    white-space: pre;
+  }
+
+  .plugin-log {
+    max-height: var(--size-plugin-log);
+    margin: 0;
+    padding: var(--space-2) 0;
+    overflow: auto;
+    list-style: none;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+  }
+
+  .plugin-log__line {
+    display: grid;
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    gap: var(--space-3);
+    padding: var(--space-half) var(--space-4);
+  }
+
+  .plugin-log__time,
+  .plugin-log__stream {
+    color: var(--text-muted);
+  }
+
+  .plugin-log__text {
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  /* Install: the drop area and the check, step by step. */
+  .plugin-drop {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    padding: var(--space-6) var(--space-4);
+    border: var(--border-width) dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    text-align: center;
+  }
+
+  .plugin-drop[data-over="true"],
+  .plugin-drop:hover {
+    background: var(--bg-hover);
+    cursor: pointer;
+  }
+
+  .plugin-drop:focus-within {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .plugin-drop .icon {
+    color: var(--text-muted);
+  }
+
+  .plugin-steps {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .plugin-step {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-2);
+    align-items: start;
+  }
+
+  .plugin-step__mark {
+    display: grid;
+    width: var(--icon-size);
+    height: var(--icon-size);
+    place-items: center;
+    color: var(--text-muted);
+  }
+
+  .plugin-step[data-state="done"] .plugin-step__mark {
+    color: var(--success-text);
+  }
+
+  .plugin-step[data-state="failed"] .plugin-step__mark {
+    color: var(--danger-text);
+  }
+
+  .plugin-step[data-state="warning"] .plugin-step__mark {
+    color: var(--warning-text);
+  }
+
+  .plugin-step__text {
+    display: grid;
+    gap: var(--space-half);
+    font-size: var(--font-size-sm);
+  }
+
+  .plugin-step__title {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .plugin-step[data-state="skipped"] .plugin-step__title,
+  .plugin-step[data-state="busy"] .plugin-step__title {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .plugin-step__detail {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .plugin-dialog {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .plugin-dialog__heading {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .plugin-grants {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .plugin-grants__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .plugin-grants__item[data-new="true"] .plugin-grants__target {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .plugin-check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .plugin-dialog__footer {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .plugin-dialog__spacer {
+    flex: 1;
+  }
+
+  .plugin-fingerprint {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .plugin-fingerprint__value {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-lg);
+    font-variant-ligatures: none;
+    letter-spacing: var(--letter-spacing-caps);
+  }
+
+  /* A switch row of the trust tab: text on the left, the switch on the right. */
+  .plugin-switch {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+  }
+
+  .plugin-switch__text {
+    display: grid;
+    flex: 1;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .plugin-switch__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .plugin-switch input,
+  .plugins-toggle {
+    width: var(--icon-size);
+    height: var(--icon-size);
+  }
+
+  .plugin-used {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .plugin-used li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  /* State colors last, so the plain rules above do not override them. */
+  .plugins-signature[data-state="broken"] {
+    color: var(--danger-text);
+  }
+
+  .plugins-signature[data-state="broken"] .icon {
+    color: var(--danger-text);
+  }
+
+  .plugins-signature[data-state="unsigned"] .icon {
+    color: var(--warning-text);
+  }
+
+  .plugin-log__line[data-stream="stderr"] .plugin-log__stream {
+    color: var(--warning-text);
+  }
+
+  @media (width < 40rem) {
+    .plugins-filters__platform {
+      margin-inline-start: 0;
+    }
+
+    .plugin-defs {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .plugin-log__line {
+      grid-template-columns: max-content minmax(0, 1fr);
+    }
+
+    .plugin-log__stream {
+      display: none;
+    }
+  }
+}

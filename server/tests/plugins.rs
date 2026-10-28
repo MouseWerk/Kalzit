@@ -97,6 +97,7 @@ fn manifest(p: &Pkg) -> String {
     let binary = plugin_binary();
     format!(
         "manifest = 1\nid = \"{id}\"\nname = \"Test plugin\"\nversion = \"{version}\"\nkind = \"datasource\"\n\
+         publisher = \"Example GmbH\"\n\
          min_kalzit = \"0.1.0\"\nshapes = [\"frame\", \"documents\", \"graph\"]\nprotocol = 1\n\n\
          [[settings]]\nname = \"host\"\nlabel = {{ en = \"Host\", de = \"Rechner\" }}\ntype = \"string\"\nrequired = true\ntarget = true\n\n\
          [[settings]]\nname = \"password\"\nlabel = {{ en = \"Password\" }}\ntype = \"string\"\nsecret = true\n\n\
@@ -458,6 +459,7 @@ async fn a_plugin_serves_its_kind_within_the_limits_and_organizations_can_block_
     let r = t.send(Method::GET, &format!("/orgs/{}/datasource-kinds", t.org), None).await;
     let kind = r.body["items"].as_array().unwrap().iter().find(|k| k["kind"] == ID).cloned().expect("listed");
     assert_eq!(kind["plugin"]["labels"]["host"]["de"], "Rechner", "{kind}");
+    assert_eq!(kind["plugin"]["publisher"], "Example GmbH", "{kind}");
 
     // The plugin's own settings check.
     let body = json!({ "name": "Kaputt", "kind": ID, "settings": { "host": "invalid" } });
@@ -468,6 +470,16 @@ async fn a_plugin_serves_its_kind_within_the_limits_and_organizations_can_block_
     let ds = t.datasource(ID, 3).await;
     let r = t.query(&ds, json!({ "do": "frame" })).await;
     assert_eq!(r["result"]["frame"]["fields"][0]["values"], json!([0, 1, 2]), "{r}");
+
+    // One plugin names the sources of its kind in every organization, and its manifest.
+    let p = t.plugin(ID).await;
+    assert_eq!(p["usedIn"].as_array().map(Vec::len), Some(1), "{p}");
+    assert_eq!(p["usedIn"][0]["id"], ds.as_str(), "{p}");
+    assert_eq!(p["usedIn"][0]["orgId"], t.org.as_str(), "{p}");
+    assert_eq!(p["usedIn"][0]["orgName"], "Müller & Söhne", "{p}");
+    assert!(p["manifest"].as_str().unwrap().contains("publisher = \"Example GmbH\""), "{p}");
+    let r = t.send(Method::GET, "/admin/plugins", None).await;
+    assert!(r.body["items"][0].get("usedIn").is_none(), "the list leaves it out: {}", r.body);
     let r = t.query(&ds, json!({ "do": "documents" })).await;
     assert_eq!(r["result"]["documents"]["documents"][0]["a"], "zwei", "{r}");
     let r = t.query(&ds, json!({ "do": "graph" })).await;

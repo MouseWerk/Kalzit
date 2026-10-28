@@ -14,7 +14,9 @@ changed images in this folder (see CONTRIBUTING.md, "Screenshots").
 
 The graph pictures (`graph-*`) need the Neo4j of the e2e specs and the field distribution
 (`explore-distribution-dark`) its MongoDB; without them those tests are skipped and the images
-here stay. To take every picture, run the `readme` set of the same workflow as the gallery, which
+here stay. The plugin pictures (`plugins`, `plugin-details`, `plugins-trust`,
+`data-source-plugin`) need the test plugin (`KALZIT_E2E_PLUGIN_BINARY`, built by
+`cargo build -p kalzit-test-plugin`). To take every picture, run the `readme` set of the same workflow as the gallery, which
 starts and seeds the e2e services, and commit the images you changed from its artifact:
 
 ```sh

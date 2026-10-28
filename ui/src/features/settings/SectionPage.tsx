@@ -21,6 +21,8 @@ import { LoadState } from "../admin/components/Section";
 import { ConflictDialog, useSettingChanges } from "../admin/components/Settings";
 import { AiOrgSection } from "../ai/admin/AiOrgSection";
 import { AiServerSection } from "../ai/admin/AiServerSection";
+import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
+import { PluginsSection } from "../plugins/PluginsSection";
 import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
@@ -135,6 +137,10 @@ function SectionBody({ section }: { section: SectionDef }) {
       return <AiServerSection section={section} />;
     case "aiOrg":
       return <AiOrgSection section={section} />;
+    case "plugins":
+      return <PluginsSection />;
+    case "pluginsOrg":
+      return <OrgPluginsSection />;
     case "updates":
       return (
         <>

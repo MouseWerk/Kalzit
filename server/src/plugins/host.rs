@@ -177,6 +177,9 @@ pub fn exposed_secrets(config: &crate::config::Config) -> Vec<String> {
 pub struct KindTexts {
     pub plugin: String,
     pub version: String,
+    /// The publisher the manifest names; shown as a neutral badge, not a verified identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<String>,
     pub labels: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub help: BTreeMap<String, BTreeMap<String, String>>,
@@ -385,6 +388,7 @@ impl PluginHost {
         Some(KindTexts {
             plugin: m.id.clone(),
             version: m.version.clone(),
+            publisher: m.publisher.clone(),
             labels: m.settings.iter().map(|s| (s.name.clone(), s.label.clone())).collect(),
             help: m.settings.iter().filter_map(|s| s.help.clone().map(|h| (s.name.clone(), h))).collect(),
         })

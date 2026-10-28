@@ -65,10 +65,18 @@ export function reasonText(t: Translate, { reason, params, fallback }: Reason): 
   }
   const key = reasonKey(reason);
   if (key !== undefined) {
-    return t(key, typeWords(t, reason, fill(reason, params ?? {})));
+    const text = t(key, typeWords(t, reason, fill(reason, params ?? {})));
+    // A plugin's own words follow ours: its error, and what its connection test found.
+    if (PLUGIN_TEXT_REASONS.has(reason) && fallback !== undefined && fallback !== "") {
+      return `${text} ${fallback}`;
+    }
+    return text;
   }
   return fallback === undefined || fallback === "" ? undefined : fallback;
 }
+
+/** Reasons whose message is the plugin's own text (docs/api/plugins.md, "Reasons"). */
+const PLUGIN_TEXT_REASONS = new Set(["plugin.error", "plugin.connected"]);
 
 export function stringParams(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) {

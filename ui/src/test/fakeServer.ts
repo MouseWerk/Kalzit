@@ -8,6 +8,7 @@ import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboard
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
 import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
 import { exploreHistoryFake } from "../features/explore/test/fakeExploreHistory";
+import { handlePluginAdminRoute, pluginsFake } from "../features/plugins/test/fakePlugins";
 import { shellFake } from "../shell/test/fakeShell";
 
 /**
@@ -108,6 +109,7 @@ const AREA_FAKES = {
   // Before dashboards: it answers /dashboards/validate and the annotation routes.
   dashboardFeatures: dashboardFeaturesFake,
   dashboards: dashboardsFake,
+  plugins: pluginsFake,
   shell: shellFake,
 };
 
@@ -498,6 +500,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       }
     }
     return (
+      handlePluginAdminRoute(areaStates.plugins, path, method, input) ??
       handleAiAdminRoute(areaStates.aiAdmin, server, path, method, input) ??
       handleAdminRoute(server, path, method, body) ??
       error(404, "not_found")
