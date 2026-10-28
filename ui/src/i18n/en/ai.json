@@ -165,7 +165,7 @@
   "ai.source.leavesText": "tables, fields and types; the query text; for summaries the results, cut to the row limit.",
   "ai.source.rowLimit": "At most {rows} rows, documents or nodes per result (the server’s limit).",
   "ai.source.excluded": "Excluded fields",
-  "ai.source.excludedHint": "Names or dotted paths, at most {max}. The server replaces their values before sending; the model sees only the name. This works by name: a renamed or computed field is not covered. In “Ask”, a query that names an excluded field is not run.",
+  "ai.source.excludedHint": "Names or dotted paths, at most {max}. The server replaces their values before sending; the model sees only the name. This works by name: a renamed or computed field is not covered. In “Ask”, a query that names an excluded field is not run; this too is best effort, not a barrier. Data that must never reach a provider belongs in a source closed to AI.",
   "ai.source.addField": "Add field",
   "ai.source.removeField": "Remove",
   "ai.source.removeFieldNamed": "Remove {name}",

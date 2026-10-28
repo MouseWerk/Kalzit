@@ -430,7 +430,7 @@ person had made the request: nothing is decided by the model. Results keep their
 |---|---|---|
 | `list_datasources` | none | lists the chosen sources the caller may read or query: `id`, `name`, `kind`, `queryLanguage`, `openToAi`, `mayQuery` |
 | `get_schema` | `datasourceId` | `datasources:query` on the source (as `GET .../schema`), the source open to AI and chosen |
-| `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts). A query that names an excluded field (the entry or its last segment, as a whole word, any case) is refused (`ai.query_names_excluded_field`): an alias or an expression would pass its values under another name |
+| `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts). A query that names an excluded field is refused (`ai.query_names_excluded_field`), since an alias or an expression would pass its values under another name. The check is best effort: it looks for the field as a whole word in any case, outside single-quoted literals and comments (in a MongoDB pipeline as written, quoted names included); an entry with a table (`kunden.email`) is not matched by another table's field (`users.email`); generic names (`id`, `name`, `title`, `label`, `type`, `kind`, `key`, `value`, `status`, `date`, `time`, `count`, `created_at`, `updated_at`) count only with the entry's own table, and a bare generic entry never refuses a query. A query can still reach a value without naming its field (a whole-row cast, `FOR JSON`, `$$ROOT`, `keys(n)`, escaped identifiers): data that must never reach a provider belongs in a source closed to AI |
 | `find_panels` | `search` | lists dashboards the caller may read whose title contains `search` (at most 20), with their panels |
 | `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run, with the saved current value of each variable (the dashboard's defaults when one is no longer valid); every source of the panel open to AI (and chosen, when sources are chosen). Hidden queries are left out; the panel's steps are not applied |
 | `propose_query` | `datasourceId`, `query`, `title`, `explanation` | `datasources:query` on the source, chosen; never runs, the UI offers "Open in Explore" |
@@ -461,8 +461,10 @@ and the dashboards they may still read.
 Each tool call is audited as `ai.tool_called`: the tool, the chat, the source or the dashboard
 and panel, the query (at most 4000 characters), the number of rows, the outcome and its reason;
 never result data, the question or the answer. A call cut off when the person stops the answer is
-audited too, with the outcome `stopped` and the query the model gave, so a query sent to a source
-always leaves an entry. The query text stays in the audit log for its own retention, which may be
+audited too, with the outcome `stopped`, the query the model gave and `"unverified": true`: the
+ids the model named are in the summary (`datasourceId`, `dashboardId`, `panelId`), not as the
+entry's resource, since they were not checked yet. So a query sent to a source always leaves an
+entry. The query text stays in the audit log for its own retention, which may be
 longer than the chat's.
 
 ### Messages

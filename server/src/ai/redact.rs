@@ -37,6 +37,24 @@ pub const EXCLUDED: &str = "[excluded]";
 pub const MAX_EXCLUDED: usize = 200;
 const MAX_ENTRY_CHARS: usize = 256;
 
+/// Field names too common to refuse a query for unless the entry's own table qualifies them.
+pub const GENERIC: &[&str] = &[
+    "id",
+    "name",
+    "title",
+    "label",
+    "type",
+    "kind",
+    "key",
+    "value",
+    "status",
+    "date",
+    "time",
+    "count",
+    "created_at",
+    "updated_at",
+];
+
 /// The rules for one data source, loaded once per AI call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataPolicy {
@@ -76,18 +94,56 @@ impl DataPolicy {
     /// The first excluded entry a query text names as a word: the entry itself or its last
     /// segment (`kunden.email` is named by `email`), compared after the same folding. A query the
     /// model writes could otherwise read an excluded field under another name (`email AS x`).
+    ///
+    /// Best effort, like excluding itself: a query can still reach a value without naming its
+    /// field (a whole-row cast, `FOR JSON`, `$$ROOT`, `keys(n)`, escapes in identifiers). To keep
+    /// false refusals rare, an entry qualified by a table (`kunden.email`) is not matched by the
+    /// field under another qualifier (`users.email`), and a very generic field name (`GENERIC`)
+    /// counts only where it is qualified by the entry's own table; a bare generic entry (`id`)
+    /// never refuses a query.
     pub fn excluded_named_in(&self, text: &str) -> Option<String> {
         let text = fold(text);
         let is_word = |c: char| c.is_alphanumeric() || c == '_';
-        let named = |word: &str| {
-            !word.is_empty()
-                && text.match_indices(word).any(|(at, _)| {
-                    let before = text[..at].chars().next_back();
+        // Each whole-word mention of `word`, with the word before a dot in front of it, if any.
+        let mentions = |word: &str| -> Vec<Option<String>> {
+            if word.is_empty() {
+                return Vec::new();
+            }
+            text.match_indices(word)
+                .filter(|(at, _)| {
+                    let before = text[..*at].chars().next_back();
                     let after = text[at + word.len()..].chars().next();
                     !before.is_some_and(is_word) && !after.is_some_and(is_word)
                 })
+                .map(|(at, _)| {
+                    let head = text[..at].strip_suffix('.')?;
+                    let start =
+                        head.char_indices().rev().find(|(_, c)| !is_word(*c)).map_or(0, |(i, c)| i + c.len_utf8());
+                    Some(head[start..].to_string())
+                })
+                .collect()
         };
-        self.excluded.iter().find(|e| named(e) || e.rsplit('.').next().is_some_and(named)).cloned()
+        for entry in &self.excluded {
+            let (table, field) = match entry.rsplit_once('.') {
+                Some((table, field)) => (Some(table.rsplit('.').next().unwrap_or(table)), field),
+                None => (None, entry.as_str()),
+            };
+            let generic = GENERIC.contains(&field);
+            if generic && table.is_none() {
+                continue;
+            }
+            for qualifier in mentions(field) {
+                let refused = match (table, qualifier.as_deref()) {
+                    (Some(table), Some(qualifier)) => qualifier == table,
+                    (Some(_), None) => !generic,
+                    (None, _) => true,
+                };
+                if refused {
+                    return Some(entry.clone());
+                }
+            }
+        }
+        None
     }
 
     /// An error text of a source as the model may get it: with excluded fields, every quoted
@@ -435,6 +491,12 @@ mod tests {
         assert_eq!(p.excluded_named_in("select k.iban from k").as_deref(), Some("iban"));
         assert_eq!(p.excluded_named_in("SELECT emails, xemail, iban_count FROM k"), None);
         assert_eq!(policy(&[], 10).excluded_named_in("SELECT email"), None);
+        // Another table's field of the same name, and generic names, do not refuse a query.
+        assert_eq!(p.excluded_named_in("SELECT users.email FROM users"), None);
+        assert_eq!(p.excluded_named_in("SELECT kunden.email FROM kunden").as_deref(), Some("kunden.email"));
+        let generic = policy(&["id", "kunden.name"], 10);
+        assert_eq!(generic.excluded_named_in("SELECT id, name FROM kunden"), None);
+        assert_eq!(generic.excluded_named_in("SELECT kunden.name FROM kunden").as_deref(), Some("kunden.name"));
     }
 
     #[test]

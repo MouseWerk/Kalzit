@@ -165,7 +165,7 @@
   "ai.source.leavesText": "Tabellen, Felder und Typen; der Abfragetext; beim Zusammenfassen die Ergebnisse, gekürzt auf die Zeilengrenze.",
   "ai.source.rowLimit": "Höchstens {rows} Zeilen, Dokumente oder Knoten je Ergebnis (Grenze des Servers).",
   "ai.source.excluded": "Felder ausnehmen",
-  "ai.source.excludedHint": "Namen oder Pfade mit Punkten, höchstens {max}. Der Server ersetzt ihre Werte vor dem Senden; das Modell sieht nur den Namen. Das wirkt nach Namen: ein umbenanntes oder berechnetes Feld ist nicht erfasst. In „Fragen“ wird eine Abfrage, die ein ausgenommenes Feld nennt, nicht ausgeführt.",
+  "ai.source.excludedHint": "Namen oder Pfade mit Punkten, höchstens {max}. Der Server ersetzt ihre Werte vor dem Senden; das Modell sieht nur den Namen. Das wirkt nach Namen: ein umbenanntes oder berechnetes Feld ist nicht erfasst. In „Fragen“ wird eine Abfrage, die ein ausgenommenes Feld nennt, nicht ausgeführt; auch das ist nur ein Behelf, keine Sperre. Was nie an einen Anbieter gehen darf, gehört in eine Quelle ohne KI-Freigabe.",
   "ai.source.addField": "Feld hinzufügen",
   "ai.source.removeField": "Entfernen",
   "ai.source.removeFieldNamed": "{name} entfernen",

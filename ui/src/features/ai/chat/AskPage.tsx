@@ -138,7 +138,15 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
   const [pickerOpen, setPickerOpen] = useState(false);
   const limitId = useId();
 
-  useEffect(() => () => abort.current?.abort(), []);
+  // Leaving the page stops the answer, and what settles it afterwards changes nothing anymore.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      abort.current?.abort();
+    };
+  }, []);
 
   // Chosen sources the person can no longer pick (deleted, out of reach) drop out.
   const chosen = (selection ?? stored.data?.datasourceIds ?? []).filter(
@@ -184,6 +192,13 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
         break;
       }
       await wait(SETTLE_WAIT_MS);
+      if (!mounted.current) {
+        break;
+      }
+    }
+    if (!mounted.current) {
+      // The person went elsewhere meanwhile; the page does not take them back.
+      return;
     }
     if (isNew) {
       // The new chat gets its address; the page starts over from what was stored.

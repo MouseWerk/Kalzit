@@ -46,6 +46,8 @@ const MAX_DASHBOARD_CANDIDATES: i64 = 200;
 const MAX_QUERY_BYTES: usize = 100 * 1024;
 /// The longest query text an audit entry keeps.
 const MAX_AUDIT_QUERY_CHARS: usize = 4000;
+/// The longest id from a model's arguments an audit entry keeps (an id is 36 characters).
+const MAX_AUDIT_ID_CHARS: usize = 64;
 /// The range a query runs over when the model names none.
 const DEFAULT_RANGE_MS: i64 = 24 * 3600 * 1000;
 
@@ -298,7 +300,10 @@ pub async fn run(scope: &ToolScope<'_>, name: &str, args: &Value) -> ToolRecord 
         record.duration_ms = Some(started.elapsed().as_millis() as u64);
     }
     if let Some(entry) = pending.0.take() {
-        entry.write(Some(&record)).await;
+        // Written in a task of its own, so a stop that arrives meanwhile cannot drop it; awaited
+        // here, so the entry is there when the answer ends.
+        let ended = record.clone();
+        let _ = tokio::spawn(async move { entry.write(Some(&ended)).await }).await;
     }
     record
 }
@@ -353,16 +358,17 @@ impl AuditEntry {
                 (Some("dashboard"), Some(d.id.clone()))
             }
             Some(_) => (None, None),
-            None => match (text_arg("datasourceId"), text_arg("dashboardId")) {
-                (Some(ds), _) => (Some("datasource"), Some(ds)),
-                (None, Some(d)) => {
-                    if let Some(panel) = text_arg("panelId") {
-                        summary["panelId"] = json!(panel);
+            // Stopped before it ended: what the model asked for, not checked yet, so it names no
+            // resource and says so.
+            None => {
+                summary["unverified"] = json!(true);
+                for key in ["datasourceId", "dashboardId", "panelId"] {
+                    if let Some(value) = text_arg(key) {
+                        summary[key] = json!(value.chars().take(MAX_AUDIT_ID_CHARS).collect::<String>());
                     }
-                    (Some("dashboard"), Some(d))
                 }
-                _ => (None, None),
-            },
+                (None, None)
+            }
         };
         let event = AuditEvent {
             org_id: Some(&self.org_id),
@@ -575,6 +581,59 @@ fn result_record(
     record
 }
 
+/// The text of a query as the excluded-field check reads it. A MongoDB query is its collection
+/// and its pipeline as written (not as escaped JSON), field names in quotes included. A text
+/// query (SQL, Cypher, PromQL, ...) loses its single-quoted literals and its comments, so a word
+/// in a string or a comment does not refuse it.
+fn searchable_text(query: &Value) -> String {
+    if let Some(pipeline) = query.get("pipeline") {
+        let collection = query.get("collection").and_then(Value::as_str).unwrap_or_default();
+        let pipeline = pipeline.as_str().map_or_else(|| pipeline.to_string(), str::to_string);
+        return format!("{collection}\n{pipeline}");
+    }
+    let text = prompts::query_text(query);
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                // A literal ends at the next quote that is not doubled ('it''s').
+                while let Some(c) = chars.next() {
+                    if c == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                out.push(' ');
+            }
+            '-' if chars.peek() == Some(&'-') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+                out.push('\n');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = ' ';
+                for c in chars.by_ref() {
+                    if last == '*' && c == '/' {
+                        break;
+                    }
+                    last = c;
+                }
+                out.push(' ');
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord> {
     let id = arg_str(args, "datasourceId")?;
     let query = query_arg(args)?;
@@ -582,7 +641,7 @@ async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let (ds, policy) = queryable(scope, id, true).await?;
     // Excluded fields are matched by name in results; a query that names one could pass its
     // values under another name (`email AS kontakt`), so such a query is not run at all.
-    if let Some(field) = policy.excluded_named_in(&prompts::query_text(&query)) {
+    if let Some(field) = policy.excluded_named_in(&searchable_text(&query)) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "ai_unavailable",
@@ -948,6 +1007,16 @@ mod tests {
         for bad in [json!("yesterday"), json!("now-"), json!("now-3x"), json!("now-h"), json!(true)] {
             assert!(time_point(Some(&bad), now, 0).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn literals_and_comments_are_not_searched_but_pipelines_are() {
+        let sql = json!({ "sql": "SELECT 'email' AS x, n -- email\nFROM t /* email */ WHERE a = 'it''s email'" });
+        let text = searchable_text(&sql);
+        assert!(!text.contains("email"), "{text}");
+        assert!(text.contains("SELECT") && text.contains("FROM t"), "{text}");
+        let mongo = json!({ "collection": "kunden", "pipeline": "[{\"$project\": {\"email\": 1}}]" });
+        assert!(searchable_text(&mongo).contains("\"email\""), "unescaped pipeline text");
     }
 
     #[test]
