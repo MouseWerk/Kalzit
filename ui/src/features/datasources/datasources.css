@@ -258,6 +258,13 @@
     text-transform: uppercase;
   }
 
+  /* "Signed, run in a sandbox" after the heading of the plugin kinds. */
+  .ds-kinds__group-note {
+    font-weight: var(--font-weight-regular);
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
   /* The kinds as small cards: mark, name, one line on what it is, a check on the chosen one. */
   .ds-kinds__list {
     display: grid;
@@ -651,6 +658,16 @@
     width: var(--size-kind-mark-small);
     height: var(--size-kind-mark-small);
     border-radius: var(--radius-sm);
+  }
+
+  /* A plugin kind's letters, where a built-in kind has its logo or glyph. */
+  .kind-mark__letters {
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .kind-mark:not(.kind-mark--small) .kind-mark__letters {
+    font-size: var(--font-size-sm);
   }
 
   .kind-mark .icon {

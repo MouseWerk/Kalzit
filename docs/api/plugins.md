@@ -112,7 +112,14 @@ What the host checks, in this order, before anything runs:
 }
 ```
 
-`GET /admin/plugins/{pluginId}` answers one item.
+`GET /admin/plugins/{pluginId}` answers one item with two more fields: `manifest`, the manifest
+exactly as signed (TOML), and `usedIn`, the data sources of its kind in every organization (not
+in the trash), for "Used in" and the question before removing it:
+
+```json
+{ "...": "...", "manifest": "manifest = 1\nid = \"dev.example.redis\"\n...",
+  "usedIn": [{ "id": "0190...", "name": "Cache", "orgId": "0190...", "orgName": "MouseWerk" }] }
+```
 
 ### Install or update: `POST /admin/plugins`
 
@@ -217,9 +224,9 @@ sources of the kind answer `datasource.kind_unavailable`.
 ## Data sources of plugin kinds
 
 - A registered plugin kind appears in `GET /orgs/{orgId}/datasource-kinds` like a built-in kind
-  (its `kind` is the plugin id), with `plugin`: `{ "plugin", "version", "labels", "help" }`, the
-  labels and help texts of its settings by field and language (`en`, optionally `de`) from the
-  manifest. `labelKey` of a plugin field is `datasources.settings.<name>`, so known names keep
+  (its `kind` is the plugin id), with `plugin`: `{ "plugin", "version", "publisher", "labels",
+  "help" }`, the publisher as the manifest names it (absent when it names none), and the labels
+  and help texts of its settings by field and language (`en`, optionally `de`) from the manifest. `labelKey` of a plugin field is `datasources.settings.<name>`, so known names keep
   their own translation.
 - The manifest's form rules are checked like a built-in kind's; the plugin's own `CheckSettings`
   follows. A plugin that cannot be started or reached does not refuse the settings.
@@ -348,7 +355,6 @@ environment, and (Linux) cannot `ptrace` or signal Kalzit.
 - Kalzit's connector for plugin network access, and with it network isolation on both systems.
 - `Release` calls when a data source changes or is deleted (plugins key their pools by
   `Connection.revision` meanwhile).
-- The Plugins board in the UI (docs/design/blueprint/Plugins.dc.html).
 
 ## Reasons
 

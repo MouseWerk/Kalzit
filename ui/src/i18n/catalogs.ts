@@ -19,6 +19,7 @@ import deLibraryPanels from "./de/libraryPanels.json";
 import deLive from "./de/live.json";
 import dePanels from "./de/panels.json";
 import dePlaylists from "./de/playlists.json";
+import dePlugins from "./de/plugins.json";
 import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
 import deToolbar from "./de/toolbar.json";
@@ -39,6 +40,7 @@ import enLibraryPanels from "./en/libraryPanels.json";
 import enLive from "./en/live.json";
 import enPanels from "./en/panels.json";
 import enPlaylists from "./en/playlists.json";
+import enPlugins from "./en/plugins.json";
 import enSettings from "./en/settings.json";
 import enShell from "./en/shell.json";
 import enToolbar from "./en/toolbar.json";
@@ -74,6 +76,7 @@ export const en = {
   ...enLive,
   ...enAccess,
   ...enAi,
+  ...enPlugins,
 };
 export const de = {
   ...deCore,
@@ -93,4 +96,5 @@ export const de = {
   ...deLive,
   ...deAccess,
   ...deAi,
+  ...dePlugins,
 };
