@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import type { Shape } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { panelsForShapes } from "../registry";
+import { panelDescription, panelName, panelsForShapes, useExternalPanels } from "../registry";
 import { CheckboxField } from "../shared";
 import { GenericPreview } from "./previews";
 import "../viz.css";
@@ -9,7 +9,8 @@ import "../viz.css";
 /**
  * The visual chooser of panel types: a card with a drawing per type, showing the types that
  * can draw what the query returns. The others appear on request, marked as not fitting. The
- * cards are one radio group, so arrow keys move between them.
+ * cards are one radio group, so arrow keys move between them. Panels of plugins come after the
+ * built-in ones, each marked as a plugin with the publisher its manifest names.
  */
 export function PanelPicker({
   value,
@@ -24,6 +25,8 @@ export function PanelPicker({
   const { t } = useI18n();
   const name = useId();
   const [showAll, setShowAll] = useState(false);
+  // Drawn again when the plugins' panels arrive.
+  useExternalPanels();
   const choices = panelsForShapes(shapes.length === 0 ? ["frame"] : shapes);
   const hidden = choices.filter((c) => !c.accepts).length;
   const shown = choices.filter((c) => c.accepts || showAll || c.panel.type === value);
@@ -34,11 +37,12 @@ export function PanelPicker({
         {shown.map(({ panel, accepts }) => {
           const Preview = panel.Preview ?? GenericPreview;
           const hintId = `${name}-${panel.type}-hint`;
+          const description = panelDescription(t, panel);
           return (
             <label
               key={panel.type}
               // The whole description, also where the card shows only its first two lines.
-              title={accepts && panel.description !== undefined ? t(panel.description) : undefined}
+              title={accepts ? description : undefined}
               className={
                 panel.type === value ? "picker__card picker__card--current" : "picker__card"
               }
@@ -55,14 +59,17 @@ export function PanelPicker({
               />
               <Preview />
               <span className="picker__name" id={`${name}-${panel.type}-name`}>
-                {t(panel.name)}
+                {panelName(t, panel)}
               </span>
+              {panel.external === true ? (
+                <span className="picker__badge">
+                  {panel.badge === undefined
+                    ? t("panelPlugins.badge")
+                    : t("panelPlugins.badgeBy", { publisher: panel.badge })}
+                </span>
+              ) : null}
               <span className="picker__hint" id={hintId}>
-                {accepts
-                  ? panel.description === undefined
-                    ? ""
-                    : t(panel.description)
-                  : t("dashboards.editor.notForShape")}
+                {accepts ? (description ?? "") : t("dashboards.editor.notForShape")}
               </span>
             </label>
           );

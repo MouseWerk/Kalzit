@@ -1157,6 +1157,20 @@
     line-height: var(--line-height-tight);
   }
 
+  /* A panel of a plugin: a neutral badge with the publisher its manifest names. */
+  .picker__badge {
+    justify-self: start;
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
   .preview {
     display: block;
     width: 100%;

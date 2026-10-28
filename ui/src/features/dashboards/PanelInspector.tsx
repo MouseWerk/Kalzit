@@ -4,7 +4,7 @@ import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
-import { getPanel } from "../../panels/registry";
+import { getPanel, panelName } from "../../panels/registry";
 import { datasourcesQuery } from "../datasources/api";
 import {
   clampGrid,
@@ -58,7 +58,7 @@ export function PanelInspector({
   const { t } = useI18n();
   const id = useId();
   const plugin = getPanel(panel.type);
-  const typeName = plugin === undefined ? panel.type : t(plugin.name);
+  const typeName = plugin === undefined ? panel.type : panelName(t, plugin);
   const row = rows.find((r) => r.id === panel.rowId);
   const rowName =
     row === undefined

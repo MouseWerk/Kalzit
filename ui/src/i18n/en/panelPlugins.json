@@ -1,0 +1,17 @@
+{
+  "panelPlugins.panel": "Panel of a plugin",
+  "panelPlugins.badge": "Plugin",
+  "panelPlugins.badgeBy": "Plugin · {publisher}",
+  "panelPlugins.frameTitle": "{name} (plugin panel)",
+  "panelPlugins.options.none": "This panel has no options.",
+  "panelPlugins.options.unset": "Not set",
+  "panelPlugins.error.unavailable": "The plugin of this panel ({type}) is not available: it is not installed, turned off or blocked for this organization.",
+  "panelPlugins.error.timeout": "The panel did not start within {seconds} seconds.",
+  "panelPlugins.error.navigated": "The panel tried to leave its frame and was stopped.",
+  "panelPlugins.error.retry": "Try again",
+  "panelPlugins.link.title": "Open link?",
+  "panelPlugins.link.outside": "The panel “{plugin}” wants to open this address in a new tab:",
+  "panelPlugins.link.inside": "The panel “{plugin}” wants to open this page of Kalzit:",
+  "panelPlugins.link.open": "Open",
+  "panelPlugins.link.cancel": "Cancel"
+}

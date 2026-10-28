@@ -17,7 +17,7 @@ api = 1
 name = "field"
 label = { en = "Field", de = "Feld" }
 type = "string"
-help = { en = "The number field to show; empty: the first number field.", de = "Das Zahlenfeld, das die Kachel zeigt; leer: das erste Zahlenfeld." }
+help = { en = "The number field to show; empty: the first number field.", de = "Das Zahlenfeld, das das Panel zeigt; leer: das erste Zahlenfeld." }
 
 [[panel.options]]
 name = "decimals"

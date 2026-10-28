@@ -1,6 +1,6 @@
 import { asSteps } from "../../analysis/steps";
 import type { MessageKey, Translate } from "../../i18n/i18n";
-import { getPanel } from "../../panels/registry";
+import { getPanel, panelName } from "../../panels/registry";
 import type { AnalysisModel } from "./api";
 
 /** One difference between two versions of an analysis, as a line of text. */
@@ -56,7 +56,7 @@ export function analysisChanges(
   if (before.visualization.type !== after.visualization.type) {
     const name = (type: string) => {
       const plugin = getPanel(type);
-      return plugin === undefined ? type : t(plugin.name);
+      return plugin === undefined ? type : panelName(t, plugin);
     };
     changes.push({
       key: "analyses.change.visualization",

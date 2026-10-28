@@ -4,6 +4,7 @@ import type {
   FieldDistribution,
   Frame,
   GraphSet,
+  QueryResult,
   Shape,
 } from "../api/generated/shapes";
 import type { PathStep } from "../documents/paths";
@@ -35,6 +36,22 @@ export interface PanelPlugin<Options = Record<string, unknown>> {
   standalone?: boolean;
   /** A small drawing for the panel picker, made of palette classes only. */
   Preview?: () => ReactNode;
+  /**
+   * A panel of an installed panel plugin (`features/plugins/panel`): its name and description
+   * come from the plugin's manifest, not from Kalzit's catalogs (`label`, `hint`), and it is
+   * marked as a plugin in the picker (`badge`: the publisher it names). It gets `series`.
+   */
+  external?: true;
+  label?: string;
+  hint?: string;
+  badge?: string;
+}
+
+/** One query's result in its native shape, or its error, for panels of plugins. */
+export interface PanelSeries {
+  refId: string;
+  result?: QueryResult;
+  error?: { code: string; reason?: string; message: string };
 }
 
 /**
@@ -92,6 +109,8 @@ export interface PanelProps<Options> {
    * in the result, such as a drilldown, start over then.
    */
   revision?: string | number | undefined;
+  /** Every query's result in its native shape or its error, in target order (`external` panels). */
+  series?: readonly PanelSeries[] | undefined;
 }
 
 /** One target's graph, with the source it came from (explorer mode queries it again). */

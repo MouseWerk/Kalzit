@@ -614,7 +614,7 @@ function Explore({
     ...(projected ? stepsRun.frames.map((f) => ({ shape: "frame" as const, frame: f.frame })) : []),
   ];
   const shapes: Shape[] = projected ? [...new Set<Shape>([...kindShapes, "frame"])] : kindShapes;
-  const choices = panelsForShapes(shapes);
+  const choices = panelsForShapes(shapes, { plugins: false });
   const type = panelType ?? (results.length > 0 ? suggestPanel(results) : "table");
   // A saved analysis keeps its visualization options while its type stays.
   const savedLook =

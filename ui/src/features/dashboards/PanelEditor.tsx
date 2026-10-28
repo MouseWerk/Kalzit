@@ -38,8 +38,9 @@ import { useOrgPermissions } from "../../org/useOrg";
 import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { isNumeric, seriesName } from "../../panels/frame";
+import { PanelHostContext, usePanelHost } from "../../panels/host";
 import { PanelPicker } from "../../panels/picker/PanelPicker";
-import { getPanel } from "../../panels/registry";
+import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
 import { AnalysisPicker, type ApplyMode } from "../analyses/AnalysisPicker";
@@ -752,23 +753,25 @@ export function PanelEditor({
   );
 
   const previewSection = (
-    <EditorPreview
-      notice={filterError}
-      tableView={tableView}
-      onTableView={setTableView}
-      revision={results.dataUpdatedAt}
-      onFilter={filterable ? filterBy : undefined}
-      panel={previewPanel}
-      title={look.title}
-      range={range}
-      pending={pending}
-      error={results.error}
-      outcomes={outcomes}
-      stepsRun={stepsRun}
-      variables={texts}
-      kindOf={sourceKindOf}
-      distribution={previewDistribution}
-    />
+    <EditablePreview onOptions={(options) => setLook((p) => ({ ...p, options }))}>
+      <EditorPreview
+        notice={filterError}
+        tableView={tableView}
+        onTableView={setTableView}
+        revision={results.dataUpdatedAt}
+        onFilter={filterable ? filterBy : undefined}
+        panel={previewPanel}
+        title={look.title}
+        range={range}
+        pending={pending}
+        error={results.error}
+        outcomes={outcomes}
+        stepsRun={stepsRun}
+        variables={texts}
+        kindOf={sourceKindOf}
+        distribution={previewDistribution}
+      />
+    </EditablePreview>
   );
 
   const optionsPane = (
@@ -852,6 +855,23 @@ export function PanelEditor({
         options={optionsPane}
       />
     </section>
+  );
+}
+
+/**
+ * The preview's host: what the dashboard offers its panels, plus taking the options a panel asks
+ * for itself (a plugin's `setOptions`), which only the editor allows.
+ */
+function EditablePreview({
+  onOptions,
+  children,
+}: {
+  onOptions: (options: Record<string, unknown>) => void;
+  children: ReactNode;
+}) {
+  const host = usePanelHost();
+  return (
+    <PanelHostContext value={{ ...host, editOptions: onOptions }}>{children}</PanelHostContext>
   );
 }
 
@@ -1195,6 +1215,8 @@ function OptionsPane({
   onMakeLibrary: (() => void) | undefined;
 }) {
   const { t } = useI18n();
+  // Drawn again when the plugins' panels arrive.
+  useExternalPanels();
   const plugin = getPanel(look.type);
   const Editor = plugin?.Editor;
   return (
@@ -1203,7 +1225,7 @@ function OptionsPane({
       <OptionGroup
         id={`${titleId}-viz`}
         title={t("dashboards.editor.visualization")}
-        summary={plugin === undefined ? look.type : t(plugin.name)}
+        summary={plugin === undefined ? look.type : panelName(t, plugin)}
         open={isNew}
       >
         <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
