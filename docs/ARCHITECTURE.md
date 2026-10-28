@@ -328,8 +328,9 @@ type QueryResult =
 Decided by the owner on 2026-10-27. Done: the protocol, the manifest with its validator, the
 signing context, the kind registry, the in-process adapter, and the host for data source plugins
 (install from a file with every check, trust, approval, processes with supervision and sandbox,
-the admin API in docs/api/plugins.md). The panel message API, the catalog, Kalzit's network
-connector for plugins, the Rust SDK and the Plugins board follow in M4 (marked (M4) below). The
+the admin API in docs/api/plugins.md), and Kalzit's network connector, the only network a plugin
+has. The panel message API, the catalog, the Rust SDK and the Plugins board follow in M4 (marked
+(M4) below). The
 UI follows the board `docs/design/blueprint/Plugins.dc.html`.
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
@@ -355,10 +356,13 @@ process, a network target or the gRPC protocol.
   watches it and restarts it with backoff; a crashed or hanging plugin fails only the queries
   of its kind, never the server.
 - Kalzit is the gRPC client (tonic, HTTP/2), the plugin the server. The connection is local:
-  - Windows: a named pipe with a random name Kalzit chooses (`\\.\pipe\kalzit-plugin-<random>`).
-    The plugin creates it as first instance with a DACL for Kalzit's account and `RESTRICTED`
-    (its restricted token needs that to create the next instance); Kalzit checks that the pipe's
-    server process (`GetNamedPipeServerProcessId`) is the child it started, on every connect.
+  - Windows: a named pipe with a random name (`\\.\pipe\kalzit-plugin-<random>`). Kalzit creates
+    it (its first instance before the plugin starts, for Kalzit's account, the start's SID and
+    the plugin's AppContainer, labelled low) and keeps one instance waiting; the plugin connects
+    to it as a client, because an AppContainer cannot create pipes, checks that the server is
+    Kalzit's process (`GetNamedPipeServerProcessId`) and serves the protocol on each connection
+    it makes. Kalzit uses a connection only when its client process
+    (`GetNamedPipeClientProcessId`) is the child it started, on every connect.
   - Linux: a Unix socket `socket` in the start's private run directory (mode 0700,
     `<data_dir>/plugins/run/<random>`); Kalzit checks the peer's process id (`SO_PEERCRED`) on
     every connect.
@@ -366,10 +370,11 @@ process, a network target or the gRPC protocol.
     listens) and the plugin's log (stderr, into Kalzit's log with the plugin id, kept per plugin
     with limits: 2000 lines, 512 KiB, lines cut at 4 KiB, 200 lines per second). The address
     and a per-start token arrive in the environment (`KALZIT_PLUGIN_ADDRESS`,
-    `KALZIT_PLUGIN_TOKEN`, and Kalzit's process id as `KALZIT_PLUGIN_HOST_PID`), which holds
-    nothing else of Kalzit's; the plugin accepts connections only from that process (the pipe's
-    client process id, `SO_PEERCRED` of the socket), every call carries the token as metadata
-    (`kalzit-plugin-token`) and the plugin refuses calls without it.
+    `KALZIT_PLUGIN_TOKEN`, Kalzit's process id as `KALZIT_PLUGIN_HOST_PID`, and the network
+    connector as `KALZIT_PLUGIN_CONNECTOR`), which holds nothing else of Kalzit's; the plugin
+    serves only that process (the pipe's server process id, `SO_PEERCRED` of the socket), every
+    call carries the token as metadata (`kalzit-plugin-token`) and the plugin refuses calls
+    without it.
 - `plugins::supervisor`: the process starts with the first call of its kind; within 10 seconds
   it must say ready, accept the checked connection and answer `Describe` in line with its
   manifest. Every 30 seconds a `Describe` probes it; two missed answers end it. After the n-th
@@ -644,13 +649,49 @@ while Kalzit runs as root.
   and `setpgid`/`setsid` are refused after that. Without Landlock (unless allowed) nothing
   starts: the host checks before spawning, and the child fails the spawn when Landlock does not
   take.
-- Network, both systems: **not limited yet.** Kalzit's connector (the plugin asks Kalzit for a
-  connection, Kalzit checks the target against the manifest and the target rules and connects)
-  is not built; without it a network namespace (Linux) or an AppContainer without network
-  capabilities or a filtering rule (Windows) would cut the plugin off from its database. Until
-  then the network rule rests on the signature, the administrator's approval of the declared
-  targets, and the host's check of the configured target before each call; a plugin can open
-  connections to any address the server reaches. Processes and CPU are not limited on Linux.
+- Network, Windows: an AppContainer of its own per plugin (a profile `kalzit.plugin.<hash>`,
+  removed with the plugin) without any capability and without a loopback exemption, combined
+  with the restricted token (Windows makes the token a lowbox token; every access passes the
+  normal, the restricting-SID and the AppContainer check). It opens no network connection, not
+  even to loopback. An AppContainer cannot create named pipes, so Kalzit creates the plugin's
+  pipe and the plugin connects to it; Windows sets `TEMP`/`TMP` to the container's `AC\Temp`,
+  which Kalzit empties at every start and limits to the plugin. A Windows Filtering Platform
+  rule was not chosen: adding filters needs administrator rights, which a Kalzit service account
+  does not have.
+- Network, Linux: the seccomp filter lets `socket` make Unix sockets only (other families
+  `EACCES`), and where user namespaces are allowed the plugin gets a network namespace of its own
+  with only an unconfigured loopback device. The filter holds also where namespaces are not
+  allowed.
+- Processes and CPU are not limited on Linux.
+
+### Network connector
+
+The only network a plugin has (`plugins::connector`, protocol minor 1, feature
+`network_connector`; the client is `kalzit_plugin_api::connector::Connector`; details and reasons
+in docs/api/plugins.md, "Network connector"). Per connection the plugin opens the connector
+(`KALZIT_PLUGIN_CONNECTOR`: the Unix socket `connector` in its run directory, a named pipe on
+Windows; only the plugin's process is served) and sends one `ConnectRequest` (token, data source
+id, host, port, `tcp` or `tls`), framed with a 4-byte length; gRPC cannot carry a socket.
+
+- The target must be one the manifest declares for that data source's settings as the plugin
+  last received them (`connector::Grants`, recorded with every call that hands over a
+  `Connection`): a `host` setting with its port setting or default port and protocol, a `url`
+  setting's host and port (`https`/`wss` mean TLS), a fixed host and port.
+- Kalzit resolves the name, checks every address with the data source target rules
+  (`TargetPolicy`: metadata addresses, `datasources.allowed_targets`) and against its own
+  addresses (`connector::OwnEndpoints`: the HTTP and HTTPS ports on any local address, the
+  PostgreSQL database of `database.url`), and connects to the checked address, so a name cannot
+  resolve to something else for the connection (DNS rebinding).
+- Linux: the connected socket goes to the plugin with `SCM_RIGHTS`; Kalzit keeps no copy, counts
+  the plugin's connections by their inodes in `/proc/<pid>/fd`, and closes idle ones through a
+  copy taken with `pidfd_getfd` (the last traffic from `TCP_INFO`, then `shutdown`). Windows: a
+  socket handle duplicated into the AppContainer (`WSADuplicateSocket`) depends on the machine's
+  Winsock catalog and hides the connection from Kalzit, so Kalzit relays the pipe to the TCP
+  connection instead; the relay ends with either side or when idle.
+- Limits (`supervisor::Options`): 64 connections at once per plugin, 15 minutes without traffic,
+  10 seconds to connect. Every refused connect goes to the plugin's log, Kalzit's log and the
+  audit log (`plugins.connect_refused`, at most once a minute per target and reason).
+- The plugin speaks its database's protocol over the stream and wraps it in TLS itself.
 
 ## Dashboards
 

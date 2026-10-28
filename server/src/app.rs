@@ -107,7 +107,10 @@ impl AppState {
         let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs, Capacity::SMALL);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
-        let plugins = Arc::new(crate::plugins::host::PluginHost::new(&config.paths.data_dir));
+        let plugins = Arc::new(
+            crate::plugins::host::PluginHost::new(&config.paths.data_dir)
+                .with_own_endpoints(crate::plugins::connector::OwnEndpoints::from_config(&config)),
+        );
         plugins.load(&db, &datasources).await.map_err(|e| anyhow::anyhow!("loading the plugins: {}", e.message))?;
         let touch_limit = crate::auth::session::Touches::limit_for(&db);
         // The touches, plus one for each of the two hourly jobs.

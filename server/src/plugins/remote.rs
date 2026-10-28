@@ -193,8 +193,10 @@ impl Remote {
     }
 
     /// The data source as the protocol carries it. The revision changes with the settings and
-    /// the secrets, so the plugin keeps a pool per revision.
+    /// the secrets, so the plugin keeps a pool per revision. Its settings from now on decide
+    /// where the plugin's connects for it may go (`connector::Grants`).
     fn connection(&self, conn: &Connection) -> pb::Connection {
+        self.supervisor.grants().record(conn);
         let mut secrets = BTreeMap::new();
         for s in self.manifest.settings.iter().filter(|s| s.secret) {
             if let Some(v) = conn.secret(&s.name) {
@@ -221,51 +223,19 @@ impl Remote {
     /// hosts and URLs it takes from the settings and its fixed hosts. A refused target (Kalzit's
     /// own database and metadata addresses, `datasources.allowed_targets`) fails the call here,
     /// and so does a target setting that is not text, a URL that does not parse or has no host,
-    /// and an empty host; the error names the settings field. The plugin connects on its own,
-    /// so this checks the configured targets, not the connections it makes.
+    /// and an empty host; the error names the settings field. The connector checks every
+    /// connection the plugin then asks for again (`connector`).
     async fn check_targets(&self, conn: &Connection) -> Result<(), (&'static str, SourceError)> {
-        for target in &self.manifest.permissions.network {
-            if let Some(host) = &target.host {
-                let port = target.port.unwrap_or(0);
-                conn.policy().resolve_all(host, port).await.map_err(|e| ("settings", e.into()))?;
-                continue;
-            }
-            let Some(setting) = &target.setting else { continue };
-            let field = self.field(setting);
-            let refused = |reason: &'static str, message: &str| {
-                (field, SourceError::Rejected(Detail::new(reason, message).with("field", field)))
-            };
-            let value = match conn.settings().get(setting) {
-                None | Some(Value::Null) => continue,
-                Some(Value::String(s)) => s.trim(),
-                Some(_) => return Err(refused("settings.expected_text", "the target setting is not text")),
-            };
-            if value.is_empty() {
-                return Err(refused("settings.host_invalid", "the target setting is empty"));
-            }
-            let (host, port) = match target.form.as_deref() {
-                Some("url") => {
-                    let Ok(url) = url::Url::parse(value) else {
-                        return Err(refused("settings.url_invalid", "the URL cannot be parsed"));
-                    };
-                    let Some(host) = url.host_str().map(|h| h.trim_matches(['[', ']']).to_string()) else {
-                        return Err(refused("settings.url_no_host", "the URL has no host"));
-                    };
-                    (host, url.port_or_known_default().unwrap_or(443))
-                }
-                _ => {
-                    let port = target
-                        .port_setting
-                        .as_ref()
-                        .and_then(|p| conn.settings().get(p))
-                        .and_then(Value::as_u64)
-                        .and_then(|p| u16::try_from(p).ok())
-                        .or(target.default_port)
-                        .unwrap_or(0);
-                    (value.to_string(), port)
+        for target in super::connector::declared(&self.manifest, conn.settings()) {
+            let target = match target {
+                Ok(t) => t,
+                Err(u) => {
+                    let field = self.field(&u.setting);
+                    return Err((field, SourceError::Rejected(Detail::new(u.reason, u.message).with("field", field))));
                 }
             };
-            conn.policy().resolve_all(&host, port).await.map_err(|e| (field, e.into()))?;
+            let field = target.setting.as_deref().map_or("settings", |s| self.field(s));
+            conn.policy().resolve_all(&target.host, target.port).await.map_err(|e| (field, e.into()))?;
         }
         Ok(())
     }

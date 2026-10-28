@@ -17,7 +17,9 @@ key id, or `server`) as `resourceId`: `plugins.installed`, `plugins.updated`,
 `plugins.restarted`, `plugins.removed`, `plugins.install_refused` (with the reason),
 `plugins.key_added`, `plugins.key_removed` (with the plugins it stopped and the updates it
 dropped), `plugins.handover_added`, `plugins.unsigned_allowed`, `plugins.unsigned_refused`,
-`plugins.landlock_optional`, `plugins.landlock_required`, and in the organization's log `plugins.blocked` and
+`plugins.landlock_optional`, `plugins.landlock_required`, `plugins.connect_refused` (a network
+connection the connector refused, with `datasourceId`, `host`, `port` and `reason`; at most once a
+minute per target and reason, no actor), and in the organization's log `plugins.blocked` and
 `plugins.unblocked`. Summaries carry versions, key ids and the approved network targets, never
 secrets.
 
@@ -99,8 +101,8 @@ What the host checks, in this order, before anything runs:
       "starts": 1, "failures": 0,
       "lastError": { "reason": "plugin.crashed", "message": "...", "at": 1800000000000 },
       "retryAt": 1800000010000,     // while waiting
-      "sandbox": ["no_new_privs", "landlock", "seccomp", "memory_limit"],
-      "sandboxMissing": ["user_namespace", "ipc_namespace", "network"]
+      "sandbox": ["no_new_privs", "landlock", "seccomp", "network", "memory_limit", "signals"],
+      "sandboxMissing": ["user_namespace", "ipc_namespace", "network_namespace"]
     },
     "installedAt": 1800000000000,
     "updatedAt": 1800000000000
@@ -246,15 +248,22 @@ sources of the kind answer `datasource.kind_unavailable`.
 ## Processes
 
 - A registered plugin's process starts with the first call that needs it, with `KALZIT_PLUGIN_ADDRESS`,
-  `KALZIT_PLUGIN_TOKEN` and `KALZIT_PLUGIN_HOST_PID` (the plugin accepts connections from that
-  process only) and nothing else of Kalzit's environment (on Windows also
-  `SystemRoot`, `SystemDrive`, `windir`, `NUMBER_OF_PROCESSORS`, `PROCESSOR_ARCHITECTURE` and a
-  `PATH` of `System32`; on Linux `PATH=/usr/bin:/bin`, `HOME` and `LANG`), and `TMP`, `TEMP` and
-  `TMPDIR` pointing at its private temporary directory.
-- Start: within 10 seconds it prints `kalzit-plugin 1 ready` on stdout, Kalzit connects (Windows:
-  the named pipe's server process must be the child; Linux: `SO_PEERCRED` of the socket must be
-  the child) and its `Describe` answer must fit the manifest (protocol, kind, shapes,
-  capabilities).
+  `KALZIT_PLUGIN_TOKEN`, `KALZIT_PLUGIN_HOST_PID` (the plugin serves that process only) and
+  `KALZIT_PLUGIN_CONNECTOR` (the network connector, below) and nothing else of Kalzit's
+  environment (on Windows also `SystemRoot`, `SystemDrive`, `windir`, `NUMBER_OF_PROCESSORS`,
+  `PROCESSOR_ARCHITECTURE`, `USERPROFILE`, `LOCALAPPDATA`, `APPDATA` (Windows needs them to start
+  an AppContainer process) and a `PATH` of `System32`; on Linux `PATH=/usr/bin:/bin`, `HOME` and
+  `LANG`), and `TMP`, `TEMP` and `TMPDIR` pointing at its private temporary directory (on Windows
+  Windows sets `TMP` and `TEMP` to the AppContainer's own `AC\Temp`, emptied at every start).
+- The local connection: Linux, the plugin listens on the Unix socket `KALZIT_PLUGIN_ADDRESS` and
+  Kalzit connects (`SO_PEERCRED` of the socket must be the child). Windows, Kalzit creates the
+  named pipe `KALZIT_PLUGIN_ADDRESS` and keeps an instance waiting; the plugin connects to it as a
+  client (an AppContainer cannot create pipes), checks that the pipe's server is
+  `KALZIT_PLUGIN_HOST_PID`, and serves the protocol over each connection it makes, always keeping
+  one ready; Kalzit uses a connection only when its client process is the child.
+- Start: within 10 seconds it prints `kalzit-plugin 1 ready` on stdout, Kalzit connects and its
+  `Describe` answer must fit the manifest (protocol, kind, shapes, capabilities). `Describe`
+  announces protocol minor 1 with the feature `network_connector`.
 - Health: every 30 seconds Kalzit asks `Describe`; two failed answers in a row end the process
   (`plugin.unresponsive`).
 - Restarts: after the n-th failure in a row (crash, failed start, unresponsive) the plugin waits
@@ -263,6 +272,37 @@ sources of the kind answer `datasource.kind_unavailable`.
   that ran 10 minutes before it failed starts the count afresh.
 - A crash fails only the calls of its kind. Disabling, removing, a removed key and Kalzit's stop
   end the process and everything it started.
+
+## Network connector
+
+A plugin has no network of its own (Sandbox, below): every connection goes through Kalzit
+(`ConnectRequest` in the protocol, `kalzit_plugin_api::connector::Connector` with the crate's
+feature `connector`). For each connection the plugin connects to `KALZIT_PLUGIN_CONNECTOR` (a
+Unix socket in its run directory, a named pipe on Windows; only the plugin's own process is
+served) and sends the start's token, the data source id it got in `Connection`, host, port and
+protocol (`tcp` or `tls`). Kalzit then:
+
+1. refuses an unknown token (`plugin.token_invalid`) and a data source the plugin was not given
+   (`plugin.datasource_unknown`);
+2. refuses any host, port or protocol that is not one of the manifest's targets for that data
+   source's settings as the plugin last received them, compared without case and trailing dot
+   (`plugin.target_undeclared`): a `host` target's setting with its port setting or default
+   port and protocol, a `url` target's host and port (`https` and `wss` are `tls`), a fixed host
+   with its port and protocol;
+3. resolves the name itself and applies the data source target rules to every address
+   (`target.metadata_address`, `target.not_allowed`; any metadata address refuses the whole
+   name), and refuses Kalzit's own addresses: the HTTP and HTTPS ports on any address of the
+   machine (`target.own_address`) and its PostgreSQL database (`target.own_database`);
+4. refuses a connection beyond `64` at once per plugin (`plugin.connections_exhausted`);
+5. connects to the checked address (10 seconds at most, `target.unreachable` otherwise), never
+   resolving again, and hands it over: on Linux the connected socket itself (`SCM_RIGHTS`), on
+   Windows the pipe, which Kalzit relays to the TCP connection.
+
+A connection without traffic for 15 minutes is closed (Linux: Kalzit takes a copy of the
+plugin's socket with `pidfd_getfd`, reads its last traffic from `TCP_INFO` and shuts it down;
+Windows: the relay ends). Refusals of steps 1 to 4 answer `ERROR_KIND_BLOCKED`, step 5
+`ERROR_KIND_FAILED`; every refusal is written to the plugin's log (`stream: host`), Kalzit's log
+and the audit log (`plugins.connect_refused`). The plugin speaks TLS itself over the stream.
 
 ## Sandbox
 
@@ -282,7 +322,7 @@ as root (`plugin.root_refused`).
   process needs it: `/usr`, `/lib*`, `/bin`, `/sbin`, `/proc`, `/sys`, the certificate
   directories and a few files of `/etc` (name lookup, time zone, users), the device files `null`,
   `zero`, `full`, `random`, `urandom`, its package (read and run) and its private run directory
-  (read and write, not run: the socket and `tmp`). Kalzit's data directory, configuration and
+  (read and write, not run: the sockets `socket` and `connector`, and `tmp`). Kalzit's data directory, configuration and
   secrets are out of reach, and so are other processes' `/proc` entries (Kalzit's environment and
   memory included).
 - `seccomp`: refused with `EPERM` are `ptrace`, `process_vm_readv/writev`, `pidfd_getfd`,
@@ -293,6 +333,13 @@ as root (`plugin.root_refused`).
   `truncate`/`ftruncate` where Landlock is older than ABI 3 (which guards truncation itself);
   `clone3` answers `ENOSYS` (its flags are out of a filter's reach; the C library falls back to
   `clone`); other architectures than the server's (and the x32 ABI) are killed.
+- `network` (part of the seccomp filter): `socket` makes Unix sockets only, every other family
+  (IPv4, IPv6, packet, netlink, vsock, ...) is refused with `EACCES`. A TCP connection comes
+  only from the connector, connected already (tested: a direct connection fails, also to
+  loopback).
+- `network_namespace`: a network namespace of its own with nothing but an unconfigured loopback
+  device, where unprivileged user namespaces are allowed; the connector's sockets stay in the
+  host's namespace.
 - `signals`: the plugin may signal only itself and its process group (`kill(0)`, `kill(-pid)`,
   its own threads): Landlock's signal scope where the kernel has ABI 6, else a seccomp filter on
   `kill`, `tgkill` and `rt_(tg)sigqueueinfo`. With the filter it cannot signal its children one
@@ -301,9 +348,7 @@ as root (`plugin.root_refused`).
   start); not where the host forbids unprivileged user namespaces (some distributions, most
   containers).
 - `memory_limit`: the data segment (`RLIMIT_DATA`, 2 GiB).
-- **Not limited**: the network (no network namespace: Kalzit's connector, through which a plugin
-  would reach only its declared targets, is not built yet; a plugin can open connections to any
-  address the server can reach), the number of processes and the CPU.
+- **Not limited**: the number of processes and the CPU.
 
 **Windows**
 
@@ -315,9 +360,16 @@ as root (`plugin.root_refused`).
   package grants read and run to the plugin's SID only, its run directory read and write (not
   run) to the start's SID only, so plugins cannot reach each other's packages or run
   directories (tested). Its default DACL grants only Kalzit's account, SYSTEM and the start's
-  SID, so other plugins cannot open its process or objects (tested). A plugin
-  creates its pipe instances with a DACL for Kalzit's account and `RESTRICTED` (the restricting
-  SIDs could not create the next instance otherwise).
+  SID, so other plugins cannot open its process or objects (tested). Kalzit's pipes for the
+  plugin grant Kalzit's account, the start's SID and the plugin's AppContainer, labelled low.
+- `app_container`: the plugin runs in an AppContainer of its own (a profile named
+  `kalzit.plugin.<hash of its id>`, removed with the plugin) without any capability; Windows
+  combines it with the restricted token, so every access passes both checks. Its package and run
+  directory also grant `ALL APPLICATION PACKAGES`; the plugin's and the start's SIDs still decide
+  which plugin gets in.
+- `network`: an AppContainer without the `internetClient`, `internetClientServer` and
+  `privateNetworkClientServer` capabilities and without a loopback exemption opens no network
+  connection, not even to loopback (tested); the connector is the only way out.
 - `low_integrity`: the plugin runs at low integrity. It cannot open Kalzit's process (or any
   process above low) for reading or writing its memory, and it can write only objects labelled
   low: its run directory carries that label; files and directories that only Everyone or Users may
@@ -331,21 +383,20 @@ as root (`plugin.root_refused`).
 - `image_load_policy`: DLLs from System32 first, none from remote shares or with a low label (so
   none from its run directory), and only the listed files in the package directory.
 - Its pipe ends are inheritable only while it is created, and only they are in its handle list.
-- **Not limited**: the network. A restricted token does not stop a process from opening sockets;
-  holding a plugin to its declared targets needs an AppContainer without network capabilities or
-  a Windows Filtering Platform rule per process, which are not built yet.
 
-On both systems the network rule of the manifest therefore rests on the signature and the
-administrator's approval of the declared targets, plus the host's check of every target before
-each call. The contract tests check per system that a plugin cannot open Kalzit's process or
-another plugin's, cannot write or read Kalzit's data directory, sees nothing of Kalzit's
-environment, and (Linux) cannot `ptrace` or signal Kalzit.
+On both systems a plugin reaches the network only through the connector, so only the targets its
+manifest declares for a data source's current settings, after the target rules. The contract
+tests check per system that a plugin cannot open Kalzit's process or another plugin's, cannot
+write or read Kalzit's data directory, sees nothing of Kalzit's environment, cannot open a
+network connection of its own, reaches a declared target through the connector, and is refused
+an undeclared target, an undeclared port or protocol and Kalzit's own port, and (Linux) cannot
+`ptrace` or signal Kalzit. Where the Linux seccomp filter cannot be applied (no `no_new_privs`),
+`network` is missing and the plugin's network is not limited; the plugin page shows it.
 
 ## Not here yet
 
 - Panel plugins (the bundle, the sandboxed iframe and the message API).
 - The catalog (signed index, downloads).
-- Kalzit's connector for plugin network access, and with it network isolation on both systems.
 - `Release` calls when a data source changes or is deleted (plugins key their pools by
   `Connection.revision` meanwhile).
 - The Plugins board in the UI (docs/design/blueprint/Plugins.dc.html).
@@ -404,3 +455,18 @@ environment, and (Linux) cannot `ptrace` or signal Kalzit.
 | `plugin.protocol` | | the plugin broke the protocol: parts out of order or of another shape, values that do not fit, too many parts, a result without its end, an unknown schema form (`datasource_error`) |
 | `plugin.error` | `reason` | the plugin answered with a reason of its own; its text is the message |
 | `plugin.connected` | | "Test connection" passed, with the plugin's own text |
+
+Reasons of the network connector, answered to the plugin (`ConnectResponse.error`) and in
+`plugins.connect_refused`; a plugin may pass the `target.*` ones on:
+
+| Reason | Params | When |
+|---|---|---|
+| `plugin.token_invalid` | | the request does not carry the start's token |
+| `plugin.datasource_unknown` | `datasourceId` | the plugin was not given this data source |
+| `plugin.protocol_unknown` | | the protocol is neither `tcp` nor `tls` |
+| `plugin.target_undeclared` | `host`, `port` | not a target the manifest declares for the data source's settings |
+| `plugin.connections_exhausted` | `max` | the plugin holds its maximum of connections |
+| `target.own_address` | `address` | one of Kalzit's own listening addresses |
+| `target.own_database` | `address` | Kalzit's own database |
+| `target.metadata_address`, `target.not_allowed` | | the data source target rules |
+| `target.unresolvable`, `target.unreachable` | `host`, `detail` | the name does not resolve or no address answers |

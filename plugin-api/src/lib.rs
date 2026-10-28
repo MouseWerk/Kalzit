@@ -4,6 +4,7 @@
 //! itself (processes, sandbox, catalog downloads) lives in the server.
 
 pub mod catalog;
+pub mod connector;
 pub mod manifest;
 pub mod signing;
 
@@ -21,11 +22,11 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The minor version of protocol 1 this crate speaks: additions up to it are understood. A host
 /// announces it in `DescribeRequest.protocol_minor`, and a plugin uses no addition above it.
-pub const PROTOCOL_MINOR: u32 = 0;
+pub const PROTOCOL_MINOR: u32 = 1;
 
 /// Additions of protocol 1 by name, as a host announces them in `DescribeRequest.features`.
-/// Empty until the first addition.
-pub const FEATURES: &[&str] = &[];
+/// Minor 1: `network_connector` (`connector`).
+pub const FEATURES: &[&str] = &[connector::FEATURE];
 
 /// The protocol versions a host of this crate accepts from a plugin.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[u32] = &[1];

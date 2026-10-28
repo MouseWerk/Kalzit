@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use kalzit_plugin_api::manifest::{self, Manifest};
@@ -19,6 +19,7 @@ use kalzit_plugin_api::signing::{self, HandOver, Installed, Signer};
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use super::connector::OwnEndpoints;
 use super::package::{self, PluginAccess, TrustedKey, Verified};
 use super::remote::Remote;
 use super::store::{self, HandOverRow, KeyRow, Pending, PluginRow};
@@ -119,6 +120,10 @@ pub struct PluginHost {
     changes: tokio::sync::Mutex<()>,
     /// Plugins may run on a Linux host without Landlock (`allowWithoutLandlock`).
     without_landlock: Arc<AtomicBool>,
+    /// Kalzit's own addresses, which no plugin connection reaches.
+    own: Arc<OwnEndpoints>,
+    /// Kalzit's database, for the audit log of refused connects; set by `load`.
+    db: OnceLock<sqlx::AnyPool>,
 }
 
 impl PluginHost {
@@ -131,7 +136,15 @@ impl PluginHost {
             running: Mutex::default(),
             changes: tokio::sync::Mutex::new(()),
             without_landlock: Arc::default(),
+            own: Arc::default(),
+            db: OnceLock::new(),
         }
+    }
+
+    /// Kalzit's own listening addresses and database (`OwnEndpoints::from_config`).
+    pub fn with_own_endpoints(mut self, own: OwnEndpoints) -> Self {
+        self.own = Arc::new(own);
+        self
     }
 
     /// Changes the supervision times and limits for plugins started from now on (tests).
@@ -172,6 +185,7 @@ impl PluginHost {
     /// Registers the kinds of every runnable plugin and loads the blocks of organizations;
     /// at start. A plugin that cannot run is logged and left out.
     pub async fn load(&self, db: &sqlx::AnyPool, datasources: &DataSources) -> ApiResult<()> {
+        let _ = self.db.set(db.clone());
         datasources.set_blocks(store::blocks(db).await?);
         self.without_landlock.store(store::switches(db).await?.allow_without_landlock, Ordering::SeqCst);
         let rows = store::all(db).await?;
@@ -238,6 +252,8 @@ impl PluginHost {
             package_dir,
             run_root: self.dir("run"),
             allow_without_landlock: self.without_landlock.clone(),
+            own: self.own.clone(),
+            audit: self.db.get().cloned(),
         };
         let options = self.options.read().unwrap_or_else(|e| e.into_inner()).clone();
         let supervisor = Supervisor::new(launch, options);
@@ -622,6 +638,7 @@ impl PluginHost {
         if let Some(p) = &row.pending {
             remove_dir(&self.dir("packages").join(&p.dir));
         }
+        super::sandbox::remove_app_container(id);
         Ok(())
     }
 

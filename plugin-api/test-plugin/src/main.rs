@@ -7,11 +7,14 @@
 //! - Per query, by `{"do": ...}`: `frame`, `documents`, `graph`, `rows` (`n` rows), `crash`,
 //!   `hang`, `flood` (stderr), `malformed` (rows before the start), `endless` (parts that never
 //!   end), `no_end`, `child` (starts a child process and answers its id), `spawn_many`, `write`
-//!   and `read` (`path`), `env` (the names of its environment), `ptrace` (Linux).
+//!   and `read` (`path`), `env` (the names of its environment), `ptrace` (Linux), and the network:
+//!   `net_direct` (a TCP connection of its own to `host`:`port`, which the sandbox must refuse),
+//!   `net_connect` (through Kalzit's connector; `wait` then waits for an idle close) and
+//!   `net_many` (`n` connections at once, against the connector's limit).
 //!
-//! Like a real plugin it accepts connections only from Kalzit's process
-//! (`KALZIT_PLUGIN_HOST_PID`), creates its pipe instances with a DACL for Kalzit's account and
-//! `RESTRICTED` (Windows), and refuses calls without the start's token.
+//! Like a real plugin it serves only Kalzit's process (`KALZIT_PLUGIN_HOST_PID`: the peer of its
+//! Unix socket on Linux, the server of the pipe it connects to on Windows) and refuses calls
+//! without the start's token.
 //!
 //! Started with the argument `sleep`, it only sleeps: the child of `child`.
 
@@ -20,9 +23,11 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use futures_util::{Stream, stream};
+use kalzit_plugin_api::connector::{ConnectError, Connector, Stream as NetStream};
 use kalzit_plugin_api::datasource::v1 as pb;
 use kalzit_plugin_api::datasource::v1::data_source_server::{DataSource, DataSourceServer};
 use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tonic::{Request, Response, Status};
 
 const KIND_FILE: &str = "kind.txt";
@@ -181,6 +186,87 @@ fn ptrace_traceme() -> Value {
     json!({ "ok": false, "errno": -1 })
 }
 
+/// Whether this process can open a TCP connection itself, past Kalzit's connector.
+async fn net_direct(host: &str, port: u16) -> Value {
+    match tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect((host, port))).await {
+        Ok(Ok(_)) => json!({ "ok": true }),
+        Ok(Err(e)) => json!({ "ok": false, "error": e.to_string() }),
+        Err(_) => json!({ "ok": false, "error": "no answer within 5 seconds" }),
+    }
+}
+
+/// A refused or failed connect as the probes answer it.
+fn connect_failed(e: ConnectError) -> Value {
+    match e {
+        ConnectError::Refused(e) => {
+            let detail = e.detail.unwrap_or_default();
+            json!({ "ok": false, "kind": e.kind, "reason": detail.reason, "message": detail.message })
+        }
+        other => json!({ "ok": false, "reason": "error", "message": other.to_string() }),
+    }
+}
+
+/// One line out, one line back.
+async fn exchange(stream: &mut NetStream) -> std::io::Result<String> {
+    stream.write_all(b"ping\n").await?;
+    let mut reply = Vec::new();
+    let mut byte = [0u8; 1];
+    while stream.read(&mut byte).await? == 1 && byte[0] != b'\n' {
+        reply.push(byte[0]);
+    }
+    Ok(String::from_utf8_lossy(&reply).into_owned())
+}
+
+/// Through Kalzit's connector: connects for the data source `ds` to `q.host:q.port` (`q.protocol`
+/// `tcp` or `tls`), exchanges a line, and with `q.wait` (seconds) then waits for Kalzit to close
+/// the idle connection.
+async fn net_connect(ds: &str, q: &Value) -> Value {
+    let Some(connector) = Connector::from_env() else { return json!({ "ok": false, "reason": "no_connector" }) };
+    let protocol = if q["protocol"] == "tls" { pb::TargetProtocol::Tls } else { pb::TargetProtocol::Tcp };
+    let host = q["host"].as_str().unwrap_or_default();
+    let port = q["port"].as_u64().unwrap_or(0) as u16;
+    let (mut stream, address) = match connector.connect(ds, host, port, protocol).await {
+        Ok(connected) => connected,
+        Err(e) => return connect_failed(e),
+    };
+    let reply = match tokio::time::timeout(Duration::from_secs(5), exchange(&mut stream)).await {
+        Ok(Ok(reply)) => reply,
+        Ok(Err(e)) => return json!({ "ok": false, "reason": "exchange", "message": e.to_string() }),
+        Err(_) => return json!({ "ok": false, "reason": "exchange", "message": "no reply within 5 seconds" }),
+    };
+    let mut answer = json!({ "ok": true, "address": address, "reply": reply });
+    if let Some(wait) = q["wait"].as_u64() {
+        let mut byte = [0u8; 1];
+        let closed = match tokio::time::timeout(Duration::from_secs(wait), stream.read(&mut byte)).await {
+            Ok(Ok(0) | Err(_)) => true,
+            Ok(Ok(_)) | Err(_) => false,
+        };
+        answer["closed"] = json!(closed);
+    }
+    answer
+}
+
+/// Opens `q.n` connections through the connector and holds them until all are tried: how many
+/// opened, and why the first refused one was refused.
+async fn net_many(ds: &str, q: &Value) -> Value {
+    let Some(connector) = Connector::from_env() else { return json!({ "ok": false, "reason": "no_connector" }) };
+    let host = q["host"].as_str().unwrap_or_default();
+    let port = q["port"].as_u64().unwrap_or(0) as u16;
+    let mut held = Vec::new();
+    let mut refused = Value::Null;
+    for _ in 0..q["n"].as_u64().unwrap_or(1) {
+        match connector.connect(ds, host, port, pb::TargetProtocol::Tcp).await {
+            Ok((stream, _)) => held.push(stream),
+            Err(e) => {
+                if refused.is_null() {
+                    refused = connect_failed(e);
+                }
+            }
+        }
+    }
+    json!({ "opened": held.len(), "refused": refused })
+}
+
 #[tonic::async_trait]
 impl DataSource for Plugin {
     async fn describe(&self, _: Request<pb::DescribeRequest>) -> Result<Response<pb::DescribeResponse>, Status> {
@@ -238,6 +324,7 @@ impl DataSource for Plugin {
     async fn query(&self, request: Request<pb::QueryRequest>) -> Result<Response<Self::QueryStream>, Status> {
         let q = request.into_inner();
         let query: Value = serde_json::from_str(&q.query_json).map_err(|e| Status::invalid_argument(e.to_string()))?;
+        let datasource = q.connection.as_ref().map(|c| c.datasource_id.clone()).unwrap_or_default();
         let parts: Vec<Result<pb::QueryChunk, Status>> = match query["do"].as_str().unwrap_or("frame") {
             "frame" => rows(3),
             "rows" => rows(query["n"].as_u64().unwrap_or(10)),
@@ -331,6 +418,12 @@ impl DataSource for Plugin {
             "join_host_group" => documents(vec![join_host_group(self.host)]),
             "tmpdir" => documents(vec![json!({ "path": std::env::temp_dir() })]),
             "open_pid" => documents(vec![open_host(query["pid"].as_u64().unwrap_or(0) as u32)]),
+            "net_direct" => documents(vec![
+                net_direct(query["host"].as_str().unwrap_or_default(), query["port"].as_u64().unwrap_or(0) as u16)
+                    .await,
+            ]),
+            "net_connect" => documents(vec![net_connect(&datasource, &query).await]),
+            "net_many" => documents(vec![net_many(&datasource, &query).await]),
             other => return Err(Status::invalid_argument(format!("unknown behaviour {other}"))),
         };
         Ok(Response::new(Box::pin(stream::iter(parts))))
@@ -374,69 +467,28 @@ fn package_file(name: &str) -> String {
     String::new()
 }
 
+/// Windows: Kalzit creates the pipe and keeps an instance waiting (an AppContainer cannot create
+/// pipes); the plugin connects to it as a client, checks that Kalzit's process is the server, and
+/// serves the protocol on every connection it makes, with one always ready for the next call.
 #[cfg(windows)]
 mod listen {
+    use std::os::windows::io::AsRawHandle;
     use std::pin::Pin;
     use std::task::{Context, Poll};
+    use std::time::Duration;
 
     use futures_util::Stream;
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-    use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
-    use windows::Win32::Security::Authorization::{
-        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-    };
-    use windows::Win32::Security::{
-        GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
-    };
-    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-    use windows::core::{HSTRING, PWSTR};
+    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+    use windows::core::HSTRING;
 
-    /// The SID of the account this process runs as (Kalzit's account).
-    fn user_sid() -> String {
-        // SAFETY: plain token queries into buffers of the size asked for; the strings are freed.
-        unsafe {
-            let mut token = HANDLE::default();
-            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).expect("the own token");
-            let mut needed = 0u32;
-            let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
-            let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
-            GetTokenInformation(token, TokenUser, Some(buffer.as_mut_ptr().cast()), needed, &mut needed)
-                .expect("the token's user");
-            let mut text = PWSTR::null();
-            ConvertSidToStringSidW((*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid, &mut text).expect("a SID");
-            let sid = text.to_string().expect("UTF-16");
-            LocalFree(Some(HLOCAL(text.0.cast())));
-            sid
-        }
-    }
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const ERROR_PIPE_BUSY: i32 = 231;
 
-    /// Creates a pipe instance that only Kalzit's account may open: the account itself, and
-    /// `RESTRICTED`, which a plugin's restricted token needs to create the next instance.
-    fn create(address: &str, first: bool) -> std::io::Result<NamedPipeServer> {
-        let sddl = format!("D:P(A;;GA;;;{})(A;;GA;;;RC)", user_sid());
-        let mut sd = PSECURITY_DESCRIPTOR::default();
-        // SAFETY: the descriptor is converted from SDDL and lives until the pipe exists.
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(sddl), SDDL_REVISION_1, &mut sd, None)
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            let mut attributes = SECURITY_ATTRIBUTES {
-                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                lpSecurityDescriptor: sd.0,
-                bInheritHandle: false.into(),
-            };
-            let pipe = ServerOptions::new()
-                .first_pipe_instance(first)
-                .reject_remote_clients(true)
-                .create_with_security_attributes_raw(address, (&raw mut attributes).cast());
-            LocalFree(Some(HLOCAL(sd.0)));
-            pipe
-        }
-    }
-
-    /// One accepted pipe instance, as tonic serves a connection.
-    pub struct Pipe(NamedPipeServer);
+    /// One connection to Kalzit's pipe, as tonic serves a connection.
+    pub struct Pipe(NamedPipeClient);
 
     impl tonic::transport::server::Connected for Pipe {
         type ConnectInfo = ();
@@ -465,43 +517,46 @@ mod listen {
         }
     }
 
-    /// The process id of the pipe's client.
-    fn client_pid(server: &NamedPipeServer) -> Option<u32> {
-        use std::os::windows::io::AsRawHandle;
+    /// The process id of the pipe's server.
+    fn server_pid(client: &NamedPipeClient) -> Option<u32> {
         let mut pid = 0u32;
         // SAFETY: the handle is open for the call; pid is a valid out pointer.
-        unsafe { GetNamedPipeClientProcessId(HANDLE(server.as_raw_handle()), &mut pid) }.ok()?;
+        unsafe { GetNamedPipeServerProcessId(HANDLE(client.as_raw_handle()), &mut pid) }.ok()?;
         Some(pid)
     }
 
-    /// Creates the pipe as its first instance (nobody else can own the name) and yields every
-    /// client that is the host, with a fresh instance waiting for the next one.
-    pub fn incoming(address: &str, host: u32) -> std::io::Result<impl Stream<Item = std::io::Result<Pipe>>> {
-        let first = create(address, true)?;
-        let address = address.to_string();
-        Ok(futures_util::stream::unfold(Some(first), move |server| {
-            let address = address.clone();
-            async move {
-                let mut server = server?;
-                loop {
-                    if let Err(e) = server.connect().await {
-                        return Some((Err(e), None));
-                    }
-                    if client_pid(&server) == Some(host) {
-                        break;
-                    }
-                    eprintln!("a connection from another process was refused");
-                    server = create(&address, false).ok()?;
+    /// The next connection to Kalzit: waits (in the kernel, up to a second at a time) while every
+    /// instance is taken.
+    async fn dial(address: &str, host: u32) -> Pipe {
+        loop {
+            match ClientOptions::new().open(address) {
+                Ok(client) if server_pid(&client) == Some(host) => return Pipe(client),
+                Ok(_) => {
+                    eprintln!("the pipe's server is not Kalzit's process");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                let next = match create(&address, false) {
-                    Ok(next) => Some(next),
-                    Err(e) => {
-                        eprintln!("the next pipe instance could not be created: {e}");
-                        None
-                    }
-                };
-                Some((Ok(Pipe(server)), next))
+                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                    let name = HSTRING::from(address);
+                    // SAFETY: a plain wait on the pipe's name, which lives for the call.
+                    let _ = tokio::task::spawn_blocking(move || unsafe { WaitNamedPipeW(&name, 1000) }).await;
+                }
+                Err(e) if e.raw_os_error() == Some(ERROR_FILE_NOT_FOUND) => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(e) => {
+                    eprintln!("Kalzit's pipe cannot be opened: {e}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
             }
+        }
+    }
+
+    /// Every connection to Kalzit's pipe, one after the other.
+    pub fn incoming(address: &str, host: u32) -> std::io::Result<impl Stream<Item = std::io::Result<Pipe>>> {
+        let address = address.to_string();
+        Ok(futures_util::stream::unfold(address, move |address| async move {
+            let pipe = dial(&address, host).await;
+            Some((Ok(pipe), address))
         }))
     }
 }

@@ -6,26 +6,36 @@
 //! `null`, `zero`, `full`, `random` and `urandom`, the plugin's package to read and run, its run
 //! directory to write); seccomp (no `ptrace`, no other process's memory, no mounts, no
 //! namespaces, no kernel modules or `kexec`, no `bpf`, `perf_event_open`, `userfaultfd` or
-//! keyrings); a user and an IPC namespace; no core dumps and a limit on the data segment; its
-//! own process group (all of it is killed), and it is killed when Kalzit ends
-//! (`PR_SET_PDEATHSIG`). The plugin keeps the network of the host: Kalzit's connector for
-//! plugins is not built yet, so a network namespace would cut the plugin off from its database.
+//! keyrings; `socket` for Unix sockets only, so no network of its own); a user, an IPC and a
+//! network namespace (only an unconfigured loopback device); no core dumps and a limit on the
+//! data segment; its own process group (all of it is killed), and it is killed when Kalzit ends
+//! (`PR_SET_PDEATHSIG`). Network connections come from Kalzit's connector (`connector`).
 //!
 //! Windows: a restricted token (no privileges but "bypass traverse checking", Administrators
-//! deny-only, restricting SIDs Everyone, Users, `RESTRICTED` and the logon session: the plugin
-//! can open only what one of these may open, so not Kalzit's data directory, only its package
-//! to read and run and its run directory to write); a job object (killed with Kalzit, no
-//! breakaway, limits on memory and processes, optional CPU cap, no desktop, clipboard or global
-//! atoms); image load policy (system DLLs first, no images from remote shares or with a low
-//! label). A restricted token does not stop a process from opening sockets: holding the network
-//! to the declared targets needs an AppContainer or a filtering rule, which are not built yet.
+//! deny-only, restricting SIDs Everyone, Users, `RESTRICTED`, the plugin's and the start's: the
+//! plugin can open only what one of these may open, so not Kalzit's data directory, only its
+//! package to read and run and its run directory to write); an AppContainer of its own without
+//! capabilities (no network, not even loopback; the connector is its way out); a job object
+//! (killed with Kalzit, no breakaway, limits on memory and processes, optional CPU cap, no
+//! desktop, clipboard or global atoms); image load policy (system DLLs first, no images from
+//! remote shares or with a low label).
 
 #[cfg(target_os = "linux")]
 pub use linux::spawn;
 #[cfg(target_os = "linux")]
 pub use linux::{LANDLOCK_REFUSED, landlock_available};
 #[cfg(windows)]
-pub use windows::{label_low, spawn};
+pub use windows::{app_container, label_low, remove_app_container, spawn};
+
+/// The AppContainer of a plugin's processes (Windows only; empty elsewhere).
+#[cfg(not(windows))]
+pub fn app_container(_id: &str) -> std::io::Result<String> {
+    Ok(String::new())
+}
+
+/// Removes the AppContainer profile of a removed plugin (Windows only).
+#[cfg(not(windows))]
+pub fn remove_app_container(_id: &str) {}
 
 /// Whether Kalzit runs as root (Linux): plugins are refused then, as a sandboxed process of root
 /// would still be root.
@@ -106,6 +116,7 @@ mod linux {
     #[cfg(target_arch = "aarch64")]
     const AUDIT_ARCH: u32 = 0xC000_00B7;
     const EPERM: u32 = 1;
+    const EACCES: u32 = 13;
     const ENOSYS: u32 = 38;
     /// `seccomp_data`: the number at 0, the architecture at 4, the first argument's low half at 16.
     const ARG0: u32 = 16;
@@ -127,19 +138,24 @@ mod linux {
     const ONE: libc::c_ulong = 1;
 
     // What the child reports back, one bit per layer.
-    const NO_NEW_PRIVS: u8 = 1;
-    const USER_NAMESPACE: u8 = 2;
-    const IPC_NAMESPACE: u8 = 4;
-    const LANDLOCK: u8 = 8;
-    const SECCOMP: u8 = 16;
-    const MEMORY_LIMIT: u8 = 32;
-    const SIGNALS: u8 = 64;
-    const NAMES: [(u8, &str); 7] = [
+    const NO_NEW_PRIVS: u16 = 1;
+    const USER_NAMESPACE: u16 = 2;
+    const IPC_NAMESPACE: u16 = 4;
+    const LANDLOCK: u16 = 8;
+    const SECCOMP: u16 = 16;
+    const MEMORY_LIMIT: u16 = 32;
+    const SIGNALS: u16 = 64;
+    /// No network sockets (part of the seccomp filter).
+    const NETWORK: u16 = 128;
+    const NETWORK_NAMESPACE: u16 = 256;
+    const NAMES: [(u16, &str); 9] = [
         (NO_NEW_PRIVS, "no_new_privs"),
         (USER_NAMESPACE, "user_namespace"),
         (IPC_NAMESPACE, "ipc_namespace"),
+        (NETWORK_NAMESPACE, "network_namespace"),
         (LANDLOCK, "landlock"),
         (SECCOMP, "seccomp"),
+        (NETWORK, "network"),
         (MEMORY_LIMIT, "memory_limit"),
         (SIGNALS, "signals"),
     ];
@@ -225,6 +241,13 @@ mod linux {
         }
         f.push(op(BPF_JMP_JEQ_K, 0, 1, libc::SYS_clone3 as u32));
         f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | ENOSYS));
+        // socket: Unix sockets only (the host's connection and the connector); a network
+        // socket comes only from Kalzit's connector, already connected.
+        f.push(op(BPF_JMP_JEQ_K, 0, 4, libc::SYS_socket as u32));
+        f.push(op(BPF_LD_W_ABS, 0, 0, ARG0));
+        f.push(op(BPF_JMP_JEQ_K, 1, 0, libc::AF_UNIX as u32));
+        f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | EACCES));
+        f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW));
         // clone: the flags are the first argument (x86_64 and aarch64 alike).
         f.push(op(BPF_JMP_JEQ_K, 0, 3, libc::SYS_clone as u32));
         f.push(op(BPF_LD_W_ABS, 0, 0, ARG0));
@@ -415,7 +438,7 @@ mod linux {
         /// Runs in the child between fork and exec. Each layer that fails is left out and
         /// reported; the plugin then runs with the others.
         fn apply(&self) -> std::io::Result<()> {
-            let mut layers = 0u8;
+            let mut layers = 0u16;
             // SAFETY: only system calls on data prepared before the fork.
             unsafe {
                 // A session and process group of its own, outside Kalzit's: the plugin's group
@@ -441,6 +464,11 @@ mod linux {
                     layers |= USER_NAMESPACE;
                     if libc::unshare(libc::CLONE_NEWIPC) == 0 {
                         layers |= IPC_NAMESPACE;
+                    }
+                    // A network namespace with nothing but its loopback device (not up): the
+                    // sockets Kalzit's connector hands over stay in the host's namespace.
+                    if libc::unshare(libc::CLONE_NEWNET) == 0 {
+                        layers |= NETWORK_NAMESPACE;
                     }
                 }
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, ONE, ZERO, ZERO, ZERO) == 0 {
@@ -485,7 +513,7 @@ mod linux {
                         libc::sock_fprog { len: self.filter.len() as u16, filter: self.filter.as_ptr().cast_mut() };
                     let mode = libc::SECCOMP_MODE_FILTER as libc::c_ulong;
                     if libc::prctl(libc::PR_SET_SECCOMP, mode, &raw const program, ZERO, ZERO) == 0 {
-                        layers |= SECCOMP;
+                        layers |= SECCOMP | NETWORK;
                     }
                     if signals_scoped {
                         layers |= SIGNALS;
@@ -498,7 +526,7 @@ mod linux {
                         }
                     }
                 }
-                libc::write(self.status, (&raw const layers).cast(), 1);
+                libc::write(self.status, (&raw const layers).cast(), 2);
                 if self.require_landlock && layers & LANDLOCK == 0 {
                     // `spawn` fails with this error; nothing of the plugin runs.
                     return Err(std::io::Error::from_raw_os_error(LANDLOCK_REFUSED));
@@ -547,10 +575,11 @@ mod linux {
         let mut child = command.spawn()?;
         drop(status_write);
         drop(plan);
-        let mut bits = 0u8;
-        // SAFETY: a one-byte read into `bits`; the child wrote it before exec, which `spawn` waited for.
-        let read = unsafe { libc::read(status_read.as_raw_fd(), (&raw mut bits).cast(), 1) };
-        if read != 1 {
+        let mut bits = 0u16;
+        // SAFETY: a two-byte read into `bits`; the child wrote it before exec, which `spawn`
+        // waited for (a pipe write of two bytes is atomic).
+        let read = unsafe { libc::read(status_read.as_raw_fd(), (&raw mut bits).cast(), 2) };
+        if read != 2 {
             bits = 0;
         }
         let pid = child.id().ok_or_else(|| std::io::Error::other("the plugin ended at once"))?;
@@ -577,9 +606,8 @@ mod linux {
             let _ = tx.send(Some(text));
         });
         let layers = NAMES.iter().filter(|(bit, _)| bits & bit != 0).map(|(_, name)| *name).collect();
-        let mut missing: Vec<&'static str> =
+        let missing: Vec<&'static str> =
             NAMES.iter().filter(|(bit, _)| bits & bit == 0).map(|(_, name)| *name).collect();
-        missing.push("network");
         Ok(Child { pid, stdout: Box::new(stdout), stderr: Box::new(stderr), layers, missing, exited, control })
     }
 
@@ -600,6 +628,10 @@ mod linux {
             assert_eq!(f.last().unwrap().k, libc::SECCOMP_RET_ALLOW);
             assert!(f.len() < 4096);
             assert!(denied().contains(&libc::SYS_ptrace));
+            // Network sockets: only Unix sockets may be made.
+            let socket = f.iter().position(|i| i.code == BPF_JMP_JEQ_K && i.k == libc::SYS_socket as u32).unwrap();
+            assert_eq!(f[socket + 2].k, libc::AF_UNIX as u32);
+            assert_eq!(f[socket + 3].k, libc::SECCOMP_RET_ERRNO | EACCES);
         }
 
         #[test]
@@ -624,15 +656,22 @@ mod windows {
         CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, LocalFree, SetHandleInformation,
     };
     use windows::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW, SDDL_REVISION_1,
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
+        SDDL_REVISION_1,
     };
     use windows::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
+    use windows::Win32::Security::FreeSid;
+    use windows::Win32::Security::Isolation::{
+        CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
+        GetAppContainerFolderPath,
+    };
     use windows::Win32::Security::{
         ACL, CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, GetLengthSid, GetSecurityDescriptorDacl,
-        GetSecurityDescriptorSacl, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SID_AND_ATTRIBUTES,
-        SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
-        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenDefaultDacl, TokenIntegrityLevel,
+        GetSecurityDescriptorSacl, LABEL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_CAPABILITIES,
+        SID_AND_ATTRIBUTES, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL,
+        TOKEN_DUPLICATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenDefaultDacl, TokenIntegrityLevel,
     };
+    use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
         JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
@@ -646,8 +685,9 @@ mod windows {
         CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW,
         DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
         InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
-        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, PROCESS_INFORMATION, ResumeThread,
-        STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+        PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
+        STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
     };
     use windows::core::{HSTRING, PWSTR};
 
@@ -824,6 +864,85 @@ mod windows {
         Ok(token)
     }
 
+    /// The AppContainer profile functions fail when two threads use them at once.
+    static PROFILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The AppContainer name of a plugin: from its id, within the 64 characters Windows allows.
+    fn container_name(id: &str) -> HSTRING {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(format!("kalzit-plugin\n{id}").as_bytes());
+        HSTRING::from(format!("kalzit.plugin.{}", &hex::encode(digest)[..32]))
+    }
+
+    /// Makes sure the plugin's AppContainer profile exists and answers its SID. Its processes
+    /// run in it without any capability: no network of their own, no loopback. Windows sets
+    /// `TEMP` and `TMP` of an AppContainer process to the profile's `AC\Temp`; that folder is
+    /// emptied and given a DACL for Kalzit's account, the plugin's SID and its AppContainer only.
+    pub fn app_container(id: &str) -> std::io::Result<String> {
+        let sid = app_container_sid(id)?;
+        // SAFETY: the SID string lives for the call; the path is freed with CoTaskMemFree.
+        let folder = unsafe {
+            let path = GetAppContainerFolderPath(&HSTRING::from(sid.as_str())).map_err(os)?;
+            let folder = path.to_string().map_err(|e| std::io::Error::other(e.to_string()));
+            CoTaskMemFree(Some(path.0.cast_const().cast()));
+            folder
+        }?;
+        let temp = std::path::Path::new(&folder).join("Temp");
+        if temp.exists() {
+            let _ = std::fs::remove_dir_all(&temp);
+        }
+        std::fs::create_dir_all(&temp)?;
+        let user = crate::data_dir::acl::current_user()?;
+        let plugin = crate::plugins::package::plugin_sid(id);
+        crate::data_dir::acl::restrict(
+            &temp,
+            &format!(
+                "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{user})(A;OICI;0x13019f;;;{plugin})(A;OICI;0x13019f;;;{sid})"
+            ),
+        )?;
+        label_low(&temp)?;
+        Ok(sid)
+    }
+
+    fn app_container_sid(id: &str) -> std::io::Result<String> {
+        /// `HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)`.
+        const ALREADY_EXISTS: i32 = 0x8007_00B7_u32 as i32;
+        let _one = PROFILES.lock().unwrap_or_else(|e| e.into_inner());
+        let name = container_name(id);
+        // SAFETY: the strings live for the calls; the SID returned is freed with FreeSid below.
+        let sid = unsafe {
+            match CreateAppContainerProfile(&name, &name, &HSTRING::from("A Kalzit data source plugin"), None) {
+                Ok(sid) => sid,
+                Err(e) if e.code().0 == ALREADY_EXISTS => {
+                    DeriveAppContainerSidFromAppContainerName(&name).map_err(os)?
+                }
+                Err(e) => return Err(os(e)),
+            }
+        };
+        let mut text = PWSTR::null();
+        // SAFETY: `sid` is valid until freed; the string is LocalAlloc'ed and freed below.
+        let converted = unsafe { ConvertSidToStringSidW(sid, &mut text) };
+        // SAFETY: allocated by the profile functions, freed once.
+        unsafe { FreeSid(sid) };
+        converted.map_err(os)?;
+        // SAFETY: a NUL-terminated string from ConvertSidToStringSidW, freed once.
+        let out = unsafe {
+            let s = text.to_string().map_err(|e| std::io::Error::other(e.to_string()));
+            LocalFree(Some(HLOCAL(text.0.cast())));
+            s
+        }?;
+        Ok(out)
+    }
+
+    /// Removes the AppContainer profile of a removed plugin; a failure is logged.
+    pub fn remove_app_container(id: &str) {
+        let _one = PROFILES.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: the name lives for the call.
+        if let Err(e) = unsafe { DeleteAppContainerProfile(&container_name(id)) } {
+            tracing::warn!(plugin = %id, "the plugin's AppContainer profile could not be removed: {e}");
+        }
+    }
+
     /// Gives a directory (and what is created in it) the low integrity label, so a plugin at low
     /// integrity may write there; anything without the label it may not write.
     pub fn label_low(path: &std::path::Path) -> std::io::Result<()> {
@@ -985,12 +1104,12 @@ mod windows {
         let (stderr_child, stderr_ours) = pipe(false)?;
 
         let mut size = 0usize;
-        // SAFETY: a size query for two attributes; fails with "insufficient buffer" by design.
-        let _ = unsafe { InitializeProcThreadAttributeList(None, 2, None, &mut size) };
+        // SAFETY: a size query for three attributes; fails with "insufficient buffer" by design.
+        let _ = unsafe { InitializeProcThreadAttributeList(None, 3, None, &mut size) };
         let mut attributes = vec![0u64; size.div_ceil(8)];
         let list = LPPROC_THREAD_ATTRIBUTE_LIST(attributes.as_mut_ptr().cast());
         // SAFETY: `attributes` holds `size` bytes for the list.
-        unsafe { InitializeProcThreadAttributeList(Some(list), 2, None, &mut size) }.map_err(os)?;
+        unsafe { InitializeProcThreadAttributeList(Some(list), 3, None, &mut size) }.map_err(os)?;
         let _guard = AttributeList(list);
         let inherited = [stdin_child.0, stdout_child.0, stderr_child.0];
         // SAFETY: the handle array and the policy outlive the process creation below.
@@ -1021,6 +1140,26 @@ mod windows {
         }
         .map_err(os)?;
         layers.push("image_load_policy");
+        // An AppContainer without capabilities: no network of its own (no `internetClient`,
+        // `privateNetworkClientServer` or loopback), Windows makes the restricted token a
+        // lowbox token of it. Files pass the AppContainer check through `AC` (`PluginAccess`).
+        let container = Sid::parse(&spec.app_container_sid)?;
+        let capabilities = SECURITY_CAPABILITIES { AppContainerSid: container.0, ..Default::default() };
+        // SAFETY: `capabilities` and the SID it points to outlive the process creation below.
+        unsafe {
+            UpdateProcThreadAttribute(
+                list,
+                0,
+                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
+                Some((&raw const capabilities).cast()),
+                std::mem::size_of::<SECURITY_CAPABILITIES>(),
+                None,
+                None,
+            )
+        }
+        .map_err(os)?;
+        layers.push("app_container");
+        layers.push("network");
 
         let mut info = STARTUPINFOEXW::default();
         info.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
@@ -1095,7 +1234,7 @@ mod windows {
             stdout: Box::new(stdout),
             stderr: Box::new(stderr),
             layers,
-            missing: vec!["network"],
+            missing: Vec::new(),
             exited,
             control,
         })
