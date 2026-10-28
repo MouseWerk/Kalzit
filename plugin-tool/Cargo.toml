@@ -1,0 +1,26 @@
+[package]
+name = "kalzit-plugin-tool"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kalzit-plugin, the packaging tool for Kalzit plugins: builds the package with the hashes of its files, signs the manifest and checks a package as Kalzit does"
+
+# A tool of its own rather than a kalzit-sign command: kalzit-sign is built next to the release
+# key and stays small, while packaging needs the manifest validator of kalzit-plugin-api.
+[dependencies]
+base64 = "0.23.1"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
+getrandom = { version = "0.4.3", features = ["std"] }
+hex = "0.4.3"
+kalzit-plugin-api = { path = "../plugin-api" }
+kalzit-release = { path = "../release" }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+toml = "1.1.8"
+zeroize = "1.9.1"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+
+[[bin]]
+name = "kalzit-plugin"
+path = "src/main.rs"

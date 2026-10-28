@@ -466,11 +466,23 @@ pub fn parse_public_key(text: &str) -> Option<VerifyingKey> {
     (!key.is_weak()).then_some(key)
 }
 
-/// Kalzit's own plugin keys (base64): the ones compiled in plus `KALZIT_PLUGIN_PUBLIC_KEYS` at
-/// build time (comma-separated). None is compiled in yet; until the project's plugin key is
-/// made, ids under `io.kalzit.` and `dev.kalzit.` cannot be installed.
+/// Kalzit's own plugin public keys, compiled in (base64): the main key, which the release
+/// workflow signs Kalzit's plugins with (`KALZIT_PLUGIN_SIGNING_KEY` in the release
+/// environment), and the backup key, kept offline to sign with should the main key be lost.
+/// Packages under `io.kalzit.` and `dev.kalzit.` need one of them.
+pub const COMPILED_KALZIT_KEYS: &[&str] = &[KALZIT_PLUGIN_MAIN_KEY, KALZIT_PLUGIN_BACKUP_KEY];
+
+/// The main plugin key, key id 581c30a0d8384cfd. The release workflow reads this line to check
+/// the signed packages against it; keep the name and the form.
+pub const KALZIT_PLUGIN_MAIN_KEY: &str = "6RZV2LeoOy9gDyW7Izi8OXRoDbMjsWQ3FiZabeC4D6c=";
+
+/// The offline backup plugin key, key id df87ab1649696788.
+pub const KALZIT_PLUGIN_BACKUP_KEY: &str = "t0SLQ6UM+XNRoqJJai/6aSx8t8ITdjIz3uL7tuv0gh8=";
+
+/// Kalzit's own plugin keys: [`COMPILED_KALZIT_KEYS`] plus `KALZIT_PLUGIN_PUBLIC_KEYS` at build
+/// time (comma-separated base64), for a fork or a test build with keys of its own.
 pub fn kalzit_keys() -> Vec<VerifyingKey> {
-    const COMPILED: &[&str] = &[];
+    const COMPILED: &[&str] = COMPILED_KALZIT_KEYS;
     const BUILD: Option<&str> = option_env!("KALZIT_PLUGIN_PUBLIC_KEYS");
     COMPILED
         .iter()
@@ -517,6 +529,17 @@ mod tests {
     use super::*;
 
     const BINARY: &[u8] = b"not really a program";
+
+    #[test]
+    fn kalzits_plugin_keys_are_compiled_in() {
+        let ids: Vec<String> =
+            COMPILED_KALZIT_KEYS.iter().map(|k| signing::key_id(&parse_public_key(k).expect("a valid key"))).collect();
+        assert_eq!(ids, ["581c30a0d8384cfd", "df87ab1649696788"]);
+        let all = kalzit_keys();
+        for k in COMPILED_KALZIT_KEYS {
+            assert!(all.contains(&parse_public_key(k).unwrap()));
+        }
+    }
 
     fn manifest_for(files: &[(&str, &[u8])]) -> String {
         let platform = crate::plugins::platform().unwrap_or("linux-x64");

