@@ -261,14 +261,16 @@ pub fn parse_event(message: &str) -> Result<Event, Refused> {
 
 /// Whether a panel may ask to open `url`: an `http` or `https` address with a host and without
 /// a user name (`https://kalzit.dev@elsewhere` would read as Kalzit), or a path in Kalzit
-/// (`/dashboards/...`, not `//host` or `/\host`, which browsers read as another host). Never
-/// `javascript:`, `data:` or any other scheme. Without white space or control characters.
+/// (`/dashboards/...`, not `//host` or `/\host`, which browsers read as another host, and not
+/// Kalzit's API under `/api`). Never `javascript:`, `data:` or any other scheme. Without white
+/// space or control characters.
 pub fn link_allowed(url: &str) -> bool {
     if url.is_empty() || url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\\') {
         return false;
     }
     if let Some(path) = url.strip_prefix('/') {
-        return !path.starts_with('/');
+        let first = path.split(['/', '?', '#']).next().unwrap_or_default();
+        return !path.starts_with('/') && !first.eq_ignore_ascii_case("api");
     }
     let lower = url.to_ascii_lowercase();
     let Some(rest) = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://")) else {

@@ -89,14 +89,16 @@ function variableName(name: string): boolean {
 
 /**
  * Whether a panel may ask to open `url`: an `http` or `https` address with a host and without a
- * user name, or a path in Kalzit (`/...`, not `//host` or `/\host`). Never another scheme.
+ * user name, or a path in Kalzit (`/...`, not `//host` or `/\host`, and not Kalzit's API under
+ * `/api`). Never another scheme.
  */
 export function linkAllowed(url: string): boolean {
   if (url === "" || /[\s\p{Cc}\\]/u.test(url)) {
     return false;
   }
   if (url.startsWith("/")) {
-    return !url.startsWith("//");
+    const first = url.slice(1).split(/[/?#]/, 1)[0] ?? "";
+    return !url.startsWith("//") && first.toLowerCase() !== "api";
   }
   const lower = url.toLowerCase();
   const rest = lower.startsWith("https://")

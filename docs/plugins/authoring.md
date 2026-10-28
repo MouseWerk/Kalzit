@@ -312,7 +312,7 @@ where the dashboard has none.
 - Send only what Kalzit acts on: `resize` (a height of 16 to 4000 pixels; the panel scrolls when
   it is taller than its place), `setOptions` (only when `init.mode` is `"edit"`, the whole
   options object, checked against `[[panel.options]]`), `link` (an `https`/`http` address or a
-  path in Kalzit; the viewer confirms before it opens) and `log` (at most 5 lines a second, shown
+  page of Kalzit, not its API; the viewer confirms before it opens) and `log` (at most 5 lines a second, shown
   in the browser console with the plugin id). `click`, `select`, `range` and `setVariable` are
   part of version 1 but not acted on yet.
 - Draw with the design tokens from `init.theme.tokens` (`--text`, `--bg-raised`, `--chart-1`,

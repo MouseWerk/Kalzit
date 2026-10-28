@@ -197,7 +197,7 @@ export interface SetOptionsEvent extends Envelope {
 
 /**
  * Asks Kalzit to open a link: an `http` or `https` address (without a user name) or a path in
- * Kalzit starting with `/`; at most 2048 characters. Kalzit shows the address and opens it only
+ * Kalzit starting with `/` (not `//`, not the API under `/api`); at most 2048 characters. Kalzit shows the address and opens it only
  * when the viewer confirms; an address opens in a new tab without a referrer.
  */
 export interface LinkEvent extends Envelope {
