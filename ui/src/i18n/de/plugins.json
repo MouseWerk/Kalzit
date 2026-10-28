@@ -212,7 +212,7 @@
   "plugins.risk.unsignedBanner": "Ein Hinweisband steht auf allen Plugin-Seiten, bis du wieder ausschaltest.",
   "plugins.risk.landlockText": "Plugins starten ohne die Sandbox für Dateien; sie können lesen, was Kalzits Konto lesen kann.",
   "plugins.risk.audit": "Die Änderung steht im Audit-Log.",
-  "plugins.risk.type": "Gib zur Bestätigung den Servernamen ein: {name}",
+  "plugins.risk.type": "Gib zur Bestätigung den Servernamen ein:",
   "plugins.risk.mismatch": "Das ist nicht der Servername.",
   "plugins.risk.allow": "Erlauben",
   "plugins.details.back": "Plugins",

@@ -245,7 +245,10 @@ async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) ->
     let row = store::get(&state.db, &path.plugin_id).await?.ok_or_else(ApiError::not_found)?;
     let manifest = row.manifest.clone();
     let used_in: Vec<UsedIn> = sqlx::query_as(
-        "SELECT d.id, d.name, d.org_id, o.name AS org_name FROM datasources d JOIN orgs o ON o.id = d.org_id          WHERE d.kind = $1 AND d.deleted_at IS NULL ORDER BY o.name, d.name, d.id",
+        "SELECT d.id, d.name, d.org_id, o.name AS org_name \
+         FROM datasources d JOIN orgs o ON o.id = d.org_id \
+         WHERE d.kind = $1 AND d.deleted_at IS NULL \
+         ORDER BY o.name, d.name, d.id",
     )
     .bind(&row.id)
     .fetch_all(&state.db)

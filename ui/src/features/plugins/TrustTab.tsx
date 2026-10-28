@@ -315,7 +315,10 @@ function RiskDialog({
         </div>
         <div className="field">
           <label className="field__label" htmlFor={inputId}>
-            {t("plugins.risk.type", { name })}
+            {t("plugins.risk.type")}{" "}
+            <strong className="plugins-mono" translate="no">
+              {name}
+            </strong>
           </label>
           <input
             id={inputId}
@@ -407,10 +410,14 @@ function AddKeyDialog({
           <button
             type="button"
             className="button button--primary"
+            // A key other than the one that signed the refused package is never added from here.
+            disabled={differs}
             aria-disabled={add.isPending}
             onClick={() => {
               setTried(true);
-              if (add.isPending || name.trim() === "" || parsed === null || !compared) return;
+              if (add.isPending || differs || name.trim() === "" || parsed === null || !compared) {
+                return;
+              }
               add.mutate();
             }}
           >

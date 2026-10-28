@@ -72,6 +72,9 @@ describe("fingerprints", () => {
     expect(parsePublicKey("not a key")).toBeNull();
     expect(parsePublicKey(keyBase64(new Uint8Array(31)))).toBeNull();
     expect(keyIdOf(bytes)).toBe(sha256Hex(bytes).slice(0, 16));
+    // Kalzit's plugin main key and its id from plugin-api's `key_id` (signing.rs).
+    const kalzit = parsePublicKey("6RZV2LeoOy9gDyW7Izi8OXRoDbMjsWQ3FiZabeC4D6c=");
+    expect(kalzit === null ? null : keyIdOf(kalzit)).toBe("581c30a0d8384cfd");
     expect(groupedKeyId("7f3a91c20d5be4a8")).toBe("7F3A 91C2 0D5B E4A8");
   });
 
@@ -415,9 +418,21 @@ describe("Plugins, install from file", () => {
     await user.type(within(add).getByRole("textbox", { name: "Publisher" }), "Polar Metrics");
     const field = within(add).getByRole("textbox", { name: "Public key (Ed25519)" });
     await user.click(field);
+    // Another key than the package's: named as such, and it cannot be added from here.
+    await user.paste(keyBase64(Uint8Array.from({ length: 32 }, (_, i) => i + 1)));
+    expect(
+      within(add).getByText(/This is not the key that signed the refused package/),
+    ).toBeTruthy();
+    expect(
+      (within(add).getByRole("button", { name: "Add key" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await user.clear(field);
     await user.paste(keyBase64(bytes));
     expect(within(add).getByText(groupedKeyId(keyId))).toBeTruthy();
     expect(within(add).getByText("Matches the key that signed the refused package.")).toBeTruthy();
+    expect(
+      (within(add).getByRole("button", { name: "Add key" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
     // Not before the comparison is confirmed.
     await user.click(within(add).getByRole("button", { name: "Add key" }));
     expect(await within(add).findByText("Compare the fingerprint first.")).toBeTruthy();
@@ -494,6 +509,8 @@ describe("Plugins, signature and trust", () => {
     const input = within(dialog).getByRole("textbox", {
       name: `To confirm, type the server’s name: ${name}`,
     });
+    // The exact text to type stands visibly next to the field.
+    expect(within(dialog).getByText(name, { selector: "strong" })).toBeTruthy();
     await user.type(input, "wrong");
     await user.click(within(dialog).getByRole("button", { name: "Allow" }));
     expect(await within(dialog).findByText("That is not the server’s name.")).toBeTruthy();

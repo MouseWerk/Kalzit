@@ -212,7 +212,7 @@
   "plugins.risk.unsignedBanner": "A band stays on every plugin page until you turn it off again.",
   "plugins.risk.landlockText": "Plugins start without the file system sandbox; they can read whatever Kalzit’s account can read.",
   "plugins.risk.audit": "The change is recorded in the audit log.",
-  "plugins.risk.type": "To confirm, type the server’s name: {name}",
+  "plugins.risk.type": "To confirm, type the server’s name:",
   "plugins.risk.mismatch": "That is not the server’s name.",
   "plugins.risk.allow": "Allow",
   "plugins.details.back": "Plugins",
