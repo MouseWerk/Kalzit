@@ -17,6 +17,7 @@ written as the English interface shows them, with the German label in parenthese
 | [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, graph steps, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
+| [Plugins](plugins.md) | Installing data source plugins from a file, the checks and permissions, a plugin's status, log and sandbox, trusted keys, unsigned plugins, blocking per organization |
 | [AI](ai.md) | Turning AI on with a provider, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 
@@ -25,7 +26,7 @@ The HTTP API behind every function is described in [docs/api](../api): [access](
 [settings and dashboards](../api/settings-dashboards.md),
 [dashboard features](../api/dashboard-features.md), [saved analyses](../api/analyses.md),
 [shell](../api/shell.md),
-[updates](../api/updates.md) and [AI](../api/ai.md). Words used in the interface are explained in the
+[updates](../api/updates.md), [plugins](../api/plugins.md) and [AI](../api/ai.md). Words used in the interface are explained in the
 [glossary](../glossary.md); how to install and run a server is in
 [Installation](installation.md), the [README](../../README.md#quick-start) and
 [ARCHITECTURE](../ARCHITECTURE.md).
