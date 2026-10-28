@@ -243,13 +243,17 @@ pub struct StateLookup {
 impl super::connector::Lookup for StateLookup {
     async fn current(&self, datasource_id: &str) -> Option<super::connector::Current> {
         let state = self.state.read().unwrap_or_else(|e| e.into_inner()).clone()?;
-        let row: Option<(String, String)> =
-            sqlx::query_as("SELECT kind, settings FROM datasources WHERE id = $1 AND deleted_at IS NULL")
+        let row: Option<(String, String, String)> =
+            sqlx::query_as("SELECT org_id, kind, settings FROM datasources WHERE id = $1 AND deleted_at IS NULL")
                 .bind(datasource_id)
                 .fetch_optional(&state.db)
                 .await
                 .ok()?;
-        let (kind, settings) = row?;
+        let (org_id, kind, settings) = row?;
+        // An organization that blocked the plugin keeps it away from its sources.
+        if state.datasources.is_blocked(&org_id, &kind) {
+            return None;
+        }
         let settings = serde_json::from_str(&settings).ok()?;
         let policy = state.datasources.policy(&state).await.ok()?;
         Some(super::connector::Current { kind, settings, policy })
@@ -310,7 +314,11 @@ impl PluginHost {
 
     /// Gives the connector the server's state, to read data sources and settings at each connect.
     pub fn attach(&self, state: AppState) {
-        *self.lookup.state.write().unwrap_or_else(|e| e.into_inner()) = Some(state);
+        // Without this host in it: the state the connector reads must not keep the plugins (and
+        // with them their processes) alive once the server lets go of them.
+        let mut detached = state;
+        detached.plugins = Arc::new(PluginHost::new(&detached.config.paths.data_dir));
+        *self.lookup.state.write().unwrap_or_else(|e| e.into_inner()) = Some(detached);
     }
 
     /// The warnings of `exposed_secrets`, shown with every plugin and logged when one is enabled.
@@ -365,8 +373,10 @@ impl PluginHost {
     pub async fn load(&self, db: &sqlx::AnyPool, datasources: &DataSources) -> ApiResult<()> {
         let _ = self.db.set(db.clone());
         // A changed or deleted data source takes back what plugins may reach for it.
-        let running = self.running.clone();
+        // Weak: the data sources must not keep the plugins alive.
+        let running = Arc::downgrade(&self.running);
         datasources.on_forget(Arc::new(move |datasource_id| {
+            let Some(running) = running.upgrade() else { return };
             for supervisor in running.lock().unwrap_or_else(|e| e.into_inner()).values() {
                 supervisor.grants().revoke(datasource_id);
             }
@@ -1125,6 +1135,17 @@ impl PluginHost {
         }
         crate::db::commit(tx).await?;
         state.datasources.set_blocked(org_id, id, blocked);
+        if blocked && let Some(supervisor) = self.supervisor(id) {
+            // What the plugin was handed of this organization goes, with its open connections.
+            let sources: Vec<(String,)> = sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND kind = $2")
+                .bind(org_id)
+                .bind(id)
+                .fetch_all(&state.db)
+                .await?;
+            for (source,) in sources {
+                supervisor.grants().revoke(&source);
+            }
+        }
         Ok(changed)
     }
 

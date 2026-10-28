@@ -197,6 +197,22 @@ impl Remote {
     /// where the plugin's connects for it may go (`connector::Grants`).
     fn connection(&self, conn: &Connection) -> pb::Connection {
         self.supervisor.grants().record(conn);
+        self.pb_connection(conn)
+    }
+
+    /// For calls that test settings which may not be stored (yet): "Test connection" of new or
+    /// edited settings, the check before a save. The plugin gets an id of this call's own, under
+    /// which it may connect to the targets these settings declare, until the call ends (the
+    /// returned grant). Targets come from settings, never from secrets (the manifest allows only
+    /// non-secret target fields).
+    fn draft_connection(&self, conn: &Connection) -> (pb::Connection, super::connector::DraftGrant) {
+        let grant = self.supervisor.grants().draft(conn);
+        let mut connection = self.pb_connection(conn);
+        connection.datasource_id = grant.id.clone();
+        (connection, grant)
+    }
+
+    fn pb_connection(&self, conn: &Connection) -> pb::Connection {
         let mut secrets = BTreeMap::new();
         for s in self.manifest.settings.iter().filter(|s| s.secret) {
             if let Some(v) = conn.secret(&s.name) {
@@ -318,10 +334,10 @@ impl DataSourcePlugin for Remote {
             Ok(c) => c,
             Err(e) => return Health::failed(&e),
         };
-        let request = pb::HealthRequest {
-            connection: Some(self.connection(conn)),
-            deadline_unix_ms: Self::deadline(MAX_HEALTH_TIMEOUT),
-        };
+        // The grant lives until the end of this call.
+        let (connection, _grant) = self.draft_connection(conn);
+        let request =
+            pb::HealthRequest { connection: Some(connection), deadline_unix_ms: Self::deadline(MAX_HEALTH_TIMEOUT) };
         let answer = match client.health(with_timeout(request, MAX_HEALTH_TIMEOUT)).await {
             Ok(a) => a.into_inner(),
             Err(s) => return Health::failed(&status_error(self.kind, s, MAX_HEALTH_TIMEOUT)),
@@ -405,8 +421,9 @@ impl DataSourcePlugin for Remote {
         // The targets first: the connection with its secrets goes only to an allowed target.
         self.check_targets(conn).await?;
         let mut client = self.client().await.map_err(|e| ("settings", e))?;
+        let (connection, _grant) = self.draft_connection(conn);
         let request = pb::CheckOnSaveRequest {
-            connection: Some(self.connection(conn)),
+            connection: Some(connection),
             deadline_unix_ms: Self::deadline(MAX_HEALTH_TIMEOUT),
         };
         let answer = match client.check_on_save(with_timeout(request, MAX_HEALTH_TIMEOUT)).await {

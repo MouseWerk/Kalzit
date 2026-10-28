@@ -727,8 +727,13 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   call that hands over a `Connection`; taken back, with its open connections closed, when the
   data source changes or goes to the trash, `DataSources::on_forget`). The target must be one
   the manifest declares for the data source's settings as they are stored at the connect
-  (`connector::Lookup`, `host::StateLookup`, with the target rules of the server settings then):
-  a `host` setting with its port setting or default port and
+  (`connector::Lookup`, `host::StateLookup`, with the target rules of the server settings then;
+  a source of an organization that blocked the plugin is refused, and the block revokes its
+  grants). "Test connection" and the check before a save hand over settings that may not be
+  stored: they get a draft grant under an id of their own (`draft-...`, `Grants::draft`) for the
+  length of the call, checked by the same rules and revoked with its connections at its end.
+  Requests with a host above 253 bytes are refused before any check. The target must be one the
+  manifest declares for these settings: a `host` setting with its port setting or default port and
   protocol, a `url` setting's host and port (`https`/`wss` mean TLS), a fixed host and port. The
   protocol is a permission label; Kalzit does not enforce TLS on the stream.
 - Kalzit resolves the name, checks every address with the data source target rules
@@ -744,11 +749,16 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   (`WSADuplicateSocket`) would have the same problem on Windows. The relay makes the count of
   connections exact and ends a connection when either side ends it, when idle, or when its data
   source is taken back.
+- Every relay also ends with the plugin process (a per-start cancellation, `Context::stopped`).
+- Linux: a plugin starts only when the seccomp network filter or a network namespace took
+  (`plugin.network_missing`), unless an administrator allows plugins without Landlock; then the
+  plugin page warns.
 - Limits (`supervisor::Options`): 64 connections at once per plugin, 15 minutes without traffic,
   one budget of 10 seconds per request for the data source, the lookups and every address, 16
   requests under way at once. Every refused connect goes to the plugin's log, Kalzit's log and
   the audit log (`plugins.connect_refused`), and the connector's other warnings to the logs,
-  each at most once a minute per target and reason.
+  each at most once a minute per target and reason, refusals also through a token bucket per
+  plugin (20, then one per 3 seconds), and at most 1000 distinct keys at once.
 - The plugin speaks its database's protocol over the stream and wraps it in TLS itself.
 
 ## Dashboards

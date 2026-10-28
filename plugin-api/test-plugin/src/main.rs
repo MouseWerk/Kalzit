@@ -377,6 +377,29 @@ impl DataSource for Plugin {
             let e = error(pb::ErrorKind::Failed, "testplugin.down", "the test database is down");
             return Ok(Response::new(pb::HealthResponse { ok: false, detail: None, error: Some(e), warnings: vec![] }));
         }
+        // With a port setting (the network tests), "Test connection" reaches the target through
+        // Kalzit's connector, under the id the call carries.
+        if let (Some(host), Some(port)) = (settings["host"].as_str(), settings["port"].as_u64()) {
+            let reached = match Connector::from_env() {
+                Some(connector) => {
+                    connector.connect(&c.datasource_id, host, port as u16, pb::TargetProtocol::Tcp).await.map(|_| ())
+                }
+                None => Err(ConnectError::Protocol("no connector".into())),
+            };
+            if let Err(e) = reached {
+                let reason = match &e {
+                    ConnectError::Refused(r) => r.detail.clone().unwrap_or_default().reason,
+                    _ => "testplugin.connect_failed".into(),
+                };
+                let e = error(pb::ErrorKind::Failed, &reason, &e.to_string());
+                return Ok(Response::new(pb::HealthResponse {
+                    ok: false,
+                    detail: None,
+                    error: Some(e),
+                    warnings: vec![],
+                }));
+            }
+        }
         let detail = pb::Detail {
             reason: "health.connected".into(),
             params: [("engine".to_string(), "Test plugin".to_string()), ("version".to_string(), "1".to_string())]

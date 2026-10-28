@@ -427,7 +427,7 @@ impl Supervisor {
     }
 
     /// The data sources the plugin was handed, with their settings (`connector`).
-    pub fn grants(&self) -> &Grants {
+    pub fn grants(&self) -> &Arc<Grants> {
         &self.grants
     }
 
@@ -660,12 +660,33 @@ impl Supervisor {
                             .to_string(),
                 });
             }
+            if cfg!(target_os = "linux")
+                && !child.layers.contains(&"network")
+                && !child.layers.contains(&"network_namespace")
+            {
+                s.warnings.push(StatusWarning {
+                    reason: "plugin.without_network_limit",
+                    params: Default::default(),
+                    message: "the plugin's network is not limited on this host (allowed without Landlock)".to_string(),
+                });
+            }
         });
         // The child refuses to run without it already; this holds should it report otherwise.
         if require_landlock && !child.layers.contains(&"landlock") {
             child.control.kill();
             cleanup(child.exited.clone(), &run_dir).await;
             return Err(landlock_missing());
+        }
+        // Linux: without the socket filter or a network namespace the plugin would reach the
+        // network past the connector. Required like Landlock, with the same switch.
+        let unlimited = !child.layers.contains(&"network") && !child.layers.contains(&"network_namespace");
+        if cfg!(target_os = "linux") && require_landlock && unlimited {
+            child.control.kill();
+            cleanup(child.exited.clone(), &run_dir).await;
+            return Err(HostError::new(
+                "plugin.network_missing",
+                "the plugin's network could not be limited on this host (no seccomp filter, no network namespace); an administrator can allow plugins without it",
+            ));
         }
         tracing::info!(plugin = %self.id, pid = child.pid, sandbox = ?child.layers, missing = ?child.missing, "plugin process started");
         let context = connector::Context::new(

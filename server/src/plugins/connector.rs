@@ -51,6 +51,16 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PENDING: usize = 16;
 /// The same refusal (target and reason) or note in the logs and the audit log at most this often.
 const NOTE_EVERY: Duration = Duration::from_secs(60);
+/// Distinct refusals and notes remembered for `NOTE_EVERY`; when full, nothing new is logged.
+const MAX_NOTED: usize = 1000;
+/// Refusals a plugin may have logged and audited: a burst of this many, then one per
+/// `REFUSALS_REFILL`, whatever the targets.
+const REFUSALS_BURST: f64 = 20.0;
+const REFUSALS_REFILL: Duration = Duration::from_secs(3);
+/// The longest host name a request may name (DNS allows 253 characters).
+const MAX_HOST_BYTES: usize = 253;
+/// The longest data source id a request may name.
+const MAX_ID_BYTES: usize = 64;
 
 /// The data sources a plugin was handed. Each has a token that its relayed connections hold:
 /// when the data source changes or goes to the trash (`revoke`), they are closed and new
@@ -58,12 +68,47 @@ const NOTE_EVERY: Duration = Duration::from_secs(60);
 #[derive(Default)]
 pub struct Grants {
     handed: Mutex<HashMap<String, CancellationToken>>,
+    /// Settings a single call carries that are not stored (yet): "Test connection" of new or
+    /// edited settings, the check before a save. Each is bound to its call (`DraftGrant`).
+    drafts: Mutex<HashMap<String, Draft>>,
+}
+
+#[derive(Clone)]
+struct Draft {
+    settings: Value,
+    policy: Arc<TargetPolicy>,
+    token: CancellationToken,
+}
+
+/// A draft grant for the length of one call: the plugin may connect under its id to the targets
+/// the draft settings declare; dropping it takes it back and closes its connections.
+pub struct DraftGrant {
+    grants: Arc<Grants>,
+    pub id: String,
+}
+
+impl Drop for DraftGrant {
+    fn drop(&mut self) {
+        let draft = self.grants.drafts.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+        if let Some(draft) = draft {
+            draft.token.cancel();
+        }
+    }
 }
 
 impl Grants {
     /// Called with every call that hands the plugin a data source.
     pub fn record(&self, conn: &Connection) {
         self.handed.lock().unwrap_or_else(|e| e.into_inner()).entry(conn.datasource_id().to_string()).or_default();
+    }
+
+    /// A grant for one call with settings that are not stored, under an id of its own.
+    pub fn draft(self: &Arc<Self>, conn: &Connection) -> DraftGrant {
+        let id = format!("draft-{}", uuid::Uuid::now_v7().simple());
+        let draft =
+            Draft { settings: conn.settings().clone(), policy: conn.policy_arc(), token: CancellationToken::new() };
+        self.drafts.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), draft);
+        DraftGrant { grants: self.clone(), id }
     }
 
     /// Takes back a data source: its connections close, its connects are refused.
@@ -77,6 +122,10 @@ impl Grants {
     /// What a connection for the data source holds, while it is handed over.
     fn token(&self, datasource_id: &str) -> Option<CancellationToken> {
         self.handed.lock().unwrap_or_else(|e| e.into_inner()).get(datasource_id).map(CancellationToken::child_token)
+    }
+
+    fn draft_of(&self, id: &str) -> Option<Draft> {
+        self.drafts.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
     }
 }
 
@@ -286,6 +335,10 @@ pub struct Context {
     pub connect_timeout: Duration,
     /// When a refusal or note was last logged, by its key.
     noted: Mutex<HashMap<String, Instant>>,
+    /// The token bucket of refusals logged and audited: tokens and when it was last filled.
+    refusals: Mutex<(f64, Instant)>,
+    /// Cancelled when the plugin process ends: every relay of it ends too.
+    pub stopped: CancellationToken,
 }
 
 /// An opened connection: where it goes, the connection, and what closes it when its data source
@@ -319,6 +372,23 @@ impl Context {
             idle,
             connect_timeout,
             noted: Mutex::default(),
+            refusals: Mutex::new((REFUSALS_BURST, Instant::now())),
+            stopped: CancellationToken::new(),
+        }
+    }
+
+    /// Whether another refusal may be logged and audited now (per plugin, whatever the target).
+    fn may_log_refusal(&self) -> bool {
+        let mut bucket = self.refusals.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let refill = now.duration_since(bucket.1).as_secs_f64() / REFUSALS_REFILL.as_secs_f64();
+        bucket.0 = (bucket.0 + refill).min(REFUSALS_BURST);
+        bucket.1 = now;
+        if bucket.0 >= 1.0 {
+            bucket.0 -= 1.0;
+            true
+        } else {
+            false
         }
     }
 
@@ -329,8 +399,11 @@ impl Context {
         if noted.get(&key).is_some_and(|at| now.duration_since(*at) < NOTE_EVERY) {
             return false;
         }
-        if noted.len() > 1000 {
+        if noted.len() >= MAX_NOTED {
             noted.retain(|_, at| now.duration_since(*at) < NOTE_EVERY);
+            if noted.len() >= MAX_NOTED {
+                return false;
+            }
         }
         noted.insert(key, now);
         true
@@ -351,6 +424,13 @@ impl Context {
             return Err((
                 pb::ErrorKind::Blocked,
                 Detail::new("plugin.token_invalid", "the request carries no valid token"),
+            ));
+        }
+        // Before anything else looks at them, and before they reach a log.
+        if request.host.len() > MAX_HOST_BYTES || request.datasource_id.len() > MAX_ID_BYTES {
+            return Err((
+                pb::ErrorKind::Blocked,
+                Detail::new("plugin.request_invalid", "the host or the data source id is too long"),
             ));
         }
         let budget = self.connect_timeout;
@@ -374,9 +454,16 @@ impl Context {
                     .with("datasourceId", &request.datasource_id),
             )
         };
-        let Some(closing) = self.grants.token(&request.datasource_id) else { return Err(unknown()) };
-        // The settings and rules of now, not of the call that handed the data source over.
-        let Some(current) = self.lookup.current(&request.datasource_id).await else { return Err(unknown()) };
+        let (closing, current) = if let Some(draft) = self.grants.draft_of(&request.datasource_id) {
+            // Settings of the call under way (a test of unsaved settings), checked like stored ones.
+            let current = Current { kind: self.plugin.clone(), settings: draft.settings, policy: draft.policy };
+            (draft.token.child_token(), current)
+        } else {
+            let Some(closing) = self.grants.token(&request.datasource_id) else { return Err(unknown()) };
+            // The settings and rules of now, not of the call that handed the data source over.
+            let Some(current) = self.lookup.current(&request.datasource_id).await else { return Err(unknown()) };
+            (closing, current)
+        };
         if current.kind != self.plugin {
             return Err(unknown());
         }
@@ -430,7 +517,7 @@ impl Context {
     /// A refused connect: in the plugin's log and Kalzit's, and in the audit log, each at most
     /// once a minute per target and reason.
     fn refused(&self, request: &pb::ConnectRequest, detail: &Detail) {
-        if !self.may_note(format!("{}\n{}\n{}", detail.reason, request.host, request.port)) {
+        if !self.may_note(format!("{}\n{}\n{}", detail.reason, request.host, request.port)) || !self.may_log_refusal() {
             return;
         }
         let text = format!(
@@ -532,6 +619,7 @@ async fn relay(ctx: &Context, plugin_side: impl AsyncRead + AsyncWrite, tcp: Tcp
                 ctx.note("revoked", "connections of a changed or deleted data source were closed");
                 break;
             }
+            () = ctx.stopped.cancelled() => break,
         }
     }
 }
@@ -774,11 +862,13 @@ mod linux {
                 return;
             }
         };
-        let sent = send(&socket, &connected_frame(id, addr), Some(theirs.as_raw_fd())).await;
-        // The plugin holds its end now; Kalzit keeps only its own.
+        // A plugin that does not read its answers does not keep the connection open.
+        let frame = connected_frame(id, addr);
+        let sent = tokio::time::timeout(Duration::from_secs(1), send(&socket, &frame, Some(theirs.as_raw_fd()))).await;
+        // The plugin holds its end now (or never will); Kalzit keeps only its own.
         drop(theirs);
         drop(pending);
-        if sent.is_err() || ours.set_nonblocking(true).is_err() {
+        if !matches!(sent, Ok(Ok(()))) || ours.set_nonblocking(true).is_err() {
             return;
         }
         let Ok(ours) = tokio::net::UnixStream::from_std(ours) else { return };
@@ -837,6 +927,8 @@ mod linux {
                     }
                 }
             }
+            // The process ended: its relays end with it.
+            ctx.stopped.cancel();
         });
     }
 }
@@ -942,6 +1034,8 @@ mod windows {
                     }
                 }
             }
+            // The process ended: its relays end with it.
+            ctx.stopped.cancel();
         });
     }
 }
@@ -1159,5 +1253,71 @@ mod tests {
         assert!(!relayed.is_finished());
         grants.revoke("ds");
         tokio::time::timeout(Duration::from_secs(5), relayed).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn relays_end_with_the_plugin_process() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (ctx, store, _dir) = context(OwnEndpoints::default());
+        set_port(&store, port);
+        let ctx = Arc::new(ctx);
+        let (_, tcp, closing) = ctx.open(&request("127.0.0.1", port.into(), pb::TargetProtocol::Tls)).await.unwrap();
+        let (_far, _) = listener.accept().await.unwrap();
+        let (_plugin, kalzit) = tokio::io::duplex(1024);
+        let relaying = ctx.clone();
+        let relayed = tokio::spawn(async move { relay(&relaying, kalzit, tcp, closing).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!relayed.is_finished());
+        ctx.stopped.cancel();
+        tokio::time::timeout(Duration::from_secs(5), relayed).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn drafts_hold_for_their_call_only() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (ctx, store, _dir) = context(OwnEndpoints::new(vec!["0.0.0.0:3999".parse().unwrap()], None));
+        let grants = ctx.grants.clone();
+        // Settings that are not stored: only the draft knows them.
+        let draft = Draft {
+            settings: json!({ "host": "127.0.0.1", "port": port }),
+            policy: store.policy.clone(),
+            token: CancellationToken::new(),
+        };
+        grants.drafts.lock().unwrap().insert("draft-1".into(), draft);
+        let held = DraftGrant { grants: grants.clone(), id: "draft-1".into() };
+        let mut r = request("127.0.0.1", port.into(), pb::TargetProtocol::Tls);
+        r.datasource_id = "draft-1".into();
+        let (_, _, closing) = ctx.open(&r).await.unwrap();
+        // The draft's targets pass the same rules: Kalzit's own port stays refused.
+        grants.drafts.lock().unwrap().get_mut("draft-1").unwrap().settings["port"] = json!(3999);
+        let mut own = request("127.0.0.1", 3999, pb::TargetProtocol::Tls);
+        own.datasource_id = "draft-1".into();
+        assert_eq!(reason(&ctx, own).await, "target.own_address");
+        // The end of the call takes it back and closes its connections.
+        drop(held);
+        assert!(closing.is_cancelled());
+        assert_eq!(reason(&ctx, r).await, "plugin.datasource_unknown");
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn requests_and_their_logging_are_bounded() {
+        let (ctx, _store, _dir) = context(OwnEndpoints::default());
+        let long = request(&"a".repeat(MAX_HOST_BYTES + 1), 80, pb::TargetProtocol::Tcp);
+        assert_eq!(reason(&ctx, long).await, "plugin.request_invalid");
+        let mut id = request("127.0.0.1", 80, pb::TargetProtocol::Tcp);
+        id.datasource_id = "x".repeat(MAX_ID_BYTES + 1);
+        assert_eq!(reason(&ctx, id).await, "plugin.request_invalid");
+        // A burst, then nothing until the bucket fills again, whatever the target.
+        let allowed = (0..100).filter(|_| ctx.may_log_refusal()).count();
+        assert_eq!(allowed, REFUSALS_BURST as usize);
+        // The map of noted keys does not grow past its cap.
+        for i in 0..MAX_NOTED + 50 {
+            ctx.may_note(format!("key {i}"));
+        }
+        assert_eq!(ctx.noted.lock().unwrap().len(), MAX_NOTED);
+        assert!(!ctx.may_note("one more".into()));
     }
 }

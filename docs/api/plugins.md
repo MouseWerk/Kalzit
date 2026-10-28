@@ -230,7 +230,9 @@ takes either switch, each change is recorded on its own.
 - `allowUnsigned`, off by default: unsigned packages may be installed. An invalid signature is
   refused either way; unsigned plugins are marked `signer: "unsigned"`, and those installed while
   the switch was on keep running when it is turned off.
-- `allowWithoutLandlock`, off by default: on a Linux host without Landlock, plugins start anyway.
+- `allowWithoutLandlock`, off by default: on a Linux host without Landlock, plugins start anyway;
+  so they do where neither the seccomp network filter nor a network namespace took (otherwise
+  `plugin.network_missing`). Both show as warnings on the plugin.
   Without the switch they are refused there (`plugin.landlock_missing`): nothing would keep them
   from reading Kalzit's files. `landlockAvailable` says whether this host has Landlock.
 
@@ -320,10 +322,12 @@ token, the data source id it got in `Connection`, host, port and protocol (`tcp`
 
 Kalzit then:
 
-1. refuses an unknown token (`plugin.token_invalid`) and a data source the plugin was not given,
-   that changed or went to the trash since, that does not exist or belongs to another kind
-   (`plugin.datasource_unknown`: a change or the trash takes the data source back, and closes
-   its open connections, until the next call hands it over again);
+1. refuses an unknown token (`plugin.token_invalid`), a host longer than 253 bytes or a data
+   source id longer than 64 (`plugin.request_invalid`, before anything else looks at them), and
+   a data source the plugin was not given, that changed or went to the trash since, that does
+   not exist, belongs to another kind or to an organization that blocked the plugin
+   (`plugin.datasource_unknown`: a change, the trash or the block takes the data source back,
+   and closes its open connections, until the next call hands it over again);
 2. reads the data source's settings and the target rules as they are now, and refuses any host,
    port or protocol that is not one of the manifest's targets for those settings, compared without case and trailing dot
    (`plugin.target_undeclared`): a `host` target's setting with its port setting or default
@@ -346,10 +350,20 @@ Kalzit then:
    stream socket pair (`SCM_RIGHTS`), on Windows the pipe itself. The TCP connection stays with
    Kalzit, so the plugin can neither point it elsewhere nor listen on the host's network.
 
-A relayed connection ends when either side closes it, after 15 minutes without traffic, and
-when its data source changes or goes to the trash. Refusals of steps 1 to 4 answer
+"Test connection" and the check before a save may carry settings that are not stored (yet): a
+new source, an edited one, or one provisioned from a file. For such a call the plugin gets an id
+of its own (`Connection.datasource_id` starting with `draft-`) under which it may connect to the
+targets these settings declare, checked by the same rules (steps 2 to 5), until the call ends;
+then its connections close. A plugin should not keep a pool for a `draft-` id. Targets come from
+settings, never from secret fields (the manifest allows only non-secret target fields).
+
+A relayed connection ends when either side closes it, after 15 minutes without traffic, when
+its data source changes, goes to the trash or is blocked, and when the plugin process ends.
+Refusals of steps 1 to 4 answer
 `ERROR_KIND_BLOCKED`, step 5 `ERROR_KIND_FAILED`; every refusal is written to the plugin's log
-(`stream: host`), Kalzit's log and the audit log (`plugins.connect_refused`). The plugin speaks
+(`stream: host`), Kalzit's log and the audit log (`plugins.connect_refused`), at most once a
+minute per target and reason and at most 20 at once per plugin, then one every 3 seconds,
+whatever the targets; at most 1000 distinct ones are remembered. The plugin speaks
 TLS itself over the stream.
 
 ## Sandbox
@@ -572,6 +586,8 @@ Rules:
 | `plugin.handover_invalid` | | the hand-over does not verify (`422`) |
 | `plugin.start_failed` | `detail` | the process could not be started (`datasource_error`) |
 | `plugin.root_refused` | | Kalzit runs as root on Linux; plugins do not start (`datasource_error`) |
+| `plugin.network_missing` | | Linux: neither the seccomp network filter nor a network namespace took, and plugins without Landlock are not allowed (`datasource_error`) |
+| `plugin.without_network_limit` | | Linux: the plugin's network is not limited, allowed with `allowWithoutLandlock` (`process.warnings`) |
 | `plugin.secrets_exposed` | `path` | a file of Kalzit's with secrets is readable by plugins (Windows); plugins do not start (`datasource_error`) |
 | `plugin.secrets_readable` | `path`, `accounts` | a file of Kalzit's with secrets is readable by other local accounts, not by plugins (`process.warnings`) |
 | `plugin.without_landlock` | | the plugin runs without Landlock (`process.warnings`) |
@@ -604,6 +620,7 @@ Reasons of the network connector, answered to the plugin (`ConnectResponse.error
 | `plugin.protocol_unknown` | | the protocol is neither `tcp` nor `tls` |
 | `plugin.target_undeclared` | `host`, `port` | not a target the manifest declares for the data source's settings |
 | `plugin.connections_exhausted` | `max` | the plugin holds its maximum of connections |
+| `plugin.request_invalid` | | the host is longer than 253 bytes or the data source id longer than 64 |
 | `plugin.connector_busy` | `max` | the plugin has its maximum of connection requests under way |
 | `target.own_address` | `address` | one of Kalzit's own listening addresses |
 | `target.own_database` | `address` | Kalzit's own database |

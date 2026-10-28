@@ -1044,6 +1044,26 @@ async fn the_network_goes_only_through_the_connector() {
     let r = t.doc(&own, ID, json!({ "do": "net_connect", "host": "127.0.0.1", "port": 3999 })).await;
     assert_eq!(r["reason"], "target.own_address", "{r}");
 
+    // "Test connection" reaches the target through the connector: of the saved settings, of
+    // settings not saved yet, and of a saved source's edited settings.
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/{ds}/health", t.org), Some(json!({}))).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    let other = echo_server().await;
+    let draft = json!({ "kind": ID, "settings": { "host": "127.0.0.1", "port": other } });
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/test", t.org), Some(draft)).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    // A changed target needs its secrets sent again.
+    let edited = json!({
+        "kind": ID, "datasourceId": ds,
+        "settings": { "host": "127.0.0.1", "port": other }, "secrets": { "password": "geheim-4711" },
+    });
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/test", t.org), Some(edited)).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+    // An unsaved target that is Kalzit's own port is refused all the same.
+    let refused = json!({ "kind": ID, "settings": { "host": "127.0.0.1", "port": 3999 } });
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/test", t.org), Some(refused)).await;
+    assert_eq!(r.body["ok"], false, "{}", r.body);
+
     // At most three connections at once; closed ones free their place.
     let q = json!({ "do": "net_many", "host": "127.0.0.1", "port": port, "n": 5 });
     let r = t.doc(&ds, ID, q.clone()).await;
