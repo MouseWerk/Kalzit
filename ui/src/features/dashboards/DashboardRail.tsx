@@ -3,7 +3,7 @@ import { Icon, type IconName } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
-import { getPanel, panelName } from "../../panels/registry";
+import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import type { ToolbarActions } from "./DashboardToolbar";
 import { type PanelModel, type RowModel, readingOrder } from "./model";
 import { panelIcon } from "./panelIcons";
@@ -227,6 +227,7 @@ function Outline({
 }) {
   const { t, language } = useI18n();
   const filterId = useId();
+  const plugins = useExternalPanels();
   const [filter, setFilter] = useState("");
   const needle = filter.trim().toLocaleLowerCase(language);
   const titleOf = (panel: PanelModel) => (panel.title === "" ? untitled : panel.title);
@@ -241,7 +242,7 @@ function Outline({
     }))
     .filter((group) => needle === "" || group.panels.length > 0);
   const panelButton = (panel: PanelModel) => {
-    const plugin = getPanel(panel.type);
+    const plugin = getPanel(panel.type, plugins);
     const name = plugin === undefined ? undefined : panelName(t, plugin);
     return (
       <li key={panel.id}>

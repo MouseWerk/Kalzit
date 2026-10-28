@@ -727,8 +727,8 @@ export function PanelBody({
   );
   const frames = useMemo(() => stepsRun.frames.map((f) => f.frame), [stepsRun]);
   // Drawn again when the plugins' panel types arrive.
-  useExternalPanels();
-  const plugin = getPanel(panel.type);
+  const plugins = useExternalPanels();
+  const plugin = getPanel(panel.type, plugins);
   // Parsed once per change of the stored options, for the same reason.
   const stored = panel.options;
   const options = useMemo(() => plugin?.options(stored), [plugin, stored]);

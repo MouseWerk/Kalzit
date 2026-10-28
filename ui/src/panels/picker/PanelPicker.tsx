@@ -26,8 +26,8 @@ export function PanelPicker({
   const name = useId();
   const [showAll, setShowAll] = useState(false);
   // Drawn again when the plugins' panels arrive.
-  useExternalPanels();
-  const choices = panelsForShapes(shapes.length === 0 ? ["frame"] : shapes);
+  const plugins = useExternalPanels();
+  const choices = panelsForShapes(shapes.length === 0 ? ["frame"] : shapes, plugins);
   const hidden = choices.filter((c) => !c.accepts).length;
   const shown = choices.filter((c) => c.accepts || showAll || c.panel.type === value);
   return (

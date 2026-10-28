@@ -82,8 +82,16 @@ export function useExternalPanels(): readonly AnyPanelPlugin[] {
   return useSyncExternalStore(subscribe, externalPanels, externalPanels);
 }
 
-export function getPanel(type: string): AnyPanelPlugin | undefined {
-  return PANELS.find((panel) => panel.type === type) ?? external.find((p) => p.type === type);
+/**
+ * The panel type `type`: a built-in one, else one of `plugins` (the plugins' panel types known
+ * now). A component passes what `useExternalPanels` gave it, so its drawing depends on the list
+ * and is redone when the list changes.
+ */
+export function getPanel(
+  type: string,
+  plugins: readonly AnyPanelPlugin[] = external,
+): AnyPanelPlugin | undefined {
+  return PANELS.find((panel) => panel.type === type) ?? plugins.find((p) => p.type === type);
 }
 
 /** The name of a panel type as the picker shows it: a plugin's own, else the catalog's. */
@@ -98,15 +106,15 @@ export function panelDescription(t: Translate, panel: AnyPanelPlugin): string | 
 
 /**
  * Panels that accept any of the shapes first, then the rest, each group in registry order and
- * the plugins' panels after the built-in ones. A panel that draws without a query (text) fits
- * every result. `plugins: false` leaves the plugins' panels out (Explore, which has no
- * dashboard to show them on).
+ * the plugins' panels (`plugins`, from `useExternalPanels`) after the built-in ones. A panel that
+ * draws without a query (text) fits every result. Explore passes none: it has no dashboard to
+ * show them on.
  */
 export function panelsForShapes(
   shapes: readonly Shape[],
-  { plugins = true }: { plugins?: boolean } = {},
+  plugins: readonly AnyPanelPlugin[] = [],
 ): { panel: AnyPanelPlugin; accepts: boolean }[] {
-  const entries = (plugins ? [...PANELS, ...external] : PANELS).map((panel) => ({
+  const entries = [...PANELS, ...plugins].map((panel) => ({
     panel,
     accepts: panel.standalone === true || panel.shapes.some((shape) => shapes.includes(shape)),
   }));

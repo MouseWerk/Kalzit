@@ -1216,8 +1216,8 @@ function OptionsPane({
 }) {
   const { t } = useI18n();
   // Drawn again when the plugins' panels arrive.
-  useExternalPanels();
-  const plugin = getPanel(look.type);
+  const plugins = useExternalPanels();
+  const plugin = getPanel(look.type, plugins);
   const Editor = plugin?.Editor;
   return (
     <div className="options-pane">
