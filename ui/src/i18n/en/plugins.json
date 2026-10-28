@@ -75,7 +75,7 @@
   "plugins.layer.memory_limit": "Memory limit",
   "plugins.layer.network": "Network isolation",
   "plugins.layer.network_namespace": "Own network namespace",
-  "plugins.layer.app_container": "AppContainer",
+  "plugins.layer.app_container": "Own AppContainer",
   "plugins.layer.restricted_token": "Restricted token",
   "plugins.layer.low_integrity": "Low integrity",
   "plugins.layer.job_object": "Job object",

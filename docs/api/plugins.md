@@ -475,7 +475,8 @@ an undeclared target, an undeclared port or protocol and Kalzit's own port, and 
 | `plugin.connected` | | "Test connection" passed, with the plugin's own text |
 
 Reasons of the network connector, answered to the plugin (`ConnectResponse.error`) and in
-`plugins.connect_refused`; a plugin may pass the `target.*` ones on:
+`plugins.connect_refused`, besides the data source target reasons (`target.metadata_address`,
+`target.not_allowed`, docs/api/datasources.md); a plugin may pass the `target.*` ones on:
 
 | Reason | Params | When |
 |---|---|---|
@@ -486,5 +487,4 @@ Reasons of the network connector, answered to the plugin (`ConnectResponse.error
 | `plugin.connections_exhausted` | `max` | the plugin holds its maximum of connections |
 | `target.own_address` | `address` | one of Kalzit's own listening addresses |
 | `target.own_database` | `address` | Kalzit's own database |
-| `target.metadata_address`, `target.not_allowed` | | the data source target rules |
 | `target.unresolvable`, `target.unreachable` | `host`, `detail` | the name does not resolve or no address answers |
