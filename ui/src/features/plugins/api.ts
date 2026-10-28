@@ -292,10 +292,17 @@ export async function getPlugin(id: string, signal?: AbortSignal): Promise<Plugi
   return parseDetail(await request("GET", `/api/admin/plugins/${enc(id)}`, undefined, { signal }));
 }
 
-/** Uploads a package (a zip file); the server checks it and answers the installed plugin. */
-export async function installPlugin(file: Blob): Promise<Plugin> {
+/**
+ * Uploads a package (a zip file); the server checks it and answers the installed plugin. With
+ * `confirmPublisherChange` a removed plugin's id is installed without its signing key, which
+ * clears the stored secrets of its data sources (`plugin.publisher_changed`).
+ */
+export async function installPlugin(file: Blob, confirmPublisherChange = false): Promise<Plugin> {
   const body = new Blob([file], { type: "application/zip" });
-  return parsePlugin(await request("POST", "/api/admin/plugins", body));
+  const path = confirmPublisherChange
+    ? "/api/admin/plugins?confirmPublisherChange=true"
+    : "/api/admin/plugins";
+  return parsePlugin(await request("POST", path, body));
 }
 
 export async function approvePlugin(id: string, version: string): Promise<Plugin> {

@@ -1298,8 +1298,9 @@ impl DataSources {
         Ok(conn)
     }
 
-    #[cfg(test)]
-    pub(crate) fn cached_connection(&self, datasource_id: &str) -> Option<Arc<Connection>> {
+    /// The cached connection of a data source, if any (tests).
+    #[doc(hidden)]
+    pub fn cached_connection(&self, datasource_id: &str) -> Option<Arc<Connection>> {
         self.connections.lock().expect("connection cache lock").get(datasource_id).and_then(|c| c.conn.get().cloned())
     }
 

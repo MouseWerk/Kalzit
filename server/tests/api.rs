@@ -890,6 +890,47 @@ async fn a_browser_that_is_not_mine_is_not_remembered() {
     t.finish().await;
 }
 
+/// Over HTTPS the device cookie is `__Host-kalzit_device`, and forgetting removes that one, with
+/// `Secure`. A sign-out with an odd query still signs out.
+#[tokio::test]
+async fn forgetting_a_browser_over_https_clears_the_secure_cookie() {
+    let t = test_app("10.1.2.3:50000", |c| {
+        c.server.public_url = Some("https://kalzit.example.com".into());
+        c.security.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    t.setup().await;
+    let https = [("origin", "https://kalzit.example.com"), ("x-forwarded-proto", "https")];
+    let cleared = |r: &Reply| {
+        r.headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|v| v.starts_with("__Host-kalzit_device=;") && v.contains("Max-Age=0") && v.contains("; Secure"))
+    };
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD, "forgetBrowser": true });
+    let r = t.send(Method::POST, "/api/auth/login", Some(body), &https).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(cleared(&r), "{:?}", r.headers);
+
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
+    let r = t.send(Method::POST, "/api/auth/login", Some(body), &https).await;
+    let session = r.session_cookie();
+    let mut headers = https.to_vec();
+    headers.push(("cookie", &session));
+    let out = t.send(Method::POST, "/api/auth/logout?forgetBrowser=1&unknown=%zz", None, &headers).await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    assert!(cleared(&out), "{:?}", out.headers);
+    let r = t.send(Method::GET, "/api/me", None, &headers).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+
+    // Anything else in the query: a plain sign-out, never an error.
+    let out = t.send(Method::POST, "/api/auth/logout?forgetBrowser=yes&x", None, &https).await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    assert!(!cleared(&out));
+    t.finish().await;
+}
+
 /// Guessing spread over many networks gets only the account's shared budget, not the budget of
 /// every address: after it, every guess is refused, the right one included.
 #[tokio::test]

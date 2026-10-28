@@ -535,10 +535,12 @@ impl PluginHost {
 
     /// A plugin installed again after its removal: its tombstone stands for the removed version,
     /// and the package must be signed as an update of it would be (the same key or one it was
-    /// handed over to; an older version may come back). A plugin removed before tombstones were
-    /// kept has no known key, so with data sources left it counts as a change too. A change with
-    /// data sources of the kind needs the administrator's confirmation, since their secrets
-    /// would otherwise reach the new publisher's binary.
+    /// handed over to; an older version may come back). Only that unchanged signed key keeps the
+    /// secrets of the kind's data sources: a removed unsigned plugin vouches for nobody, and a
+    /// plugin removed before tombstones were kept has no known key, so with data sources left any
+    /// reinstall of those (signed or unsigned) counts as a change. A change with data sources of
+    /// the kind needs the administrator's confirmation, since their secrets would otherwise reach
+    /// a binary nobody vouched for.
     async fn check_reinstall(
         &self,
         state: &AppState,
@@ -549,20 +551,21 @@ impl PluginHost {
         let tombstone = store::tombstone(&state.db, &m.id).await?;
         let datasources = store::datasources_of_kind(&state.db, &m.id).await?;
         let changed = match &tombstone {
-            Some(t) => {
+            Some(t) if t.public_key.is_some() => {
                 let removed = Manifest { version: m.version.clone(), ..m.clone() };
                 let old_key = t.public_key.as_deref().and_then(key_from_hex);
                 let handovers = self.handovers(state, &m.id).await?;
                 let installed = Installed { manifest: &removed, key: old_key.as_ref(), handovers: &handovers };
                 // A stored key that no longer reads as one cannot vouch for anything.
-                (t.public_key.is_some() && old_key.is_none())
+                old_key.is_none()
                     || match signing::check_update(&installed, m, key) {
                         Ok(()) => false,
                         Err(signing::Refusal::KeyChanged) => true,
                         Err(r) => return Err(package::refusal(&r).api()),
                     }
             }
-            None => !datasources.is_empty(),
+            // Unsigned, or unknown: nothing ties the new package to the removed one.
+            _ => !datasources.is_empty(),
         };
         if !changed {
             return Ok(None);
@@ -572,8 +575,8 @@ impl PluginHost {
             let mut e = HostError::new(
                 "plugin.publisher_changed",
                 format!(
-                    "the removed plugin {} was signed with another key; installing this package clears the stored \
-                     secrets of its {} data sources (repeat with confirmPublisherChange=true)",
+                    "this package is not signed with the key of the removed plugin {}; installing it clears the \
+                     stored secrets of its {} data sources (repeat with confirmPublisherChange=true)",
                     m.id,
                     datasources.len()
                 ),

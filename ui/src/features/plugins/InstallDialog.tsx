@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type DragEvent, useId, useState } from "react";
+import { type DragEvent, type RefObject, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
@@ -18,6 +18,7 @@ import {
 import { refreshPlugins } from "./hooks";
 import { PluginMark } from "./parts";
 import { groupedKeyId, permissionText, pluginReasonText, sameLine } from "./status";
+import { serverName } from "./TrustTab";
 import "./plugins.css";
 
 export const STEP_IDS = [
@@ -57,6 +58,7 @@ export function failedStep(reason: string | undefined): StepId {
     case "plugin.update_other_id":
     case "plugin.downgrade":
     case "plugin.key_changed":
+    case "plugin.publisher_changed":
     case "plugin.kind_taken":
       return "update";
     case "plugin.target_refused":
@@ -296,8 +298,8 @@ export function StepList({ steps, busy }: { steps: readonly Step[]; busy: boolea
 
 type Stage =
   | { kind: "choose" }
-  | { kind: "checking"; packageText: string }
-  | { kind: "refused"; packageText: string; error: unknown }
+  | { kind: "checking"; packageText: string; file: File }
+  | { kind: "refused"; packageText: string; file: File | undefined; error: unknown }
   | { kind: "review"; packageText: string; plugin: Plugin; prior: Plugin | undefined };
 
 /**
@@ -326,11 +328,21 @@ export function InstallDialog({
   const [granted, setGranted] = useState(false);
   const [start, setStart] = useState(true);
   const [missingGrant, setMissingGrant] = useState(false);
+  // The server's name typed to confirm a change of publisher.
+  const [typedName, setTypedName] = useState("");
+  const [wrongName, setWrongName] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   const refresh = () => refreshPlugins(queryClient);
 
   const upload = useMutation({
-    mutationFn: installPlugin,
+    mutationFn: ({
+      file,
+      confirmPublisherChange,
+    }: {
+      file: File;
+      confirmPublisherChange: boolean;
+    }) => installPlugin(file, confirmPublisherChange),
     onSuccess: (plugin, _file) => {
       const prior = list.items.find((item) => item.id === plugin.id);
       setStage((current) => ({
@@ -345,6 +357,7 @@ export function InstallDialog({
       setStage((current) => ({
         kind: "refused",
         packageText: current.kind === "checking" ? current.packageText : "",
+        file: current.kind === "checking" ? current.file : undefined,
         error,
       }));
     },
@@ -386,8 +399,20 @@ export function InstallDialog({
     const packageText = `${file.name} · ${sizeText(language, file.size)}`;
     setGranted(false);
     setMissingGrant(false);
-    setStage({ kind: "checking", packageText });
-    upload.mutate(file);
+    setStage({ kind: "checking", packageText, file });
+    upload.mutate({ file, confirmPublisherChange: false });
+  }
+
+  /** Sends the refused package again, confirming the change of publisher. */
+  function installAnyway(packageText: string, file: File) {
+    if (typedName.trim() !== serverName()) {
+      setWrongName(true);
+      nameRef.current?.focus();
+      return;
+    }
+    setTypedName("");
+    setStage({ kind: "checking", packageText, file });
+    upload.mutate({ file, confirmPublisherChange: true });
   }
 
   function cancel() {
@@ -460,6 +485,37 @@ export function InstallDialog({
       <button type="button" className="button button--secondary" onClick={onClose}>
         {t("admin.common.cancel")}
       </button>
+    );
+  } else if (stage.kind === "refused" && isPublisherChange(stage.error) && stage.file) {
+    const file = stage.file;
+    const packageText = stage.packageText;
+    title = t("plugins.publisher.title");
+    body = (
+      <PublisherChange
+        error={stage.error}
+        typed={typedName}
+        wrong={wrongName}
+        inputRef={nameRef}
+        onType={(value) => {
+          setTypedName(value);
+          setWrongName(false);
+        }}
+      />
+    );
+    footer = (
+      <div className="plugin-dialog__footer">
+        <span className="plugin-dialog__spacer" />
+        <button type="button" className="button button--secondary" onClick={onClose}>
+          {t("admin.common.cancel")}
+        </button>
+        <button
+          type="button"
+          className="button button--danger"
+          onClick={() => installAnyway(packageText, file)}
+        >
+          {t("plugins.publisher.install")}
+        </button>
+      </div>
     );
   } else if (stage.kind === "refused") {
     const reason = errorReason(stage.error);
@@ -664,5 +720,77 @@ export function InstallDialog({
     <Dialog open title={title} onClose={cancel} wide footer={footer}>
       {body}
     </Dialog>
+  );
+}
+
+function isPublisherChange(error: unknown): boolean {
+  return errorReason(error)?.reason === "plugin.publisher_changed";
+}
+
+/**
+ * A removed plugin's id comes back without its signing key (`plugin.publisher_changed`): what is
+ * left of it (its data sources, the key and version that were removed), that installing clears
+ * the secrets of those data sources, and the server's name typed out before it is sent again.
+ */
+function PublisherChange({
+  error,
+  typed,
+  wrong,
+  inputRef,
+  onType,
+}: {
+  error: unknown;
+  typed: string;
+  wrong: boolean;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onType: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  const inputId = useId();
+  const params = errorReason(error)?.params ?? {};
+  const name = serverName();
+  const mismatch = wrong && typed.trim() !== name;
+  return (
+    <div className="plugin-dialog">
+      <p className="plugins-note plugins-note--danger" role="alert">
+        <Icon name="alert" />
+        <span>{t("plugins.publisher.text")}</span>
+      </p>
+      <ul className="plugin-grants">
+        <li>{t("plugins.publisher.sources", { count: params.datasources ?? "0" })}</li>
+        <li>
+          {params.previousKeyId === undefined
+            ? t("plugins.publisher.previousUnknown")
+            : t("plugins.publisher.previousKey", { key: groupedKeyId(params.previousKeyId) })}
+        </li>
+        {params.removedVersion === undefined ? null : (
+          <li>{t("plugins.publisher.removedVersion", { version: params.removedVersion })}</li>
+        )}
+      </ul>
+      <p className="plugins-hint">{t("plugins.publisher.clears")}</p>
+      <div className="field">
+        <label className="field__label" htmlFor={inputId}>
+          {t("plugins.risk.type")}{" "}
+          <strong className="plugins-mono" translate="no">
+            {name}
+          </strong>
+        </label>
+        <input
+          ref={inputRef}
+          id={inputId}
+          className="input input--mono"
+          autoComplete="off"
+          spellCheck={false}
+          value={typed}
+          aria-invalid={mismatch}
+          onChange={(event) => onType(event.currentTarget.value)}
+        />
+        {mismatch ? (
+          <p className="field__error" role="alert">
+            {t("plugins.risk.mismatch")}
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }

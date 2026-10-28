@@ -1,6 +1,7 @@
 //! Sign in, sign out and the current user.
 
-use axum::extract::{Query, State};
+use axum::extract::State;
+use axum::http::Uri;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
@@ -23,12 +24,13 @@ pub struct LoginRequest {
     forget_browser: bool,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LogoutQuery {
-    /// "Sign out and forget this browser": the device cookie is removed as well.
-    #[serde(default, rename = "forgetBrowser")]
-    forget_browser: bool,
+/// "Sign out and forget this browser" (`?forgetBrowser=true` or `=1`): the device cookie is
+/// removed as well. Read leniently: whatever else the query holds, signing out never fails.
+fn forget_browser(uri: &Uri) -> bool {
+    uri.query().unwrap_or_default().split('&').any(|pair| {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        key == "forgetBrowser" && matches!(value.to_ascii_lowercase().as_str(), "true" | "1")
+    })
 }
 
 #[derive(sqlx::FromRow)]
@@ -278,7 +280,7 @@ pub async fn login(
 pub async fn logout(
     State(state): State<AppState>,
     Extension(info): Extension<RequestInfo>,
-    Query(query): Query<LogoutQuery>,
+    uri: Uri,
     headers: HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
     if let Some(token) = session::read_cookie(&headers, info.https) {
@@ -308,7 +310,7 @@ pub async fn logout(
     out.insert(header::SET_COOKIE, session::clear_cookie(info.https));
     // The device cookie survives a plain sign-out, so the owner keeps the known-device budget in
     // their own browser; on request it goes too.
-    if query.forget_browser {
+    if forget_browser(&uri) {
         out.append(header::SET_COOKIE, crate::auth::device::clear_cookie(info.https));
     }
     Ok((StatusCode::NO_CONTENT, out))
@@ -316,4 +318,21 @@ pub async fn logout(
 
 pub async fn current(State(state): State<AppState>, CurrentUser(user): CurrentUser) -> ApiResult<Json<Me>> {
     Ok(Json(me(&state.db, user).await?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forget_browser_is_read_leniently() {
+        let read = |q: &str| forget_browser(&q.parse::<Uri>().unwrap());
+        assert!(read("/api/auth/logout?forgetBrowser=true"));
+        assert!(read("/api/auth/logout?forgetBrowser=1"));
+        assert!(read("/api/auth/logout?x=%zz&forgetBrowser=TRUE&y"));
+        assert!(!read("/api/auth/logout"));
+        assert!(!read("/api/auth/logout?forgetBrowser=false"));
+        assert!(!read("/api/auth/logout?forgetBrowser"));
+        assert!(!read("/api/auth/logout?forgetbrowser=true"));
+    }
 }

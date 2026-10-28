@@ -61,6 +61,8 @@ export interface FakePluginsState {
   installAnswer:
     | { plugin: WirePlugin }
     | { status: number; code: string; reason: string; params?: Record<string, string> };
+  /** The answer of an install sent with `confirmPublisherChange=true`, if it differs. */
+  confirmedInstallAnswer?: { plugin: WirePlugin };
   /** Data sources of each plugin's kind, by plugin id. */
   usedIn: Record<string, { id: string; name: string; orgId: string; orgName: string }[]>;
   logs: Record<string, { at: number; stream: string; text: string }[]>;
@@ -208,7 +210,8 @@ export function handlePluginAdminRoute(
       return json(200, list(state));
     }
     if (method === "POST") {
-      const answer = state.installAnswer;
+      const confirmed = new URLSearchParams(query).get("confirmPublisherChange") === "true";
+      const answer = (confirmed ? state.confirmedInstallAnswer : undefined) ?? state.installAnswer;
       if (!("plugin" in answer)) {
         return refusal(answer.status, answer.code, answer.reason, answer.params);
       }

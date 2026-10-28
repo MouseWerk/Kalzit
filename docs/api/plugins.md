@@ -138,7 +138,9 @@ payload_too_large` above). Answers `201` with the plugin.
 - A plugin installed again after it was removed is checked against what the removal left (the
   last installed version and the key that signed it, kept per id): it must be signed with that
   key or one it was handed over to, like an update (an older version may come back). Another key,
-  or no signature for a signed one, is a change of publisher. With data sources of the kind left
+  or no signature for a signed one, is a change of publisher; so is any reinstall, signed or not,
+  of a plugin that was removed unsigned, since nothing ties a package to it. Only the unchanged
+  signing key keeps the secrets. With data sources of the kind left
   (in any organization, in the trash too) it is refused with `409 plugin.publisher_changed`
   (`datasources`: their number, `previousKeyId`, `removedVersion`) until the administrator
   repeats it with `?confirmPublisherChange=true`. Then the stored secrets of those data sources
@@ -390,7 +392,7 @@ environment, and (Linux) cannot `ptrace` or signal Kalzit.
 | `plugin.update_other_id` | | the package is for another plugin (`422`) |
 | `plugin.downgrade` | | the package is older than the installed version (`409`) |
 | `plugin.key_changed` | | the update is not signed by the installed version's key or a key it was handed over to, or it is unsigned (`409`) |
-| `plugin.publisher_changed` | `datasources`, `previousKeyId`, `removedVersion` | a removed plugin's id is installed with another key while data sources of its kind exist; repeat with `confirmPublisherChange=true` to clear their secrets (`409`) |
+| `plugin.publisher_changed` | `datasources`, `previousKeyId`, `removedVersion` | a removed plugin's id is installed without its signing key (or it was unsigned or removed before 0.3.2) while data sources of its kind exist; repeat with `confirmPublisherChange=true` to clear their secrets (`409`) |
 | `plugin.kind_taken` | | another kind has this id (`422`) |
 | `plugin.target_refused` | `host` | a fixed network target of the manifest is refused by the data source target rules (`422`) |
 | `plugin.io` | `detail` | a file of the host could not be written or read (`422`) |
