@@ -41,8 +41,6 @@ reach it with the keyboard: its links, view alone, **Annotate**, **Inspect**, ex
 query and the server's notes and warnings, and says when the result was cut off at the data
 source's row limit.
 
-![Dashboard on a phone](../screenshots/dashboard-phone.png)
-
 ## Edit mode
 
 Press **Edit** (needs write access). The toolbar shows **Done** (or **Discard changes...** when
