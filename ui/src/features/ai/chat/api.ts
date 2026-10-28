@@ -116,6 +116,8 @@ export interface Turn {
 export interface Question {
   text: string;
   datasourceIds?: string[];
+  /** The dashboard asked about ("Dashboard als Kontext"). */
+  dashboard?: { id: string; title: string };
 }
 
 export type ChatMessage =
@@ -217,7 +219,12 @@ export interface AskHandlers {
 export async function streamAsk(
   orgId: string,
   chatId: string,
-  body: { text: string; datasourceIds: string[]; language: string },
+  body: {
+    text: string;
+    datasourceIds: string[];
+    language: string;
+    dashboardId?: string | undefined;
+  },
   handlers: AskHandlers,
   signal: AbortSignal,
 ): Promise<void> {
@@ -225,7 +232,12 @@ export async function streamAsk(
   const language = body.language === "de" ? "de" : "en";
   await requestStream(
     path,
-    { text: body.text, datasourceIds: body.datasourceIds, language },
+    {
+      text: body.text,
+      datasourceIds: body.datasourceIds,
+      language,
+      ...(body.dashboardId === undefined ? {} : { dashboardId: body.dashboardId }),
+    },
     (event: StreamEvent) => {
       const data = isRecord(event.data) ? event.data : {};
       switch (event.event) {

@@ -959,7 +959,13 @@ query, summarize a result, the agent chat) come after it and must go through it.
   which cancels the round and the running tool). The conversation the provider gets is rebuilt
   from the stored chat (the newest twelve questions); results of sources the person lost or that
   were closed to AI since are withheld there and in the API. A chat answers one question at a
-  time.
+  time. A question may name a dashboard as context (`dashboards:read`); its title and panels go
+  to the model fenced. `run_panel` runs the panel's enabled steps on the server, as summaries do.
+- **A provider per function.** `ai.provider_explain`, `ai.provider_summarize` and
+  `ai.provider_chat` choose a server provider per function (`service::in_effect_for`, from the
+  call's purpose); an organization's own provider still applies to all functions. The notice is
+  per provider, so the status names each function's provider with its acknowledgement, endpoint,
+  last test and whether its address stays in the own network (`service::stays_in_network`).
 - **Prompt injection (tool use in the chat).** Everything that comes back
   from a data source, a document or a web page is untrusted input to the model: it may contain
   text written to steer it. So tools are read-only by construction (they run queries through the

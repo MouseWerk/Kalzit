@@ -1,3 +1,4 @@
+import { useNavigate } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
   type PointerEvent,
@@ -149,6 +150,7 @@ export function PanelCard({
   alone = false,
 }: PanelCardProps) {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const calendar = useAnalysisCalendar();
   const ref = useRef<HTMLElement>(null);
   const titleId = useId();
@@ -398,6 +400,17 @@ export function PanelCard({
       label: t("ai.call.summarize"),
       name: t("ai.call.summarizeNamed", { title }),
       onSelect: () => setSummarizing(true),
+    });
+    // "In Fragen öffnen": a chat about this dashboard, the question about the panel ready.
+    menuItems.push({
+      key: "ask",
+      label: t("ai.chat.openInAsk"),
+      name: t("ai.chat.openInAskNamed", { title }),
+      onSelect: () =>
+        void navigate({
+          to: "/ask",
+          search: { dashboard: query.dashboardId, q: t("ai.chat.askAboutPanel", { title }) },
+        }),
     });
   }
   if (edit !== undefined) {

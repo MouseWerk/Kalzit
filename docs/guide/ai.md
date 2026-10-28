@@ -139,6 +139,19 @@ which sources the assistant may use; none chosen means all sources open to AI. S
 read appear greyed out with "AI may not read". The side pane also shows the provider and where data
 goes, your requests today, your recent chats and a few suggested questions.
 
+**Dashboard as context** (Dashboard als Kontext) in the composer, or **Open in Ask** (In Fragen
+öffnen) in a panel's menu, asks about one dashboard: its title and panels go along, and the
+assistant can run its panels, steps included. After a summary, **Continue in Ask** (In Fragen
+weiterfragen) starts a chat about it. Under an answer, **Save as panel** (Als Panel speichern)
+opens its query in Explore with the save dialog, **Add to dashboard** (Zum Dashboard hinzufügen)
+puts it on a dashboard, and **Adjust query** (Abfrage anpassen) opens it in Explore; a result over
+time switches between **Table** and **Time series**. The side pane names the provider's endpoint,
+whether it passed its last test, and whether data leaves your network (judged from its address).
+
+With several providers, **Which provider for what** (Welcher Anbieter wofür) under Settings > AI
+chooses one for explain and draft, one for summaries and one for Ask; each asks for the notice
+once.
+
 Chats are yours alone; nobody else can read them, administrators included. **Ask > History**
 (Verlauf) lists them with the days until they are deleted: 30 days after their last message by
 default, shorter if your organization chose so. Delete one chat, the chosen ones or all of them at

@@ -8,7 +8,18 @@ import { aiStatusQuery } from "../api";
 export interface AskSearch {
   /** The chat shown; absent for a new one. */
   chat?: string | undefined;
+  /** A new chat about this dashboard ("In Fragen öffnen" from a panel). */
+  dashboard?: string | undefined;
+  /** A new chat on this source (after a summary in Explore). */
+  source?: string | undefined;
+  /** The question to start with, in the composer, not sent. */
+  q?: string | undefined;
 }
+
+/** The longest question a link may start a chat with. */
+const MAX_LINKED_QUESTION = 500;
+
+const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
 
 /**
  * "Fragen" exists only while AI is usable for the person (on, with a provider in effect): else
@@ -29,7 +40,10 @@ const askRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/ask",
   validateSearch: (search: Record<string, unknown>): AskSearch => ({
-    chat: typeof search.chat === "string" && search.chat !== "" ? search.chat : undefined,
+    chat: text(search.chat),
+    dashboard: text(search.dashboard),
+    source: text(search.source),
+    q: text(search.q)?.slice(0, MAX_LINKED_QUESTION),
   }),
   beforeLoad: ({ context }) => requireUsableAi(context.queryClient, context.me),
   component: lazyRouteComponent(() => import("./AskPage"), "AskPage"),

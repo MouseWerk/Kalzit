@@ -13,7 +13,7 @@ import {
 import { LoadState } from "../../admin/components/Section";
 import { ConflictDialog, useSettingChanges } from "../../admin/components/Settings";
 import { resetSetting } from "../../settings/api";
-import { type Changes, SettingRow } from "../../settings/rows";
+import { type Changes, type Choice, SettingRow } from "../../settings/rows";
 import { useFoundRow } from "../../settings/SectionPage";
 import { rowId, type SectionDef } from "../../settings/sections";
 import { providerHost } from "../adminApi";
@@ -35,6 +35,9 @@ const LIMIT_KEYS = [
   "ai.request_timeout_secs",
 ] as const;
 
+/** The provider chosen per function (board frame 2, "Welcher Anbieter wofür"). */
+const FUNCTION_KEYS = ["ai.provider_explain", "ai.provider_summarize", "ai.provider_chat"] as const;
+
 /** A card of setting rows with an optional heading. */
 export function RowsCard({
   title,
@@ -45,7 +48,10 @@ export function RowsCard({
   changes,
   canWrite,
   found,
+  choicesFor,
 }: {
+  /** Choices from data for some keys (the providers for a function). */
+  choicesFor?: (key: string) => Choice[] | undefined;
   title?: string;
   lead?: string;
   keys: readonly string[];
@@ -84,6 +90,7 @@ export function RowsCard({
             canWrite={canWrite}
             inheritable={false}
             found={found === id}
+            choices={choicesFor?.(key)}
           />
         );
       })}
@@ -190,6 +197,27 @@ export function AiServerSection({ section }: { section: SectionDef }) {
         </section>
       ) : null}
       <ProvidersCard scope={{ kind: "server" }} canWrite />
+      {list.length > 1 ? (
+        <RowsCard
+          title={t("ai.admin.functions.title")}
+          lead={t("ai.admin.functions.lead")}
+          keys={FUNCTION_KEYS}
+          choicesFor={() => [
+            {
+              value: "",
+              label:
+                fallback === undefined
+                  ? t("ai.admin.functions.noDefault")
+                  : t("ai.admin.functions.default", { name: fallback.name }),
+            },
+            ...list.map((provider) => ({
+              value: provider.id,
+              label: `${provider.name} · ${provider.model}`,
+            })),
+          ]}
+          {...rowProps}
+        />
+      ) : null}
       <RowsCard title={t("ai.admin.orgs.title")} keys={["ai.allow_org_providers"]} {...rowProps} />
       <RowsCard
         title={t("ai.admin.limits.title")}

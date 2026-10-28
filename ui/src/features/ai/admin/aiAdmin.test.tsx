@@ -47,6 +47,15 @@ describe("AI, server section", () => {
     expect(within(cloud).getByText("api.anthropic.com")).toBeTruthy();
     expect(within(cloud).getByText("Key refused")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Edit Cloud" })).toBeTruthy();
+    // With several providers, one can be chosen per function; empty is the default.
+    const functions = screen.getByRole("region", { name: "Which provider for what" });
+    const chat = within(functions).getByRole("combobox", {
+      name: "Provider for Ask (chat with tools)",
+    });
+    const options = within(chat)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(options).toEqual(["Default (Local)", "Local · llama3.3:70b", "Cloud · claude-x"]);
     // The limits, the usage and the notice of what leaves the server are on the same page.
     expect(screen.getByRole("region", { name: "Limits" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Usage" })).toBeTruthy();

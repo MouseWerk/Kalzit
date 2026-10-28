@@ -499,6 +499,19 @@ function Explore({
         },
   );
 
+  // A query handed over to be saved ("Als Panel speichern" in Fragen) opens the save dialog once
+  // it is in the editor, for someone who may save analyses.
+  const saveOnArrival = useRef(handoff?.save === true);
+  const mayCreateAny =
+    permissions.has("analyses:write") ||
+    (folders.data ?? []).some((folder) => folder.access?.write === true);
+  useEffect(() => {
+    if (saveOnArrival.current && mayCreateAny && datasource !== undefined && query !== null) {
+      saveOnArrival.current = false;
+      setSaveDialog("save");
+    }
+  }, [mayCreateAny, datasource, query]);
+
   if (datasources.isPending) {
     return <p className="loading">{t("common.loading")}</p>;
   }

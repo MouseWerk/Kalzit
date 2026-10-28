@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
+import type { AiStatus, AiStatusProvider } from "../../api/generated/shapes";
 import { FormAlert } from "../../components/FormAlert";
 import { useI18n } from "../../i18n/i18n";
 import { Dialog } from "../admin/components/Dialog";
@@ -11,6 +12,24 @@ import "./ai-calls.css";
 
 /** The functions the notice names what they send for. */
 export type AiFeature = "explain" | "draft" | "summarize" | "chat";
+
+/**
+ * The provider a function goes to: the one the server chose for it (`functions`, docs/api/ai.md
+ * "Status"), else the provider in effect. Explain and draft share one.
+ */
+export function providerFor(
+  status: AiStatus | undefined,
+  feature: AiFeature,
+): AiStatusProvider | undefined {
+  const fn = feature === "draft" ? "explain" : feature;
+  return status?.functions?.[fn] ?? status?.provider;
+}
+
+/** Whether the person acknowledged the notice for the provider of `feature`. */
+function acknowledgedFor(status: AiStatus | undefined, feature: AiFeature): boolean | undefined {
+  const fn = feature === "draft" ? "explain" : feature;
+  return status?.functions?.[fn]?.noticeAcknowledged ?? status?.noticeAcknowledged;
+}
 
 export interface AiNoticeGate {
   /**
@@ -42,7 +61,7 @@ export function useAiNotice(orgId: string): AiNoticeGate {
   const textId = useId();
 
   function guard(feature: AiFeature, run: () => void, onCancel?: () => void) {
-    if (status?.noticeAcknowledged === false) {
+    if (acknowledgedFor(status, feature) === false) {
       setError(null);
       setPending({ feature, run, onCancel });
       return;
@@ -56,7 +75,7 @@ export function useAiNotice(orgId: string): AiNoticeGate {
   }
 
   async function acknowledge() {
-    const provider = status?.provider;
+    const provider = pending === null ? undefined : providerFor(status, pending.feature);
     if (pending === null || provider === undefined) {
       return;
     }
@@ -79,7 +98,7 @@ export function useAiNotice(orgId: string): AiNoticeGate {
     }
   }
 
-  const provider = status?.provider;
+  const provider = pending === null ? undefined : providerFor(status, pending.feature);
   const rows = status?.maxRowsToModel ?? 0;
   const dialog =
     pending === null || provider === undefined ? null : (

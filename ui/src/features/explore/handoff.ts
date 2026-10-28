@@ -6,6 +6,8 @@
 export interface ExploreHandoff {
   datasourceId: string;
   query: unknown;
+  /** Opens the dialog to save it as an analysis once it is in the editor. */
+  save?: boolean;
 }
 
 /** A query not picked up this soon (the navigation failed or went elsewhere) is dropped. */

@@ -63,6 +63,17 @@ functions (explain or draft a query, summarize a result, the chat "Fragen") buil
 }
 ```
 
+Each provider in the status also carries `endpoint` (host and port of its base URL),
+`leavesNetwork` (whether data leaves the installation's own network, judged from the address
+alone: a loopback, private or link-local address, `localhost`, a name without a dot or under a
+local suffix such as `.local`, `.lan`, `.internal`, `.intern`, `.home.arpa` or `.corp` stays in
+it; a gateway there may still forward data further), `reachable` (the last connection test passed
+or failed; absent while untested since the last change) and `noticeAcknowledged` (the caller read
+the notice for it). `functions` names the provider of each function (`explain` for explain and
+draft, `summarize`, `chat`); it differs from `provider` where the server chose another provider
+for a function (`ai.provider_<function>`), and an organization's own provider applies to all of
+them.
+
 `reason` is set when AI is on but not usable (`ai.no_provider`). `provider.host` is where data
 goes (the host of the base URL, never the whole URL); `provider.scope` is `org` when the
 organization's own provider is in effect. `usage` holds the caller's calls and tokens today (UTC)
@@ -75,7 +86,8 @@ organization and renders AI only when `enabled` and `usable` are both true (`ui/
 
 ## First-use notice
 
-`POST /orgs/{orgId}/ai/notice` with `{"providerId": "..."}` (every member): the caller read the
+`POST /orgs/{orgId}/ai/notice` with `{"providerId": "..."}` (every member; the provider in effect
+or the one of a function): the caller read the
 notice for the provider in effect. `204`; again is harmless. A `providerId` that is not the one in
 effect answers `409 conflict` (`ai.notice_provider_changed`): the UI shows the notice of the new
 provider instead.
@@ -187,6 +199,7 @@ Server settings (`/admin/settings`):
 |---|---|---|
 | `ai.enabled` | `false` | every AI function on or off (on only with a tested provider, see "Rules") |
 | `ai.allow_org_providers` | `true` | organizations may connect, change, test and use their own provider |
+| `ai.provider_explain`, `ai.provider_summarize`, `ai.provider_chat` | empty | the server provider for explain and draft, for summaries and for the chat; empty uses the default provider. Only a server provider can be chosen (`ai.provider_unknown`); one deleted later falls back to the default. An organization's own provider comes first |
 | `ai.user_requests_per_day` | 200 | calls per person and day (UTC) in one organization; 0: none |
 | `ai.user_tokens_per_day` | 200000 | tokens per person and day; 0: none |
 | `ai.org_tokens_per_month` | 20000000 | tokens of an organization per calendar month (UTC); 0: none |
@@ -375,6 +388,12 @@ Another person's chat is `404 not_found`, also for administrators.
 { "text": "Wie hat sich der Umsatz je Region entwickelt?", "datasourceIds": ["..."], "language": "de" }
 ```
 
+`dashboardId` (optional, "Dashboard als Kontext") names a dashboard the question is about; it needs
+`dashboards:read` (else `404`). Its title and its panels (ids, titles, types) go to the model inside
+a `<kalzit:dashboard>` block, and the stored question keeps them as `dashboard` (`id`, `title`,
+`panels`); a dashboard the caller may no longer read is left out when the chat is read or
+continued.
+
 `text` is 1 to 4000 characters (`ai.request_invalid`); `datasourceIds`, when present, replaces the
 chat's sources; `language` (`de` or `en`) is the language of the answer. The switch, the provider,
 the notice and the daily and monthly limits are checked first; a refusal is an ordinary JSON error
@@ -432,7 +451,7 @@ person had made the request: nothing is decided by the model. Results keep their
 | `get_schema` | `datasourceId` | `datasources:query` on the source (as `GET .../schema`), the source open to AI and chosen |
 | `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts). A query that names an excluded field is refused (`ai.query_names_excluded_field`), since an alias or an expression would pass its values under another name. The check is best effort: it looks for the field as a whole word in any case, in the query as written and once more without its single-quoted literals and comments (a MongoDB pipeline as written, quoted names included), so a literal naming the field refuses the query too; for an entry with a table (`kunden.email`), a query that names that table anywhere (as a whole word, any case) is refused for any mention of the field, qualified or not, so no alias, subquery or CTE leads around it; a query that does not name the table lets the field through under another qualifier (`users.email`) and refuses it bare, except for generic names (`id`, `name`, `title`, `label`, `type`, `kind`, `key`, `value`, `status`, `date`, `time`, `count`, `created_at`, `updated_at`), which then pass; a bare generic entry without a table never refuses a query. A query can still reach a value without naming its field (a whole-row cast, `FOR JSON`, `$$ROOT`, `keys(n)`, escaped identifiers): data that must never reach a provider belongs in a source closed to AI |
 | `find_panels` | `search` | lists dashboards the caller may read whose title contains `search` (at most 20), with their panels |
-| `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run, with the saved current value of each variable (the dashboard's defaults when one is no longer valid); every source of the panel open to AI (and chosen, when sources are chosen). Hidden queries are left out; the panel's steps are not applied |
+| `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run, with the saved current value of each variable (the dashboard's defaults when one is no longer valid); every source of the panel open to AI (and chosen, when sources are chosen). The panel's enabled steps run on the server as for its summary and export (a frame they make is redacted with the rules of all the panel's sources); hidden queries are left out, unless a step reads them |
 | `propose_query` | `datasourceId`, `query`, `title`, `explanation` | `datasources:query` on the source, chosen; never runs, the UI offers "Open in Explore" |
 
 Viewers have no free queries (`datasources:query`), so for them `get_schema`, `run_query` and

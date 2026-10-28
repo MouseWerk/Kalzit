@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
@@ -297,6 +298,7 @@ export function useExploreAiSummary(
       call={call}
       title={t("ai.call.summaryTitleExplore")}
       sourceLink={{ datasourceId: source.id, name: source.name }}
+      followUp={{ source: source.id, q: t("ai.chat.followUpExplore", { name: source.name }) }}
     />
   );
   return { button, card };
@@ -336,11 +338,14 @@ export function SummaryCard({
   title,
   sourceLink,
   onClose,
+  followUp,
 }: {
   call: ReturnType<typeof useAiCall>;
   title: string;
   sourceLink?: { datasourceId: string; name: string } | undefined;
   onClose?: () => void;
+  /** Where "In Fragen weiterfragen" starts a chat: a dashboard or a source as its context. */
+  followUp?: { dashboard?: string; source?: string; q: string } | undefined;
 }) {
   const { t } = useI18n();
   return (
@@ -350,6 +355,19 @@ export function SummaryCard({
       footnote={sentNote(t, call.state.meta)}
       sourceLink={sourceLink}
       onClose={onClose ?? call.reset}
+      actions={
+        followUp === undefined ? undefined : (
+          <Link
+            to="/ask"
+            search={followUp}
+            className="button button--secondary button--small"
+            onClick={() => onClose?.()}
+          >
+            <Icon name="ask" />
+            {t("ai.chat.followUp")}
+          </Link>
+        )
+      }
     />
   );
 }

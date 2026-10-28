@@ -2,6 +2,8 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../../test/fakeServer";
 import { renderApp } from "../../../test/renderApp";
+import { emptyModel } from "../../dashboards/model";
+import { addDashboard } from "../../dashboards/test/fakeDashboards";
 import { PG_ID, PROM_ID } from "../../datasources/test/fakeDatasources";
 import type { ToolRecord, Turn } from "./api";
 import { CHAT_T0, chatMessages, fakeChat } from "./test/fakeAiChat";
@@ -19,6 +21,10 @@ const USABLE = {
     model: "modell-1",
     host: "llm.intern",
     scope: "server",
+    endpoint: "llm.intern:11434",
+    leavesNetwork: false,
+    reachable: true,
+    noticeAcknowledged: true,
   },
   usage: {
     requests: 46,
@@ -121,7 +127,9 @@ describe("Fragen", () => {
     expect(await within(nav).findByRole("link", { name: "Ask Beta" })).toBeTruthy();
     const pane = await screen.findByRole("complementary", { name: "Context and controls" });
     expect(within(pane).getByText("Lokal · modell-1")).toBeTruthy();
-    expect(within(pane).getByText("llm.intern")).toBeTruthy();
+    expect(within(pane).getByText("llm.intern:11434")).toBeTruthy();
+    expect(within(pane).getByText("Reachable")).toBeTruthy();
+    expect(within(pane).getByText("No, own network")).toBeTruthy();
     const open_ = await within(pane).findByRole("checkbox", { name: "Allow Sales DB" });
     expect((open_ as HTMLInputElement).disabled).toBe(false);
     const closed = within(pane)
@@ -159,7 +167,8 @@ describe("Fragen", () => {
 
     const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
     expect(await within(answer).findByText("Süd liegt vorn.")).toBeTruthy();
-    expect(within(answer).getByText("Ran a query")).toBeTruthy();
+    expect(within(answer).getByText("Data used and query")).toBeTruthy();
+    expect(within(answer).getByText("Table bestellungen")).toBeTruthy();
     expect(within(answer).getByText(/1 query, read-only/)).toBeTruthy();
     expect(within(answer).getByRole("cell", { name: "Süd" })).toBeTruthy();
     expect(within(answer).getByText("Excluded values: 1.")).toBeTruthy();
@@ -260,6 +269,90 @@ describe("Fragen", () => {
     ];
     expect(await screen.findByText(/No longer available/)).toBeTruthy();
     expect(screen.getByText("Stopped. What arrived until then is kept.")).toBeTruthy();
+  });
+});
+
+describe("Fragen: from the board", () => {
+  it("offers the answer's query as a panel, on a dashboard and to adjust, never run here", async () => {
+    const { server, user, location } = open("/ask?chat=c-act", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-act", title: "Umsatz", messages: chatMessages("Umsatz?", TURN) }),
+    ];
+    const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
+    await user.click(within(answer).getByRole("button", { name: "Add to dashboard" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add to dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    const before = server.areas.datasources.queries.length;
+    await user.click(within(answer).getByRole("button", { name: "Save as panel" }));
+    await waitFor(() => expect(location().pathname).toBe("/explore"));
+    expect(server.areas.datasources.queries.length).toBe(before);
+  });
+
+  it("switches a result over time between table and time series", async () => {
+    const series: Turn = {
+      rounds: [
+        {
+          text: "",
+          calls: [
+            {
+              id: "c1",
+              name: "run_query",
+              arguments: {},
+              record: {
+                ...QUERY_RECORD,
+                results: [
+                  {
+                    refId: "A",
+                    rows: 3,
+                    truncated: false,
+                    excludedValues: 0,
+                    data: {
+                      shape: "frame",
+                      fields: [
+                        {
+                          name: "tag",
+                          type: "time",
+                          values: [CHAT_T0, CHAT_T0 + 1000, CHAT_T0 + 2000],
+                        },
+                        { name: "umsatz", type: "number", values: [1, 3, 2] },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      outcome: "ok",
+    };
+    const { server, user } = open("/ask?chat=c-ts", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-ts", title: "Verlauf", messages: chatMessages("Verlauf?", series) }),
+    ];
+    const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
+    expect(within(answer).getByRole("table")).toBeTruthy();
+    await user.click(within(answer).getByRole("button", { name: "Time series" }));
+    expect(within(answer).getByRole("img", { name: /^umsatz from / })).toBeTruthy();
+    expect(within(answer).queryByRole("table")).toBeNull();
+  });
+
+  it("asks about a dashboard chosen as context", async () => {
+    const { server, user } = open("/ask", USABLE);
+    addDashboard(server.areas.dashboards, "d-region", emptyModel("Umsatz nach Region"));
+    const composer = await screen.findByRole("form", { name: "Ask a question" });
+    await user.click(within(composer).getByRole("button", { name: "Dashboard as context" }));
+    await user.click(await within(composer).findByRole("button", { name: "Umsatz nach Region" }));
+    expect(within(composer).getByText("Context: Umsatz nach Region")).toBeTruthy();
+    await user.click(
+      within(composer).getByRole("button", { name: "Remove the dashboard context" }),
+    );
+    expect(within(composer).queryByText("Context: Umsatz nach Region")).toBeNull();
+    await user.click(within(composer).getByRole("button", { name: "Dashboard as context" }));
+    await user.click(await within(composer).findByRole("button", { name: "Umsatz nach Region" }));
+    await user.type(within(composer).getByRole("textbox"), "Was fällt auf?{Enter}");
+    await waitFor(() => expect(server.areas.aiChat.asks).toHaveLength(1));
+    expect(server.areas.aiChat.asks[0]?.body.dashboardId).toBe("d-region");
   });
 });
 
