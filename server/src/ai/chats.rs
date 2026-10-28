@@ -1,4 +1,4 @@
-//! Stored chats of "Fragen" (migration 0021): a chat belongs to one person in one organization,
+//! Stored chats of "Fragen" (migration 0022): a chat belongs to one person in one organization,
 //! and every read and write here is for that person alone. A chat holds the questions and the
 //! answers with their rounds of text and tool calls (`Turn`); the conversation the provider gets
 //! is rebuilt from them (`conversation`), so a stored chat sends again exactly what it sent

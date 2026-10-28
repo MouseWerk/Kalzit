@@ -914,7 +914,7 @@ query, summarize a result, the agent chat) come after it and must go through it.
   `ai.notice_acknowledged` and `datasource.ai_access_changed` (with the number of excluded fields,
   not their names).
 - **Privacy.** Chats are stored per user and organization (`ai_chats`, `ai_chat_messages`,
-  migration 0021) and deleted `ai.chat_retention_days` (default 30, 0 keeps none; an organization
+  migration 0022) and deleted `ai.chat_retention_days` (default 30, 0 keeps none; an organization
   may only shorten it, `ai::service::chat_retention_days`) after their last message by an hourly
   job (`ai::chats::spawn_retention`); nobody else reads them, admins included, and their owner
   deletes one or all at any time. A stored tool result holds only what went to the provider.
