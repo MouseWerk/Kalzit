@@ -255,9 +255,8 @@ sources of the kind answer `datasource.kind_unavailable`.
   (Kalzit's own database by address, metadata addresses, `datasources.allowed_targets`): the hosts
   and URLs it takes from the settings and its fixed hosts. A target setting that is not text
   (`settings.expected_text`), a URL that does not parse (`settings.url_invalid`) or has no host
-  (`settings.url_no_host`), and an empty host (`settings.host_invalid`) are refused. The plugin
-  then connects on its own (see "Sandbox"), so this checks the configured targets, not the
-  connections it makes.
+  (`settings.url_no_host`), and an empty host (`settings.host_invalid`) are refused. Every
+  connection the plugin then asks for is checked again by the connector ("Network connector").
 - Results pass `plugins::wire::Assembler` with the query's limits: rows, documents and graph
   elements beyond the limit and parts beyond the response budget are cut with the notices of
   built-in sources; parts out of order, of another shape, values that do not fit their field type

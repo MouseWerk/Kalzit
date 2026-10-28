@@ -388,7 +388,8 @@ process, a network target or the gRPC protocol.
   gRPC with a deadline; results go through `wire::Assembler` with the query's limits. Plugin
   reasons that are not reasons of Kalzit's catalog become `plugin.error` (docs/api/plugins.md).
   Before each call the targets the manifest takes from the settings pass the data source target
-  rules; the plugin connects on its own (see Sandbox).
+  rules; every connection the plugin then asks for passes the connector's checks again (see
+  "Network connector").
 
 ### Protocol, version 1
 
@@ -480,9 +481,10 @@ process, a network target or the gRPC protocol.
 - `plugin-sdk/` (crate `kalzit-plugin-sdk`): a plugin implements the `DataSource` trait
   (describe, check_settings, health, schema, query; optional check_on_save, watch, release) and
   calls `kalzit_plugin_sdk::run`. The SDK reads the start's environment (and takes the token out
-  of it), listens on the pipe or socket with the checks of "Process model and transport" (the
-  pipe's DACL with Kalzit's account and `RESTRICTED`, first instance, the client's process id;
-  `SO_PEERCRED` on Linux), prints the handshake, refuses calls without the token (compared in
+  of it, keeping the connector's copy), serves with the checks of "Process model and transport"
+  (Windows: connects to the pipe Kalzit created and checks the server's process id; Linux:
+  listens on the socket, `SO_PEERCRED`), connects to targets only through Kalzit's connector
+  (`net::connect`), prints the handshake, refuses calls without the token (compared in
   constant time), turns the gRPC deadline and `deadline_unix_ms` into one deadline per call, and
   drives a query's future from its result stream, so a cancelled call drops the plugin's work.
   Results are written per shape (`FrameWriter`, `DocumentWriter`, `GraphWriter`), which keep
