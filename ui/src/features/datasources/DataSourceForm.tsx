@@ -294,11 +294,8 @@ function NewDataSource({ orgId }: { orgId: string }) {
                       ) : null}
                     </Link>
                     <span className="ds-kinds__summary" id={`${pickerId}-${option.kind}`}>
-                      {option.plugin === undefined ? (
-                        kindSummary(t, option.kind)
-                      ) : (
-                        <span className="ds-badge">{kindLine(t, option)}</span>
-                      )}
+                      {/* A plugin kind names its publisher here, as plain text like a summary. */}
+                      {kindLine(t, option)}
                     </span>
                   </li>
                 ))}
