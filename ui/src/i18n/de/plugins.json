@@ -103,7 +103,7 @@
   "plugins.publisher.previousKey": "Schlüssel des entfernten Plugins: {key}",
   "plugins.publisher.previousUnknown": "Schlüssel des entfernten Plugins: unsigniert oder unbekannt",
   "plugins.publisher.removedVersion": "Entfernte Version: {version}",
-  "plugins.publisher.clears": "Beim Installieren werden die gespeicherten Passwörter und Schlüssel dieser Datenquellen gelöscht; sie müssen neu eingegeben werden, bevor die Datenquellen wieder funktionieren. Die Änderung wird im Audit-Log festgehalten.",
+  "plugins.publisher.clears": "Beim Installieren werden die gespeicherten Passwörter und Schlüssel dieser Datenquellen sofort gelöscht, auch wenn du die Prüfung der Berechtigungen danach abbrichst; sie müssen neu eingegeben werden, bevor die Datenquellen wieder funktionieren. Die Änderung wird im Audit-Log festgehalten.",
   "plugins.publisher.install": "Installieren und Passwörter löschen",
   "plugins.install.close": "Schließen",
   "plugins.install.reviewTitle": "{name} {version} installieren",

@@ -139,8 +139,8 @@ payload_too_large` above). Answers `201` with the plugin.
   last installed version and the key that signed it, kept per id): it must be signed with that
   key or one it was handed over to, like an update (an older version may come back). Another key,
   or no signature for a signed one, is a change of publisher; so is any reinstall, signed or not,
-  of a plugin that was removed unsigned, since nothing ties a package to it. Only the unchanged
-  signing key keeps the secrets. With data sources of the kind left
+  of a plugin that was removed unsigned, since nothing ties a package to it. Only the same key, or one
+  it was handed over to, keeps the secrets. With data sources of the kind left
   (in any organization, in the trash too) it is refused with `409 plugin.publisher_changed`
   (`datasources`: their number, `previousKeyId`, `removedVersion`) until the administrator
   repeats it with `?confirmPublisherChange=true`. Then the stored secrets of those data sources

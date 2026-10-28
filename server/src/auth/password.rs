@@ -151,22 +151,25 @@ mod tests {
 
     /// Lanes full of sign-in checks, of unknown and of known browsers, do not hold up a new
     /// password's hash, and hashing has threads of its own, so it cannot hold up those checks.
+    /// Checked on lanes of the test's own, so other tests never queue behind lanes held here.
     #[tokio::test]
     async fn hashing_and_checking_do_not_wait_for_each_other() {
-        let shared = SHARED.turns.acquire_many(u32::try_from(cpus()).unwrap()).await.unwrap();
-        let trusted = TRUSTED.turns.acquire_many(u32::try_from((cpus() / 4).max(1)).unwrap()).await.unwrap();
-        let hashed = tokio::time::timeout(std::time::Duration::from_secs(60), hash("neues Passwort 2026".into())).await;
-        drop((shared, trusted));
+        let (shared, trusted, hashing) = (Lane::new(2), Lane::new(1), Lane::new(1));
+        let held = (shared.turns.acquire_many(2).await.unwrap(), trusted.turns.acquire().await.unwrap());
+        let hashed =
+            tokio::time::timeout(std::time::Duration::from_secs(60), hash_on("neues Passwort 2026".into(), &hashing))
+                .await;
+        drop(held);
         let h = hashed.expect("hashing waited for a lane of checks").unwrap();
         assert!(h.starts_with("$argon2id$"));
 
-        let hashing = HASHING.turns.acquire_many(u32::try_from((cpus() / 4).max(1)).unwrap()).await.unwrap();
+        let held = hashing.turns.acquire().await.unwrap();
         let checked = tokio::time::timeout(
             std::time::Duration::from_secs(60),
-            verify("neues Passwort 2026".into(), Some(h), &TRUSTED),
+            verify("neues Passwort 2026".into(), Some(h), &trusted),
         )
         .await;
-        drop(hashing);
+        drop(held);
         assert_eq!(checked.expect("a check waited for hashing"), Some(true));
     }
 
