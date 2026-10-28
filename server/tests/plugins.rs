@@ -726,3 +726,147 @@ async fn processes_end_when_kalzit_stops() {
     t.finish().await;
     assert!(!alive(pid), "the plugin process ended with the server");
 }
+
+/// The example data source plugin (examples/plugins/csv-http), built with the SDK, packaged and
+/// signed with kalzit-plugin-tool as a release would be, installed under Kalzit's key (a test
+/// key trusted as Kalzit's here) and queried through the host.
+fn csv_http_package(key: &SigningKey) -> Vec<u8> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = std::process::Command::new(cargo)
+        .args(["build", "--quiet", "-p", "kalzit-csv-http", "--message-format=json"])
+        .output()
+        .expect("cargo runs");
+    assert!(out.status.success(), "building the example failed: {}", String::from_utf8_lossy(&out.stderr));
+    let binary = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|m| m["target"]["name"] == "kalzit-csv-http")
+        .find_map(|m| m["executable"].as_str().map(PathBuf::from))
+        .expect("cargo names the example's executable");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins/csv-http");
+    // The example needs the Kalzit that ships the plugin host; this build may be older.
+    let template = std::fs::read_to_string(example.join("kalzit-plugin.toml"))
+        .unwrap()
+        .replace("min_kalzit = \"0.4.0\"", concat!("min_kalzit = \"", env!("CARGO_PKG_VERSION"), "\""));
+    let exe = if cfg!(windows) { ".exe" } else { "" };
+    let files = [
+        (format!("bin/{}/kalzit-csv-http{exe}", platform()), std::fs::read(binary).unwrap()),
+        ("README.md".to_string(), std::fs::read(example.join("README.md")).unwrap()),
+    ]
+    .into_iter()
+    .collect();
+    kalzit_plugin_tool::package(&template, &files, &[platform().to_string()], Some(key)).unwrap()
+}
+
+/// A small HTTP server: `/data.csv`, `/data.json`, and `/private.csv` with a bearer token.
+async fn file_server() -> SocketAddr {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).to_string();
+                let path = text.split_whitespace().nth(1).unwrap_or_default().to_string();
+                let authorized = text.lines().any(|l| l.eq_ignore_ascii_case("authorization: Bearer s3cret"));
+                let csv =
+                    "time,host,cpu\n2026-10-28T10:00:00Z,a,0.5\n2026-10-28T10:01:00Z,b,1.5\n2026-10-28T10:02:00Z,c,2\n";
+                let (status, kind, body) = match path.as_str() {
+                    "/data.csv" => ("200 OK", "text/csv", csv.to_string()),
+                    "/private.csv" if authorized => ("200 OK", "text/csv", "n\n1\n".to_string()),
+                    "/private.csv" => ("401 Unauthorized", "text/plain", "no".to_string()),
+                    "/data.json" => (
+                        "200 OK",
+                        "application/json",
+                        r#"{"items":[{"n":1,"ok":true},{"n":2,"ok":false}]}"#.to_string(),
+                    ),
+                    _ => ("404 Not Found", "text/plain", "missing".to_string()),
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn the_example_plugin_built_with_the_sdk_installs_and_answers() {
+    const KIND: &str = "dev.kalzit.csv-http";
+    let t = test_app().await;
+    let kalzit = key(42);
+    let package = csv_http_package(&kalzit);
+    // Under Kalzit's own id a publisher key is refused; Kalzit's key installs it.
+    let r = t.raw(Method::POST, "/api/admin/plugins", Body::from(package.clone()), "application/zip").await;
+    assert_eq!(r.reason(), "plugin.signer_untrusted", "{}", r.body);
+    t.state.plugins.trust_kalzit_key(kalzit.verifying_key());
+    let r = t.raw(Method::POST, "/api/admin/plugins", Body::from(package), "application/zip").await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["signer"], "kalzit", "{}", r.body);
+    assert_eq!(r.body["permissions"][0]["setting"], "url", "{}", r.body);
+    let r = t.send(Method::POST, &format!("/admin/plugins/{KIND}/approve"), Some(json!({ "version": "0.1.0" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.send(Method::POST, &format!("/admin/plugins/{KIND}/enable"), None).await;
+    assert_eq!(r.body["running"], true, "{}", r.body);
+
+    let server = file_server().await;
+    let create = |name: &str, path: &str, secrets: Value| json!({ "name": name, "kind": KIND, "settings": { "url": format!("http://{server}{path}") }, "secrets": secrets });
+    // The plugin's own settings check refuses what is not an http URL.
+    let body = json!({ "name": "FTP", "kind": KIND, "settings": { "url": "ftp://example.com/x.csv" } });
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources", t.org), Some(body)).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+
+    let r = t
+        .send(Method::POST, &format!("/orgs/{}/datasources", t.org), Some(create("CSV", "/data.csv", json!({}))))
+        .await;
+    if r.status != StatusCode::CREATED {
+        let logs = t.send(Method::GET, &format!("/admin/plugins/{KIND}/logs"), None).await;
+        panic!("creating the source failed: {}; the plugin's output: {}", r.body, logs.body);
+    }
+    let ds = r.body["id"].as_str().unwrap().to_string();
+    let r = t.query(&ds, json!({})).await;
+    let frame = &r["result"]["frame"];
+    let names: Vec<&str> = frame["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["time", "host", "cpu"], "{r}");
+    assert_eq!(frame["fields"][0]["type"], "time", "{r}");
+    assert_eq!(frame["fields"][2]["values"], json!([0.5, 1.5, 2]), "{r}");
+    assert_eq!(frame["fields"][1]["values"], json!(["a", "b", "c"]), "{r}");
+
+    // "Test connection" through the plugin.
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources/{ds}/health", t.org), Some(json!({}))).await;
+    assert_eq!(r.body["ok"], true, "{}", r.body);
+
+    // JSON with a pointer, and a secret sent as a bearer token.
+    let r = t
+        .send(Method::POST, &format!("/orgs/{}/datasources", t.org), Some(create("JSON", "/data.json", json!({}))))
+        .await;
+    let json_ds = r.body["id"].as_str().unwrap().to_string();
+    let r = t.query(&json_ds, json!({ "pointer": "/items" })).await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["values"], json!([1, 2]), "{r}");
+    let body = create("Private", "/private.csv", json!({ "token": "s3cret" }));
+    let r = t.send(Method::POST, &format!("/orgs/{}/datasources", t.org), Some(body)).await;
+    let private = r.body["id"].as_str().unwrap().to_string();
+    let r = t.query(&private, json!({})).await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["values"], json!([1]), "{r}");
+    let r = t
+        .send(
+            Method::POST,
+            &format!("/orgs/{}/datasources", t.org),
+            Some(create("No token", "/private.csv", json!({}))),
+        )
+        .await;
+    let r = t.query(r.body["id"].as_str().unwrap(), json!({})).await;
+    assert_eq!(r["error"]["reason"], "source.error", "{r}");
+    t.finish().await;
+}

@@ -170,6 +170,124 @@ jobs:
             --notes-file "docs/releases/v$version.md" \
             --verify-tag $prerelease
 
+  # The example plugins (examples/plugins) for Windows and Linux, signed with Kalzit's plugin key
+  # in job `plugins`. Building them needs no key.
+  plugin-build:
+    name: plugin build (${{ matrix.platform }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            exe: ""
+          - os: windows-latest
+            platform: windows-x64
+            exe: .exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag on main
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME does not point at a commit of main"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - run: cargo build --release --locked -p kalzit-csv-http
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p plugin-bin/${{ matrix.platform }}
+          cp "target/release/kalzit-csv-http${{ matrix.exe }}" plugin-bin/${{ matrix.platform }}/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-bin-${{ matrix.platform }}
+          path: plugin-bin/
+          if-no-files-found: error
+
+  # Packages the example plugins (one package with both binaries per data source plugin, one for
+  # the panel), signs their manifests with Kalzit's plugin key and adds them to the release. The
+  # key is KALZIT_PLUGIN_SIGNING_KEY in the `release` environment (reviewers approve each run);
+  # only release tags reach it, pull requests sign with a throwaway key (ci.yml, job `plugins`).
+  # The packages are checked against the main public key compiled into Kalzit
+  # (server/src/plugins/package.rs), so a wrong secret fails here, not on a server.
+  plugins:
+    name: sign and publish plugins
+    needs: [plugin-build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag on main
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME does not point at a commit of main"
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plugin-bin-*
+          path: plugin-bin
+          merge-multiple: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      # The packaging tool: the plugin contract crate (manifest validator, signing context), zip
+      # and the small release crate; not the server's dependency tree.
+      - run: cargo build --release --locked -p kalzit-plugin-tool --bin kalzit-plugin
+      - name: Package and sign
+        shell: bash
+        env:
+          KALZIT_PLUGIN_SIGNING_KEY: ${{ secrets.KALZIT_PLUGIN_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KALZIT_PLUGIN_SIGNING_KEY" ]; then
+            echo "::error::KALZIT_PLUGIN_SIGNING_KEY is not set in the release environment (docs/plugins/authoring.md)"
+            exit 1
+          fi
+          mkdir -p dist
+          version="$(grep -m1 '^version = ' examples/plugins/csv-http/kalzit-plugin.toml | cut -d'"' -f2)"
+          target/release/kalzit-plugin package --manifest examples/plugins/csv-http/kalzit-plugin.toml \
+            --file bin/linux-x64/kalzit-csv-http=plugin-bin/linux-x64/kalzit-csv-http \
+            --file bin/windows-x64/kalzit-csv-http.exe=plugin-bin/windows-x64/kalzit-csv-http.exe \
+            --file README.md=examples/plugins/csv-http/README.md \
+            --out "dist/dev.kalzit.csv-http-$version.zip"
+          version="$(grep -m1 '^version = ' examples/plugins/panel-kpi/kalzit-plugin.toml | cut -d'"' -f2)"
+          target/release/kalzit-plugin package --manifest examples/plugins/panel-kpi/kalzit-plugin.toml \
+            --file panel.js=examples/plugins/panel-kpi/panel.js \
+            --file README.md=examples/plugins/panel-kpi/README.md \
+            --out "dist/dev.kalzit.panel-kpi-$version.zip"
+      - name: Check against Kalzit's compiled key
+        shell: bash
+        run: |
+          set -euo pipefail
+          public="$(grep -m1 -oE '"[A-Za-z0-9+/]{43}="' server/src/plugins/package.rs | tr -d '"')"
+          for package in dist/*.zip; do
+            target/release/kalzit-plugin verify --package "$package" --public-key "$public"
+          done
+      - name: Add to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY"
+
   # The container image for linux/amd64 and linux/arm64, pushed to ghcr.io/mousewerk/kalzit once
   # the release is published: tags <version>, and for a stable release also <major>.<minor> and
   # latest. The server is cross-compiled in the Dockerfile, so no emulation is needed. This job

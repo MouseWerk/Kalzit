@@ -53,6 +53,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY server server
 COPY release release
 COPY plugin-api plugin-api
+COPY plugin-sdk plugin-sdk
+COPY plugin-tool plugin-tool
+COPY examples examples
 COPY ui ui
 # The help pages shown before sign-in are guide pages, bundled into the web interface.
 COPY docs/guide docs/guide
@@ -68,6 +71,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY server server
 COPY release release
 COPY plugin-api plugin-api
+COPY plugin-sdk plugin-sdk
+COPY plugin-tool plugin-tool
+COPY examples examples
 COPY --from=ui /src/ui/dist ui/dist
 ARG CARGO_PROFILE=release
 ARG CARGO_BUILD_JOBS

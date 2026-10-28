@@ -22,10 +22,10 @@ env:
 
 # Which jobs run: on a pull request only those for the areas it changes (job `changes`, rules in
 # .github/scripts/changes.sh and docs/ARCHITECTURE.md, "CI"); on main and in the merge queue all
-# of them. A job without work still reports its check: the matrix jobs (server, ui, e2e) run and
-# skip their steps, because a matrix job skipped as a whole reports no check per matrix value;
-# the other jobs are skipped as a whole, which counts as passed. If `changes` fails, everything
-# runs.
+# of them. A job without work still reports its check: the matrix jobs (server, plugins, ui,
+# e2e) run and skip their steps, because a matrix job skipped as a whole reports no check per
+# matrix value; the other jobs are skipped as a whole, which counts as passed. If `changes`
+# fails, everything runs.
 jobs:
   changes:
     name: changes
@@ -89,6 +89,68 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - if: env.RUN_JOB == 'true'
         run: cargo test --locked
+
+  # The example plugins (examples/plugins), built and packaged per system the way a release does
+  # (release.yml, job `plugins`), but signed with a throwaway key made in the job: pull requests
+  # never see Kalzit's plugin key. The package is then checked against that key.
+  plugins:
+    name: plugins (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            exe: ""
+          - os: windows-latest
+            platform: windows-x64
+            exe: .exe
+    runs-on: ${{ matrix.os }}
+    env:
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.server == 'true' }}
+    steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        run: echo "No server change in this pull request; the plugin packages are skipped."
+      - uses: actions/checkout@v7
+        if: env.RUN_JOB == 'true'
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.RUN_JOB == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: env.RUN_JOB == 'true'
+        with:
+          key: plugins
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - if: env.RUN_JOB == 'true'
+        run: cargo build --release --locked -p kalzit-csv-http -p kalzit-plugin-tool
+      - name: Package and sign with a throwaway key
+        if: env.RUN_JOB == 'true'
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          set -euo pipefail
+          tool="target/release/kalzit-plugin$EXE"
+          key="$RUNNER_TEMP/throwaway-plugin-key"
+          public="$("$tool" keygen --out "$key" | sed -n 's/^public key: //p')"
+          test -n "$public"
+          mkdir -p dist
+          "$tool" package --manifest examples/plugins/csv-http/kalzit-plugin.toml \
+            --file "bin/$PLATFORM/kalzit-csv-http$EXE=target/release/kalzit-csv-http$EXE" \
+            --file README.md=examples/plugins/csv-http/README.md \
+            --platform "$PLATFORM" --key-file "$key" \
+            --out "dist/dev.kalzit.csv-http-$PLATFORM.zip"
+          "$tool" package --manifest examples/plugins/panel-kpi/kalzit-plugin.toml \
+            --file panel.js=examples/plugins/panel-kpi/panel.js \
+            --file README.md=examples/plugins/panel-kpi/README.md \
+            --key-file "$key" --out dist/dev.kalzit.panel-kpi.zip
+          rm -f "$key"
+          for package in dist/*.zip; do
+            "$tool" verify --package "$package" --public-key "$public"
+          done
 
   postgres:
     name: postgres

@@ -326,11 +326,12 @@ type QueryResult =
 ## Plugins
 
 Decided by the owner on 2026-10-27. Done: the protocol, the manifest with its validator, the
-signing context, the kind registry, the in-process adapter, and the host for data source plugins
+signing context, the kind registry, the in-process adapter, the host for data source plugins
 (install from a file with every check, trust, approval, processes with supervision and sandbox,
-the admin API in docs/api/plugins.md). The panel message API, the catalog, Kalzit's network
-connector for plugins, the Rust SDK and the Plugins board follow in M4 (marked (M4) below). The
-UI follows the board `docs/design/blueprint/Plugins.dc.html`.
+the admin API in docs/api/plugins.md), the Rust SDK with the packaging tool and example plugins,
+and the panel message API. The panel host, the catalog, Kalzit's network connector for plugins and
+the Plugins board follow in M4 (marked (M4) below). The UI follows the board
+`docs/design/blueprint/Plugins.dc.html`.
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
 serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a
@@ -463,6 +464,35 @@ process, a network target or the gRPC protocol.
   schema of its version and drops anything else; a panel cannot run queries of its own.
 - Version 1 grows only by new optional fields and message types; the manifest's `api` names the
   version a bundle speaks, and Kalzit refuses versions it does not know.
+- Done: the message API, version 1 (docs/api/plugins.md, "Panel message API";
+  `kalzit_plugin_api::panel` checks events, `plugin-api/panel/v1/kalzit-panel.d.ts` has the
+  types) and the example `examples/plugins/panel-kpi`. The host side follows (M4).
+
+### SDK, packaging tool and examples
+
+- `plugin-sdk/` (crate `kalzit-plugin-sdk`): a plugin implements the `DataSource` trait
+  (describe, check_settings, health, schema, query; optional check_on_save, watch, release) and
+  calls `kalzit_plugin_sdk::run`. The SDK reads the start's environment (and takes the token out
+  of it), listens on the pipe or socket with the checks of "Process model and transport" (the
+  pipe's DACL with Kalzit's account and `RESTRICTED`, first instance, the client's process id;
+  `SO_PEERCRED` on Linux), prints the handshake, refuses calls without the token (compared in
+  constant time), turns the gRPC deadline and `deadline_unix_ms` into one deadline per call, and
+  drives a query's future from its result stream, so a cancelled call drops the plugin's work.
+  Results are written per shape (`FrameWriter`, `DocumentWriter`, `GraphWriter`), which keep
+  the order of parts, cut batches at `TARGET_PART_BYTES` and say `Full` one row past the row
+  limit or one part past the byte budget, so the host cuts with its own notice. Errors map to
+  `Error` kinds; logs go to stderr. Its tests serve a plugin on a real pipe or socket.
+- Network: `kalzit_plugin_sdk::net` is the place for the client of Kalzit's connector (M4,
+  being built separately); until it lands it connects directly.
+- `plugin-tool/` (binary `kalzit-plugin`): `keygen`, `package` (writes `[files]` with the
+  hashes, checks the manifest as the host does, signs with a key file or
+  `KALZIT_PLUGIN_SIGNING_KEY`), `sign` and `verify`. A tool of its own, so `kalzit-sign` stays
+  small next to the release key.
+- `examples/plugins/csv-http` (`dev.kalzit.csv-http`, a CSV or JSON file over HTTP as a frame)
+  and `examples/plugins/panel-kpi`. CI builds and packages them per system with a throwaway key;
+  release tags sign them with Kalzit's plugin key (`release` environment) and attach them to
+  the release. The contract test installs the data source example signed with a key trusted as
+  Kalzit's and queries it through the host on Windows and Linux.
 
 ### Registry and the in-process adapter
 
@@ -589,8 +619,8 @@ pass the same data source target rules (`TargetPolicy`) as built-in sources.
 - The host (`plugins::package`, `plugins::host`): the package is unpacked into a fresh
   directory below `<data_dir>/plugins/packages` that only Kalzit's account may write, with every
   entry path checked before anything is written and the unpacked size counted (at most 1 GiB);
-  then `check_package`, the signature against Kalzit's plugin keys (compiled in or
-  `KALZIT_PLUGIN_PUBLIC_KEYS` at build time; none yet) and the publisher keys in
+  then `check_package`, the signature against Kalzit's plugin keys (the main key and the offline
+  backup key compiled in, plus `KALZIT_PLUGIN_PUBLIC_KEYS` at build time) and the publisher keys in
   `plugin_keys`, `check_signer` and, for an update, `check_update` with the hand-overs kept
   in `plugin_handovers`. Installed plugins are the table `plugins` (migration 0020), with the
   exact manifest, the signer and its key, the approval, the switch and an update that waits.
