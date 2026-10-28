@@ -90,7 +90,7 @@ server, a view or a range that ends now runs the query again at the dashboard's 
 like every other kind. See [Explore](explore.md#documents) and
 [Dashboards](dashboards.md#live-updates).
 
-InfluxDB, Loki and ClickHouse (M5) and Graphite, Redis, Oracle, Tempo and Jaeger (M6) are planned.
+InfluxDB, Loki and ClickHouse (M5) and Graphite, Redis, Oracle, Tempo and Jaeger (M7) are planned.
 
 ## Read-only
 
