@@ -482,7 +482,7 @@ mod linux {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use tokio::io::{AsyncWriteExt, Interest};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest};
     use tokio::net::{UnixListener, UnixStream};
     use tokio::sync::watch;
 
@@ -511,7 +511,8 @@ mod linux {
     struct Passed {
         inode: u64,
         at: Instant,
-        /// Seen in the plugin's descriptor table: from then on its absence means it is closed.
+        /// The plugin received it (or it was seen in its descriptor table): from then on its
+        /// absence from the table means it is closed.
         seen: bool,
     }
 
@@ -589,6 +590,14 @@ mod linux {
             slots.pending = slots.pending.saturating_sub(1);
             if let Some(inode) = inode {
                 slots.passed.push(Passed { inode, at: Instant::now(), seen: false });
+            }
+        }
+
+        /// The plugin holds the socket `inode` now (it closed the connector connection).
+        fn received(&self, inode: u64) {
+            let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(p) = slots.passed.iter_mut().find(|p| p.inode == inode) {
+                p.seen = true;
             }
         }
 
@@ -697,6 +706,15 @@ mod linux {
             Ok(n) => {
                 process.release(inode);
                 let _ = stream.write_all(&bytes[n..]).await;
+                // The plugin closes the connector connection once it holds the socket; from then
+                // on a socket missing from its table is closed.
+                let mut rest = [0u8; 1];
+                let closed = tokio::time::timeout(IN_FLIGHT, stream.read(&mut rest)).await;
+                if matches!(closed, Ok(Ok(0) | Err(_)))
+                    && let Some(inode) = inode
+                {
+                    process.received(inode);
+                }
             }
             Err(_) => process.release(None),
         }
