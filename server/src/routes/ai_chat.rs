@@ -109,7 +109,10 @@ struct ChatView {
 }
 
 fn summary(chat: ChatRow, retention_days: u64, visible: &[tools::UsableSource]) -> ChatSummary {
-    let selection = chat.selection();
+    // Only the chosen sources the caller may still read: one deleted or out of reach since would
+    // make the next question fail, and the composer could not take it off.
+    let selection: Vec<String> =
+        chat.selection().into_iter().filter(|id| visible.iter().any(|s| &s.id == id)).collect();
     let keep = i64::try_from(retention_days).unwrap_or(i64::MAX / DAY_MS);
     ChatSummary {
         datasources: chats::names_of(&selection, visible),
@@ -378,6 +381,8 @@ impl AgentRun {
             address: self.address.clone(),
         };
         for _ in 0..self.max_calls.saturating_add(2) {
+            // Results of this answer add up too; the oldest go first when they grow too large.
+            chats::trim(&mut messages);
             let request = ChatRequest {
                 system: Some(system.clone()),
                 messages: messages.clone(),

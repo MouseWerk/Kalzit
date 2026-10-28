@@ -358,7 +358,9 @@ Another person's chat is `404 not_found`, also for administrators.
 - `datasourceIds` are the sources chosen in the composer. Each must be one the caller may read or
   query (else `404`), at most 50 (`ai.chat_sources_invalid`). Empty means every source the caller
   may read. The choice narrows every tool; a tool call on another source answers
-  `ai.chat_source_not_selected`. `datasources` names the chosen sources the caller may still read.
+  `ai.chat_source_not_selected`. `datasourceIds` and `datasources` in answers name only the chosen
+  sources the caller may still read; one deleted or out of reach since drops out, so the chat
+  stays usable.
 - `expiresAt` is when the retention job deletes the chat unless it is used again: `updatedAt`
   plus `retentionDays` (`ai.chat_retention_days`, or the organization's shorter value). An hourly
   job deletes chats past it, with their messages; a retention of 0 keeps none (the next run
@@ -385,7 +387,9 @@ core (counted against the limits and audited as `ai.called` with `purpose` `chat
 back to the model, and the next round starts. At most `ai.max_tool_calls` tool calls run per
 answer; a call past it gets the error `ai.chat_tool_limit`, the model has one more round to answer
 in words, and an answer that still calls tools ends with the outcome `toolLimit`. The provider
-gets the newest twelve questions of the chat with their answers and tool results.
+gets the newest twelve questions of the chat with their answers and tool results, at most 150,000
+characters: beyond that the oldest tool results are left out (with a note to run the query again),
+also within one answer; the newest result always stays.
 
 The answer streams as server-sent events:
 
@@ -426,9 +430,9 @@ person had made the request: nothing is decided by the model. Results keep their
 |---|---|---|
 | `list_datasources` | none | lists the chosen sources the caller may read or query: `id`, `name`, `kind`, `queryLanguage`, `openToAi`, `mayQuery` |
 | `get_schema` | `datasourceId` | `datasources:query` on the source (as `GET .../schema`), the source open to AI and chosen |
-| `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts) |
+| `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts). A query that names an excluded field (the entry or its last segment, as a whole word, any case) is refused (`ai.query_names_excluded_field`): an alias or an expression would pass its values under another name |
 | `find_panels` | `search` | lists dashboards the caller may read whose title contains `search` (at most 20), with their panels |
-| `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run; every source of the panel open to AI (and chosen, when sources are chosen). Hidden queries are left out; the panel's steps are not applied |
+| `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run, with the saved current value of each variable (the dashboard's defaults when one is no longer valid); every source of the panel open to AI (and chosen, when sources are chosen). Hidden queries are left out; the panel's steps are not applied |
 | `propose_query` | `datasourceId`, `query`, `title`, `explanation` | `datasources:query` on the source, chosen; never runs, the UI offers "Open in Explore" |
 
 Viewers have no free queries (`datasources:query`), so for them `get_schema`, `run_query` and
@@ -437,7 +441,9 @@ Viewers have no free queries (`datasources:query`), so for them `get_schema`, `r
 days) or epoch milliseconds; the default is the last 24 hours. A refused or failed call is not an
 error of the answer: its record has `status` `error` and `error` (the error envelope's body, with
 its `reason`), and the model reads it. A source of a panel that is closed to AI is named only to a
-caller who may read the source.
+caller who may read the source. For a source with excluded fields, quoted parts of its error
+messages (`'...'`, `"..."`) are replaced by `[excluded]`, since a database error may quote a
+value.
 
 The record of a call (`toolResult`, and in the stored answer) holds only what went to the
 provider: `status`, `datasource` or `dashboard` (`id`, `title`, `panelId`, `panelTitle`,
@@ -445,13 +451,19 @@ provider: `status`, `datasource` or `dashboard` (`id`, `title`, `panelId`, `pane
 `data`, `rows`, `truncated`, `excludedValues`, `error`), `durationMs`, `items`, `schema`,
 `proposal` (`title`, `explanation`) or `error`. The text the model gets is made from the record,
 inside `<kalzit:...>` blocks that cannot be closed from inside, so a stored chat sends the same
-again. When a chat is read or continued, results of a source the caller may no longer read or
-query, of a source closed to AI since, or of a dashboard the caller may no longer read are
-withheld: the record says `"withheld": true` and keeps no data, and the model gets a note instead.
+again. When a chat is read or continued, every record is checked again: a query's result or a
+schema needs the source to exist (not in the trash), to be open to AI and `datasources:query` for
+the caller; a panel's results need `dashboards:read` and its sources existing and open to AI.
+Otherwise the record is withheld: it says `"withheld": true` and keeps no data and no error
+message, and the model gets a note instead. Lists keep only the sources the caller may still read
+and the dashboards they may still read.
 
 Each tool call is audited as `ai.tool_called`: the tool, the chat, the source or the dashboard
 and panel, the query (at most 4000 characters), the number of rows, the outcome and its reason;
-never result data, the question or the answer.
+never result data, the question or the answer. A call cut off when the person stops the answer is
+audited too, with the outcome `stopped` and the query the model gave, so a query sent to a source
+always leaves an entry. The query text stays in the audit log for its own retention, which may be
+longer than the chat's.
 
 ### Messages
 
@@ -501,6 +513,7 @@ sources' own.
 | `ai.chat_tool_unknown` | `name` | the model called a tool that does not exist |
 | `ai.chat_tool_arguments` | | the model called a tool with missing or malformed arguments |
 | `ai.chat_tool_limit` | `max` | the answer used its `max` tool calls (`ai.max_tool_calls`) |
+| `ai.query_names_excluded_field` | `field` | a chat query names a field excluded from AI |
 | `ai.query_empty` | | there is no query to explain, summarize or run (a panel without queries) |
 | `ai.query_too_large` | `bytes` | the query is larger than `bytes` as JSON |
 | `ai.request_invalid` | `max` | the request of a draft or a chat question is empty, longer than `max` characters or has control characters |

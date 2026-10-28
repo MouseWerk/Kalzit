@@ -268,9 +268,20 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> ApiResult<&'a str> {
 }
 
 /// Runs the tool `name` with `args` for the person in `scope`. Never fails: a refusal or an
-/// error becomes an `error` record, which the model reads and the chat shows.
+/// error becomes an `error` record, which the model reads and the chat shows. The call is audited
+/// also when it is dropped before it ends (the person stopped the answer): a query sent to a
+/// source always leaves an `ai.tool_called` entry.
 pub async fn run(scope: &ToolScope<'_>, name: &str, args: &Value) -> ToolRecord {
     let started = Instant::now();
+    let mut pending = PendingAudit(Some(AuditEntry {
+        state: scope.state.clone(),
+        org_id: scope.ctx.org_id.clone(),
+        user_id: scope.ctx.user.id.clone(),
+        address: scope.address.clone(),
+        chat_id: scope.chat_id.to_string(),
+        name: name.to_string(),
+        args: args.clone(),
+    }));
     let outcome = match name {
         "list_datasources" => list_datasources(scope).await,
         "get_schema" => get_schema(scope, args).await,
@@ -286,47 +297,91 @@ pub async fn run(scope: &ToolScope<'_>, name: &str, args: &Value) -> ToolRecord 
     if matches!(name, "run_query" | "run_panel") {
         record.duration_ms = Some(started.elapsed().as_millis() as u64);
     }
-    audit_call(scope, name, &record).await;
+    if let Some(entry) = pending.0.take() {
+        entry.write(Some(&record)).await;
+    }
     record
 }
 
-async fn audit_call(scope: &ToolScope<'_>, name: &str, record: &ToolRecord) {
-    let mut summary = json!({ "tool": name, "chatId": scope.chat_id, "outcome": record.status });
-    if let Some(reason) = record.error.as_ref().and_then(|e| e.reason.clone()) {
-        summary["reason"] = json!(reason);
-    }
-    if let Some(query) = &record.query {
-        let text: String = prompts::query_text(query).chars().take(MAX_AUDIT_QUERY_CHARS).collect();
-        summary["query"] = json!(text);
-    }
-    if !record.results.is_empty() {
-        summary["rows"] = json!(record.results.iter().map(|r| r.rows).sum::<usize>());
-    }
-    let (resource_type, resource_id) = match (&record.datasource, &record.dashboard) {
-        (Some(ds), _) => (Some("datasource"), Some(ds.id.as_str())),
-        (None, Some(d)) => {
-            summary["panelId"] = json!(d.panel_id);
-            (Some("dashboard"), Some(d.id.as_str()))
+/// Who called which tool with what, for its audit entry.
+struct AuditEntry {
+    state: AppState,
+    org_id: String,
+    user_id: String,
+    address: Option<String>,
+    chat_id: String,
+    name: String,
+    args: Value,
+}
+
+/// The audit entry of a call still running; dropped unfinished, it is written as `stopped`.
+struct PendingAudit(Option<AuditEntry>);
+
+impl Drop for PendingAudit {
+    fn drop(&mut self) {
+        if let Some(entry) = self.0.take() {
+            tokio::spawn(async move { entry.write(None).await });
         }
-        _ => (None, None),
-    };
-    let event = AuditEvent {
-        org_id: Some(&scope.ctx.org_id),
-        actor_user_id: Some(&scope.ctx.user.id),
-        actor_address: scope.address.clone(),
-        action: "ai.tool_called",
-        resource_type,
-        resource_id,
-        summary,
-        at_ms: scope.state.clock.now_ms(),
-    };
-    let audited = async {
-        let mut tx = crate::db::begin(&scope.state.db).await?;
-        audit::record(&mut tx, &event).await?;
-        crate::db::commit(tx).await
-    };
-    if let Err(e) = audited.await {
-        tracing::warn!("auditing an AI tool call failed: {e}");
+    }
+}
+
+impl AuditEntry {
+    /// Writes the entry: from the record when the call ended, else from the arguments the model
+    /// gave (outcome `stopped`).
+    async fn write(&self, record: Option<&ToolRecord>) {
+        let outcome = record.map_or("stopped", |r| r.status.as_str());
+        let mut summary = json!({ "tool": self.name, "chatId": self.chat_id, "outcome": outcome });
+        if let Some(reason) = record.and_then(|r| r.error.as_ref()).and_then(|e| e.reason.clone()) {
+            summary["reason"] = json!(reason);
+        }
+        let query = match record {
+            Some(r) => r.query.clone(),
+            None => self.args.get("query").filter(|q| q.is_object()).cloned(),
+        };
+        if let Some(query) = &query {
+            let text: String = prompts::query_text(query).chars().take(MAX_AUDIT_QUERY_CHARS).collect();
+            summary["query"] = json!(text);
+        }
+        if let Some(r) = record.filter(|r| !r.results.is_empty()) {
+            summary["rows"] = json!(r.results.iter().map(|r| r.rows).sum::<usize>());
+        }
+        let text_arg = |key: &str| self.args.get(key).and_then(Value::as_str).map(str::to_string);
+        let (resource_type, resource_id) = match record.map(|r| (&r.datasource, &r.dashboard)) {
+            Some((Some(ds), _)) => (Some("datasource"), Some(ds.id.clone())),
+            Some((None, Some(d))) => {
+                summary["panelId"] = json!(d.panel_id);
+                (Some("dashboard"), Some(d.id.clone()))
+            }
+            Some(_) => (None, None),
+            None => match (text_arg("datasourceId"), text_arg("dashboardId")) {
+                (Some(ds), _) => (Some("datasource"), Some(ds)),
+                (None, Some(d)) => {
+                    if let Some(panel) = text_arg("panelId") {
+                        summary["panelId"] = json!(panel);
+                    }
+                    (Some("dashboard"), Some(d))
+                }
+                _ => (None, None),
+            },
+        };
+        let event = AuditEvent {
+            org_id: Some(&self.org_id),
+            actor_user_id: Some(&self.user_id),
+            actor_address: self.address.clone(),
+            action: "ai.tool_called",
+            resource_type,
+            resource_id: resource_id.as_deref(),
+            summary,
+            at_ms: self.state.clock.now_ms(),
+        };
+        let audited = async {
+            let mut tx = crate::db::begin(&self.state.db).await?;
+            audit::record(&mut tx, &event).await?;
+            crate::db::commit(tx).await
+        };
+        if let Err(e) = audited.await {
+            tracing::warn!("auditing an AI tool call failed: {e}");
+        }
     }
 }
 
@@ -509,7 +564,9 @@ fn result_record(
             }
             Err(e) => record.error = Some(crate::datasources::api_error_body(e)),
         },
-        Some(QueryOutcome::Err { error }) => record.error = Some(error),
+        Some(QueryOutcome::Err { error }) => {
+            record.error = Some(ErrorBody { message: policy.error_text(&error.message), ..error });
+        }
         None => {
             record.error =
                 Some(crate::datasources::api_error_body(ApiError::internal("ai", format!("no outcome for {ref_id}"))))
@@ -523,6 +580,17 @@ async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let query = query_arg(args)?;
     let range = time_range(args, scope.state.clock.now_ms())?;
     let (ds, policy) = queryable(scope, id, true).await?;
+    // Excluded fields are matched by name in results; a query that names one could pass its
+    // values under another name (`email AS kontakt`), so such a query is not run at all.
+    if let Some(field) = policy.excluded_named_in(&prompts::query_text(&query)) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            format!("the query names {field}, a field excluded from AI"),
+        )
+        .because("ai.query_names_excluded_field")
+        .param("field", field));
+    }
     let item = QueryItem {
         ref_id: "A".into(),
         datasource_id: ds.id.clone(),
@@ -585,6 +653,24 @@ async fn find_panels(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecor
     Ok(ToolRecord { status: "ok".into(), items: Some(Value::Array(found)), ..Default::default() })
 }
 
+/// The saved current value of every variable a request may set (constants come from the
+/// dashboard itself), as the dashboard sends them when it opens.
+fn current_values(model: &crate::dashboards::model::DashboardModel) -> BTreeMap<String, Value> {
+    use crate::dashboards::model::VariableType;
+    model
+        .variables
+        .iter()
+        .filter(|v| !matches!(v.kind, VariableType::Constant))
+        .filter_map(|v| {
+            let value = match &v.current {
+                Some(Value::Object(m)) => m.get("value").cloned(),
+                other => other.clone(),
+            }?;
+            (!value.is_null()).then(|| (v.name.clone(), value))
+        })
+        .collect()
+}
+
 async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord> {
     let dashboard_id = arg_str(args, "dashboardId")?;
     let panel_id = arg_str(args, "panelId")?;
@@ -594,7 +680,13 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let panel_title = stored.title.clone();
     let linked = crate::dashboards::linked_content(&scope.state.db, &scope.ctx.org_id, stored).await?;
     let panel = linked.as_ref().unwrap_or(stored);
-    let run = crate::routes::query::stored_items(&model, panel, &BTreeMap::new(), None, &BTreeMap::new())?;
+    // The values the dashboard opens with: each variable's current value as it was saved.
+    let current = current_values(&model);
+    let run = match crate::routes::query::stored_items(&model, panel, &current, None, &BTreeMap::new()) {
+        Ok(run) => run,
+        // A saved value that is no longer an option: the dashboard's own defaults then.
+        Err(_) => crate::routes::query::stored_items(&model, panel, &BTreeMap::new(), None, &BTreeMap::new())?,
+    };
     let hidden: BTreeSet<&str> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.as_str()).collect();
     let items: Vec<QueryItem> = run.items.into_iter().filter(|i| !hidden.contains(i.ref_id.as_str())).collect();
     if items.is_empty() {
@@ -730,32 +822,43 @@ pub fn model_content(name: &str, record: &ToolRecord) -> (String, bool) {
     (text, false)
 }
 
-/// Whether the person may still see a stored record: every source it read is still open to AI
-/// and readable for them, and a panel's dashboard still readable. Answers are cached per id for
-/// one chat.
+/// Whether the person may still see a stored record, decided again whenever a chat is read or
+/// continued, with answers cached per id for one chat:
+///
+/// - a query's result or a schema: the source still exists, is open to AI, and the person may
+///   still query it (`datasources:query`, as running or reading the schema needed);
+/// - a panel's results: the dashboard is still readable and its sources exist and are open to AI;
+/// - lists: only the sources the person may still read, the dashboards they may still read.
+///
+/// What is withheld loses its data, and error messages too (a database error may quote values).
 #[derive(Default)]
 pub struct Visibility {
-    sources: BTreeMap<String, bool>,
+    queryable: BTreeMap<String, bool>,
+    open: BTreeMap<String, bool>,
     dashboards: BTreeMap<String, bool>,
+    visible: Option<BTreeSet<String>>,
 }
 
 impl Visibility {
-    async fn source(&mut self, state: &AppState, ctx: &OrgCtx, id: &str) -> bool {
-        if let Some(known) = self.sources.get(id) {
+    /// The source exists (not in the trash) and is open to AI.
+    async fn open(&mut self, state: &AppState, ctx: &OrgCtx, id: &str) -> bool {
+        if let Some(known) = self.open.get(id) {
             return *known;
         }
-        let rights = async {
-            for permission in [Permission::DatasourcesQuery, Permission::DatasourcesRead] {
-                if check_resource(&state.db, ctx, permission, Resource::Datasource(id)).await.is_ok() {
-                    return true;
-                }
-            }
-            false
-        }
-        .await;
-        let open = rights && super::store::datasource_readable(&state.db, id).await.unwrap_or(false);
-        self.sources.insert(id.to_string(), open);
+        let exists = find_in_org(&state.db, &ctx.org_id, id, false).await.is_ok();
+        let open = exists && super::store::datasource_readable(&state.db, id).await.unwrap_or(false);
+        self.open.insert(id.to_string(), open);
         open
+    }
+
+    async fn queryable(&mut self, state: &AppState, ctx: &OrgCtx, id: &str) -> bool {
+        if let Some(known) = self.queryable.get(id) {
+            return *known;
+        }
+        let ok = self.open(state, ctx, id).await
+            && check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(id)).await.is_ok();
+        self.queryable.insert(id.to_string(), ok);
+        ok
     }
 
     async fn dashboard(&mut self, state: &AppState, ctx: &OrgCtx, id: &str) -> bool {
@@ -767,35 +870,62 @@ impl Visibility {
         ok
     }
 
-    /// `record` as the person may see it now: with its schema and results, or withheld.
-    pub async fn check(&mut self, state: &AppState, ctx: &OrgCtx, mut record: ToolRecord) -> ToolRecord {
-        let carries_data = record.schema.is_some() || record.results.iter().any(|r| r.data.is_some());
-        if !carries_data || record.withheld {
+    async fn visible(&mut self, state: &AppState, ctx: &OrgCtx) -> &BTreeSet<String> {
+        if self.visible.is_none() {
+            let ids = visible_sources(state, ctx).await.map(|s| s.into_iter().map(|s| s.id).collect());
+            self.visible = Some(ids.unwrap_or_default());
+        }
+        self.visible.get_or_insert_with(BTreeSet::new)
+    }
+
+    /// `record` of a call of `name` as the person may see it now.
+    pub async fn check(&mut self, state: &AppState, ctx: &OrgCtx, name: &str, mut record: ToolRecord) -> ToolRecord {
+        if record.withheld {
             return record;
         }
-        let mut allowed = true;
-        if let Some(dashboard) = &record.dashboard {
-            allowed &= self.dashboard(state, ctx, &dashboard.id).await;
-            for id in dashboard.datasource_ids.clone() {
-                // The panel's sources only need to stay open to AI; reading them comes with the
-                // dashboard.
-                let open = match self.sources.get(&format!("open:{id}")) {
-                    Some(known) => *known,
-                    None => {
-                        let open = super::store::datasource_readable(&state.db, &id).await.unwrap_or(false);
-                        self.sources.insert(format!("open:{id}"), open);
-                        open
+        // Lists keep what the person may still see.
+        if let Some(Value::Array(items)) = record.items.take() {
+            let mut kept = Vec::new();
+            for item in items {
+                let keep = match name {
+                    "list_datasources" => {
+                        let id = item.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                        self.visible(state, ctx).await.contains(&id)
                     }
+                    "find_panels" => {
+                        let id = item.get("dashboardId").and_then(Value::as_str).unwrap_or_default().to_string();
+                        self.dashboard(state, ctx, &id).await
+                    }
+                    _ => true,
                 };
-                allowed &= open;
+                if keep {
+                    kept.push(item);
+                }
             }
-        } else if let Some(ds) = &record.datasource {
-            allowed &= self.source(state, ctx, &ds.id).await;
+            record.items = Some(Value::Array(kept));
+        }
+        let mut allowed = true;
+        if let Some(dashboard) = record.dashboard.clone() {
+            allowed &= self.dashboard(state, ctx, &dashboard.id).await;
+            for id in &dashboard.datasource_ids {
+                allowed &= self.open(state, ctx, id).await;
+            }
+        } else if let Some(ds) = record.datasource.clone() {
+            // A proposal holds no data of the source; a result or a schema needs the right to query.
+            if name != "propose_query" {
+                allowed &= self.queryable(state, ctx, &ds.id).await;
+            }
         }
         if !allowed {
             record.schema = None;
             for result in &mut record.results {
                 result.data = None;
+                if let Some(error) = &mut result.error {
+                    error.message.clear();
+                }
+            }
+            if let Some(error) = &mut record.error {
+                error.message.clear();
             }
             record.withheld = true;
         }

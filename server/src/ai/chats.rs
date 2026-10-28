@@ -279,7 +279,7 @@ async fn checked_turn(state: &AppState, ctx: &OrgCtx, visibility: &mut Visibilit
     for round in &mut turn.rounds {
         for call in &mut round.calls {
             if let Some(record) = call.record.take() {
-                call.record = Some(visibility.check(state, ctx, record).await);
+                call.record = Some(visibility.check(state, ctx, &call.name, record).await);
             }
         }
     }
@@ -347,7 +347,49 @@ pub async fn conversation(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiR
             _ => {}
         }
     }
+    trim(&mut out);
     Ok(out)
+}
+
+/// The most characters a conversation sent to the provider holds; results beyond it are left
+/// out, oldest first, so a chat with large results stays within a model's context.
+pub const MAX_CONVERSATION_CHARS: usize = 150_000;
+
+/// What replaces a tool result left out to keep the conversation short.
+const LEFT_OUT: &str =
+    "This older result was left out to keep the conversation short. Run the query again if it is needed.";
+
+fn part_chars(part: &Part) -> usize {
+    match part {
+        Part::Text(t) => t.chars().count(),
+        Part::ToolCall { name, arguments, .. } => name.len() + arguments.to_string().len(),
+        Part::ToolResult { content, .. } => content.chars().count(),
+    }
+}
+
+/// Leaves out tool results, oldest first, until the conversation holds at most
+/// `MAX_CONVERSATION_CHARS`; the newest result always stays, as do questions and answers.
+pub fn trim(messages: &mut [Message]) {
+    let mut total: usize = messages.iter().flat_map(|m| &m.parts).map(part_chars).sum();
+    let results = messages.iter().flat_map(|m| &m.parts).filter(|p| matches!(p, Part::ToolResult { .. })).count();
+    let mut seen = 0;
+    for part in messages.iter_mut().flat_map(|m| m.parts.iter_mut()) {
+        if total <= MAX_CONVERSATION_CHARS {
+            return;
+        }
+        if let Part::ToolResult { content, .. } = part {
+            seen += 1;
+            if seen == results {
+                // The newest result stays.
+                return;
+            }
+            let before = content.chars().count();
+            if before > LEFT_OUT.len() {
+                *content = LEFT_OUT.to_string();
+                total = total - before + LEFT_OUT.len();
+            }
+        }
+    }
 }
 
 /// The data sources a chat names in the list, for each chat: the chosen ones, by name, among the
@@ -431,6 +473,31 @@ mod tests {
         let long = "Wort ".repeat(60);
         let title = title_of(&long);
         assert!(title.ends_with("...") && title.chars().count() <= MAX_TITLE_CHARS + 3, "{title}");
+    }
+
+    #[test]
+    fn long_conversations_lose_their_oldest_results_first() {
+        let result = |id: &str, n: usize| Message {
+            role: Role::User,
+            parts: vec![Part::ToolResult { call_id: id.into(), content: "x".repeat(n), is_error: false }],
+        };
+        let mut messages = vec![
+            Message::user("Frage"),
+            result("a", MAX_CONVERSATION_CHARS),
+            result("b", 1000),
+            result("c", MAX_CONVERSATION_CHARS),
+        ];
+        trim(&mut messages);
+        let content = |m: &Message| match &m.parts[0] {
+            Part::ToolResult { content, .. } => content.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(content(&messages[1]), LEFT_OUT);
+        assert_eq!(content(&messages[2]), LEFT_OUT, "older ones go until it fits");
+        assert_eq!(content(&messages[3]).len(), MAX_CONVERSATION_CHARS, "the newest result stays");
+        let mut short = vec![Message::user("Frage"), result("a", 10)];
+        trim(&mut short);
+        assert_eq!(content(&short[1]).len(), 10);
     }
 
     #[test]

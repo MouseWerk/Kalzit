@@ -458,7 +458,7 @@ async fn answers_with_tools(kind: &str) {
         tool("get_schema", json!({ "datasourceId": ds })),
         tool(
             "run_query",
-            json!({ "datasourceId": ds, "query": { "sql": "SELECT name, email, umsatz FROM kunden ORDER BY name" },
+            json!({ "datasourceId": ds, "query": { "sql": "SELECT * FROM kunden ORDER BY name" },
                     "timeRange": { "from": "now-7d", "to": "now" } }),
         ),
         text("Drei Kunden, zusammen 60."),
@@ -515,6 +515,28 @@ async fn answers_with_tools(kind: &str) {
     assert!(follow_up.to_string().contains("Wie viel Umsatz haben die Kunden?"));
     assert_eq!(tool_results(&follow_up).len(), 3, "the earlier tool results go along: {follow_up}");
 
+    // A query that names an excluded field is not run: an alias would pass its values.
+    mock.script(vec![
+        tool("run_query", json!({ "datasourceId": ds, "query": { "sql": "SELECT lower(EMAIL) AS k FROM kunden" } })),
+        text("Geht nicht."),
+    ]);
+    let r = t.ask(&org, &chat, "Die Adressen?", &editor).await;
+    assert_eq!(r.records()[0]["error"]["reason"], "ai.query_names_excluded_field", "{}", r.text);
+    assert!(!mock.requests().last().unwrap().to_string().contains("geheim.example"));
+
+    // Who may no longer query the source no longer sees its stored results.
+    let me = t.get("/api/me", &editor).await;
+    let editor_id = me.body["id"].as_str().expect("the editor's id").to_string();
+    let role = |role: &str| json!({ "role": role });
+    let path = format!("/api/orgs/{org}/members/{editor_id}");
+    assert_eq!(t.send(Method::PATCH, &path, Some(role("viewer")), Some(&owner)).await.status, StatusCode::OK);
+    let r = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    let rounds = &r.body["messages"][1]["content"]["rounds"];
+    assert_eq!(rounds[2]["calls"][0]["record"]["withheld"], true, "{rounds}");
+    assert!(rounds[1]["calls"][0]["record"].get("schema").is_none(), "the schema too: {rounds}");
+    assert_eq!(rounds[0]["calls"][0]["record"]["items"], json!([]), "a viewer reads no source: {rounds}");
+    assert_eq!(t.send(Method::PATCH, &path, Some(role("editor")), Some(&owner)).await.status, StatusCode::OK);
+
     // Closing the source withholds its stored results, in the chat and towards the provider.
     t.access(&org, &ds, false, &[], &owner).await;
     let r = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
@@ -531,11 +553,11 @@ async fn answers_with_tools(kind: &str) {
     // Audited: each round as a call with the purpose `chat`, each tool call with its query and
     // row count, never result data.
     let calls = t.audited("ai.called").await;
-    assert_eq!(calls.len(), 6);
+    assert_eq!(calls.len(), 8);
     assert!(calls.iter().all(|c| c["purpose"] == "chat" && c["promptVersion"] == 1));
     let tools = t.audited("ai.tool_called").await;
     let names: Vec<&str> = tools.iter().map(|c| c["tool"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_datasources", "get_schema", "run_query"]);
+    assert_eq!(names, ["list_datasources", "get_schema", "run_query", "run_query"]);
     assert_eq!(tools[2]["rows"], 3);
     assert!(tools[2]["query"].as_str().unwrap().contains("FROM kunden"));
     for entry in calls.iter().chain(&tools) {
@@ -691,6 +713,24 @@ async fn every_tool_is_authorized_with_the_askers_rights() {
     // A source the caller may not read cannot be chosen.
     let r = t.post(&format!("/api/orgs/{org}/ai/chats"), json!({ "datasourceIds": [ds] }), &viewer).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    // A chosen source deleted since drops out of the chat's sources, so the chat stays usable.
+    let r = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    assert_eq!(r.body["datasourceIds"], json!([closed]), "{}", r.body);
+    let r = t.delete(&format!("/api/orgs/{org}/datasources/{closed}"), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let r = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    assert_eq!(r.body["datasourceIds"], json!([]), "{}", r.body);
+
+    // Removing a member from the organization deletes their chats there.
+    let viewer_id = t.get("/api/me", &viewer).await.body["id"].as_str().unwrap().to_string();
+    let r = t.delete(&format!("/api/orgs/{org}/members/{viewer_id}"), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ai_chats WHERE user_id = $1")
+        .bind(&viewer_id)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
     t.finish().await;
 }
 

@@ -73,6 +73,53 @@ impl DataPolicy {
         out
     }
 
+    /// The first excluded entry a query text names as a word: the entry itself or its last
+    /// segment (`kunden.email` is named by `email`), compared after the same folding. A query the
+    /// model writes could otherwise read an excluded field under another name (`email AS x`).
+    pub fn excluded_named_in(&self, text: &str) -> Option<String> {
+        let text = fold(text);
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let named = |word: &str| {
+            !word.is_empty()
+                && text.match_indices(word).any(|(at, _)| {
+                    let before = text[..at].chars().next_back();
+                    let after = text[at + word.len()..].chars().next();
+                    !before.is_some_and(is_word) && !after.is_some_and(is_word)
+                })
+        };
+        self.excluded.iter().find(|e| named(e) || e.rsplit('.').next().is_some_and(named)).cloned()
+    }
+
+    /// An error text of a source as the model may get it: with excluded fields, every quoted
+    /// part (`'...'`, `"..."`) is replaced, since a database error may quote a value.
+    pub fn error_text(&self, message: &str) -> String {
+        if self.excluded.is_empty() {
+            return message.to_string();
+        }
+        let mut out = String::with_capacity(message.len());
+        let mut open: Option<char> = None;
+        for c in message.chars() {
+            match open {
+                Some(q) if c == q => {
+                    out.push_str(EXCLUDED);
+                    out.push(c);
+                    open = None;
+                }
+                Some(_) => {}
+                None => {
+                    out.push(c);
+                    if c == '\'' || c == '"' {
+                        open = Some(c);
+                    }
+                }
+            }
+        }
+        if open.is_some() {
+            out.push_str(EXCLUDED);
+        }
+        out
+    }
+
     /// Whether the value at `path` (a field name or dotted path) is excluded.
     pub fn excludes(&self, path: &str) -> bool {
         let path = fold(path);
@@ -379,6 +426,25 @@ mod tests {
         assert_eq!(out.value["edges"].as_array().unwrap().len(), 1);
         assert_eq!(out.value["nodes"][0]["properties"]["email"], EXCLUDED);
         assert!(out.truncated);
+    }
+
+    #[test]
+    fn queries_naming_an_excluded_field_are_found() {
+        let p = policy(&["kunden.email", "IBAN"], 10);
+        assert_eq!(p.excluded_named_in("SELECT name, Email AS kontakt FROM kunden").as_deref(), Some("kunden.email"));
+        assert_eq!(p.excluded_named_in("select k.iban from k").as_deref(), Some("iban"));
+        assert_eq!(p.excluded_named_in("SELECT emails, xemail, iban_count FROM k"), None);
+        assert_eq!(policy(&[], 10).excluded_named_in("SELECT email"), None);
+    }
+
+    #[test]
+    fn quoted_parts_of_errors_are_replaced_when_fields_are_excluded() {
+        let p = policy(&["email"], 10);
+        assert_eq!(
+            p.error_text("invalid input syntax for type integer: \"ana@x.de\" near 'x"),
+            "invalid input syntax for type integer: \"[excluded]\" near '[excluded]"
+        );
+        assert_eq!(policy(&[], 10).error_text("bad \"v\""), "bad \"v\"");
     }
 
     #[test]
