@@ -12,6 +12,8 @@ plugin its own page (`/settings/plugins/<plugin id>`).
 
 ## Installed plugins
 
+![Settings > Plugins: the installed plugins with publisher, signature, version, network targets and status](../screenshots/plugins.png)
+
 A strip on top counts the installed plugins, how many run, the problems, waiting updates, the
 catalog and whether unsigned plugins are allowed. **All**, **Problems** and **Updates** filter the
 table, which shows per plugin:
@@ -62,6 +64,8 @@ A refused package names the step that failed and why, and the steps after it are
 
 ## A plugin's page
 
+![A plugin's page: granted permissions, the process and its sandbox layers](../screenshots/plugin-details.png)
+
 The page shows the plugin's id, publisher, signature, license and installation date, and:
 
 - **Approve permissions...** for a plugin not approved yet, **Approve update to ...** for a waiting
@@ -84,6 +88,8 @@ They stay with their settings and answer "kind not available" until it is instal
 **Turn off** keeps the plugin installed; its sources answer the same until it is turned on.
 
 ## Signature and trust
+
+![Signature and trust: the trusted keys and the switch for unsigned plugins](../screenshots/plugins-trust.png)
 
 **Trusted keys** (Vertrauenswürdige Schlüssel) lists Kalzit's own key (built in, cannot be removed)
 and the publisher keys added here, with fingerprint, date and the plugins they signed.
@@ -118,6 +124,8 @@ organization's sources of its kind answer "kind not available". The change appli
 can be undone.
 
 ## Data sources of plugin kinds
+
+![Add data source with a plugin kind: its own group, the publisher and the plugin's advice](../screenshots/data-source-plugin.png)
 
 In **Add data source** the plugin kinds have a group of their own, **From plugins** (signed, run
 in a sandbox), each with the plugin's letters and "Plugin from *publisher* · *version*". The form

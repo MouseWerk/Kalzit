@@ -215,6 +215,10 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Sign in, dark theme | |
 | ![About Kalzit: the calcite crystal with a beam of light split in two, the build and the license, dark theme](docs/screenshots/about-dark.png) | ![About Kalzit in the light theme](docs/screenshots/about-light.png) |
 | About Kalzit, dark theme | About Kalzit, light theme |
+| ![Settings > Plugins: the installed plugins with publisher, signature, version, network targets and status](docs/screenshots/plugins.png) | ![A plugin's page: granted permissions, the process and its sandbox layers](docs/screenshots/plugin-details.png) |
+| Plugins: installed plugins | A plugin's page with its sandbox |
+| ![Signature and trust: the trusted keys and the switch for unsigned plugins](docs/screenshots/plugins-trust.png) | ![Add data source with a plugin kind: its own group, the publisher and the plugin's advice](docs/screenshots/data-source-plugin.png) |
+| Plugins: signature and trust | A data source of a plugin kind |
 
 ## Quick start
 
