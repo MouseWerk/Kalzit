@@ -16,6 +16,7 @@
   "nav.children": "Bereiche: {name}",
   "userMenu.label": "Konto",
   "userMenu.signOut": "Abmelden",
+  "userMenu.signOutForget": "Abmelden und diesen Browser vergessen",
   "theme.label": "Darstellung",
   "theme.system": "System",
   "theme.light": "Hell",

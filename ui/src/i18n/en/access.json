@@ -20,6 +20,8 @@
   "access.login.password": "Password",
   "access.login.forgot": "Forgot password?",
   "access.login.forgotHint": "An admin of your organization can reset your password.",
+  "access.login.notMyBrowser": "This is not my browser",
+  "access.login.notMyBrowserNote": "Do not remember this device",
   "access.login.submit": "Sign in",
   "access.login.submitting": "Signing in…",
   "access.login.wrong": "Email address or password is not correct.",

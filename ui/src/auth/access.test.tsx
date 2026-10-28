@@ -44,8 +44,12 @@ describe("sign-in page", () => {
     expect(email.getAttribute("autocomplete")).toBe("username");
     expect(email.getAttribute("placeholder")).toBe("name@company.com");
     expect(screen.getByLabelText("Password").getAttribute("autocomplete")).toBe("current-password");
-    // "Stay signed in" would need short and long sessions, which the server does not have yet.
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    // "Stay signed in" would need short and long sessions, which the server does not have yet;
+    // the one choice is not to remember a browser that is not the user's, off by default.
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(1);
+    expect(checkboxes[0]?.getAttribute("name")).toBe("forgetBrowser");
+    expect((checkboxes[0] as HTMLInputElement).checked).toBe(false);
     expect(screen.getByRole("button", { name: "Language: English" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Theme: System" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Help" }).getAttribute("href")).toBe(

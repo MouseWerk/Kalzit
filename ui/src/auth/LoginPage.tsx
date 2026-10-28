@@ -49,6 +49,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FieldErrors<LoginField>>({});
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [notMine, setNotMine] = useState(false);
   const [until, setUntil] = useState<number | null>(null);
   const [firstWait, setFirstWait] = useState(0);
   const forgotId = useId();
@@ -106,7 +107,11 @@ export function LoginPage() {
       return;
     }
     setUntil(null);
-    signIn.mutate({ email: trimWhitespace(email), password });
+    signIn.mutate({
+      email: trimWhitespace(email),
+      password,
+      ...(notMine ? { forgetBrowser: true } : {}),
+    });
   }
 
   function edit(field: LoginField, setValue: (value: string) => void) {
@@ -257,6 +262,18 @@ export function LoginPage() {
         <div id={forgotId} className="access__forgot" aria-live="polite">
           {forgotOpen ? <p className="field__hint">{t("access.login.forgotHint")}</p> : null}
         </div>
+        {/* A shared or borrowed browser: it does not become a known device of the account. */}
+        <label className="access__check">
+          <input
+            type="checkbox"
+            name="forgetBrowser"
+            checked={notMine}
+            disabled={busy}
+            onChange={(event) => setNotMine(event.currentTarget.checked)}
+          />
+          <span>{t("access.login.notMyBrowser")}</span>
+          <span className="access__check-note">{t("access.login.notMyBrowserNote")}</span>
+        </label>
         <button
           type="submit"
           className={

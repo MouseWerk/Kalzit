@@ -45,10 +45,11 @@ pub struct Lane {
     max_waiting: usize,
 }
 
-/// For everyone: hashing, and the checks of sign-ins from browsers the account does not know.
+/// For the checks of sign-ins from browsers the account does not know.
 pub static SHARED: LazyLock<Lane> = LazyLock::new(|| Lane::new(cpus()));
-/// For the checks of known devices (`auth::device`) and of signed-in users, so a flood of
-/// guesses that fills the shared lane cannot keep the owner out.
+/// For the checks of known devices (`auth::device`) and of signed-in users, and for hashing new
+/// passwords (setup, an admin's reset, a user's change), so a flood of guesses that fills the
+/// shared lane cannot keep the owner out or delay them.
 pub static TRUSTED: LazyLock<Lane> = LazyLock::new(|| Lane::new((cpus() / 4).max(1)));
 
 /// Counts a waiter until dropped (also when the request is cancelled while waiting).
@@ -80,10 +81,11 @@ impl Lane {
     }
 }
 
-/// Hashes a new password on the shared lane; it waits for its turn however many wait (only
-/// admins, signed-in users and setup hash).
+/// Hashes a new password on the trusted lane; it waits for its turn however many wait. Only
+/// privileged requests hash (setup with its code, admins, signed-in users), so sign-in guesses on
+/// the shared lane never delay them.
 pub async fn hash(password: String) -> Result<String, String> {
-    let _turn = SHARED.turns.acquire().await.map_err(|e| e.to_string())?;
+    let _turn = TRUSTED.turns.acquire().await.map_err(|e| e.to_string())?;
     tokio::task::spawn_blocking(move || hash_blocking(&password)).await.map_err(|e| e.to_string())?
 }
 
@@ -128,6 +130,16 @@ mod tests {
     #[tokio::test]
     async fn unknown_user_never_verifies() {
         assert_eq!(verify("anything".into(), None, &SHARED).await, Some(false));
+    }
+
+    /// A shared lane full of sign-in checks does not hold up a new password's hash.
+    #[tokio::test]
+    async fn hashing_does_not_wait_for_the_shared_lane() {
+        let threads = u32::try_from(cpus()).unwrap();
+        let busy = SHARED.turns.acquire_many(threads).await.unwrap();
+        let hashed = tokio::time::timeout(std::time::Duration::from_secs(60), hash("neues Passwort 2026".into())).await;
+        drop(busy);
+        assert!(hashed.expect("hashing waited for the shared lane").unwrap().starts_with("$argon2id$"));
     }
 
     /// Beyond its waiters a lane refuses at once instead of queueing without end.

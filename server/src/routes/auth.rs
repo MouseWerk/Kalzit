@@ -1,6 +1,6 @@
 //! Sign in, sign out and the current user.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
@@ -18,6 +18,17 @@ use crate::net::RequestInfo;
 pub struct LoginRequest {
     email: String,
     password: String,
+    /// "This is not my browser": no device cookie is issued, and one the browser has is removed.
+    #[serde(default, rename = "forgetBrowser")]
+    forget_browser: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogoutQuery {
+    /// "Sign out and forget this browser": the device cookie is removed as well.
+    #[serde(default, rename = "forgetBrowser")]
+    forget_browser: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -247,20 +258,27 @@ pub async fn login(
     event.resource_id = Some(&row.id);
     crate::audit::record(&mut tx, &event).await?;
     // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
-    let device = crate::auth::device::issue(&state.secrets, &row.id, row.password_hash.as_deref(), now);
+    let device = (!req.forget_browser)
+        .then(|| crate::auth::device::issue(&state.secrets, &row.id, row.password_hash.as_deref(), now));
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
     let answer = me(&mut *tx, user).await?;
     crate::db::commit(tx).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    // This browser is now a known device of the account (renewed with every sign-in).
-    headers.append(header::SET_COOKIE, crate::auth::device::set_cookie(&device, info.https));
+    // This browser is now a known device of the account (renewed with every sign-in), unless the
+    // user said it is not theirs: then it forgets any device it was.
+    let device_cookie = match &device {
+        Some(value) => crate::auth::device::set_cookie(value, info.https),
+        None => crate::auth::device::clear_cookie(info.https),
+    };
+    headers.append(header::SET_COOKIE, device_cookie);
     Ok((headers, Json(answer)))
 }
 
 pub async fn logout(
     State(state): State<AppState>,
     Extension(info): Extension<RequestInfo>,
+    Query(query): Query<LogoutQuery>,
     headers: HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
     if let Some(token) = session::read_cookie(&headers, info.https) {
@@ -288,6 +306,11 @@ pub async fn logout(
     }
     let mut out = HeaderMap::new();
     out.insert(header::SET_COOKIE, session::clear_cookie(info.https));
+    // The device cookie survives a plain sign-out, so the owner keeps the known-device budget in
+    // their own browser; on request it goes too.
+    if query.forget_browser {
+        out.append(header::SET_COOKIE, crate::auth::device::clear_cookie(info.https));
+    }
     Ok((StatusCode::NO_CONTENT, out))
 }
 

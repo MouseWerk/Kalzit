@@ -845,6 +845,51 @@ async fn a_known_device_signs_in_while_the_account_is_under_attack() {
     t.finish().await;
 }
 
+/// "This is not my browser" at sign-in issues no device cookie and removes one the browser had;
+/// a plain sign-out keeps the device cookie, "sign out and forget this browser" removes it.
+#[tokio::test]
+async fn a_browser_that_is_not_mine_is_not_remembered() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    t.setup().await;
+    let device_cookies = |r: &Reply| -> Vec<String> {
+        r.headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .filter(|v| v.starts_with("kalzit_device="))
+            .map(str::to_string)
+            .collect()
+    };
+
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD, "forgetBrowser": true });
+    let shared = t.send(Method::POST, "/api/auth/login", Some(body), &[]).await;
+    assert_eq!(shared.status, StatusCode::OK, "{}", shared.body);
+    let cookies = device_cookies(&shared);
+    assert_eq!(cookies.len(), 1, "{cookies:?}");
+    assert!(cookies[0].starts_with("kalzit_device=;") && cookies[0].contains("Max-Age=0"), "{cookies:?}");
+
+    // The owner's own browser: a plain sign-out leaves the device cookie alone.
+    let own = t.login("joerg@example.de", PASSWORD).await;
+    let device = set_cookie(&own, "kalzit_device");
+    assert!(device.len() > "kalzit_device=".len());
+    let session = own.session_cookie();
+    let out = t.send(Method::POST, "/api/auth/logout", None, &[("cookie", &session)]).await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    assert!(device_cookies(&out).is_empty(), "a plain sign-out keeps the device cookie");
+
+    // Sign out and forget this browser.
+    let again = t.login_with("joerg@example.de", PASSWORD, &device).await;
+    let session = again.session_cookie();
+    let out = t
+        .send(Method::POST, "/api/auth/logout?forgetBrowser=true", None, &[("cookie", &format!("{session}; {device}"))])
+        .await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    let cookies = device_cookies(&out);
+    assert!(cookies.len() == 1 && cookies[0].contains("Max-Age=0"), "{cookies:?}");
+    assert_eq!(t.send(Method::GET, "/api/me", None, &[("cookie", &session)]).await.status, StatusCode::UNAUTHORIZED);
+    t.finish().await;
+}
+
 /// Guessing spread over many networks gets only the account's shared budget, not the budget of
 /// every address: after it, every guess is refused, the right one included.
 #[tokio::test]

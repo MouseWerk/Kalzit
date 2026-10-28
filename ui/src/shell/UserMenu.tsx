@@ -49,11 +49,11 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const menu = useMenuButton({ onOpen: () => signOut.reset() });
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   const signOut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (forgetBrowser: boolean) => {
       // Reads still under way are stopped first: answered after the session ended, they would
       // come back as 401 errors of a page that is being left.
       await queryClient.cancelQueries();
-      await logout();
+      await logout(forgetBrowser);
     },
     onSuccess: async () => {
       // Nothing chosen in this session passes to whoever signs in next in this browser.
@@ -163,11 +163,25 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
               className="menu__item"
               onClick={() => {
                 closeMenu(true);
-                signOut.mutate();
+                signOut.mutate(false);
               }}
             >
               <Icon name="signOut" />
               {t("userMenu.signOut")}
+            </button>
+            {/* A shared browser: it is no longer a known device of the account either. */}
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              className="menu__item"
+              onClick={() => {
+                closeMenu(true);
+                signOut.mutate(true);
+              }}
+            >
+              <Icon name="check" className="menu__check" />
+              {t("userMenu.signOutForget")}
             </button>
           </div>
         ) : null}

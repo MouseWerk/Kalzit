@@ -61,6 +61,7 @@ impl HostError {
             "plugin.key_in_use"
             | "plugin.downgrade"
             | "plugin.key_changed"
+            | "plugin.publisher_changed"
             | "plugin.not_approved"
             | "plugin.nothing_to_approve"
             | "plugin.version_mismatch"

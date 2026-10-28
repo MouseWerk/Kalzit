@@ -15,6 +15,8 @@ Every change is written to the audit log with `resourceType: "plugin"` and the p
 key id, or `server`) as `resourceId`: `plugins.installed`, `plugins.updated`,
 `plugins.update_pending`, `plugins.approved`, `plugins.enabled`, `plugins.disabled`,
 `plugins.restarted`, `plugins.removed`, `plugins.install_refused` (with the reason),
+`plugins.publisher_changed` (a removed plugin's id installed with another key: both key ids, the
+data sources whose secrets were cleared and how many secrets),
 `plugins.key_added`, `plugins.key_removed` (with the plugins it stopped and the updates it
 dropped), `plugins.handover_added`, `plugins.unsigned_allowed`, `plugins.unsigned_refused`,
 `plugins.landlock_optional`, `plugins.landlock_required`, and in the organization's log `plugins.blocked` and
@@ -126,6 +128,17 @@ payload_too_large` above). Answers `201` with the plugin.
   restarts with the next call.
 - An update of an approved plugin that adds network targets waits in `pending`: the installed
   version keeps running until the administrator approves the update.
+- A plugin installed again after it was removed is checked against what the removal left (the
+  last installed version and the key that signed it, kept per id): it must be signed with that
+  key or one it was handed over to, like an update (an older version may come back). Another key,
+  or no signature for a signed one, is a change of publisher. With data sources of the kind left
+  (in any organization, in the trash too) it is refused with `409 plugin.publisher_changed`
+  (`datasources`: their number, `previousKeyId`, `removedVersion`) until the administrator
+  repeats it with `?confirmPublisherChange=true`. Then the stored secrets of those data sources
+  are cleared, so the new publisher's binary never receives them (they must be entered again),
+  the id's hand-overs are dropped, and `plugins.publisher_changed` is recorded. A plugin removed
+  before Kalzit 0.3.2 has no known key: with data sources left, its reinstall needs the same
+  confirmation. Without data sources a change of publisher is installed and recorded.
 
 ### Approve: `POST /admin/plugins/{pluginId}/approve`
 
@@ -143,8 +156,9 @@ stopped (below); the next call starts it. All three answer the plugin.
 
 ### Remove: `DELETE /admin/plugins/{pluginId}`
 
-Ends the process and deletes the plugin, its files and its hand-overs (`204`). Its data sources
-stay and answer `datasource.kind_unavailable`; blocks of organizations stay for a reinstall.
+Ends the process and deletes the plugin and its files (`204`). Its data sources stay and answer
+`datasource.kind_unavailable`; blocks of organizations, its hand-overs and its last version and
+signing key stay for a reinstall (see Install).
 
 ### Logs: `GET /admin/plugins/{pluginId}/logs`
 
@@ -370,6 +384,7 @@ environment, and (Linux) cannot `ptrace` or signal Kalzit.
 | `plugin.update_other_id` | | the package is for another plugin (`422`) |
 | `plugin.downgrade` | | the package is older than the installed version (`409`) |
 | `plugin.key_changed` | | the update is not signed by the installed version's key or a key it was handed over to, or it is unsigned (`409`) |
+| `plugin.publisher_changed` | `datasources`, `previousKeyId`, `removedVersion` | a removed plugin's id is installed with another key while data sources of its kind exist; repeat with `confirmPublisherChange=true` to clear their secrets (`409`) |
 | `plugin.kind_taken` | | another kind has this id (`422`) |
 | `plugin.target_refused` | `host` | a fixed network target of the manifest is refused by the data source target rules (`422`) |
 | `plugin.io` | `detail` | a file of the host could not be written or read (`422`) |

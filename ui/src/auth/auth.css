@@ -230,6 +230,20 @@
     text-decoration: underline;
   }
 
+  /* The "not my browser" choice: a plain checkbox row with a quiet note, as on the blueprint. */
+  .access__check {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .access__check-note {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
   .access__forgot:empty {
     margin-block-start: calc(var(--space-4) * -1);
   }

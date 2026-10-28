@@ -524,6 +524,84 @@ async fn a_plugin_serves_its_kind_within_the_limits_and_organizations_can_block_
     t.finish().await;
 }
 
+/// A removed plugin leaves its key behind: installed again, its id is checked like an update.
+/// Another key with data sources of the kind left needs the administrator's confirmation, and
+/// then their stored secrets are cleared and the change is audited; the same key just works.
+#[tokio::test]
+async fn a_removed_plugin_id_stays_bound_to_its_key() {
+    let t = test_app().await;
+    let (publisher, other) = (key(11), key(12));
+    t.trust(&publisher).await;
+    t.trust(&other).await;
+    t.ready(&Pkg { key: Some(&publisher), ..Default::default() }).await;
+    let ds = t.datasource(ID, 3).await;
+    let (db, ds_id) = (&t.state.db, ds.as_str());
+    let secrets = move || async move {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1")
+            .bind(ds_id)
+            .fetch_one(db)
+            .await
+            .unwrap();
+        n
+    };
+    assert_eq!(secrets().await, 1);
+    let (app, path) = (&t, format!("/admin/plugins/{ID}"));
+    let remove = || app.send(Method::DELETE, &path, None);
+    assert_eq!(remove().await.status, StatusCode::NO_CONTENT);
+
+    // Another key is refused without confirmation; the secrets stay.
+    let r = t.install(&Pkg { version: "1.1.0", key: Some(&other), ..Default::default() }).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.publisher_changed"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["datasources"], "1", "{}", r.body);
+    assert_eq!(
+        r.body["error"]["params"]["previousKeyId"],
+        kalzit_plugin_api::signing::key_id(&publisher.verifying_key()),
+        "{}",
+        r.body
+    );
+    assert_eq!(secrets().await, 1);
+    // So is an unsigned package, with unsigned plugins allowed.
+    let r = t.send(Method::PATCH, "/admin/plugin-host", Some(json!({ "allowUnsigned": true }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.install(&Pkg { version: "1.1.0", ..Default::default() }).await;
+    assert_eq!(r.reason(), "plugin.publisher_changed", "{}", r.body);
+
+    // The same key installs again, an older version too, and the secrets stay.
+    let r = t.install(&Pkg { version: "0.9.0", key: Some(&publisher), ..Default::default() }).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(secrets().await, 1);
+    assert_eq!(remove().await.status, StatusCode::NO_CONTENT);
+
+    // Confirmed: installed, the secrets cleared, the change audited.
+    let r = t
+        .raw(
+            Method::POST,
+            "/api/admin/plugins?confirmPublisherChange=true",
+            Body::from(package(&Pkg { version: "1.1.0", key: Some(&other), ..Default::default() })),
+            "application/zip",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["keyId"], kalzit_plugin_api::signing::key_id(&other.verifying_key()), "{}", r.body);
+    assert_eq!(secrets().await, 0);
+    let (summary,): (String,) = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'plugins.publisher_changed' AND resource_id = $1",
+    )
+    .bind(ID)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    let summary: Value = serde_json::from_str(&summary).unwrap();
+    assert_eq!(summary["datasources"], json!([ds]), "{summary}");
+    assert_eq!(summary["secretsCleared"], 1, "{summary}");
+    assert_eq!(summary["fromKeyId"], kalzit_plugin_api::signing::key_id(&publisher.verifying_key()));
+
+    // From now on the id is bound to the new key: the former one is an update with another key.
+    let r = t.install(&Pkg { version: "1.2.0", key: Some(&publisher), ..Default::default() }).await;
+    assert_eq!(r.reason(), "plugin.key_changed", "{}", r.body);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn crashes_restart_with_backoff_until_stopped_and_an_admin_restarts() {
     let t = test_app().await;
