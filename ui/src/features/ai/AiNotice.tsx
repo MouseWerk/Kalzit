@@ -10,7 +10,7 @@ import { useAiStatusFor } from "./useAiStatus";
 import "./ai-calls.css";
 
 /** The functions the notice names what they send for. */
-export type AiFeature = "explain" | "draft" | "summarize";
+export type AiFeature = "explain" | "draft" | "summarize" | "chat";
 
 export interface AiNoticeGate {
   /**

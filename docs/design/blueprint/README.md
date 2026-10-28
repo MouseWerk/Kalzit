@@ -21,7 +21,7 @@ titles and heights.
 | `Updates.dc.html` | Online and offline updates, backups and history |
 | `DataSources.dc.html` | Data source list with team access drawer |
 | `DataSourceNew.dc.html` | Add and configure a data source, advanced options per type |
-| `DataChat.dc.html` | "Fragen", a planned data chat; not scheduled yet |
+| `DataChat.dc.html` | "Fragen", the AI agent chat (M4), with the changes frame 11 of `AI.dc.html` lists |
 | `SavedAnalyses.dc.html` | Saved analyses: save dialog and saved state in Explore, the list under Explore, the panel editor's "From saved analysis", and the conflict on save |
 | `Access.dc.html` | Sign in and first-run setup on the calm backdrop: every state of both, 360 px layouts, light and dark, notes on motion and accessibility |
 | `Graph.dc.html` | Graph native (M3): network panel, explorer, hierarchy and paths, the graph panel editor, and Explore with graph steps (frames 5A and 5B) |

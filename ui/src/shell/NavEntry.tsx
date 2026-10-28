@@ -37,7 +37,7 @@ export function NavEntry({ item, rail, wide, permissions, onFlyoutLayerChange }:
   const { t } = useI18n();
   const children = visibleChildren(item, permissions);
   if (children.length === 0) {
-    const label = t(item.label);
+    const label = item.badge === undefined ? t(item.label) : `${t(item.label)} ${t(item.badge)}`;
     return (
       <li>
         {/* A tooltip only where the label is hidden: the rail, and phones (narrow layout). */}
@@ -48,7 +48,15 @@ export function NavEntry({ item, rail, wide, permissions, onFlyoutLayerChange }:
           activeOptions={{ exact: item.exact === true }}
         >
           <Icon name={item.icon} />
-          <span className="nav-link__label">{label}</span>
+          <span className="nav-link__label">
+            {item.badge === undefined ? (
+              label
+            ) : (
+              <>
+                {t(item.label)} <span className="nav-link__badge">{t(item.badge)}</span>
+              </>
+            )}
+          </span>
         </Link>
       </li>
     );

@@ -2,6 +2,7 @@ import type { MessageKey } from "../i18n/i18n";
 import { HOME_NAV, type NavItem } from "../shell/navItem";
 import { membersNav } from "./admin/membersNav";
 import { adminNav } from "./admin/nav";
+import { askNav } from "./ai/chat/nav";
 import { dashboardsNav } from "./dashboards/nav";
 import { datasourcesNav } from "./datasources/nav";
 import { exploreNav } from "./explore/nav";
@@ -20,7 +21,7 @@ export interface NavSection {
  */
 export const NAV_SECTIONS: readonly NavSection[] = [
   { items: [HOME_NAV] },
-  { items: [dashboardsNav, exploreNav, datasourcesNav] },
+  { items: [dashboardsNav, exploreNav, askNav, datasourcesNav] },
   { heading: "nav.group.org", items: [membersNav, settingsNav, adminNav] },
 ];
 

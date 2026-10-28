@@ -235,6 +235,11 @@ pub async fn max_rows_to_model(state: &AppState) -> ApiResult<usize> {
     Ok(usize::try_from(setting_u64(state, "ai.max_rows_to_model").await?).unwrap_or(usize::MAX))
 }
 
+/// The most tool calls of one chat answer (`ai.max_tool_calls`).
+pub async fn max_tool_calls(state: &AppState) -> ApiResult<usize> {
+    Ok(usize::try_from(setting_u64(state, "ai.max_tool_calls").await?).unwrap_or(usize::MAX))
+}
+
 /// The day (UTC) a moment falls on, `YYYY-MM-DD`: the key of the daily counters.
 pub fn day_of(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default().format("%Y-%m-%d").to_string()

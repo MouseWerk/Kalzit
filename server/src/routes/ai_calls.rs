@@ -106,7 +106,7 @@ async fn schema_for(state: &AppState, ctx: &OrgCtx, ds: &Datasource) -> ApiResul
 }
 
 /// Who answers, for the `meta` event: the name, kind, model and the host data goes to.
-fn provider_meta(row: &ProviderRow) -> Value {
+pub(crate) fn provider_meta(row: &ProviderRow) -> Value {
     let host = url::Url::parse(&row.base_url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
     json!({
         "id": row.id,

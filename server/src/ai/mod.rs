@@ -14,12 +14,14 @@
 //! source opt-in.
 
 pub mod anthropic;
+pub mod chats;
 pub mod openai;
 pub mod prompts;
 pub mod redact;
 pub mod service;
 pub mod sse;
 pub mod store;
+pub mod tools;
 
 use std::fmt;
 use std::pin::Pin;
@@ -32,7 +34,7 @@ use async_trait::async_trait;
 use futures_util::Stream;
 use reqwest::header::HeaderMap;
 use reqwest::{Method, StatusCode, Url};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
@@ -149,7 +151,7 @@ pub enum Role {
     Assistant,
 }
 
-/// One part of a message. Tool calls and results are here for the agent flows that come later.
+/// One part of a message: text, or a tool call of the assistant and its result (the agent chat).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(String),
@@ -204,7 +206,7 @@ pub struct ChatRequest {
 /// Anthropic's Messages API requires `max_tokens`; used when the request names none.
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     pub input_tokens: u64,

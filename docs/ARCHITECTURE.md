@@ -978,13 +978,17 @@ query, summarize a result, the agent chat) come after it and must go through it.
   answer. Configuration writes `ai.provider_created|updated|deleted|tested`,
   `ai.notice_acknowledged` and `datasource.ai_access_changed` (with the number of excluded fields,
   not their names).
-- **Privacy.** Chats (with the chat package) are stored per user and deleted
-  `ai.chat_retention_days` (default 30, 0 keeps none; an organization may only shorten it,
-  `ai::service::chat_retention_days`) after their last message; nobody else reads them, admins
-  included. Usage rows hold counts only. The audit retention covers the call entries.
-- **Screens.** The approved board is `docs/design/blueprint/AI.dc.html` (Verwaltung > KI, KI der
+- **Privacy.** Chats are stored per user and organization (`ai_chats`, `ai_chat_messages`,
+  migration 0022) and deleted `ai.chat_retention_days` (default 30, 0 keeps none; an organization
+  may only shorten it, `ai::service::chat_retention_days`) after their last message by an hourly
+  job (`ai::chats::spawn_retention`); nobody else reads them, admins included, and their owner
+  deletes one or all at any time. A stored tool result holds only what went to the provider.
+  Usage rows hold counts only. The audit retention covers the call entries.
+- **Screens.** The approved boards are `docs/design/blueprint/AI.dc.html` (Verwaltung > KI, KI der
   Organisation, the source's KI part with "Felder ausnehmen", the notice, explain and draft in
-  Explore, summarize at the result and in the panel menu). The UI lives in `ui/src/features/ai`.
+  Explore, summarize at the result and in the panel menu, the chat's history and source picker)
+  and `DataChat.dc.html` ("Fragen", with the changes frame 11 of the AI board lists). The UI lives
+  in `ui/src/features/ai` (the chat in `ui/src/features/ai/chat`).
 - **Plain calls** (`server/src/routes/ai_calls.rs`, docs/api/ai.md "Explain, draft and
   summarize"): explain, draft and summarize call `ai::service::stream` with the feature's
   versioned prompt (`ai::prompts`) and answer with server-sent events (`meta`, `text`, `done` or
@@ -1000,7 +1004,28 @@ query, summarize a result, the agent chat) come after it and must go through it.
   checks. Untrusted text (queries, requests, titles, schemas, results) goes into the user message
   in `<kalzit:...>` blocks that cannot be closed from inside; the system prompt names the blocks
   as data whose instructions are never followed.
-- **Prompt injection (for the tool use that comes with the chat).** Everything that comes back
+- **The agent chat "Fragen"** (`server/src/routes/ai_chat.rs`, `ai::tools`, `ai::chats`;
+  docs/api/ai.md "Chat"). A question is stored, then answered in rounds: each round is one
+  `service::stream` call with the versioned `CHAT` prompt and the tool definitions, so every round
+  is admitted, counted and audited like any AI call. The provider trait carries tool calls for
+  both APIs (`Part::ToolCall`, `Part::ToolResult`, `ChatEvent::ToolCall`; OpenAI `tool_calls` and
+  `role: tool` messages, Anthropic `tool_use` and `tool_result` blocks). The tools are
+  `list_datasources`, `get_schema`, `run_query`, `find_panels`, `run_panel` and `propose_query`;
+  each call is authorized in `ai::tools` with the asker's `OrgCtx` exactly as the matching route
+  would (`datasources:query` for schema and free queries, `dashboards:read` for a panel's stored
+  queries, so viewers ask about the panels they see), needs the source open to AI and chosen in
+  the composer, runs through the normal query path, and passes its result through `ai::redact`.
+  A refused call is a result with an error the model reads, never a failure of the answer. Each
+  call is shown in the chat as it starts and ends (`tool`, `toolResult`) and audited as
+  `ai.tool_called` (tool, source or dashboard, query, rows, outcome; no result data). At most
+  `ai.max_tool_calls` calls per answer; past it, the model gets one round to answer in words. The
+  answer runs in a task of its own that streams to the request through a channel and stores the
+  answer when it ends, also when the person stops it (closing the request drops the channel,
+  which cancels the round and the running tool). The conversation the provider gets is rebuilt
+  from the stored chat (the newest twelve questions); results of sources the person lost or that
+  were closed to AI since are withheld there and in the API. A chat answers one question at a
+  time.
+- **Prompt injection (tool use in the chat).** Everything that comes back
   from a data source, a document or a web page is untrusted input to the model: it may contain
   text written to steer it. So tools are read-only by construction (they run queries through the
   normal read-only query path with the asking user's rights, never anything that writes, sends or

@@ -37,6 +37,24 @@ pub const EXCLUDED: &str = "[excluded]";
 pub const MAX_EXCLUDED: usize = 200;
 const MAX_ENTRY_CHARS: usize = 256;
 
+/// Field names too common to refuse a query for unless the entry's own table qualifies them.
+pub const GENERIC: &[&str] = &[
+    "id",
+    "name",
+    "title",
+    "label",
+    "type",
+    "kind",
+    "key",
+    "value",
+    "status",
+    "date",
+    "time",
+    "count",
+    "created_at",
+    "updated_at",
+];
+
 /// The rules for one data source, loaded once per AI call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataPolicy {
@@ -69,6 +87,97 @@ impl DataPolicy {
         if out.max_rows == usize::MAX {
             out.max_rows = 0;
             out.readable = false;
+        }
+        out
+    }
+
+    /// The first excluded entry a query text names as a word: the entry itself or its last
+    /// segment (`kunden.email` is named by `email`), compared after the same folding. A query the
+    /// model writes could otherwise read an excluded field under another name (`email AS x`).
+    ///
+    /// Best effort, like excluding itself: a query can still reach a value without naming its
+    /// field (a whole-row cast, `FOR JSON`, `$$ROOT`, `keys(n)`, escapes in identifiers). To keep
+    /// false refusals rare without a way around: for an entry with a table (`kunden.email`), a
+    /// query that never names that table lets the field through under another qualifier
+    /// (`users.email`), and a very generic field name (`GENERIC`) unqualified; a query that names
+    /// the table anywhere is refused for any mention of the field. A bare generic entry (`id`)
+    /// never refuses a query.
+    pub fn excluded_named_in(&self, text: &str) -> Option<String> {
+        let text = fold(text);
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        // Each whole-word mention of `word`, with the word before a dot in front of it, if any.
+        let mentions = |word: &str| -> Vec<Option<String>> {
+            if word.is_empty() {
+                return Vec::new();
+            }
+            text.match_indices(word)
+                .filter(|(at, _)| {
+                    let before = text[..*at].chars().next_back();
+                    let after = text[at + word.len()..].chars().next();
+                    !before.is_some_and(is_word) && !after.is_some_and(is_word)
+                })
+                .map(|(at, _)| {
+                    let head = text[..at].strip_suffix('.')?;
+                    let start =
+                        head.char_indices().rev().find(|(_, c)| !is_word(*c)).map_or(0, |(i, c)| i + c.len_utf8());
+                    Some(head[start..].to_string())
+                })
+                .collect()
+        };
+        for entry in &self.excluded {
+            let (table, field) = match entry.rsplit_once('.') {
+                Some((table, field)) => (Some(table.rsplit('.').next().unwrap_or(table)), field),
+                None => (None, entry.as_str()),
+            };
+            let generic = GENERIC.contains(&field);
+            if generic && table.is_none() {
+                continue;
+            }
+            // Where the entry's table is named anywhere in the query, every mention of the field
+            // refuses it: an alias, a CTE or a subquery could stand for the table under any name.
+            let table_named = table.is_some_and(|t| !mentions(t).is_empty());
+            for qualifier in mentions(field) {
+                let refused = match table {
+                    Some(_) if table_named => true,
+                    // The table is not read: another table's field passes, a bare one does not
+                    // (unless its name is generic).
+                    Some(_) => qualifier.is_none() && !generic,
+                    None => true,
+                };
+                if refused {
+                    return Some(entry.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// An error text of a source as the model may get it: with excluded fields, every quoted
+    /// part (`'...'`, `"..."`) is replaced, since a database error may quote a value.
+    pub fn error_text(&self, message: &str) -> String {
+        if self.excluded.is_empty() {
+            return message.to_string();
+        }
+        let mut out = String::with_capacity(message.len());
+        let mut open: Option<char> = None;
+        for c in message.chars() {
+            match open {
+                Some(q) if c == q => {
+                    out.push_str(EXCLUDED);
+                    out.push(c);
+                    open = None;
+                }
+                Some(_) => {}
+                None => {
+                    out.push(c);
+                    if c == '\'' || c == '"' {
+                        open = Some(c);
+                    }
+                }
+            }
+        }
+        if open.is_some() {
+            out.push_str(EXCLUDED);
         }
         out
     }
@@ -379,6 +488,43 @@ mod tests {
         assert_eq!(out.value["edges"].as_array().unwrap().len(), 1);
         assert_eq!(out.value["nodes"][0]["properties"]["email"], EXCLUDED);
         assert!(out.truncated);
+    }
+
+    #[test]
+    fn queries_naming_an_excluded_field_are_found() {
+        let p = policy(&["kunden.email", "IBAN"], 10);
+        assert_eq!(p.excluded_named_in("SELECT name, Email AS kontakt FROM kunden").as_deref(), Some("kunden.email"));
+        assert_eq!(p.excluded_named_in("select k.iban from k").as_deref(), Some("iban"));
+        assert_eq!(p.excluded_named_in("SELECT emails, xemail, iban_count FROM k"), None);
+        assert_eq!(policy(&[], 10).excluded_named_in("SELECT email"), None);
+        // Another table's field passes while the entry's table is not named in the query.
+        assert_eq!(p.excluded_named_in("SELECT users.email FROM users"), None);
+        assert_eq!(p.excluded_named_in("SELECT u.email FROM users u JOIN orders o ON true"), None);
+        // Once the table is named anywhere, every mention refuses: aliases, subqueries, CTEs.
+        for aliased in [
+            "SELECT k.email AS kontakt FROM kunden k",
+            "SELECT k.email FROM kunden AS k",
+            "SELECT x.email FROM (SELECT * FROM kunden) x",
+            "WITH k AS (SELECT * FROM kunden) SELECT k.email AS kontakt FROM k",
+            "SELECT u.email FROM kunden k JOIN users u ON true",
+            "SELECT kunden.email FROM kunden",
+        ] {
+            assert_eq!(p.excluded_named_in(aliased).as_deref(), Some("kunden.email"), "{aliased}");
+        }
+        let generic = policy(&["id", "kunden.name"], 10);
+        assert_eq!(generic.excluded_named_in("SELECT id, name FROM users"), None, "generic names stay usable");
+        assert_eq!(generic.excluded_named_in("SELECT id, name FROM kunden").as_deref(), Some("kunden.name"));
+        assert_eq!(generic.excluded_named_in("SELECT k.name FROM KUNDEN k").as_deref(), Some("kunden.name"));
+    }
+
+    #[test]
+    fn quoted_parts_of_errors_are_replaced_when_fields_are_excluded() {
+        let p = policy(&["email"], 10);
+        assert_eq!(
+            p.error_text("invalid input syntax for type integer: \"ana@x.de\" near 'x"),
+            "invalid input syntax for type integer: \"[excluded]\" near '[excluded]"
+        );
+        assert_eq!(policy(&[], 10).error_text("bad \"v\""), "bad \"v\"");
     }
 
     #[test]

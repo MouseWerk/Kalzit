@@ -100,6 +100,8 @@ const PATHS = {
   terminal: "M3.5 4.5h17v15h-17zM7 9.5l3 2.5-3 2.5M12 15h5",
   log: "M4.5 6h15M4.5 12h15M4.5 18h10",
   /** AI entry points (neutral, never in the accent color). */
+  /** "Fragen": a speech bubble with the AI spark inside. */
+  ask: "M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20l1-4.2A7.5 7.5 0 1 1 20 12.5zM12 9l.9 2.1 2.1.9-2.1.9L12 15l-.9-2.1-2.1-.9 2.1-.9z",
   sparkle:
     "M11 4.5l1.6 4.4 4.4 1.6-4.4 1.6L11 16.5l-1.6-4.4L5 10.5l4.4-1.6zM17.5 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z",
 } as const;
