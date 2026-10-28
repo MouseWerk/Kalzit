@@ -185,6 +185,61 @@ pub async fn in_effect(state: &AppState, org_id: &str) -> ApiResult<Option<Provi
     Ok(store::in_effect(&state.db, org_id, org_providers_allowed(state).await?).await?)
 }
 
+/// The functions a server provider can be chosen for (`ai.provider_<function>`; board AI.dc.html
+/// frame 2): explain and draft, summarize, and the chat.
+pub const FUNCTIONS: [&str; 3] = ["explain", "summarize", "chat"];
+
+/// The function of a call's purpose, for the provider chosen for it.
+pub fn function_of(purpose: &str) -> Option<&'static str> {
+    match purpose {
+        "explain_query" | "draft_query" => Some("explain"),
+        "summarize_result" => Some("summarize"),
+        "chat" => Some("chat"),
+        _ => None,
+    }
+}
+
+/// The provider in effect for one function of an organization: the organization's own default
+/// when it has one (and may), else the server provider chosen for the function
+/// (`ai.provider_<function>`, while it exists), else the server's default.
+pub async fn in_effect_for(state: &AppState, org_id: &str, function: Option<&str>) -> ApiResult<Option<ProviderRow>> {
+    let allowed = org_providers_allowed(state).await?;
+    if allowed && let Some(own) = store::list(&state.db, Some(org_id)).await?.into_iter().find(|p| p.is_default != 0) {
+        return Ok(Some(own));
+    }
+    if let Some(function) = function {
+        let chosen = settings::get(state, &format!("ai.provider_{function}")).await?;
+        if let Some(id) = chosen.as_str().filter(|id| !id.is_empty())
+            && let Some(row) = store::find(&state.db, None, id).await?
+        {
+            return Ok(Some(row));
+        }
+    }
+    Ok(store::list(&state.db, None).await?.into_iter().find(|p| p.is_default != 0))
+}
+
+/// Whether a provider's address stays in the installation's own network, judged from the address
+/// alone: a loopback, private or link-local address, `localhost`, a name without a dot, or a name
+/// under a local suffix (`.local`, `.lan`, `.internal`, `.intern`, `.home.arpa`, `.corp`). A
+/// gateway there may still forward data further; the providers page says where it goes.
+pub fn stays_in_network(base_url: &str) -> bool {
+    use std::net::IpAddr;
+    let Some(host) = url::Url::parse(base_url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)) else {
+        return false;
+    };
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = bare.parse::<IpAddr>() {
+        return match ip {
+            IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+            IpAddr::V6(v6) => {
+                v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        };
+    }
+    let local = [".local", ".lan", ".internal", ".intern", ".home.arpa", ".corp", ".localdomain"];
+    host == "localhost" || !host.contains('.') || local.iter().any(|s| host.ends_with(s))
+}
+
 /// AI can only be switched on while a provider in effect passed its connection test since its
 /// address, model or key last changed: for `ai.enabled` the server's default provider (or, while
 /// the server has none, an organization's default), for `ai.org_enabled` the provider in effect
@@ -195,6 +250,16 @@ pub async fn check_switch(
     key: &str,
     value: &serde_json::Value,
 ) -> ApiResult<()> {
+    // A provider chosen for a function is one of the server's, or empty for the default.
+    if org_id.is_none() && key.starts_with("ai.provider_") {
+        let id = value.as_str().unwrap_or_default();
+        if !id.is_empty() && store::find(&state.db, None, id).await?.is_none() {
+            return Err(ApiError::validation("the provider is not one of the server's")
+                .with_field("value")
+                .because("ai.provider_unknown"));
+        }
+        return Ok(());
+    }
     if value.as_bool() != Some(true) {
         return Ok(());
     }
@@ -471,7 +536,7 @@ async fn ready_row(state: &AppState, caller: &Caller) -> ApiResult<ProviderRow> 
     if !enabled_in_org(state, &caller.org_id).await? {
         return Err(unavailable("ai.org_disabled", "AI is turned off in this organization"));
     }
-    let row = in_effect(state, &caller.org_id)
+    let row = in_effect_for(state, &caller.org_id, function_of(caller.purpose))
         .await?
         .ok_or_else(|| unavailable("ai.no_provider", "no AI provider is configured"))?;
     // The person saw what leaves the server, and to which provider, before the first call.
@@ -735,6 +800,10 @@ pub struct AiStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub provider: Option<AiStatusProvider>,
+    /// The provider of each function (explain and draft, summarize, the chat).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub functions: Option<AiStatusFunctions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub usage: Option<AiStatusUsage>,
@@ -763,6 +832,28 @@ pub struct AiStatusProvider {
     pub host: String,
     /// `org` when the organization's own provider is in effect, else `server`.
     pub scope: String,
+    /// Host and port of the base URL (`llm.intern:11434`), never the path or credentials.
+    pub endpoint: String,
+    /// Whether data leaves the installation's own network, judged from the address
+    /// (`stays_in_network`).
+    pub leaves_network: bool,
+    /// The last connection test: passed, failed, or (absent) not tested since the last change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reachable: Option<bool>,
+    /// Whether the caller acknowledged the first-use notice for this provider.
+    pub notice_acknowledged: bool,
+}
+
+/// The provider in effect for each function, when the server chose one per function (board
+/// AI.dc.html frame 2). Equal to `provider` where nothing was chosen.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AiStatusFunctions {
+    pub explain: AiStatusProvider,
+    pub summarize: AiStatusProvider,
+    pub chat: AiStatusProvider,
 }
 
 /// The caller's tokens and calls today, the organization's tokens this month, and the limits
@@ -788,11 +879,34 @@ impl AiStatus {
             notice_acknowledged: None,
             reason: None,
             provider: None,
+            functions: None,
             usage: None,
             notice_text: None,
             max_rows_to_model: None,
         }
     }
+}
+
+/// A provider as the status names it, with the caller's acknowledgement of its notice.
+async fn status_provider(state: &AppState, user_id: &str, row: ProviderRow) -> ApiResult<AiStatusProvider> {
+    let url = url::Url::parse(&row.base_url).ok();
+    let host = url.as_ref().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+    let endpoint = match url.as_ref().and_then(url::Url::port_or_known_default) {
+        Some(port) if !host.is_empty() => format!("{host}:{port}"),
+        _ => host.clone(),
+    };
+    Ok(AiStatusProvider {
+        notice_acknowledged: store::notice_acknowledged(&state.db, user_id, &row.id).await?,
+        leaves_network: !stays_in_network(&row.base_url),
+        reachable: row.last_test_ok.map(|ok| ok != 0),
+        scope: if row.org_id.is_some() { "org" } else { "server" }.into(),
+        endpoint,
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        model: row.model,
+        host,
+    })
 }
 
 pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<AiStatus> {
@@ -808,7 +922,6 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
     let limits = limits(state, org_id).await?;
     let acknowledged = store::notice_acknowledged(&state.db, user_id, &row.id).await?;
     let clamp = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
-    let host = url::Url::parse(&row.base_url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
     let notice_text = settings::get(state, "ai.notice_text")
         .await?
         .as_str()
@@ -816,20 +929,24 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
         .filter(|t| !t.is_empty())
         .map(str::to_string);
     let max_rows = i64::try_from(max_rows_to_model(state).await?).unwrap_or(i64::MAX);
+    let provider = status_provider(state, user_id, row).await?;
+    let mut by_function = Vec::new();
+    for function in FUNCTIONS {
+        by_function.push(match in_effect_for(state, org_id, Some(function)).await? {
+            Some(row) if row.id != provider.id => status_provider(state, user_id, row).await?,
+            _ => provider.clone(),
+        });
+    }
+    let [explain, summarize, chat]: [AiStatusProvider; 3] =
+        by_function.try_into().map_err(|_| ApiError::internal("ai", "one provider per function"))?;
     Ok(AiStatus {
         enabled: true,
         usable: true,
         org_providers_allowed: allowed,
         notice_acknowledged: Some(acknowledged),
         reason: None,
-        provider: Some(AiStatusProvider {
-            scope: if row.org_id.is_some() { "org" } else { "server" }.into(),
-            id: row.id,
-            name: row.name,
-            kind: row.kind,
-            model: row.model,
-            host,
-        }),
+        provider: Some(provider),
+        functions: Some(AiStatusFunctions { explain, summarize, chat }),
         usage: Some(AiStatusUsage {
             requests: user.requests,
             tokens: user.tokens,
@@ -846,6 +963,29 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn addresses_in_the_own_network_are_told_apart() {
+        for own in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8000",
+            "http://10.0.0.5/v1",
+            "http://192.168.1.2",
+            "http://[::1]:1/",
+            "http://[fd00::1]/",
+            "http://ollama:11434",
+            "https://llm.intern/v1",
+            "https://gpu.corp/v1",
+        ] {
+            assert!(stays_in_network(own), "{own}");
+        }
+        for out in ["https://api.anthropic.com", "https://api.openai.com/v1", "http://8.8.8.8", "not a url"] {
+            assert!(!stays_in_network(out), "{out}");
+        }
+        assert_eq!(function_of("draft_query"), Some("explain"));
+        assert_eq!(function_of("summarize_result"), Some("summarize"));
+        assert_eq!(function_of("test"), None);
+    }
 
     #[test]
     fn days_are_utc() {

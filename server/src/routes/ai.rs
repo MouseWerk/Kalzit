@@ -883,8 +883,15 @@ async fn acknowledge_notice(
     Extension(info): Extension<RequestInfo>,
     JsonBody(body): JsonBody<NoticeBody>,
 ) -> ApiResult<StatusCode> {
-    let current = service::in_effect(&state, &ctx.org_id).await?;
-    let Some(row) = current.filter(|r| r.id == body.provider_id) else {
+    // The provider in effect, or the one chosen for a function (explain, summarize, chat).
+    let mut current = service::in_effect(&state, &ctx.org_id).await?.filter(|r| r.id == body.provider_id);
+    for function in service::FUNCTIONS {
+        if current.is_none() {
+            current =
+                service::in_effect_for(&state, &ctx.org_id, Some(function)).await?.filter(|r| r.id == body.provider_id);
+        }
+    }
+    let Some(row) = current else {
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "another AI provider is in effect now")
             .with_field("providerId")
             .because("ai.notice_provider_changed"));

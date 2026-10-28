@@ -375,11 +375,14 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
     let r = t.get(&status, &viewer).await;
     assert_eq!(r.body["usable"], true);
     assert_eq!(r.body["noticeAcknowledged"], false);
+    let endpoint = r.body["provider"]["endpoint"].as_str().unwrap_or_default().to_string();
+    assert!(endpoint.starts_with("127.0.0.1:"), "{endpoint}");
     assert_eq!(
         r.body["provider"],
         json!({
             "id": server_id, "name": "openai lokal", "kind": "openai", "model": "modell-1", "host": "127.0.0.1",
-            "scope": "server"
+            "scope": "server", "endpoint": endpoint, "leavesNetwork": false, "reachable": true,
+            "noticeAcknowledged": false
         })
     );
     assert_eq!(r.body["maxRowsToModel"], 200);

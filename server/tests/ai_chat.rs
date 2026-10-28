@@ -798,3 +798,107 @@ async fn chats_are_deleted_after_their_retention_or_by_their_owner() {
     assert_eq!(kalzit::ai::chats::purge_expired(&t.state).await.unwrap(), 1);
     t.finish().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_provider_per_function_a_dashboard_as_context_and_panels_after_their_steps() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let editor = t.member(&owner, &org, "ede@example.de", "editor").await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let ds = t.source(&owner, &org, "Kunden").await;
+    let default_mock = mock().await;
+    let chat_mock = mock().await;
+    t.enable(&owner, &default_mock, "openai").await;
+    t.access(&org, &ds, true, &[], &owner).await;
+
+    // The status names where data goes, by address, and whether the provider passed its test.
+    t.ack(&org, &editor).await;
+    let status = t.get(&format!("/api/orgs/{org}/ai/status"), &editor).await;
+    let provider = status.body["provider"].clone();
+    assert_eq!(provider["endpoint"], format!("127.0.0.1:{}", default_mock.addr.port()), "{provider}");
+    assert_eq!((provider["leavesNetwork"].as_bool(), provider["reachable"].as_bool()), (Some(false), Some(true)));
+    assert_eq!(status.body["functions"]["chat"]["id"], provider["id"]);
+
+    // A provider of its own for the chat: only a server provider can be chosen.
+    let body = json!({ "name": "Chat", "kind": "openai", "baseUrl": chat_mock.url("/v1"), "model": "modell-2" });
+    let r = t.post("/api/admin/ai/providers", body, &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let chat_provider = r.body["id"].as_str().unwrap().to_string();
+    let current = t.get("/api/admin/settings", &owner).await;
+    let version =
+        current.body["items"].as_array().unwrap().iter().find(|s| s["key"] == "ai.provider_chat").unwrap()["version"]
+            .as_i64()
+            .unwrap();
+    let r = t
+        .send(
+            Method::PATCH,
+            "/api/admin/settings/ai.provider_chat",
+            Some(json!({ "value": "no-such-provider", "version": version })),
+            Some(&owner),
+        )
+        .await;
+    assert_eq!(r.reason(), "ai.provider_unknown", "{}", r.body);
+    t.setting("ai.provider_chat", json!(chat_provider), &owner).await;
+    let status = t.get(&format!("/api/orgs/{org}/ai/status"), &editor).await;
+    assert_eq!(status.body["functions"]["chat"]["id"], chat_provider);
+    assert_eq!(status.body["functions"]["chat"]["noticeAcknowledged"], false);
+    assert_eq!(status.body["functions"]["explain"]["id"], provider["id"], "the others keep the default");
+    // Its own notice first; then the chat goes to it and nowhere else.
+    let r = t.post(&format!("/api/orgs/{org}/ai/chats"), json!({}), &editor).await;
+    assert_eq!(r.reason(), "ai.notice_required", "{}", r.body);
+    let r = t.post(&format!("/api/orgs/{org}/ai/notice"), json!({ "providerId": chat_provider }), &editor).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+
+    // A dashboard as context: its title and panels go along; a panel's steps run first.
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "title": "Kundenumsatz",
+        "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [
+            { "id": "p1", "type": "table", "title": "Umsatz doppelt",
+              "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds,
+                             "query": { "sql": "SELECT name, umsatz FROM kunden ORDER BY name" } } ],
+              "transformations": [
+                  { "id": "1", "type": "calculate", "frame": "A", "name": "Doppelt", "expression": "umsatz * 2" }
+              ] }
+        ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let chat = t.new_chat(&org, &editor, &[]).await;
+    chat_mock.script(vec![tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "p1" })), text("Doppelt.")]);
+    let r = t
+        .post(
+            &format!("/api/orgs/{org}/ai/chats/{chat}/messages"),
+            json!({ "text": "Was zeigt das Panel?", "dashboardId": dashboard, "language": "de" }),
+            &editor,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(default_mock.requests().len(), 0, "the default provider got nothing");
+    let first = chat_mock.requests()[0].to_string();
+    assert!(first.contains("kalzit:dashboard") && first.contains("Umsatz doppelt"), "{first}");
+    let record = &r.records()[0];
+    assert_eq!(record["status"], "ok", "{record}");
+    let fields = record["results"][0]["data"]["fields"].as_array().unwrap();
+    assert!(fields.iter().any(|f| f["name"] == "Doppelt"), "the panel's step ran: {record}");
+    let stored = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    assert_eq!(stored.body["messages"][0]["content"]["dashboard"]["title"], "Kundenumsatz");
+
+    // A dashboard the caller may not read is not found.
+    t.ack(&org, &viewer).await;
+    let r = t.post(&format!("/api/orgs/{org}/ai/notice"), json!({ "providerId": chat_provider }), &viewer).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let viewer_chat = t.new_chat(&org, &viewer, &[]).await;
+    let r = t
+        .post(
+            &format!("/api/orgs/{org}/ai/chats/{viewer_chat}/messages"),
+            json!({ "text": "Und?", "dashboardId": "00000000-0000-7000-8000-000000000000" }),
+            &viewer,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    t.finish().await;
+}

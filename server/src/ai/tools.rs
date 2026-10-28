@@ -753,8 +753,20 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         // A saved value that is no longer an option: the dashboard's own defaults then.
         Err(_) => crate::routes::query::stored_items(&model, panel, &BTreeMap::new(), None, &BTreeMap::new())?,
     };
-    let hidden: BTreeSet<&str> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.as_str()).collect();
-    let items: Vec<QueryItem> = run.items.into_iter().filter(|i| !hidden.contains(i.ref_id.as_str())).collect();
+    // Hidden queries stay out, unless a step reads them (`stored_items` keeps only those).
+    let hidden: BTreeSet<String> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.clone()).collect();
+    let refs: BTreeSet<&str> = panel.targets.iter().map(|t| t.ref_id.as_str()).collect();
+    // The panel's enabled steps run on the server as for its summary and export; steps that no
+    // longer check are left out and the queries' own results are shown.
+    let steps: Vec<crate::analysis::Step> =
+        crate::analysis::check_steps(&panel.transformations, &refs, "transformations")
+            .map(|steps| steps.into_iter().filter(|s| !s.disabled).collect())
+            .unwrap_or_default();
+    let items: Vec<QueryItem> = if steps.is_empty() {
+        run.items.into_iter().filter(|i| !hidden.contains(&i.ref_id)).collect()
+    } else {
+        run.items
+    };
     if items.is_empty() {
         return Err(ApiError::validation("the panel has no query to run").because("ai.query_empty"));
     }
@@ -785,15 +797,21 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     }
     let queries: BTreeMap<String, (String, Value)> =
         items.iter().map(|i| (i.ref_id.clone(), (i.datasource_id.clone(), i.query.clone()))).collect();
+    let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
     let QueryResponse { mut results } =
         run_queries_with(scope.state, scope.ctx, items, range, None, None, &run.variables, Some(&run.identifiers))
             .await;
-    let records: Vec<ResultRecord> = queries
-        .iter()
-        .map(|(ref_id, (ds, query))| {
-            result_record(ref_id, Some(ds), Some(query), results.remove(ref_id), &policies[ds])
-        })
-        .collect();
+    let records: Vec<ResultRecord> = if steps.is_empty() {
+        order
+            .iter()
+            .map(|ref_id| {
+                let (ds, query) = &queries[ref_id];
+                result_record(ref_id, Some(ds), Some(query), results.remove(ref_id), &policies[ds])
+            })
+            .collect()
+    } else {
+        stepped_records(scope, &steps, &order, &mut results, &queries, &policies, &hidden).await?
+    };
     let status = if records.iter().all(|r| r.error.is_some()) { "error" } else { "ok" };
     Ok(ToolRecord {
         status: status.into(),
@@ -809,6 +827,77 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         results: records,
         ..Default::default()
     })
+}
+
+/// The results of a panel after its steps, as the panel shows them: the steps read every query
+/// (one that failed fails the call, as for a summary), run off the request threads within the
+/// query timeout, and each frame or graph they leave goes through `ai::redact` with the rules of
+/// all the panel's sources (a step may combine them). Hidden queries stay out.
+async fn stepped_records(
+    scope: &ToolScope<'_>,
+    steps: &[crate::analysis::Step],
+    order: &[String],
+    results: &mut BTreeMap<String, QueryOutcome>,
+    queries: &BTreeMap<String, (String, Value)>,
+    policies: &BTreeMap<String, redact::DataPolicy>,
+    hidden: &BTreeSet<String>,
+) -> ApiResult<Vec<ResultRecord>> {
+    use crate::analysis::steps::{Control, Input, run_shapes};
+    use crate::shapes::QueryResult;
+    let mut inputs = Vec::new();
+    let mut done = BTreeSet::new();
+    for ref_id in order {
+        match results.remove(ref_id) {
+            Some(QueryOutcome::Ok { result, steps: ran }) => {
+                done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
+                inputs.push((
+                    ref_id.clone(),
+                    match result {
+                        QueryResult::Frame { frame } => Input::Frame(frame),
+                        QueryResult::Documents { documents } => Input::Documents(documents),
+                        QueryResult::Graph { graph } => Input::Graph(graph),
+                    },
+                ));
+            }
+            Some(QueryOutcome::Err { error }) => return Err(crate::routes::query::api_error(error)),
+            None => return Err(ApiError::internal("ai", format!("no outcome for {ref_id}"))),
+        }
+    }
+    let timeout = crate::settings::get(scope.state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
+    let steps = steps.to_vec();
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let control = Control::new(flag.clone(), timeout);
+    let ran = tokio::task::spawn_blocking(move || run_shapes(&steps, inputs, &control, &done));
+    // Dropped (the person stopped the answer): the steps stop too.
+    struct StopOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let _stop = StopOnDrop(flag);
+    let (frames, graphs) = ran.await.map_err(|e| ApiError::internal("ai", e))?.map_err(|f| {
+        ApiError::validation(format!("step {}: {}", f.index + 1, f.detail.message))
+            .with_reason(f.detail.reason, f.detail.params)
+    })?;
+    let all = redact::DataPolicy::merged(policies.values());
+    let shown = frames
+        .into_iter()
+        .map(|f| (f.name, QueryResult::Frame { frame: f.frame }))
+        .chain(graphs.into_iter().map(|(name, graph)| (name, QueryResult::Graph { graph })))
+        .filter(|(name, _)| !hidden.contains(name));
+    Ok(shown
+        .map(|(name, result)| {
+            let source = queries.get(&name);
+            result_record(
+                &name,
+                source.map(|(ds, _)| ds.as_str()),
+                source.map(|(_, q)| q),
+                Some(QueryOutcome::Ok { result, steps: None }),
+                &all,
+            )
+        })
+        .collect())
 }
 
 async fn propose_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord> {
@@ -934,6 +1023,11 @@ impl Visibility {
         let ok = check_resource(&state.db, ctx, Permission::DashboardsRead, Resource::Dashboard(id)).await.is_ok();
         self.dashboards.insert(id.to_string(), ok);
         ok
+    }
+
+    /// Whether the person may still read the dashboard (a question's context).
+    pub async fn dashboard_readable(&mut self, state: &AppState, ctx: &OrgCtx, id: &str) -> bool {
+        self.dashboard(state, ctx, id).await
     }
 
     async fn visible(&mut self, state: &AppState, ctx: &OrgCtx) -> &BTreeSet<String> {
