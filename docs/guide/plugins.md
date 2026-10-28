@@ -146,7 +146,9 @@ plugin's manifest.
 
 The panel draws the results of the panel's own queries, nothing else: it runs in a sandboxed
 frame without network, cannot read your session, cookies or other panels, and cannot call
-Kalzit. It may ask for more height, change its options while you edit the panel, and ask to open a
+Kalzit. (One gap is left to the browser: a browser that does not know the policy that blocks
+WebRTC would let a panel open WebRTC connections; install panel plugins only from publishers you
+trust.) It may ask for more height, change its options while you edit the panel, and ask to open a
 link: Kalzit then shows the address and opens it only when you choose **Open**. A panel that does
 not start within 10 seconds, or tries to leave its frame, shows an error with **Try again**. When
 its plugin is turned off, removed or blocked for your organization, the panel says so instead.

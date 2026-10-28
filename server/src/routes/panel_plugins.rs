@@ -158,6 +158,7 @@ async fn frame(
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    h.insert("x-dns-prefetch-control", HeaderValue::from_static("off"));
     h.insert("cross-origin-resource-policy", HeaderValue::from_static("same-origin"));
     h.insert(
         "permissions-policy",

@@ -238,6 +238,7 @@ async fn a_panel_frame_is_served_sandboxed_from_the_checked_package_to_those_who
     for part in [
         &format!("script-src 'sha256-{hash}'") as &str,
         "connect-src 'none'",
+        "webrtc 'block'",
         "form-action 'none'",
         "base-uri 'none'",
         "frame-ancestors 'self'",
@@ -250,6 +251,7 @@ async fn a_panel_frame_is_served_sandboxed_from_the_checked_package_to_those_who
     assert_eq!(r.header("x-frame-options"), "SAMEORIGIN");
     assert_eq!(r.header("cache-control"), "no-store");
     assert_eq!(r.header("referrer-policy"), "no-referrer");
+    assert_eq!(r.header("x-dns-prefetch-control"), "off");
     assert!(r.headers.get(header::SET_COOKIE).is_none());
     // Other responses keep Kalzit's own policy.
     let r = t.send(Method::GET, &format!("/orgs/{}/panel-plugins", t.org), None, &viewer).await;

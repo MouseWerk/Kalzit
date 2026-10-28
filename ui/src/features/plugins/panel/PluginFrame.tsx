@@ -137,6 +137,8 @@ function FrameHost({
   const [ready, setReady] = useState(false);
   const [requested, setRequested] = useState<number | null>(null);
   const [link, setLink] = useState<{ url: string; title?: string } | null>(null);
+  // While the viewer is asked about a link, the panel cannot swap it for another.
+  const asking = useRef(false);
   const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const latest = useRef<Latest | null>(null);
   useEffect(() => {
@@ -199,6 +201,11 @@ function FrameHost({
           return;
         }
         case "link":
+          if (asking.current) {
+            note("dropped link: the viewer is still asked about another one");
+            return;
+          }
+          asking.current = true;
           setLink(
             event.title === undefined ? { url: event.url } : { url: event.url, title: event.title },
           );
@@ -308,8 +315,12 @@ function FrameHost({
         <LinkDialog
           plugin={props.info.name}
           link={link}
-          onClose={() => setLink(null)}
+          onClose={() => {
+            asking.current = false;
+            setLink(null);
+          }}
           onOpen={() => {
+            asking.current = false;
             setLink(null);
             openLink(link.url);
           }}

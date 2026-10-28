@@ -97,8 +97,20 @@ export function linkAllowed(url: string): boolean {
     return false;
   }
   if (url.startsWith("/")) {
-    const first = url.slice(1).split(/[/?#]/, 1)[0] ?? "";
-    return !url.startsWith("//") && first.toLowerCase() !== "api";
+    // No dot segments and no encoded dots or slashes, so the path is the one the browser
+    // resolves and `/./api` or `/%2e/api` cannot reach the API.
+    const route = url.slice(1).toLowerCase().split(/[?#]/, 1)[0] ?? "";
+    if (
+      url.startsWith("//") ||
+      /%2e|%2f|%5c/.test(route) ||
+      route.split("/").some((s) => s === "." || s === "..") ||
+      route.split("/")[0] === "api"
+    ) {
+      return false;
+    }
+    // And as the browser resolves it.
+    const resolved = new URL(url, "https://kalzit.invalid").pathname.toLowerCase();
+    return resolved !== "/api" && !resolved.startsWith("/api/");
   }
   const lower = url.toLowerCase();
   const rest = lower.startsWith("https://")

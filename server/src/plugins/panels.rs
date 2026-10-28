@@ -134,6 +134,8 @@ pub fn frame_policy(hash: &str) -> String {
         "font-src data:".to_string(),
         "media-src data: blob:".to_string(),
         "connect-src 'none'".to_string(),
+        // WebRTC is not covered by connect-src; browsers that know this directive block it.
+        "webrtc 'block'".to_string(),
         "frame-src 'none'".to_string(),
         "worker-src 'none'".to_string(),
         "object-src 'none'".to_string(),
@@ -203,7 +205,13 @@ mod tests {
         assert!(f.html.contains("<title>Tile &lt;b&gt;</title>"));
         let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(normalized.as_bytes()));
         assert!(f.csp.contains(&format!("script-src 'sha256-{hash}'")), "{}", f.csp);
-        for part in ["sandbox allow-scripts;", "default-src 'none'", "connect-src 'none'", "frame-ancestors 'self'"] {
+        for part in [
+            "sandbox allow-scripts;",
+            "default-src 'none'",
+            "connect-src 'none'",
+            "webrtc 'block'",
+            "frame-ancestors 'self'",
+        ] {
             assert!(f.csp.contains(part), "{part} is missing from {}", f.csp);
         }
         assert!(!f.csp.contains("allow-same-origin"));

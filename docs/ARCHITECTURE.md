@@ -468,8 +468,10 @@ process, a network target or the gRPC protocol.
   bundle inline. Inline because the frame's requests carry no session (opaque origin), so a
   separate bundle request could not be authorized. The response carries its own policy:
   `sandbox allow-scripts`, `default-src 'none'`, the bundle's hash as the only script source,
-  `connect-src 'none'`, no forms, no base, `frame-ancestors 'self'` (`net::security_headers`
-  keeps it). Authorization per request: the dashboard (readable when it shows the panel, editable
+  `connect-src 'none'`, `webrtc 'block'`, no forms, no base, `frame-ancestors 'self'`
+  (`net::security_headers` keeps it), and `X-DNS-Prefetch-Control: off`. Remaining risk: WebRTC is
+  outside `connect-src`, and `webrtc 'block'` holds only in browsers that implement it; there a
+  panel could still reach a STUN/TURN server. That rests on the signature and the admin's trust. Authorization per request: the dashboard (readable when it shows the panel, editable
   otherwise), the plugin enabled, trusted and not blocked for the organization.
 - The UI loads it into `<iframe sandbox="allow-scripts">` without `allow-same-origin`: the panel
   gets an opaque origin, so it cannot read Kalzit's cookies, storage or DOM, call its API or

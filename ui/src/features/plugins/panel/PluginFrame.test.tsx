@@ -195,6 +195,7 @@ describe("the panel frame", () => {
   it("opens a link only after the viewer confirms, without a referrer", async () => {
     expectConsoleOutput(
       /dropped an event \(panel\.field_invalid\): url is an http or https address/,
+      /dropped link: the viewer is still asked about another one/,
     );
     const user = userEvent.setup();
     const open = vi.spyOn(window, "open").mockReturnValue(null);
@@ -207,6 +208,9 @@ describe("the panel frame", () => {
       event({ type: "link", url: "https://example.com/runbook", title: "Runbook" }),
     );
     let dialog = screen.getByRole("dialog", { name: "Open link?" });
+    // While it is asked, the panel cannot swap the address.
+    fromFrame(target, event({ type: "link", url: "https://evil.example/" }));
+    expect(within(dialog).queryByText("https://evil.example/")).toBeNull();
     expect(within(dialog).getByText("https://example.com/runbook")).toBeTruthy();
     expect(within(dialog).getByText("Runbook")).toBeTruthy();
     // Cancel has the focus, so Enter does not open it.

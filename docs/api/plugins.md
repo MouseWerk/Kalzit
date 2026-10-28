@@ -294,12 +294,13 @@ page policy does not replace them):
 ```
 Content-Security-Policy: sandbox allow-scripts; default-src 'none'; script-src 'sha256-<bundle>';
   style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:;
-  connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none';
+  connect-src 'none'; webrtc 'block'; frame-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none';
   form-action 'none'; base-uri 'none'; frame-ancestors 'self'
 X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 Cache-Control: no-store
 Referrer-Policy: no-referrer
+X-DNS-Prefetch-Control: off
 Cross-Origin-Resource-Policy: same-origin
 Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), display-capture=(), fullscreen=()
 ```
@@ -310,6 +311,10 @@ Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   no session, and `connect-src 'none'` stops it anyway).
 - The hash of the bundle is the only script source: nothing else runs, inline or loaded.
 - No `Set-Cookie`; the response is never cached.
+- Left to the browser: `connect-src` does not cover WebRTC, so `webrtc 'block'` stops it only
+  where the browser knows that directive (not every current one does); a panel could otherwise
+  reach a STUN or TURN server. DNS prefetching is turned off, but a browser may still resolve
+  names it is given. Both rest on the bundle's signature and the administrator's trust.
 - Inline, because a separate request for the bundle from the opaque origin would carry no session
   and could not be authorized.
 
@@ -476,7 +481,7 @@ Results keep the query's limits; a panel cannot run queries of its own.
 | `setVariable` | `name`, `value` (a text, or a list for a multi-value variable) | a variable name of at most 64 characters; at most 100 values of at most 1024 characters, no control characters |
 | `resize` | `height` | 16 to 4000 CSS pixels; Kalzit may give less |
 | `setOptions` | `options` (the whole object) | in `edit` mode only; only options the manifest declares, each fitting (`panel.option_unknown`, `panel.option_invalid`) |
-| `link` | `url`, `title` (optional) | `url` at most 2048 characters: `http`/`https` with a host and no user name, or a path in Kalzit starting with `/` (not `//`, not the API under `/api`); `title` at most 200 |
+| `link` | `url`, `title` (optional) | `url` at most 2048 characters: `http`/`https` with a host and no user name, or a path in Kalzit starting with `/` (not `//`, no `.` or `..` segments, no `%2e`, `%2f` or `%5c`, not the API under `/api`); `title` at most 200 |
 | `log` | `level` (`debug`, `info`, `warn`, `error`), `text` | at most 1024 characters, no control characters; at most 5 lines per second |
 
 What the host does with them:

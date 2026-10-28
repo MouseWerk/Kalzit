@@ -269,8 +269,17 @@ pub fn link_allowed(url: &str) -> bool {
         return false;
     }
     if let Some(path) = url.strip_prefix('/') {
-        let first = path.split(['/', '?', '#']).next().unwrap_or_default();
-        return !path.starts_with('/') && !first.eq_ignore_ascii_case("api");
+        // No dot segments and no encoded dots or slashes, so the path is the one the browser
+        // resolves and `/./api` or `/%2e/api` cannot reach the API.
+        let lower = path.to_ascii_lowercase();
+        let route = lower.split(['?', '#']).next().unwrap_or_default();
+        if path.starts_with('/')
+            || ["%2e", "%2f", "%5c"].iter().any(|e| route.contains(e))
+            || route.split('/').any(|s| s == "." || s == "..")
+        {
+            return false;
+        }
+        return route.split('/').next() != Some("api");
     }
     let lower = url.to_ascii_lowercase();
     let Some(rest) = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://")) else {
