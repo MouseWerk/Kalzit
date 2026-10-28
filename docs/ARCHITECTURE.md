@@ -758,7 +758,10 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   requests under way at once. Every refused connect goes to the plugin's log, Kalzit's log and
   the audit log (`plugins.connect_refused`), and the connector's other warnings to the logs,
   each at most once a minute per target and reason, refusals also through a token bucket per
-  plugin (20, then one per 3 seconds), and at most 1000 distinct keys at once.
+  plugin (20, then one per 3 seconds) checked before a key is remembered, and at most 1000
+  distinct keys at once. Refusals for Kalzit's own addresses, metadata addresses and the
+  allow-list are always audited, once a minute per reason; everything held back is counted by
+  reason and summed up once a minute (`plugins.connect_refusals_suppressed`).
 - The plugin speaks its database's protocol over the stream and wraps it in TLS itself.
 
 ## Dashboards

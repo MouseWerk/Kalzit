@@ -57,6 +57,9 @@ const MAX_NOTED: usize = 1000;
 /// `REFUSALS_REFILL`, whatever the targets.
 const REFUSALS_BURST: f64 = 20.0;
 const REFUSALS_REFILL: Duration = Duration::from_secs(3);
+/// Refusals that say the plugin tried to reach what it must never reach: always logged and
+/// audited (once a minute per reason), whatever else it sends.
+const SEVERE: &[&str] = &["target.own_address", "target.own_database", "target.metadata_address", "target.not_allowed"];
 /// The longest host name a request may name (DNS allows 253 characters).
 const MAX_HOST_BYTES: usize = 253;
 /// The longest data source id a request may name.
@@ -335,6 +338,13 @@ pub struct Context {
     pub connect_timeout: Duration,
     /// When a refusal or note was last logged, by its key.
     noted: Mutex<HashMap<String, Instant>>,
+    /// When a severe refusal was last logged, by its reason.
+    severe: Mutex<HashMap<&'static str, Instant>>,
+    /// Refusals not logged one by one, by reason, and when the last summary was written.
+    suppressed: Mutex<(std::collections::BTreeMap<&'static str, u64>, Instant)>,
+    /// The audit rows written, for the tests.
+    #[cfg(test)]
+    audited_rows: Mutex<Vec<(&'static str, Value)>>,
     /// The token bucket of refusals logged and audited: tokens and when it was last filled.
     refusals: Mutex<(f64, Instant)>,
     /// Cancelled when the plugin process ends: every relay of it ends too.
@@ -372,6 +382,10 @@ impl Context {
             idle,
             connect_timeout,
             noted: Mutex::default(),
+            severe: Mutex::default(),
+            suppressed: Mutex::new((std::collections::BTreeMap::new(), Instant::now())),
+            #[cfg(test)]
+            audited_rows: Mutex::default(),
             refusals: Mutex::new((REFUSALS_BURST, Instant::now())),
             stopped: CancellationToken::new(),
         }
@@ -517,23 +531,77 @@ impl Context {
     /// A refused connect: in the plugin's log and Kalzit's, and in the audit log, each at most
     /// once a minute per target and reason.
     fn refused(&self, request: &pb::ConnectRequest, detail: &Detail) {
-        if !self.may_note(format!("{}\n{}\n{}", detail.reason, request.host, request.port)) || !self.may_log_refusal() {
+        if SEVERE.contains(&detail.reason) {
+            // Always audited, keyed by the reason alone: junk the plugin sends cannot hide it.
+            let due = {
+                let mut severe = self.severe.lock().unwrap_or_else(|e| e.into_inner());
+                let now = Instant::now();
+                let due = severe.get(detail.reason).is_none_or(|at| now.duration_since(*at) >= NOTE_EVERY);
+                if due {
+                    severe.insert(detail.reason, now);
+                }
+                due
+            };
+            if !due {
+                self.suppressed(detail.reason);
+                return;
+            }
+        } else if !self.may_log_refusal()
+            || !self.may_note(format!("{}\n{}\n{}", detail.reason, request.host, request.port))
+        {
+            // The bucket first: refusals it holds back never reach the map of noted keys.
+            self.suppressed(detail.reason);
             return;
         }
+        self.flush_suppressed(false);
         let text = format!(
             "connect to {}:{} for data source {} refused ({}): {}",
             request.host, request.port, request.datasource_id, detail.reason, detail.message
         );
         tracing::warn!(plugin = %self.plugin, reason = detail.reason, "{text}");
         self.logs.push(&self.plugin, "host", text);
+        self.audit(
+            "plugins.connect_refused",
+            json!({
+                "datasourceId": request.datasource_id,
+                "host": request.host,
+                "port": request.port,
+                "reason": detail.reason,
+            }),
+        );
+    }
+
+    /// Counts a refusal that was not logged, for the next summary.
+    fn suppressed(&self, reason: &'static str) {
+        *self.suppressed.lock().unwrap_or_else(|e| e.into_inner()).0.entry(reason).or_default() += 1;
+        self.flush_suppressed(false);
+    }
+
+    /// Writes "N refusals not logged, by reason" to the logs and the audit log, at most once a
+    /// minute (or now, with `force`, as the process ends).
+    pub fn flush_suppressed(&self, force: bool) {
+        let counts = {
+            let mut suppressed = self.suppressed.lock().unwrap_or_else(|e| e.into_inner());
+            let now = Instant::now();
+            if suppressed.0.is_empty() || (!force && now.duration_since(suppressed.1) < NOTE_EVERY) {
+                return;
+            }
+            suppressed.1 = now;
+            std::mem::take(&mut suppressed.0)
+        };
+        let total: u64 = counts.values().sum();
+        let text = format!("{total} refused connects were not logged one by one: {counts:?}");
+        tracing::warn!(plugin = %self.plugin, "{text}");
+        self.logs.push(&self.plugin, "host", text);
+        self.audit("plugins.connect_refusals_suppressed", json!({ "total": total, "byReason": counts }));
+    }
+
+    /// One row of the audit log about this plugin, written in the background.
+    fn audit(&self, action: &'static str, summary: Value) {
+        #[cfg(test)]
+        self.audited_rows.lock().unwrap_or_else(|e| e.into_inner()).push((action, summary.clone()));
         let Some(pool) = self.audit.clone() else { return };
         let plugin = self.plugin.clone();
-        let summary = json!({
-            "datasourceId": request.datasource_id,
-            "host": request.host,
-            "port": request.port,
-            "reason": detail.reason,
-        });
         tokio::spawn(async move {
             let at_ms =
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
@@ -541,7 +609,7 @@ impl Context {
                 org_id: None,
                 actor_user_id: None,
                 actor_address: None,
-                action: "plugins.connect_refused",
+                action,
                 resource_type: Some("plugin"),
                 resource_id: Some(&plugin),
                 summary,
@@ -552,7 +620,7 @@ impl Context {
                 Err(e) => Err(e),
             };
             if let Err(e) = written {
-                tracing::error!(plugin = %plugin, "the refused connect could not be written to the audit log: {e}");
+                tracing::error!(plugin = %plugin, "the connector could not write to the audit log: {e}");
             }
         });
     }
@@ -890,9 +958,11 @@ mod linux {
         let pending = Arc::new(Semaphore::new(MAX_PENDING));
         tokio::spawn(async move {
             let mut buf = vec![0u8; kalzit_plugin_api::connector::MAX_MESSAGE_BYTES + 4];
+            let mut summary = tokio::time::interval(super::NOTE_EVERY);
             loop {
                 tokio::select! {
                     () = ended(&mut exited) => break,
+                    _ = summary.tick() => ctx.flush_suppressed(false),
                     readable = socket.readable() => {
                         let Ok(mut guard) = readable else { break };
                         let read = guard.try_io(|inner| {
@@ -927,7 +997,8 @@ mod linux {
                     }
                 }
             }
-            // The process ended: its relays end with it.
+            // The process ended: its relays end with it; what was not logged is summed up.
+            ctx.flush_suppressed(true);
             ctx.stopped.cancel();
         });
     }
@@ -1001,9 +1072,11 @@ mod windows {
         tokio::spawn(async move {
             let Listener { first, address, sddl } = listener;
             let mut server = first;
+            let mut summary = tokio::time::interval(super::NOTE_EVERY);
             loop {
                 tokio::select! {
                     () = ended(&mut exited) => break,
+                    _ = summary.tick() => ctx.flush_suppressed(false),
                     connected = server.connect() => {
                         if connected.is_err() || client_pid(&server) != Some(pid) {
                             if connected.is_ok() {
@@ -1034,7 +1107,8 @@ mod windows {
                     }
                 }
             }
-            // The process ended: its relays end with it.
+            // The process ended: its relays end with it; what was not logged is summed up.
+            ctx.flush_suppressed(true);
             ctx.stopped.cancel();
         });
     }
@@ -1300,6 +1374,34 @@ mod tests {
         assert!(closing.is_cancelled());
         assert_eq!(reason(&ctx, r).await, "plugin.datasource_unknown");
         drop(listener);
+    }
+
+    #[tokio::test]
+    async fn junk_cannot_hide_a_severe_refusal_and_what_is_held_back_is_summed_up() {
+        let (ctx, _store, _dir) = context(OwnEndpoints::default());
+        let junk = Detail::new("plugin.target_undeclared", "not declared");
+        for i in 0..200 {
+            ctx.refused(&request(&format!("junk-{i}.example.test"), 80, pb::TargetProtocol::Tcp), &junk);
+        }
+        let rows = |action: &str| ctx.audited_rows.lock().unwrap().iter().filter(|(a, _)| *a == action).count();
+        assert_eq!(rows("plugins.connect_refused"), REFUSALS_BURST as usize, "the bucket holds the junk back");
+        // Held back before it reached the map of noted keys.
+        assert_eq!(ctx.noted.lock().unwrap().len(), REFUSALS_BURST as usize);
+        // A metadata address is audited all the same, and once a minute per reason.
+        let metadata = Detail::new("target.metadata_address", "169.254.169.254 is a metadata address");
+        let tried = request("rebound.example.test", 80, pb::TargetProtocol::Tcp);
+        ctx.refused(&tried, &metadata);
+        ctx.refused(&tried, &metadata);
+        let audited = ctx.audited_rows.lock().unwrap().clone();
+        let severe: Vec<_> = audited.iter().filter(|(_, s)| s["reason"] == "target.metadata_address").collect();
+        assert_eq!(severe.len(), 1, "{audited:?}");
+        // What was not logged one by one is summed up by reason.
+        ctx.flush_suppressed(true);
+        let audited = ctx.audited_rows.lock().unwrap().clone();
+        let (_, summary) = audited.iter().find(|(a, _)| *a == "plugins.connect_refusals_suppressed").unwrap();
+        assert_eq!(summary["total"], 181, "{summary}");
+        assert_eq!(summary["byReason"]["plugin.target_undeclared"], 180, "{summary}");
+        assert_eq!(summary["byReason"]["target.metadata_address"], 1, "{summary}");
     }
 
     #[tokio::test]

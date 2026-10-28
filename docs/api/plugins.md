@@ -20,8 +20,9 @@ data sources whose secrets were cleared and how many secrets),
 `plugins.key_added`, `plugins.key_removed` (with the plugins it stopped and the updates it
 dropped), `plugins.handover_added`, `plugins.unsigned_allowed`, `plugins.unsigned_refused`,
 `plugins.landlock_optional`, `plugins.landlock_required`, `plugins.connect_refused` (a network
-connection the connector refused, with `datasourceId`, `host`, `port` and `reason`; at most once a
-minute per target and reason, no actor), and in the organization's log `plugins.blocked` and
+connection the connector refused, with `datasourceId`, `host`, `port` and `reason`; bounded as
+"Network connector" says, no actor), `plugins.connect_refusals_suppressed` (refusals not logged
+one by one, with `total` and `byReason`), and in the organization's log `plugins.blocked` and
 `plugins.unblocked`. Summaries carry versions, key ids and the approved network targets, never
 secrets.
 
@@ -363,7 +364,12 @@ Refusals of steps 1 to 4 answer
 `ERROR_KIND_BLOCKED`, step 5 `ERROR_KIND_FAILED`; every refusal is written to the plugin's log
 (`stream: host`), Kalzit's log and the audit log (`plugins.connect_refused`), at most once a
 minute per target and reason and at most 20 at once per plugin, then one every 3 seconds,
-whatever the targets; at most 1000 distinct ones are remembered. The plugin speaks
+whatever the targets; at most 1000 distinct ones are remembered, and only those the per-plugin
+limit let through. Refusals for Kalzit's own addresses and database, metadata addresses and
+addresses outside `datasources.allowed_targets` are always logged and audited, once a minute
+per reason, whatever else the plugin sends. What is not logged one by one is counted by reason
+and written once a minute, and when the process ends, as `plugins.connect_refusals_suppressed`
+(`total`, `byReason`). The plugin speaks
 TLS itself over the stream.
 
 ## Sandbox
