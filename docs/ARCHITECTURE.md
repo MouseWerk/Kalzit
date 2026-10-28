@@ -656,7 +656,7 @@ manifest and signature) always works, also offline, and runs the same checks.
   key trusted for plugins (Kalzit's plugin keys or an administrator's publisher keys); then
   `parse_index` with the accepted sequences. The index taken, its key, the accepted sequences
   (never lowered, also across URL changes) and the last failure are the row of `plugin_catalog`
-  (migration 0023); a failure keeps the index taken before, and the same bytes served again count
+  (migration 0024); a failure keeps the index taken before, and the same bytes served again count
   as unchanged until their expiry. A background loop refreshes when due (`spawn_background`).
 - Installing from the catalog: the entry must be listed in a current, unexpired index and not
   withdrawn; the package is streamed into the host's private upload directory and must match

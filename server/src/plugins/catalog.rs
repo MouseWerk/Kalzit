@@ -2,7 +2,7 @@
 //! hosted by the project or a mirror, off by default. Turned on, Kalzit itself loads the index
 //! (never a plugin) through the one HTTP client with the data source target rules, a time limit
 //! and a size limit, checks its signature against the keys trusted for plugins, its sequence (no
-//! rollback) and its expiry, and keeps it in `plugin_catalog` (migration 0023). A package chosen
+//! rollback) and its expiry, and keeps it in `plugin_catalog` (migration 0024). A package chosen
 //! from the index is downloaded, compared with the entry (size, SHA-256, id, version, signing key)
 //! and then installed through exactly the path of an uploaded file (`PluginHost::install`):
 //! the same checks, the same approval of network targets, the same sandbox.
