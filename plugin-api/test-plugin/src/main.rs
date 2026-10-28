@@ -175,6 +175,34 @@ fn signal_host(_host: u32) -> Value {
     json!({ "ok": false })
 }
 
+/// Whether this process can reach a Unix socket of the host by its path (Linux).
+#[cfg(unix)]
+fn unix_connect(path: &str) -> Value {
+    match std::os::unix::net::UnixStream::connect(path) {
+        Ok(_) => json!({ "ok": true }),
+        Err(e) => json!({ "ok": false, "error": e.to_string() }),
+    }
+}
+
+#[cfg(not(unix))]
+fn unix_connect(_path: &str) -> Value {
+    json!({ "ok": false, "error": "not on this system" })
+}
+
+/// Whether this process can make itself non-dumpable (and so hide its descriptors).
+#[cfg(target_os = "linux")]
+fn undumpable() -> Value {
+    // SAFETY: a plain prctl with integer arguments.
+    let r = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    json!({ "ok": r == 0, "errno": if r == 0 { 0 } else { errno } })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn undumpable() -> Value {
+    json!({ "ok": false, "errno": -1 })
+}
+
 #[cfg(target_os = "linux")]
 fn ptrace_traceme() -> Value {
     // SAFETY: PTRACE_TRACEME takes no pointers; it only marks this process as traceable.
@@ -425,6 +453,8 @@ impl DataSource for Plugin {
                     .await,
             ]),
             "net_connect" => documents(vec![net_connect(&datasource, &query).await]),
+            "unix_connect" => documents(vec![unix_connect(query["path"].as_str().unwrap_or_default())]),
+            "undumpable" => documents(vec![undumpable()]),
             "net_many" => documents(vec![net_many(&datasource, &query).await]),
             other => return Err(Status::invalid_argument(format!("unknown behaviour {other}"))),
         };
@@ -565,26 +595,21 @@ mod listen {
 
 #[cfg(unix)]
 mod listen {
-    use futures_util::Stream;
-    use tokio::net::{UnixListener, UnixStream};
+    use futures_util::{Stream, StreamExt};
+    use tokio::net::UnixStream;
 
-    /// Yields every connection from the host process (SO_PEERCRED); others are closed.
-    pub fn incoming(address: &str, host: u32) -> std::io::Result<impl Stream<Item = std::io::Result<UnixStream>>> {
-        let listener = UnixListener::bind(address)?;
-        Ok(futures_util::stream::unfold(listener, move |listener| async move {
-            loop {
-                match listener.accept().await {
-                    Ok((stream, _)) => {
-                        let pid = stream.peer_cred().ok().and_then(|c| c.pid());
-                        if pid == i32::try_from(host).ok() {
-                            return Some((Ok(stream), listener));
-                        }
-                        eprintln!("a connection from another process was refused");
-                    }
-                    Err(e) => return Some((Err(e), listener)),
-                }
-            }
-        }))
+    /// The one connection Kalzit handed over as `fd:<n>`, then none (the sandbox allows no
+    /// socket of the plugin's own; the pair reaches only Kalzit).
+    pub fn incoming(address: &str, _host: u32) -> std::io::Result<impl Stream<Item = std::io::Result<UnixStream>>> {
+        let fd: std::os::fd::RawFd = address
+            .strip_prefix("fd:")
+            .and_then(|n| n.parse().ok())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "the address is not fd:<n>"))?;
+        // SAFETY: the inherited descriptor belongs to this process and is taken over once.
+        let stream = unsafe { <std::os::unix::net::UnixStream as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+        stream.set_nonblocking(true)?;
+        let stream = UnixStream::from_std(stream)?;
+        Ok(futures_util::stream::once(async move { Ok(stream) }).chain(futures_util::stream::pending()))
     }
 }
 

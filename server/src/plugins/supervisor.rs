@@ -95,8 +95,9 @@ pub struct Launch {
     pub own: Arc<OwnEndpoints>,
     /// Where refused connects are recorded (`None` in some tests).
     pub audit: Option<sqlx::AnyPool>,
-    /// Shown in the status: Kalzit's own files with secrets that every local account may read.
-    pub warnings: Arc<Vec<String>>,
+    /// Kalzit's own files with secrets that others may read: shown in the status, and while a
+    /// plugin could read one, plugins do not start.
+    pub exposure: Arc<super::host::Exposure>,
 }
 
 /// What the plugin page shows about the process.
@@ -124,7 +125,16 @@ pub struct Status {
     pub sandbox_missing: Vec<&'static str>,
     /// Kalzit's own files with secrets that every local account may read (Windows).
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<String>,
+    pub warnings: Vec<StatusWarning>,
+}
+
+/// Something about a plugin's process an administrator should know: a reason the UI translates,
+/// its parameters and an English text.
+#[derive(Clone, Debug, Serialize)]
+pub struct StatusWarning {
+    pub reason: &'static str,
+    pub params: std::collections::BTreeMap<String, String>,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -400,7 +410,7 @@ fn random_hex(bytes: usize) -> String {
 
 impl Supervisor {
     pub fn new(launch: Launch, options: Options) -> Arc<Self> {
-        let warnings = launch.warnings.as_ref().clone();
+        let warnings = launch.exposure.warnings.clone();
         Arc::new(Self {
             id: launch.manifest.id.clone(),
             launch,
@@ -544,6 +554,15 @@ impl Supervisor {
                 "plugins do not run while Kalzit runs as root; run Kalzit as its own account",
             ));
         }
+        if let Some(path) = self.launch.exposure.readable_by_plugins.first() {
+            return Err(HostError::new(
+                "plugin.secrets_exposed",
+                format!(
+                    "{path} holds secrets that a plugin could read; limit it to SYSTEM, Administrators and the account Kalzit runs as"
+                ),
+            )
+            .with("path", path));
+        }
         let require_landlock = cfg!(target_os = "linux") && !self.launch.allow_without_landlock.load(Ordering::SeqCst);
         let landlock_missing = || {
             HostError::new(
@@ -570,7 +589,8 @@ impl Supervisor {
         let opened = process::Endpoint::new(&run_dir, &random, &start_sid, &app_container_sid).and_then(|endpoint| {
             connector::listen(&run_dir, &random, &start_sid, &app_container_sid).map(|c| (endpoint, c))
         });
-        let (endpoint, (listener, connector_address)) = match opened {
+        #[allow(unused_mut)]
+        let (mut endpoint, (mut listener, connector_address)) = match opened {
             Ok(opened) => opened,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&run_dir);
@@ -582,6 +602,20 @@ impl Supervisor {
             }
         };
         let plugin_address = endpoint.address.clone();
+        // Linux: the plugin gets both connections as descriptors, connected already; it may
+        // open no socket of its own. Kalzit's copies of the plugin's ends close after the start.
+        #[cfg(unix)]
+        let handed = [
+            endpoint.take_plugin_end().map(|fd| (fd, process::HOST_FD)),
+            listener.take_plugin_end().map(|fd| (fd, process::CONNECTOR_FD)),
+        ];
+        #[cfg(unix)]
+        let inherit: Vec<(i32, i32)> = {
+            use std::os::fd::AsRawFd;
+            handed.iter().flatten().map(|(fd, to)| (fd.as_raw_fd(), *to)).collect()
+        };
+        #[cfg(not(unix))]
+        let inherit = Vec::new();
         let mut endpoint = Some(endpoint);
         let spec = process::Spec {
             program: self.launch.program.clone(),
@@ -595,8 +629,12 @@ impl Supervisor {
             start_sid,
             app_container_sid,
             require_landlock,
+            inherit,
         };
-        let mut child = match process::spawn(&spec) {
+        let spawned = process::spawn(&spec);
+        #[cfg(unix)]
+        drop(handed);
+        let mut child = match spawned {
             Ok(child) => child,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&run_dir);
@@ -612,6 +650,17 @@ impl Supervisor {
             s.starts += 1;
             s.sandbox = child.layers.clone();
             s.sandbox_missing = child.missing.clone();
+            s.warnings = self.launch.exposure.warnings.clone();
+            // Allowed by the administrator, but said with every start.
+            if cfg!(target_os = "linux") && !child.layers.contains(&"landlock") {
+                s.warnings.push(StatusWarning {
+                    reason: "plugin.without_landlock",
+                    params: Default::default(),
+                    message:
+                        "the plugin runs without Landlock (allowed without it): its file system access is not limited"
+                            .to_string(),
+                });
+            }
         });
         // The child refuses to run without it already; this holds should it report otherwise.
         if require_landlock && !child.layers.contains(&"landlock") {

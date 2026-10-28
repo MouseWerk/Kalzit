@@ -3,18 +3,18 @@
 //! connection. This module holds the framing both sides share and, with the feature
 //! `connector`, the client a plugin uses (`Connector`).
 //!
-//! One connection to the connector asks for one network connection: the plugin writes a
-//! `ConnectRequest`, Kalzit answers a `ConnectResponse`, each preceded by its length (4 bytes,
-//! big-endian, at most `MAX_MESSAGE_BYTES`). On Linux the answer carries the connected socket
-//! (`SCM_RIGHTS`); on Windows the pipe itself becomes the connection, relayed by Kalzit.
+//! Every message is preceded by its length (4 bytes, big-endian, at most `MAX_MESSAGE_BYTES`).
+//! Linux: requests and answers share one inherited `SOCK_SEQPACKET` socket (`fd:4`), matched by
+//! `request_id`; an answer carries the connected socket (`SCM_RIGHTS`). Windows: one pipe
+//! connection per request; after the answer the pipe itself is the connection, relayed by Kalzit.
 
 use prost::Message;
 
 /// The name of the addition in `DescribeRequest.features`.
 pub const FEATURE: &str = "network_connector";
 
-/// The environment variable with the connector's address: a Unix socket path (Linux) or a pipe
-/// name (Windows).
+/// The environment variable with the connector's address: `fd:<n>`, an inherited socket (Linux),
+/// or a pipe name (Windows).
 pub const ENV: &str = "KALZIT_PLUGIN_CONNECTOR";
 
 /// The largest request or answer either side accepts.
@@ -34,6 +34,13 @@ pub fn frame(message: &impl Message) -> Vec<u8> {
 pub fn frame_len(prefix: [u8; 4]) -> Option<usize> {
     let len = u32::from_be_bytes(prefix) as usize;
     (len <= MAX_MESSAGE_BYTES).then_some(len)
+}
+
+/// The body of a whole frame in `bytes`, or `None` when `bytes` is not exactly one frame.
+pub fn frame_body(bytes: &[u8]) -> Option<&[u8]> {
+    let prefix: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+    let len = frame_len(prefix)?;
+    (bytes.len() == 4 + len).then(|| &bytes[4..])
 }
 
 #[cfg(feature = "connector")]
@@ -88,23 +95,31 @@ mod client {
     pub struct Connector {
         address: String,
         token: String,
+        /// Kalzit's process id (`KALZIT_PLUGIN_HOST_PID`): on Windows the pipe's server must be it.
+        host_pid: Option<u32>,
     }
 
     impl Connector {
-        /// The connector of this start (`KALZIT_PLUGIN_CONNECTOR`, `KALZIT_PLUGIN_TOKEN`); `None`
-        /// when the host did not give one (a host before protocol minor 1).
+        /// The connector of this start (`KALZIT_PLUGIN_CONNECTOR`, `KALZIT_PLUGIN_TOKEN`,
+        /// `KALZIT_PLUGIN_HOST_PID`); `None` when the host did not give one (a host before
+        /// protocol minor 1). Read it before the token leaves the environment.
         pub fn from_env() -> Option<Self> {
-            Some(Self { address: std::env::var(super::ENV).ok()?, token: std::env::var("KALZIT_PLUGIN_TOKEN").ok()? })
+            Some(Self {
+                address: std::env::var(super::ENV).ok()?,
+                token: std::env::var("KALZIT_PLUGIN_TOKEN").ok()?,
+                host_pid: std::env::var("KALZIT_PLUGIN_HOST_PID").ok().and_then(|p| p.parse().ok()),
+            })
         }
 
-        pub fn new(address: impl Into<String>, token: impl Into<String>) -> Self {
-            Self { address: address.into(), token: token.into() }
+        pub fn new(address: impl Into<String>, token: impl Into<String>, host_pid: Option<u32>) -> Self {
+            Self { address: address.into(), token: token.into(), host_pid }
         }
 
         /// A connection to `host:port` for the data source `datasource_id` (its
         /// `Connection.datasource_id`), over which the plugin speaks `protocol` (wrapping the
-        /// stream in TLS itself for `TargetProtocol::Tls`). Returns the stream and the address
-        /// Kalzit connected to.
+        /// stream in TLS itself for `TargetProtocol::Tls`; Kalzit checks the protocol against the
+        /// manifest but does not enforce it). Returns the stream and the address Kalzit connected
+        /// to.
         pub async fn connect(
             &self,
             datasource_id: &str,
@@ -118,20 +133,22 @@ mod client {
                 host: host.to_string(),
                 port: u32::from(port),
                 protocol: protocol as i32,
+                request_id: 0,
             };
-            imp::connect(&self.address, &super::frame(&request)).await
+            imp::connect(&self.address, self.host_pid, request).await
         }
     }
 
-    /// The address from a decoded answer, or why there is none.
-    fn answer(bytes: &[u8]) -> Result<String, ConnectError> {
+    /// The decoded answer: its request id, and the address or why there is none.
+    fn answer(bytes: &[u8]) -> Result<(u64, Result<String, ConnectError>), ConnectError> {
         let response = pb::ConnectResponse::decode(bytes)
             .map_err(|e| ConnectError::Protocol(format!("undecodable answer: {e}")))?;
-        match response.result {
+        let result = match response.result {
             Some(pb::connect_response::Result::Connected(c)) => Ok(c.address),
             Some(pb::connect_response::Result::Error(e)) => Err(ConnectError::Refused(e)),
             None => Err(ConnectError::Protocol("an empty answer".into())),
-        }
+        };
+        Ok((response.request_id, result))
     }
 
     /// A connection Kalzit made: the TCP socket itself (Linux) or the pipe Kalzit relays
@@ -163,19 +180,64 @@ mod client {
 
     #[cfg(unix)]
     mod imp {
+        use std::collections::HashMap;
         use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Mutex};
 
-        use tokio::io::{AsyncWriteExt, Interest};
-        use tokio::net::UnixStream;
+        use tokio::io::unix::AsyncFd;
+        use tokio::sync::oneshot;
 
-        use super::{ConnectError, Stream};
+        use super::{ConnectError, Stream, pb};
 
         pub type Inner = tokio::net::TcpStream;
 
-        /// One `recvmsg`: bytes into `buf`, a passed descriptor (if any) into `fd`. Descriptors
-        /// beyond the first are closed.
+        /// What the reader hands a waiting request: the answer's body and the socket it carried.
+        type Reply = (Vec<u8>, Option<OwnedFd>);
+
+        /// The one connector socket of this process, shared by every request.
+        struct Mux {
+            socket: AsyncFd<OwnedFd>,
+            waiting: Mutex<HashMap<u64, oneshot::Sender<Reply>>>,
+            next: AtomicU64,
+        }
+
+        static MUX: Mutex<Option<(String, Arc<Mux>)>> = Mutex::new(None);
+
+        /// The shared socket for `address` (`fd:<n>`), its reader started on first use.
+        fn mux(address: &str) -> std::io::Result<Arc<Mux>> {
+            let mut current = MUX.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((a, m)) = current.as_ref()
+                && a == address
+            {
+                return Ok(m.clone());
+            }
+            let fd: RawFd = address.strip_prefix("fd:").and_then(|n| n.parse().ok()).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "the connector's address is not fd:<n>")
+            })?;
+            // SAFETY: fcntl only queries the flags of a number; it fails for a closed one.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: the inherited descriptor belongs to this process and is taken over once
+            // (guarded by `MUX`); it is made non-blocking and close-on-exec.
+            let owned = unsafe {
+                libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                OwnedFd::from_raw_fd(fd)
+            };
+            // SAFETY: an `OwnedFd` keeps its one open descriptor until the `AsyncFd` drops it.
+            let socket = unsafe { AsyncFd::register(owned) }?;
+            let m = Arc::new(Mux { socket, waiting: Mutex::default(), next: AtomicU64::new(1) });
+            tokio::spawn(read(m.clone()));
+            *current = Some((address.to_string(), m.clone()));
+            Ok(m)
+        }
+
+        /// One `recvmsg`: one message into `buf`, a passed descriptor (if any) into `fd`.
+        /// Descriptors beyond the first are closed.
         fn receive(socket: RawFd, buf: &mut [u8], fd: &mut Option<OwnedFd>) -> std::io::Result<usize> {
-            // Room for a few descriptors; only one is expected.
             let mut control = [0u64; 8];
             let mut iov = libc::iovec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() };
             // SAFETY: a zeroed msghdr is valid; the pointers below refer to buffers alive for the call.
@@ -210,29 +272,65 @@ mod client {
             Ok(n as usize)
         }
 
-        pub async fn connect(address: &str, request: &[u8]) -> Result<(Stream, String), ConnectError> {
-            let mut socket = UnixStream::connect(address).await?;
-            socket.write_all(request).await?;
-            let mut bytes = Vec::new();
-            let mut fd = None;
-            let mut chunk = vec![0u8; 4096];
-            let body = loop {
-                let n =
-                    socket.async_io(Interest::READABLE, || receive(socket.as_raw_fd(), &mut chunk, &mut fd)).await?;
-                if n == 0 {
-                    return Err(ConnectError::Protocol("the connector closed before it answered".into()));
+        /// Hands every answer to its request; at the end of the socket every request fails.
+        async fn read(m: Arc<Mux>) {
+            let mut buf = vec![0u8; super::super::MAX_MESSAGE_BYTES + 4];
+            loop {
+                let Ok(mut guard) = m.socket.readable().await else { break };
+                let mut fd = None;
+                let read = guard.try_io(|inner| receive(inner.as_raw_fd(), &mut buf, &mut fd));
+                let n = match read {
+                    Err(_would_block) => continue,
+                    Ok(Ok(0)) | Ok(Err(_)) => break,
+                    Ok(Ok(n)) => n,
+                };
+                let Some(body) = super::super::frame_body(&buf[..n]) else { continue };
+                let Ok((id, _)) = super::answer(body) else { continue };
+                let sender = m.waiting.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                if let Some(sender) = sender {
+                    let _ = sender.send((body.to_vec(), fd));
                 }
-                bytes.extend_from_slice(&chunk[..n]);
-                if bytes.len() >= 4 {
-                    let prefix = [bytes[0], bytes[1], bytes[2], bytes[3]];
-                    let len = super::super::frame_len(prefix)
-                        .ok_or_else(|| ConnectError::Protocol("the answer is too large".into()))?;
-                    if bytes.len() >= 4 + len {
-                        break &bytes[4..4 + len];
-                    }
+            }
+            m.waiting.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            // A broken socket is not used again.
+            let mut current = MUX.lock().unwrap_or_else(|e| e.into_inner());
+            if current.as_ref().is_some_and(|(_, c)| Arc::ptr_eq(c, &m)) {
+                *current = None;
+            }
+        }
+
+        pub async fn connect(
+            address: &str,
+            _host_pid: Option<u32>,
+            mut request: pb::ConnectRequest,
+        ) -> Result<(Stream, String), ConnectError> {
+            let m = mux(address)?;
+            let id = m.next.fetch_add(1, Ordering::Relaxed);
+            request.request_id = id;
+            let bytes = super::super::frame(&request);
+            let (tx, rx) = oneshot::channel();
+            m.waiting.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
+            let sent = loop {
+                let mut guard = m.socket.writable().await?;
+                let sent = guard.try_io(|inner| {
+                    // SAFETY: one message from a buffer alive for the call.
+                    let n = unsafe {
+                        libc::send(inner.as_raw_fd(), bytes.as_ptr().cast(), bytes.len(), libc::MSG_NOSIGNAL)
+                    };
+                    if n < 0 { Err(std::io::Error::last_os_error()) } else { Ok(n as usize) }
+                });
+                if let Ok(result) = sent {
+                    break result;
                 }
             };
-            let address = super::answer(body)?;
+            if let Err(e) = sent {
+                m.waiting.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                return Err(e.into());
+            }
+            let (body, fd) =
+                rx.await.map_err(|_| ConnectError::Protocol("the connector closed before it answered".into()))?;
+            let (_, result) = super::answer(&body)?;
+            let address = result?;
             let fd = fd.ok_or_else(|| ConnectError::Protocol("the answer carried no socket".into()))?;
             let stream = std::net::TcpStream::from(fd);
             stream.set_nonblocking(true)?;
@@ -242,18 +340,25 @@ mod client {
 
     #[cfg(windows)]
     mod imp {
+        use std::os::windows::io::AsRawHandle;
         use std::time::Duration;
 
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::windows::named_pipe::ClientOptions;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
 
-        use super::{ConnectError, Stream};
+        use super::{ConnectError, Stream, pb};
 
         pub type Inner = tokio::net::windows::named_pipe::NamedPipeClient;
 
         const ERROR_PIPE_BUSY: i32 = 231;
 
-        pub async fn connect(address: &str, request: &[u8]) -> Result<(Stream, String), ConnectError> {
+        pub async fn connect(
+            address: &str,
+            host_pid: Option<u32>,
+            request: pb::ConnectRequest,
+        ) -> Result<(Stream, String), ConnectError> {
             let mut tries = 0;
             let mut pipe = loop {
                 match ClientOptions::new().open(address) {
@@ -265,15 +370,27 @@ mod client {
                     Err(e) => return Err(e.into()),
                 }
             };
-            pipe.write_all(request).await?;
+            // The token goes only to Kalzit's process.
+            if let Some(host) = host_pid {
+                let mut server = 0u32;
+                // SAFETY: the handle is open for the call; `server` is a valid out pointer.
+                let known = unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut server) }.is_ok();
+                if !known || server != host {
+                    return Err(ConnectError::Io(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "the connector's pipe does not belong to Kalzit's process",
+                    )));
+                }
+            }
+            pipe.write_all(&super::super::frame(&request)).await?;
             let mut prefix = [0u8; 4];
             pipe.read_exact(&mut prefix).await?;
             let len = super::super::frame_len(prefix)
                 .ok_or_else(|| ConnectError::Protocol("the answer is too large".into()))?;
             let mut body = vec![0u8; len];
             pipe.read_exact(&mut body).await?;
-            let address = super::answer(&body)?;
-            Ok((Stream(pipe), address))
+            let (_, result) = super::answer(&body)?;
+            Ok((Stream(pipe), result?))
         }
     }
 }
@@ -285,11 +402,12 @@ mod tests {
 
     #[test]
     fn frames_carry_their_length() {
-        let request = pb::ConnectRequest { host: "db".into(), port: 5432, ..Default::default() };
+        let request = pb::ConnectRequest { host: "db".into(), port: 5432, request_id: 7, ..Default::default() };
         let bytes = frame(&request);
         let len = frame_len(bytes[..4].try_into().unwrap()).unwrap();
         assert_eq!(len, bytes.len() - 4);
-        assert_eq!(pb::ConnectRequest::decode(&bytes[4..]).unwrap(), request);
+        assert_eq!(pb::ConnectRequest::decode(frame_body(&bytes).unwrap()).unwrap(), request);
+        assert_eq!(frame_body(&bytes[..bytes.len() - 1]), None);
         assert_eq!(frame_len((MAX_MESSAGE_BYTES as u32 + 1).to_be_bytes()), None);
     }
 }

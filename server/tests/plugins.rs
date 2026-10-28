@@ -992,6 +992,21 @@ async fn the_network_goes_only_through_the_connector() {
     }
     let r = t.doc(&ds, ID, json!({ "do": "net_direct", "host": "127.0.0.1", "port": port })).await;
     assert_eq!(r["ok"], false, "the plugin connected past the connector: {r} ({layers:?})");
+    #[cfg(unix)]
+    {
+        // Nor a Unix socket of the host (a database's, Docker's), whatever its file mode.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        let path = dir.path().join("host.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let r = t.doc(&ds, ID, json!({ "do": "unix_connect", "path": path })).await;
+        assert_eq!(r["ok"], false, "the plugin reached a Unix socket of the host: {r} ({layers:?})");
+        // And it cannot hide its descriptors from the connector's count.
+        let r = t.doc(&ds, ID, json!({ "do": "undumpable" })).await;
+        assert_eq!((r["ok"].clone(), r["errno"].clone()), (json!(false), json!(1)), "{r}");
+    }
 
     // Through the connector the declared target answers.
     let r = t.doc(&ds, ID, json!({ "do": "net_connect", "host": "127.0.0.1", "port": port })).await;

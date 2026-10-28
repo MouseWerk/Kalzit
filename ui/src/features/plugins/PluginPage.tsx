@@ -516,6 +516,19 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
               </span>
             </p>
           )}
+          {(process?.warnings ?? [])
+            .filter((w) => !(w.reason === "plugin.without_landlock" && plugin.sandboxWarning !== undefined))
+            .map((w) => (
+              <p
+                key={`${w.reason}-${w.params.path ?? ""}`}
+                className="plugins-note plugins-note--warning"
+              >
+                <Icon name="alert" />
+                <span>
+                  {pluginReasonText(t, { reason: w.reason, params: w.params, fallback: w.message })}
+                </span>
+              </p>
+            ))}
         </div>
       </section>
     </div>

@@ -130,21 +130,28 @@ fn holds_secrets(text: &str) -> bool {
     }
 }
 
-/// Kalzit's own files that hold secrets (`kalzit.toml` with secrets in it, the TLS key) and that
-/// every local account may read (Windows: an entry for Everyone, Users, Authenticated Users or
-/// all AppContainers). Plugins cannot read them (their token has none of these SIDs and their
-/// AppContainer no entry), but other local accounts can; Kalzit warns when a plugin is enabled
-/// and shows it in the plugin's status. Empty on Linux, where Landlock keeps the plugin out.
-pub fn exposed_secrets(config: &crate::config::Config) -> Vec<String> {
+/// Kalzit's own files with secrets that others may read (`exposed_secrets`).
+#[derive(Clone, Debug, Default)]
+pub struct Exposure {
+    /// Files every local account may read, but no plugin: shown and logged.
+    pub warnings: Vec<super::supervisor::StatusWarning>,
+    /// Files a plugin could read: plugins do not start while there are any
+    /// (`plugin.secrets_exposed`).
+    pub readable_by_plugins: Vec<String>,
+}
+
+/// Kalzit's own files that hold secrets: `kalzit.toml` with secrets in it, the TLS key, the
+/// secrets key files and a SQLite database outside the data directory (Windows).
+///
+/// A plugin's token keeps Everyone, Users and `RESTRICTED` as restricting SIDs and runs in an
+/// AppContainer, so a plugin reads a file when its DACL grants read to one of those and also to
+/// all AppContainers (`ALL APPLICATION PACKAGES` or `ALL RESTRICTED APPLICATION PACKAGES`, as
+/// under `C:\Program Files`): such a file is in `readable_by_plugins`. A file only Everyone,
+/// Users or Authenticated Users may read is closed to plugins but open to other local accounts:
+/// a warning. Empty on Linux, where Landlock keeps the plugin out of these files.
+pub fn exposed_secrets(config: &crate::config::Config) -> Exposure {
     #[cfg(windows)]
     {
-        const WIDE: &[(&str, &str)] = &[
-            ("S-1-1-0", "Everyone"),
-            ("S-1-5-32-545", "Users"),
-            ("S-1-5-11", "Authenticated Users"),
-            ("S-1-15-2-1", "ALL APPLICATION PACKAGES"),
-        ];
-        const READ: u32 = 0x1 | 0x8000_0000 | 0x1000_0000;
         let mut files = Vec::new();
         if let Some(path) = &config.config_file
             && std::fs::read_to_string(path).is_ok_and(|t| holds_secrets(&t))
@@ -152,24 +159,40 @@ pub fn exposed_secrets(config: &crate::config::Config) -> Vec<String> {
             files.push(path.clone());
         }
         files.extend(config.tls.key_file.clone());
-        let mut out = Vec::new();
+        for name in [crate::secrets::KEY_FILE, crate::secrets::DPAPI_KEY_FILE] {
+            let path = config.paths.data_dir.join(name);
+            if path.exists() {
+                files.push(path);
+            }
+        }
+        let url = config.database_url();
+        if let Some(rest) = url.strip_prefix("sqlite:") {
+            let path = std::path::PathBuf::from(rest.trim_start_matches("//").split('?').next().unwrap_or_default());
+            if path.is_absolute() && !path.starts_with(&config.paths.data_dir) {
+                files.push(path);
+            }
+        }
+        let mut out = Exposure::default();
         for path in files {
             let Ok((_, dacl)) = crate::data_dir::acl::read(&path) else { continue };
-            let names: Vec<&str> = match dacl {
-                None => vec!["everyone (no access list)"],
-                Some(entries) => WIDE
-                    .iter()
-                    .filter(|(sid, _)| entries.iter().any(|e| e.sid == *sid && e.mask & READ != 0))
-                    .map(|(_, name)| *name)
-                    .collect(),
-            };
-            if !names.is_empty() {
-                out.push(format!(
-                    "{} holds secrets and {} may read it; plugins cannot, but other local accounts can: \
-                     limit it to SYSTEM, Administrators and the account Kalzit runs as",
-                    path.display(),
-                    names.join(", ")
-                ));
+            let dacl: Option<Vec<(String, u32)>> = dacl.map(|d| d.into_iter().map(|e| (e.sid, e.mask)).collect());
+            match judge(dacl.as_deref()) {
+                Judged::Closed => {}
+                Judged::LocalAccounts(names) => out.warnings.push(super::supervisor::StatusWarning {
+                    reason: "plugin.secrets_readable",
+                    message: format!(
+                        "{} holds secrets and {} may read it; plugins cannot, but other local accounts can: \
+                         limit it to SYSTEM, Administrators and the account Kalzit runs as",
+                        path.display(),
+                        names.join(", ")
+                    ),
+                    params: [
+                        ("path".to_string(), path.display().to_string()),
+                        ("accounts".to_string(), names.join(", ")),
+                    ]
+                    .into(),
+                }),
+                Judged::Plugins => out.readable_by_plugins.push(path.display().to_string()),
             }
         }
         out
@@ -177,8 +200,36 @@ pub fn exposed_secrets(config: &crate::config::Config) -> Vec<String> {
     #[cfg(not(windows))]
     {
         let _ = config;
-        Vec::new()
+        Exposure::default()
     }
+}
+
+/// Who besides Kalzit may read a file, by its allow entries (`None`: no DACL).
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+enum Judged {
+    Closed,
+    LocalAccounts(Vec<&'static str>),
+    Plugins,
+}
+
+#[cfg(any(windows, test))]
+fn judge(dacl: Option<&[(String, u32)]>) -> Judged {
+    /// Read data, or everything.
+    const READ: u32 = 0x1 | 0x8000_0000 | 0x1000_0000;
+    const WIDE: &[(&str, &str)] =
+        &[("S-1-1-0", "Everyone"), ("S-1-5-32-545", "Users"), ("S-1-5-11", "Authenticated Users")];
+    /// The restricting SIDs of a plugin's token that name others than the plugin.
+    const RESTRICTING: &[&str] = &["S-1-1-0", "S-1-5-32-545", "S-1-5-12"];
+    /// What every AppContainer passes.
+    const CONTAINERS: &[&str] = &["S-1-15-2-1", "S-1-15-2-2"];
+    let Some(entries) = dacl else { return Judged::Plugins };
+    let reads = |sid: &str| entries.iter().any(|(s, mask)| s == sid && mask & READ != 0);
+    if RESTRICTING.iter().any(|s| reads(s)) && CONTAINERS.iter().any(|s| reads(s)) {
+        return Judged::Plugins;
+    }
+    let names: Vec<&str> = WIDE.iter().filter(|(sid, _)| reads(sid)).map(|(_, name)| *name).collect();
+    if names.is_empty() { Judged::Closed } else { Judged::LocalAccounts(names) }
 }
 
 /// The texts of a plugin kind for the kind list: labels and help by field and language.
@@ -201,7 +252,7 @@ pub struct PluginHost {
     options: RwLock<Options>,
     kalzit_keys: RwLock<Vec<VerifyingKey>>,
     /// The plugins whose kinds are registered, with their process.
-    running: Mutex<HashMap<String, Arc<Supervisor>>>,
+    running: Arc<Mutex<HashMap<String, Arc<Supervisor>>>>,
     /// Serializes the administrator's changes.
     changes: tokio::sync::Mutex<()>,
     /// Plugins may run on a Linux host without Landlock (`allowWithoutLandlock`).
@@ -211,7 +262,7 @@ pub struct PluginHost {
     /// Kalzit's database, for the audit log of refused connects; set by `load`.
     db: OnceLock<sqlx::AnyPool>,
     /// Kalzit's own files with secrets that every local account may read (`exposed_secrets`).
-    exposed: Arc<Vec<String>>,
+    exposed: Arc<Exposure>,
 }
 
 impl PluginHost {
@@ -221,7 +272,7 @@ impl PluginHost {
             root: data_dir.join("plugins"),
             options: RwLock::new(Options::default()),
             kalzit_keys: RwLock::new(package::kalzit_keys()),
-            running: Mutex::default(),
+            running: Arc::default(),
             changes: tokio::sync::Mutex::new(()),
             without_landlock: Arc::default(),
             own: Arc::default(),
@@ -231,7 +282,7 @@ impl PluginHost {
     }
 
     /// The warnings of `exposed_secrets`, shown with every plugin and logged when one is enabled.
-    pub fn with_exposed_secrets(mut self, exposed: Vec<String>) -> Self {
+    pub fn with_exposed_secrets(mut self, exposed: Exposure) -> Self {
         self.exposed = Arc::new(exposed);
         self
     }
@@ -281,6 +332,13 @@ impl PluginHost {
     /// at start. A plugin that cannot run is logged and left out.
     pub async fn load(&self, db: &sqlx::AnyPool, datasources: &DataSources) -> ApiResult<()> {
         let _ = self.db.set(db.clone());
+        // A changed or deleted data source takes back what plugins may reach for it.
+        let running = self.running.clone();
+        datasources.on_forget(Arc::new(move |datasource_id| {
+            for supervisor in running.lock().unwrap_or_else(|e| e.into_inner()).values() {
+                supervisor.grants().revoke(datasource_id);
+            }
+        }));
         datasources.set_blocks(store::blocks(db).await?);
         self.without_landlock.store(store::switches(db).await?.allow_without_landlock, Ordering::SeqCst);
         let rows = store::all(db).await?;
@@ -349,7 +407,7 @@ impl PluginHost {
             allow_without_landlock: self.without_landlock.clone(),
             own: self.own.clone(),
             audit: self.db.get().cloned(),
-            warnings: self.exposed.clone(),
+            exposure: self.exposed.clone(),
         };
         let options = self.options.read().unwrap_or_else(|e| e.into_inner()).clone();
         let supervisor = Supervisor::new(launch, options);
@@ -796,8 +854,11 @@ impl PluginHost {
         crate::db::commit(tx).await?;
         self.unregister(id, &state.datasources).await;
         if enabled {
-            for warning in self.exposed.iter() {
-                tracing::warn!(plugin = %id, "{warning}");
+            for warning in &self.exposed.warnings {
+                tracing::warn!(plugin = %id, "{}", warning.message);
+            }
+            for path in &self.exposed.readable_by_plugins {
+                tracing::error!(plugin = %id, "{path} holds secrets that plugins could read; plugins do not start until it is limited to SYSTEM, Administrators and the account Kalzit runs as");
             }
             self.reregister(state, id).await;
         }
@@ -1108,9 +1169,35 @@ mod tests {
         crate::data_dir::acl::restrict(&file, &format!("D:P(A;;FA;;;SY)(A;;FA;;;{me})(A;;0x1200a9;;;BU)")).unwrap();
         let config = crate::config::Config { config_file: Some(file.clone()), ..Default::default() };
         let found = exposed_secrets(&config);
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].contains("Users"), "{found:?}");
+        assert_eq!((found.warnings.len(), found.readable_by_plugins.len()), (1, 0), "{found:?}");
+        assert_eq!(found.warnings[0].params["accounts"], "Users", "{found:?}");
+        // Users and all AppContainers, as under Program Files: plugins could read it.
+        crate::data_dir::acl::restrict(
+            &file,
+            &format!("D:P(A;;FA;;;SY)(A;;FA;;;{me})(A;;0x1200a9;;;BU)(A;;0x1200a9;;;AC)"),
+        )
+        .unwrap();
+        let found = exposed_secrets(&config);
+        assert_eq!(found.readable_by_plugins.len(), 1, "{found:?}");
         crate::data_dir::acl::restrict(&file, &format!("D:P(A;;FA;;;SY)(A;;FA;;;{me})")).unwrap();
-        assert!(exposed_secrets(&config).is_empty());
+        let found = exposed_secrets(&config);
+        assert!(found.warnings.is_empty() && found.readable_by_plugins.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn who_may_read_a_file_is_judged_like_a_plugin_token() {
+        let entries = |list: &[(&str, u32)]| list.iter().map(|(s, m)| (s.to_string(), *m)).collect::<Vec<_>>();
+        assert_eq!(judge(None), Judged::Plugins);
+        assert_eq!(judge(Some(&entries(&[("S-1-5-18", 0x1f01ff)]))), Judged::Closed);
+        assert_eq!(judge(Some(&entries(&[("S-1-5-32-545", 0x1200a9)]))), Judged::LocalAccounts(vec!["Users"]));
+        assert_eq!(judge(Some(&entries(&[("S-1-15-2-1", 0x1200a9)]))), Judged::Closed, "AppContainers alone");
+        for container in ["S-1-15-2-1", "S-1-15-2-2"] {
+            for wide in ["S-1-1-0", "S-1-5-32-545", "S-1-5-12"] {
+                let list = entries(&[(wide, 0x1200a9), (container, 0x1200a9)]);
+                assert_eq!(judge(Some(&list)), Judged::Plugins, "{wide} {container}");
+            }
+        }
+        // Write only is no reading.
+        assert_eq!(judge(Some(&entries(&[("S-1-5-32-545", 0x2), ("S-1-15-2-1", 0x2)]))), Judged::Closed);
     }
 }

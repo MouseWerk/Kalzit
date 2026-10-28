@@ -1,8 +1,8 @@
 //! The local connection between Kalzit and the plugin, per operating system. Only Kalzit's
 //! process (`KALZIT_PLUGIN_HOST_PID`) is served.
 //!
-//! - Linux: the plugin listens on the Unix socket `KALZIT_PLUGIN_ADDRESS` in its private run
-//!   directory; connections from any other process are closed before a byte is read.
+//! - Linux: `KALZIT_PLUGIN_ADDRESS` is `fd:3`, one end of a socket pair Kalzit made: the plugin
+//!   serves the protocol on that one connection (its sandbox lets it open no socket).
 //! - Windows: the plugin runs in an AppContainer, which cannot create named pipes. Kalzit creates
 //!   the pipe `KALZIT_PLUGIN_ADDRESS` and keeps an instance waiting; the plugin connects to it as
 //!   a client, checks that the server is Kalzit's process, and serves the protocol over every
@@ -117,17 +117,32 @@ mod windows_pipe {
 
 #[cfg(unix)]
 mod unix_socket {
-    use futures_util::Stream;
     use tokio::net::{UnixListener, UnixStream};
 
     use crate::log;
 
-    /// Listens on the socket in the start's private run directory and yields every connection
-    /// from the host process (`SO_PEERCRED`); others are closed.
+    /// `fd:<n>` (as Kalzit starts a plugin): the one connection Kalzit handed over, connected
+    /// already, so the plugin needs no socket of its own (its sandbox allows none). A path (tests
+    /// and tools): listens there and yields every connection from the host process
+    /// (`SO_PEERCRED`); others are closed.
     pub(crate) fn incoming(
         address: &str,
         host: u32,
-    ) -> std::io::Result<impl Stream<Item = std::io::Result<UnixStream>>> {
+    ) -> std::io::Result<futures_util::stream::BoxStream<'static, std::io::Result<UnixStream>>> {
+        use futures_util::StreamExt;
+        if let Some(fd) = address.strip_prefix("fd:") {
+            let fd: std::os::fd::RawFd = fd.parse().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "KALZIT_PLUGIN_ADDRESS is not fd:<n>")
+            })?;
+            // SAFETY: the inherited descriptor belongs to this process and is taken over once.
+            let stream = unsafe { <std::os::unix::net::UnixStream as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+            stream.set_nonblocking(true)?;
+            let stream = UnixStream::from_std(stream)?;
+            // One connection, then none: the server keeps serving it until Kalzit ends it.
+            return Ok(futures_util::stream::once(async move { Ok(stream) })
+                .chain(futures_util::stream::pending())
+                .boxed());
+        }
         let listener = UnixListener::bind(address)?;
         Ok(futures_util::stream::unfold(listener, move |listener| async move {
             loop {
@@ -147,6 +162,7 @@ mod unix_socket {
                     }
                 }
             }
-        }))
+        })
+        .boxed())
     }
 }

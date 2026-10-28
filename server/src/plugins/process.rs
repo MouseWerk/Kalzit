@@ -58,6 +58,8 @@ pub struct Spec {
     pub app_container_sid: String,
     /// Linux: refuse to start when Landlock does not take.
     pub require_landlock: bool,
+    /// Linux: descriptors of Kalzit's that the plugin gets, as (Kalzit's number, the plugin's).
+    pub inherit: Vec<(i32, i32)>,
 }
 
 /// A started plugin process.
@@ -124,17 +126,29 @@ pub fn environment(address: &str, token: &str, tmp: &std::path::Path, connector:
     env
 }
 
-/// Where a start's local connection lives: the socket path (Linux) or the pipe with its waiting
-/// instance (Windows), made before the plugin starts.
+/// The descriptor number a Linux plugin finds its connection to Kalzit on (`fd:3`).
+pub const HOST_FD: i32 = 3;
+/// The descriptor number of Kalzit's network connector in a Linux plugin (`fd:4`).
+pub const CONNECTOR_FD: i32 = 4;
+
+/// Where a start's local connection lives, made before the plugin starts: a connected socket
+/// pair (Linux; the plugin's end becomes its descriptor 3, so it needs no socket of its own) or
+/// the pipe with its waiting instance (Windows).
 pub struct Endpoint {
     /// What the plugin gets as `KALZIT_PLUGIN_ADDRESS`.
     pub address: String,
     #[cfg(windows)]
     pipe: windows_pipe::Pipe,
+    /// Kalzit's end, taken by the one connection Kalzit makes.
+    #[cfg(unix)]
+    ours: std::sync::Mutex<Option<std::os::unix::net::UnixStream>>,
+    /// The plugin's end, until it is handed to the process (`take_plugin_end`).
+    #[cfg(unix)]
+    theirs: Option<std::os::fd::OwnedFd>,
 }
 
 impl Endpoint {
-    /// Linux: the socket path in `run_dir`, which the plugin binds. Windows: the pipe
+    /// Linux: a socket pair, `fd:3` for the plugin. Windows: the pipe
     /// `\\.\pipe\kalzit-plugin-<random>`, created here, for Kalzit's account, the start's SID
     /// and the plugin's AppContainer, labelled low.
     pub fn new(
@@ -153,23 +167,35 @@ impl Endpoint {
         }
         #[cfg(not(windows))]
         {
-            let _ = (random, start_sid, app_container_sid);
-            Ok(Self { address: run_dir.join("socket").to_string_lossy().into_owned() })
+            let _ = (run_dir, random, start_sid, app_container_sid);
+            let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
+            ours.set_nonblocking(true)?;
+            Ok(Self {
+                address: format!("fd:{HOST_FD}"),
+                ours: std::sync::Mutex::new(Some(ours)),
+                theirs: Some(theirs.into()),
+            })
         }
     }
 
-    /// The local connection to the plugin, checked to end at the process `pid`.
+    /// The plugin's end of the connection, to be inherited as `HOST_FD` (Linux).
     #[cfg(unix)]
-    async fn connect(&self, pid: u32) -> std::io::Result<tokio::net::UnixStream> {
-        let stream = tokio::net::UnixStream::connect(&self.address).await?;
-        let peer = stream.peer_cred()?.pid();
-        if peer != i32::try_from(pid).ok() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!("the socket belongs to process {peer:?}, not to the plugin ({pid})"),
-            ));
+    pub fn take_plugin_end(&mut self) -> Option<std::os::fd::OwnedFd> {
+        self.theirs.take()
+    }
+
+    /// The one connection to the plugin (Linux): the socket pair cannot reach anyone else, so no
+    /// process check is needed; a second connect finds it gone and fails.
+    #[cfg(unix)]
+    async fn connect(&self, _pid: u32) -> std::io::Result<tokio::net::UnixStream> {
+        let ours = self.ours.lock().unwrap_or_else(|e| e.into_inner()).take();
+        match ours {
+            Some(stream) => tokio::net::UnixStream::from_std(stream),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "the plugin's connection ended; it is restarted with its next start",
+            )),
         }
-        Ok(stream)
     }
 
     /// The local connection to the plugin, checked to end at the process `pid`.
@@ -198,7 +224,8 @@ pub mod windows_pipe {
     /// write it.
     pub fn sddl(start_sid: &str, app_container_sid: &str) -> std::io::Result<String> {
         let user = crate::data_dir::acl::current_user()?;
-        Ok(format!("D:P(A;;GA;;;{user})(A;;GA;;;{start_sid})(A;;GA;;;{app_container_sid})S:(ML;;NW;;;LW)"))
+        // Read and write for the plugin, never the right to change the pipe's security.
+        Ok(format!("D:P(A;;GA;;;{user})(A;;0x12019f;;;{start_sid})(A;;0x12019f;;;{app_container_sid})S:(ML;;NW;;;LW)"))
     }
 
     /// A pipe instance with the descriptor `sddl`, local clients only.

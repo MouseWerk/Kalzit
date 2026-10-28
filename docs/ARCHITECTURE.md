@@ -366,9 +366,10 @@ process, a network target or the gRPC protocol.
     Kalzit's process (`GetNamedPipeServerProcessId`) and serves the protocol on each connection
     it makes. Kalzit uses a connection only when its client process
     (`GetNamedPipeClientProcessId`) is the child it started, on every connect.
-  - Linux: a Unix socket `socket` in the start's private run directory (mode 0700,
-    `<data_dir>/plugins/run/<random>`); Kalzit checks the peer's process id (`SO_PEERCRED`) on
-    every connect.
+  - Linux: one end of a socket pair Kalzit makes before the start, inherited as descriptor 3
+    (`KALZIT_PLUGIN_ADDRESS=fd:3`); the plugin serves the protocol on that one connection. A
+    pair reaches only Kalzit, so no process check is needed, and the plugin opens no socket of
+    its own (the sandbox refuses `socket`). When the connection ends, the plugin is restarted.
   - stdio carries only the handshake (the plugin prints `kalzit-plugin 1 ready` on stdout when it
     listens) and the plugin's log (stderr, into Kalzit's log with the plugin id, kept per plugin
     with limits: 2000 lines, 512 KiB, lines cut at 4 KiB, 200 lines per second). The address
@@ -695,42 +696,54 @@ while Kalzit runs as root.
   which Kalzit empties at every start and limits to the plugin. Files any local account may
   read (`kalzit.toml` in ProgramData with `database.url`, a TLS key inheriting ProgramData's
   entries) stay closed: they grant Users or Everyone, which remain restricting SIDs (System32
-  and the `NUL` device need them), but no AppContainer (tested). Kalzit still warns in the
-  plugin's status and log when such a file holds secrets (`host::exposed_secrets`). A Windows Filtering Platform
+  and the `NUL` device need them), but no AppContainer (tested). A file of Kalzit's with secrets
+  that grants reading to those and to all AppContainers (as under `C:\Program Files`) would be
+  readable: then plugins do not start (`plugin.secrets_exposed`, `host::exposed_secrets`); one
+  that only local accounts may read is a warning in the plugin's status and log. A Windows Filtering Platform
   rule was not chosen: adding filters needs administrator rights, which a Kalzit service account
   does not have.
-- Network, Linux: the seccomp filter lets `socket` make Unix sockets only (other families
-  `EACCES`), and where user namespaces are allowed the plugin gets a network namespace of its own
-  with only an unconfigured loopback device. The filter holds also where namespaces are not
-  allowed.
-- Processes and CPU are not limited on Linux.
+- Network, Linux: the seccomp filter refuses `socket` for every family (`EACCES`), Unix sockets
+  included: the plugin's connection to Kalzit and the connector are inherited socket pairs, so it
+  reaches neither the network nor a Unix socket of the host (a database's, Docker's, D-Bus's,
+  named or abstract), whatever Landlock's ABI. Where user namespaces are allowed the plugin also
+  gets a network namespace of its own with only an unconfigured loopback device.
+  `prctl(PR_SET_DUMPABLE)` is refused, so the connector can read every process's descriptors.
+- Processes and CPU are not limited on Linux; the connector counts connections over the
+  plugin's whole session, which no process of it may leave.
 
 ### Network connector
 
 The only network a plugin has (`plugins::connector`, protocol minor 1, feature
 `network_connector`; the client is `kalzit_plugin_api::connector::Connector`; details and reasons
-in docs/api/plugins.md, "Network connector"). Per connection the plugin opens the connector
-(`KALZIT_PLUGIN_CONNECTOR`: the Unix socket `connector` in its run directory, a named pipe on
-Windows; only the plugin's process is served) and sends one `ConnectRequest` (token, data source
-id, host, port, `tcp` or `tls`), framed with a 4-byte length; gRPC cannot carry a socket.
+in docs/api/plugins.md, "Network connector"). The plugin sends a `ConnectRequest` (token, data
+source id, host, port, `tcp` or `tls`, request id), framed with a 4-byte length, to
+`KALZIT_PLUGIN_CONNECTOR`: on Linux the inherited `SOCK_SEQPACKET` pair `fd:4` (requests may
+overlap), on Windows one connection to a named pipe of Kalzit's per request (only the plugin's
+process is served; the client checks that the server is Kalzit). gRPC cannot carry a socket.
 
 - The target must be one the manifest declares for that data source's settings as the plugin
   last received them (`connector::Grants`, recorded with every call that hands over a
-  `Connection`): a `host` setting with its port setting or default port and protocol, a `url`
-  setting's host and port (`https`/`wss` mean TLS), a fixed host and port.
+  `Connection`; taken back when the data source changes or goes to the trash,
+  `DataSources::on_forget`): a `host` setting with its port setting or default port and
+  protocol, a `url` setting's host and port (`https`/`wss` mean TLS), a fixed host and port. The
+  protocol is a permission label; Kalzit does not enforce TLS on the stream.
 - Kalzit resolves the name, checks every address with the data source target rules
   (`TargetPolicy`: metadata addresses, `datasources.allowed_targets`) and against its own
   addresses (`connector::OwnEndpoints`: the HTTP and HTTPS ports on any local address, the
-  PostgreSQL database of `database.url`), and connects to the checked address, so a name cannot
-  resolve to something else for the connection (DNS rebinding).
+  PostgreSQL database of `database.url`, resolved at start and again per request; with no
+  address from either, its port is refused everywhere), and connects to the checked address, so
+  a name cannot resolve to something else for the connection (DNS rebinding).
 - Linux: the connected socket goes to the plugin with `SCM_RIGHTS`; Kalzit keeps no copy, counts
-  the plugin's connections by their inodes in `/proc/<pid>/fd`, and closes idle ones through a
-  copy taken with `pidfd_getfd` (the last traffic from `TCP_INFO`, then `shutdown`). Windows: a
+  the plugin's connections by their inodes in `/proc/<pid>/fd` of every process of its session
+  (a socket still in the plugin's queue counts too), refuses connections while a table cannot be
+  read, and closes idle ones through a copy taken with `pidfd_getfd` (the last traffic from
+  `TCP_INFO`, then `shutdown`). Windows: a
   socket handle duplicated into the AppContainer (`WSADuplicateSocket`) depends on the machine's
   Winsock catalog and hides the connection from Kalzit, so Kalzit relays the pipe to the TCP
   connection instead; the relay ends with either side or when idle.
 - Limits (`supervisor::Options`): 64 connections at once per plugin, 15 minutes without traffic,
-  10 seconds to connect. Every refused connect goes to the plugin's log, Kalzit's log and the
+  one budget of 10 seconds per request for the lookup and every address, 16 requests under way
+  at once. Every refused connect goes to the plugin's log, Kalzit's log and the
   audit log (`plugins.connect_refused`, at most once a minute per target and reason).
 - The plugin speaks its database's protocol over the stream and wraps it in TLS itself.
 

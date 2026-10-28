@@ -25,11 +25,15 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use kalzit_plugin_api::connector::{frame, frame_len};
+use kalzit_plugin_api::connector::frame;
+#[cfg(windows)]
+use kalzit_plugin_api::connector::frame_len;
 use kalzit_plugin_api::datasource::v1 as pb;
 use kalzit_plugin_api::manifest::Manifest;
+#[cfg(windows)]
 use prost::Message;
 use serde_json::{Value, json};
+#[cfg(windows)]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
@@ -38,8 +42,12 @@ use super::supervisor::Logs;
 use crate::datasources::targets::{TargetPolicy, canonical_ip};
 use crate::datasources::{Connection, Detail};
 
-/// How long a plugin may take to send its request.
+/// How long a plugin may take to send its request (Windows, one pipe connection per request).
+#[cfg(windows)]
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// Connector requests Kalzit works on (or waits to read) at once for one process; more are
+/// refused at once.
+const MAX_PENDING: usize = 16;
 /// Refusals of the same target and reason in the audit log at most this often.
 const AUDIT_EVERY: Duration = Duration::from_secs(60);
 
@@ -61,6 +69,12 @@ impl Grants {
     pub fn record(&self, conn: &Connection) {
         let grant = Grant { settings: conn.settings().clone(), policy: conn.policy_arc() };
         self.by_source.lock().unwrap_or_else(|e| e.into_inner()).insert(conn.datasource_id().to_string(), grant);
+    }
+
+    /// Takes back a data source (changed, deleted, or moved away): connects for it are refused
+    /// until a call hands it over again with its current settings.
+    pub fn revoke(&self, datasource_id: &str) {
+        self.by_source.lock().unwrap_or_else(|e| e.into_inner()).remove(datasource_id);
     }
 
     fn get(&self, datasource_id: &str) -> Option<Grant> {
@@ -174,11 +188,15 @@ pub fn is_declared(targets: &[Declared], host: &str, port: u16, protocol: Protoc
 /// reaches them through the connector, whatever its settings say.
 #[derive(Clone, Debug, Default)]
 pub struct OwnEndpoints {
+    /// Every address Kalzit listens on (HTTP and HTTPS; it opens no other listener).
     listen: Vec<SocketAddr>,
     database: Option<(String, u16)>,
+    /// The database's addresses as resolved when Kalzit started.
+    database_addrs: Vec<IpAddr>,
 }
 
 impl OwnEndpoints {
+    /// Resolves the database's host once, at start (blocking, before anything is served).
     pub fn from_config(config: &crate::config::Config) -> Self {
         let listen = [config.http_addr(), config.https_addr()].into_iter().flatten().collect();
         let url = config.database_url();
@@ -189,15 +207,23 @@ impl OwnEndpoints {
         } else {
             None
         };
-        Self { listen, database }
+        Self::new(listen, database)
     }
 
     pub fn new(listen: Vec<SocketAddr>, database: Option<(String, u16)>) -> Self {
-        Self { listen, database }
+        use std::net::ToSocketAddrs;
+        let database_addrs = database
+            .as_ref()
+            .and_then(|(host, port)| (host.as_str(), *port).to_socket_addrs().ok())
+            .map(|addrs| addrs.map(|a| canonical_ip(a.ip())).collect())
+            .unwrap_or_default();
+        Self { listen, database, database_addrs }
     }
 
     /// Refuses `addr` when it is one of Kalzit's own: a listening address (on any address of
-    /// this machine when Kalzit listens on all), or its database.
+    /// this machine when Kalzit listens on all), or its database. The database's addresses are
+    /// those of the start and of a fresh lookup; when neither yields any, every address with the
+    /// database's port is refused.
     pub async fn check(&self, addr: SocketAddr) -> Result<(), Detail> {
         let ip = canonical_ip(addr.ip());
         for own in &self.listen {
@@ -209,12 +235,13 @@ impl OwnEndpoints {
         if let Some((host, port)) = &self.database
             && *port == addr.port()
         {
-            let own: Vec<IpAddr> = match tokio::net::lookup_host((host.as_str(), *port)).await {
-                Ok(addrs) => addrs.map(|a| canonical_ip(a.ip())).collect(),
-                Err(_) => Vec::new(),
-            };
+            let mut own = self.database_addrs.clone();
+            let lookup = tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host((host.as_str(), *port)));
+            if let Ok(Ok(addrs)) = lookup.await {
+                own.extend(addrs.map(|a| canonical_ip(a.ip())));
+            }
             let local_database = own.iter().any(|o| is_local(*o));
-            if own.contains(&ip) || (local_database && is_local(ip)) {
+            if own.is_empty() || own.contains(&ip) || (local_database && is_local(ip)) {
                 return Err(Detail::new("target.own_database", "Kalzit's own database cannot be a target")
                     .with("address", addr));
             }
@@ -276,6 +303,7 @@ impl Context {
     /// Checks a request and opens the connection, or says why not (`ErrorKind::Blocked` for a
     /// refusal, `Failed` when the target does not answer).
     async fn open(&self, request: &pb::ConnectRequest) -> Result<(SocketAddr, TcpStream), (pb::ErrorKind, Detail)> {
+        let started = Instant::now();
         let blocked = |d: Detail| (pb::ErrorKind::Blocked, d);
         if !same(request.token.as_bytes(), self.token.as_bytes()) {
             return Err(blocked(Detail::new("plugin.token_invalid", "the request carries no valid token")));
@@ -308,22 +336,36 @@ impl Context {
                 .with("port", request.port),
             ));
         }
-        let addrs = grant.policy.resolve_all(&request.host, port).await.map_err(|e| match e {
+        let resolved = tokio::time::timeout(self.connect_timeout, grant.policy.resolve_all(&request.host, port))
+            .await
+            .map_err(|_| {
+                (
+                    pb::ErrorKind::Failed,
+                    Detail::new("target.unresolvable", format!("{} did not resolve in time", request.host))
+                        .with("host", &request.host),
+                )
+            })?;
+        let addrs = resolved.map_err(|e| match e {
             crate::datasources::targets::ResolveError::Blocked(b) => blocked(b.0),
             dns => (pb::ErrorKind::Failed, dns.detail()),
         })?;
         for addr in &addrs {
             self.own.check(*addr).await.map_err(blocked)?;
         }
+        // One budget for the whole request, however many addresses the name has.
+        let deadline = tokio::time::Instant::from_std(started) + self.connect_timeout;
         let mut last = String::new();
         for addr in addrs {
-            match tokio::time::timeout(self.connect_timeout, TcpStream::connect(addr)).await {
+            match tokio::time::timeout_at(deadline, TcpStream::connect(addr)).await {
                 Ok(Ok(stream)) => {
                     let _ = stream.set_nodelay(true);
                     return Ok((addr, stream));
                 }
                 Ok(Err(e)) => last = format!("{addr}: {e}"),
-                Err(_) => last = format!("{addr}: no answer within {} seconds", self.connect_timeout.as_secs()),
+                Err(_) => {
+                    last = format!("{addr}: no answer within {} seconds", self.connect_timeout.as_secs());
+                    break;
+                }
             }
         }
         Err((
@@ -391,7 +433,7 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-fn error_frame(kind: pb::ErrorKind, detail: &Detail) -> Vec<u8> {
+fn error_frame(request_id: u64, kind: pb::ErrorKind, detail: &Detail) -> Vec<u8> {
     frame(&pb::ConnectResponse {
         result: Some(pb::connect_response::Result::Error(pb::Error {
             kind: kind as i32,
@@ -401,16 +443,19 @@ fn error_frame(kind: pb::ErrorKind, detail: &Detail) -> Vec<u8> {
                 message: detail.message.clone(),
             }),
         })),
+        request_id,
     })
 }
 
-fn connected_frame(addr: SocketAddr) -> Vec<u8> {
+fn connected_frame(request_id: u64, addr: SocketAddr) -> Vec<u8> {
     frame(&pb::ConnectResponse {
         result: Some(pb::connect_response::Result::Connected(pb::Connected { address: addr.to_string() })),
+        request_id,
     })
 }
 
 /// Reads one request, within `REQUEST_TIMEOUT`.
+#[cfg(windows)]
 async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> std::io::Result<pb::ConnectRequest> {
     let read = async {
         let mut prefix = [0u8; 4];
@@ -428,6 +473,7 @@ async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> std::io::Result<
 }
 
 /// Answers a refusal and records it.
+#[cfg(windows)]
 async fn refuse(
     ctx: &Context,
     stream: &mut (impl AsyncWrite + Unpin),
@@ -438,7 +484,7 @@ async fn refuse(
     if kind == pb::ErrorKind::Blocked {
         ctx.refused(request, &detail);
     }
-    let _ = stream.write_all(&error_frame(kind, &detail)).await;
+    let _ = stream.write_all(&error_frame(request.request_id, kind, &detail)).await;
     let _ = stream.flush().await;
 }
 
@@ -468,6 +514,14 @@ pub use windows::{Listener, listen, serve};
 pub struct Listener;
 
 #[cfg(not(any(windows, target_os = "linux")))]
+impl Listener {
+    #[cfg(unix)]
+    pub fn take_plugin_end(&mut self) -> Option<std::os::fd::OwnedFd> {
+        None
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn listen(_: &std::path::Path, _: &str, _: &str, _: &str) -> std::io::Result<(Listener, String)> {
     Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "plugins run on Windows and Linux only"))
 }
@@ -477,42 +531,74 @@ pub fn serve(_: Listener, _: Arc<Context>, _: u32, _: watch::Receiver<Option<Str
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use std::collections::HashSet;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest};
-    use tokio::net::{UnixListener, UnixStream};
-    use tokio::sync::watch;
+    use prost::Message;
+    use tokio::io::unix::AsyncFd;
+    use tokio::sync::{Semaphore, watch};
 
-    use super::{Context, connected_frame, ended, exhausted, read_request, refuse};
+    use super::{Context, MAX_PENDING, connected_frame, ended, error_frame, exhausted};
+    use kalzit_plugin_api::connector::frame_body;
     use kalzit_plugin_api::datasource::v1 as pb;
 
-    /// A socket handed over less than this long ago counts even before it shows up in the
-    /// plugin's descriptor table.
+    /// A handed-over socket that is not in a descriptor table yet counts this long at most,
+    /// unless it still waits in the plugin's queue.
     const IN_FLIGHT: Duration = Duration::from_secs(10);
 
-    pub struct Listener(UnixListener);
+    /// The connector's socket pair: Kalzit's end, and the plugin's until it is handed over as
+    /// descriptor 4 (`process::CONNECTOR_FD`). A pair reaches nobody else, and the plugin needs
+    /// no socket of its own to use it.
+    pub struct Listener {
+        ours: OwnedFd,
+        theirs: Option<OwnedFd>,
+    }
 
-    /// The connector's Unix socket in the run directory, bound before the plugin starts.
+    impl Listener {
+        pub fn take_plugin_end(&mut self) -> Option<OwnedFd> {
+            self.theirs.take()
+        }
+    }
+
     pub fn listen(
-        run_dir: &std::path::Path,
+        _run_dir: &std::path::Path,
         _random: &str,
         _start_sid: &str,
         _container_sid: &str,
     ) -> std::io::Result<(Listener, String)> {
-        let path = run_dir.join("connector");
-        let listener = UnixListener::bind(&path)?;
-        Ok((Listener(listener), path.to_string_lossy().into_owned()))
+        let mut fds = [0 as RawFd; 2];
+        // SAFETY: `fds` has room for both ends; both are owned below.
+        let made = unsafe {
+            libc::socketpair(
+                libc::AF_UNIX,
+                libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
+                0,
+                fds.as_mut_ptr(),
+            )
+        };
+        if made != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: both ends were just made and are owned here.
+        let (ours, theirs) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        // The plugin's end blocks like any inherited descriptor; its client sets what it needs.
+        // SAFETY: plain flag changes on an owned descriptor.
+        unsafe {
+            let flags = libc::fcntl(theirs.as_raw_fd(), libc::F_GETFL);
+            libc::fcntl(theirs.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK);
+        }
+        Ok((Listener { ours, theirs: Some(theirs) }, format!("fd:{}", super::super::process::CONNECTOR_FD)))
     }
 
     /// A socket handed to the plugin.
     struct Passed {
         inode: u64,
         at: Instant,
-        /// The plugin received it (or it was seen in its descriptor table): from then on its
-        /// absence from the table means it is closed.
+        /// Seen in a descriptor table of the plugin, or received for sure: from then on its
+        /// absence means it is closed.
         seen: bool,
     }
 
@@ -523,27 +609,58 @@ mod linux {
         pending: usize,
     }
 
+    /// Why the plugin's connections cannot be counted.
+    const UNCOUNTABLE: &str = "a process of the plugin hides its descriptors (not dumpable), so its connections cannot be counted; new connections are refused";
+
     struct Process {
+        /// The plugin's process id, which is also its session: every process it starts stays
+        /// in that session (`setsid` and `setpgid` are refused in the sandbox).
         pid: u32,
-        pidfd: Option<OwnedFd>,
+        socket: AsyncFd<OwnedFd>,
         slots: std::sync::Mutex<Slots>,
         warned: AtomicBool,
     }
 
+    /// The processes of the session `session`.
+    fn session(session: u32) -> Vec<u32> {
+        let Ok(dir) = std::fs::read_dir("/proc") else { return vec![session] };
+        let mut out = Vec::new();
+        for entry in dir.flatten() {
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+            // After the name in parentheses: state, ppid, pgrp, session.
+            let Some(rest) = stat.rsplit_once(')').map(|(_, r)| r) else { continue };
+            if rest.split_whitespace().nth(3).and_then(|s| s.parse::<u32>().ok()) == Some(session) {
+                out.push(pid);
+            }
+        }
+        if !out.contains(&session) {
+            out.push(session);
+        }
+        out
+    }
+
     impl Process {
-        /// The plugin's sockets by inode, with their descriptor number; `None` when its table
-        /// cannot be read.
-        fn sockets(&self) -> Option<Vec<(RawFd, u64)>> {
-            let dir = std::fs::read_dir(format!("/proc/{}/fd", self.pid)).ok()?;
+        /// Every socket of every process of the plugin, by (process, descriptor, inode); `None`
+        /// when a descriptor table cannot be read.
+        fn sockets(&self) -> Option<Vec<(u32, RawFd, u64)>> {
             let mut out = Vec::new();
-            for entry in dir.flatten() {
-                let Ok(fd) = entry.file_name().to_string_lossy().parse::<RawFd>() else { continue };
-                let Ok(link) = std::fs::read_link(entry.path()) else { continue };
-                let link = link.to_string_lossy();
-                if let Some(inode) = link.strip_prefix("socket:[").and_then(|s| s.strip_suffix(']'))
-                    && let Ok(inode) = inode.parse()
-                {
-                    out.push((fd, inode));
+            for pid in session(self.pid) {
+                let dir = match std::fs::read_dir(format!("/proc/{pid}/fd")) {
+                    Ok(dir) => dir,
+                    // Ended in the meantime.
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(_) => return None,
+                };
+                for entry in dir.flatten() {
+                    let Ok(fd) = entry.file_name().to_string_lossy().parse::<RawFd>() else { continue };
+                    let Ok(link) = std::fs::read_link(entry.path()) else { continue };
+                    let link = link.to_string_lossy();
+                    if let Some(inode) = link.strip_prefix("socket:[").and_then(|s| s.strip_suffix(']'))
+                        && let Ok(inode) = inode.parse()
+                    {
+                        out.push((pid, fd, inode));
+                    }
                 }
             }
             Some(out)
@@ -556,33 +673,38 @@ mod linux {
             }
         }
 
-        /// Forgets sockets the plugin no longer holds and reserves a slot, or refuses.
-        fn reserve(&self, ctx: &Context) -> bool {
-            let live = self.sockets();
+        /// Bytes Kalzit sent that the plugin has not read yet (`SIOCOUTQ`).
+        fn unread(&self) -> usize {
+            let mut n: libc::c_int = 0;
+            // SAFETY: an ioctl that writes one int.
+            let r = unsafe { libc::ioctl(self.socket.get_ref().as_raw_fd(), libc::TIOCOUTQ, &raw mut n) };
+            if r == 0 { usize::try_from(n).unwrap_or(0) } else { 1 }
+        }
+
+        /// Forgets sockets the plugin no longer holds and reserves a slot, or says why not.
+        fn reserve(&self, ctx: &Context) -> Result<(), super::Detail> {
+            let Some(live) = self.sockets() else {
+                self.warn_once(ctx, UNCOUNTABLE);
+                return Err(super::Detail::new("plugin.connections_uncountable", UNCOUNTABLE));
+            };
+            let unread = self.unread();
+            let live: HashSet<u64> = live.into_iter().map(|(_, _, inode)| inode).collect();
             let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
             let now = Instant::now();
-            match &live {
-                Some(live) => slots.passed.retain_mut(|p| {
-                    if live.iter().any(|(_, i)| *i == p.inode) {
-                        p.seen = true;
-                        true
-                    } else {
-                        !p.seen && now.duration_since(p.at) < IN_FLIGHT
-                    }
-                }),
-                None => {
-                    self.warn_once(
-                        ctx,
-                        "the plugin's descriptor table cannot be read; its connections count until the idle time passed",
-                    );
-                    slots.passed.retain(|p| now.duration_since(p.at) < ctx.idle);
+            slots.passed.retain_mut(|p| {
+                if live.contains(&p.inode) {
+                    p.seen = true;
+                    true
+                } else {
+                    // Not in a table: closed, unless it still waits in the plugin's queue.
+                    !p.seen && unread > 0 && now.duration_since(p.at) < IN_FLIGHT
                 }
-            }
+            });
             if slots.passed.len() + slots.pending >= ctx.max_connections {
-                return false;
+                return Err(exhausted(ctx.max_connections));
             }
             slots.pending += 1;
-            true
+            Ok(())
         }
 
         fn release(&self, inode: Option<u64>) {
@@ -593,23 +715,29 @@ mod linux {
             }
         }
 
-        /// The plugin holds the socket `inode` now (it closed the connector connection).
-        fn received(&self, inode: u64) {
-            let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(p) = slots.passed.iter_mut().find(|p| p.inode == inode) {
-                p.seen = true;
-            }
-        }
-
-        /// Closes the handed-over sockets that saw no data for `ctx.idle`, through a copy of the
-        /// plugin's descriptor (`pidfd_getfd`); `shutdown` ends the connection for the plugin too.
+        /// Closes the handed-over sockets that saw no data for `ctx.idle`, in whichever process
+        /// of the plugin holds them, through a copy taken with `pidfd_getfd`; `shutdown` ends
+        /// the connection for every holder.
         fn sweep(&self, ctx: &Context) {
-            let Some(pidfd) = &self.pidfd else { return };
-            let Some(live) = self.sockets() else { return };
-            let passed: Vec<u64> =
+            let Some(live) = self.sockets() else {
+                self.warn_once(ctx, UNCOUNTABLE);
+                return;
+            };
+            let passed: HashSet<u64> =
                 self.slots.lock().unwrap_or_else(|e| e.into_inner()).passed.iter().map(|p| p.inode).collect();
-            for (fd, inode) in live.into_iter().filter(|(_, i)| passed.contains(i)) {
-                // SAFETY: a copy of the plugin's descriptor into this process, owned below.
+            let mut closed = HashSet::new();
+            for (pid, fd, inode) in live.into_iter().filter(|(_, _, i)| passed.contains(i)) {
+                if closed.contains(&inode) {
+                    continue;
+                }
+                // SAFETY: a descriptor of the plugin's process, owned below.
+                let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
+                if pidfd < 0 {
+                    continue;
+                }
+                // SAFETY: just opened, owned here.
+                let pidfd = unsafe { OwnedFd::from_raw_fd(pidfd as RawFd) };
+                // SAFETY: a copy of the process's descriptor into this process, owned below.
                 let copy = unsafe { libc::syscall(libc::SYS_pidfd_getfd, pidfd.as_raw_fd(), fd, 0) };
                 if copy < 0 {
                     let e = std::io::Error::last_os_error();
@@ -640,6 +768,7 @@ mod linux {
                         Duration::from_millis(u64::from(info.tcpi_last_data_recv.min(info.tcpi_last_data_sent)));
                     if quiet >= ctx.idle {
                         libc::shutdown(copy.as_raw_fd(), libc::SHUT_RDWR);
+                        closed.insert(inode);
                         ctx.logs.push(
                             &ctx.plugin,
                             "host",
@@ -649,10 +778,21 @@ mod linux {
                 }
             }
         }
+
+        /// Sends one answer, with `fd` attached when given.
+        async fn send(&self, bytes: &[u8], fd: Option<RawFd>) -> std::io::Result<()> {
+            loop {
+                let mut guard = self.socket.writable().await?;
+                match guard.try_io(|inner| send_message(inner.as_raw_fd(), bytes, fd)) {
+                    Ok(result) => return result,
+                    Err(_would_block) => continue,
+                }
+            }
+        }
     }
 
-    /// Sends `bytes` with `fd` attached to the first of them; answers how many bytes went.
-    fn send_with_fd(socket: RawFd, bytes: &[u8], fd: RawFd) -> std::io::Result<usize> {
+    /// One message, with `fd` attached when given.
+    fn send_message(socket: RawFd, bytes: &[u8], fd: Option<RawFd>) -> std::io::Result<()> {
         let mut control = [0u64; 4];
         let mut iov = libc::iovec { iov_base: bytes.as_ptr().cast_mut().cast(), iov_len: bytes.len() };
         // SAFETY: a zeroed msghdr is valid; the buffers outlive the call; the control message is
@@ -661,30 +801,39 @@ mod linux {
             let mut msg: libc::msghdr = std::mem::zeroed();
             msg.msg_iov = &raw mut iov;
             msg.msg_iovlen = 1;
-            msg.msg_control = control.as_mut_ptr().cast();
-            msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<RawFd>() as u32) as _;
-            let cmsg = libc::CMSG_FIRSTHDR(&raw const msg);
-            (*cmsg).cmsg_level = libc::SOL_SOCKET;
-            (*cmsg).cmsg_type = libc::SCM_RIGHTS;
-            (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as _;
-            libc::CMSG_DATA(cmsg).cast::<RawFd>().write_unaligned(fd);
-            let n = libc::sendmsg(socket, &raw const msg, libc::MSG_NOSIGNAL);
-            if n < 0 { Err(std::io::Error::last_os_error()) } else { Ok(n as usize) }
+            if let Some(fd) = fd {
+                msg.msg_control = control.as_mut_ptr().cast();
+                msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<RawFd>() as u32) as _;
+                let cmsg = libc::CMSG_FIRSTHDR(&raw const msg);
+                (*cmsg).cmsg_level = libc::SOL_SOCKET;
+                (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+                (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as _;
+                libc::CMSG_DATA(cmsg).cast::<RawFd>().write_unaligned(fd);
+            }
+            if libc::sendmsg(socket, &raw const msg, libc::MSG_NOSIGNAL) < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
         }
     }
 
-    async fn handle(ctx: Arc<Context>, process: Arc<Process>, mut stream: UnixStream) {
-        let Ok(request) = read_request(&mut stream).await else { return };
-        if !process.reserve(&ctx) {
-            let detail = exhausted(ctx.max_connections);
-            refuse(&ctx, &mut stream, &request, pb::ErrorKind::Blocked, detail).await;
+    /// One request: checked, connected, answered.
+    async fn handle(ctx: Arc<Context>, process: Arc<Process>, request: pb::ConnectRequest) {
+        let id = request.request_id;
+        if let Err(detail) = process.reserve(&ctx) {
+            ctx.refused(&request, &detail);
+            let _ = process.send(&error_frame(id, pb::ErrorKind::Blocked, &detail), None).await;
             return;
         }
         let (addr, tcp) = match ctx.open(&request).await {
             Ok(opened) => opened,
             Err((kind, detail)) => {
                 process.release(None);
-                refuse(&ctx, &mut stream, &request, kind, detail).await;
+                if kind == pb::ErrorKind::Blocked {
+                    ctx.refused(&request, &detail);
+                }
+                let _ = process.send(&error_frame(id, kind, &detail), None).await;
                 return;
             }
         };
@@ -692,58 +841,73 @@ mod linux {
             process.release(None);
             return;
         };
-        let fd = tcp.as_raw_fd();
         // SAFETY: fstat into a stack buffer of its size.
         let inode = unsafe {
             let mut stat: libc::stat = std::mem::zeroed();
-            (libc::fstat(fd, &raw mut stat) == 0).then_some(stat.st_ino)
+            (libc::fstat(tcp.as_raw_fd(), &raw mut stat) == 0).then_some(stat.st_ino)
         };
-        let bytes = connected_frame(addr);
-        let sent = stream.async_io(Interest::WRITABLE, || send_with_fd(stream.as_raw_fd(), &bytes, fd)).await;
+        let sent = process.send(&connected_frame(id, addr), Some(tcp.as_raw_fd())).await;
         // Kalzit's copy goes; the plugin holds the only one.
         drop(tcp);
-        match sent {
-            Ok(n) => {
-                process.release(inode);
-                let _ = stream.write_all(&bytes[n..]).await;
-                // The plugin closes the connector connection once it holds the socket; from then
-                // on a socket missing from its table is closed.
-                let mut rest = [0u8; 1];
-                let closed = tokio::time::timeout(IN_FLIGHT, stream.read(&mut rest)).await;
-                if matches!(closed, Ok(Ok(0) | Err(_)))
-                    && let Some(inode) = inode
-                {
-                    process.received(inode);
-                }
-            }
-            Err(_) => process.release(None),
-        }
+        process.release(if sent.is_ok() { inode } else { None });
     }
 
-    /// Serves the plugin process `pid` until it ends: only connections from it are answered.
+    /// Serves the plugin process `pid` until it ends or closes its end of the pair.
     pub fn serve(listener: Listener, ctx: Arc<Context>, pid: u32, mut exited: watch::Receiver<Option<String>>) {
-        // SAFETY: opens a descriptor of the child process; owned below.
-        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
-        // SAFETY: just opened, owned here.
-        let pidfd = (pidfd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(pidfd as RawFd) });
+        // SAFETY: an `OwnedFd` keeps its one open descriptor until the `AsyncFd` drops it.
+        let socket = match unsafe { AsyncFd::register(listener.ours) }.map_err(std::io::Error::from) {
+            Ok(socket) => socket,
+            Err(e) => {
+                tracing::error!(plugin = %ctx.plugin, "the network connector cannot be served: {e}");
+                return;
+            }
+        };
         let process =
-            Arc::new(Process { pid, pidfd, slots: std::sync::Mutex::default(), warned: AtomicBool::new(false) });
+            Arc::new(Process { pid, socket, slots: std::sync::Mutex::default(), warned: AtomicBool::new(false) });
+        let pending = Arc::new(Semaphore::new(MAX_PENDING));
         tokio::spawn(async move {
             let every = (ctx.idle / 4).clamp(Duration::from_millis(500), Duration::from_secs(30));
             let mut sweep = tokio::time::interval(every);
             sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut buf = vec![0u8; kalzit_plugin_api::connector::MAX_MESSAGE_BYTES + 4];
             loop {
                 tokio::select! {
                     () = ended(&mut exited) => break,
                     _ = sweep.tick() => process.sweep(&ctx),
-                    accepted = listener.0.accept() => {
-                        let Ok((stream, _)) = accepted else { continue };
-                        let peer = stream.peer_cred().ok().and_then(|c| c.pid());
-                        if peer != i32::try_from(pid).ok() {
-                            tracing::warn!(plugin = %ctx.plugin, ?peer, "a connection to the connector from another process was refused");
+                    readable = process.socket.readable() => {
+                        let Ok(mut guard) = readable else { break };
+                        // SAFETY: one message into a buffer of its size; nothing is passed to Kalzit.
+                        let read = guard.try_io(|inner| {
+                            let n = unsafe { libc::recv(inner.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len(), 0) };
+                            if n < 0 { Err(std::io::Error::last_os_error()) } else { Ok(n as usize) }
+                        });
+                        let n = match read {
+                            Err(_would_block) => continue,
+                            Ok(Ok(0)) | Ok(Err(_)) => break,
+                            Ok(Ok(n)) => n,
+                        };
+                        let Some(request) = frame_body(&buf[..n]).and_then(|b| pb::ConnectRequest::decode(b).ok()) else {
+                            tracing::warn!(plugin = %ctx.plugin, "the plugin sent the connector a message that is not a request");
                             continue;
+                        };
+                        match pending.clone().try_acquire_owned() {
+                            Ok(permit) => {
+                                let (ctx, process) = (ctx.clone(), process.clone());
+                                tokio::spawn(async move {
+                                    handle(ctx, process, request).await;
+                                    drop(permit);
+                                });
+                            }
+                            Err(_) => {
+                                let detail = super::Detail::new(
+                                    "plugin.connector_busy",
+                                    format!("the plugin has {MAX_PENDING} connection requests under way already"),
+                                )
+                                .with("max", MAX_PENDING);
+                                ctx.refused(&request, &detail);
+                                let _ = process.send(&error_frame(request.request_id, pb::ErrorKind::Blocked, &detail), None).await;
+                            }
                         }
-                        tokio::spawn(handle(ctx.clone(), process.clone(), stream));
                     }
                 }
             }
@@ -760,10 +924,10 @@ mod windows {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::net::windows::named_pipe::NamedPipeServer;
-    use tokio::sync::{Semaphore, watch};
+    use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
     use super::super::process::windows_pipe::{client_pid, create, sddl};
-    use super::{Context, connected_frame, ended, exhausted, read_request, refuse};
+    use super::{Context, MAX_PENDING, connected_frame, ended, exhausted, read_request, refuse};
     use kalzit_plugin_api::datasource::v1 as pb;
 
     pub struct Listener {
@@ -849,8 +1013,15 @@ mod windows {
         }
     }
 
-    async fn handle(ctx: Arc<Context>, slots: Arc<Semaphore>, mut pipe: NamedPipeServer) {
-        let Ok(request) = read_request(&mut pipe).await else { return };
+    async fn handle(
+        ctx: Arc<Context>,
+        slots: Arc<Semaphore>,
+        mut pipe: NamedPipeServer,
+        pending: OwnedSemaphorePermit,
+    ) {
+        let read = read_request(&mut pipe).await;
+        drop(pending);
+        let Ok(request) = read else { return };
         let Ok(permit) = slots.try_acquire_owned() else {
             let detail = exhausted(ctx.max_connections);
             refuse(&ctx, &mut pipe, &request, pb::ErrorKind::Blocked, detail).await;
@@ -863,7 +1034,7 @@ mod windows {
                 return;
             }
         };
-        if pipe.write_all(&connected_frame(addr)).await.is_err() {
+        if pipe.write_all(&connected_frame(request.request_id, addr)).await.is_err() {
             return;
         }
         relay(&ctx, pipe, tcp).await;
@@ -873,6 +1044,8 @@ mod windows {
     /// Serves the plugin process `pid` until it ends: only its pipe connections are answered.
     pub fn serve(listener: Listener, ctx: Arc<Context>, pid: u32, mut exited: watch::Receiver<Option<String>>) {
         let slots = Arc::new(Semaphore::new(ctx.max_connections));
+        // Pipe connections whose request is not read yet: each holds a buffer until it is.
+        let pending = Arc::new(Semaphore::new(MAX_PENDING));
         tokio::spawn(async move {
             let Listener { first, address, sddl } = listener;
             let mut server = first;
@@ -901,7 +1074,11 @@ mod windows {
                             }
                         };
                         let current = std::mem::replace(&mut server, next);
-                        tokio::spawn(handle(ctx.clone(), slots.clone(), current));
+                        let Ok(permit) = pending.clone().try_acquire_owned() else {
+                            tracing::warn!(plugin = %ctx.plugin, "too many connector requests under way; one was closed");
+                            continue;
+                        };
+                        tokio::spawn(handle(ctx.clone(), slots.clone(), current, permit));
                     }
                 }
             }
@@ -980,6 +1157,7 @@ mod tests {
             host: host.into(),
             port,
             protocol: protocol as i32,
+            request_id: 1,
         }
     }
 
@@ -1006,6 +1184,14 @@ mod tests {
         let mut unknown = request("127.0.0.1", port.into(), pb::TargetProtocol::Tls);
         unknown.datasource_id = "other".into();
         assert_eq!(reason(&ctx, unknown).await, "plugin.datasource_unknown");
+        // A changed or deleted data source is taken back.
+        let saved = ctx.grants.get("ds").unwrap();
+        ctx.grants.revoke("ds");
+        assert_eq!(
+            reason(&ctx, request("127.0.0.1", port.into(), pb::TargetProtocol::Tls)).await,
+            "plugin.datasource_unknown"
+        );
+        ctx.grants.by_source.lock().unwrap().insert("ds".into(), saved);
         assert_eq!(
             reason(&ctx, request("127.0.0.1", u32::from(port) + 1, pb::TargetProtocol::Tls)).await,
             "plugin.target_undeclared"
@@ -1045,6 +1231,10 @@ mod tests {
         for good in ["127.0.0.1:3001", "192.0.2.10:3443", "192.0.2.10:5432"] {
             assert!(own.check(good.parse().unwrap()).await.is_ok(), "{good}");
         }
+        // A database whose name resolves neither at start nor now: its port is refused anywhere.
+        let unknown = OwnEndpoints::new(Vec::new(), Some(("kalzit-db.invalid".into(), 5432)));
+        assert!(unknown.check("192.0.2.10:5432".parse().unwrap()).await.is_err());
+        assert!(unknown.check("192.0.2.10:5433".parse().unwrap()).await.is_ok());
         let config = crate::config::Config::from_sources(
             "[server]\nhttp_addr = \"127.0.0.1:4000\"\n[database]\nurl = \"postgres://k:p@db.internal:6543/kalzit\"\n",
             Vec::new(),

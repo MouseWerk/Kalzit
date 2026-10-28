@@ -527,9 +527,11 @@ impl Config {
 }
 
 /// Serves `plugin` as Kalzit started it, until Kalzit ends the process. Call it first in `main`,
-/// before any thread starts: it takes the token out of the environment (so processes the plugin
-/// starts do not inherit it) and builds the async runtime itself. Fails when the environment is
-/// not Kalzit's or the address cannot be listened on.
+/// before any thread starts: it takes the token out of the process's environment variables, so
+/// processes the plugin starts do not inherit it, and builds the async runtime itself. The
+/// environment the process started with stays readable to the plugin's own processes
+/// (`/proc/<pid>/environ` on Linux); the token is worth nothing outside this start of this
+/// plugin. Fails when the environment is not Kalzit's or the address cannot be served on.
 pub fn run<P: DataSource>(plugin: P) -> ExitCode {
     let config = match Config::from_env() {
         Ok(config) => config,
