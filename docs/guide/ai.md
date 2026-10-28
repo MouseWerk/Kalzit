@@ -72,7 +72,8 @@ On a data source's page, the **AI** part (KI) appears while AI is on:
 - **Excluded fields** (Felder ausnehmen): names or dotted paths (`kunden.email`, `iban`) whose
   values the server replaces with `[excluded]` before anything is sent; the model sees only the
   name. Excluding works by name: a field renamed or computed in a query (`email AS kontakt`) is not
-  covered. Data that must never reach a provider belongs in a source that stays closed.
+  covered, so in **Ask** a query that names an excluded field is not run at all. Data that must
+  never reach a provider belongs in a source that stays closed.
 
 Only people who may edit the data source can change this, and every change is audited. The data
 source list marks opened sources with **AI may read**.

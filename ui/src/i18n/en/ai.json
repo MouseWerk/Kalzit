@@ -165,7 +165,7 @@
   "ai.source.leavesText": "tables, fields and types; the query text; for summaries the results, cut to the row limit.",
   "ai.source.rowLimit": "At most {rows} rows, documents or nodes per result (the server’s limit).",
   "ai.source.excluded": "Excluded fields",
-  "ai.source.excludedHint": "Names or dotted paths, at most {max}. The server replaces their values before sending; the model sees only the name. This works by name: a renamed or computed field is not covered.",
+  "ai.source.excludedHint": "Names or dotted paths, at most {max}. The server replaces their values before sending; the model sees only the name. This works by name: a renamed or computed field is not covered. In “Ask”, a query that names an excluded field is not run.",
   "ai.source.addField": "Add field",
   "ai.source.removeField": "Remove",
   "ai.source.removeFieldNamed": "Remove {name}",
@@ -227,7 +227,7 @@
   "ai.notice.never": "Never",
   "ai.notice.neverText": "Passwords, connection settings, keys, values of excluded fields, sources not open to AI and data you may not see yourself.",
   "ai.notice.audit": "Audit log",
-  "ai.notice.auditText": "Every AI call is logged with person, time, provider and tokens, without questions, answers or results.",
+  "ai.notice.auditText": "Every AI call is logged with person, time, provider and tokens, without questions, answers or results. For “Ask”, the text of every query the assistant runs is logged too; it stays as long as the audit log, also after the chat is deleted.",
   "ai.notice.once": "Shown once per person and provider.",
   "ai.notice.cancel": "Cancel",
   "ai.notice.confirm": "Got it",
@@ -291,7 +291,7 @@
   "ai.chat.composer": "Ask a question",
   "ai.chat.sources": "Sources",
   "ai.chat.allSources": "All sources open to AI",
-  "ai.chat.addSource": "Choose sources",
+  "ai.chat.addSource": "+ Source",
   "ai.chat.removeSource": "Remove {name}",
   "ai.chat.question": "Question about your data",
   "ai.chat.placeholder": "Ask your data, for example: Which products were returned most often in October?",
@@ -305,7 +305,6 @@
   "ai.chat.openContext": "Context",
   "ai.chat.model": "Model",
   "ai.chat.dataGoesTo": "Data goes to",
-  "ai.chat.endpoint": "Endpoint",
   "ai.chat.modelSetBy": "Administrators choose model and provider under",
   "ai.chat.adminLink": "Settings > AI",
   "ai.chat.allowed": "Allowed sources",
@@ -346,5 +345,6 @@
   "ai.chat.noMatch": "No chat matches the search.",
   "ai.chat.loadError": "The chat cannot be loaded.",
   "ai.chat.dateToday": "Today, {time}",
-  "ai.chat.dateYesterday": "Yesterday, {time}"
+  "ai.chat.dateYesterday": "Yesterday, {time}",
+  "ai.reason.ai.query_names_excluded_field": "The query names “{field}”, a field excluded from AI. It is not run, since another name could pass its values on."
 }

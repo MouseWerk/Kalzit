@@ -198,6 +198,21 @@ describe("Fragen", () => {
     expect(server.areas.datasources.queries.length).toBe(before);
   });
 
+  it("chooses sources with + Source and leaves out one that is gone", async () => {
+    const { server, user } = open("/ask?chat=c-gone", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-gone", title: "Alt", datasourceIds: ["ds-deleted"] }),
+    ];
+    const composer = await screen.findByRole("form", { name: "Ask a question" });
+    expect(await within(composer).findByText("All sources open to AI")).toBeTruthy();
+    await user.click(within(composer).getByRole("button", { name: "+ Source" }));
+    await user.click(within(composer).getByRole("checkbox", { name: "Allow Sales DB" }));
+    expect(within(composer).getByRole("button", { name: "Remove Sales DB" })).toBeTruthy();
+    await user.type(within(composer).getByRole("textbox"), "Frage{Enter}");
+    await waitFor(() => expect(server.areas.aiChat.asks).toHaveLength(1));
+    expect(server.areas.aiChat.asks[0]?.body.datasourceIds).toEqual([PG_ID]);
+  });
+
   it("gives a refused question back to the composer with the reason", async () => {
     const { server, user } = open("/ask", USABLE);
     server.areas.aiChat.answer = {

@@ -12,6 +12,7 @@ import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
 import { datasourcesQuery } from "../../datasources/api";
 import { KindMark } from "../../datasources/kindMarks";
+import { errorReason } from "../../datasources/reasons";
 import { useAiNotice } from "../AiNotice";
 import { AI_STATUS_QUERY_KEY } from "../api";
 import { aiLimitReason } from "../calls";
@@ -33,6 +34,14 @@ import "./chat.css";
 
 /** The longest question, as the server takes it. */
 export const MAX_QUESTION = 4000;
+/** How often, and how far apart, the page asks again for an answer the server is still storing. */
+const SETTLE_ATTEMPTS = 8;
+const SETTLE_WAIT_MS = 250;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 /** Chats the side pane lists; "All" leads to the whole history. */
 const RECENT_CHATS = 4;
 
@@ -125,11 +134,16 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
   const endRef = useRef<HTMLDivElement>(null);
   const questionRef = useRef<HTMLTextAreaElement>(null);
   const hintId = useId();
+  const pickerId = useId();
+  const [pickerOpen, setPickerOpen] = useState(false);
   const limitId = useId();
 
   useEffect(() => () => abort.current?.abort(), []);
 
-  const chosen = selection ?? stored.data?.datasourceIds ?? [];
+  // Chosen sources the person can no longer pick (deleted, out of reach) drop out.
+  const chosen = (selection ?? stored.data?.datasourceIds ?? []).filter(
+    (id) => sources.length === 0 || sources.some((source) => source.id === id),
+  );
   const running = live !== null && (live.phase === "waiting" || live.phase === "streaming");
   const messages: ChatMessage[] = stored.data?.messages ?? [];
   const visible = live === null ? messages : messages.slice(0, shownBefore);
@@ -148,16 +162,28 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
   const limit = aiLimitReason(status);
   const limitText = limit === undefined ? undefined : aiReasonText(t, limit);
 
-  async function settle(id: string | undefined, isNew: boolean) {
+  async function settle(id: string | undefined, isNew: boolean, stopped: boolean, before: number) {
     void queryClient.invalidateQueries({ queryKey: [AI_STATUS_QUERY_KEY, orgId] });
     void queryClient.invalidateQueries({ queryKey: [CHATS_KEY, orgId, "list"] });
     if (id === undefined) {
       return;
     }
-    try {
-      await queryClient.fetchQuery({ ...chatQuery(orgId, id), staleTime: 0 });
-    } catch {
-      // The page shows what it has; the next visit loads the chat again.
+    // A stopped answer is stored by the server a moment after the request closed: wait for it,
+    // so the page shows it and the next question does not find the chat still answering.
+    for (let attempt = 0; attempt < (stopped ? SETTLE_ATTEMPTS : 1); attempt++) {
+      try {
+        const chat = await queryClient.fetchQuery({ ...chatQuery(orgId, id), staleTime: 0 });
+        if (
+          !stopped ||
+          (chat.messages.length > before + 1 && chat.messages.at(-1)?.role === "assistant")
+        ) {
+          break;
+        }
+      } catch {
+        // The page shows what it has; the next visit loads the chat again.
+        break;
+      }
+      await wait(SETTLE_WAIT_MS);
     }
     if (isNew) {
       // The new chat gets its address; the page starts over from what was stored.
@@ -182,7 +208,8 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
     const isNew = chatId === undefined;
     let id = chatId ?? created.current;
     setSendError(null);
-    setShownBefore(messages.length);
+    const shownBeforeNow = messages.length;
+    setShownBefore(shownBeforeNow);
     setLive({ question, steps: [], phase: "waiting", at: Date.now() });
     setDraft("");
     const update = (change: (current: LiveAnswer) => LiveAnswer) => {
@@ -197,33 +224,48 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
         id = chat.id;
         created.current = chat.id;
       }
-      await streamAsk(
-        orgId,
-        id,
-        { text: question, datasourceIds: chosen, language },
-        {
-          onMeta: (meta) => {
-            started = true;
-            update((s) => ({ ...s, provider: meta.provider }));
+      const target = id;
+      const send = () =>
+        streamAsk(
+          orgId,
+          target,
+          { text: question, datasourceIds: chosen, language },
+          {
+            onMeta: (meta) => {
+              started = true;
+              update((s) => ({ ...s, provider: meta.provider }));
+            },
+            onText: (part) =>
+              update((s) => ({ ...s, phase: "streaming", steps: addText(s.steps, part) })),
+            onTool: (call) =>
+              update((s) => ({ ...s, phase: "streaming", steps: addCall(s.steps, call) })),
+            onToolResult: (callId, record) =>
+              update((s) => ({ ...s, steps: setRecord(s.steps, callId, record) })),
+            onDone: (done) =>
+              update((s) => ({
+                ...s,
+                phase: done.outcome === "failed" ? "error" : "done",
+                usage: done.usage,
+                outcome: done.outcome,
+                error: done.error ?? s.error,
+              })),
+            onError: (error) => update((s) => ({ ...s, phase: "error", outcome: "failed", error })),
           },
-          onText: (part) =>
-            update((s) => ({ ...s, phase: "streaming", steps: addText(s.steps, part) })),
-          onTool: (call) =>
-            update((s) => ({ ...s, phase: "streaming", steps: addCall(s.steps, call) })),
-          onToolResult: (callId, record) =>
-            update((s) => ({ ...s, steps: setRecord(s.steps, callId, record) })),
-          onDone: (done) =>
-            update((s) => ({
-              ...s,
-              phase: done.outcome === "failed" ? "error" : "done",
-              usage: done.usage,
-              outcome: done.outcome,
-              error: done.error ?? s.error,
-            })),
-          onError: (error) => update((s) => ({ ...s, phase: "error", outcome: "failed", error })),
-        },
-        controller.signal,
-      );
+          controller.signal,
+        );
+      // The answer before may still be finishing on the server (a stop a moment ago).
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await send();
+          break;
+        } catch (error) {
+          const busy = errorReason(error)?.reason === "ai.chat_busy";
+          if (!busy || started || attempt >= SETTLE_ATTEMPTS || controller.signal.aborted) {
+            throw error;
+          }
+          await wait(SETTLE_WAIT_MS);
+        }
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         update((s) => ({ ...s, phase: "stopped", outcome: "stopped" }));
@@ -243,7 +285,7 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
     if (abort.current === controller) {
       abort.current = null;
     }
-    await settle(id, isNew);
+    await settle(id, isNew, controller.signal.aborted, shownBeforeNow);
   }
 
   function stop() {
@@ -394,7 +436,25 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
                 );
               })
             )}
+            <button
+              type="button"
+              className="ask-chip ask-chip--add"
+              aria-expanded={pickerOpen}
+              aria-controls={pickerId}
+              onClick={() => setPickerOpen((open) => !open)}
+            >
+              {t("ai.chat.addSource")}
+            </button>
           </div>
+          {pickerOpen ? (
+            <fieldset id={pickerId} className="ask-composer__picker">
+              <legend className="visually-hidden">{t("ai.chat.sources")}</legend>
+              {sources.length === 0 ? (
+                <p className="ask-result__note">{t("ai.chat.noSources")}</p>
+              ) : null}
+              <SourceChoices sources={sources} chosen={chosen} onToggle={toggle} />
+            </fieldset>
+          ) : null}
           <label className="ask-composer__field">
             <span className="visually-hidden">{t("ai.chat.question")}</span>
             <textarea
@@ -476,7 +536,6 @@ function ContextPane({
   const when = useWhen();
   const provider = status?.provider;
   const open = sources.filter((source) => source.open);
-  const closed = sources.filter((source) => !source.open);
   const headingId = useId();
   return (
     <aside className="ask-context" aria-labelledby={headingId}>
@@ -530,37 +589,7 @@ function ContextPane({
           </span>
         </legend>
         {sources.length === 0 ? <p className="ask-result__note">{t("ai.chat.noSources")}</p> : null}
-        {open.map((source) => (
-          <label key={source.id} className="ask-source">
-            <input
-              type="checkbox"
-              checked={chosen.includes(source.id)}
-              onChange={() => onToggle(source.id)}
-              aria-label={t("ai.chat.allowSource", { name: source.name })}
-            />
-            <KindMark kind={source.kind} small />
-            <span className="ask-source__name truncate" title={source.name}>
-              {source.name}
-            </span>
-          </label>
-        ))}
-        {closed.map((source) => (
-          <label key={source.id} className="ask-source ask-source--closed">
-            <input
-              type="checkbox"
-              disabled
-              checked={false}
-              aria-describedby={`${headingId}-${source.id}`}
-            />
-            <KindMark kind={source.kind} small />
-            <span className="ask-source__name truncate" title={source.name}>
-              {source.name}
-            </span>
-            <span id={`${headingId}-${source.id}`} className="ask-result__note">
-              {t("ai.chat.notOpen")}
-            </span>
-          </label>
-        ))}
+        <SourceChoices sources={sources} chosen={chosen} onToggle={onToggle} />
       </fieldset>
       <section className="ask-context__section">
         <div className="ask-rights">
@@ -626,5 +655,58 @@ function ContextPane({
         ))}
       </section>
     </aside>
+  );
+}
+
+/** The sources to choose from: open ones as checkboxes, closed ones greyed with the reason. */
+function SourceChoices({
+  sources,
+  chosen,
+  onToggle,
+}: {
+  sources: PickerSource[];
+  chosen: string[];
+  onToggle: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  const prefix = useId();
+  return (
+    <>
+      {sources
+        .filter((source) => source.open)
+        .map((source) => (
+          <label key={source.id} className="ask-source">
+            <input
+              type="checkbox"
+              checked={chosen.includes(source.id)}
+              onChange={() => onToggle(source.id)}
+              aria-label={t("ai.chat.allowSource", { name: source.name })}
+            />
+            <KindMark kind={source.kind} small />
+            <span className="ask-source__name truncate" title={source.name}>
+              {source.name}
+            </span>
+          </label>
+        ))}
+      {sources
+        .filter((source) => !source.open)
+        .map((source) => (
+          <label key={source.id} className="ask-source ask-source--closed">
+            <input
+              type="checkbox"
+              disabled
+              checked={false}
+              aria-describedby={`${prefix}-${source.id}`}
+            />
+            <KindMark kind={source.kind} small />
+            <span className="ask-source__name truncate" title={source.name}>
+              {source.name}
+            </span>
+            <span id={`${prefix}-${source.id}`} className="ask-result__note">
+              {t("ai.chat.notOpen")}
+            </span>
+          </label>
+        ))}
+    </>
   );
 }

@@ -165,7 +165,7 @@
   "ai.source.leavesText": "Tabellen, Felder und Typen; der Abfragetext; beim Zusammenfassen die Ergebnisse, gekürzt auf die Zeilengrenze.",
   "ai.source.rowLimit": "Höchstens {rows} Zeilen, Dokumente oder Knoten je Ergebnis (Grenze des Servers).",
   "ai.source.excluded": "Felder ausnehmen",
-  "ai.source.excludedHint": "Namen oder Pfade mit Punkten, höchstens {max}. Der Server ersetzt ihre Werte vor dem Senden; das Modell sieht nur den Namen. Das wirkt nach Namen: ein umbenanntes oder berechnetes Feld ist nicht erfasst.",
+  "ai.source.excludedHint": "Namen oder Pfade mit Punkten, höchstens {max}. Der Server ersetzt ihre Werte vor dem Senden; das Modell sieht nur den Namen. Das wirkt nach Namen: ein umbenanntes oder berechnetes Feld ist nicht erfasst. In „Fragen“ wird eine Abfrage, die ein ausgenommenes Feld nennt, nicht ausgeführt.",
   "ai.source.addField": "Feld hinzufügen",
   "ai.source.removeField": "Entfernen",
   "ai.source.removeFieldNamed": "{name} entfernen",
@@ -227,7 +227,7 @@
   "ai.notice.never": "Nie",
   "ai.notice.neverText": "Passwörter, Verbindungsdaten, Schlüssel, Werte ausgenommener Felder, Quellen ohne Freigabe und Daten, die du selbst nicht sehen darfst.",
   "ai.notice.audit": "Audit-Log",
-  "ai.notice.auditText": "Jeder KI-Aufruf steht mit Person, Zeit, Anbieter und Tokens im Audit-Log, ohne Fragen, Antworten oder Ergebnisse.",
+  "ai.notice.auditText": "Jeder KI-Aufruf steht mit Person, Zeit, Anbieter und Tokens im Audit-Log, ohne Fragen, Antworten oder Ergebnisse. Bei „Fragen“ steht dort auch der Text jeder Abfrage, die der Assistent ausführt; er bleibt so lange wie das Audit-Log, auch nach dem Löschen des Chats.",
   "ai.notice.once": "Einmal je Person und Anbieter.",
   "ai.notice.cancel": "Abbrechen",
   "ai.notice.confirm": "Verstanden",
@@ -291,7 +291,7 @@
   "ai.chat.composer": "Frage stellen",
   "ai.chat.sources": "Quellen",
   "ai.chat.allSources": "Alle freigegebenen Quellen",
-  "ai.chat.addSource": "Quelle wählen",
+  "ai.chat.addSource": "+ Quelle",
   "ai.chat.removeSource": "{name} entfernen",
   "ai.chat.question": "Frage an deine Daten",
   "ai.chat.placeholder": "Frag deine Daten, zum Beispiel: Welche Produkte wurden im Oktober am häufigsten retourniert?",
@@ -305,7 +305,6 @@
   "ai.chat.openContext": "Kontext",
   "ai.chat.model": "Modell",
   "ai.chat.dataGoesTo": "Daten gehen an",
-  "ai.chat.endpoint": "Endpunkt",
   "ai.chat.modelSetBy": "Modell und Anbieter legen Admins fest unter",
   "ai.chat.adminLink": "Verwaltung > KI",
   "ai.chat.allowed": "Erlaubte Quellen",
@@ -346,5 +345,6 @@
   "ai.chat.noMatch": "Kein Chat passt zur Suche.",
   "ai.chat.loadError": "Der Chat lässt sich nicht laden.",
   "ai.chat.dateToday": "Heute, {time}",
-  "ai.chat.dateYesterday": "Gestern, {time}"
+  "ai.chat.dateYesterday": "Gestern, {time}",
+  "ai.reason.ai.query_names_excluded_field": "Die Abfrage nennt „{field}“, ein für KI ausgenommenes Feld. Kalzit führt sie nicht aus, weil ein anderer Name dessen Werte weitergeben könnte."
 }
