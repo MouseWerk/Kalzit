@@ -111,9 +111,11 @@ fn try_read(path: &str) -> Value {
 fn sleeping_child() -> std::io::Result<std::process::Child> {
     std::process::Command::new(std::env::current_exe()?)
         .arg("sleep")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        // Pipes, not the NUL device: an AppContainer process may not open NUL on every Windows
+        // (Windows Server refuses it).
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
 }
 

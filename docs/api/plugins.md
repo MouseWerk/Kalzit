@@ -402,7 +402,8 @@ as root (`plugin.root_refused`).
   plugin) without any capability; Windows
   combines it with the restricted token, so every access passes both checks. Its package and run
   directory also grant `ALL APPLICATION PACKAGES`; the plugin's and the start's SIDs still decide
-  which plugin gets in.
+  which plugin gets in. On Windows Server the plugin cannot open the `NUL` device: give child
+  processes pipes, not `NUL`, as their standard handles.
 - `network`: an AppContainer without the `internetClient`, `internetClientServer` and
   `privateNetworkClientServer` capabilities and without a loopback exemption opens no network
   connection, not even to loopback (tested); the connector is the only way out.
