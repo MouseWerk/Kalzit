@@ -634,6 +634,13 @@ fn searchable_text(query: &Value) -> String {
     out
 }
 
+/// The excluded field a query names, read both as written and without its literals and comments:
+/// stripping cannot always tell a literal or a comment apart (`'a\''`, MySQL's `0--email`), so
+/// either one naming the field refuses the query, a literal naming it included.
+fn names_excluded(policy: &redact::DataPolicy, query: &Value) -> Option<String> {
+    policy.excluded_named_in(&prompts::query_text(query)).or_else(|| policy.excluded_named_in(&searchable_text(query)))
+}
+
 async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord> {
     let id = arg_str(args, "datasourceId")?;
     let query = query_arg(args)?;
@@ -641,7 +648,7 @@ async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let (ds, policy) = queryable(scope, id, true).await?;
     // Excluded fields are matched by name in results; a query that names one could pass its
     // values under another name (`email AS kontakt`), so such a query is not run at all.
-    if let Some(field) = policy.excluded_named_in(&searchable_text(&query)) {
+    if let Some(field) = names_excluded(&policy, &query) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "ai_unavailable",
@@ -1017,6 +1024,24 @@ mod tests {
         assert!(text.contains("SELECT") && text.contains("FROM t"), "{text}");
         let mongo = json!({ "collection": "kunden", "pipeline": "[{\"$project\": {\"email\": 1}}]" });
         assert!(searchable_text(&mongo).contains("\"email\""), "unescaped pipeline text");
+    }
+
+    #[test]
+    fn a_name_hidden_by_stripping_still_refuses_the_query() {
+        let access =
+            super::super::store::DatasourceAccess { readable: true, excluded_fields: vec!["kunden.email".into()] };
+        let policy = redact::DataPolicy::new(&access, 10);
+        for sql in [
+            r"SELECT 'a\'', email, 'b' FROM kunden",
+            r"SELECT E'a\'', email, E'b' FROM kunden",
+            "SELECT 0--email AS k FROM kunden",
+            "SELECT k.email AS kontakt FROM kunden k",
+        ] {
+            assert_eq!(names_excluded(&policy, &json!({ "sql": sql })).as_deref(), Some("kunden.email"), "{sql}");
+        }
+        assert_eq!(names_excluded(&policy, &json!({ "sql": "SELECT name FROM kunden" })), None);
+        let mongo = json!({ "collection": "kunden", "pipeline": "[{\"$project\": {\"email\": 1}}]" });
+        assert_eq!(names_excluded(&policy, &mongo).as_deref(), Some("kunden.email"));
     }
 
     #[test]

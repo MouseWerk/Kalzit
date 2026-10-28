@@ -55,6 +55,19 @@ pub const GENERIC: &[&str] = &[
     "updated_at",
 ];
 
+/// Whether `qualifier` in the (folded) query `text` names a table of its own: it follows FROM or
+/// JOIN (with a schema or not), and the entry's `table` is not aliased to it (`kunden k`,
+/// `kunden AS k`). Anything less clear counts as the entry's table.
+fn other_table(text: &str, table: &str, qualifier: &str) -> bool {
+    let (t, q) = (regex::escape(table), regex::escape(qualifier));
+    let read = regex::Regex::new(&format!(r"\b(?:from|join)\s+(?:[\w]+\.)?{q}\b"));
+    let alias = regex::Regex::new(&format!(r"\b{t}\s+(?:as\s+)?{q}\b"));
+    match (read, alias) {
+        (Ok(read), Ok(alias)) => read.is_match(text) && !alias.is_match(text),
+        _ => false,
+    }
+}
+
 /// The rules for one data source, loaded once per AI call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataPolicy {
@@ -134,7 +147,9 @@ impl DataPolicy {
             }
             for qualifier in mentions(field) {
                 let refused = match (table, qualifier.as_deref()) {
-                    (Some(table), Some(qualifier)) => qualifier == table,
+                    // Another qualifier is let through only when it is clearly another table: one
+                    // read after FROM or JOIN by that name, and not an alias of the entry's table.
+                    (Some(table), Some(qualifier)) => qualifier == table || !other_table(&text, table, qualifier),
                     (Some(_), None) => !generic,
                     (None, _) => true,
                 };
@@ -493,6 +508,15 @@ mod tests {
         assert_eq!(policy(&[], 10).excluded_named_in("SELECT email"), None);
         // Another table's field of the same name, and generic names, do not refuse a query.
         assert_eq!(p.excluded_named_in("SELECT users.email FROM users"), None);
+        assert_eq!(p.excluded_named_in("SELECT u.email FROM kunden k JOIN public.u ON true"), None);
+        // An alias of the entry's table, or a qualifier that is no table read, still refuses.
+        for aliased in [
+            "SELECT k.email AS kontakt FROM kunden k",
+            "SELECT k.email FROM kunden AS k",
+            "SELECT x.email FROM (SELECT * FROM kunden) x",
+        ] {
+            assert_eq!(p.excluded_named_in(aliased).as_deref(), Some("kunden.email"), "{aliased}");
+        }
         assert_eq!(p.excluded_named_in("SELECT kunden.email FROM kunden").as_deref(), Some("kunden.email"));
         let generic = policy(&["id", "kunden.name"], 10);
         assert_eq!(generic.excluded_named_in("SELECT id, name FROM kunden"), None);
