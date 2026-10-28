@@ -32,6 +32,9 @@ pub struct ProviderRow {
     pub last_test_ok: Option<i64>,
     pub last_test_reason: Option<String>,
     pub last_tested_at: Option<i64>,
+    /// `yes` or `no` as the administrators say whether data leaves the own network; absent: judged
+    /// from the address.
+    pub leaves_network: Option<String>,
 }
 
 impl ProviderRow {
@@ -42,7 +45,7 @@ impl ProviderRow {
 }
 
 const COLUMNS: &str = "id, org_id, name, kind, base_url, model, is_default, created_at, updated_at, updated_by, \
-                       token_limit_field, last_test_ok, last_test_reason, last_tested_at";
+                       token_limit_field, last_test_ok, last_test_reason, last_tested_at, leaves_network";
 
 /// Forgets the last connection test (its address, model or key changed).
 pub async fn clear_test(conn: &mut sqlx::AnyConnection, id: &str) -> Result<(), sqlx::Error> {

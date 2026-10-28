@@ -1029,6 +1029,7 @@ mod tests {
             DistributionBin::decl(&cfg),
             crate::ai::service::AiStatus::decl(&cfg),
             crate::ai::service::AiStatusProvider::decl(&cfg),
+            crate::ai::service::AiStatusFunctions::decl(&cfg),
             crate::ai::service::AiStatusUsage::decl(&cfg),
         ];
         let mut out = String::from(

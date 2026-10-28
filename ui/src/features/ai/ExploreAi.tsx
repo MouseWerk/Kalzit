@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
@@ -9,7 +10,7 @@ import { type AiCallMeta, aiLimitReason } from "./calls";
 import { aiReasonText } from "./reasons";
 import { useAiReadableSources } from "./source/useAiReadable";
 import { useAiCall } from "./useAiCall";
-import { useAiStatusFor } from "./useAiStatus";
+import { featureUsable, useAiStatus, useAiStatusFor } from "./useAiStatus";
 import "./ai-calls.css";
 
 /** The longest request of a draft, as the server takes it. */
@@ -245,7 +246,7 @@ export function useExploreAiSummary(
   run: { query: unknown; timeRange: TimeRange; intervalMs?: number } | null,
 ): { button: ReactNode; card: ReactNode } {
   const { t } = useI18n();
-  const { usable } = useAiStatusFor(orgId);
+  const usable = featureUsable(useAiStatusFor(orgId).status, "summarize");
   const call = useAiCall(orgId);
   const notice = useAiNotice(orgId);
   const limitText = useLimitText(orgId);
@@ -297,6 +298,7 @@ export function useExploreAiSummary(
       call={call}
       title={t("ai.call.summaryTitleExplore")}
       sourceLink={{ datasourceId: source.id, name: source.name }}
+      followUp={{ source: source.id, q: t("ai.chat.followUpExplore", { name: source.name }) }}
     />
   );
   return { button, card };
@@ -336,13 +338,18 @@ export function SummaryCard({
   title,
   sourceLink,
   onClose,
+  followUp,
 }: {
   call: ReturnType<typeof useAiCall>;
   title: string;
   sourceLink?: { datasourceId: string; name: string } | undefined;
   onClose?: () => void;
+  /** Where "In Fragen weiterfragen" starts a chat: a dashboard or a source as its context. */
+  followUp?: { dashboard?: string; source?: string; q: string } | undefined;
 }) {
   const { t } = useI18n();
+  // Only while the chat can be used: its provider may differ from the summary's.
+  const chat = featureUsable(useAiStatus().status, "chat");
   return (
     <AiAnswer
       title={title}
@@ -350,6 +357,19 @@ export function SummaryCard({
       footnote={sentNote(t, call.state.meta)}
       sourceLink={sourceLink}
       onClose={onClose ?? call.reset}
+      actions={
+        followUp === undefined || !chat ? undefined : (
+          <Link
+            to="/ask"
+            search={followUp}
+            className="button button--secondary button--small"
+            onClick={() => onClose?.()}
+          >
+            <Icon name="ask" />
+            {t("ai.chat.followUp")}
+          </Link>
+        )
+      }
     />
   );
 }

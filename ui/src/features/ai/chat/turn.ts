@@ -85,6 +85,9 @@ export interface LiveAnswer {
   phase: "waiting" | "streaming" | "done" | "stopped" | "error";
   /** When the question was sent. */
   at: number;
+  /** The names of the sources chosen for it, and the dashboard it is about. */
+  sources?: string[] | undefined;
+  context?: string | undefined;
 }
 
 /** The query text a record ran or proposes, as Copy takes it: the text, else its JSON. */

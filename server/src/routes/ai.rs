@@ -92,6 +92,9 @@ pub struct ProviderView {
     token_limit_field: &'static str,
     /// Whether a key is stored; the key itself is never sent.
     api_key_set: bool,
+    /// Whether data leaves the own network: `yes` or `no` as the administrators say, `auto` to
+    /// judge it from the address.
+    leaves_network: &'static str,
     created_at: i64,
     updated_at: i64,
     /// The last connection test, if one ran.
@@ -118,6 +121,11 @@ async fn view<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, row: Provi
         scope: if row.org_id.is_some() { "org" } else { "server" },
         api_key_set,
         last_test,
+        leaves_network: match row.leaves_network.as_deref() {
+            Some("yes") => "yes",
+            Some("no") => "no",
+            _ => "auto",
+        },
         token_limit_field: row
             .token_limit_field
             .as_deref()
@@ -170,6 +178,20 @@ struct CreateBody {
     #[serde(default)]
     is_default: bool,
     token_limit_field: Option<String>,
+    /// `yes`, `no` or `auto` (default).
+    leaves_network: Option<String>,
+}
+
+/// `leavesNetwork`: `yes` or `no` as stored, `auto` as nothing.
+fn leaves_network(raw: &str) -> ApiResult<Option<&'static str>> {
+    match raw {
+        "yes" => Ok(Some("yes")),
+        "no" => Ok(Some("no")),
+        "auto" => Ok(None),
+        _ => Err(ApiError::validation("leavesNetwork must be yes, no or auto")
+            .with_field("leavesNetwork")
+            .because("ai.leaves_network_invalid")),
+    }
 }
 
 #[derive(Deserialize)]
@@ -182,6 +204,7 @@ struct PatchBody {
     api_key: Option<Option<Zeroizing<String>>>,
     is_default: Option<bool>,
     token_limit_field: Option<String>,
+    leaves_network: Option<String>,
     /// The `updatedAt` the client last read; a newer stored provider answers `version_conflict`.
     expected_updated_at: i64,
 }
@@ -367,6 +390,7 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
     let kind = kind_of(&body.kind)?;
     let token_field = body.token_limit_field.as_deref().map(token_field).transpose()?.flatten();
+    let leaves = body.leaves_network.as_deref().map(leaves_network).transpose()?.flatten();
     let model = check_model(&body.model)?;
     let url = check_base_url(state, &body.base_url).await?;
     match body.api_key.as_deref() {
@@ -379,7 +403,7 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "INSERT INTO ai_providers (id, org_id, name, kind, base_url, model, is_default, created_at, updated_at, \
-         updated_by, token_limit_field) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9)",
+         updated_by, token_limit_field, leaves_network) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9, $10)",
     )
     .bind(&id)
     .bind(actor.org_id)
@@ -390,6 +414,7 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
     .bind(now)
     .bind(&actor.user.id)
     .bind(token_field)
+    .bind(leaves)
     .execute(&mut *tx)
     .await?;
     if let Some(key) = body.api_key.as_deref() {
@@ -460,6 +485,13 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
     if token_limit_field != row.token_limit_field {
         changed.push("tokenLimitField");
     }
+    let leaves = match &body.leaves_network {
+        Some(raw) => leaves_network(raw)?.map(str::to_string),
+        None => row.leaves_network.clone(),
+    };
+    if leaves != row.leaves_network {
+        changed.push("leavesNetwork");
+    }
     let make_default = body.is_default == Some(true) && row.is_default == 0;
     if make_default {
         changed.push("isDefault");
@@ -471,7 +503,7 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
     let mut tx = crate::db::begin(&state.db).await?;
     let updated = sqlx::query(
         "UPDATE ai_providers SET name = $1, model = $2, base_url = $3, updated_at = $4, updated_by = $5, \
-         token_limit_field = $6 WHERE id = $7 AND updated_at = $8",
+         token_limit_field = $6, leaves_network = $9 WHERE id = $7 AND updated_at = $8",
     )
     .bind(&name)
     .bind(&model)
@@ -481,6 +513,7 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
     .bind(token_limit_field.as_deref())
     .bind(id)
     .bind(row.updated_at)
+    .bind(leaves.as_deref())
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -883,8 +916,15 @@ async fn acknowledge_notice(
     Extension(info): Extension<RequestInfo>,
     JsonBody(body): JsonBody<NoticeBody>,
 ) -> ApiResult<StatusCode> {
-    let current = service::in_effect(&state, &ctx.org_id).await?;
-    let Some(row) = current.filter(|r| r.id == body.provider_id) else {
+    // The provider in effect, or the one chosen for a function (explain, summarize, chat).
+    let mut current = service::in_effect(&state, &ctx.org_id).await?.filter(|r| r.id == body.provider_id);
+    for function in service::FUNCTIONS {
+        if current.is_none() {
+            current =
+                service::in_effect_for(&state, &ctx.org_id, Some(function)).await?.filter(|r| r.id == body.provider_id);
+        }
+    }
+    let Some(row) = current else {
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "another AI provider is in effect now")
             .with_field("providerId")
             .because("ai.notice_provider_changed"));

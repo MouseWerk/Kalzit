@@ -2,6 +2,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
+import { newPanelId, type PanelModel } from "../../dashboards/model";
+import { AddToDashboardDialog } from "../../explore/AddToDashboardDialog";
 import { handOffToExplore } from "../../explore/handoff";
 import { AnswerText } from "../AiAnswer";
 import { aiReasonText } from "../reasons";
@@ -12,16 +14,43 @@ import "./chat.css";
 
 /** What the answer needs to know of the data sources: which ones the person may query. */
 export interface SourceRights {
+  orgId: string;
   mayQuery: (datasourceId: string) => boolean;
 }
 
 /** The person's question, on the right. */
-export function QuestionBubble({ text, when }: { text: string; when: string }) {
+export function QuestionBubble({
+  text,
+  when,
+  sources = [],
+  context,
+}: {
+  text: string;
+  when: string;
+  /** The names of the sources chosen for it. */
+  sources?: readonly string[] | undefined;
+  /** The title of the dashboard it was asked about. */
+  context?: string | undefined;
+}) {
   const { t } = useI18n();
   return (
     <div className="ask-question">
       <span className="ask-meta">{t("ai.chat.you", { time: when })}</span>
       <p className="ask-question__text">{text}</p>
+      {sources.length === 0 && context === undefined ? null : (
+        <span className="ask-question__chips">
+          {sources.map((name) => (
+            <span key={name} className="ask-chip ask-chip--quiet">
+              {name}
+            </span>
+          ))}
+          {context === undefined ? null : (
+            <span className="ask-chip ask-chip--quiet">
+              {t("ai.chat.contextChip", { title: context })}
+            </span>
+          )}
+        </span>
+      )}
     </div>
   );
 }
@@ -92,6 +121,33 @@ function callSummary(t: ReturnType<typeof useI18n>["t"], call: ToolCall): string
   return undefined;
 }
 
+/**
+ * What a query reads, for the header of its step: the first table after FROM in SQL, the
+ * collection of a MongoDB query, the first label of a Cypher MATCH. Undefined when it is not
+ * clear; the query below says the rest.
+ */
+export function objectRead(
+  query: unknown,
+): { kind: "table" | "collection" | "label"; name: string } | undefined {
+  if (query === null || typeof query !== "object") {
+    return undefined;
+  }
+  const q = query as Record<string, unknown>;
+  if (typeof q.collection === "string" && q.collection !== "") {
+    return { kind: "collection", name: q.collection };
+  }
+  if (typeof q.sql === "string") {
+    const match = /\bfrom\s+([\w."[\]`]+)/i.exec(q.sql);
+    const name = match?.[1]?.replace(/["[\]`]/g, "");
+    return name === undefined || name === "" ? undefined : { kind: "table", name };
+  }
+  if (typeof q.cypher === "string") {
+    const match = /\(\s*\w*\s*:\s*`?(\w+)`?/.exec(q.cypher);
+    return match?.[1] === undefined ? undefined : { kind: "label", name: match[1] };
+  }
+  return undefined;
+}
+
 /** The names a list of sources or dashboards holds, for a short line under the call. */
 function itemNames(items: unknown): string[] {
   if (!Array.isArray(items)) {
@@ -123,10 +179,14 @@ function ToolStep({ call, rights }: { call: ToolCall; rights: SourceRights }) {
   const record = call.record;
   const key = toolLabelKey(call.name);
   const panelTitle = record?.dashboard?.panelTitle ?? "";
+  // A query that ran is "the data used and the query" of the board, naming what it read.
   const label =
-    key === undefined
-      ? t("ai.chat.tool.unknown", { name: call.name })
-      : t(key, { title: panelTitle });
+    call.name === "run_query" && record?.status === "ok"
+      ? t("ai.chat.usedData")
+      : key === undefined
+        ? t("ai.chat.tool.unknown", { name: call.name })
+        : t(key, { title: panelTitle });
+  const read = call.name === "run_query" ? objectRead(record?.query) : undefined;
   const running = record === undefined;
   const failed = record?.status === "error";
   const summary = callSummary(t, call);
@@ -155,6 +215,11 @@ function ToolStep({ call, rights }: { call: ToolCall; rights: SourceRights }) {
         )}
         {record?.dashboard === undefined ? null : (
           <span className="ask-chip">{record.dashboard.title}</span>
+        )}
+        {read === undefined ? null : (
+          <span className="ask-tool__read">
+            {t(`ai.chat.read.${read.kind}`, { name: read.name })}
+          </span>
         )}
         <span className="ask-tool__meta">
           {running
@@ -270,6 +335,92 @@ function ProposalCard({ call, rights }: { call: ToolCall; rights: SourceRights }
   );
 }
 
+/** The last query of an answer that ran or was proposed, on a source the person may query. */
+function lastQuery(
+  steps: readonly Step[],
+  rights: SourceRights,
+): { datasourceId: string; query: unknown; title: string | undefined } | undefined {
+  for (const step of [...steps].reverse()) {
+    if (step.kind !== "call") {
+      continue;
+    }
+    const { name, record } = step.call;
+    if (record?.status !== "ok" || (name !== "run_query" && name !== "propose_query")) {
+      continue;
+    }
+    const datasourceId = record.datasource?.id;
+    if (datasourceId !== undefined && record.query !== undefined && rights.mayQuery(datasourceId)) {
+      return { datasourceId, query: record.query, title: record.proposal?.title };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Under an answer (board DataChat.dc.html): its last query "Als Panel speichern" (Explore opens
+ * it with the save dialog), "Zum Dashboard hinzufügen", and "Abfrage anpassen" (Explore, not
+ * run). Nothing is saved or run without the person's own step.
+ */
+function QueryActions({ steps, rights }: { steps: readonly Step[]; rights: SourceRights }) {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const [adding, setAdding] = useState(false);
+  const last = lastQuery(steps, rights);
+  if (last === undefined) {
+    return null;
+  }
+  const open = (save: boolean) => {
+    handOffToExplore({ datasourceId: last.datasourceId, query: last.query, save });
+    void navigate({ to: "/explore", search: {} });
+  };
+  const panel: PanelModel = {
+    id: newPanelId(),
+    type: "table",
+    title: last.title ?? t("ai.chat.panelTitle"),
+    grid: { x: 0, y: 0, w: 24, h: 9 },
+    targets: [{ refId: "A", datasourceId: last.datasourceId, query: last.query }],
+    transformations: [],
+    options: {},
+    fieldConfig: {},
+  };
+  return (
+    <div className="ask-answer__actions">
+      <button
+        type="button"
+        className="button button--secondary button--small"
+        onClick={() => open(true)}
+      >
+        <Icon name="save" />
+        {t("ai.chat.saveAsPanel")}
+      </button>
+      <button
+        type="button"
+        className="button button--secondary button--small"
+        onClick={() => setAdding(true)}
+      >
+        <Icon name="plusSquare" />
+        {t("ai.chat.addToDashboard")}
+      </button>
+      <button
+        type="button"
+        className="button button--secondary button--small"
+        onClick={() => open(false)}
+      >
+        <Icon name="edit" />
+        {t("ai.chat.adjustQuery")}
+      </button>
+      {adding ? (
+        <AddToDashboardDialog
+          orgId={rights.orgId}
+          panel={panel}
+          range={{ from: "now-24h", to: "now" }}
+          onClose={() => setAdding(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 export interface AnswerProps {
   steps: readonly Step[];
   provider: ChatProvider | undefined;
@@ -353,6 +504,7 @@ export function ChatAnswer({
         {outcome === "toolLimit" ? (
           <p className="ask-result__note">{t("ai.chat.toolLimit")}</p>
         ) : null}
+        {running ? null : <QueryActions steps={steps} rights={rights} />}
         <div className="ask-answer__actions">
           {running && onStop !== undefined ? (
             <button

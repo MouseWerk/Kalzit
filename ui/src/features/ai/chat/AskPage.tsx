@@ -10,10 +10,11 @@ import { isComposingKey } from "../../../lib/ime";
 import { zoneOption } from "../../../lib/timeSettings";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
+import { DASHBOARDS_KEY, fetchDashboard } from "../../dashboards/api";
 import { datasourcesQuery } from "../../datasources/api";
 import { KindMark } from "../../datasources/kindMarks";
 import { errorReason } from "../../datasources/reasons";
-import { useAiNotice } from "../AiNotice";
+import { providerFor, useAiNotice } from "../AiNotice";
 import { AI_STATUS_QUERY_KEY } from "../api";
 import { aiLimitReason } from "../calls";
 import { aiErrorText, aiReasonText } from "../reasons";
@@ -29,6 +30,7 @@ import {
   streamAsk,
 } from "./api";
 import { ChatAnswer, QuestionBubble, type SourceRights } from "./ChatTurn";
+import { type ChatContext, ContextPicker } from "./ContextPicker";
 import { addCall, addText, type LiveAnswer, setRecord, stepsOf } from "./turn";
 import "./chat.css";
 
@@ -103,15 +105,37 @@ export function useWhen(): (ms: number) => string {
  */
 export function AskPage() {
   const org = useCurrentOrg();
-  const { chat } = useSearch({ from: "/_app/ask" });
+  const { chat, dashboard, source, q } = useSearch({ from: "/_app/ask" });
   if (org === undefined) {
     return null;
   }
   // A new chat, or another one from the history, starts the page over.
-  return <AskChat key={chat ?? "new"} orgId={org.id} chatId={chat} />;
+  return (
+    <AskChat
+      key={chat ?? `new:${dashboard ?? ""}:${source ?? ""}:${q ?? ""}`}
+      orgId={org.id}
+      chatId={chat}
+      start={{ dashboard, source, q }}
+    />
+  );
 }
 
-function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined }) {
+/** What a link starts a new chat with: a dashboard as context, a source, a question. */
+interface ChatStart {
+  dashboard: string | undefined;
+  source: string | undefined;
+  q: string | undefined;
+}
+
+function AskChat({
+  orgId,
+  chatId,
+  start,
+}: {
+  orgId: string;
+  chatId: string | undefined;
+  start: ChatStart;
+}) {
   const { t, language } = useI18n();
   useDocumentTitle("ai.chat.title");
   const queryClient = useQueryClient();
@@ -121,8 +145,18 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
   const notice = useAiNotice(orgId);
   const sources = usePickerSources(orgId);
   const stored = useQuery({ ...chatQuery(orgId, chatId ?? ""), enabled: chatId !== undefined });
-  const [selection, setSelection] = useState<string[] | null>(null);
-  const [draft, setDraft] = useState("");
+  const [selection, setSelection] = useState<string[] | null>(
+    start.source === undefined ? null : [start.source],
+  );
+  const [draft, setDraft] = useState(start.q ?? "");
+  // The dashboard asked about: chosen here (null: none), else the linked one or the last one.
+  const [chosenContext, setChosenContext] = useState<ChatContext | null | undefined>(undefined);
+  const [contextPicking, setContextPicking] = useState(false);
+  const linked = useQuery({
+    queryKey: [DASHBOARDS_KEY, orgId, "ask-linked", start.dashboard ?? ""],
+    queryFn: ({ signal }) => fetchDashboard(orgId, start.dashboard ?? "", signal),
+    enabled: start.dashboard !== undefined,
+  });
   const [live, setLive] = useState<LiveAnswer | null>(null);
   // Stored messages shown while an answer is live: the ones before its question.
   const [shownBefore, setShownBefore] = useState(0);
@@ -154,6 +188,17 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
   );
   const running = live !== null && (live.phase === "waiting" || live.phase === "streaming");
   const messages: ChatMessage[] = stored.data?.messages ?? [];
+  const lastAsked = messages.findLast((message) => message.role === "user");
+  const context: ChatContext | null =
+    chosenContext !== undefined
+      ? chosenContext
+      : linked.data !== undefined
+        ? { id: linked.data.id, title: linked.data.model.title || linked.data.title }
+        : lastAsked?.role === "user"
+          ? (lastAsked.content.dashboard ?? null)
+          : null;
+  const sourceNames = (ids: readonly string[] | undefined) =>
+    (ids ?? []).flatMap((id) => sources.find((source) => source.id === id)?.name ?? []);
   const visible = live === null ? messages : messages.slice(0, shownBefore);
   const steps = live?.steps.length ?? 0;
 
@@ -165,6 +210,7 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
   }, [steps, visible.length]);
 
   const rights: SourceRights = {
+    orgId,
     mayQuery: (id) => sources.some((source) => source.id === id && source.mayQuery),
   };
   const limit = aiLimitReason(status);
@@ -225,7 +271,15 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
     setSendError(null);
     const shownBeforeNow = messages.length;
     setShownBefore(shownBeforeNow);
-    setLive({ question, steps: [], phase: "waiting", at: Date.now() });
+    const askedAbout = context;
+    setLive({
+      question,
+      steps: [],
+      phase: "waiting",
+      at: Date.now(),
+      sources: sourceNames(chosen),
+      context: askedAbout?.title,
+    });
     setDraft("");
     const update = (change: (current: LiveAnswer) => LiveAnswer) => {
       if (abort.current === controller) {
@@ -244,7 +298,7 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
         streamAsk(
           orgId,
           target,
-          { text: question, datasourceIds: chosen, language },
+          { text: question, datasourceIds: chosen, language, dashboardId: askedAbout?.id },
           {
             onMeta: (meta) => {
               started = true;
@@ -388,6 +442,8 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
                 key={message.seq}
                 text={message.content.text}
                 when={when(message.createdAt)}
+                sources={sourceNames(message.content.datasourceIds)}
+                context={message.content.dashboard?.title}
               />
             ) : (
               <ChatAnswer
@@ -406,7 +462,12 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
           )}
           {live === null ? null : (
             <>
-              <QuestionBubble text={live.question} when={when(live.at)} />
+              <QuestionBubble
+                text={live.question}
+                when={when(live.at)}
+                sources={live.sources}
+                context={live.context}
+              />
               <ChatAnswer
                 steps={live.steps}
                 provider={live.provider}
@@ -460,7 +521,38 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
             >
               {t("ai.chat.addSource")}
             </button>
+            {context === null ? null : (
+              <>
+                <span className="ask-composer__divider" aria-hidden="true" />
+                <span className="ask-chip">
+                  <Icon name="dashboards" />
+                  {t("ai.chat.contextChip", { title: context.title })}
+                  <button
+                    type="button"
+                    className="ask-chip__remove"
+                    aria-label={t("ai.chat.removeContext")}
+                    title={t("ai.chat.removeContext")}
+                    onClick={() => setChosenContext(null)}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </span>
+              </>
+            )}
+            <span className="ask-spacer" />
+            {counter === undefined ? null : <span className="ask-result__note">{counter}</span>}
           </div>
+          {contextPicking ? (
+            <ContextPicker
+              orgId={orgId}
+              onPick={(picked) => {
+                setChosenContext(picked);
+                setContextPicking(false);
+                questionRef.current?.focus();
+              }}
+              onClose={() => setContextPicking(false)}
+            />
+          ) : null}
           {pickerOpen ? (
             <fieldset id={pickerId} className="ask-composer__picker">
               <legend className="visually-hidden">{t("ai.chat.sources")}</legend>
@@ -491,11 +583,19 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
             </p>
           )}
           <div className="ask-composer__foot">
+            <button
+              type="button"
+              className="button button--secondary button--small"
+              aria-expanded={contextPicking}
+              onClick={() => setContextPicking((open) => !open)}
+            >
+              <Icon name="link" />
+              {t("ai.chat.contextButton")}
+            </button>
             <span id={hintId} className="ask-result__note">
               {t("ai.chat.enterHint")}
             </span>
             <span className="ask-spacer" />
-            {counter === undefined ? null : <span className="ask-result__note">{counter}</span>}
             <span className="ask-result__note">{t("ai.chat.readOnlyQueries")}</span>
             <button
               type="submit"
@@ -549,7 +649,8 @@ function ContextPane({
   const { status } = useAiStatusFor(orgId);
   const recent = useQuery(chatsQuery(orgId));
   const when = useWhen();
-  const provider = status?.provider;
+  // The provider the chat goes to, which the server may have chosen apart from the others.
+  const provider = providerFor(status, "chat");
   const open = sources.filter((source) => source.open);
   const headingId = useId();
   return (
@@ -577,8 +678,37 @@ function ContextPane({
             {provider.name} · {provider.model}
           </p>
           <dl className="ask-context__facts">
-            <dt>{t("ai.chat.dataGoesTo")}</dt>
-            <dd className="ask-context__mono">{provider.host}</dd>
+            <dt>{t("ai.chat.endpoint")}</dt>
+            <dd className="ask-context__mono">{provider.endpoint || provider.host}</dd>
+            <dt>{t("ai.chat.providerStatus")}</dt>
+            <dd>
+              <span
+                className={
+                  provider.reachable === true
+                    ? "ask-dot ask-dot--ok"
+                    : provider.reachable === false
+                      ? "ask-dot ask-dot--failed"
+                      : "ask-dot"
+                }
+                aria-hidden="true"
+              />
+              {provider.reachable === true
+                ? t("ai.chat.reachable")
+                : provider.reachable === false
+                  ? t("ai.chat.unreachable")
+                  : t("ai.chat.untested")}
+            </dd>
+            <dt>{t("ai.chat.leavesServer")}</dt>
+            <dd>
+              {/* The administrators' word as a fact; from the address only an estimate. */}
+              {provider.leavesNetworkEstimated
+                ? provider.leavesNetwork
+                  ? t("ai.chat.leavesEstimateYes", { host: provider.host })
+                  : t("ai.chat.leavesEstimateNo")
+                : provider.leavesNetwork
+                  ? t("ai.chat.leavesYes", { host: provider.host })
+                  : t("ai.chat.leavesNo")}
+            </dd>
           </dl>
           {permissions.isServerAdmin || permissions.has("settings:write") ? (
             <p className="ask-result__note">

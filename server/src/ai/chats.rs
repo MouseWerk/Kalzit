@@ -54,6 +54,31 @@ pub struct Question {
     pub text: String,
     #[serde(default)]
     pub datasource_ids: Vec<String>,
+    /// The dashboard the question was asked about ("Dashboard als Kontext").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dashboard: Option<DashboardContext>,
+}
+
+/// A dashboard given as context: its id and title, and its panels as the model got them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardContext {
+    pub id: String,
+    pub title: String,
+    /// `[{panelId, title, type}]`.
+    #[serde(default)]
+    pub panels: Vec<Value>,
+}
+
+impl DashboardContext {
+    /// The question as the model gets it: the text, then the dashboard inside a block.
+    pub fn message(&self, text: &str) -> String {
+        let data = serde_json::json!({ "dashboardId": self.id, "title": self.title, "panels": self.panels });
+        format!(
+            "{text}\n\nThe person asks in the context of this dashboard; use run_panel for its panels.\n{}",
+            super::prompts::fence("dashboard", &data.to_string())
+        )
+    }
 }
 
 /// An answer: its rounds (each the model's text and the tools it called), the tokens of all its
@@ -268,7 +293,18 @@ pub async fn visible_messages(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> 
                 Err(_) => content,
             }
         } else {
-            content
+            match serde_json::from_value::<Question>(content.clone()) {
+                // A dashboard context the person may no longer read is left out.
+                Ok(mut question) => {
+                    if let Some(d) = &question.dashboard
+                        && !visibility.dashboard_readable(state, ctx, &d.id).await
+                    {
+                        question.dashboard = None;
+                    }
+                    serde_json::to_value(question).unwrap_or(Value::Null)
+                }
+                Err(_) => content,
+            }
         };
         out.push(StoredMessage { seq, role, created_at, content });
     }
@@ -321,7 +357,12 @@ pub async fn conversation(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiR
         match role.as_str() {
             "user" => {
                 let question: Question = serde_json::from_value(content).unwrap_or_default();
-                push(Message::user(question.text), &mut out);
+                // A dashboard the person may no longer read is left out of the question.
+                let text = match &question.dashboard {
+                    Some(d) if visibility.dashboard_readable(state, ctx, &d.id).await => d.message(&question.text),
+                    _ => question.text,
+                };
+                push(Message::user(text), &mut out);
             }
             "assistant" => {
                 let Ok(turn) = serde_json::from_value::<Turn>(content) else { continue };
