@@ -42,6 +42,9 @@ fn main() -> ExitCode {
     }
 }
 
+/// The options of `package`.
+const PACKAGE_OPTIONS: &[&str] = &["manifest", "file", "dir", "platform", "out", "key-file", "manifest-out"];
+
 /// `--name value` options and `--flag` switches; repeated names keep every value.
 struct Options(Vec<(String, Option<String>)>);
 
@@ -85,9 +88,7 @@ fn run(args: &[String]) -> Result<String, String> {
     let (command, rest) = args.split_first().ok_or("usage: kalzit-plugin keygen|package|sign|verify ...")?;
     match command.as_str() {
         "keygen" => keygen(Path::new(Options::parse(rest, &["out"], &[])?.required("out")?)),
-        "package" => {
-            package(&Options::parse(rest, &["manifest", "file", "dir", "platform", "out", "key-file"], &["unsigned"])?)
-        }
+        "package" => package(&Options::parse(rest, PACKAGE_OPTIONS, &["unsigned"])?),
         "sign" => sign(&Options::parse(rest, &["package", "key-file", "out"], &[])?),
         "verify" => verify(&Options::parse(rest, &["package", "public-key"], &[])?),
         "attach-signature" => attach(&Options::parse(rest, &["package", "signature", "public-key", "out"], &[])?),
@@ -270,5 +271,14 @@ mod tests {
         assert!(o.flag("unsigned"));
         assert!(Options::parse(&args("--nope 1"), &["file"], &[]).is_err());
         assert!(Options::parse(&args("--file"), &["file"], &[]).is_err());
+    }
+
+    #[test]
+    fn package_takes_every_documented_option() {
+        let line =
+            "--manifest m --file a=b --dir d --platform linux-x64 --out o --key-file k --manifest-out t --unsigned";
+        let o = Options::parse(&args(line), PACKAGE_OPTIONS, &["unsigned"]).unwrap();
+        assert_eq!(o.one("manifest-out"), Some("t"));
+        assert!(o.flag("unsigned"));
     }
 }
