@@ -13,13 +13,16 @@ use axum::{Extension, Json};
 use kalzit_plugin_api::manifest::PanelOption;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{self, Access, OrgCtx, Permission, Resource};
+use crate::dashboards::library;
 use crate::error::{ApiError, ApiResult};
 use crate::plugins::panels::{self, ActivePanel};
 use crate::plugins::store;
+use crate::saved_analyses;
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
@@ -108,7 +111,8 @@ struct FrameQuery {
     _version: Option<String>,
 }
 
-/// Whether the current version of the dashboard shows a panel of type `kind`.
+/// Whether the current version of the dashboard shows a panel of type `kind`: its own, a linked
+/// library panel's or a linked analysis's visualization.
 async fn shows_panel(state: &AppState, org_id: &str, dashboard_id: &str, kind: &str) -> ApiResult<bool> {
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT v.model FROM dashboards d JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
@@ -120,7 +124,26 @@ async fn shows_panel(state: &AppState, org_id: &str, dashboard_id: &str, kind: &
     .await?;
     let (raw,) = row.ok_or_else(ApiError::not_found)?;
     let model: Value = serde_json::from_str(&raw).map_err(|e| ApiError::internal("dashboards", e))?;
-    Ok(model["panels"].as_array().into_iter().flatten().any(|p| p["type"].as_str() == Some(kind)))
+    let panels: Vec<&Value> = model["panels"].as_array().into_iter().flatten().collect();
+    if panels.iter().any(|p| p["type"].as_str() == Some(kind)) {
+        return Ok(true);
+    }
+    let ids = |key: &str| -> BTreeSet<&str> { panels.iter().filter_map(|p| p[key].as_str()).collect() };
+    let (library, analyses) = (ids("libraryPanelId"), ids("analysisId"));
+    let mut conn = state.db.acquire().await?;
+    if !library.is_empty()
+        && library::linked_panels(&mut conn, org_id, &library)
+            .await?
+            .values()
+            .any(|p| p.model["type"].as_str() == Some(kind))
+    {
+        return Ok(true);
+    }
+    Ok(!analyses.is_empty()
+        && saved_analyses::linked_analyses(&mut conn, org_id, &analyses)
+            .await?
+            .values()
+            .any(|a| a.model["visualization"]["type"].as_str() == Some(kind)))
 }
 
 /// `GET /orgs/{orgId}/panel-plugins/{pluginId}/frame?dashboard=...`: the frame document of a

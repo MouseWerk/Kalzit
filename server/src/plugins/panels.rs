@@ -68,6 +68,32 @@ impl PanelRegistry {
     }
 }
 
+/// Checks the options of the panels of plugins that a dashboard write adds or changes against the
+/// options their manifest declares (`panel::check_options`). Panels of plugins that cannot be
+/// shown now, and unchanged panels, are left as they are, like unknown types. The error names the
+/// panel and the option, as `dashboards::model::check_panel_options` does.
+pub fn check_dashboard_options(
+    registry: &PanelRegistry,
+    model: &crate::dashboards::model::DashboardModel,
+    previous: Option<&crate::dashboards::model::DashboardModel>,
+) -> Result<(), (String, String)> {
+    for (i, p) in model.panels.iter().enumerate() {
+        let Some(panel) = registry.get(&p.kind) else { continue };
+        let unchanged = previous
+            .and_then(|m| m.panels.iter().find(|old| old.id == p.id))
+            .is_some_and(|old| old.kind == p.kind && old.options == p.options);
+        if unchanged {
+            continue;
+        }
+        let name = || if p.title.trim().is_empty() { p.id.clone() } else { p.title.clone() };
+        let options =
+            p.options.as_object().ok_or_else(|| (name(), format!("model.panels[{i}].options must be an object")))?;
+        kalzit_plugin_api::panel::check_options(&panel.bundle().options, options)
+            .map_err(|r| (name(), format!("model.panels[{i}].{}", r.message)))?;
+    }
+    Ok(())
+}
+
 fn path_in(package_dir: &Path, path: &str) -> PathBuf {
     path.split('/').fold(package_dir.to_path_buf(), |p, part| p.join(part))
 }

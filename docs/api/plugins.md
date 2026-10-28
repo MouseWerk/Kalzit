@@ -268,16 +268,18 @@ visualization picker and the options editor:
 
 `options` are the manifest's `[[panel.options]]` (docs/ARCHITECTURE.md, "Manifest"). The UI
 builds the options editor from them, and gives a panel only declared options whose values fit,
-with the defaults for the rest. The dashboard routes store a plugin panel's options as they are
-given; they are not checked against the manifest on save.
+with the defaults for the rest. Creating, saving and restoring a dashboard check the options of
+the plugin panels they add or change against the manifest (`422 validation`,
+`dashboards.panel_options`, naming the panel and the option), while the plugin may be shown;
+library panels and saved analyses keep their options unchecked for now.
 
 ### Frame: `GET /orgs/{orgId}/panel-plugins/{pluginId}/frame?dashboard={dashboardId}`
 
 `Access::OrgMember`, then per request:
 
 - With `dashboard`: the dashboard must exist in the organization and not be in the trash. If its
-  current version shows a panel of this type, `dashboards:read` on the dashboard is enough
-  (viewers); otherwise the caller adds the panel and needs `dashboards:write` on it. A dashboard
+  current version shows a panel of this type (its own, or through a linked library panel or
+  saved analysis), `dashboards:read` on the dashboard is enough (viewers); otherwise the caller adds the panel and needs `dashboards:write` on it. A dashboard
   the caller cannot see answers `404`, one they may only read `403`.
 - Without `dashboard` (a dashboard not saved yet): `dashboards:write` in the organization.
 - The plugin must be approved, enabled, trusted and not blocked for the organization; else

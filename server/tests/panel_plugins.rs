@@ -266,6 +266,32 @@ async fn a_panel_frame_is_served_sandboxed_from_the_checked_package_to_those_who
     assert_eq!(t.frame(Some("no-such-dashboard"), &t.owner).await.status, StatusCode::NOT_FOUND);
     assert_eq!(t.frame(Some(&shown), "").await.status, StatusCode::UNAUTHORIZED);
 
+    // A dashboard that shows the panel through a linked library panel lets viewers load it too.
+    let content = json!({ "schemaVersion": kalzit::dashboards::model::SCHEMA_VERSION, "type": ID, "title": "Kachel",
+                          "options": { "field": "cpu" }, "targets": [] });
+    let r = t
+        .admin(
+            Method::POST,
+            &format!("/orgs/{}/library-panels", t.org),
+            Some(json!({ "name": "Kachel", "model": content })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let library = r.body["id"].as_str().unwrap().to_string();
+    let model = json!({ "schemaVersion": 1, "title": "Mit Bibliothek", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "lp", "type": "table", "grid": { "x": 0, "y": 0, "w": 6, "h": 6 }, "libraryPanelId": library }] });
+    let r = t.admin(Method::POST, &format!("/orgs/{}/dashboards", t.org), Some(json!({ "model": model }))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let linked = r.body["id"].as_str().unwrap().to_string();
+    assert_eq!(t.frame(Some(&linked), &viewer).await.status, StatusCode::OK);
+
+    // Options the manifest does not allow are refused when a dashboard is saved.
+    let bad = json!({ "schemaVersion": 1, "title": "Falsch", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "p1", "type": ID, "grid": { "x": 0, "y": 0, "w": 6, "h": 6 },
+                     "options": { "decimals": 99 }, "targets": [] }] });
+    let r = t.admin(Method::POST, &format!("/orgs/{}/dashboards", t.org), Some(json!({ "model": bad }))).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "dashboards.panel_options"), "{}", r.text);
+
     // Blocked for the organization: neither offered nor served; unblocked again, both.
     let block = format!("/orgs/{}/plugins/{ID}/block", t.org);
     assert_eq!(t.admin(Method::PUT, &block, None).await.status, StatusCode::NO_CONTENT);
