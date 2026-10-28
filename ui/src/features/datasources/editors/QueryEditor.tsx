@@ -21,6 +21,7 @@ import {
 import { FileQueryEditor } from "./FileQueryEditor";
 import { GsqlQueryEditor } from "./GsqlQueryEditor";
 import { HttpJsonQueryEditor } from "./HttpJsonQueryEditor";
+import { JsonField } from "./JsonField";
 import { MacroHelp } from "./MacroHelp";
 import { MongoQueryEditor, type PreviewRun } from "./MongoQueryEditor";
 import { SearchQueryEditor } from "./SearchQueryEditor";
@@ -67,8 +68,55 @@ export function QueryEditor(props: QueryEditorProps) {
       return <FileQueryEditor {...props} />;
     case "http":
       return <HttpJsonQueryEditor {...props} />;
+    case "plugin":
+      return <PluginQueryEditor {...props} />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
+  }
+}
+
+/**
+ * A plugin kind's query: the plugin defines its form, so it is edited as one JSON object, sent
+ * as written. The plugin checks it and answers `query.invalid_form` for one it does not take.
+ */
+function PluginQueryEditor({ query, onChange, onRun, label }: QueryEditorProps) {
+  const { t } = useI18n();
+  const hintId = useId();
+  const object = query !== null && typeof query === "object" ? query : {};
+  // The text as typed while it still says the same as the query, so the field does not reformat
+  // what is being written; a query changed from outside is shown formatted.
+  const [typed, setTyped] = useState<string | null>(null);
+  const value = typed !== null && sameJson(typed, object) ? typed : JSON.stringify(object, null, 2);
+  return (
+    <div className="query-editor">
+      <JsonField
+        label={label ?? t("datasources.editor.label")}
+        value={value}
+        rows={6}
+        describedBy={hintId}
+        validate={(parsed) =>
+          parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+            ? null
+            : t("datasources.editor.plugin.object")
+        }
+        onChange={(text) => {
+          setTyped(text);
+          onChange(text === "" ? {} : (JSON.parse(text) as unknown));
+        }}
+        onRun={onRun}
+      />
+      <p className="field__hint" id={hintId}>
+        {t("datasources.editor.shortcuts")} {t("datasources.editor.plugin.hint")}
+      </p>
+    </div>
+  );
+}
+
+function sameJson(text: string, value: unknown): boolean {
+  try {
+    return JSON.stringify(JSON.parse(text)) === JSON.stringify(value);
+  } catch {
+    return false;
   }
 }
 

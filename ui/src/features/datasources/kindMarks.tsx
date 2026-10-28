@@ -26,6 +26,7 @@ export type KindFamily =
   | "file"
   | "http"
   | "graph"
+  | "plugin"
   | "generic";
 
 export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
@@ -107,13 +108,37 @@ const GLYPHS: Record<KindFamily, string> = {
   // Three nodes and their edges.
   graph:
     "M3.75 7a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M15.75 6a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M9.75 18a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M8.25 6.8l7.5-.6M7.1 9l3.8 7M16.9 8l-3.8 8",
+  // A puzzle piece: a kind a plugin adds.
+  plugin:
+    "M5 7.5h3.25a2 2 0 1 1 4 0h3.25v3.25a2 2 0 1 1 0 4V18H12.25a2 2 0 1 0-4 0H5v-3.25a2 2 0 1 0 0-4z",
   // A database cylinder, for kinds this UI does not know yet.
   generic:
     "M4.5 6c0-1.66 3.36-3 7.5-3s7.5 1.34 7.5 3-3.36 3-7.5 3-7.5-1.34-7.5-3zM4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3",
 };
 
+/**
+ * Whether a kind comes from a plugin: plugin ids are reverse domain names with at least one dot
+ * (docs/ARCHITECTURE.md, "Manifest"), built-in kinds never have one.
+ */
+export function isPluginKind(kind: string): boolean {
+  return kind.includes(".");
+}
+
 export function kindFamily(kind: string): KindFamily {
-  return Object.hasOwn(KIND_FAMILIES, kind) ? (KIND_FAMILIES[kind] as KindFamily) : "generic";
+  if (Object.hasOwn(KIND_FAMILIES, kind)) {
+    return KIND_FAMILIES[kind] as KindFamily;
+  }
+  return isPluginKind(kind) ? "plugin" : "generic";
+}
+
+/** The two letters of a plugin kind's tile: "Sf" for Snowflake, "SH" for SAP HANA. */
+export function kindMonogram(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}`.toUpperCase();
+  }
+  const word = words[0] ?? "?";
+  return `${word.slice(0, 1).toUpperCase()}${word.slice(1, 2).toLowerCase()}`;
 }
 
 /** The one-line summary of a kind for the picker, when this UI has one. */
@@ -128,9 +153,25 @@ export function kindSummary(t: Translate, kind: string): string | null {
  * (several are dark blue and would vanish on dark); the contrast theme draws them in the text
  * color. Glyphs follow the text color.
  */
-export function KindMark({ kind, small = false }: { kind: string; small?: boolean }) {
+export function KindMark({
+  kind,
+  small = false,
+  name,
+}: {
+  kind: string;
+  small?: boolean;
+  /** A plugin kind's name: its letters stand in the tile, where a built-in kind has its logo. */
+  name?: string | undefined;
+}) {
   const logos = kindLogos(kind);
   const size = small ? " kind-mark--small" : "";
+  if (name !== undefined && isPluginKind(kind)) {
+    return (
+      <span className={`kind-mark${size}`} data-family="plugin" aria-hidden="true">
+        <span className="kind-mark__letters">{kindMonogram(name)}</span>
+      </span>
+    );
+  }
   if (logos.length > 0) {
     return (
       <span
@@ -180,7 +221,7 @@ export function KindMark({ kind, small = false }: { kind: string; small?: boolea
 export function KindLabel({ kind, name }: { kind: string; name: string }) {
   return (
     <span className="kind-label">
-      <KindMark kind={kind} small />
+      <KindMark kind={kind} small name={name} />
       <span>{name}</span>
     </span>
   );

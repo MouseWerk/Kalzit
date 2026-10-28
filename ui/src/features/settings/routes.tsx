@@ -23,6 +23,13 @@ const sectionRoute = createRoute({
   component: lazyRouteComponent(() => import("./SectionPage"), "SectionPage"),
 });
 
+// One plugin, below its section (Verwaltung > Plugins > the plugin).
+const pluginRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/plugins/$pluginId",
+  component: lazyRouteComponent(() => import("../plugins/PluginPage"), "PluginRoutePage"),
+});
+
 // The earlier addresses of the settings pages lead to their sections.
 const accountRedirect = createRoute({
   getParentRoute: () => appRoute,
@@ -38,6 +45,6 @@ const accountRedirect = createRoute({
 });
 
 export const settingsRoutes = [
-  settingsRoute.addChildren([settingsIndexRoute, sectionRoute]),
+  settingsRoute.addChildren([settingsIndexRoute, sectionRoute, pluginRoute]),
   accountRedirect,
 ] as const;

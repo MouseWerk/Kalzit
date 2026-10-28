@@ -15,6 +15,8 @@ export type SectionKind =
   | "planned"
   | "ai"
   | "aiOrg"
+  | "plugins"
+  | "pluginsOrg"
   | "updates"
   | "profile"
   | "shortcuts"
@@ -174,6 +176,17 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
+    // The board docs/design/blueprint/Plugins.dc.html: tabs for the installed plugins, the
+    // catalog and the trusted keys; each plugin has its own page (`/settings/plugins/<id>`).
+    id: "plugins",
+    group: "server",
+    kind: "plugins",
+    label: "settings.section.plugins.label",
+    lead: "settings.section.plugins.lead",
+    keywords: "settings.section.plugins.keywords",
+    visible: serverAdmin,
+  },
+  {
     // The page follows the board docs/design/blueprint/AI.dc.html, frames 1 to 4 and 7. The
     // organization's AI keys belong to "AI of the organization" (frame 5).
     id: "ai",
@@ -259,6 +272,15 @@ export const SECTIONS: readonly SectionDef[] = [
       "ai.chat_retention_days",
     ],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
+  },
+  {
+    id: "org-plugins",
+    group: "org",
+    kind: "pluginsOrg",
+    label: "settings.section.orgPlugins.label",
+    lead: "settings.section.orgPlugins.lead",
+    keywords: "settings.section.orgPlugins.keywords",
+    visible: (access) => access.orgId !== undefined && access.permissions.has("plugins:configure"),
   },
   {
     id: "profile",

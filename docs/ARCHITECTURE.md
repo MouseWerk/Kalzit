@@ -328,10 +328,12 @@ type QueryResult =
 Decided by the owner on 2026-10-27. Done: the protocol, the manifest with its validator, the
 signing context, the kind registry, the in-process adapter, the host for data source plugins
 (install from a file with every check, trust, approval, processes with supervision and sandbox,
-the admin API in docs/api/plugins.md), the Rust SDK with the packaging tool and example plugins,
-and the panel message API. The panel host, the catalog, Kalzit's network connector for plugins and
-the Plugins board follow in M4 (marked (M4) below). The UI follows the board
-`docs/design/blueprint/Plugins.dc.html`.
+the admin API in docs/api/plugins.md), its pages in the UI after the board
+`docs/design/blueprint/Plugins.dc.html` (`ui/src/features/plugins`: Settings > Plugins with the
+installed plugins, install from a file, signature and trust, a page per plugin, and the
+organization's block list; plugin kinds in "Add data source" with a JSON query editor), the Rust
+SDK with the packaging tool and example plugins, and the panel message API. The panel host, the
+catalog and Kalzit's network connector for plugins follow in M4 (marked (M4) below).
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
 serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a

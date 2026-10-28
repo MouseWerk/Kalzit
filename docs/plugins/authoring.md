@@ -197,8 +197,8 @@ to stderr. Kalzit keeps the last 2000 lines per plugin for the administrator and
   does: `kalzit_plugin_sdk::serve` on a pipe or socket with your own process id as the host,
   and the generated client with the token.
 - Against Kalzit: install the package on a test server (below). For quick rounds an administrator
-  may allow unsigned packages there (`PATCH /api/admin/plugin-host` with `allowUnsigned`); an
-  unsigned plugin is marked as such, and a broken signature is refused in any case.
+  may turn on "Allow unsigned plugins" there (Settings > Plugins; `allowUnsigned` in the API);
+  an unsigned plugin is marked as such, and a broken signature is refused in any case.
 
 ## Package and sign
 
@@ -240,9 +240,9 @@ signatures afterwards.
 
 ## Install
 
-A server administrator adds the publisher key (`POST /api/admin/plugin-keys`), uploads the package
-(`POST /api/admin/plugins`), reviews and approves the network targets it declares, and enables it
-(docs/api/plugins.md; the Plugins page in the administration follows). Its kind then appears next to the built-in kinds.
+A server administrator adds the publisher key, installs the package with "Install from file",
+reviews and grants the network targets it declares, and starts it, all under Settings > Plugins
+(or through the API in docs/api/plugins.md). Its kind then appears next to the built-in kinds.
 
 Updates keep the plugin id and key: a newer version signed by the same key replaces the
 installed one (an update that adds network targets waits for approval). To move to a new key,

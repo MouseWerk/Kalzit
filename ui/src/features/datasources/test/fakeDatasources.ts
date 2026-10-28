@@ -51,12 +51,20 @@ const TARGET_FIELDS = new Set([
   "apiKeyHeader",
 ]);
 
-interface WireKind {
+export interface WireKind {
   kind: string;
   name: string;
   shapes: string[];
   hintKey: string;
   settings: WireSetting[];
+  /** A plugin kind (docs/api/plugins.md, "Data sources of plugin kinds"). */
+  plugin?: {
+    plugin: string;
+    version: string;
+    publisher?: string;
+    labels: Record<string, Record<string, string>>;
+    help?: Record<string, Record<string, string>>;
+  };
 }
 
 const setting = (
@@ -302,6 +310,8 @@ export interface FakeDatasourcesState {
   grants: Record<string, "query" | "edit" | "admin">;
   /** Whether answers carry `access` (stream C's addition); false plays an older server. */
   sendAccess: boolean;
+  /** Kinds of installed plugins, listed after the built-in ones. */
+  pluginKinds: WireKind[];
   /** Every request body of the free query route, in order. */
   queries: Record<string, unknown>[];
   /** Collections of MongoDB sources (one set for all of them), by name. */
@@ -700,6 +710,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         : defaultOutcome(item, range, variables),
     grants: {},
     sendAccess: true,
+    pluginKinds: [],
     queries: [],
     mongo: FAKE_MONGO_COLLECTIONS(),
     distributions: [],
@@ -740,7 +751,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
     const view = (ds: StoredDatasource) => publicView(ds, accessOf(ds.id));
 
     if (parts[0] === "datasource-kinds" && parts.length === 1 && method === "GET") {
-      return json(200, { items: FAKE_KINDS, nextCursor: null });
+      return json(200, { items: [...FAKE_KINDS, ...state.pluginKinds], nextCursor: null });
     }
     if (parts[0] === "query" && parts.length === 1 && method === "POST") {
       const extra = unknownKey(body, QUERY_REQUEST_FIELDS);
@@ -867,7 +878,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       if (name === "" || name.length > 100) {
         return validation("name");
       }
-      const kind = FAKE_KINDS.find((k) => k.kind === body.kind);
+      const kind = [...FAKE_KINDS, ...state.pluginKinds].find((k) => k.kind === body.kind);
       if (kind === undefined) {
         return validation("kind");
       }
@@ -936,7 +947,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       if (extra !== undefined) {
         return validation(extra);
       }
-      const kind = FAKE_KINDS.find((k) => k.kind === body.kind);
+      const kind = [...FAKE_KINDS, ...state.pluginKinds].find((k) => k.kind === body.kind);
       if (kind === undefined) {
         return validation("kind");
       }
@@ -1031,7 +1042,9 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
           },
         });
       }
-      const kind = FAKE_KINDS.find((k) => k.kind === ds.kind) as WireKind;
+      const kind = [...FAKE_KINDS, ...state.pluginKinds].find(
+        (k) => k.kind === ds.kind,
+      ) as WireKind;
       const settings = (body.settings ?? ds.settings) as Record<string, unknown>;
       const secrets = (body.secrets ?? {}) as Record<string, unknown>;
       const refused = checkSettings(kind, settings, secrets, body.settings !== undefined);
