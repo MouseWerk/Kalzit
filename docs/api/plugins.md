@@ -262,10 +262,13 @@ the index's exact bytes. It must be signed by a key trusted for plugins: Kalzit'
 or a publisher key an administrator added. An index is taken only when
 
 - its signature verifies (`catalog.signature_missing`, `catalog.signer_untrusted`,
-  `catalog.signature_invalid`),
-- its `sequence` is higher than any index taken before from the same key, kept in the database
-  and never lowered, also when the address changes or the catalog is turned off and on
-  (`catalog.rollback`); the same bytes served again count as unchanged,
+  `catalog.signature_invalid`), and with the key pinned for this address: the first list taken
+  from an address pins its key, another trusted key is refused (`catalog.key_changed`) until an
+  administrator confirms with `POST /admin/plugin-catalog/refresh?acceptKeyChange=true`,
+- its `sequence` is higher than any index taken before from the same key and from the same
+  address (whatever key signed it), kept in the database and never lowered, also when the address
+  changes or the catalog is turned off and on (`catalog.rollback`); the same bytes served again
+  count as unchanged,
 - it is published at most 5 minutes in the future, valid for at most 31 days and not past its
   `expiresAt` (`catalog.times_implausible`, `catalog.expired`; served unchanged past its expiry it
   is refused as well),
@@ -299,7 +302,7 @@ anything runs, the review shows the package's own manifest and its network targe
 
 ```jsonc
 {
-  "state": "ready",        // off | unconfigured (on without address) | not_loaded | unreachable | expired | ready
+  "state": "ready",        // off | unconfigured (on without address) | not_loaded | unreachable | untrusted (its key is trusted no more) | expired | ready
   "settings": {            // with the version a change names; editable is false when set in the environment or kalzit.toml
     "enabled": { "value": true, "version": 3, "editable": true },
     "url": { "value": "https://plugins.example.dev/index.json", "version": 1, "editable": true },
@@ -338,9 +341,12 @@ right after. In the background Kalzit checks every 5 minutes whether a refresh i
 `{ "id": "dev.example.redis", "version": "1.2.0", "confirmPublisherChange": false }` answers `201`
 with the plugin, exactly as `POST /admin/plugins`. Before that:
 
-1. The catalog must be on, its index taken from the current address and not expired
-   (`catalog.disabled`, `catalog.url_missing`, `catalog.not_loaded`, `catalog.expired`), the
-   entry listed (`404 catalog.entry_unknown`) and not withdrawn (`409 catalog.entry_revoked`).
+1. The catalog must be on, its index taken from the current address, not expired and signed by a
+   key still trusted (`catalog.disabled`, `catalog.url_missing`, `catalog.not_loaded`,
+   `catalog.expired`, `catalog.signer_untrusted`), the entry listed (`404 catalog.entry_unknown`)
+   and not withdrawn (`409 catalog.entry_revoked`; a pre-release counts as its release). These
+   checks run again after the download, right before the install (`catalog.package_mismatch`
+   with `field: entry` when the entry changed meanwhile).
 2. The package is downloaded into the host's private upload directory, at most its listed size;
    size and SHA-256 must match the entry (`catalog.package_mismatch`, `field`: `size`, `sha256`).
 3. Its manifest must have the entry's id and version (`field`: `id`, `version`), and it must be
@@ -624,7 +630,8 @@ Rules:
 | `catalog.too_large` | `bytes` | the index, its signature or a package is larger than allowed (`422`) |
 | `catalog.signature_missing` | | there is no signature next to the index (`422`) |
 | `catalog.signature_invalid` | | the index does not match its signature, or the signature cannot be read; always refused (`422`) |
-| `catalog.signer_untrusted` | `keyId` | the index is signed with a key this server does not trust for plugins (`422`) |
+| `catalog.signer_untrusted` | `keyId` | the index is signed with a key this server does not trust for plugins, or no longer trusts the key of the stored index (install) (`422`) |
+| `catalog.key_changed` | `keyId`, `previousKeyId` | the index of this address is signed by another key than the one pinned for it; repeat the refresh with `acceptKeyChange=true` (`409`) |
 | `catalog.invalid` | | the index is not valid JSON of the index format (`422`) |
 | `catalog.format_unsupported` | `format` | the index has a format this Kalzit does not read (`422`) |
 | `catalog.rollback` | `sequence`, `accepted` | the index's sequence is not higher than one taken before from the same key (`422`) |

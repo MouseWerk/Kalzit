@@ -568,13 +568,22 @@ async fn catalog_view(
     Ok(Json(state.catalog.view(&state, &q, kind).await?))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RefreshQuery {
+    /// `true`: take a list signed by another key than the one pinned for this address.
+    accept_key_change: Option<bool>,
+}
+
 /// `POST /admin/plugin-catalog/refresh`: loads and checks the index now.
 async fn catalog_refresh(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    Query(query): Query<RefreshQuery>,
 ) -> ApiResult<Json<crate::plugins::catalog::CatalogView>> {
-    state.catalog.refresh(&state, Some(&actor(&user, &info, None))).await?;
+    let accept = query.accept_key_change.unwrap_or(false);
+    state.catalog.refresh(&state, Some(&actor(&user, &info, None)), accept).await?;
     Ok(Json(state.catalog.view(&state, "", None).await?))
 }
 

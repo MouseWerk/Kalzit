@@ -58,12 +58,19 @@ pub struct Revocation {
 }
 
 impl Revocation {
-    /// Whether this revocation withdraws `version` of `id`.
+    /// Whether this revocation withdraws `version` of `id`. A pre-release is matched as its
+    /// release (`1.5.0-rc.1` as `1.5.0`): semver requirements never match pre-releases, so `*`
+    /// would otherwise miss them. A version that does not parse is withdrawn by any revocation of
+    /// its id, so nothing escapes a withdrawal by its form.
     pub fn covers(&self, id: &str, version: &str) -> bool {
-        let (Ok(req), Ok(v)) = (semver::VersionReq::parse(&self.versions), semver::Version::parse(version)) else {
+        if self.id != id {
             return false;
-        };
-        self.id == id && req.matches(&v)
+        }
+        let Ok(req) = semver::VersionReq::parse(&self.versions) else { return false };
+        match semver::Version::parse(version) {
+            Ok(v) => req.matches(&semver::Version::new(v.major, v.minor, v.patch)),
+            Err(_) => true,
+        }
     }
 }
 
@@ -443,7 +450,13 @@ mod tests {
         assert!(i.revocation("dev.example.redis", "1.2.1").is_none());
         assert!(i.revocation("dev.example.other", "1.0.0").is_none());
         assert!(revocation("*").covers("dev.example.redis", "9.9.9"));
-        assert!(!revocation("*").covers("dev.example.redis", "not-a-version"));
+        assert!(revocation("*").covers("dev.example.redis", "not-a-version"));
+        // Pre-releases count as their release, which plain requirements never match otherwise.
+        assert!(revocation("*").covers("dev.example.redis", "1.5.0-rc.1"));
+        assert!(revocation("<1.2.1").covers("dev.example.redis", "1.2.0-beta.2"));
+        assert!(revocation("=1.5.0").covers("dev.example.redis", "1.5.0-rc.1"));
+        assert!(!revocation("<1.2.1").covers("dev.example.redis", "1.3.0-rc.1"));
+        assert!(!revocation("*").covers("dev.example.other", "1.0.0"));
         // An index without revocations reads as before.
         let plain = parse_index(&index(5, NOW - 60, NOW + 60), &key(1), &Accepted::default(), NOW).unwrap();
         assert!(plain.revoked.is_empty());

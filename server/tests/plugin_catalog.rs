@@ -662,3 +662,43 @@ async fn only_server_admins_reach_the_catalog() {
     assert_eq!(t.files.hits.load(Ordering::SeqCst), 0);
     t.finish().await;
 }
+
+/// The key of an address is pinned: another trusted key needs the administrator's confirmation,
+/// and even then cannot bring back a list older than one taken from the address.
+#[tokio::test]
+async fn the_catalog_key_is_pinned_to_its_address() {
+    let t = test_app().await;
+    let (first, second) = (key(1), key(2));
+    t.trust(&first, "Katalog GmbH").await;
+    t.trust(&second, "Neuer Schlüssel").await;
+    t.turn_on().await;
+    t.publish(&index(5, vec![]), &first);
+    assert_eq!(t.refresh().await.status, StatusCode::OK);
+
+    t.publish(&index(6, vec![]), &second);
+    let r = t.refresh().await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "catalog.key_changed"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["previousKeyId"], key_id(&first));
+    assert_eq!(t.catalog("").await["index"]["sequence"], 5, "the pinned list stays");
+
+    // Confirmed, the new key still cannot serve an older list for this address.
+    t.publish(&index(3, vec![]), &second);
+    let r = t.send(Method::POST, "/admin/plugin-catalog/refresh?acceptKeyChange=true", None).await;
+    assert_eq!(r.reason(), "catalog.rollback", "{}", r.body);
+    t.publish(&index(6, vec![]), &second);
+    let r = t.send(Method::POST, "/admin/plugin-catalog/refresh?acceptKeyChange=true", None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["index"]["keyId"], key_id(&second));
+
+    // A list whose key is trusted no more offers nothing to install.
+    let pkg = package(ID, "1.0.0", Some(&second), false, "");
+    let entry = t.offer(ID, "1.0.0", &second, pkg);
+    t.publish(&index(7, vec![entry]), &second);
+    assert_eq!(t.refresh().await.status, StatusCode::OK);
+    let r = t.send(Method::DELETE, &format!("/admin/plugin-keys/{}", key_id(&second)), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.catalog("").await["state"], "untrusted");
+    let r = t.install(ID, "1.0.0").await;
+    assert_eq!(r.reason(), "catalog.signer_untrusted", "{}", r.body);
+    t.finish().await;
+}

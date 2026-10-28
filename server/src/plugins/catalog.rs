@@ -34,7 +34,7 @@ use crate::datasources::Detail;
 use crate::error::{ApiError, ApiResult};
 use crate::http::{self, HttpClient, HttpError, HttpOptions};
 
-/// The time limit of the index and its signature together.
+/// The time limit of each request for the index and for its signature.
 pub const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
 /// The time limit of one package download.
 pub const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -102,9 +102,11 @@ impl Failure {
         use axum::http::StatusCode;
         let (status, code) = match self.reason.as_str() {
             "catalog.entry_unknown" => return ApiError::not_found(),
-            "catalog.disabled" | "catalog.url_missing" | "catalog.not_loaded" | "catalog.entry_revoked" => {
-                (StatusCode::CONFLICT, "conflict")
-            }
+            "catalog.disabled"
+            | "catalog.url_missing"
+            | "catalog.not_loaded"
+            | "catalog.entry_revoked"
+            | "catalog.key_changed" => (StatusCode::CONFLICT, "conflict"),
             "catalog.unreachable" | "catalog.download_failed" => (StatusCode::BAD_GATEWAY, "datasource_error"),
             r if r.starts_with("target.") => (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"),
             // The index's own refusals (`kalzit_plugin_api::catalog::CatalogError::code`).
@@ -122,10 +124,18 @@ impl Failure {
     }
 }
 
+/// The highest sequences taken: per catalog key (`catalog::Accepted`), and per catalog address
+/// whatever key signed it, so a rotation to another key cannot bring back an older list.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+struct Sequences {
+    keys: Accepted,
+    urls: BTreeMap<String, u64>,
+}
+
 /// What `plugin_catalog` holds.
 #[derive(Clone, Debug, Default)]
 struct Saved {
-    accepted: Accepted,
+    accepted: Sequences,
     source_url: Option<String>,
     index_json: Option<String>,
     key_hex: Option<String>,
@@ -243,6 +253,16 @@ fn index_of(saved: &Saved, url: &str) -> Option<CatalogIndex> {
     serde_json::from_str(saved.index_json.as_deref()?).ok()
 }
 
+/// The signature's address: the index's path with `.sig` appended (its query kept, no fragment).
+fn signature_url(url: &str) -> Result<String, Failure> {
+    let mut parsed =
+        Url::parse(url).map_err(|e| Failure::new("catalog.url_invalid", format!("{url} is not a URL: {e}")))?;
+    let path = format!("{}.sig", parsed.path());
+    parsed.set_path(&path);
+    parsed.set_fragment(None);
+    Ok(parsed.to_string())
+}
+
 /// Unix seconds of the index as the API's milliseconds.
 fn millis(secs: u64) -> i64 {
     i64::try_from(secs).unwrap_or(i64::MAX / 1000).saturating_mul(1000)
@@ -308,7 +328,11 @@ impl Catalog {
 
     /// Loads the index and its signature, checks them and keeps the index. The result of the try
     /// (the new state, or the failure) is stored; a failure keeps the index taken before.
-    pub async fn refresh(&self, state: &AppState, actor: Option<&Actor<'_>>) -> ApiResult<()> {
+    ///
+    /// The key that signed the list taken from this address is pinned: a list signed by another
+    /// trusted key is refused (`catalog.key_changed`) until an administrator confirms the change
+    /// with `accept_key_change`.
+    pub async fn refresh(&self, state: &AppState, actor: Option<&Actor<'_>>, accept_key_change: bool) -> ApiResult<()> {
         let _one = self.refreshing.lock().await;
         let cfg = config(state).await?;
         if !cfg.enabled {
@@ -320,12 +344,14 @@ impl Catalog {
         let now = state.clock.now_ms();
         let mut saved = load(&state.db).await?;
         let trusted = state.plugins.trusted_keys(&state.db).await?;
-        let outcome = self.fetch(state, &cfg.url, &trusted, &saved, now).await;
+        let outcome = self.fetch(state, &cfg.url, &trusted, &saved, now, accept_key_change).await;
         saved.attempted_at = Some(now);
         let summary = match outcome {
             Ok(Fetched { bytes, key, index, changed }) => {
                 if changed {
-                    saved.accepted.record(&key, &index);
+                    saved.accepted.keys.record(&key, &index);
+                    let url_seq = saved.accepted.urls.entry(cfg.url.clone()).or_insert(index.sequence);
+                    *url_seq = (*url_seq).max(index.sequence);
                     saved.index_json = Some(String::from_utf8_lossy(&bytes).into_owned());
                     saved.key_hex = Some(signing::key_hex(&key));
                     saved.source_url = Some(cfg.url.clone());
@@ -363,13 +389,14 @@ impl Catalog {
         trusted: &[TrustedKey],
         saved: &Saved,
         now: i64,
+        accept_key_change: bool,
     ) -> Result<Fetched, Failure> {
         let client = self.client(state, INDEX_TIMEOUT).await?;
         let response = Self::get(&client, url, "catalog.unreachable").await?;
         let bytes = http::read_limited(response, catalog::MAX_INDEX_BYTES)
             .await
             .map_err(|e| Failure::from_http(&e, "catalog.unreachable"))?;
-        let sig_url = format!("{url}.sig");
+        let sig_url = signature_url(url)?;
         let signature = match Self::get(&client, &sig_url, "catalog.unreachable").await {
             Ok(r) => http::read_limited(r, MAX_SIGNATURE_BYTES)
                 .await
@@ -383,6 +410,19 @@ impl Catalog {
             Err(f) => return Err(f),
         };
         let key = verify(&bytes, &signature, trusted)?;
+        // The key of this address is pinned; another one needs the administrator's confirmation.
+        if let Some(pinned) = saved.key_hex.as_deref().filter(|_| saved.source_url.as_deref() == Some(url))
+            && pinned != signing::key_hex(&key)
+            && !accept_key_change
+        {
+            let previous = key_from_hex(pinned).map(|k| signing::key_id(&k)).unwrap_or_default();
+            return Err(Failure::new(
+                "catalog.key_changed",
+                "the catalog list is signed by another key than before; confirm the change to take it",
+            )
+            .with("keyId", signing::key_id(&key))
+            .with("previousKeyId", previous));
+        }
         let now_secs = u64::try_from(now / 1000).unwrap_or_default();
         // The index taken before, served again unchanged: still valid only until it expires.
         if saved.source_url.as_deref() == Some(url)
@@ -396,7 +436,13 @@ impl Catalog {
             return Ok(Fetched { bytes, key, index, changed: false });
         }
         let index =
-            catalog::parse_index(&bytes, &key, &saved.accepted, now_secs).map_err(|e| Failure::from_index(&e))?;
+            catalog::parse_index(&bytes, &key, &saved.accepted.keys, now_secs).map_err(|e| Failure::from_index(&e))?;
+        // Per address too, whatever key signed it: a rotation cannot bring back an older list.
+        if let Some(&accepted) = saved.accepted.urls.get(url)
+            && index.sequence <= accepted
+        {
+            return Err(Failure::from_index(&catalog::CatalogError::Rollback { sequence: index.sequence, accepted }));
+        }
         Ok(Fetched { bytes, key, index, changed: true })
     }
 
@@ -414,7 +460,7 @@ impl Catalog {
             (true, Some(checked), Some(attempted)) if attempted <= checked => now - checked >= interval,
             (_, _, Some(attempted)) => now - attempted >= interval.min(RETRY_MS),
         };
-        if due && let Err(e) = self.refresh(state, None).await {
+        if due && let Err(e) = self.refresh(state, None, false).await {
             tracing::debug!("the plugin catalog was not refreshed: {}", e.message);
         }
     }
@@ -459,8 +505,17 @@ impl Catalog {
         };
         view.checked_at = saved.checked_at;
         let now_secs = u64::try_from(state.clock.now_ms() / 1000).unwrap_or_default();
-        view.state = if now_secs >= index.expires_at { "expired" } else { "ready" };
         let trusted = state.plugins.trusted_keys(&state.db).await?;
+        let signer_trusted =
+            saved.key_hex.as_deref().and_then(key_from_hex).is_some_and(|k| trusted.iter().any(|t| t.key == k));
+        // A list whose key is trusted no more, or past its expiry, offers nothing to install.
+        view.state = if !signer_trusted {
+            "untrusted"
+        } else if now_secs >= index.expires_at {
+            "expired"
+        } else {
+            "ready"
+        };
         let names = key_names(state, &trusted).await?;
         let signer = saved.key_hex.as_deref().and_then(key_from_hex);
         view.index = Some(IndexView {
@@ -518,10 +573,25 @@ impl Catalog {
         if let Err(f) = check.await {
             return Err(self.refused(state, actor, id, version, f).await);
         }
+        // The index may have changed during the download (a withdrawal, its expiry, its key no
+        // longer trusted): checked again right before the install, with the same entry.
+        match self.checked_entry(state, id, version).await {
+            Ok((again, _)) if again == entry => {}
+            Ok(_) => {
+                let f = Failure::new("catalog.package_mismatch", "the catalog entry changed during the download")
+                    .with("field", "entry");
+                return Err(self.refused(state, actor, id, version, f).await);
+            }
+            Err(f) => return Err(self.refused(state, actor, id, version, f).await),
+        }
         let row = state.plugins.install(state, &upload.0, confirm_publisher_change, actor).await?;
         let host = Url::parse(&entry.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
         let summary = json!({ "version": entry.version, "sha256": entry.sha256, "keyId": entry.key_id, "host": host });
-        record(state, actor, "plugins.catalog_installed", &row.id, summary, state.clock.now_ms()).await?;
+        // The plugin is installed (and recorded as such by the host); a failed extra entry is logged.
+        if let Err(e) = record(state, actor, "plugins.catalog_installed", &row.id, summary, state.clock.now_ms()).await
+        {
+            tracing::warn!(plugin = %row.id, "the catalog install could not be recorded: {}", e.message);
+        }
         Ok(row)
     }
 
@@ -546,6 +616,17 @@ impl Catalog {
         let now_secs = u64::try_from(state.clock.now_ms() / 1000).unwrap_or_default();
         if now_secs >= index.expires_at {
             return Err(Failure::from_index(&catalog::CatalogError::Expired { expires_at: index.expires_at }));
+        }
+        // The key that signed the stored index must still be trusted.
+        let trusted = state.plugins.trusted_keys(&state.db).await.map_err(internal)?;
+        let signer = saved.key_hex.as_deref().and_then(key_from_hex);
+        if !signer.is_some_and(|k| trusted.iter().any(|t| t.key == k)) {
+            let key_id = signer.as_ref().map(signing::key_id).unwrap_or_default();
+            return Err(Failure::new(
+                "catalog.signer_untrusted",
+                format!("the catalog list is signed with key {key_id}, which this server no longer trusts"),
+            )
+            .with("keyId", key_id));
         }
         if let Some(r) = index.revocation(id, version) {
             return Err(Failure::new("catalog.entry_revoked", format!("{id} {version} was withdrawn: {}", r.reason))
@@ -924,7 +1005,7 @@ pub struct RevokedView {
 #[serde(rename_all = "camelCase")]
 pub struct CatalogView {
     /// `off`, `unconfigured` (on without an address), `not_loaded`, `unreachable` (no index could
-    /// be taken), `expired` or `ready`.
+    /// be taken), `untrusted` (its key is trusted no more), `expired` or `ready`.
     state: &'static str,
     settings: SettingsView,
     #[serde(skip_serializing_if = "Option::is_none")]

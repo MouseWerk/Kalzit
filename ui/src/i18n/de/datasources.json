@@ -636,6 +636,7 @@
   "datasources.reason.catalog.signature_missing": "Neben dem Katalog liegt keine Signatur (die Adresse mit angehängtem .sig).",
   "datasources.reason.catalog.signature_invalid": "Die Katalogliste passt nicht zu ihrer Signatur, weil sie nach dem Signieren geändert wurde oder beschädigt ist. Kalzit hat sie nicht übernommen.",
   "datasources.reason.catalog.signer_untrusted": "Die Katalogliste ist mit dem Schlüssel {keyId} signiert, dem dieser Server nicht vertraut.",
+  "datasources.reason.catalog.key_changed": "Die Katalogliste ist jetzt mit dem Schlüssel {keyId} statt {previousKeyId} signiert. Kalzit übernimmt sie erst, wenn du den Wechsel bestätigst.",
   "datasources.reason.catalog.invalid": "Die Katalogliste ist nicht gültig.",
   "datasources.reason.catalog.format_unsupported": "Die Katalogliste hat das Format {format}, das dieses Kalzit nicht lesen kann.",
   "datasources.reason.catalog.rollback": "Die Katalogliste hat die Folgenummer {sequence}, übernommen ist schon {accepted}. Eine ältere Liste wird nie wieder übernommen (Rollback).",

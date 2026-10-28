@@ -636,6 +636,7 @@
   "datasources.reason.catalog.signature_missing": "The catalog has no signature next to it (the address with .sig appended).",
   "datasources.reason.catalog.signature_invalid": "The catalog list does not match its signature: it was changed after signing or is damaged. It was not taken.",
   "datasources.reason.catalog.signer_untrusted": "The catalog list is signed with key {keyId}, which this server does not trust.",
+  "datasources.reason.catalog.key_changed": "The catalog list is now signed with key {keyId} instead of {previousKeyId}. Kalzit takes it only after you confirm the change.",
   "datasources.reason.catalog.invalid": "The catalog list is not valid.",
   "datasources.reason.catalog.format_unsupported": "The catalog list has format {format}, which this Kalzit cannot read.",
   "datasources.reason.catalog.rollback": "The catalog list has sequence {sequence}, but {accepted} was taken already. An older list is never taken again (rollback).",

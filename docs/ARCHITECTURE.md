@@ -654,8 +654,9 @@ manifest and signature) always works, also offline, and runs the same checks.
   client (`crate::http`): the data source target policy, HTTPS only on every hop, 30 s and 4 MiB
   for the index, 10 minutes and the entry's size for a package. The signature must verify with a
   key trusted for plugins (Kalzit's plugin keys or an administrator's publisher keys); then
-  `parse_index` with the accepted sequences. The index taken, its key, the accepted sequences
-  (never lowered, also across URL changes) and the last failure are the row of `plugin_catalog`
+  `parse_index` with the accepted sequences. The first list of an address pins its key (another
+  key needs `acceptKeyChange`), and the highest sequence is kept per key and per address. The index
+  taken, its key, the accepted sequences (never lowered, also across URL changes) and the last failure are the row of `plugin_catalog`
   (migration 0024); a failure keeps the index taken before, and the same bytes served again count
   as unchanged until their expiry. A background loop refreshes when due (`spawn_background`).
 - Installing from the catalog: the entry must be listed in a current, unexpired index and not

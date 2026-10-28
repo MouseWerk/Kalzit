@@ -54,7 +54,9 @@ function catalogCount(t: (key: "plugins.tab.catalogOff") => string, view: Catalo
   if (view === undefined || view.state === "off") {
     return t("plugins.tab.catalogOff");
   }
-  return view.state === "ready" || view.state === "expired" ? view.counts.all : null;
+  return view.state === "ready" || view.state === "expired" || view.state === "untrusted"
+    ? view.counts.all
+    : null;
 }
 
 /**

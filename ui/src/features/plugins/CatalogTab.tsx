@@ -69,7 +69,7 @@ export function CatalogTab({
   });
   const queryClient = useQueryClient();
   const refresh = useMutation({
-    mutationFn: refreshCatalog,
+    mutationFn: (acceptKeyChange: boolean) => refreshCatalog(acceptKeyChange),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: catalogKeys.all }),
     onSuccess: () => showToast({ message: t("plugins.catalog.refreshed") }),
     onError: (error) => showToast({ message: errorMessage(t, error), error: true }),
@@ -94,7 +94,7 @@ export function CatalogTab({
       className="button button--secondary button--small"
       aria-disabled={busy}
       onClick={() => {
-        if (!busy) refresh.mutate();
+        if (!busy) refresh.mutate(false);
       }}
     >
       <Icon name="refresh" />
@@ -105,7 +105,11 @@ export function CatalogTab({
   return (
     <div className="plugins">
       {view.state === "off" ? (
-        <OffCard view={view} onInstallFile={onInstallFile} onTurnedOn={() => refresh.mutate()} />
+        <OffCard
+          view={view}
+          onInstallFile={onInstallFile}
+          onTurnedOn={() => refresh.mutate(false)}
+        />
       ) : null}
       {view.state === "unconfigured" ? (
         <p className="plugins-note plugins-note--warning">
@@ -138,7 +142,7 @@ export function CatalogTab({
           </div>
         </section>
       ) : null}
-      {view.state === "ready" || view.state === "expired" ? (
+      {view.state === "ready" || view.state === "expired" || view.state === "untrusted" ? (
         <Browse
           view={view}
           search={search}
@@ -146,12 +150,13 @@ export function CatalogTab({
           category={category}
           onCategory={setCategory}
           refreshButton={refreshButton}
+          onAcceptKey={() => refresh.mutate(true)}
           onInstall={onInstall}
           onCheckKey={onCheckKey}
         />
       ) : null}
       {view.state === "off" ? null : (
-        <SettingsCard view={view} onChanged={(urlChanged) => urlChanged && refresh.mutate()} />
+        <SettingsCard view={view} onChanged={(urlChanged) => urlChanged && refresh.mutate(false)} />
       )}
     </div>
   );
@@ -409,6 +414,7 @@ function Browse({
   category,
   onCategory,
   refreshButton,
+  onAcceptKey,
   onInstall,
   onCheckKey,
 }: {
@@ -418,6 +424,8 @@ function Browse({
   category: Category;
   onCategory: (value: Category) => void;
   refreshButton: ReactNode;
+  /** Takes the list although another key signed it than before. */
+  onAcceptKey: () => void;
   onInstall: (item: CatalogItem) => void;
   onCheckKey: (keyId: string) => void;
 }) {
@@ -425,7 +433,8 @@ function Browse({
   const [trustedOnly, setTrustedOnly] = useState(false);
   const [details, setDetails] = useState<CatalogItem | null>(null);
   const time = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
-  const expired = view.state === "expired";
+  // Past its expiry or signed by a key trusted no more: nothing can be installed from it.
+  const expired = view.state === "expired" || view.state === "untrusted";
   const items = trustedOnly ? view.items.filter((item) => item.keyName !== undefined) : view.items;
   const withdrawn = view.revoked.filter((r) => r.installedVersion !== undefined);
   const index = view.index;
@@ -453,7 +462,15 @@ function Browse({
         {refreshButton}
         <TurnOffButton view={view} />
       </div>
-      {expired && index !== undefined ? (
+      {view.state === "untrusted" ? (
+        <p className="plugins-note plugins-note--danger" role="alert">
+          <Icon name="alert" />
+          <span>
+            <strong>{t("plugins.catalog.untrusted")}</strong> {t("plugins.catalog.untrustedText")}
+          </span>
+        </p>
+      ) : null}
+      {view.state === "expired" && index !== undefined ? (
         <p className="plugins-note plugins-note--danger" role="alert">
           <Icon name="alert" />
           <span>
@@ -469,6 +486,15 @@ function Browse({
             <strong>{t("plugins.catalog.lastFailed")}</strong> {failureText(t, view.lastError)}{" "}
             {t("plugins.catalog.keptList", { time: time.format(index?.fetchedAt ?? 0) })}
           </span>
+          {view.lastError.reason === "catalog.key_changed" ? (
+            <button
+              type="button"
+              className="button button--secondary button--small"
+              onClick={onAcceptKey}
+            >
+              {t("plugins.catalog.acceptKey")}
+            </button>
+          ) : null}
         </p>
       ) : null}
       {withdrawn.length === 0 ? null : (
@@ -581,10 +607,16 @@ function KeyChip({ item }: { item: CatalogItem }) {
     <span className="plugins-chip catalog-key" data-trusted={trusted}>
       <Icon name={trusted ? "shieldCheck" : "alert"} />
       {trusted
-        ? (item.publisher ?? item.keyName)
+        ? item.keyName
         : t("plugins.catalog.untrustedKey", {
             publisher: item.publisher ?? t("plugins.publisher.unknown"),
           })}
+      {/* The catalog's publisher text is unverified: only a quiet second label. */}
+      {trusted && item.publisher !== undefined && item.publisher !== item.keyName ? (
+        <span className="plugins-muted">
+          {t("plugins.catalog.says", { publisher: item.publisher })}
+        </span>
+      ) : null}
     </span>
   );
 }

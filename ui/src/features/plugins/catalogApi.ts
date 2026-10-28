@@ -33,6 +33,7 @@ export type CatalogState =
   | "unconfigured"
   | "not_loaded"
   | "unreachable"
+  | "untrusted"
   | "expired"
   | "ready";
 
@@ -114,6 +115,7 @@ const STATES: readonly CatalogState[] = [
   "unconfigured",
   "not_loaded",
   "unreachable",
+  "untrusted",
   "expired",
   "ready",
 ];
@@ -252,8 +254,11 @@ export async function getCatalog(
 }
 
 /** Loads and checks the index now; a refusal names its reason (`catalog.*`). */
-export async function refreshCatalog(): Promise<CatalogView> {
-  return parseCatalog(await request("POST", "/api/admin/plugin-catalog/refresh"));
+export async function refreshCatalog(acceptKeyChange = false): Promise<CatalogView> {
+  const path = acceptKeyChange
+    ? "/api/admin/plugin-catalog/refresh?acceptKeyChange=true"
+    : "/api/admin/plugin-catalog/refresh";
+  return parseCatalog(await request("POST", path));
 }
 
 /**
