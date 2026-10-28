@@ -37,6 +37,10 @@ expect "true false true true false false true"            server/src/main.rs
 expect "true false true true false false true"            server/migrations/sqlite/0001_init.sql
 expect "true false true true false false true"            Cargo.lock
 expect "true false true true false false true"            release/src/main.rs
+expect "true false true true false false true"            plugin-api/src/panel.rs
+expect "true false true true false false true"            plugin-sdk/src/lib.rs
+expect "true false true true false false true"            plugin-tool/src/main.rs
+expect "true false true true false false true"            examples/plugins/panel-kpi/panel.js
 expect "true false true true false false true"            rust-toolchain
 expect "true false true true false false true"            rust-toolchain.toml
 expect "true false true true false false true"            .cargo/config.toml

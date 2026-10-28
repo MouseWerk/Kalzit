@@ -1,12 +1,15 @@
-# The image is built from the workspace manifests, the server, the release and plugin API
-# crates, the UI sources and the guide pages the UI ships as help; everything else stays out of
-# the build context.
+# The image is built from the workspace manifests, the server, the release and plugin crates
+# (cargo needs every workspace member: the plugin SDK, tool and examples too), the UI sources
+# and the guide pages the UI ships as help; everything else stays out of the build context.
 *
 !Cargo.toml
 !Cargo.lock
 !server/
 !release/
 !plugin-api/
+!plugin-sdk/
+!plugin-tool/
+!examples/
 !ui/
 !docs/
 docs/*
