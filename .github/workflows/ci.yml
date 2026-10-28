@@ -353,6 +353,8 @@ jobs:
     timeout-minutes: 30
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      # The test plugin of the server's contract tests, packaged by ui/e2e/plugins.spec.ts.
+      KALZIT_E2E_PLUGIN_BINARY: ${{ github.workspace }}/target/e2e/kalzit-test-plugin${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
       RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true' }}
     steps:
@@ -389,7 +391,7 @@ jobs:
       - run: npm run build
         if: env.RUN_JOB == 'true'
         working-directory: ui
-      - run: cargo build --profile e2e --locked -p kalzit
+      - run: cargo build --profile e2e --locked -p kalzit -p kalzit-test-plugin
         if: env.RUN_JOB == 'true'
       # The browsers belong to the Playwright version, so other dependency updates keep the cache.
       - name: Playwright version

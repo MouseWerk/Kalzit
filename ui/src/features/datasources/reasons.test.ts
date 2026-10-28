@@ -6,15 +6,23 @@ import { catalogs, type MessageKey, translate } from "../../i18n/i18n";
 import { errorMessage } from "../dashboards/ui/errors";
 import { noticeText, reasonText } from "./reasons";
 
-/** The rows of the "Reasons" tables in docs/api/datasources.md: codes and their params. */
+/**
+ * The rows of the "Reasons" tables in docs/api/datasources.md and docs/api/plugins.md (plugin
+ * reasons reach the data source routes too): codes and their params.
+ */
 function documentedReasons(): Map<string, Set<string>> {
-  const doc = readFileSync(
-    resolve(import.meta.dirname, "../../../../docs/api/datasources.md"),
-    "utf8",
-  );
-  const start = doc.indexOf("\n## Reasons");
-  const end = doc.indexOf("\n## ", start + 1);
   const reasons = new Map<string, Set<string>>();
+  for (const file of ["datasources.md", "plugins.md"]) {
+    const doc = readFileSync(resolve(import.meta.dirname, "../../../../docs/api", file), "utf8");
+    readReasons(doc, reasons);
+  }
+  return reasons;
+}
+
+function readReasons(doc: string, reasons: Map<string, Set<string>>): void {
+  const start = doc.indexOf("\n## Reasons");
+  const next = doc.indexOf("\n## ", start + 1);
+  const end = next === -1 ? doc.length : next;
   // "Every reason here has the param `field`", says the settings section of the docs.
   let everyHasField = false;
   for (const line of doc.slice(start, end).split("\n")) {
@@ -37,7 +45,6 @@ function documentedReasons(): Map<string, Set<string>> {
       reasons.set(code ?? "", names);
     }
   }
-  return reasons;
 }
 
 const PREFIX = "datasources.reason.";
