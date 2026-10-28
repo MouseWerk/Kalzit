@@ -17,6 +17,7 @@ import {
   createAiProvider,
   deleteAiProvider,
   isAiProvider,
+  type LeavesNetwork,
   providerHost,
   TOKEN_LIMIT_FIELDS,
   type TokenLimitField,
@@ -144,6 +145,9 @@ export function ProviderDialog({
   const [model, setModel] = useState(provider?.model ?? "");
   const [apiKey, setApiKey] = useState("");
   const [removeKey, setRemoveKey] = useState(false);
+  const [leavesNetwork, setLeavesNetwork] = useState<LeavesNetwork>(
+    provider?.leavesNetwork ?? "auto",
+  );
   const [tokenLimitField, setTokenLimitField] = useState<TokenLimitField>(
     (TOKEN_LIMIT_FIELDS as readonly string[]).includes(provider?.tokenLimitField ?? "")
       ? (provider?.tokenLimitField as TokenLimitField)
@@ -204,6 +208,10 @@ export function ProviderDialog({
       patch.tokenLimitField = tokenLimitField;
       any = true;
     }
+    if (leavesNetwork !== (stored.leavesNetwork ?? "auto")) {
+      patch.leavesNetwork = leavesNetwork;
+      any = true;
+    }
     if (isDefault && !stored.isDefault) {
       patch.isDefault = true;
       any = true;
@@ -235,6 +243,7 @@ export function ProviderDialog({
         isDefault,
         ...(apiKey === "" ? {} : { apiKey }),
         ...(openai ? { tokenLimitField } : {}),
+        leavesNetwork,
       });
       setCreatedHere(true);
     } else {
@@ -560,6 +569,24 @@ export function ProviderDialog({
               </DialogField>
             ) : null}
           </div>
+          <DialogField
+            id={`${ids}-network`}
+            label={t("ai.admin.dialog.leavesNetwork")}
+            hint={t("ai.admin.dialog.leavesNetworkHint")}
+            error={undefined}
+          >
+            <select
+              id={`${ids}-network`}
+              className="select"
+              value={leavesNetwork}
+              aria-describedby={describedBy(`${ids}-network`, true, undefined)}
+              onChange={(event) => setLeavesNetwork(event.currentTarget.value as LeavesNetwork)}
+            >
+              <option value="auto">{t("ai.admin.dialog.leavesNetworkAuto")}</option>
+              <option value="yes">{t("ai.admin.dialog.leavesNetworkYes")}</option>
+              <option value="no">{t("ai.admin.dialog.leavesNetworkNo")}</option>
+            </select>
+          </DialogField>
           <label className="ai-dialog__check">
             <input
               type="checkbox"

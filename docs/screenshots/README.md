@@ -4,13 +4,16 @@ Kalzit has two sets of pictures, both taken by Playwright against the real binar
 
 | Set | Script | Where the images go |
 |---|---|---|
-| README screenshots | `ui/e2e/screenshots/readme.shots.ts` (`npm run screenshots`) | committed here, in `docs/screenshots/` |
-| Gallery renders for the website | `ui/e2e/gallery/gallery.shots.ts` (`npm run gallery`) | the artifact `kalzit-gallery` of the gallery workflow; never committed |
+| Guide screenshots | `ui/e2e/screenshots/readme.shots.ts` (`npm run screenshots`) | committed here, in `docs/screenshots/` |
+| Gallery renders for the README and the website | `ui/e2e/gallery/gallery.shots.ts` (`npm run gallery`) | the artifact `kalzit-gallery` of the gallery workflow; the WebP files are committed in `docs/screenshots/gallery/` |
 
-## README screenshots
+All pictures are taken at desktop size; there are no phone captures.
 
-A pull request that visibly changes the UI reruns `npm run screenshots` in `ui/` and commits the
-changed images in this folder (see CONTRIBUTING.md, "Screenshots").
+## Guide screenshots
+
+The user guide (`docs/guide/`) and the docs pages of the website show these. A pull request that
+visibly changes the UI reruns `npm run screenshots` in `ui/` and commits the changed images in this
+folder (see CONTRIBUTING.md, "Screenshots").
 
 The graph pictures (`graph-*`) need the Neo4j of the e2e specs and the field distribution
 (`explore-distribution-dark`) its MongoDB; without them those tests are skipped and the images
@@ -36,7 +39,6 @@ WebP (quality 90), mostly in dark and light:
 | `setup-*` | the first-run setup page |
 | `sign-in-*` | the sign-in page |
 | `dashboard-overview-*` | site overview: stats, time series, bar chart, bar gauge, table, a hall variable |
-| `dashboard-phone-*` | the overview on a phone (390 x 844) |
 | `graph-network-*` | the network and power topology in one network panel, colored by label |
 | `graph-inspector-*` | the same with a server selected and the node inspector open |
 | `graph-hierarchy-paths-*` | site > hall > row > rack > server as a hierarchy, and two path panels (uplinks to a core switch, the A and B power feeds of a server) |
@@ -46,6 +48,15 @@ WebP (quality 90), mostly in dark and light:
 | `explore-steps-*` | Explore with a saved analysis and its steps (moving average, trend) |
 | `dashboard-all-sources-*` | one dashboard on SQLite, OpenSearch, MongoDB and Neo4j |
 | `dashboard-live-*` | a live dashboard of rack temperatures |
+
+The README and the gallery page of the website show the same files: the WebP renders live in
+`gallery/` here, and the website keeps copies of them in `src/assets/gallery/`. After a rerun, copy
+the WebP files of the artifact into both places (the PNG files are not committed):
+
+```sh
+gh run download <run-id> --name kalzit-gallery --dir <folder>
+cp <folder>/*.webp docs/screenshots/gallery/
+```
 
 ### Run it
 

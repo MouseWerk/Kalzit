@@ -133,7 +133,7 @@ Guards that keep this airtight:
   - `editor`: viewer plus `dashboards:write|delete|share`, `folders:write`,
     `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`.
     `dashboards:share` means granting access to users and teams of the same organization;
-    public links for people without an account are a separate permission (M6), by default only
+    public links for people without an account are a separate permission (M7), by default only
     for admins.
   - `admin`: everything except `org:delete`. `owner`: everything.
 - **Custom roles**: a named set of permissions per organization.
@@ -984,7 +984,13 @@ query, summarize a result, the agent chat) come after it and must go through it.
   which cancels the round and the running tool). The conversation the provider gets is rebuilt
   from the stored chat (the newest twelve questions); results of sources the person lost or that
   were closed to AI since are withheld there and in the API. A chat answers one question at a
-  time.
+  time. A question may name a dashboard as context (`dashboards:read`); its title and panels go
+  to the model fenced. `run_panel` runs the panel's enabled steps on the server, as summaries do.
+- **A provider per function.** `ai.provider_explain`, `ai.provider_summarize` and
+  `ai.provider_chat` choose a server provider per function (`service::in_effect_for`, from the
+  call's purpose); an organization's own provider still applies to all functions. The notice is
+  per provider, so the status names each function's provider with its acknowledgement, endpoint,
+  last test and whether its address stays in the own network (`service::stays_in_network`).
 - **Prompt injection (tool use in the chat).** Everything that comes back
   from a data source, a document or a web page is untrusted input to the model: it may contain
   text written to steer it. So tools are read-only by construction (they run queries through the
@@ -1399,7 +1405,9 @@ through `settings::get`; new registry entries are requested from the orchestrato
   most in `TIME_WAIT`, against 16,384 ephemeral ports, and CI runs two workers. Fewer workers
   or shared browser contexts would not remove it, so the guard keeps failing on it rather than
   retrying; rerun the job and add the run to the issue.
-- Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
+- Screenshots: the images in `README.md` are the gallery renders in `docs/screenshots/gallery/`
+  (`npm run gallery`, see `docs/screenshots/README.md`); the user guide's come from
+  `npm run screenshots`. Both are taken from the real application at desktop size. `npm run screenshots`
   in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
   through the same global setup, seeds a demo organization through the API (members, teams,
   the SQLite sales fixture, a dashboard with a variable and four panels; later pictures add a

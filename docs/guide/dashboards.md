@@ -41,8 +41,6 @@ reach it with the keyboard: its links, view alone, **Annotate**, **Inspect**, ex
 query and the server's notes and warnings, and says when the result was cut off at the data
 source's row limit.
 
-![Dashboard on a phone](../screenshots/dashboard-phone.png)
-
 ## Edit mode
 
 Press **Edit** (needs write access). The toolbar shows **Done** (or **Discard changes...** when
@@ -317,7 +315,7 @@ team-only content or a restricted folder through their admin rights, the audit l
 Within an organization, **More** > **Access...** gives users, teams or roles access to a dashboard
 beyond their role (**Can view**, **Can edit**, **Can manage**). It needs the `dashboards:share`
 permission or manage access. Folders work the same way and pass access to their dashboards and
-subfolders. Public links for people without an account are planned (M6).
+subfolders. Public links for people without an account are planned (M7).
 
 Viewers run only the stored queries of a dashboard they may read; free queries need
 `datasources:query` (editor and up).
