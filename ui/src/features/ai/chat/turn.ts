@@ -47,7 +47,7 @@ export function queriesRun(steps: readonly Step[]): number {
     (step) =>
       step.kind === "call" &&
       (step.call.name === "run_query" || step.call.name === "run_panel") &&
-      step.call.record !== undefined,
+      step.call.record?.status === "ok",
   ).length;
 }
 

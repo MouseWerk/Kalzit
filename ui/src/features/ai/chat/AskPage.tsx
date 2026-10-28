@@ -316,7 +316,7 @@ function AskChat({ orgId, chatId }: { orgId: string; chatId: string | undefined 
           {chatId !== undefined && stored.isError ? (
             <FormAlert>{t("ai.chat.loadError")}</FormAlert>
           ) : null}
-          {visible.length === 0 && live === null && !stored.isPending ? (
+          {visible.length === 0 && live === null && !(chatId !== undefined && stored.isPending) ? (
             <div className="ask__empty">
               <Icon name="sparkle" className="ask__empty-mark" />
               <h1 className="ask__empty-title">{t("ai.chat.empty.title")}</h1>
