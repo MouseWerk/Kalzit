@@ -37,7 +37,8 @@ test("an admin installs a plugin from a file, approves and starts it, and querie
       await dialog.getByRole("textbox").fill(name);
       await dialog.getByRole("button", { name: t("plugins.risk.allow") }).click();
       await expect(dialog).toBeHidden();
-      await expect(page.getByText(t("plugins.banner.title"))).toBeVisible();
+      // The band, not the confirmation toast with the same words.
+      await expect(page.locator(".plugins-banner")).toContainText(t("plugins.banner.title"));
     });
 
     await test.step("install the package: the checks, the permissions, then start", async () => {
@@ -89,7 +90,7 @@ test("an admin installs a plugin from a file, approves and starts it, and querie
       const row = page.getByRole("row").filter({ hasText: NAME });
       await expect(row.getByText(t("plugins.status.running"))).toBeVisible();
       await page.getByRole("button", { name: t("plugins.banner.turnOff") }).click();
-      await expect(page.getByText(t("plugins.banner.title"))).toBeHidden();
+      await expect(page.locator(".plugins-banner")).toHaveCount(0);
     });
   } finally {
     await owner.context.patch("/api/admin/plugin-host", { data: { allowUnsigned: false } });

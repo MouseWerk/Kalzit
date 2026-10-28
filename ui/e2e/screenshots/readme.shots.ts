@@ -1134,7 +1134,9 @@ test("plugins", async ({ browser }) => {
   await signIn(page);
   await page.goto("/settings/plugins");
   await expect(page.getByRole("link", { name: "Numbers", exact: true })).toBeVisible();
-  await expect(page.getByText(t("plugins.status.running"))).toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: "Numbers" }).getByText(t("plugins.status.running")),
+  ).toBeVisible();
   await shoot(page, "plugins");
   await page.goto(`/settings/plugins/${id}`);
   await expect(page.getByRole("heading", { level: 2, name: "Numbers" })).toBeVisible();
