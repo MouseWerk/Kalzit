@@ -40,6 +40,8 @@ jobs:
     env:
       SET: ${{ inputs.set }}
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit
+      # The test plugin, installed for the pictures of the plugin pages (readme set).
+      KALZIT_E2E_PLUGIN_BINARY: ${{ github.workspace }}/target/e2e/kalzit-test-plugin
       KALZIT_GALLERY_OUT: ${{ github.workspace }}/gallery
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
     steps:
@@ -61,7 +63,7 @@ jobs:
         working-directory: ui
       - run: npm run build
         working-directory: ui
-      - run: cargo build --profile e2e --locked -p kalzit
+      - run: cargo build --profile e2e --locked -p kalzit -p kalzit-test-plugin
       - name: Playwright version
         id: playwright
         working-directory: ui

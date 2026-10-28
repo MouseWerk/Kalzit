@@ -1,9 +1,10 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
+import { BINARY, writePackage } from "../support/plugin";
 import { boltTarget, GRAPH_FIXTURE, MONGO_FIXTURE } from "../support/services";
 import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
 import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
@@ -1081,5 +1082,68 @@ test("graph node details and explorer, dark", async ({ browser }) => {
     animations: "disabled",
     caret: "hide",
   });
+  await page.context().close();
+});
+
+test("plugins", async ({ browser }) => {
+  test.skip(
+    BINARY === "",
+    "KALZIT_E2E_PLUGIN_BINARY is not set; the pictures need the test plugin",
+  );
+  const owner = demo.owner;
+  const id = "dev.example.numbers";
+  const host = (await (await owner.context.get("/api/admin/plugin-host")).json()) as {
+    landlockAvailable: boolean;
+  };
+  // Unsigned only while the package goes in; plugins installed meanwhile keep running.
+  await owner.context.patch("/api/admin/plugin-host", {
+    data: {
+      allowUnsigned: true,
+      ...(host.landlockAvailable ? {} : { allowWithoutLandlock: true }),
+    },
+  });
+  const file = test.info().outputPath("numbers.zip");
+  writePackage(file, { id, name: "Numbers", publisher: "Example Data GmbH" });
+  const installed = await owner.context.post("/api/admin/plugins", {
+    data: readFileSync(file),
+    headers: { "Content-Type": "application/zip" },
+  });
+  expect(installed.ok(), await installed.text()).toBe(true);
+  for (const step of ["approve", "enable"]) {
+    const answer = await owner.context.post(`/api/admin/plugins/${id}/${step}`, {
+      ...(step === "approve" ? { data: { version: "1.0.0" } } : {}),
+    });
+    expect(answer.ok(), await answer.text()).toBe(true);
+  }
+  await owner.context.patch("/api/admin/plugin-host", { data: { allowUnsigned: false } });
+  const created = await owner.context.post(`/api/orgs/${owner.orgId}/datasources`, {
+    data: { name: "Numbers", kind: id, settings: { host: "numbers.example.test" }, secrets: {} },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  const source = ((await created.json()) as { id: string }).id;
+  // One query starts the process, so the page shows it running with its sandbox.
+  await owner.context.post(`/api/orgs/${owner.orgId}/query`, {
+    data: {
+      queries: [{ refId: "A", datasourceId: source, query: { do: "frame" } }],
+      timeRange: { from: SCREENSHOT_NOW - 3_600_000, to: SCREENSHOT_NOW },
+    },
+  });
+
+  const page = await openPage(browser);
+  await signIn(page);
+  await page.goto("/settings/plugins");
+  await expect(page.getByRole("link", { name: "Numbers", exact: true })).toBeVisible();
+  await expect(page.getByText(t("plugins.status.running"))).toBeVisible();
+  await shoot(page, "plugins");
+  await page.goto(`/settings/plugins/${id}`);
+  await expect(page.getByRole("heading", { level: 2, name: "Numbers" })).toBeVisible();
+  await shoot(page, "plugin-details");
+  await page.goto("/settings/plugins#trust");
+  await expect(page.getByRole("heading", { name: t("plugins.trust.keys.title") })).toBeVisible();
+  await shoot(page, "plugins-trust");
+  await page.goto("/data-sources/new");
+  await page.getByRole("link", { name: "Numbers", exact: true }).click();
+  await expect(page.getByText(t("datasources.kinds.plugin.hint"))).toBeVisible();
+  await shoot(page, "data-source-plugin");
   await page.context().close();
 });
