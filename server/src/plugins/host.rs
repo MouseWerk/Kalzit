@@ -232,6 +232,30 @@ fn judge(dacl: Option<&[(String, u32)]>) -> Judged {
     if names.is_empty() { Judged::Closed } else { Judged::LocalAccounts(names) }
 }
 
+/// The connector's view of the data sources: each connect reads the data source's kind and
+/// settings from the database and the target rules from the server settings, as they are then.
+#[derive(Default)]
+pub struct StateLookup {
+    state: RwLock<Option<AppState>>,
+}
+
+#[async_trait::async_trait]
+impl super::connector::Lookup for StateLookup {
+    async fn current(&self, datasource_id: &str) -> Option<super::connector::Current> {
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner()).clone()?;
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT kind, settings FROM datasources WHERE id = $1 AND deleted_at IS NULL")
+                .bind(datasource_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()?;
+        let (kind, settings) = row?;
+        let settings = serde_json::from_str(&settings).ok()?;
+        let policy = state.datasources.policy(&state).await.ok()?;
+        Some(super::connector::Current { kind, settings, policy })
+    }
+}
+
 /// The texts of a plugin kind for the kind list: labels and help by field and language.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,6 +287,8 @@ pub struct PluginHost {
     db: OnceLock<sqlx::AnyPool>,
     /// Kalzit's own files with secrets that every local account may read (`exposed_secrets`).
     exposed: Arc<Exposure>,
+    /// The data sources and server settings as they are now, for the connector (`attach`).
+    lookup: Arc<StateLookup>,
 }
 
 impl PluginHost {
@@ -278,7 +304,13 @@ impl PluginHost {
             own: Arc::default(),
             db: OnceLock::new(),
             exposed: Arc::default(),
+            lookup: Arc::default(),
         }
+    }
+
+    /// Gives the connector the server's state, to read data sources and settings at each connect.
+    pub fn attach(&self, state: AppState) {
+        *self.lookup.state.write().unwrap_or_else(|e| e.into_inner()) = Some(state);
     }
 
     /// The warnings of `exposed_secrets`, shown with every plugin and logged when one is enabled.
@@ -408,6 +440,7 @@ impl PluginHost {
             own: self.own.clone(),
             audit: self.db.get().cloned(),
             exposure: self.exposed.clone(),
+            lookup: self.lookup.clone(),
         };
         let options = self.options.read().unwrap_or_else(|e| e.into_inner()).clone();
         let supervisor = Supervisor::new(launch, options);
@@ -438,6 +471,7 @@ impl PluginHost {
 
     /// Ends every plugin process (Kalzit stops).
     pub async fn shutdown(&self) {
+        *self.lookup.state.write().unwrap_or_else(|e| e.into_inner()) = None;
         let all: Vec<Arc<Supervisor>> =
             self.running.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
         for s in all {

@@ -120,7 +120,7 @@ impl AppState {
         let updates = Arc::new(crate::updates::Updates::new(&config.paths.data_dir, &config.database_url()));
         let read_db = db::read_pool(&db, &config.database_url(), db.options().get_max_connections())
             .unwrap_or_else(|| db.clone());
-        Ok(Self {
+        let state = Self {
             db,
             read_db,
             config: Arc::new(config),
@@ -163,7 +163,11 @@ impl AppState {
             live: Arc::default(),
             ai: Arc::default(),
             plugins,
-        })
+        };
+        // The connector reads data sources and server settings as they are at each connect;
+        // `close` lets go of the state again.
+        state.plugins.attach(state.clone());
+        Ok(state)
     }
 
     /// Stops the background writes and closes every database pool this state opened: the

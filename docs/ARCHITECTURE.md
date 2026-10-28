@@ -366,8 +366,9 @@ process, a network target or the gRPC protocol.
     Kalzit's process (`GetNamedPipeServerProcessId`) and serves the protocol on each connection
     it makes. Kalzit uses a connection only when its client process
     (`GetNamedPipeClientProcessId`) is the child it started, on every connect.
-  - Linux: one end of a socket pair Kalzit makes before the start, inherited as descriptor 3
-    (`KALZIT_PLUGIN_ADDRESS=fd:3`); the plugin serves the protocol on that one connection. A
+  - Linux: one end of a socket pair Kalzit makes before the start, inherited with its descriptor
+    number (`KALZIT_PLUGIN_ADDRESS=fd:<n>`; only close-on-exec is cleared in the child, nothing
+    is moved over its other descriptors); the plugin serves the protocol on that one connection. A
     pair reaches only Kalzit, so no process check is needed, and the plugin opens no socket of
     its own (the sandbox refuses `socket`). When the connection ends, the plugin is restarted.
   - stdio carries only the handshake (the plugin prints `kalzit-plugin 1 ready` on stdout when it
@@ -702,14 +703,15 @@ while Kalzit runs as root.
   that only local accounts may read is a warning in the plugin's status and log. A Windows Filtering Platform
   rule was not chosen: adding filters needs administrator rights, which a Kalzit service account
   does not have.
-- Network, Linux: the seccomp filter refuses `socket` for every family (`EACCES`), Unix sockets
-  included: the plugin's connection to Kalzit and the connector are inherited socket pairs, so it
-  reaches neither the network nor a Unix socket of the host (a database's, Docker's, D-Bus's,
-  named or abstract), whatever Landlock's ABI. Where user namespaces are allowed the plugin also
-  gets a network namespace of its own with only an unconfigured loopback device.
-  `prctl(PR_SET_DUMPABLE)` is refused, so the connector can read every process's descriptors.
-- Processes and CPU are not limited on Linux; the connector counts connections over the
-  plugin's whole session, which no process of it may leave.
+- Network, Linux: the seccomp filter refuses `socket`, `connect`, `bind`, `listen`, `accept` and
+  `accept4` for every family (`EACCES`), Unix sockets included, allows `socketpair` for stream
+  and sequenced-packet pairs only, and refuses `MSG_FASTOPEN`. The plugin's connection to Kalzit
+  and the connector are inherited socket pairs, and every network connection is a socket pair
+  Kalzit relays, so it reaches neither the network nor a Unix socket of the host (a database's,
+  Docker's, D-Bus's, `/dev/log`, named or abstract), whatever Landlock's ABI, and holds no socket
+  of the host's network it could point elsewhere. Where user namespaces are allowed the plugin
+  also gets a network namespace of its own with only an unconfigured loopback device.
+- Processes and CPU are not limited on Linux.
 
 ### Network connector
 
@@ -717,14 +719,16 @@ The only network a plugin has (`plugins::connector`, protocol minor 1, feature
 `network_connector`; the client is `kalzit_plugin_api::connector::Connector`; details and reasons
 in docs/api/plugins.md, "Network connector"). The plugin sends a `ConnectRequest` (token, data
 source id, host, port, `tcp` or `tls`, request id), framed with a 4-byte length, to
-`KALZIT_PLUGIN_CONNECTOR`: on Linux the inherited `SOCK_SEQPACKET` pair `fd:4` (requests may
-overlap), on Windows one connection to a named pipe of Kalzit's per request (only the plugin's
+`KALZIT_PLUGIN_CONNECTOR`: on Linux an inherited `SOCK_SEQPACKET` pair `fd:<n>` (requests may
+overlap; it belongs to the process that opened it), on Windows one connection to a named pipe of Kalzit's per request (only the plugin's
 process is served; the client checks that the server is Kalzit). gRPC cannot carry a socket.
 
-- The target must be one the manifest declares for that data source's settings as the plugin
-  last received them (`connector::Grants`, recorded with every call that hands over a
-  `Connection`; taken back when the data source changes or goes to the trash,
-  `DataSources::on_forget`): a `host` setting with its port setting or default port and
+- The plugin must have been handed the data source (`connector::Grants`, recorded with every
+  call that hands over a `Connection`; taken back, with its open connections closed, when the
+  data source changes or goes to the trash, `DataSources::on_forget`). The target must be one
+  the manifest declares for the data source's settings as they are stored at the connect
+  (`connector::Lookup`, `host::StateLookup`, with the target rules of the server settings then):
+  a `host` setting with its port setting or default port and
   protocol, a `url` setting's host and port (`https`/`wss` mean TLS), a fixed host and port. The
   protocol is a permission label; Kalzit does not enforce TLS on the stream.
 - Kalzit resolves the name, checks every address with the data source target rules
@@ -733,18 +737,18 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   PostgreSQL database of `database.url`, resolved at start and again per request; with no
   address from either, its port is refused everywhere), and connects to the checked address, so
   a name cannot resolve to something else for the connection (DNS rebinding).
-- Linux: the connected socket goes to the plugin with `SCM_RIGHTS`; Kalzit keeps no copy, counts
-  the plugin's connections by their inodes in `/proc/<pid>/fd` of every process of its session
-  (a socket still in the plugin's queue counts too), refuses connections while a table cannot be
-  read, and closes idle ones through a copy taken with `pidfd_getfd` (the last traffic from
-  `TCP_INFO`, then `shutdown`). Windows: a
-  socket handle duplicated into the AppContainer (`WSADuplicateSocket`) depends on the machine's
-  Winsock catalog and hides the connection from Kalzit, so Kalzit relays the pipe to the TCP
-  connection instead; the relay ends with either side or when idle.
+- Kalzit keeps the TCP connection and relays it (`connector::relay`): on Linux the plugin gets
+  one end of a new stream socket pair with `SCM_RIGHTS`, on Windows the pipe itself. Handing the
+  TCP socket over was dropped: a plugin could disconnect it (`connect` with `AF_UNSPEC`) and
+  point it anywhere, or bind and listen with it. A socket handle duplicated into the AppContainer
+  (`WSADuplicateSocket`) would have the same problem on Windows. The relay makes the count of
+  connections exact and ends a connection when either side ends it, when idle, or when its data
+  source is taken back.
 - Limits (`supervisor::Options`): 64 connections at once per plugin, 15 minutes without traffic,
-  one budget of 10 seconds per request for the lookup and every address, 16 requests under way
-  at once. Every refused connect goes to the plugin's log, Kalzit's log and the
-  audit log (`plugins.connect_refused`, at most once a minute per target and reason).
+  one budget of 10 seconds per request for the data source, the lookups and every address, 16
+  requests under way at once. Every refused connect goes to the plugin's log, Kalzit's log and
+  the audit log (`plugins.connect_refused`), and the connector's other warnings to the logs,
+  each at most once a minute per target and reason.
 - The plugin speaks its database's protocol over the stream and wraps it in TLS itself.
 
 ## Dashboards

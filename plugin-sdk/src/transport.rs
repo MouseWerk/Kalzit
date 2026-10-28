@@ -1,7 +1,7 @@
 //! The local connection between Kalzit and the plugin, per operating system. Only Kalzit's
 //! process (`KALZIT_PLUGIN_HOST_PID`) is served.
 //!
-//! - Linux: `KALZIT_PLUGIN_ADDRESS` is `fd:3`, one end of a socket pair Kalzit made: the plugin
+//! - Linux: `KALZIT_PLUGIN_ADDRESS` is `fd:<n>`, one end of a socket pair Kalzit made: the plugin
 //!   serves the protocol on that one connection (its sandbox lets it open no socket).
 //! - Windows: the plugin runs in an AppContainer, which cannot create named pipes. Kalzit creates
 //!   the pipe `KALZIT_PLUGIN_ADDRESS` and keeps an instance waiting; the plugin connects to it as
@@ -136,6 +136,12 @@ mod unix_socket {
             })?;
             // SAFETY: the inherited descriptor belongs to this process and is taken over once.
             let stream = unsafe { <std::os::unix::net::UnixStream as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+            // A copy that closes on exec, so programs the plugin starts do not get the connection.
+            let stream = {
+                let copy = stream.try_clone()?;
+                drop(stream);
+                copy
+            };
             stream.set_nonblocking(true)?;
             let stream = UnixStream::from_std(stream)?;
             // One connection, then none: the server keeps serving it until Kalzit ends it.

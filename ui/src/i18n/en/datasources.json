@@ -666,7 +666,6 @@
   "datasources.reason.plugin.protocol_unknown": "Kalzit refused the plugin’s connection: the protocol is neither tcp nor tls.",
   "datasources.reason.plugin.target_undeclared": "Kalzit refused the plugin’s connection to {host}:{port}: its manifest does not declare this target for the data source’s settings.",
   "datasources.reason.plugin.connections_exhausted": "Kalzit refused the plugin’s connection: it holds {max} connections already.",
-  "datasources.reason.plugin.connections_uncountable": "Kalzit refused the plugin’s connection: a process of the plugin hides its descriptors, so its connections cannot be counted.",
   "datasources.reason.plugin.connector_busy": "Kalzit refused the plugin’s connection: it has {max} connection requests under way already.",
   "datasources.reason.plugin.secrets_exposed": "Plugins do not start: {path} holds secrets that a plugin could read. Limit it to SYSTEM, Administrators and the account Kalzit runs as.",
   "datasources.reason.plugin.secrets_readable": "{path} holds secrets and {accounts} may read it. Plugins cannot, but other local accounts can: limit it to SYSTEM, Administrators and the account Kalzit runs as.",

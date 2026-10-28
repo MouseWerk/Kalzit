@@ -4,9 +4,11 @@
 //! `connector`, the client a plugin uses (`Connector`).
 //!
 //! Every message is preceded by its length (4 bytes, big-endian, at most `MAX_MESSAGE_BYTES`).
-//! Linux: requests and answers share one inherited `SOCK_SEQPACKET` socket (`fd:4`), matched by
-//! `request_id`; an answer carries the connected socket (`SCM_RIGHTS`). Windows: one pipe
-//! connection per request; after the answer the pipe itself is the connection, relayed by Kalzit.
+//! Linux: requests and answers share one inherited `SOCK_SEQPACKET` socket (`fd:<n>`), matched by
+//! `request_id`; an answer carries one end of a new stream socket pair (`SCM_RIGHTS`) that
+//! Kalzit relays to the TCP connection it holds. The connector belongs to the process that
+//! opened it (close-on-exec; a forked child does not use it). Windows: one pipe connection per
+//! request; after the answer the pipe itself is the connection, relayed by Kalzit.
 
 use prost::Message;
 
@@ -151,10 +153,17 @@ mod client {
         Ok((response.request_id, result))
     }
 
-    /// A connection Kalzit made: the TCP socket itself (Linux) or the pipe Kalzit relays
-    /// (Windows).
+    /// A connection Kalzit made and relays: one end of a socket pair (Linux) or a pipe (Windows).
+    /// The TCP connection itself stays with Kalzit.
     #[derive(Debug)]
     pub struct Stream(imp::Inner);
+
+    #[cfg(unix)]
+    impl std::os::fd::AsRawFd for Stream {
+        fn as_raw_fd(&self) -> std::os::fd::RawFd {
+            self.0.as_raw_fd()
+        }
+    }
 
     impl AsyncRead for Stream {
         fn poll_read(
@@ -190,7 +199,7 @@ mod client {
 
         use super::{ConnectError, Stream, pb};
 
-        pub type Inner = tokio::net::TcpStream;
+        pub type Inner = tokio::net::UnixStream;
 
         /// What the reader hands a waiting request: the answer's body and the socket it carried.
         type Reply = (Vec<u8>, Option<OwnedFd>);
@@ -305,7 +314,9 @@ mod client {
             mut request: pb::ConnectRequest,
         ) -> Result<(Stream, String), ConnectError> {
             let m = mux(address)?;
-            let id = m.next.fetch_add(1, Ordering::Relaxed);
+            // Unique also should another process (a fork) share the socket by mistake; the
+            // connector belongs to the process that opened it.
+            let id = (u64::from(std::process::id()) << 32) | (m.next.fetch_add(1, Ordering::Relaxed) & 0xffff_ffff);
             request.request_id = id;
             let bytes = super::super::frame(&request);
             let (tx, rx) = oneshot::channel();
@@ -332,9 +343,10 @@ mod client {
             let (_, result) = super::answer(&body)?;
             let address = result?;
             let fd = fd.ok_or_else(|| ConnectError::Protocol("the answer carried no socket".into()))?;
-            let stream = std::net::TcpStream::from(fd);
+            // One end of a socket pair Kalzit relays to the TCP connection it holds.
+            let stream = std::os::unix::net::UnixStream::from(fd);
             stream.set_nonblocking(true)?;
-            Ok((Stream(tokio::net::TcpStream::from_std(stream)?), address))
+            Ok((Stream(tokio::net::UnixStream::from_std(stream)?), address))
         }
     }
 

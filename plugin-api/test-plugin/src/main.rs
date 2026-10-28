@@ -189,18 +189,63 @@ fn unix_connect(_path: &str) -> Value {
     json!({ "ok": false, "error": "not on this system" })
 }
 
-/// Whether this process can make itself non-dumpable (and so hide its descriptors).
+/// Whether this process can make a datagram socket pair (which could `sendto` a datagram socket
+/// of the host by its path).
 #[cfg(target_os = "linux")]
-fn undumpable() -> Value {
-    // SAFETY: a plain prctl with integer arguments.
-    let r = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
+fn dgram_pair() -> Value {
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: `fds` has room for both ends; they are closed at once.
+    let r = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr()) };
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    if r == 0 {
+        // SAFETY: both were just made.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
     json!({ "ok": r == 0, "errno": if r == 0 { 0 } else { errno } })
 }
 
 #[cfg(not(target_os = "linux"))]
-fn undumpable() -> Value {
+fn dgram_pair() -> Value {
     json!({ "ok": false, "errno": -1 })
+}
+
+/// Whether a connection the connector handed over can be pointed elsewhere: `connect` with
+/// `AF_UNSPEC` (disconnect) and then to `127.0.0.1:port` (Linux).
+#[cfg(target_os = "linux")]
+async fn net_repoint(ds: &str, q: &Value) -> Value {
+    use std::os::fd::AsRawFd;
+    let Some(connector) = Connector::from_env() else { return json!({ "ok": false, "reason": "no_connector" }) };
+    let host = q["host"].as_str().unwrap_or_default();
+    let port = q["port"].as_u64().unwrap_or(0) as u16;
+    let (stream, _) = match connector.connect(ds, host, port, pb::TargetProtocol::Tcp).await {
+        Ok(connected) => connected,
+        Err(e) => return connect_failed(e),
+    };
+    let fd = stream.as_raw_fd();
+    // SAFETY: plain connect calls on an open descriptor with addresses on the stack.
+    let (unspec, inet) = unsafe {
+        let mut unspec: libc::sockaddr = std::mem::zeroed();
+        unspec.sa_family = libc::AF_UNSPEC as libc::sa_family_t;
+        let a = libc::connect(fd, &raw const unspec, std::mem::size_of::<libc::sockaddr>() as libc::socklen_t);
+        let a_errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        let mut inet: libc::sockaddr_in = std::mem::zeroed();
+        inet.sin_family = libc::AF_INET as libc::sa_family_t;
+        inet.sin_port = port.to_be();
+        inet.sin_addr.s_addr = u32::from(std::net::Ipv4Addr::LOCALHOST).to_be();
+        let b =
+            libc::connect(fd, (&raw const inet).cast(), std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t);
+        let b_errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        ((a, a_errno), (b, b_errno))
+    };
+    json!({ "ok": unspec.0 == 0 || inet.0 == 0, "unspec": unspec.1, "inet": inet.1 })
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn net_repoint(_ds: &str, _q: &Value) -> Value {
+    json!({ "ok": false })
 }
 
 #[cfg(target_os = "linux")]
@@ -454,7 +499,8 @@ impl DataSource for Plugin {
             ]),
             "net_connect" => documents(vec![net_connect(&datasource, &query).await]),
             "unix_connect" => documents(vec![unix_connect(query["path"].as_str().unwrap_or_default())]),
-            "undumpable" => documents(vec![undumpable()]),
+            "dgram_pair" => documents(vec![dgram_pair()]),
+            "net_repoint" => documents(vec![net_repoint(&datasource, &query).await]),
             "net_many" => documents(vec![net_many(&datasource, &query).await]),
             other => return Err(Status::invalid_argument(format!("unknown behaviour {other}"))),
         };
@@ -607,6 +653,12 @@ mod listen {
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "the address is not fd:<n>"))?;
         // SAFETY: the inherited descriptor belongs to this process and is taken over once.
         let stream = unsafe { <std::os::unix::net::UnixStream as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+        // A copy that closes on exec, so programs the plugin starts do not get the connection.
+        let stream = {
+            let copy = stream.try_clone()?;
+            drop(stream);
+            copy
+        };
         stream.set_nonblocking(true)?;
         let stream = UnixStream::from_std(stream)?;
         Ok(futures_util::stream::once(async move { Ok(stream) }).chain(futures_util::stream::pending()))

@@ -1003,9 +1003,19 @@ async fn the_network_goes_only_through_the_connector() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o777)).unwrap();
         let r = t.doc(&ds, ID, json!({ "do": "unix_connect", "path": path })).await;
         assert_eq!(r["ok"], false, "the plugin reached a Unix socket of the host: {r} ({layers:?})");
-        // And it cannot hide its descriptors from the connector's count.
-        let r = t.doc(&ds, ID, json!({ "do": "undumpable" })).await;
-        assert_eq!((r["ok"].clone(), r["errno"].clone()), (json!(false), json!(1)), "{r}");
+        // Nor a datagram socket pair, which could send to a datagram socket of the host.
+        if cfg!(target_os = "linux") {
+            let r = t.doc(&ds, ID, json!({ "do": "dgram_pair" })).await;
+            assert_eq!((r["ok"].clone(), r["errno"].clone()), (json!(false), json!(13)), "{r}");
+            // A connection the connector handed over cannot be pointed elsewhere: it is a socket
+            // pair Kalzit relays, and `connect` is refused anyway.
+            let r = t.doc(&ds, ID, json!({ "do": "net_repoint", "host": "127.0.0.1", "port": port })).await;
+            assert_eq!(
+                (r["ok"].clone(), r["unspec"].clone(), r["inet"].clone()),
+                (json!(false), json!(13), json!(13)),
+                "{r}"
+            );
+        }
     }
 
     // Through the connector the declared target answers.

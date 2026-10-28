@@ -111,6 +111,7 @@ mod linux {
     const BPF_LD_W_ABS: u16 = 0x20;
     const BPF_JMP_JEQ_K: u16 = 0x15;
     const BPF_JMP_JSET_K: u16 = 0x45;
+    const BPF_ALU_AND_K: u16 = 0x54;
     const BPF_RET_K: u16 = 0x06;
     #[cfg(target_arch = "x86_64")]
     const AUDIT_ARCH: u32 = 0xC000_003E;
@@ -242,19 +243,35 @@ mod linux {
         }
         f.push(op(BPF_JMP_JEQ_K, 0, 1, libc::SYS_clone3 as u32));
         f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | ENOSYS));
-        // No socket at all, of any family: the connection to Kalzit and the connector arrive as
-        // descriptors, connected already, and a network socket comes only from the connector.
-        // So neither the network nor a Unix socket of the host (a database's, Docker's, D-Bus)
-        // nor an abstract one is reachable. `socketpair` makes only a pair with itself.
-        f.push(op(BPF_JMP_JEQ_K, 0, 1, libc::SYS_socket as u32));
-        f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | EACCES));
-        // prctl(PR_SET_DUMPABLE): a plugin that made itself non-dumpable would hide its
-        // descriptors from the connector's count (`/proc/<pid>/fd`, `pidfd_getfd`).
-        f.push(op(BPF_JMP_JEQ_K, 0, 4, libc::SYS_prctl as u32));
-        f.push(op(BPF_LD_W_ABS, 0, 0, ARG0));
-        f.push(op(BPF_JMP_JEQ_K, 0, 1, libc::PR_SET_DUMPABLE as u32));
-        f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ERRNO | EPERM));
+        // No socket of its own, of any family, and no address for one: the connection to Kalzit
+        // and the connector arrive as connected socket pairs, and every network connection is a
+        // socket pair Kalzit relays. So neither the network nor a Unix socket of the host (a
+        // database's, Docker's, D-Bus, `/dev/log`), named or abstract, is reachable.
+        let refused = libc::SECCOMP_RET_ERRNO | EACCES;
+        for nr in
+            [libc::SYS_socket, libc::SYS_connect, libc::SYS_bind, libc::SYS_listen, libc::SYS_accept, libc::SYS_accept4]
+        {
+            f.push(op(BPF_JMP_JEQ_K, 0, 1, nr as u32));
+            f.push(op(BPF_RET_K, 0, 0, refused));
+        }
+        // socketpair: stream or sequenced packets only (a datagram pair could `sendto` a
+        // datagram socket of the host by its path).
+        f.push(op(BPF_JMP_JEQ_K, 0, 6, libc::SYS_socketpair as u32));
+        f.push(op(BPF_LD_W_ABS, 0, 0, ARG0 + 8));
+        f.push(op(BPF_ALU_AND_K, 0, 0, !((libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK) as u32)));
+        f.push(op(BPF_JMP_JEQ_K, 2, 0, libc::SOCK_STREAM as u32));
+        f.push(op(BPF_JMP_JEQ_K, 1, 0, libc::SOCK_SEQPACKET as u32));
+        f.push(op(BPF_RET_K, 0, 0, refused));
         f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW));
+        // sendto, sendmsg, sendmmsg: no TCP Fast Open (a connect in disguise). The flags are the
+        // fourth, third and fourth argument.
+        for (nr, arg) in [(libc::SYS_sendto, 3), (libc::SYS_sendmsg, 2), (libc::SYS_sendmmsg, 3)] {
+            f.push(op(BPF_JMP_JEQ_K, 0, 4, nr as u32));
+            f.push(op(BPF_LD_W_ABS, 0, 0, ARG0 + 8 * arg));
+            f.push(op(BPF_JMP_JSET_K, 0, 1, libc::MSG_FASTOPEN as u32));
+            f.push(op(BPF_RET_K, 0, 0, refused));
+            f.push(op(BPF_RET_K, 0, 0, libc::SECCOMP_RET_ALLOW));
+        }
         // clone: the flags are the first argument (x86_64 and aarch64 alike).
         f.push(op(BPF_JMP_JEQ_K, 0, 3, libc::SYS_clone as u32));
         f.push(op(BPF_LD_W_ABS, 0, 0, ARG0));
@@ -373,8 +390,8 @@ mod linux {
         status: RawFd,
         /// Landlock must take, or the plugin does not start.
         require_landlock: bool,
-        /// Descriptors the plugin gets: (Kalzit's number, the plugin's).
-        inherit: Vec<(RawFd, RawFd)>,
+        /// Descriptors the plugin gets, by their number.
+        inherit: Vec<RawFd>,
     }
 
     fn open_path(path: &Path) -> Option<(OwnedFd, bool)> {
@@ -536,12 +553,11 @@ mod linux {
                         }
                     }
                 }
-                // The handed descriptors: first above every number they go to (so moving one
-                // cannot overwrite another), then to their numbers, without close-on-exec.
-                let mut moved: [RawFd; 4] = [-1; 4];
-                for (i, (from, _)) in self.inherit.iter().take(moved.len()).enumerate() {
-                    moved[i] = libc::fcntl(*from, libc::F_DUPFD_CLOEXEC, 16);
-                    if moved[i] < 0 {
+                // The handed descriptors keep their numbers (named in the plugin's environment);
+                // only close-on-exec is cleared, so no descriptor of the child is moved or
+                // overwritten.
+                for fd in &self.inherit {
+                    if libc::fcntl(*fd, libc::F_SETFD, 0) < 0 {
                         return Err(std::io::Error::last_os_error());
                     }
                 }
@@ -549,12 +565,6 @@ mod linux {
                 if self.require_landlock && layers & LANDLOCK == 0 {
                     // `spawn` fails with this error; nothing of the plugin runs.
                     return Err(std::io::Error::from_raw_os_error(LANDLOCK_REFUSED));
-                }
-                for (i, (_, to)) in self.inherit.iter().take(moved.len()).enumerate() {
-                    if libc::dup2(moved[i], *to) < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    libc::close(moved[i]);
                 }
             }
             Ok(())
@@ -653,12 +663,18 @@ mod linux {
             assert_eq!(f.last().unwrap().k, libc::SECCOMP_RET_ALLOW);
             assert!(f.len() < 4096);
             assert!(denied().contains(&libc::SYS_ptrace));
-            // No socket of any family; no PR_SET_DUMPABLE.
-            let socket = f.iter().position(|i| i.code == BPF_JMP_JEQ_K && i.k == libc::SYS_socket as u32).unwrap();
-            assert_eq!(f[socket + 1].k, libc::SECCOMP_RET_ERRNO | EACCES);
-            let prctl = f.iter().position(|i| i.code == BPF_JMP_JEQ_K && i.k == libc::SYS_prctl as u32).unwrap();
-            assert_eq!(f[prctl + 2].k, libc::PR_SET_DUMPABLE as u32);
-            assert_eq!(f[prctl + 3].k, libc::SECCOMP_RET_ERRNO | EPERM);
+            // No socket of its own and no address for one; socket pairs of streams only; no
+            // TCP Fast Open.
+            let at = |nr: libc::c_long| f.iter().position(|i| i.code == BPF_JMP_JEQ_K && i.k == nr as u32).unwrap();
+            for nr in [libc::SYS_socket, libc::SYS_connect, libc::SYS_bind, libc::SYS_listen, libc::SYS_accept4] {
+                assert_eq!(f[at(nr) + 1].k, libc::SECCOMP_RET_ERRNO | EACCES, "{nr}");
+            }
+            let pair = at(libc::SYS_socketpair);
+            assert_eq!((f[pair + 1].k, f[pair + 2].code), (ARG0 + 8, BPF_ALU_AND_K));
+            assert_eq!((f[pair + 3].k, f[pair + 4].k), (libc::SOCK_STREAM as u32, libc::SOCK_SEQPACKET as u32));
+            assert_eq!(f[pair + 5].k, libc::SECCOMP_RET_ERRNO | EACCES);
+            let send = at(libc::SYS_sendto);
+            assert_eq!((f[send + 1].k, f[send + 2].k), (ARG0 + 24, libc::MSG_FASTOPEN as u32));
         }
 
         #[test]

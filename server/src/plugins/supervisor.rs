@@ -82,7 +82,7 @@ impl Default for Options {
 }
 
 /// What to run.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Launch {
     pub manifest: Arc<Manifest>,
     pub program: PathBuf,
@@ -98,6 +98,8 @@ pub struct Launch {
     /// Kalzit's own files with secrets that others may read: shown in the status, and while a
     /// plugin could read one, plugins do not start.
     pub exposure: Arc<super::host::Exposure>,
+    /// The data sources and settings as they are at each connect.
+    pub lookup: Arc<dyn connector::Lookup>,
 }
 
 /// What the plugin page shows about the process.
@@ -605,14 +607,11 @@ impl Supervisor {
         // Linux: the plugin gets both connections as descriptors, connected already; it may
         // open no socket of its own. Kalzit's copies of the plugin's ends close after the start.
         #[cfg(unix)]
-        let handed = [
-            endpoint.take_plugin_end().map(|fd| (fd, process::HOST_FD)),
-            listener.take_plugin_end().map(|fd| (fd, process::CONNECTOR_FD)),
-        ];
+        let handed = [endpoint.take_plugin_end(), listener.take_plugin_end()];
         #[cfg(unix)]
-        let inherit: Vec<(i32, i32)> = {
+        let inherit: Vec<i32> = {
             use std::os::fd::AsRawFd;
-            handed.iter().flatten().map(|(fd, to)| (fd.as_raw_fd(), *to)).collect()
+            handed.iter().flatten().map(AsRawFd::as_raw_fd).collect()
         };
         #[cfg(not(unix))]
         let inherit = Vec::new();
@@ -673,6 +672,7 @@ impl Supervisor {
             self.id.clone(),
             self.launch.manifest.clone(),
             self.grants.clone(),
+            self.launch.lookup.clone(),
             self.launch.own.clone(),
             token.clone(),
             self.logs.clone(),

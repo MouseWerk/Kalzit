@@ -58,8 +58,8 @@ pub struct Spec {
     pub app_container_sid: String,
     /// Linux: refuse to start when Landlock does not take.
     pub require_landlock: bool,
-    /// Linux: descriptors of Kalzit's that the plugin gets, as (Kalzit's number, the plugin's).
-    pub inherit: Vec<(i32, i32)>,
+    /// Linux: descriptors of Kalzit's that the plugin gets, with the same numbers.
+    pub inherit: Vec<i32>,
 }
 
 /// A started plugin process.
@@ -126,13 +126,8 @@ pub fn environment(address: &str, token: &str, tmp: &std::path::Path, connector:
     env
 }
 
-/// The descriptor number a Linux plugin finds its connection to Kalzit on (`fd:3`).
-pub const HOST_FD: i32 = 3;
-/// The descriptor number of Kalzit's network connector in a Linux plugin (`fd:4`).
-pub const CONNECTOR_FD: i32 = 4;
-
 /// Where a start's local connection lives, made before the plugin starts: a connected socket
-/// pair (Linux; the plugin's end becomes its descriptor 3, so it needs no socket of its own) or
+/// pair (Linux; the plugin inherits its end with the same number, so it needs no socket of its own) or
 /// the pipe with its waiting instance (Windows).
 pub struct Endpoint {
     /// What the plugin gets as `KALZIT_PLUGIN_ADDRESS`.
@@ -148,7 +143,7 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// Linux: a socket pair, `fd:3` for the plugin. Windows: the pipe
+    /// Linux: a socket pair, `fd:<n>` for the plugin. Windows: the pipe
     /// `\\.\pipe\kalzit-plugin-<random>`, created here, for Kalzit's account, the start's SID
     /// and the plugin's AppContainer, labelled low.
     pub fn new(
@@ -171,14 +166,14 @@ impl Endpoint {
             let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
             ours.set_nonblocking(true)?;
             Ok(Self {
-                address: format!("fd:{HOST_FD}"),
+                address: format!("fd:{}", std::os::fd::AsRawFd::as_raw_fd(&theirs)),
                 ours: std::sync::Mutex::new(Some(ours)),
                 theirs: Some(theirs.into()),
             })
         }
     }
 
-    /// The plugin's end of the connection, to be inherited as `HOST_FD` (Linux).
+    /// The plugin's end of the connection, inherited with its number (Linux).
     #[cfg(unix)]
     pub fn take_plugin_end(&mut self) -> Option<std::os::fd::OwnedFd> {
         self.theirs.take()
@@ -225,7 +220,7 @@ pub mod windows_pipe {
     pub fn sddl(start_sid: &str, app_container_sid: &str) -> std::io::Result<String> {
         let user = crate::data_dir::acl::current_user()?;
         // Read and write for the plugin, never the right to change the pipe's security.
-        Ok(format!("D:P(A;;GA;;;{user})(A;;0x12019f;;;{start_sid})(A;;0x12019f;;;{app_container_sid})S:(ML;;NW;;;LW)"))
+        Ok(format!("D:P(A;;GA;;;{user})(A;;0x12019b;;;{start_sid})(A;;0x12019b;;;{app_container_sid})S:(ML;;NW;;;LW)"))
     }
 
     /// A pipe instance with the descriptor `sddl`, local clients only.

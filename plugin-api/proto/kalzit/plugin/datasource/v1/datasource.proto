@@ -424,13 +424,15 @@ message ReleaseResponse {}
 // own: it asks Kalzit for each connection, and Kalzit hands it a connected TCP stream. Over that
 // stream the plugin speaks its database's protocol, TLS included (it wraps the stream itself).
 //
-// The connector is not a gRPC service, because a connected socket cannot travel over HTTP/2.
+// The connector is not a gRPC service, because a socket cannot travel over HTTP/2.
 // Its address is in the plugin's environment, `KALZIT_PLUGIN_CONNECTOR`. Every message is
 // preceded by its length as 4 bytes big-endian and is at most 64 KiB.
-// - Linux: `fd:4`, a `SOCK_SEQPACKET` socket the plugin inherits, connected to Kalzit (the
+// - Linux: `fd:<n>`, a `SOCK_SEQPACKET` socket the plugin inherits, connected to Kalzit (the
 //   plugin may open no socket itself). One message is one `ConnectRequest` or one
 //   `ConnectResponse`; requests may overlap and are matched by `request_id`. With `connected`,
-//   the same message carries the connected socket (`SCM_RIGHTS`), which the plugin then owns.
+//   the same message carries one end of a new stream socket pair (`SCM_RIGHTS`); Kalzit relays
+//   it to the TCP connection, which stays with Kalzit. The connector belongs to the process that
+//   opened it.
 // - Windows: a named pipe Kalzit created; Kalzit serves the plugin's process only, and the plugin
 //   checks that the pipe's server is Kalzit (`KALZIT_PLUGIN_HOST_PID`). One pipe connection asks
 //   for one network connection; after `connected` the pipe itself is the connection: Kalzit
