@@ -1090,7 +1090,7 @@ mod windows {
 
     struct Job {
         job: Owned,
-        process: Owned,
+        process: Arc<Owned>,
     }
 
     impl Control for Job {
@@ -1225,17 +1225,24 @@ mod windows {
             (tokio::fs::File::from_std(out), tokio::fs::File::from_std(err))
         };
         let pid = created.dwProcessId;
-        let control = Arc::new(Job { job, process });
+        let process = Arc::new(process);
+        let control = Arc::new(Job { job, process: process.clone() });
         let (tx, exited) = watch::channel(None);
-        let waiter = control.clone();
+        // The waiter holds the process, not the job: when every holder of the job is gone (also
+        // when Kalzit's runtime shuts down after a failure), the job closes and kills the
+        // plugin, and the wait ends.
+        let job = Arc::downgrade(&control);
         tokio::task::spawn_blocking(move || {
             let mut code = 0u32;
-            // SAFETY: the process handle stays open while `waiter` lives.
+            // SAFETY: the process handle stays open while `process` lives.
             unsafe {
-                WaitForSingleObject(waiter.process.0, INFINITE);
-                let _ = GetExitCodeProcess(waiter.process.0, &mut code);
-                // Whatever the plugin started goes with it.
-                let _ = TerminateJobObject(waiter.job.0, 1);
+                WaitForSingleObject(process.0, INFINITE);
+                let _ = GetExitCodeProcess(process.0, &mut code);
+            }
+            // Whatever the plugin started goes with it.
+            if let Some(job) = job.upgrade() {
+                // SAFETY: the job handle is open while `job` lives.
+                let _ = unsafe { TerminateJobObject(job.job.0, 1) };
             }
             let _ = tx.send(Some(format!("exit code {code}")));
         });
