@@ -63,16 +63,22 @@ functions (explain or draft a query, summarize a result, the chat "Fragen") buil
 }
 ```
 
-Each provider in the status also carries `endpoint` (host and port of its base URL),
-`leavesNetwork` (whether data leaves the installation's own network, judged from the address
-alone: a loopback, private or link-local address, `localhost`, a name without a dot or under a
-local suffix such as `.local`, `.lan`, `.internal`, `.intern`, `.home.arpa` or `.corp` stays in
-it; a gateway there may still forward data further), `reachable` (the last connection test passed
-or failed; absent while untested since the last change) and `noticeAcknowledged` (the caller read
-the notice for it). `functions` names the provider of each function (`explain` for explain and
-draft, `summarize`, `chat`); it differs from `provider` where the server chose another provider
-for a function (`ai.provider_<function>`), and an organization's own provider applies to all of
-them.
+Data always leaves the Kalzit server when the model runs elsewhere; what the status says is
+whether it leaves the installation's own network. Each provider in the status carries `endpoint`
+(host and port of its base URL), `leavesNetwork` with `leavesNetworkEstimated`: the
+administrators' answer on the provider (`leavesNetwork` `yes` or `no`, see "Providers") as a
+fact, else an estimate from the address alone (`leavesNetworkEstimated: true`; a loopback,
+private or link-local address, `localhost`, a name without a dot or under a local suffix such as
+`.local`, `.lan`, `.internal`, `.intern`, `.home.arpa` or `.corp` counts as the own network, and a
+gateway there may still forward data further), `reachable` (the last connection test passed or
+failed; absent while untested since the last change), `noticeAcknowledged` (the caller read the
+notice for it), and `usable` with `reason` (`ai.key_unreadable` when its key cannot be read).
+`functions` names the provider of each function (`explain` for explain and draft, `summarize`,
+`chat`), absent for a function without one; it differs from `provider` where the server chose
+another provider for a function (`ai.provider_<function>`), and an organization's own provider
+applies to all of them. The status is `usable` while any function can run; the UI shows each
+function only while its own provider is there and usable. A provider chosen for a function works
+also without a server default; `provider` is then the first function's.
 
 `reason` is set when AI is on but not usable (`ai.no_provider`). `provider.host` is where data
 goes (the host of the base URL, never the whole URL); `provider.scope` is `org` when the
@@ -128,6 +134,7 @@ A provider of one scope is `404 not_found` through the routes of another.
   "model": "example-model",
   "isDefault": true,
   "tokenLimitField": "auto",
+  "leavesNetwork": "auto",
   "apiKeySet": false,
   "createdAt": 1800000000000,
   "updatedAt": 1800000000000,
@@ -154,6 +161,10 @@ A provider of one scope is `404 not_found` through the routes of another.
   `max_tokens`, and `max_tokens` to every other server; `max_tokens` or `max_completion_tokens`
   fix it. A compatible server that answers 400 to `stream_options` is asked once more without
   it; its usage is then estimated (see "Settings, limits and usage").
+- `leavesNetwork`: whether data sent to the provider leaves the installation's own network, as
+  the administrators know it: `yes`, `no` or `auto` (default; the status then estimates it from the
+  address and says so). A gateway in the own network that forwards to an outside model counts as
+  `yes`. A change keeps `lastTest`.
 - `isDefault`: the provider used within its scope. The first provider of a scope becomes its
   default; making another one default unsets the old one; deleting the default makes the oldest
   remaining one the default.
@@ -199,7 +210,7 @@ Server settings (`/admin/settings`):
 |---|---|---|
 | `ai.enabled` | `false` | every AI function on or off (on only with a tested provider, see "Rules") |
 | `ai.allow_org_providers` | `true` | organizations may connect, change, test and use their own provider |
-| `ai.provider_explain`, `ai.provider_summarize`, `ai.provider_chat` | empty | the server provider for explain and draft, for summaries and for the chat; empty uses the default provider. Only a server provider can be chosen (`ai.provider_unknown`); one deleted later falls back to the default. An organization's own provider comes first |
+| `ai.provider_explain`, `ai.provider_summarize`, `ai.provider_chat` | empty | the server provider for explain and draft, for summaries and for the chat; empty uses the default provider. Only a server provider can be chosen (`ai.provider_unknown`), and only while its last connection test passed (`ai.enable_needs_tested_provider`); one deleted later, or whose test was cleared by a change, falls back to the default until it passes again. An organization's own provider comes first |
 | `ai.user_requests_per_day` | 200 | calls per person and day (UTC) in one organization; 0: none |
 | `ai.user_tokens_per_day` | 200000 | tokens per person and day; 0: none |
 | `ai.org_tokens_per_month` | 20000000 | tokens of an organization per calendar month (UTC); 0: none |
@@ -521,7 +532,7 @@ sources' own.
 |---|---|---|
 | `ai.disabled` | | `ai.enabled` is off |
 | `ai.org_disabled` | | `ai.org_enabled` of the organization is off |
-| `ai.enable_needs_tested_provider` | | `409 conflict` on turning `ai.enabled` or `ai.org_enabled` on without a provider in effect that passed its test since its last change |
+| `ai.enable_needs_tested_provider` | | `409 conflict` on turning `ai.enabled` or `ai.org_enabled` on without a provider in effect that passed its test since its last change, or on choosing a provider for a function (`ai.provider_<function>`) that has not |
 | `ai.limit_org_concurrent` | `max` | the organization has `max` calls running already |
 | `ai.token_limit_field_unknown` | | `tokenLimitField` is not `auto`, `max_tokens` or `max_completion_tokens` |
 | `ai.no_provider` | | no provider is in effect for the organization |

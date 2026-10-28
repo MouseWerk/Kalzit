@@ -23,6 +23,8 @@ const USABLE = {
     scope: "server",
     endpoint: "llm.intern:11434",
     leavesNetwork: false,
+    leavesNetworkEstimated: true,
+    usable: true,
     reachable: true,
     noticeAcknowledged: true,
   },
@@ -128,8 +130,10 @@ describe("Fragen", () => {
     const pane = await screen.findByRole("complementary", { name: "Context and controls" });
     expect(within(pane).getByText("Lokal · modell-1")).toBeTruthy();
     expect(within(pane).getByText("llm.intern:11434")).toBeTruthy();
-    expect(within(pane).getByText("Reachable")).toBeTruthy();
-    expect(within(pane).getByText("No, own network")).toBeTruthy();
+    expect(within(pane).getByText("Last check passed")).toBeTruthy();
+    expect(
+      within(pane).getByText("By its address in the own network; a gateway there may forward"),
+    ).toBeTruthy();
     const open_ = await within(pane).findByRole("checkbox", { name: "Allow Sales DB" });
     expect((open_ as HTMLInputElement).disabled).toBe(false);
     const closed = within(pane)

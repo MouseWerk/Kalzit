@@ -17,6 +17,7 @@ export interface WireAiProvider {
   model: string;
   isDefault: boolean;
   tokenLimitField: string;
+  leavesNetwork?: string;
   apiKeySet: boolean;
   createdAt: number;
   updatedAt: number;
@@ -255,6 +256,7 @@ function providerRoutes(
       model: String(body.model),
       isDefault: body.isDefault === true || list.length === 0,
       tokenLimitField: typeof body.tokenLimitField === "string" ? body.tokenLimitField : "auto",
+      leavesNetwork: typeof body.leavesNetwork === "string" ? body.leavesNetwork : "auto",
       apiKeySet: typeof body.apiKey === "string",
       createdAt: T0 + list.length + 1,
       updatedAt: T0 + list.length + 1,
@@ -304,6 +306,7 @@ function providerRoutes(
     if (typeof body.baseUrl === "string") provider.baseUrl = body.baseUrl;
     if (typeof body.model === "string") provider.model = body.model;
     if (typeof body.tokenLimitField === "string") provider.tokenLimitField = body.tokenLimitField;
+    if (typeof body.leavesNetwork === "string") provider.leavesNetwork = body.leavesNetwork;
     if ("apiKey" in body) provider.apiKeySet = typeof body.apiKey === "string";
     if (body.isDefault === true) {
       for (const other of list) other.isDefault = other === provider;

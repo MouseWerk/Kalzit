@@ -4,6 +4,7 @@ import type { Me } from "../../../api/auth";
 import { appRoute } from "../../../app/baseRoutes";
 import { currentOrgOf } from "../../../org/useOrg";
 import { aiStatusQuery } from "../api";
+import { featureUsable } from "../useAiStatus";
 
 export interface AskSearch {
   /** The chat shown; absent for a new one. */
@@ -31,7 +32,7 @@ async function requireUsableAi(queryClient: QueryClient, me: Me): Promise<void> 
     throw notFound();
   }
   const status = await queryClient.ensureQueryData(aiStatusQuery(org.id)).catch(() => undefined);
-  if (status?.enabled !== true || !status.usable) {
+  if (!featureUsable(status, "chat")) {
     throw notFound();
   }
 }

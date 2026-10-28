@@ -1016,7 +1016,7 @@ function Explore({
           )}
           {rangeError === null ? null : <FormAlert>{rangeError}</FormAlert>}
           {filterError === null ? null : <FormAlert>{filterError}</FormAlert>}
-          <AiGate>
+          <AiGate feature="explain">
             <ExploreAiTools
               key={datasource.id}
               orgId={orgId}

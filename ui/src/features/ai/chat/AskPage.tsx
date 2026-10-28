@@ -700,9 +700,14 @@ function ContextPane({
             </dd>
             <dt>{t("ai.chat.leavesServer")}</dt>
             <dd>
-              {provider.leavesNetwork
-                ? t("ai.chat.leavesYes", { host: provider.host })
-                : t("ai.chat.leavesNo")}
+              {/* The administrators' word as a fact; from the address only an estimate. */}
+              {provider.leavesNetworkEstimated
+                ? provider.leavesNetwork
+                  ? t("ai.chat.leavesEstimateYes", { host: provider.host })
+                  : t("ai.chat.leavesEstimateNo")
+                : provider.leavesNetwork
+                  ? t("ai.chat.leavesYes", { host: provider.host })
+                  : t("ai.chat.leavesNo")}
             </dd>
           </dl>
           {permissions.isServerAdmin || permissions.has("settings:write") ? (

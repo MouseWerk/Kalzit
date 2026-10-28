@@ -10,7 +10,7 @@ import { type AiCallMeta, aiLimitReason } from "./calls";
 import { aiReasonText } from "./reasons";
 import { useAiReadableSources } from "./source/useAiReadable";
 import { useAiCall } from "./useAiCall";
-import { useAiStatusFor } from "./useAiStatus";
+import { featureUsable, useAiStatus, useAiStatusFor } from "./useAiStatus";
 import "./ai-calls.css";
 
 /** The longest request of a draft, as the server takes it. */
@@ -246,7 +246,7 @@ export function useExploreAiSummary(
   run: { query: unknown; timeRange: TimeRange; intervalMs?: number } | null,
 ): { button: ReactNode; card: ReactNode } {
   const { t } = useI18n();
-  const { usable } = useAiStatusFor(orgId);
+  const usable = featureUsable(useAiStatusFor(orgId).status, "summarize");
   const call = useAiCall(orgId);
   const notice = useAiNotice(orgId);
   const limitText = useLimitText(orgId);
@@ -348,6 +348,8 @@ export function SummaryCard({
   followUp?: { dashboard?: string; source?: string; q: string } | undefined;
 }) {
   const { t } = useI18n();
+  // Only while the chat can be used: its provider may differ from the summary's.
+  const chat = featureUsable(useAiStatus().status, "chat");
   return (
     <AiAnswer
       title={title}
@@ -356,7 +358,7 @@ export function SummaryCard({
       sourceLink={sourceLink}
       onClose={onClose ?? call.reset}
       actions={
-        followUp === undefined ? undefined : (
+        followUp === undefined || !chat ? undefined : (
           <Link
             to="/ask"
             search={followUp}

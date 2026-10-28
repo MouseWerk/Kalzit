@@ -74,7 +74,7 @@ describe("AI, server section", () => {
     await user.click(screen.getByRole("switch", { name: "AI functions" }));
     expect(
       await screen.findByText(
-        "AI can be turned on once a provider in effect has passed its connection test since its last change.",
+        "The provider must first pass its connection test since its last change; only then can AI be turned on or the provider be chosen for a function.",
       ),
     ).toBeTruthy();
     expect(calls(server, "/api/admin/settings/ai.enabled").at(-1)?.body).toEqual({
@@ -120,6 +120,8 @@ describe("AI, server section", () => {
     };
     await user.clear(url);
     await user.type(url, "https://api.anthropic.com");
+    // A cloud model: the administrators say so, instead of the estimate from the address.
+    await user.selectOptions(within(dialog).getByLabelText("Data leaves the own network"), "yes");
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     const keyError = await within(dialog).findByText(
       "The AI provider refused the key (401). Check the key and its rights.",
@@ -138,6 +140,7 @@ describe("AI, server section", () => {
       model: "claude-x",
       isDefault: false,
       apiKey: "sk-wrong",
+      leavesNetwork: "yes",
     });
 
     // A new key passes; Save sends nothing more and closes.
