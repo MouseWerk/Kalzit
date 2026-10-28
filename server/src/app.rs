@@ -109,7 +109,8 @@ impl AppState {
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
         let plugins = Arc::new(
             crate::plugins::host::PluginHost::new(&config.paths.data_dir)
-                .with_own_endpoints(crate::plugins::connector::OwnEndpoints::from_config(&config)),
+                .with_own_endpoints(crate::plugins::connector::OwnEndpoints::from_config(&config))
+                .with_exposed_secrets(crate::plugins::host::exposed_secrets(&config)),
         );
         plugins.load(&db, &datasources).await.map_err(|e| anyhow::anyhow!("loading the plugins: {}", e.message))?;
         let touch_limit = crate::auth::session::Touches::limit_for(&db);

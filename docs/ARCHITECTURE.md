@@ -655,7 +655,11 @@ while Kalzit runs as root.
   normal, the restricting-SID and the AppContainer check). It opens no network connection, not
   even to loopback. An AppContainer cannot create named pipes, so Kalzit creates the plugin's
   pipe and the plugin connects to it; Windows sets `TEMP`/`TMP` to the container's `AC\Temp`,
-  which Kalzit empties at every start and limits to the plugin. A Windows Filtering Platform
+  which Kalzit empties at every start and limits to the plugin. Files any local account may
+  read (`kalzit.toml` in ProgramData with `database.url`, a TLS key inheriting ProgramData's
+  entries) stay closed: they grant Users or Everyone, which remain restricting SIDs (System32
+  and the `NUL` device need them), but no AppContainer (tested). Kalzit still warns in the
+  plugin's status and log when such a file holds secrets (`host::exposed_secrets`). A Windows Filtering Platform
   rule was not chosen: adding filters needs administrator rights, which a Kalzit service account
   does not have.
 - Network, Linux: the seccomp filter lets `socket` make Unix sockets only (other families

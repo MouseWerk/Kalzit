@@ -12,7 +12,8 @@
 //! (`PR_SET_PDEATHSIG`). Network connections come from Kalzit's connector (`connector`).
 //!
 //! Windows: a restricted token (no privileges but "bypass traverse checking", Administrators
-//! deny-only, restricting SIDs Everyone, Users, `RESTRICTED`, the plugin's and the start's: the
+//! deny-only, restricting SIDs Everyone, Users, `RESTRICTED`, the plugin's and the start's; what
+//! any local account may read stays closed through the AppContainer check below): the
 //! plugin can open only what one of these may open, so not Kalzit's data directory, only its
 //! package to read and run and its run directory to write); an AppContainer of its own without
 //! capabilities (no network, not even loopback; the connector is its way out); a job object
@@ -789,7 +790,8 @@ mod windows {
     }
 
     /// A primary token like Kalzit's, without privileges (but bypass traverse checking), with
-    /// Administrators for deny only, restricted to Everyone, Users and `RESTRICTED`, at low
+    /// Administrators for deny only, restricted to Everyone, Users, `RESTRICTED`, the plugin's
+    /// and the start's SID, at low
     /// integrity, and a default DACL that only Kalzit's account, SYSTEM and a SID of this start
     /// pass. Not the logon
     /// session: Kalzit's own process grants it read access, and with it a plugin could read
@@ -809,8 +811,14 @@ mod windows {
         .map_err(os)?;
         let current = Owned(current);
         let disable = [Sid::parse("S-1-5-32-544")?, Sid::parse("S-1-5-114")?];
-        // `RESTRICTED` stays for the plugin's pipe instances; files grant the plugin's or the
-        // start's SID instead, so plugins do not reach each other's files.
+        // Everyone and Users stay: System32 grants Users (and AppContainers), the NUL device
+        // Everyone, and `ALL APPLICATION PACKAGES` cannot be a restricting SID of a token that
+        // becomes a lowbox token (the process creation fails). What any local account may read
+        // (`kalzit.toml` in ProgramData, a TLS key inheriting its entries) is closed by the
+        // AppContainer check instead: those files have no entry for AppContainers (tested).
+        // `RESTRICTED` is for what Windows grants restricted processes; the package and run
+        // directory grant the plugin's or the start's SID, so plugins do not reach each other's
+        // files.
         let restrict = [
             Sid::parse("S-1-1-0")?,
             Sid::parse("S-1-5-32-545")?,

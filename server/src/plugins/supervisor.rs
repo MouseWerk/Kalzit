@@ -95,6 +95,8 @@ pub struct Launch {
     pub own: Arc<OwnEndpoints>,
     /// Where refused connects are recorded (`None` in some tests).
     pub audit: Option<sqlx::AnyPool>,
+    /// Shown in the status: Kalzit's own files with secrets that every local account may read.
+    pub warnings: Arc<Vec<String>>,
 }
 
 /// What the plugin page shows about the process.
@@ -120,6 +122,9 @@ pub struct Status {
     /// The sandbox layers of the current or last process, and those this host lacks.
     pub sandbox: Vec<&'static str>,
     pub sandbox_missing: Vec<&'static str>,
+    /// Kalzit's own files with secrets that every local account may read (Windows).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -395,13 +400,14 @@ fn random_hex(bytes: usize) -> String {
 
 impl Supervisor {
     pub fn new(launch: Launch, options: Options) -> Arc<Self> {
+        let warnings = launch.warnings.as_ref().clone();
         Arc::new(Self {
             id: launch.manifest.id.clone(),
             launch,
             options,
             host_version: env!("CARGO_PKG_VERSION").to_string(),
             state: tokio::sync::Mutex::new(State::Idle),
-            status: Mutex::new(Status { state: "idle", ..Default::default() }),
+            status: Mutex::new(Status { state: "idle", warnings, ..Default::default() }),
             logs: Arc::default(),
             generation: AtomicU64::new(0),
             grants: Arc::default(),

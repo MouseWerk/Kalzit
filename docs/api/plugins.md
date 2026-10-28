@@ -362,6 +362,17 @@ as root (`plugin.root_refused`).
   directories (tested). Its default DACL grants only Kalzit's account, SYSTEM and the start's
   SID, so other plugins cannot open its process or objects (tested). Kalzit's pipes for the
   plugin grant Kalzit's account, the start's SID and the plugin's AppContainer, labelled low.
+  Everyone and Users stay restricting SIDs (System32 grants Users, the `NUL` device Everyone;
+  `ALL APPLICATION PACKAGES` cannot be one, Windows then refuses to start the process); what any
+  local account may read is closed by the AppContainer check: files such as `kalzit.toml` in
+  `%ProgramData%\Kalzit` or a TLS key inheriting ProgramData's entries have no entry for
+  AppContainers, so the plugin cannot read them (tested with a file readable by Users and
+  Everyone).
+- `process.warnings`: Kalzit's own files that hold secrets (`kalzit.toml` with a password,
+  secret, token or a URL with a password; the TLS key) and that Everyone, Users, Authenticated
+  Users or all AppContainers may read. Plugins cannot read them, but other local accounts can;
+  the warning is also logged when a plugin is enabled. Limit such files to SYSTEM,
+  Administrators and Kalzit's account.
 - `app_container`: the plugin runs in an AppContainer of its own (a profile named
   `kalzit.plugin.<hash of its id>`, removed with the plugin) without any capability; Windows
   combines it with the restricted token, so every access passes both checks. Its package and run

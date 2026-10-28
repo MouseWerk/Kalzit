@@ -98,6 +98,79 @@ fn settings_form(m: &Manifest) -> &'static [SettingField] {
     form
 }
 
+/// Whether a configuration text holds secrets: a value of a key named like a password, secret or
+/// token, or a URL with a password (such as `database.url`).
+#[cfg(any(windows, test))]
+fn holds_secrets(text: &str) -> bool {
+    fn walk(value: &toml::Value, key: &str) -> bool {
+        match value {
+            toml::Value::Table(t) => t.iter().any(|(k, v)| walk(v, &k.to_ascii_lowercase())),
+            toml::Value::Array(a) => a.iter().any(|v| walk(v, key)),
+            toml::Value::String(s) => {
+                (!s.is_empty() && ["password", "secret", "token"].iter().any(|n| key.contains(n)))
+                    || url::Url::parse(s).is_ok_and(|u| u.password().is_some())
+            }
+            _ => false,
+        }
+    }
+    match toml::from_str::<toml::Table>(text) {
+        Ok(table) => walk(&toml::Value::Table(table), ""),
+        // A file that does not parse is not one Kalzit runs with; judge it by its words.
+        Err(_) => ["password", "secret", "token"].iter().any(|n| text.to_ascii_lowercase().contains(n)),
+    }
+}
+
+/// Kalzit's own files that hold secrets (`kalzit.toml` with secrets in it, the TLS key) and that
+/// every local account may read (Windows: an entry for Everyone, Users, Authenticated Users or
+/// all AppContainers). Plugins cannot read them (their token has none of these SIDs and their
+/// AppContainer no entry), but other local accounts can; Kalzit warns when a plugin is enabled
+/// and shows it in the plugin's status. Empty on Linux, where Landlock keeps the plugin out.
+pub fn exposed_secrets(config: &crate::config::Config) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        const WIDE: &[(&str, &str)] = &[
+            ("S-1-1-0", "Everyone"),
+            ("S-1-5-32-545", "Users"),
+            ("S-1-5-11", "Authenticated Users"),
+            ("S-1-15-2-1", "ALL APPLICATION PACKAGES"),
+        ];
+        const READ: u32 = 0x1 | 0x8000_0000 | 0x1000_0000;
+        let mut files = Vec::new();
+        if let Some(path) = &config.config_file
+            && std::fs::read_to_string(path).is_ok_and(|t| holds_secrets(&t))
+        {
+            files.push(path.clone());
+        }
+        files.extend(config.tls.key_file.clone());
+        let mut out = Vec::new();
+        for path in files {
+            let Ok((_, dacl)) = crate::data_dir::acl::read(&path) else { continue };
+            let names: Vec<&str> = match dacl {
+                None => vec!["everyone (no access list)"],
+                Some(entries) => WIDE
+                    .iter()
+                    .filter(|(sid, _)| entries.iter().any(|e| e.sid == *sid && e.mask & READ != 0))
+                    .map(|(_, name)| *name)
+                    .collect(),
+            };
+            if !names.is_empty() {
+                out.push(format!(
+                    "{} holds secrets and {} may read it; plugins cannot, but other local accounts can: \
+                     limit it to SYSTEM, Administrators and the account Kalzit runs as",
+                    path.display(),
+                    names.join(", ")
+                ));
+            }
+        }
+        out
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = config;
+        Vec::new()
+    }
+}
+
 /// The texts of a plugin kind for the kind list: labels and help by field and language.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +197,8 @@ pub struct PluginHost {
     own: Arc<OwnEndpoints>,
     /// Kalzit's database, for the audit log of refused connects; set by `load`.
     db: OnceLock<sqlx::AnyPool>,
+    /// Kalzit's own files with secrets that every local account may read (`exposed_secrets`).
+    exposed: Arc<Vec<String>>,
 }
 
 impl PluginHost {
@@ -138,7 +213,14 @@ impl PluginHost {
             without_landlock: Arc::default(),
             own: Arc::default(),
             db: OnceLock::new(),
+            exposed: Arc::default(),
         }
+    }
+
+    /// The warnings of `exposed_secrets`, shown with every plugin and logged when one is enabled.
+    pub fn with_exposed_secrets(mut self, exposed: Vec<String>) -> Self {
+        self.exposed = Arc::new(exposed);
+        self
     }
 
     /// Kalzit's own listening addresses and database (`OwnEndpoints::from_config`).
@@ -254,6 +336,7 @@ impl PluginHost {
             allow_without_landlock: self.without_landlock.clone(),
             own: self.own.clone(),
             audit: self.db.get().cloned(),
+            warnings: self.exposed.clone(),
         };
         let options = self.options.read().unwrap_or_else(|e| e.into_inner()).clone();
         let supervisor = Supervisor::new(launch, options);
@@ -603,6 +686,9 @@ impl PluginHost {
         crate::db::commit(tx).await?;
         self.unregister(id, &state.datasources).await;
         if enabled {
+            for warning in self.exposed.iter() {
+                tracing::warn!(plugin = %id, "{warning}");
+            }
             self.reregister(state, id).await;
         }
         Ok(row)
@@ -886,5 +972,34 @@ fn clear_dir(dir: &Path) {
                 tracing::warn!("removing {}: {e}", path.display());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secrets_in_a_configuration_are_recognized() {
+        assert!(holds_secrets("[database]\nurl = \"postgres://kalzit:geheim@db/kalzit\"\n"));
+        assert!(holds_secrets("[mail]\nsmtp_password = \"x\"\n"));
+        assert!(!holds_secrets("[database]\nurl = \"postgres://db/kalzit\"\n[server]\nhttp_addr = \"0.0.0.0:3000\"\n"));
+        assert!(!holds_secrets("[mail]\nsmtp_password = \"\"\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn readable_files_with_secrets_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let me = crate::data_dir::acl::current_user().unwrap();
+        let file = dir.path().join("kalzit.toml");
+        std::fs::write(&file, "[database]\nurl = \"postgres://kalzit:geheim@db/kalzit\"\n").unwrap();
+        crate::data_dir::acl::restrict(&file, &format!("D:P(A;;FA;;;SY)(A;;FA;;;{me})(A;;0x1200a9;;;BU)")).unwrap();
+        let config = crate::config::Config { config_file: Some(file.clone()), ..Default::default() };
+        let found = exposed_secrets(&config);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("Users"), "{found:?}");
+        crate::data_dir::acl::restrict(&file, &format!("D:P(A;;FA;;;SY)(A;;FA;;;{me})")).unwrap();
+        assert!(exposed_secrets(&config).is_empty());
     }
 }

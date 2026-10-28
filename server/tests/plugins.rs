@@ -677,6 +677,24 @@ async fn the_sandbox_holds() {
         let db = t.dir.path().join("kalzit.db");
         let r = first(t.query(&ds, json!({ "do": "read", "path": db })).await);
         assert_eq!(r["ok"], false, "the plugin read Kalzit's database: {r} ({layers:?})");
+        // A configuration file that every local account may read, as `kalzit.toml` in
+        // ProgramData is: the plugin still cannot.
+        let config_dir = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        {
+            let me = kalzit::data_dir::acl::current_user().unwrap();
+            kalzit::data_dir::acl::restrict(
+                config_dir.path(),
+                &format!(
+                    "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{me})(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;WD)"
+                ),
+            )
+            .unwrap();
+        }
+        let config = config_dir.path().join("kalzit.toml");
+        std::fs::write(&config, "[database]\nurl = \"postgres://kalzit:geheim@db/kalzit\"\n").unwrap();
+        let r = first(t.query(&ds, json!({ "do": "read", "path": config })).await);
+        assert_eq!(r["ok"], false, "the plugin read a configuration file readable by Users: {r} ({layers:?})");
     } else {
         eprintln!("Landlock is not available on this host; layers: {layers:?}");
     }
