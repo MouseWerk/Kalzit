@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
+import { isComposingKey } from "../../../lib/ime";
 import { DASHBOARDS_KEY, fetchDashboards } from "../../dashboards/api";
 import "./chat.css";
 
@@ -57,7 +58,7 @@ export function ContextPicker({
           aria-controls={listId}
           onChange={(event) => setSearch(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
+            if (event.key === "Escape" && !isComposingKey(event)) {
               event.preventDefault();
               onClose();
             }
