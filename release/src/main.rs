@@ -274,6 +274,7 @@ fn summary(notes: &str) -> String {
         .lines()
         .skip_while(|l| l.trim().is_empty() || l.starts_with('#'))
         .take_while(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .map(str::trim)
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
