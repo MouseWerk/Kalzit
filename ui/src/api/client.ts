@@ -200,6 +200,10 @@ export async function request(
   if (body instanceof FormData) {
     // An upload: the browser sets the multipart type with its boundary.
     init.body = body;
+  } else if (body instanceof Blob) {
+    // A file sent as it is (a plugin package), with the type it was given.
+    headers["Content-Type"] = body.type === "" ? "application/octet-stream" : body.type;
+    init.body = body;
   } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);

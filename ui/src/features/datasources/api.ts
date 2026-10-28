@@ -63,6 +63,17 @@ export interface SettingSpec {
   options?: string[];
   /** What the server uses when the field is left out; the form starts with it. */
   default?: unknown;
+  /** A plugin field's label and help from its manifest, by language (`en`, maybe `de`). */
+  labels?: Record<string, string>;
+  help?: Record<string, string>;
+}
+
+/** What a plugin kind carries besides its form (docs/api/plugins.md, "Data sources of plugin kinds"). */
+export interface PluginKindInfo {
+  plugin: string;
+  version: string;
+  /** As the manifest names it: a neutral badge, not a verified identity. */
+  publisher?: string;
 }
 
 export interface DatasourceKind {
@@ -72,6 +83,8 @@ export interface DatasourceKind {
   /** Catalog key of the advice on the form: a read-only, least-privilege login. */
   hintKey: string;
   settings: SettingSpec[];
+  /** Set for a kind a plugin adds. */
+  plugin?: PluginKindInfo;
 }
 
 /**
@@ -323,17 +336,50 @@ function parseSetting(value: unknown): SettingSpec | null {
   return spec;
 }
 
+/** Texts by language, as a manifest gives them (`{ en, de }`). */
+function languageTexts(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const texts = Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+  return Object.keys(texts).length === 0 ? undefined : texts;
+}
+
 function parseKind(item: unknown): DatasourceKind | null {
   if (!isRecord(item) || typeof item.kind !== "string" || !Array.isArray(item.settings)) {
     return null;
   }
-  return {
+  const plugin = isRecord(item.plugin) ? item.plugin : undefined;
+  const settings = item.settings.map(parseSetting).filter((spec) => spec !== null);
+  if (plugin !== undefined) {
+    const labels = isRecord(plugin.labels) ? plugin.labels : {};
+    const help = isRecord(plugin.help) ? plugin.help : {};
+    for (const spec of settings) {
+      const label = languageTexts(labels[spec.name]);
+      const text = languageTexts(help[spec.name]);
+      if (label !== undefined) spec.labels = label;
+      if (text !== undefined) spec.help = text;
+    }
+  }
+  const kind: DatasourceKind = {
     kind: item.kind,
     name: typeof item.name === "string" ? item.name : item.kind,
     shapes: Array.isArray(item.shapes) ? (item.shapes as Shape[]) : ["frame"],
     hintKey: typeof item.hintKey === "string" ? item.hintKey : "",
-    settings: item.settings.map(parseSetting).filter((spec) => spec !== null),
+    settings,
   };
+  if (plugin !== undefined) {
+    kind.plugin = {
+      plugin: typeof plugin.plugin === "string" ? plugin.plugin : item.kind,
+      version: typeof plugin.version === "string" ? plugin.version : "",
+      ...(typeof plugin.publisher === "string" ? { publisher: plugin.publisher } : {}),
+    };
+  }
+  return kind;
 }
 
 function parsePage<T>(value: unknown, item: (v: unknown) => T | null, what: string): Page<T> {
@@ -720,11 +766,15 @@ export async function fetchDistribution(
   );
 }
 
+/** The kinds of an organization; plugin pages invalidate them when a plugin kind comes or goes. */
+export const KINDS_KEY = "datasource-kinds";
+
 export function kindsQuery(orgId: string) {
   return queryOptions({
-    queryKey: ["datasource-kinds", orgId],
+    queryKey: [KINDS_KEY, orgId],
     queryFn: ({ signal }) => fetchKinds(orgId, signal),
-    // The kinds are compiled into the server; they change only with an update.
+    // Built-in kinds change only with an update; plugin kinds when an administrator turns a
+    // plugin on or off, blocks it or removes it, which invalidates this list in their browser.
     staleTime: 10 * 60_000,
   });
 }

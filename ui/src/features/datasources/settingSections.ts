@@ -46,13 +46,25 @@ export function sectionOf(name: string): Section {
   return Object.hasOwn(SECTION_OF, name) ? (SECTION_OF[name] as Section) : "behavior";
 }
 
+/**
+ * The section of one field. A plugin's own field (one with a label from its manifest and a name
+ * this UI does not know) is part of the connection, or of the sign-in when it is a secret: the
+ * plugin's form is what its source needs, not options for later.
+ */
+function sectionOfSpec(spec: SettingSpec): Section {
+  if (spec.labels !== undefined && !Object.hasOwn(SECTION_OF, spec.name)) {
+    return spec.secret ? "auth" : "connection";
+  }
+  return sectionOf(spec.name);
+}
+
 /** The kind's settings per section, each in the kind's own order; empty sections are left out. */
 export function groupSettings(
   settings: readonly SettingSpec[],
 ): { section: Section; specs: SettingSpec[] }[] {
   return SECTIONS.map((section) => ({
     section,
-    specs: settings.filter((spec) => sectionOf(spec.name) === section),
+    specs: settings.filter((spec) => sectionOfSpec(spec) === section),
   })).filter((group) => group.specs.length > 0);
 }
 
@@ -131,6 +143,7 @@ export const KIND_PICKER_GROUPS = [
   "docsGraphs",
   "filesApis",
   "other",
+  "plugins",
 ] as const;
 export type KindPickerGroup = (typeof KIND_PICKER_GROUPS)[number];
 
@@ -148,6 +161,8 @@ export function pickerGroup(kind: string): KindPickerGroup {
     case "file":
     case "http":
       return "filesApis";
+    case "plugin":
+      return "plugins";
     default:
       return "other";
   }

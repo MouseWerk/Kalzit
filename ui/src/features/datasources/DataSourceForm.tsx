@@ -48,9 +48,31 @@ import "./datasources.css";
 
 const newRoute = getRouteApi("/_app/data-sources/new");
 
-/** Server-provided label keys are used when this UI knows them; otherwise the field name. */
-function settingLabel(t: Translate, spec: SettingSpec): string {
-  return Object.hasOwn(catalogs.en, spec.labelKey) ? t(spec.labelKey as MessageKey) : spec.name;
+/**
+ * Server-provided label keys are used when this UI knows them; a plugin field's label from its
+ * manifest in the UI's language (English when it has none); otherwise the field name.
+ */
+export function settingLabel(t: Translate, spec: SettingSpec, language: string): string {
+  if (Object.hasOwn(catalogs.en, spec.labelKey)) {
+    return t(spec.labelKey as MessageKey);
+  }
+  return spec.labels?.[language] ?? spec.labels?.en ?? spec.name;
+}
+
+/** A plugin field's help from its manifest, in the UI's language or English. */
+function settingHelp(spec: SettingSpec, language: string): string | undefined {
+  return spec.help?.[language] ?? spec.help?.en;
+}
+
+/** The line under a kind's name: its summary, or for a plugin kind who publishes it. */
+export function kindLine(t: Translate, kind: DatasourceKind): string | null {
+  if (kind.plugin !== undefined) {
+    return t("datasources.plugin.line", {
+      publisher: kind.plugin.publisher ?? t("datasources.plugin.noPublisher"),
+      version: kind.plugin.version,
+    });
+  }
+  return kindSummary(t, kind.kind);
 }
 
 /** The read-only login advice of the kind (`hintKey`), or the general one for unknown keys. */
@@ -200,7 +222,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
   const kind = kinds.data.find((k) => k.kind === chosen);
   const needle = search.trim().toLocaleLowerCase(language);
   const matches = kinds.data.filter((option) =>
-    [option.name, option.kind, kindSummary(t, option.kind) ?? ""].some((text) =>
+    [option.name, option.kind, kindLine(t, option) ?? ""].some((text) =>
       text.toLocaleLowerCase(language).includes(needle),
     ),
   );
@@ -246,6 +268,12 @@ function NewDataSource({ orgId }: { orgId: string }) {
             <div key={group} className="ds-kinds__group">
               <h3 className="ds-kinds__group-title" id={`${pickerId}-${group}`}>
                 {t(`datasources.new.group.${group}`)}
+                {group === "plugins" ? (
+                  <span className="ds-kinds__group-note">
+                    {" "}
+                    {t("datasources.new.group.pluginsNote")}
+                  </span>
+                ) : null}
               </h3>
               <ul className="ds-kinds__list" aria-labelledby={`${pickerId}-${group}`}>
                 {options.map((option) => (
@@ -257,7 +285,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
                       className="ds-kinds__link"
                       aria-describedby={`${pickerId}-${option.kind}`}
                     >
-                      <KindMark kind={option.kind} small />
+                      <KindMark kind={option.kind} small name={option.name} />
                       <span className="ds-kinds__name">{option.name}</span>
                       {option.kind === chosen ? (
                         <span className="ds-kinds__check" aria-hidden="true">
@@ -266,7 +294,11 @@ function NewDataSource({ orgId }: { orgId: string }) {
                       ) : null}
                     </Link>
                     <span className="ds-kinds__summary" id={`${pickerId}-${option.kind}`}>
-                      {kindSummary(t, option.kind)}
+                      {option.plugin === undefined ? (
+                        kindSummary(t, option.kind)
+                      ) : (
+                        <span className="ds-badge">{kindLine(t, option)}</span>
+                      )}
                     </span>
                   </li>
                 ))}
@@ -297,10 +329,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
               error={create.error}
               submitLabel={t("datasources.form.create")}
               title={t("datasources.new.connect", { kind: kind.name })}
-              subtitle={[
-                t("datasources.new.step", { step: 2, count: 3 }),
-                kindSummary(t, kind.kind),
-              ]
+              subtitle={[t("datasources.new.step", { step: 2, count: 3 }), kindLine(t, kind)]
                 .filter(Boolean)
                 .join(" · ")}
               onSubmit={(output) => create.mutate(output)}
@@ -837,7 +866,7 @@ export function SettingsForm({
       }}
     >
       <div className="ds-card__head">
-        <KindMark kind={kind.kind} />
+        <KindMark kind={kind.kind} name={kind.name} />
         <div className="ds-card__title">
           <h2>{title ?? kind.name}</h2>
           {subtitle === undefined ? null : <p className="ds-card__sub">{subtitle}</p>}
@@ -1012,12 +1041,12 @@ function FormSection({
   locked?: boolean;
   children: ReactNode;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const id = useId();
   const shown = summary.slice(0, 3);
   const label = (name: string) => {
     const spec = specs.find((candidate) => candidate.name === name);
-    return spec === undefined ? name : settingLabel(t, spec);
+    return spec === undefined ? name : settingLabel(t, spec, language);
   };
   return (
     <section className="ds-section" aria-labelledby={`${id}-title`}>
@@ -1219,10 +1248,11 @@ function SettingField({
   onChange: (value: string | boolean) => void;
   disabled?: boolean;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const id = useId();
   const errorId = `${id}-error`;
-  const label = settingLabel(t, spec);
+  const label = settingLabel(t, spec, language);
+  const help = settingHelp(spec, language);
   const errorText =
     error === undefined ? null : (
       <p className="field__error" id={errorId}>
@@ -1305,6 +1335,7 @@ function SettingField({
       onValueChange={onChange}
       error={error}
       mono={spec.name === "path" || spec.name === "url"}
+      hint={help}
       inputMode={spec.type === "number" ? "numeric" : undefined}
       autoComplete="off"
       spellCheck={false}
@@ -1326,10 +1357,10 @@ function SecretField({
   error: string | undefined;
   onChange: (state: SecretState) => void;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const id = useId();
   const statusId = `${id}-status`;
-  const label = settingLabel(t, spec);
+  const label = settingLabel(t, spec, language);
 
   if (state.mode !== "set") {
     return (

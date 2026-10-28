@@ -28,7 +28,8 @@ export type EditorFamily =
   | "gsql"
   | "search"
   | "file"
-  | "http";
+  | "http"
+  | "plugin";
 
 export interface SqlQuery {
   sql: string;
@@ -54,6 +55,11 @@ export type GsqlQuery =
   | { installed: string; params?: Record<string, unknown> };
 
 export function familyOf(kind: string): EditorFamily | undefined {
+  // A plugin's kind is its id, a reverse domain name; built-in kinds never have a dot. Its query
+  // form is the plugin's own, edited as JSON.
+  if (kind.includes(".")) {
+    return "plugin";
+  }
   if ((SQL_KINDS as readonly string[]).includes(kind)) {
     return "sql";
   }
@@ -128,6 +134,7 @@ export function emptyQuery(kind: string): unknown {
       return { lucene: "" };
     case "file":
     case "http":
+    case "plugin":
       return {};
     default:
       return { sql: "" };
@@ -197,6 +204,10 @@ export function hasQuery(query: unknown, kind?: string): boolean {
   }
   if (family === "file") {
     // Any other form is replaced by `{}` before it is sent (normalizeQuery).
+    return true;
+  }
+  if (family === "plugin") {
+    // The plugin decides what its query needs; `{}` may well be a whole query.
     return true;
   }
   if (family === "http") {
