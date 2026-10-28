@@ -539,6 +539,8 @@ function AskChat({
                 </span>
               </>
             )}
+            <span className="ask-spacer" />
+            {counter === undefined ? null : <span className="ask-result__note">{counter}</span>}
           </div>
           {contextPicking ? (
             <ContextPicker
@@ -594,7 +596,6 @@ function AskChat({
               {t("ai.chat.enterHint")}
             </span>
             <span className="ask-spacer" />
-            {counter === undefined ? null : <span className="ask-result__note">{counter}</span>}
             <span className="ask-result__note">{t("ai.chat.readOnlyQueries")}</span>
             <button
               type="submit"
