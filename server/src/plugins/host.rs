@@ -724,7 +724,7 @@ impl PluginHost {
         if let Some(p) = &row.pending {
             remove_dir(&self.dir("packages").join(&p.dir));
         }
-        super::sandbox::remove_app_container(id);
+        super::sandbox::remove_app_container(&self.dir("run"), id);
         Ok(())
     }
 

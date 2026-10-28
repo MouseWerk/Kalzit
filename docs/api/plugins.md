@@ -374,7 +374,8 @@ as root (`plugin.root_refused`).
   the warning is also logged when a plugin is enabled. Limit such files to SYSTEM,
   Administrators and Kalzit's account.
 - `app_container`: the plugin runs in an AppContainer of its own (a profile named
-  `kalzit.plugin.<hash of its id>`, removed with the plugin) without any capability; Windows
+  `kalzit.plugin.<hash of the installation's plugin directory and its id>`, removed with the
+  plugin) without any capability; Windows
   combines it with the restricted token, so every access passes both checks. Its package and run
   directory also grant `ALL APPLICATION PACKAGES`; the plugin's and the start's SIDs still decide
   which plugin gets in.

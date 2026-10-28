@@ -649,7 +649,8 @@ while Kalzit runs as root.
   and `setpgid`/`setsid` are refused after that. Without Landlock (unless allowed) nothing
   starts: the host checks before spawning, and the child fails the spawn when Landlock does not
   take.
-- Network, Windows: an AppContainer of its own per plugin (a profile `kalzit.plugin.<hash>`,
+- Network, Windows: an AppContainer of its own per plugin (a profile `kalzit.plugin.<hash>` of
+  the installation and the plugin id, so two installations never share one,
   removed with the plugin) without any capability and without a loopback exemption, combined
   with the restricted token (Windows makes the token a lowbox token; every access passes the
   normal, the restricting-SID and the AppContainer check). It opens no network connection, not

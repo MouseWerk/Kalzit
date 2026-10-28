@@ -554,7 +554,7 @@ impl Supervisor {
         if require_landlock && !super::sandbox::landlock_available() {
             return Err(landlock_missing());
         }
-        let app_container_sid = super::sandbox::app_container(&self.id).map_err(|e| {
+        let app_container_sid = super::sandbox::app_container(&self.launch.run_root, &self.id).map_err(|e| {
             HostError::new("plugin.start_failed", format!("the plugin's AppContainer cannot be prepared: {e}"))
                 .with("detail", e)
         })?;

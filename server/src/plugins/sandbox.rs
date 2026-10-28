@@ -30,13 +30,13 @@ pub use windows::{app_container, label_low, remove_app_container, spawn};
 
 /// The AppContainer of a plugin's processes (Windows only; empty elsewhere).
 #[cfg(not(windows))]
-pub fn app_container(_id: &str) -> std::io::Result<String> {
+pub fn app_container(_installation: &std::path::Path, _id: &str) -> std::io::Result<String> {
     Ok(String::new())
 }
 
 /// Removes the AppContainer profile of a removed plugin (Windows only).
 #[cfg(not(windows))]
-pub fn remove_app_container(_id: &str) {}
+pub fn remove_app_container(_installation: &std::path::Path, _id: &str) {}
 
 /// Whether Kalzit runs as root (Linux): plugins are refused then, as a sandboxed process of root
 /// would still be root.
@@ -875,10 +875,12 @@ mod windows {
     /// The AppContainer profile functions fail when two threads use them at once.
     static PROFILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// The AppContainer name of a plugin: from its id, within the 64 characters Windows allows.
-    fn container_name(id: &str) -> HSTRING {
+    /// The AppContainer name of a plugin of this installation (`installation`: its plugins'
+    /// run directory, so two installations under one account never share a container): from
+    /// both, within the 64 characters Windows allows.
+    fn container_name(installation: &std::path::Path, id: &str) -> HSTRING {
         use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(format!("kalzit-plugin\n{id}").as_bytes());
+        let digest = Sha256::digest(format!("kalzit-plugin\n{}\n{id}", installation.display()).as_bytes());
         HSTRING::from(format!("kalzit.plugin.{}", &hex::encode(digest)[..32]))
     }
 
@@ -886,8 +888,8 @@ mod windows {
     /// run in it without any capability: no network of their own, no loopback. Windows sets
     /// `TEMP` and `TMP` of an AppContainer process to the profile's `AC\Temp`; that folder is
     /// emptied and given a DACL for Kalzit's account, the plugin's SID and its AppContainer only.
-    pub fn app_container(id: &str) -> std::io::Result<String> {
-        let sid = app_container_sid(id)?;
+    pub fn app_container(installation: &std::path::Path, id: &str) -> std::io::Result<String> {
+        let sid = app_container_sid(installation, id)?;
         // SAFETY: the SID string lives for the call; the path is freed with CoTaskMemFree.
         let folder = unsafe {
             let path = GetAppContainerFolderPath(&HSTRING::from(sid.as_str())).map_err(os)?;
@@ -912,11 +914,11 @@ mod windows {
         Ok(sid)
     }
 
-    fn app_container_sid(id: &str) -> std::io::Result<String> {
+    fn app_container_sid(installation: &std::path::Path, id: &str) -> std::io::Result<String> {
         /// `HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)`.
         const ALREADY_EXISTS: i32 = 0x8007_00B7_u32 as i32;
         let _one = PROFILES.lock().unwrap_or_else(|e| e.into_inner());
-        let name = container_name(id);
+        let name = container_name(installation, id);
         // SAFETY: the strings live for the calls; the SID returned is freed with FreeSid below.
         let sid = unsafe {
             match CreateAppContainerProfile(&name, &name, &HSTRING::from("A Kalzit data source plugin"), None) {
@@ -943,10 +945,10 @@ mod windows {
     }
 
     /// Removes the AppContainer profile of a removed plugin; a failure is logged.
-    pub fn remove_app_container(id: &str) {
+    pub fn remove_app_container(installation: &std::path::Path, id: &str) {
         let _one = PROFILES.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: the name lives for the call.
-        if let Err(e) = unsafe { DeleteAppContainerProfile(&container_name(id)) } {
+        if let Err(e) = unsafe { DeleteAppContainerProfile(&container_name(installation, id)) } {
             tracing::warn!(plugin = %id, "the plugin's AppContainer profile could not be removed: {e}");
         }
     }
