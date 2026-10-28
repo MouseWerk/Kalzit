@@ -294,8 +294,10 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   Datenquellen-Typen und In-Process-Adapter für die eingebauten Quellen sind fertig, ebenso der
   Host für Datenquellen-Plugins (Installation aus einer Datei mit allen Prüfungen, Vertrauen,
   Freigabe der Rechte, Prozesse mit Überwachung, Neustart und Sandbox, Admin-API in
-  `docs/api/plugins.md`). Panel-Nachrichten-API, Katalog, Kalzits Netzwerk-Connector (bis dahin
-  ist das Netzwerk der Plugins nicht eingeschränkt) und die Oberfläche folgen. Die Oberfläche folgt dem
+  `docs/api/plugins.md`). Panel-Nachrichten-API und Panel-Host sind fertig: Panel-Plugins
+  erscheinen in der Visualisierungsauswahl, laufen im abgeschotteten iframe ohne Netz und ohne
+  Zugriff auf Kalzit, ihr Optionseditor entsteht aus dem Manifest. Katalog und Kalzits
+  Netzwerk-Connector (bis dahin ist das Netzwerk der Plugins nicht eingeschränkt) folgen. Die Oberfläche folgt dem
   Board `docs/design/blueprint/Plugins.dc.html`.
 
 ## 8. Windows- und Linux-Server

@@ -17,7 +17,7 @@ written as the English interface shows them, with the German label in parenthese
 | [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, graph steps, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
-| [Plugins](plugins.md) | Installing data source plugins from a file, the checks and permissions, a plugin's status, log and sandbox, trusted keys, unsigned plugins, blocking per organization |
+| [Plugins](plugins.md) | Installing data source plugins from a file, the checks and permissions, a plugin's status, log and sandbox, trusted keys, unsigned plugins, blocking per organization, panels of plugins |
 | [AI](ai.md) | Turning AI on with a provider, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 

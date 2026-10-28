@@ -250,9 +250,81 @@ sign a hand-over with the old key (docs/api/plugins.md, "Hand-overs").
 
 ## Panel plugins
 
-A panel plugin is one ES module (`[panel] path`, `api = 1`) that runs in a sandboxed iframe
-without network and talks to Kalzit with `postMessage`: data in, events out. The message API is
-docs/api/plugins.md, "Panel message API", with TypeScript types in
+A panel plugin is one ES module (`[panel] path`, `api = 1`) that runs in the browser, in a
+sandboxed iframe without network, and talks to Kalzit with `postMessage`: data in, events out.
+The message API is docs/api/plugins.md, "Panel message API", with TypeScript types in
 `plugin-api/panel/v1/kalzit-panel.d.ts`; `examples/plugins/panel-kpi` is a complete panel.
-Package it the same way (`--file panel.js=...`). Kalzit does not host panel plugins yet; the API
-and the packaging are ready for them.
+
+### The manifest
+
+```toml
+manifest = 1
+id = "dev.example.sankey"
+name = "Sankey"
+version = "1.0.0"
+kind = "panel"
+min_kalzit = "0.4.0"
+shapes = ["graph", "frame"]        # what it shows; the picker offers it first for these
+publisher = "Example GmbH"
+
+[panel]
+path = "dist/panel.js"
+api = 1
+
+[[panel.options]]                  # one per option; Kalzit builds the options editor from them
+name = "nodeField"
+label = { en = "Node field", de = "Knotenfeld" }
+type = "string"                    # string, text, number, integer, bool, select
+help = { en = "The field that names a node." }
+
+[[panel.options]]
+name = "align"
+label = { en = "Alignment", de = "Ausrichtung" }
+type = "select"
+choices = ["left", "justify"]
+default = "justify"
+
+[[panel.options]]
+name = "padding"
+label = { en = "Node padding" }
+type = "integer"
+min = 0
+max = 40
+default = 8
+```
+
+The panel's options are its JSON options, stored with the dashboard. Kalzit hands the panel only
+declared options whose values fit (a `string` at most 1024 characters, a `text` at most 4096,
+numbers within `min` and `max`, a `select` one of its `choices`), with each option's `default`
+where the dashboard has none.
+
+### What the bundle may do
+
+- Everything it needs is inside the one file: no requests (`connect-src 'none'`), no other
+  scripts, no forms, no storage of Kalzit's, no cookies; images and fonts only as `data:` URLs.
+  Styles set at run time (a `<style>` element, `element.style`) work.
+- The bundle must not contain `</script` or `<!--`, also not in a string (write `<\/script`);
+  Kalzit serves it inside the frame's HTML and refuses such a bundle at install
+  (`plugin.bundle_invalid`). At most 8 MiB.
+- Accept messages only from `window.parent`; send `ready` once you listen. Kalzit answers with
+  `init` (options, size, theme tokens, language, time zone, title, `mode`) and `data` (the
+  panel's query results in their native shapes, after its steps).
+- Send only what Kalzit acts on: `resize` (a height of 16 to 4000 pixels; the panel scrolls when
+  it is taller than its place), `setOptions` (only when `init.mode` is `"edit"`, the whole
+  options object, checked against `[[panel.options]]`), `link` (an `https`/`http` address or a
+  path in Kalzit; the viewer confirms before it opens) and `log` (at most 5 lines a second, shown
+  in the browser console with the plugin id). `click`, `select`, `range` and `setVariable` are
+  part of version 1 but not acted on yet.
+- Draw with the design tokens from `init.theme.tokens` (`--text`, `--bg-raised`, `--chart-1`,
+  ...) and follow `theme` messages, so the panel fits every theme. Set `color-scheme` from
+  `theme.scheme`.
+- Never navigate the frame (`location = ...`): Kalzit stops a panel whose frame loads a second
+  document.
+- Kalzit stops waiting after 10 seconds without `ready` and shows an error with "Try again".
+
+### Package and try it
+
+Package it the same way as a data source (`--file panel.js=...`), sign it, and install it under
+Settings > Plugins; approve and enable it. It then appears under Visualization in the panel
+editor with a "Plugin" badge and the publisher. The browser console shows what Kalzit dropped
+and why (`[panel <id>] dropped an event (panel.field_invalid): ...`).

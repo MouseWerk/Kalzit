@@ -14,7 +14,11 @@
 // - Send events with `window.parent.postMessage(event, "*")`. Kalzit checks each one and drops
 //   what does not fit: at most 16 KiB of JSON, at most 20 events per second, the limits below.
 //
-// Kalzit checks the events with `kalzit_plugin_api::panel::parse_event`; the Rust constants
+// - Kalzit acts on `ready`, `resize`, `setOptions` (in edit mode), `link` (after the viewer
+//   confirms) and `log`; `click`, `select`, `range` and `setVariable` are checked but not acted
+//   on yet.
+//
+// Kalzit checks the events as `kalzit_plugin_api::panel::parse_event` does; the Rust constants
 // there are the limits.
 
 export type ApiVersion = 1;
@@ -204,8 +208,8 @@ export interface LinkEvent extends Envelope {
 }
 
 /**
- * A line for the panel's log, shown in the browser console and the panel inspector: at most
- * 1024 characters without control characters, at most 5 lines per second.
+ * A line for the panel's log, shown in the browser console with the plugin id: at most 1024
+ * characters without control characters, at most 5 lines per second.
  */
 export interface LogEvent extends Envelope {
   type: "log";

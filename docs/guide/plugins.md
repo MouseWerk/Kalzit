@@ -1,7 +1,9 @@
 # Plugins
 
-Plugins add data source kinds to Kalzit. Each plugin runs as a process of its own in a sandbox of
-the operating system and is loaded only when its signature fits a trusted key: Kalzit's own key or
+Plugins add data source kinds and panel types to Kalzit. A data source plugin runs as a process
+of its own in a sandbox of the operating system; a panel plugin runs in your browser, in a frame
+sealed off from Kalzit ("Panels of plugins" below). A plugin is loaded only when its signature
+fits a trusted key: Kalzit's own key or
 a publisher key a server admin added. Installing, trusting and approving plugins is for server
 admins; organizations can block a plugin for themselves. API: [plugins](../api/plugins.md).
 
@@ -134,6 +136,24 @@ a source of a plugin kind carries a neutral badge **Plugin · *publisher***.
 
 In Explore and the panel editor, a source of a plugin kind takes its query as one JSON object, in
 the form the plugin describes (see its documentation); Kalzit sends it as written.
+
+## Panels of plugins
+
+An installed, approved and enabled panel plugin is a visualization like the built-in ones: in the
+panel editor under **Visualization**, after the built-in types, with a **Plugin** badge and the
+publisher its manifest names. Its options appear under **Visualization options**, made from the
+plugin's manifest.
+
+The panel draws the results of the panel's own queries, nothing else: it runs in a sandboxed
+frame without network, cannot read your session, cookies or other panels, and cannot call
+Kalzit. It may ask for more height, change its options while you edit the panel, and ask to open a
+link: Kalzit then shows the address and opens it only when you choose **Open**. A panel that does
+not start within 10 seconds, or tries to leave its frame, shows an error with **Try again**. When
+its plugin is turned off, removed or blocked for your organization, the panel says so instead.
+
+Viewers see a plugin's panels on the dashboards they may read; adding one needs the right to edit
+the dashboard. The browser's developer console shows a plugin's log lines and what Kalzit
+refused from it, for the plugin's author.
 
 ## Sandbox and network
 
