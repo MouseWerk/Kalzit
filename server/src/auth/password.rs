@@ -7,6 +7,8 @@ use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 
+use crate::error::{ApiError, ApiResult};
+
 /// NIST SP 800-63B allows 8; 12 is the floor for accounts that can administer a server.
 pub const MIN_PASSWORD_CHARS: usize = 12;
 /// Bounds the hashing cost a hostile client can cause with one request.
@@ -45,11 +47,15 @@ pub struct Lane {
     max_waiting: usize,
 }
 
-/// For everyone: hashing, and the checks of sign-ins from browsers the account does not know.
+/// For the checks of sign-ins from browsers the account does not know.
 pub static SHARED: LazyLock<Lane> = LazyLock::new(|| Lane::new(cpus()));
 /// For the checks of known devices (`auth::device`) and of signed-in users, so a flood of
 /// guesses that fills the shared lane cannot keep the owner out.
 pub static TRUSTED: LazyLock<Lane> = LazyLock::new(|| Lane::new((cpus() / 4).max(1)));
+/// For hashing new passwords (setup, an admin's new account or reset, a user's change): apart
+/// from both lanes of checks, so neither a flood of sign-in guesses delays them nor many of
+/// them keep known devices out.
+pub static HASHING: LazyLock<Lane> = LazyLock::new(|| Lane::new((cpus() / 4).max(1)));
 
 /// Counts a waiter until dropped (also when the request is cancelled while waiting).
 struct Waiting<'a>(&'a AtomicUsize);
@@ -80,11 +86,24 @@ impl Lane {
     }
 }
 
-/// Hashes a new password on the shared lane; it waits for its turn however many wait (only
-/// admins, signed-in users and setup hash).
-pub async fn hash(password: String) -> Result<String, String> {
-    let _turn = SHARED.turns.acquire().await.map_err(|e| e.to_string())?;
-    tokio::task::spawn_blocking(move || hash_blocking(&password)).await.map_err(|e| e.to_string())?
+/// Hashes a new password on its own lane (`HASHING`). Only privileged requests hash (setup with
+/// its code, admins, signed-in users); when too many wait already it answers `429 rate_limited`
+/// at once instead of queueing without end.
+pub async fn hash(password: String) -> ApiResult<String> {
+    hash_on(password, &HASHING).await
+}
+
+async fn hash_on(password: String, lane: &Lane) -> ApiResult<String> {
+    let Some(_turn) = lane.turn().await else {
+        return Err(ApiError::rate_limited(
+            "too many passwords are being set at the moment, try again shortly",
+            std::time::Duration::from_secs(1),
+        ));
+    };
+    tokio::task::spawn_blocking(move || hash_blocking(&password))
+        .await
+        .map_err(|e| ApiError::internal("hashing password", e))?
+        .map_err(|e| ApiError::internal("hashing password", e))
 }
 
 /// Whether `password` matches `stored`, checked on `lane`; `None` when the lane is too busy to
@@ -128,6 +147,50 @@ mod tests {
     #[tokio::test]
     async fn unknown_user_never_verifies() {
         assert_eq!(verify("anything".into(), None, &SHARED).await, Some(false));
+    }
+
+    /// Lanes full of sign-in checks, of unknown and of known browsers, do not hold up a new
+    /// password's hash, and hashing has threads of its own, so it cannot hold up those checks.
+    /// Checked on lanes of the test's own, so other tests never queue behind lanes held here.
+    #[tokio::test]
+    async fn hashing_and_checking_do_not_wait_for_each_other() {
+        let (shared, trusted, hashing) = (Lane::new(2), Lane::new(1), Lane::new(1));
+        let held = (shared.turns.acquire_many(2).await.unwrap(), trusted.turns.acquire().await.unwrap());
+        let hashed =
+            tokio::time::timeout(std::time::Duration::from_secs(60), hash_on("neues Passwort 2026".into(), &hashing))
+                .await;
+        drop(held);
+        let h = hashed.expect("hashing waited for a lane of checks").unwrap();
+        assert!(h.starts_with("$argon2id$"));
+
+        let held = hashing.turns.acquire().await.unwrap();
+        let checked = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            verify("neues Passwort 2026".into(), Some(h), &trusted),
+        )
+        .await;
+        drop(held);
+        assert_eq!(checked.expect("a check waited for hashing"), Some(true));
+    }
+
+    /// Hashing waits only so long a queue; beyond it the request is refused at once.
+    #[tokio::test]
+    async fn a_full_hashing_lane_refuses_at_once() {
+        let lane = Lane::new(1);
+        let busy = lane.turns.acquire().await.unwrap();
+        let mut waiting = Vec::new();
+        for _ in 0..WAITING_PER_CPU {
+            let lane = &lane;
+            waiting.push(Box::pin(async move { lane.turn().await.is_some() }));
+        }
+        for w in &mut waiting {
+            assert!(futures_util::poll!(w.as_mut()).is_pending());
+        }
+        let refused = hash_on("neues Passwort 2026".into(), &lane).await.unwrap_err();
+        assert_eq!(refused.code, "rate_limited");
+        drop(waiting);
+        drop(busy);
+        assert!(hash_on("neues Passwort 2026".into(), &lane).await.is_ok());
     }
 
     /// Beyond its waiters a lane refuses at once instead of queueing without end.

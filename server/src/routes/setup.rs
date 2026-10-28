@@ -408,7 +408,7 @@ pub async fn complete(
         setup_setting("appearance.default_theme", Scope::Server, req.theme.as_deref(), "theme")?,
     ];
     let org_time_zone = setup_setting("appearance.time_zone", Scope::Org, req.time_zone.as_deref(), "timeZone")?;
-    let hash = password::hash(req.password).await.map_err(|e| ApiError::internal("hashing password", e))?;
+    let hash = password::hash(req.password).await?;
 
     let org_id = new_id();
     let user_id = new_id();

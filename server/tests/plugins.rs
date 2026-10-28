@@ -311,6 +311,72 @@ impl TestApp {
         r.body
     }
 
+    async fn install_confirmed(&self, p: &Pkg<'_>) -> Reply {
+        let path = "/api/admin/plugins?confirmPublisherChange=true";
+        self.raw(Method::POST, path, Body::from(package(p)), "application/zip").await
+    }
+
+    async fn allow_unsigned(&self) {
+        let r = self.send(Method::PATCH, "/admin/plugin-host", Some(json!({ "allowUnsigned": true }))).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+
+    /// The stored secrets of every data source of the test plugin's kind.
+    async fn secrets_of_kind(&self) -> i64 {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM datasource_secrets s JOIN datasources d ON d.id = s.datasource_id WHERE d.kind = $1",
+        )
+        .bind(ID)
+        .fetch_one(&self.state.db)
+        .await
+        .unwrap();
+        n
+    }
+
+    /// A source of the kind in another organization and one in the trash, each with a secret.
+    async fn foreign_sources(&self) -> (String, String) {
+        let db = &self.state.db;
+        sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('org-other', 'Andere', 0)")
+            .execute(db)
+            .await
+            .unwrap();
+        let ids = ("ds-other-org".to_string(), "ds-trashed".to_string());
+        for (id, org, deleted) in [(&ids.0, "org-other", None), (&ids.1, self.org.as_str(), Some(1_i64))] {
+            sqlx::query(
+                "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at, deleted_at) \
+                 VALUES ($1, $2, $1, $3, '{}', 0, 0, $4)",
+            )
+            .bind(id)
+            .bind(org)
+            .bind(ID)
+            .bind(deleted)
+            .execute(db)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO datasource_secrets (datasource_id, field, key_id, nonce, ciphertext) \
+                 VALUES ($1, 'password', 'k', 'n', 'c')",
+            )
+            .bind(id)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+        ids
+    }
+
+    /// The summary of the one `plugins.publisher_changed` entry.
+    async fn publisher_changed(&self) -> Value {
+        let (summary,): (String,) = sqlx::query_as(
+            "SELECT summary FROM audit_events WHERE action = 'plugins.publisher_changed' AND resource_id = $1",
+        )
+        .bind(ID)
+        .fetch_one(&self.state.db)
+        .await
+        .unwrap();
+        serde_json::from_str(&summary).unwrap()
+    }
+
     async fn audit_actions(&self) -> Vec<String> {
         let rows: Vec<(String,)> =
             sqlx::query_as("SELECT action FROM audit_events WHERE action LIKE 'plugins.%' ORDER BY created_at, id")
@@ -552,6 +618,120 @@ async fn a_plugin_serves_its_kind_within_the_limits_and_organizations_can_block_
     for action in ["plugins.blocked", "plugins.unblocked", "plugins.disabled", "plugins.removed"] {
         assert!(actions.iter().any(|a| a == action), "{action} is missing from {actions:?}");
     }
+    t.finish().await;
+}
+
+/// A removed plugin leaves its key behind: installed again, its id is checked like an update.
+/// Another key with data sources of the kind left needs the administrator's confirmation, and
+/// then their stored secrets are cleared and the change is audited; the same key just works.
+#[tokio::test]
+async fn a_removed_plugin_id_stays_bound_to_its_key() {
+    let t = test_app().await;
+    let (publisher, other) = (key(11), key(12));
+    t.trust(&publisher).await;
+    t.trust(&other).await;
+    t.ready(&Pkg { key: Some(&publisher), ..Default::default() }).await;
+    let ds = t.datasource(ID, 3).await;
+    // A source of another organization and one in the trash: their secrets count too.
+    let elsewhere = t.foreign_sources().await;
+    assert_eq!(t.secrets_of_kind().await, 3);
+    // Its connection is cached once it has run a query.
+    assert!(t.query(&ds, json!({ "do": "frame" })).await["result"].is_object());
+    let (app, path) = (&t, format!("/admin/plugins/{ID}"));
+    let remove = || app.send(Method::DELETE, &path, None);
+    assert_eq!(remove().await.status, StatusCode::NO_CONTENT);
+
+    // Another key is refused without confirmation; the secrets stay.
+    let r = t.install(&Pkg { version: "1.1.0", key: Some(&other), ..Default::default() }).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.publisher_changed"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["datasources"], "3", "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["removedVersion"], "1.0.0", "{}", r.body);
+    assert_eq!(
+        r.body["error"]["params"]["previousKeyId"],
+        kalzit_plugin_api::signing::key_id(&publisher.verifying_key()),
+        "{}",
+        r.body
+    );
+    assert_eq!(t.secrets_of_kind().await, 3);
+    // So is an unsigned package, with unsigned plugins allowed.
+    t.allow_unsigned().await;
+    let r = t.install(&Pkg { version: "1.1.0", ..Default::default() }).await;
+    assert_eq!(r.reason(), "plugin.publisher_changed", "{}", r.body);
+
+    // The same key installs again, an older version too, and the secrets stay.
+    let r = t.install(&Pkg { version: "0.9.0", key: Some(&publisher), ..Default::default() }).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(t.secrets_of_kind().await, 3);
+    assert_eq!(remove().await.status, StatusCode::NO_CONTENT);
+    assert!(t.state.datasources.cached_connection(&ds).is_some(), "the old connection is still cached");
+
+    // Confirmed: installed, the secrets of every source of the kind cleared (other
+    // organization and trash included), the cached connection dropped, the change audited.
+    let r = t.install_confirmed(&Pkg { version: "1.1.0", key: Some(&other), ..Default::default() }).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["keyId"], kalzit_plugin_api::signing::key_id(&other.verifying_key()), "{}", r.body);
+    assert_eq!(t.secrets_of_kind().await, 0);
+    assert!(t.state.datasources.cached_connection(&ds).is_none(), "the cached connection is dropped");
+    let summary = t.publisher_changed().await;
+    let mut expected = vec![ds.clone(), elsewhere.0, elsewhere.1];
+    expected.sort();
+    assert_eq!(summary["datasources"], json!(expected), "{summary}");
+    assert_eq!(summary["secretsCleared"], 3, "{summary}");
+    assert_eq!(summary["fromKeyId"], kalzit_plugin_api::signing::key_id(&publisher.verifying_key()));
+
+    // From now on the id is bound to the new key: the former one is an update with another key.
+    let r = t.install(&Pkg { version: "1.2.0", key: Some(&publisher), ..Default::default() }).await;
+    assert_eq!(r.reason(), "plugin.key_changed", "{}", r.body);
+    t.finish().await;
+}
+
+/// A removed unsigned plugin vouches for nobody: with data sources left, installing its id again
+/// needs the confirmation, unsigned or signed, and clears the secrets.
+#[tokio::test]
+async fn a_removed_unsigned_plugin_keeps_no_secrets_for_its_successor() {
+    let t = test_app().await;
+    let publisher = key(13);
+    t.trust(&publisher).await;
+    t.allow_unsigned().await;
+    t.ready(&Pkg::default()).await;
+    t.datasource(ID, 3).await;
+    assert_eq!(t.send(Method::DELETE, &format!("/admin/plugins/{ID}"), None).await.status, StatusCode::NO_CONTENT);
+
+    for pkg in [Pkg { version: "1.1.0", ..Default::default() }, Pkg { key: Some(&publisher), ..Default::default() }] {
+        let r = t.install(&pkg).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.publisher_changed"), "{}", r.body);
+        assert_eq!(r.body["error"]["params"]["datasources"], "1", "{}", r.body);
+        assert_eq!(r.body["error"]["params"].get("previousKeyId"), None, "{}", r.body);
+    }
+    assert_eq!(t.secrets_of_kind().await, 1);
+
+    // Unsigned again, confirmed: the secrets go all the same.
+    let r = t.install_confirmed(&Pkg { version: "1.1.0", ..Default::default() }).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(t.secrets_of_kind().await, 0);
+    assert_eq!(t.publisher_changed().await["secretsCleared"], 1);
+    t.finish().await;
+}
+
+/// A plugin removed before tombstones were kept: with data sources left, even the same key needs
+/// the confirmation, since nothing tells which key signed it.
+#[tokio::test]
+async fn a_plugin_removed_before_tombstones_needs_the_confirmation() {
+    let t = test_app().await;
+    let publisher = key(14);
+    t.trust(&publisher).await;
+    t.ready(&Pkg { key: Some(&publisher), ..Default::default() }).await;
+    t.datasource(ID, 3).await;
+    assert_eq!(t.send(Method::DELETE, &format!("/admin/plugins/{ID}"), None).await.status, StatusCode::NO_CONTENT);
+    sqlx::query("DELETE FROM plugin_tombstones").execute(&t.state.db).await.unwrap();
+
+    let r = t.install(&Pkg { key: Some(&publisher), ..Default::default() }).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.publisher_changed"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"].get("removedVersion"), None, "{}", r.body);
+    assert_eq!(t.secrets_of_kind().await, 1);
+    let r = t.install_confirmed(&Pkg { key: Some(&publisher), ..Default::default() }).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(t.secrets_of_kind().await, 0);
     t.finish().await;
 }
 

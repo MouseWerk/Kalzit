@@ -498,10 +498,12 @@ account run at the same moment; more wait up to 2 seconds for a slot, then are r
 /me/password` of a signed-in user, each have 1 slot per account of their own, so guesses holding
 the others cannot keep them waiting. Successful sign-ins with a known device cookie also have a
 budget of 30 per account and per address in the window, so an account that signs in over and
-over cannot keep the threads of known devices busy for others. Password hashing and checking runs on at most one thread per CPU
-(for known devices and signed-in users on a quarter of that, at least one, apart from the
-others); up to 32 checks per thread wait their turn, further ones are refused at once with
-`429 rate_limited`.
+over cannot keep the threads of known devices busy for others. Password checks of sign-ins
+from unknown browsers run on at most one thread per CPU; checks of known devices and signed-in
+users run apart from them on a quarter of that, at least one, and hashing new passwords (setup,
+an admin's new account or reset, a user's change) on as many threads of its own, so a flood of
+guesses never delays the others and hashing never keeps known devices out. Up to 32 checks or
+hashes per thread wait their turn, further ones are refused at once with `429 rate_limited`.
 
 Known devices: a successful sign-in sets the cookie `kalzit_device` (`__Host-kalzit_device` over
 HTTPS; `HttpOnly`, `SameSite=Lax`, `Path=/`, 90 days, renewed with every sign-in, kept on sign
@@ -513,6 +515,14 @@ and the budgets of the address and of the account at the address still apply), s
 who uses that budget up cannot lock the owner out of a browser they signed in with before. A
 new password, set by the user or an admin, revokes every device cookie of the account; so does a
 new secrets key.
+
+A browser that is not the user's own need not become a known device. `POST /auth/login` takes
+`"forgetBrowser": true` next to `email` and `password` (the sign-in page's "This is not my
+browser"): the sign-in then sets no device cookie and removes one the browser has (`Max-Age=0`).
+`POST /auth/logout` keeps the device cookie by default, so the owner's own browser stays known;
+`POST /auth/logout?forgetBrowser=true` (or `=1`; the account menu's "Sign out and forget this
+browser") removes it too. The query is read leniently: other parameters or values never make
+signing out fail, they only keep the device cookie. Both answer as before otherwise.
 
 An IPv6 site (/48) also has a budget for all accounts together: 5 times
 `security.login_max_failures` failures per window. Used up, an address in it goes on only with

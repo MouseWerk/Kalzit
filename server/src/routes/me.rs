@@ -89,7 +89,7 @@ async fn change_password(
     // A signed-in user has check slots and hashing threads apart from those of sign-ins, so
     // guesses at the sign-in page cannot keep them waiting.
     let slot_key = format!("session:{}", account_key(&user.email));
-    let Some(_checking) = state
+    let Some(checking) = state
         .password_checks
         .enter(&slot_key, crate::auth::ratelimit::MAX_TRUSTED_IN_FLIGHT_PER_ACCOUNT, std::time::Duration::from_secs(2))
         .await
@@ -101,13 +101,15 @@ async fn change_password(
     let Some(matched) = password::verify(req.current, stored.clone(), &password::TRUSTED).await else {
         return Err(busy());
     };
+    // The slot guards the check; hashing the new password has its own lane.
+    drop(checking);
     if !matched {
         state.account_limiter.record(&account_key(&user.email), &network_key(info.client_ip), mono);
         return Err(wrong_current());
     }
     state.password_limiter.reset(&limit_key);
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
-    let hash = password::hash(req.new).await.map_err(|e| ApiError::internal("hashing password", e))?;
+    let hash = password::hash(req.new).await?;
 
     let mut tx = crate::db::begin(&state.db).await?;
     // Only if the password is still the one just verified: of two changes at once, the second
