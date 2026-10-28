@@ -139,10 +139,10 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 | InfluxDB (1.x InfluxQL, 2.x/3.x SQL und Flux) | frame | HTTP-API | M5 |
 | Loki (Logs) | frame mit Log-Zeilen | HTTP-API | M5 |
 | ClickHouse | frame | HTTP/native | M5 |
-| Graphite | frame | HTTP-API | M6 |
-| Redis | frame bzw. documents (Hashes, JSON) | `redis` | M6 |
-| Oracle | frame | `oracle` (braucht Oracle-Client, daher eigenes Plugin) | M6 |
-| Tempo, Jaeger (Traces) | graph (Span-Baum) | HTTP/gRPC | M6 |
+| Graphite | frame | HTTP-API | M7 |
+| Redis | frame bzw. documents (Hashes, JSON) | `redis` | M7 |
+| Oracle | frame | `oracle` (braucht Oracle-Client, daher eigenes Plugin) | M7 |
+| Tempo, Jaeger (Traces) | graph (Span-Baum) | HTTP/gRPC | M7 |
 | CSV/JSON-Datei, HTTP-JSON | frame bzw. documents | eingebaut | M2 |
 
 - Gemeinsame Basis für SQL-Quellen: ein Editor mit Schema-Browser (Datenbanken, Tabellen, Spalten),
@@ -473,7 +473,12 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
    Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse; ELK (elkjs) als
    optionales Hierarchie-Layout, nur bei Auswahl nachgeladen.
-7. **M6 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
+7. **M6 Feinschliff**: Ein Meilenstein nur zum Beheben und Polieren, ohne neue Funktionen: alle
+   offenen Fehler und Review-Punkte, UI-Mängel aus den Durchgängen (z. B. überlappende Beschriftungen
+   in Graphen, eigene Auswahllisten statt Browser-Standard), instabile Tests, Performance,
+   Barrierefreiheit, Doku und Screenshots, ein vollständiger Durchgang nach
+   `quality/perfection-pass.md` über alle Bereiche.
+8. **M7 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
    (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase).
 
@@ -492,7 +497,7 @@ Getroffen (stehen auch in `CLAUDE.md`):
 6. Alle üblichen Datenquellen werden unterstützt (Abschnitt 3), nicht nur MongoDB und Graphen.
 7. Ausrichtung: Plattform zur Visualisierung und Auswertung von Daten allgemein, nicht nur Monitoring.
 8. Mehrere Organisationen pro Installation.
-9. Alerting in M6, nach dem Kern.
+9. Alerting in M7, nach dem Kern und dem Feinschliff in M6.
 10. Öffentliches Repository auf GitHub.
 11. Produktname Kalzit (statt Arbeitstitel Granit).
 12. Website mit Astro und ausdrucksstarker Bewegung, angelehnt an die Referenz des Inhabers; Hosting wird später entschieden.

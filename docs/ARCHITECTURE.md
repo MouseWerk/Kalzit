@@ -133,7 +133,7 @@ Guards that keep this airtight:
   - `editor`: viewer plus `dashboards:write|delete|share`, `folders:write`,
     `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`.
     `dashboards:share` means granting access to users and teams of the same organization;
-    public links for people without an account are a separate permission (M6), by default only
+    public links for people without an account are a separate permission (M7), by default only
     for admins.
   - `admin`: everything except `org:delete`. `owner`: everything.
 - **Custom roles**: a named set of permissions per organization.

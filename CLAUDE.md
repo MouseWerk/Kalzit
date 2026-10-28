@@ -34,7 +34,7 @@ where it is more specific.
   path, intended domain kalzit.dev; hosting decided later).
 - Viewers run only the stored queries of dashboards they may read; free queries need
   `datasources:query` (editor and up). `dashboards:share` is org-internal; public links are a
-  separate permission (M6).
+  separate permission (M7).
 - Data sources may target private networks and localhost; Kalzit's own data and database,
   metadata addresses and SQLite files outside admin-allowed directories are always refused.
 - The secrets key comes from `KALZIT_SECRETS_KEY`, systemd credentials (Linux) or DPAPI (Windows);
@@ -42,7 +42,8 @@ where it is more specific.
 - Default data directory: `%ProgramData%\Kalzit\data` on Windows, `/var/lib/kalzit` on Linux; configured relative paths resolve against the config file.
 - Kalzit's own database: SQLite (default) or PostgreSQL; no MySQL/MariaDB backend and no copy tool between them for now.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
-- Multiple organizations per installation. Alerting comes in M6, after the core.
+- Multiple organizations per installation. M6 is a pure fix-and-polish milestone (no new features);
+  alerting comes in M7, after it.
 - Built-in AI comes in M4: providers behind one interface (OpenAI and OpenAI-compatible APIs,
   LiteLLM, local models such as Ollama), plain calls and agent-based flows with tools. AI is off
   by default; one server setting turns all AI on or off, and without a connected provider the UI
