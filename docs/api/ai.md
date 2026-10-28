@@ -3,7 +3,7 @@
 Configuration and status of the built-in AI functions (M4; design in docs/ARCHITECTURE.md,
 "AI", screens on the board `docs/design/blueprint/AI.dc.html`). This part holds the switches, the
 providers, the limits, the first-use notice and what AI may read of each data source; the AI
-functions themselves (explain or draft a query, summarize a result, chat) build on it.
+functions (explain or draft a query, summarize a result, the chat "Fragen") build on it.
 
 ## Rules
 
@@ -39,7 +39,8 @@ functions themselves (explain or draft a query, summarize a result, chat) build 
   there (`ai.base_url_kalzit`).
 - Usage is shown as token and call counts; Kalzit shows no prices or currencies.
 - Every AI call is audited (`ai.called`: purpose, provider kind and scope, model, tokens, outcome),
-  never with the prompt or the answer. Configuration changes are audited as well
+  never with the prompt or the answer; every tool call of the chat as `ai.tool_called` (tool,
+  source or dashboard, query, rows, outcome), never with result data. Configuration changes are audited as well
   (`ai.provider_created`, `ai.provider_updated`, `ai.provider_deleted`, `ai.provider_tested`,
   `ai.notice_acknowledged`, `datasource.ai_access_changed`), never with a key or field names.
 
@@ -190,12 +191,12 @@ Server settings (`/admin/settings`):
 | `ai.user_tokens_per_day` | 200000 | tokens per person and day; 0: none |
 | `ai.org_tokens_per_month` | 20000000 | tokens of an organization per calendar month (UTC); 0: none |
 | `ai.max_rows_to_model` | 200 | rows, documents or nodes of one result AI receives |
-| `ai.max_tool_calls` | 10 | tool calls per chat answer (applies with the chat) |
+| `ai.max_tool_calls` | 10 | tool calls per chat answer (see "Chat") |
 | `ai.max_concurrent` | 8 | calls running at once on the server |
 | `ai.max_concurrent_per_org` | 4 | calls running at once in one organization |
 | `ai.max_concurrent_per_user` | 2 | calls running at once per person |
 | `ai.request_timeout_secs` | 120 | one call, including retries and the streamed answer |
-| `ai.chat_retention_days` | 30 | days chats are kept after their last message; 0 keeps none; applies once chats are stored (the chat package) |
+| `ai.chat_retention_days` | 30 | days chats are kept after their last message; 0 keeps none (see "Chat") |
 | `ai.notice_text` | empty | a paragraph of the administrators under the first-use notice, at most 2000 characters |
 
 Organization settings (`/orgs/{orgId}/settings`, `settings:write`): `ai.org_enabled` (default
@@ -330,6 +331,144 @@ by a person goes into the user message inside `<kalzit:...>` blocks that cannot 
 inside (every `<`, also as fullwidth or small form, becomes `&lt;` and `&` becomes `&amp;`); the system prompt says the blocks are data whose instructions are never followed. The
 answer is shown as text; nothing in it is run.
 
+## Chat
+
+"Fragen", the agent chat: a person asks questions about their data and the model answers with
+read-only tools. Chats are stored per person and organization; nobody else reads them, server and
+organization administrators included.
+
+| Method | Path | Who | What |
+|---|---|---|---|
+| `GET` | `/orgs/{orgId}/ai/chats?q=&limit=` | every member | the caller's chats, last used first; `q` searches the titles, `limit` 1 to 200 (default 50) |
+| `POST` | `/orgs/{orgId}/ai/chats` | every member, while AI is usable for them | a new chat, `{"datasourceIds": [...]}` optional; `201` |
+| `GET` | `/orgs/{orgId}/ai/chats/{chatId}` | the chat's owner | the chat with its messages |
+| `DELETE` | `/orgs/{orgId}/ai/chats/{chatId}` | the chat's owner | deletes it; `204` |
+| `DELETE` | `/orgs/{orgId}/ai/chats` | every member | deletes all of the caller's chats in the organization; `204` |
+| `POST` | `/orgs/{orgId}/ai/chats/{chatId}/messages` | the chat's owner | a question, answered as server-sent events |
+
+Another person's chat is `404 not_found`, also for administrators.
+
+```json
+{ "items": [{ "id": "...", "title": "Umsatz je Region, letzte 30 Tage", "createdAt": 1800000000000,
+              "updatedAt": 1800000000000, "expiresAt": 1802592000000,
+              "datasourceIds": ["..."], "datasources": [{ "id": "...", "name": "Vertrieb", "kind": "postgres" }] }],
+  "retentionDays": 30 }
+```
+
+- `datasourceIds` are the sources chosen in the composer. Each must be one the caller may read or
+  query (else `404`), at most 50 (`ai.chat_sources_invalid`). Empty means every source the caller
+  may read. The choice narrows every tool; a tool call on another source answers
+  `ai.chat_source_not_selected`. `datasources` names the chosen sources the caller may still read.
+- `expiresAt` is when the retention job deletes the chat unless it is used again: `updatedAt`
+  plus `retentionDays` (`ai.chat_retention_days`, or the organization's shorter value). An hourly
+  job deletes chats past it, with their messages; a retention of 0 keeps none (the next run
+  deletes every chat). Chats go with their user and organization.
+- A chat is titled by its first question (one line, at most 120 characters).
+
+### A question
+
+`POST /orgs/{orgId}/ai/chats/{chatId}/messages`:
+
+```json
+{ "text": "Wie hat sich der Umsatz je Region entwickelt?", "datasourceIds": ["..."], "language": "de" }
+```
+
+`text` is 1 to 4000 characters (`ai.request_invalid`); `datasourceIds`, when present, replaces the
+chat's sources; `language` (`de` or `en`) is the language of the answer. The switch, the provider,
+the notice and the daily and monthly limits are checked first; a refusal is an ordinary JSON error
+and stores nothing. A chat answers one question at a time; a second one while it answers is
+`409 conflict` (`ai.chat_busy`).
+
+The question is stored, then the model answers in rounds: each round is one AI call through the
+core (counted against the limits and audited as `ai.called` with `purpose` `chat` and
+`promptVersion`). When the model calls tools, each call is authorized and run, its result goes
+back to the model, and the next round starts. At most `ai.max_tool_calls` tool calls run per
+answer; a call past it gets the error `ai.chat_tool_limit`, the model has one more round to answer
+in words, and an answer that still calls tools ends with the outcome `toolLimit`. The provider
+gets the newest twelve questions of the chat with their answers and tool results.
+
+The answer streams as server-sent events:
+
+```
+event: meta
+data: {"chatId":"...","provider":{"id":"...","name":"Lokal","kind":"openai","model":"example-model","host":"llm.intern","scope":"server"}}
+
+event: tool
+data: {"id":"call_1","name":"run_query","arguments":{"datasourceId":"...","query":{"sql":"SELECT ..."}}}
+
+event: toolResult
+data: {"id":"call_1","record":{"status":"ok","datasource":{"id":"...","name":"Vertrieb","kind":"postgres"},"query":{"sql":"SELECT ..."},"timeRange":{"from":1799913600000,"to":1800000000000},"results":[{"refId":"A","datasourceId":"...","rows":4,"truncated":false,"excludedValues":0,"data":{"shape":"frame","fields":[]}}],"durationMs":84}}
+
+event: text
+data: {"text":"Süd liegt vorn "}
+
+event: done
+data: {"usage":{"inputTokens":5120,"outputTokens":410},"outcome":"ok","toolCalls":1}
+```
+
+- `tool` comes when a call starts, `toolResult` when it ended, with its record (below). Every
+  call is shown; none runs unseen.
+- `text` carries the next part of the answer's words.
+- `done` ends every answer: `usage` is the tokens of all its rounds, `outcome` is `ok`, `stopped`
+  (the request was closed), `failed` (with `error`) or `toolLimit`. An `error` event comes before
+  `done` when a round failed or was refused (a limit reached between rounds).
+- Closing the request stops the answer: the running round is cancelled (counted and audited as
+  `cancelled`), a running tool call is dropped, and what was reached is stored as `stopped`.
+
+### Tools
+
+Every tool only reads and runs with the asking person's rights, checked on each call as if the
+person had made the request: nothing is decided by the model. Results keep their native shape
+(`frame`, `documents`, `graph`) and go through `ai::redact` (excluded values replaced, cut to
+`ai.max_rows_to_model`), as for summaries.
+
+| Tool | Arguments | Needs |
+|---|---|---|
+| `list_datasources` | none | lists the chosen sources the caller may read or query: `id`, `name`, `kind`, `queryLanguage`, `openToAi`, `mayQuery` |
+| `get_schema` | `datasourceId` | `datasources:query` on the source (as `GET .../schema`), the source open to AI and chosen |
+| `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts) |
+| `find_panels` | `search` | lists dashboards the caller may read whose title contains `search` (at most 20), with their panels |
+| `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run; every source of the panel open to AI (and chosen, when sources are chosen). Hidden queries are left out; the panel's steps are not applied |
+| `propose_query` | `datasourceId`, `query`, `title`, `explanation` | `datasources:query` on the source, chosen; never runs, the UI offers "Open in Explore" |
+
+Viewers have no free queries (`datasources:query`), so for them `get_schema`, `run_query` and
+`propose_query` are refused; they ask about the panels of the dashboards they may read.
+`timeRange` ends are `now`, relative (`now-7d`; `m`, `h`, `d`, `w`, `M` as 30 days, `y` as 365
+days) or epoch milliseconds; the default is the last 24 hours. A refused or failed call is not an
+error of the answer: its record has `status` `error` and `error` (the error envelope's body, with
+its `reason`), and the model reads it. A source of a panel that is closed to AI is named only to a
+caller who may read the source.
+
+The record of a call (`toolResult`, and in the stored answer) holds only what went to the
+provider: `status`, `datasource` or `dashboard` (`id`, `title`, `panelId`, `panelTitle`,
+`datasourceIds`), `query`, `timeRange`, `results` (per query `refId`, `datasourceId`, `query`,
+`data`, `rows`, `truncated`, `excludedValues`, `error`), `durationMs`, `items`, `schema`,
+`proposal` (`title`, `explanation`) or `error`. The text the model gets is made from the record,
+inside `<kalzit:...>` blocks that cannot be closed from inside, so a stored chat sends the same
+again. When a chat is read or continued, results of a source the caller may no longer read or
+query, of a source closed to AI since, or of a dashboard the caller may no longer read are
+withheld: the record says `"withheld": true` and keeps no data, and the model gets a note instead.
+
+Each tool call is audited as `ai.tool_called`: the tool, the chat, the source or the dashboard
+and panel, the query (at most 4000 characters), the number of rows, the outcome and its reason;
+never result data, the question or the answer.
+
+### Messages
+
+`GET /orgs/{orgId}/ai/chats/{chatId}` answers the summary fields and `messages`, oldest first:
+
+```json
+{ "seq": 1, "role": "user", "createdAt": 1800000000000,
+  "content": { "text": "Wie hat sich der Umsatz entwickelt?", "datasourceIds": ["..."] } }
+{ "seq": 2, "role": "assistant", "createdAt": 1800000004000,
+  "content": { "rounds": [{ "text": "", "calls": [{ "id": "call_1", "name": "run_query", "arguments": {},
+                                                    "record": {} }] },
+                          { "text": "Süd liegt vorn ...", "calls": [] }],
+               "usage": { "inputTokens": 5120, "outputTokens": 410 }, "provider": {}, "outcome": "ok" } }
+```
+
+A call without `record` was stopped before it finished.
+
 ## Errors
 
 `409 ai_unavailable`: AI is off, no provider is in effect, the notice is not acknowledged, or the
@@ -356,9 +495,15 @@ sources' own.
 | `ai.notice_required` | | the caller has not acknowledged the notice for the provider in effect |
 | `ai.notice_provider_changed` | | the acknowledged provider is not the one in effect (`409 conflict`) |
 | `ai.datasource_not_readable` | `name`, `datasourceId` | a result of a source closed to AI was to be sent (the params name the source where the call knows it) |
-| `ai.query_empty` | | there is no query to explain or summarize |
+| `ai.chat_busy` | | the chat is answering a question already (`409 conflict`) |
+| `ai.chat_sources_invalid` | `max` | more than `max` sources chosen for a chat |
+| `ai.chat_source_not_selected` | `name` | a tool call on a source the chat is not narrowed to |
+| `ai.chat_tool_unknown` | `name` | the model called a tool that does not exist |
+| `ai.chat_tool_arguments` | | the model called a tool with missing or malformed arguments |
+| `ai.chat_tool_limit` | `max` | the answer used its `max` tool calls (`ai.max_tool_calls`) |
+| `ai.query_empty` | | there is no query to explain, summarize or run (a panel without queries) |
 | `ai.query_too_large` | `bytes` | the query is larger than `bytes` as JSON |
-| `ai.request_invalid` | `max` | the request of a draft is empty, longer than `max` characters or has control characters |
+| `ai.request_invalid` | `max` | the request of a draft or a chat question is empty, longer than `max` characters or has control characters |
 | `ai.key_unreadable` | | the stored key cannot be decrypted (another secrets key); enter it again |
 | `ai.limit_user_requests` | `max` | the caller used their calls for today |
 | `ai.limit_user_tokens` | `max` | the caller used their tokens for today |

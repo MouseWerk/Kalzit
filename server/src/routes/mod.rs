@@ -4,6 +4,7 @@ pub mod admin_settings;
 pub mod admin_users;
 pub mod ai;
 pub mod ai_calls;
+pub mod ai_chat;
 pub mod analyses;
 pub mod annotations;
 pub mod audit;
@@ -77,6 +78,7 @@ pub fn all() -> Vec<table::RouteDef> {
         updates::routes(),
         ai::routes(),
         ai_calls::routes(),
+        ai_chat::routes(),
         plugins::routes(),
     ]
     .into_iter()
