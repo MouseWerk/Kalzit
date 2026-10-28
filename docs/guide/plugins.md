@@ -112,8 +112,48 @@ asks for the server's name.
 
 ## Catalog
 
-The catalog, a signed list of plugins to install from, is not built yet. The tab says what it will
-do and shows its switch turned off; installing from a file works with the same checks.
+The catalog (Katalog) is a signed list of plugins to install from. It is **off by default**, and
+while it is off Kalzit makes no connection for it. Installing from a file always works, with or
+without it.
+
+To use it, a server administrator enters the **Address of the catalog** (Adresse des Katalogs) on
+the Catalog tab, an `https://` address of the list, and turns on **Use the catalog** (Katalog
+verwenden). There is no address by default; it can be the project's catalog or your own mirror in
+the internal network. The list must be signed with Kalzit's plugin key or a publisher key you
+trust under **Signature and trust**; its signature lies next to it at the same address with `.sig`
+appended. **Load again every** (Erneut laden alle) sets how often Kalzit loads it (24 hours by
+default). The three settings can also be set in the environment
+(`KALZIT_SETTING_PLUGINS_CATALOG_ENABLED`, `..._URL`, `..._REFRESH_HOURS`); the tab then shows
+them read-only.
+
+Kalzit loads the list itself, with the same target rules as data sources (allowed targets,
+metadata addresses refused), over HTTPS only, and sends nothing but its version and platform. It
+takes a list only when
+
+- its signature verifies with a trusted key; a list that was changed is always refused,
+- it is newer than every list taken before from the same key: an older one (a rollback) is
+  refused, also after the address changed,
+- it has not expired: every list says until when it is valid (at most 31 days), and an expired
+  list offers nothing to install.
+
+When a check fails, the tab says why and keeps the list taken before; **Refresh now** (Jetzt
+aktualisieren) tries again at once.
+
+The list shows each plugin with its kind, version, publisher, the key that signs it and whether
+you trust it, and the network targets it declares, with categories, a search and **Only trusted
+publishers** (Nur vertraute Herausgeber). **Details** shows the key id, the package's size, source
+and SHA-256. **Install** (Installieren) or **Update to …** (Auf … aktualisieren, offered when the
+list has a newer version than the installed one) downloads the package and opens the same check
+as **Install from file**: the package must be exactly the one the list names (size, SHA-256, id,
+version and key), signed by a trusted key (never unsigned, whatever the switch for unsigned
+plugins says), and then every check of a file follows, with the permissions to grant before
+anything runs. A publisher whose key you do not trust has **Check key…** (Schlüssel prüfen…),
+which opens **Signature and trust** to compare and add the key.
+
+The list can withdraw versions (for example after a security problem): they are marked
+**Withdrawn** (Zurückgezogen) and cannot be installed, and an installed version the list withdraws
+is named at the top of the tab, with the reason. Refreshing the list by hand and every install
+from it are recorded in the audit log, as are changes of its settings.
 
 ## Plugins of the organization
 

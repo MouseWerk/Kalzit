@@ -692,5 +692,11 @@
   "admin.settings.updates.keep_versions.label": "Kept versions",
   "admin.settings.updates.keep_versions.description": "Previous versions kept with their database backups, for a return.",
   "admin.settings.updates.health_timeout_secs.label": "Health check after an update (seconds)",
-  "admin.settings.updates.health_timeout_secs.description": "How long a new version has to report healthy before Kalzit returns to the previous one."
+  "admin.settings.updates.health_timeout_secs.description": "How long a new version has to report healthy before Kalzit returns to the previous one.",
+  "admin.settings.plugins.catalog_enabled.label": "Plugin catalog",
+  "admin.settings.plugins.catalog_enabled.description": "Load the signed plugin catalog. Off, Kalzit makes no connection for it; installing from a file always works.",
+  "admin.settings.plugins.catalog_url.label": "Plugin catalog address",
+  "admin.settings.plugins.catalog_url.description": "HTTPS address of the catalog list; its signature is read from the same address with .sig appended.",
+  "admin.settings.plugins.catalog_refresh_hours.label": "Plugin catalog refresh (hours)",
+  "admin.settings.plugins.catalog_refresh_hours.description": "How often the catalog list is loaded again while the catalog is on."
 }

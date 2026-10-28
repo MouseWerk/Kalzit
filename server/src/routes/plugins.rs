@@ -1,7 +1,7 @@
 //! Plugins: what server administrators do with them (install from a file, approve permissions,
 //! enable, disable, restart, remove, status and logs, trusted publisher keys, hand-overs, the
-//! switch for unsigned plugins) and the block list of an organization. Documented in
-//! docs/api/plugins.md.
+//! switch for unsigned plugins), the catalog (its index and installs from it) and the block list
+//! of an organization. Documented in docs/api/plugins.md.
 
 use std::collections::BTreeMap;
 
@@ -45,6 +45,9 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::DELETE, "/admin/plugin-keys/{keyId}", Access::ServerAdmin, remove_key),
         route(Method::GET, "/admin/plugin-host", Access::ServerAdmin, host_settings),
         route(Method::PATCH, "/admin/plugin-host", Access::ServerAdmin, patch_host_settings),
+        route(Method::GET, "/admin/plugin-catalog", Access::ServerAdmin, catalog_view),
+        route(Method::POST, "/admin/plugin-catalog/refresh", Access::ServerAdmin, catalog_refresh),
+        route(Method::POST, "/admin/plugin-catalog/install", Access::ServerAdmin, catalog_install),
         route(Method::GET, "/orgs/{orgId}/plugins", Access::Org(Permission::PluginsConfigure), org_list),
         route(Method::PUT, "/orgs/{orgId}/plugins/{pluginId}/block", Access::Org(Permission::PluginsConfigure), block),
         route(
@@ -538,6 +541,66 @@ async fn patch_host_settings(
     };
     state.plugins.set_switches(&state, new, &actor(&user, &info, None)).await?;
     host_settings(State(state)).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogQuery {
+    /// Searches name, id, description and publisher.
+    q: Option<String>,
+    /// `datasource` or `panel`.
+    kind: Option<String>,
+}
+
+/// `GET /admin/plugin-catalog`: the settings, the state of the index and its entries.
+async fn catalog_view(
+    State(state): State<AppState>,
+    Query(query): Query<CatalogQuery>,
+) -> ApiResult<Json<crate::plugins::catalog::CatalogView>> {
+    let kind = query.kind.as_deref().filter(|k| !k.is_empty());
+    if kind.is_some_and(|k| !matches!(k, "datasource" | "panel")) {
+        return Err(ApiError::validation("kind is datasource or panel").with_field("kind"));
+    }
+    let q = query.q.unwrap_or_default();
+    if q.chars().count() > 200 {
+        return Err(ApiError::validation("the search is at most 200 characters").with_field("q"));
+    }
+    Ok(Json(state.catalog.view(&state, &q, kind).await?))
+}
+
+/// `POST /admin/plugin-catalog/refresh`: loads and checks the index now.
+async fn catalog_refresh(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+) -> ApiResult<Json<crate::plugins::catalog::CatalogView>> {
+    state.catalog.refresh(&state, Some(&actor(&user, &info, None))).await?;
+    Ok(Json(state.catalog.view(&state, "", None).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogInstallBody {
+    id: String,
+    version: String,
+    /// As `confirmPublisherChange` of `POST /admin/plugins`.
+    #[serde(default)]
+    confirm_publisher_change: bool,
+}
+
+/// `POST /admin/plugin-catalog/install`: downloads the entry's package and installs it like an
+/// uploaded file; answers `201` with the plugin.
+async fn catalog_install(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(body): JsonBody<CatalogInstallBody>,
+) -> ApiResult<impl IntoResponse> {
+    let row = state
+        .catalog
+        .install(&state, &body.id, &body.version, body.confirm_publisher_change, &actor(&user, &info, None))
+        .await?;
+    Ok((StatusCode::CREATED, one(&state, &row.id).await?))
 }
 
 #[derive(Serialize)]

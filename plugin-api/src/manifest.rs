@@ -718,7 +718,7 @@ impl Validator {
 
 /// Characters that reorder how text is shown (U+202A to U+202E, U+2066 to U+2069, the marks
 /// U+200E and U+200F), so a name cannot pretend to be another.
-fn is_bidi_control(c: char) -> bool {
+pub(crate) fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
 }
 

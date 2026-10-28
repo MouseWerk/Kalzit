@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, useId, useState } from "react";
 import { Icon } from "../../components/Icon";
@@ -5,6 +6,7 @@ import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { LoadState } from "../admin/components/Section";
 import type { Plugin, PluginList } from "./api";
 import { CatalogTab } from "./CatalogTab";
+import { type CatalogItem, type CatalogView, catalogKeys, getCatalog } from "./catalogApi";
 import { useHostSwitch } from "./hooks";
 import { InstallDialog } from "./InstallDialog";
 import {
@@ -32,7 +34,27 @@ const TAB_LABEL: Record<PluginTab, MessageKey> = {
 
 function tabOf(hash: string): PluginTab {
   const name = decodeURIComponent(hash.replace(/^#/, ""));
+  // A search result for a catalog setting (`#plugins.catalog_url`) opens the catalog.
+  if (name.startsWith("plugins.catalog")) {
+    return "catalog";
+  }
   return (PLUGIN_TABS as readonly string[]).includes(name) ? (name as PluginTab) : "installed";
+}
+
+/** The catalog as the tab and the strip show it: the shared first page of the catalog tab. */
+function useCatalogSummary() {
+  return useQuery({
+    queryKey: catalogKeys.view("", ""),
+    queryFn: ({ signal }) => getCatalog("", "", signal),
+  });
+}
+
+/** The catalog tab's count: `off`, or the number of plugins it lists. */
+function catalogCount(t: (key: "plugins.tab.catalogOff") => string, view: CatalogView | undefined) {
+  if (view === undefined || view.state === "off") {
+    return t("plugins.tab.catalogOff");
+  }
+  return view.state === "ready" || view.state === "expired" ? view.counts.all : null;
 }
 
 /**
@@ -49,6 +71,9 @@ export function PluginsSection() {
   const tabsId = useId();
   const tab = tabOf(hash);
   const [installing, setInstalling] = useState(false);
+  /** A catalog entry whose install was asked for. */
+  const [fromCatalog, setFromCatalog] = useState<CatalogItem | null>(null);
+  const catalog = useCatalogSummary();
   /** A key id to compare when "Check key and trust" opened the trust tab from a refused package. */
   const [trustKeyId, setTrustKeyId] = useState<string | null>(null);
   const hostSwitch = useHostSwitch();
@@ -104,7 +129,7 @@ export function PluginsSection() {
                 {name === "installed"
                   ? list.items.length
                   : name === "catalog"
-                    ? t("plugins.tab.catalogOff")
+                    ? catalogCount(t, catalog.data)
                     : null}
               </span>
             </button>
@@ -121,24 +146,38 @@ export function PluginsSection() {
       </div>
       <div role="tabpanel" id={`${tabsId}-${tab}`} aria-labelledby={`${tabsId}-${tab}-tab`}>
         {tab === "installed" ? (
-          <InstalledTab list={list} />
+          <InstalledTab list={list} catalog={catalog.data} />
         ) : tab === "catalog" ? (
-          <CatalogTab onInstallFile={() => setInstalling(true)} />
+          <CatalogTab
+            onInstallFile={() => setInstalling(true)}
+            onInstall={setFromCatalog}
+            onCheckKey={(keyId) => {
+              setTrustKeyId(keyId);
+              choose("trust");
+            }}
+          />
         ) : (
           <TrustTab list={list} compareKeyId={trustKeyId} onCompared={() => setTrustKeyId(null)} />
         )}
       </div>
-      {installing ? (
+      {installing || fromCatalog !== null ? (
         <InstallDialog
+          key={fromCatalog === null ? "file" : `${fromCatalog.id}@${fromCatalog.version}`}
           list={list}
-          onClose={() => setInstalling(false)}
+          catalogEntry={fromCatalog ?? undefined}
+          onClose={() => {
+            setInstalling(false);
+            setFromCatalog(null);
+          }}
           onTrustKey={(keyId) => {
             setInstalling(false);
+            setFromCatalog(null);
             setTrustKeyId(keyId);
             choose("trust");
           }}
           onAllowUnsigned={() => {
             setInstalling(false);
+            setFromCatalog(null);
             choose("trust");
           }}
         />
@@ -150,7 +189,7 @@ export function PluginsSection() {
 type Filter = "all" | "problems" | "updates";
 
 /** The status strip and the table of installed plugins (board frame 1). */
-function InstalledTab({ list }: { list: PluginList }) {
+function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogView | undefined }) {
   const { t } = useI18n();
   const now = useNow(anyWaiting(list));
   const [filter, setFilter] = useState<Filter>("all");
@@ -194,8 +233,18 @@ function InstalledTab({ list }: { list: PluginList }) {
         </div>
         <div className="plugins-strip__cell">
           <span className="plugins-strip__label">{t("plugins.strip.catalog")}</span>
-          <span className="plugins-strip__value">{t("plugins.strip.off")}</span>
-          <span className="plugins-strip__sub">{t("plugins.strip.fromFile")}</span>
+          <span className="plugins-strip__value">
+            {catalog === undefined || catalog.state === "off"
+              ? t("plugins.strip.off")
+              : t("plugins.strip.on")}
+          </span>
+          <span className="plugins-strip__sub">
+            {catalog?.state === "ready"
+              ? t("plugins.strip.catalogUpdates", {
+                  count: catalog.items.filter((item) => item.action === "update").length,
+                })
+              : t("plugins.strip.fromFile")}
+          </span>
         </div>
         <div className="plugins-strip__cell">
           <span className="plugins-strip__label">{t("plugins.strip.unsigned")}</span>

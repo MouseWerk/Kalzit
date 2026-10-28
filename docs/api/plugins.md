@@ -4,8 +4,8 @@ The plugin routes, exactly as the server implements them (`server/src/routes/plu
 paths are below `/api`. Every `/admin/...` route is `Access::ServerAdmin` (installing and trusting
 plugins is a server action); the organization routes need `plugins:configure` in that
 organization. General rules (docs/ARCHITECTURE.md, "API conventions") apply. How plugins work:
-docs/ARCHITECTURE.md, "Plugins". This version hosts **data source** plugins; panel plugins and the
-catalog follow.
+docs/ARCHITECTURE.md, "Plugins". This version hosts **data source** plugins and the **catalog**;
+panel plugins follow.
 
 Refusals carry a reason from the table at the end: `422 validation` for packages and requests that
 fail a check, `409 conflict` for a state that refuses the step (a downgrade, a changed key, a key
@@ -19,9 +19,15 @@ key id, or `server`) as `resourceId`: `plugins.installed`, `plugins.updated`,
 data sources whose secrets were cleared and how many secrets),
 `plugins.key_added`, `plugins.key_removed` (with the plugins it stopped and the updates it
 dropped), `plugins.handover_added`, `plugins.unsigned_allowed`, `plugins.unsigned_refused`,
-`plugins.landlock_optional`, `plugins.landlock_required`, and in the organization's log `plugins.blocked` and
-`plugins.unblocked`. Summaries carry versions, key ids and the approved network targets, never
-secrets.
+`plugins.landlock_optional`, `plugins.landlock_required`, `plugins.catalog_refreshed` (a refresh an
+administrator asked for: the sequence and number of entries, or the reason it failed, and the
+catalog's host; `resourceId` `catalog`), `plugins.catalog_installed` (version, SHA-256, key id and
+host of a package installed from the catalog, next to its `plugins.installed` or
+`plugins.updated`), and in the organization's log `plugins.blocked` and `plugins.unblocked`. A
+package the catalog's own checks refuse is recorded as `plugins.install_refused` with `source:
+"catalog"`, the plugin id and the version. Changes of the catalog settings are
+`settings.updated` like every server setting. Summaries carry versions, key ids and the approved
+network targets, never secrets.
 
 ## Packages
 
@@ -229,6 +235,124 @@ takes either switch, each change is recorded on its own.
   Without the switch they are refused there (`plugin.landlock_missing`): nothing would keep them
   from reading Kalzit's files. `landlockAvailable` says whether this host has Landlock.
 
+## Catalog
+
+A signed index of plugins, hosted by the project or a mirror (docs/ARCHITECTURE.md, "Catalog").
+It is **off by default**; while it is off Kalzit makes no connection for it. Installing from a
+file always works, with or without it. Kalzit itself loads the index and the packages (never a
+plugin), through the one HTTP client with the data source target rules
+(`datasources.allowed_targets`, metadata addresses and Kalzit's own database refused), HTTPS only
+(redirects too), 30 seconds for the index and its signature, 10 minutes per package, at most
+4 MiB of index, 4 KiB of signature and 256 MiB of package. Requests carry Kalzit's version (user
+agent) and platform (`x-kalzit-platform`) and nothing else.
+
+Settings (server, `PATCH /admin/settings/{key}`, recorded as `settings.updated`; environment
+variables `KALZIT_SETTING_PLUGINS_CATALOG_*` override them):
+
+| Key | Default | |
+|---|---|---|
+| `plugins.catalog_enabled` | `false` | Load the catalog. |
+| `plugins.catalog_url` | `""` | The index's `https://` address. No default host: the project's address is set when its hosting is decided. |
+| `plugins.catalog_refresh_hours` | `24` | How often it is loaded again while it is on (1 to 168); after a failure it is tried again within an hour. |
+
+**The index** is the JSON of `kalzit_plugin_api::catalog::CatalogIndex`, its signature a file next
+to it at the same address with `.sig` appended, JSON like a package's
+(`{ "keyId", "signature" }`), an Ed25519 signature over `kalzit-plugin-catalog-v1\n` followed by
+the index's exact bytes. It must be signed by a key trusted for plugins: Kalzit's own plugin keys
+or a publisher key an administrator added. An index is taken only when
+
+- its signature verifies (`catalog.signature_missing`, `catalog.signer_untrusted`,
+  `catalog.signature_invalid`),
+- its `sequence` is higher than any index taken before from the same key, kept in the database
+  and never lowered, also when the address changes or the catalog is turned off and on
+  (`catalog.rollback`); the same bytes served again count as unchanged,
+- it is published at most 5 minutes in the future, valid for at most 31 days and not past its
+  `expiresAt` (`catalog.times_implausible`, `catalog.expired`; served unchanged past its expiry it
+  is refused as well),
+- every entry and every withdrawal is well formed (`catalog.entry_invalid`,
+  `catalog.revocation_invalid`).
+
+```jsonc
+{
+  "format": 1, "sequence": 42, "publishedAt": 1800000000, "expiresAt": 1802592000,
+  "plugins": [{
+    "id": "dev.example.redis", "version": "1.2.0", "kind": "datasource", "name": "Redis",
+    "keyId": "17e204d64429eae4",                 // the key that signs the package
+    "url": "https://plugins.example.dev/redis-1.2.0.kalzit-plugin",
+    "sha256": "<64 hex digits>", "size": 1840000,
+    "description": "Keys and streams as frames.",  // optional, at most 280 characters
+    "publisher": "Example GmbH",                   // optional, a label, not a verified identity
+    "network": ["*.example.dev:6379"]              // optional, for browsing only
+  }],
+  "revoked": [{ "id": "dev.example.redis", "versions": "<1.2.0", "reason": "CVE-2026-0001" }]  // optional
+}
+```
+
+A failed load keeps the index taken before (and says why); an index past its expiry offers
+nothing to install. `description`, `publisher` and `network` are what the catalog says: before
+anything runs, the review shows the package's own manifest and its network targets for approval.
+
+### State and entries: `GET /admin/plugin-catalog?q=&kind=`
+
+`q` searches name, id, description and publisher (at most 200 characters), `kind` is
+`datasource` or `panel`.
+
+```jsonc
+{
+  "state": "ready",        // off | unconfigured (on without address) | not_loaded | unreachable | expired | ready
+  "settings": {            // with the version a change names; editable is false when set in the environment or kalzit.toml
+    "enabled": { "value": true, "version": 3, "editable": true },
+    "url": { "value": "https://plugins.example.dev/index.json", "version": 1, "editable": true },
+    "refreshHours": { "value": 24, "version": 0, "editable": true }
+  },
+  "index": { "sequence": 42, "publishedAt": 1800000000000, "expiresAt": 1802592000000,
+             "fetchedAt": 1800000100000, "keyId": "581c30a0d8384cfd",
+             "signer": "Kalzit",   // or the trusted key's name; absent when the key is trusted no more
+             "host": "plugins.example.dev" },
+  "checkedAt": 1800000100000,
+  "lastError": { "reason": "catalog.unreachable", "message": "...", "params": {}, "at": 1800000200000 },  // until a check succeeds
+  "items": [{              // per plugin, the newest version not withdrawn
+    "id": "dev.example.redis", "name": "Redis", "version": "1.2.0", "kind": "datasource",
+    "description": "...", "publisher": "Example GmbH",
+    "keyId": "17e204d64429eae4", "keyName": "Example GmbH",   // keyName absent: nobody here trusts the key
+    "network": ["*.example.dev:6379"], "size": 1840000, "sha256": "...", "urlHost": "plugins.example.dev",
+    "installedVersion": "1.1.0", "pendingVersion": "1.2.0",
+    "revoked": "...",              // the offered version is withdrawn: why
+    "installedRevoked": "...",     // the installed version is withdrawn: why
+    "action": "update"             // install | update | installed | pending | untrusted | revoked
+  }],
+  "counts": { "all": 48, "datasource": 31, "panel": 17 },   // after q, before kind
+  "revoked": [{ "id": "dev.example.redis", "versions": "<1.2.0", "reason": "...", "installedVersion": "1.1.0" }]
+}
+```
+
+### Load now: `POST /admin/plugin-catalog/refresh`
+
+Loads and checks the index at once and answers the state as above, or the refusal
+(`catalog.*`, a `target.*` reason of the target rules, `409` while off or without address).
+Turning the catalog on or changing its address does not load it by itself; the UI asks for this
+right after. In the background Kalzit checks every 5 minutes whether a refresh is due.
+
+### Install or update: `POST /admin/plugin-catalog/install`
+
+`{ "id": "dev.example.redis", "version": "1.2.0", "confirmPublisherChange": false }` answers `201`
+with the plugin, exactly as `POST /admin/plugins`. Before that:
+
+1. The catalog must be on, its index taken from the current address and not expired
+   (`catalog.disabled`, `catalog.url_missing`, `catalog.not_loaded`, `catalog.expired`), the
+   entry listed (`404 catalog.entry_unknown`) and not withdrawn (`409 catalog.entry_revoked`).
+2. The package is downloaded into the host's private upload directory, at most its listed size;
+   size and SHA-256 must match the entry (`catalog.package_mismatch`, `field`: `size`, `sha256`).
+3. Its manifest must have the entry's id and version (`field`: `id`, `version`), and it must be
+   signed by a trusted key with the entry's key id (`field`: `keyId`): a package from the catalog
+   is never installed unsigned, whatever `allowUnsigned` says (`plugin.unsigned_refused`), and an
+   invalid signature is refused as always (`plugin.signature_invalid`).
+4. Then it goes through `POST /admin/plugins`'s path unchanged: every check of "Packages", the
+   update rules, a change of publisher (`confirmPublisherChange`), the approval of its
+   permissions and network targets before it runs, and the sandbox.
+
+Only one package is downloaded at a time.
+
 ## Organizations
 
 `GET /orgs/{orgId}/plugins` lists the installed plugins with `blocked` for this organization:
@@ -432,7 +556,7 @@ Rules:
 
 - The panel host: serving installed panel bundles, the sandboxed iframe and the message
   exchange above. Panel packages are refused at install meanwhile (`plugin.kind_unsupported`).
-- The catalog (signed index, downloads).
+
 - Kalzit's connector for plugin network access, and with it network isolation on both systems.
 - `Release` calls when a data source changes or is deleted (plugins key their pools by
   `Connection.revision` meanwhile).
@@ -492,3 +616,24 @@ Rules:
 | `plugin.protocol` | | the plugin broke the protocol: parts out of order or of another shape, values that do not fit, too many parts, a result without its end, an unknown schema form (`datasource_error`) |
 | `plugin.error` | `reason` | the plugin answered with a reason of its own; its text is the message |
 | `plugin.connected` | | "Test connection" passed, with the plugin's own text |
+| `catalog.disabled` | | the catalog is turned off (`409`) |
+| `catalog.url_missing` | | the catalog is on but has no address (`409`) |
+| `catalog.url_invalid` | | the catalog address or an entry's URL does not parse (`422`) |
+| `catalog.unreachable` | `detail` | the index or its signature could not be loaded: no answer, a time-out, an HTTP error status (`502 datasource_error`) |
+| `catalog.https_required` | `host` | a request or a redirect of the catalog left HTTPS (`422`) |
+| `catalog.too_large` | `bytes` | the index, its signature or a package is larger than allowed (`422`) |
+| `catalog.signature_missing` | | there is no signature next to the index (`422`) |
+| `catalog.signature_invalid` | | the index does not match its signature, or the signature cannot be read; always refused (`422`) |
+| `catalog.signer_untrusted` | `keyId` | the index is signed with a key this server does not trust for plugins (`422`) |
+| `catalog.invalid` | | the index is not valid JSON of the index format (`422`) |
+| `catalog.format_unsupported` | `format` | the index has a format this Kalzit does not read (`422`) |
+| `catalog.rollback` | `sequence`, `accepted` | the index's sequence is not higher than one taken before from the same key (`422`) |
+| `catalog.expired` | `expiresAt` | the index is past its expiry; nothing is installed from it (`422`) |
+| `catalog.times_implausible` | | the index is published in the future or valid for more than 31 days (`422`) |
+| `catalog.entry_invalid` | `index`, `field` | an entry of the index is not well formed, or an id is listed twice with one version (`422`) |
+| `catalog.revocation_invalid` | `index`, `field` | a withdrawal of the index is not well formed (`422`) |
+| `catalog.not_loaded` | | no index has been taken from the current address (`409`) |
+| `catalog.entry_unknown` | | the index does not list this id and version (`404`) |
+| `catalog.entry_revoked` | `reason` | the index withdraws this version (`409`) |
+| `catalog.download_failed` | `detail` | the package could not be downloaded or written (`502 datasource_error`) |
+| `catalog.package_mismatch` | `field` | the downloaded package is not the entry's: `size`, `sha256`, `id`, `version` or `keyId` (`422`) |

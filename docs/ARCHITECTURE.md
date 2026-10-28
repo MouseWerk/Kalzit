@@ -332,8 +332,10 @@ the admin API in docs/api/plugins.md), its pages in the UI after the board
 `docs/design/blueprint/Plugins.dc.html` (`ui/src/features/plugins`: Settings > Plugins with the
 installed plugins, install from a file, signature and trust, a page per plugin, and the
 organization's block list; plugin kinds in "Add data source" with a JSON query editor), the Rust
-SDK with the packaging tool and example plugins, and the panel message API. The panel host, the
-catalog and Kalzit's network connector for plugins follow in M4 (marked (M4) below).
+SDK with the packaging tool and example plugins, the panel message API, and the catalog's host
+side (`plugins::catalog`: settings, the checked index, browsing and installing from it in the
+Catalog tab). The panel host and Kalzit's network connector for plugins follow in M4 (marked (M4)
+below).
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
 serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a
@@ -641,6 +643,28 @@ so whoever controls the download cannot keep a known-vulnerable version listed. 
 checked: a valid plugin id, semantic version and kind, a 16-digit key id, an `https` URL
 without user info, a SHA-256 in lowercase hex, and no id with the same version twice. Installing from a file (the package with its
 manifest and signature) always works, also offline, and runs the same checks.
+
+- An index may withdraw versions (`revoked`: plugin id, a semver requirement, a reason); they are
+  never installed from the catalog and installed versions they match are named in the UI.
+  Optional `description`, `publisher` and `network` texts of an entry are for browsing only; the
+  review before approval shows the package's own manifest.
+- The host side is `plugins::catalog` (settings `plugins.catalog_enabled`, off by default,
+  `plugins.catalog_url`, no default host, and `plugins.catalog_refresh_hours`). Kalzit itself
+  loads the index and `<url>.sig` (a detached signature like a package's) with the one HTTP
+  client (`crate::http`): the data source target policy, HTTPS only on every hop, 30 s and 4 MiB
+  for the index, 10 minutes and the entry's size for a package. The signature must verify with a
+  key trusted for plugins (Kalzit's plugin keys or an administrator's publisher keys); then
+  `parse_index` with the accepted sequences. The index taken, its key, the accepted sequences
+  (never lowered, also across URL changes) and the last failure are the row of `plugin_catalog`
+  (migration 0023); a failure keeps the index taken before, and the same bytes served again count
+  as unchanged until their expiry. A background loop refreshes when due (`spawn_background`).
+- Installing from the catalog: the entry must be listed in a current, unexpired index and not
+  withdrawn; the package is streamed into the host's private upload directory and must match
+  the entry's size and SHA-256, its manifest the entry's id and version, and its signature a
+  trusted key with the entry's key id (never unsigned from the catalog). Then it goes through
+  `PluginHost::install` unchanged: the same checks, update rules, approval and sandbox as an
+  uploaded file. Refusals and installs are in the audit log (`plugins.install_refused` with
+  `source: "catalog"`, `plugins.catalog_installed`, `plugins.catalog_refreshed`).
 
 ### Sandbox
 

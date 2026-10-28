@@ -11,9 +11,12 @@
 //!   with backoff, logs.
 //! - `remote`: a plugin process as a `DataSourcePlugin`; `host`: the plugins of this server,
 //!   their kinds in the registry and the administrator's actions on them.
+//! - `catalog`: the signed catalog index (off by default), its checks and installing from it
+//!   through the same path as a file.
 //!
-//! The panel message API and the catalog follow in M4.
+//! The panel message API follows in M4.
 
+pub mod catalog;
 pub mod host;
 pub mod in_process;
 pub mod package;

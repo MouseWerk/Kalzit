@@ -184,6 +184,8 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.plugins.label",
     lead: "settings.section.plugins.lead",
     keywords: "settings.section.plugins.keywords",
+    // The catalog's settings live in its tab (`#catalog`).
+    keys: ["plugins.catalog_enabled", "plugins.catalog_url", "plugins.catalog_refresh_hours"],
     visible: serverAdmin,
   },
   {
