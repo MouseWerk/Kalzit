@@ -818,18 +818,6 @@ for (const scheme of SCHEMES) {
 }
 
 for (const scheme of SCHEMES) {
-  test(`overview dashboard, phone, ${scheme}`, async ({ browser }) => {
-    const page = await openPage(browser, scheme, { width: 390, height: 844 });
-    await signIn(page);
-    await openDashboard(page, seeded().overview, OVERVIEW);
-    await expect(page.locator(".stat").first()).toBeVisible();
-    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
-    await shoot(page, `dashboard-phone-${scheme}`);
-    await page.context().close();
-  });
-}
-
-for (const scheme of SCHEMES) {
   test(`graph network, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);

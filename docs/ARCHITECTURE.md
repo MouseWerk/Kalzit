@@ -1374,7 +1374,9 @@ through `settings::get`; new registry entries are requested from the orchestrato
   most in `TIME_WAIT`, against 16,384 ephemeral ports, and CI runs two workers. Fewer workers
   or shared browser contexts would not remove it, so the guard keeps failing on it rather than
   retrying; rerun the job and add the run to the issue.
-- Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
+- Screenshots: the images in `README.md` are the gallery renders in `docs/screenshots/gallery/`
+  (`npm run gallery`, see `docs/screenshots/README.md`); the user guide's come from
+  `npm run screenshots`. Both are taken from the real application at desktop size. `npm run screenshots`
   in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
   through the same global setup, seeds a demo organization through the API (members, teams,
   the SQLite sales fixture, a dashboard with a variable and four panels; later pictures add a
