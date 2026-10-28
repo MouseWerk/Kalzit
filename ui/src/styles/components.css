@@ -431,6 +431,17 @@
     text-overflow: ellipsis;
   }
 
+  /* A mark after an entry's label ("Beta"): small and quiet, never a color. */
+  .nav-link__badge {
+    margin-left: var(--space-1);
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+  }
+
   /* Disclosure: the row links to the entry, the chevron at its end opens the sub-pages. */
 
   .nav-group__row {

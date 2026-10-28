@@ -273,6 +273,17 @@
   }
 }
 
+/* "Fragen": the side pane, the width of a question and of the answer's words, a result's height. */
+@layer tokens {
+  :root {
+    --size-ask-context: 21rem;
+    --size-ask-question: 35rem;
+    --size-ask-text: 48rem;
+    --size-ask-result: 20rem;
+    --size-ask-mark: 1.75rem;
+  }
+}
+
 /* The plugin pages: a column of the details, and the height of the manifest and the log. */
 @layer tokens {
   :root {

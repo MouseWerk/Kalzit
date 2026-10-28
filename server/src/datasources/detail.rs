@@ -111,6 +111,7 @@ mod tests {
         "ai.provider_tested",
         "ai.provider_updated",
         "ai.request_timeout_secs",
+        "ai.tool_called",
         "ai.user_requests_per_day",
         "ai.user_tokens_per_day",
         "datasource.ai_access_changed",

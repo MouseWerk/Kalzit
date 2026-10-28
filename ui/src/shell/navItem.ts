@@ -21,6 +21,8 @@ export interface NavItem {
   to: NonNullable<LinkProps["to"]>;
   label: MessageKey;
   icon: IconName;
+  /** A small mark after the label ("Beta"), part of the entry's name. */
+  badge?: MessageKey;
   /** Only the start page matches exactly; area entries stay current on their sub-pages. */
   exact?: boolean;
   /** Hides the entry without the needed permissions; absent means always shown. */

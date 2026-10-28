@@ -255,6 +255,19 @@ async fn remove(
         .bind(&user_id)
         .execute(&mut *tx)
         .await?;
+    // And their chats of "Fragen" in this organization (`ai::chats`), with their messages.
+    sqlx::query(
+        "DELETE FROM ai_chat_messages WHERE chat_id IN (SELECT id FROM ai_chats WHERE org_id = $1 AND user_id = $2)",
+    )
+    .bind(&ctx.org_id)
+    .bind(&user_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM ai_chats WHERE org_id = $1 AND user_id = $2")
+        .bind(&ctx.org_id)
+        .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&ctx.org_id)
         .bind(&user_id)

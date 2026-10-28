@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createRoute, createRouter, type RouterHistory } from "@tanstack/react-router";
 import { adminRoutes } from "../features/admin/routes";
+import { askRoutes } from "../features/ai/chat/routes";
 import { dashboardsRoutes } from "../features/dashboards/routes";
 import { datasourcesRoutes } from "../features/datasources/routes";
 import { exploreRoutes } from "../features/explore/routes";
@@ -28,6 +29,7 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     ...dashboardsRoutes,
     ...exploreRoutes,
+    ...askRoutes,
     ...datasourcesRoutes,
     ...adminRoutes,
     ...settingsRoutes,
