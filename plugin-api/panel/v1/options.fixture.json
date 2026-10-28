@@ -1,0 +1,29 @@
+{
+  "about": "Panel options (`[[panel.options]]` as JSON) and option values with what Kalzit makes of them: `code` is null for options that pass, else the refusal code. Checked by kalzit_plugin_api::panel::check_options (Rust) and ui/src/features/plugins/panel/options.ts (TypeScript).",
+  "options": [
+    { "name": "field", "label": { "en": "Field", "de": "Feld" }, "type": "string" },
+    { "name": "note", "label": { "en": "Note" }, "type": "text" },
+    { "name": "decimals", "label": { "en": "Decimals", "de": "Nachkommastellen" }, "type": "integer", "min": 0, "max": 10, "default": 2 },
+    { "name": "scale", "label": { "en": "Scale" }, "type": "number", "min": 0.5 },
+    { "name": "sparkline", "label": { "en": "Sparkline" }, "type": "bool", "default": true },
+    { "name": "mode", "label": { "en": "Mode" }, "type": "select", "choices": ["last", "mean"], "default": "last" }
+  ],
+  "cases": [
+    { "name": "nothing set", "options": {}, "code": null },
+    {
+      "name": "every option",
+      "options": { "field": "cpu", "note": "two\nlines\tand a tab", "decimals": 3, "scale": 1.5, "sparkline": false, "mode": "mean" },
+      "code": null
+    },
+    { "name": "bounds are inclusive", "options": { "decimals": 10, "scale": 0.5 }, "code": null },
+    { "name": "an unknown key", "options": { "colour": "red" }, "code": "panel.option_unknown" },
+    { "name": "a number for a text", "options": { "field": 4 }, "code": "panel.option_invalid" },
+    { "name": "a line break in a string", "options": { "field": "a\nb" }, "code": "panel.option_invalid" },
+    { "name": "a fraction for an integer", "options": { "decimals": 1.5 }, "code": "panel.option_invalid" },
+    { "name": "an integer above its range", "options": { "decimals": 11 }, "code": "panel.option_invalid" },
+    { "name": "a number below its range", "options": { "scale": 0.25 }, "code": "panel.option_invalid" },
+    { "name": "a text for a switch", "options": { "sparkline": "yes" }, "code": "panel.option_invalid" },
+    { "name": "no choice of a select", "options": { "mode": "max" }, "code": "panel.option_invalid" },
+    { "name": "null", "options": { "mode": null }, "code": "panel.option_invalid" }
+  ]
+}

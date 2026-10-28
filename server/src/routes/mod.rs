@@ -25,6 +25,7 @@ mod live_tests;
 pub mod me;
 pub mod members;
 pub mod orgs;
+pub mod panel_plugins;
 pub mod panel_state;
 pub mod playlists;
 pub mod plugins;
@@ -74,6 +75,7 @@ pub fn all() -> Vec<table::RouteDef> {
         me::routes(),
         home::routes(),
         panel_state::routes(),
+        panel_plugins::routes(),
         preferences::routes(),
         updates::routes(),
         ai::routes(),

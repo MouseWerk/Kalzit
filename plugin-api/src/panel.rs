@@ -3,11 +3,14 @@
 //! The TypeScript types are `panel/v1/kalzit-panel.d.ts` next to this crate.
 //!
 //! Into the frame go data (options, size, theme, results in their native shapes); out of the
-//! frame come only events. The panel host (not built yet) checks every event with
-//! [`parse_event`], keeps the rate limit, and drops what does not fit; the parsed [`Event`] is all
-//! that goes further, so unknown fields never pass.
+//! frame come only events. The panel host runs in the browser (`ui/src/features/plugins/panel`):
+//! it checks every event as [`parse_event`] does, keeps the rate limits, and drops what does not
+//! fit, so unknown fields never pass. Both sides check the cases of
+//! `panel/v1/events.fixture.json` and `panel/v1/options.fixture.json`, so they agree.
 
 use serde_json::{Map, Value, json};
+
+use crate::manifest::PanelOption;
 
 /// The version this crate speaks; a bundle names its version in the manifest (`[panel] api`).
 pub const API_VERSION: u32 = 1;
@@ -36,7 +39,24 @@ pub const MAX_HEIGHT: u64 = 4000;
 pub const MESSAGES_IN: &[&str] = &["init", "data", "options", "size", "theme", "state"];
 
 /// The event types out of the frame (the panel to Kalzit).
-pub const EVENTS: &[&str] = &["ready", "click", "select", "range", "setVariable", "resize"];
+pub const EVENTS: &[&str] =
+    &["ready", "click", "select", "range", "setVariable", "resize", "setOptions", "link", "log"];
+
+/// The characters of a link a panel asks Kalzit to open, and of its title.
+pub const MAX_URL_CHARS: usize = 2048;
+pub const MAX_LINK_TITLE_CHARS: usize = 200;
+
+/// The characters of one log line, and the lines per second and panel Kalzit keeps (within the
+/// events per second); more are dropped.
+pub const MAX_LOG_CHARS: usize = 1024;
+pub const MAX_LOGS_PER_SECOND: u32 = 5;
+
+/// The levels of a log line.
+pub const LOG_LEVELS: &[&str] = &["debug", "info", "warn", "error"];
+
+/// The characters of a `string` option and of a `text` option.
+pub const MAX_OPTION_STRING_CHARS: usize = 1024;
+pub const MAX_OPTION_TEXT_CHARS: usize = 4096;
 
 /// What a click hit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +93,14 @@ pub enum Event {
     SetVariable { name: String, value: Vec<String>, multi: bool },
     /// The panel asks for a height; Kalzit may give less.
     Resize { height: u64 },
+    /// In edit mode: the panel's options as the panel wants them. Kalzit checks them against the
+    /// manifest's `[[panel.options]]` (`check_options`) and keeps them in the panel editor.
+    SetOptions { options: Map<String, Value> },
+    /// The panel asks Kalzit to open a link (`http`, `https` or a path in Kalzit); Kalzit asks
+    /// the viewer first.
+    Link { url: String, title: Option<String> },
+    /// A line for the panel's log (the browser console and the panel inspector).
+    Log { level: &'static str, text: String },
 }
 
 /// Why an event was dropped: a stable code and an English text (for the browser console).
@@ -200,8 +228,112 @@ pub fn parse_event(message: &str) -> Result<Event, Refused> {
             Some(h) if (MIN_HEIGHT..=MAX_HEIGHT).contains(&h) => Ok(Event::Resize { height: h }),
             _ => Err(refuse("panel.field_invalid", format!("height is {MIN_HEIGHT} to {MAX_HEIGHT}"))),
         },
+        "setOptions" => match m.get("options") {
+            Some(Value::Object(options)) => Ok(Event::SetOptions { options: options.clone() }),
+            _ => Err(refuse("panel.field_invalid", "options is a JSON object")),
+        },
+        "link" => {
+            let url = text(m, "url", MAX_URL_CHARS)?;
+            if !link_allowed(url) {
+                return Err(refuse(
+                    "panel.field_invalid",
+                    "url is an http or https address without user name, or a path in Kalzit starting with /",
+                ));
+            }
+            let title = match m.get("title") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(text(m, "title", MAX_LINK_TITLE_CHARS)?.to_string()),
+            };
+            Ok(Event::Link { url: url.to_string(), title })
+        }
+        "log" => {
+            let level = m
+                .get("level")
+                .and_then(Value::as_str)
+                .and_then(|l| LOG_LEVELS.iter().find(|k| **k == l).copied())
+                .ok_or_else(|| refuse("panel.field_invalid", "level is debug, info, warn or error"))?;
+            let text = text(m, "text", MAX_LOG_CHARS)?.to_string();
+            Ok(Event::Log { level, text })
+        }
         _ => Err(refuse("panel.type_unknown", format!("{kind:?} is not an event of panel API {API_VERSION}"))),
     }
+}
+
+/// Whether a panel may ask to open `url`: an `http` or `https` address with a host and without
+/// a user name (`https://kalzit.dev@elsewhere` would read as Kalzit), or a path in Kalzit
+/// (`/dashboards/...`, not `//host` or `/\host`, which browsers read as another host). Never
+/// `javascript:`, `data:` or any other scheme. Without white space or control characters.
+pub fn link_allowed(url: &str) -> bool {
+    if url.is_empty() || url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\\') {
+        return false;
+    }
+    if let Some(path) = url.strip_prefix('/') {
+        return !path.starts_with('/');
+    }
+    let lower = url.to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://")) else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !authority.is_empty() && !authority.contains('@') && !authority.starts_with(':')
+}
+
+fn option_refused(name: &str, message: impl std::fmt::Display) -> Refused {
+    refuse("panel.option_invalid", format!("options.{name}: {message}"))
+}
+
+/// Checks one value against its option: the type, the range of numbers, the choices of a
+/// select, the length of texts (no control characters but line breaks and tabs in `text`).
+pub fn check_option(option: &PanelOption, value: &Value) -> Result<(), Refused> {
+    let name = &option.name;
+    let in_range = |n: f64| option.min.is_none_or(|min| n >= min) && option.max.is_none_or(|max| n <= max);
+    let range = || match (option.min, option.max) {
+        (Some(min), Some(max)) => format!(" from {min} to {max}"),
+        (Some(min), None) => format!(" of at least {min}"),
+        (None, Some(max)) => format!(" of at most {max}"),
+        (None, None) => String::new(),
+    };
+    match (option.option_type.as_str(), value) {
+        ("string", Value::String(s)) => {
+            if s.chars().count() > MAX_OPTION_STRING_CHARS || s.chars().any(char::is_control) {
+                return Err(option_refused(name, format!("a text of at most {MAX_OPTION_STRING_CHARS} characters")));
+            }
+            Ok(())
+        }
+        ("text", Value::String(s)) => {
+            if s.chars().count() > MAX_OPTION_TEXT_CHARS || s.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
+            {
+                return Err(option_refused(name, format!("a text of at most {MAX_OPTION_TEXT_CHARS} characters")));
+            }
+            Ok(())
+        }
+        ("number", Value::Number(n)) => match n.as_f64() {
+            Some(f) if f.is_finite() && in_range(f) => Ok(()),
+            _ => Err(option_refused(name, format!("a number{}", range()))),
+        },
+        ("integer", Value::Number(n)) => match n.as_i64() {
+            #[allow(clippy::cast_precision_loss)]
+            Some(i) if in_range(i as f64) => Ok(()),
+            _ => Err(option_refused(name, format!("a whole number{}", range()))),
+        },
+        ("bool", Value::Bool(_)) => Ok(()),
+        ("select", Value::String(s)) if option.choices.contains(s) => Ok(()),
+        ("select", _) => Err(option_refused(name, format!("one of {}", option.choices.join(", ")))),
+        (ty, _) => Err(option_refused(name, format!("a value of type {ty}"))),
+    }
+}
+
+/// Checks a panel's options against the options its manifest declares: only declared keys,
+/// each value fitting its option. Absent keys take the option's default.
+pub fn check_options(declared: &[PanelOption], options: &Map<String, Value>) -> Result<(), Refused> {
+    for (key, value) in options {
+        let option = declared
+            .iter()
+            .find(|o| &o.name == key)
+            .ok_or_else(|| refuse("panel.option_unknown", format!("options.{key} is not an option of this panel")))?;
+        check_option(option, value)?;
+    }
+    Ok(())
 }
 
 impl Event {
@@ -226,6 +358,15 @@ impl Event {
                 json!({ "type": "setVariable", "name": name, "value": value })
             }
             Event::Resize { height } => json!({ "type": "resize", "height": height }),
+            Event::SetOptions { options } => json!({ "type": "setOptions", "options": options }),
+            Event::Link { url, title } => {
+                let mut v = json!({ "type": "link", "url": url });
+                if let Some(t) = title {
+                    v["title"] = json!(t);
+                }
+                v
+            }
+            Event::Log { level, text } => json!({ "type": "log", "level": level, "text": text }),
         };
         v["kalzit"] = json!(ENVELOPE);
         v["api"] = json!(API_VERSION);
@@ -243,6 +384,65 @@ mod tests {
             m[k] = v.clone();
         }
         parse_event(&m.to_string())
+    }
+
+    /// The cases both sides check (`panel/v1/events.fixture.json`; the UI's protocol test reads
+    /// the same file).
+    #[test]
+    fn the_shared_event_cases_hold() {
+        let fixture: Value = serde_json::from_str(include_str!("../panel/v1/events.fixture.json")).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let text = match case["raw"].as_str() {
+                Some("TOO_LARGE") => "x".repeat(MAX_EVENT_BYTES + 1),
+                Some(raw) => raw.to_string(),
+                None => case["event"].to_string(),
+            };
+            let got = parse_event(&text);
+            match case["code"].as_str() {
+                None => {
+                    let e = got.unwrap_or_else(|r| panic!("{name}: refused with {}", r.code));
+                    if let Some(passed) = case.get("passed") {
+                        assert_eq!(&e.to_json(), passed, "{name}");
+                    }
+                }
+                Some(code) => assert_eq!(got.map_err(|r| r.code), Err(code), "{name}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_shared_option_cases_hold() {
+        let fixture: Value = serde_json::from_str(include_str!("../panel/v1/options.fixture.json")).unwrap();
+        let declared: Vec<PanelOption> = serde_json::from_value(fixture["options"].clone()).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let got = check_options(&declared, case["options"].as_object().unwrap()).map_err(|r| r.code);
+            assert_eq!(got, case["code"].as_str().map_or(Ok(()), Err), "{name}");
+        }
+    }
+
+    #[test]
+    fn links_open_only_the_web_or_kalzit() {
+        for good in ["https://example.com", "http://10.0.0.1:8080/x", "/d/abc", "/", "HTTPS://Example.com/a"] {
+            assert!(link_allowed(good), "{good}");
+        }
+        for bad in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "vbscript:x",
+            "file:///etc/passwd",
+            "//evil.example",
+            "/\\evil.example",
+            "https://a@b.example",
+            "https://:443/x",
+            "https://",
+            "ftp://example.com",
+            "https://example.com/\u{0}",
+            "",
+        ] {
+            assert!(!link_allowed(bad), "{bad}");
+        }
     }
 
     #[test]

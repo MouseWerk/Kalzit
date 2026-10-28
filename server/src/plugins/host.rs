@@ -20,6 +20,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::package::{self, PluginAccess, TrustedKey, Verified};
+use super::panels::{self, ActivePanel, PanelRegistry};
 use super::remote::Remote;
 use super::store::{self, HandOverRow, KeyRow, Pending, PluginRow};
 use super::supervisor::{Options, Status, Supervisor};
@@ -132,6 +133,8 @@ pub struct PluginHost {
     changes: tokio::sync::Mutex<()>,
     /// Plugins may run on a Linux host without Landlock (`allowWithoutLandlock`).
     without_landlock: Arc<AtomicBool>,
+    /// The panel plugins that may be shown (`plugins::panels`).
+    panels: PanelRegistry,
 }
 
 impl PluginHost {
@@ -144,7 +147,13 @@ impl PluginHost {
             running: Mutex::default(),
             changes: tokio::sync::Mutex::new(()),
             without_landlock: Arc::default(),
+            panels: PanelRegistry::default(),
         }
+    }
+
+    /// The panel plugins that may be shown.
+    pub fn panels(&self) -> &PanelRegistry {
+        &self.panels
     }
 
     /// Changes the supervision times and limits for plugins started from now on (tests).
@@ -244,6 +253,11 @@ impl PluginHost {
             manifest::parse(&row.manifest).map_err(|e| HostError::new("plugin.manifest_invalid", e.to_string()))?;
         manifest.runs_on(env!("CARGO_PKG_VERSION")).map_err(|i| HostError::new("plugin.kalzit_too_old", i.message))?;
         let package_dir = self.dir("packages").join(&row.dir);
+        if manifest.plugin_kind() == manifest::PluginKind::Panel {
+            // Nothing runs on the server: the panel may be shown.
+            self.panels.insert(&row.id, ActivePanel { manifest: Arc::new(manifest), package_dir });
+            return Ok(true);
+        }
         let program = package::binary(&manifest, &package_dir)?;
         let launch = super::supervisor::Launch {
             manifest: Arc::new(manifest),
@@ -272,6 +286,7 @@ impl PluginHost {
     /// Takes the plugin's kind out of the registry and ends its process. Running queries finish
     /// on the kind they hold; new ones answer `datasource.kind_unavailable`.
     async fn unregister(&self, id: &str, datasources: &DataSources) {
+        self.panels.remove(id);
         let _ = datasources.registry().unregister(id);
         let supervisor = self.running.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
         if let Some(s) = supervisor {
@@ -480,12 +495,11 @@ impl PluginHost {
             .map_err(|e| ApiError::internal("plugin package", e))?
             .map_err(HostError::api)?;
         let m = &signed.manifest;
-        if m.plugin_kind() != manifest::PluginKind::DataSource {
-            return Err(HostError::new("plugin.kind_unsupported", "panel plugins cannot be installed yet").api());
-        }
+        let is_panel = m.plugin_kind() == manifest::PluginKind::Panel;
         m.runs_on(env!("CARGO_PKG_VERSION"))
             .map_err(|i| HostError::new("plugin.kalzit_too_old", i.message).with("minKalzit", &m.min_kalzit).api())?;
-        let program = package::binary(m, dir).map_err(HostError::api)?;
+        // A panel has no binary: it runs in the browser (`plugins::panels`).
+        let program = if is_panel { None } else { Some(package::binary(m, dir).map_err(HostError::api)?) };
         let keys = store::keys(&state.db).await?;
         let switches = store::switches(&state.db).await?;
         let verified =
@@ -516,9 +530,10 @@ impl PluginHost {
                 })?;
             }
         }
-        // Only the plugin itself (its SID) may read and run its package.
-        package::private_dir(dir, &PluginAccess::ReadExecute(package::plugin_sid(&m.id)))
-            .map_err(|e| HostError::from(e).api())?;
+        // Only the plugin itself (its SID) may read and run its package; no process reads a
+        // panel's package but Kalzit.
+        let access = if is_panel { PluginAccess::None } else { PluginAccess::ReadExecute(package::plugin_sid(&m.id)) };
+        package::private_dir(dir, &access).map_err(|e| HostError::from(e).api())?;
         let (archive, into) = (archive.to_path_buf(), dir.to_path_buf());
         let unpacked = tokio::task::spawn_blocking(move || package::unpack(&archive, &into))
             .await
@@ -529,7 +544,10 @@ impl PluginHost {
                 .with("issues", "manifest")
                 .api());
         }
-        package::make_executable(&program).map_err(|e| HostError::from(e).api())?;
+        match &program {
+            Some(program) => package::make_executable(program).map_err(|e| HostError::from(e).api())?,
+            None => panels::check_bundle(&unpacked.manifest, dir).map_err(HostError::api)?,
+        }
         Ok((unpacked, verified, existing, takeover))
     }
 

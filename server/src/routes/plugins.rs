@@ -99,7 +99,8 @@ struct PluginView {
     trusted: bool,
     approved: bool,
     enabled: bool,
-    /// Its kind is registered: approved, enabled, trusted and able to run here.
+    /// Its kind is registered (a panel: it may be shown): approved, enabled, trusted and able to
+    /// run here.
     running: bool,
     permissions: Vec<PermissionLine>,
     /// What the administrator should know before approving: `landlock_missing` when this Linux
@@ -154,6 +155,8 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
         None
     };
     let process = state.plugins.status(&row.id);
+    // A panel has no process: it runs when it may be shown.
+    let running = process.is_some() || state.plugins.panels().get(&row.id).is_some();
     Ok(PluginView {
         id: row.id,
         name: row.name,
@@ -170,7 +173,7 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
         trusted,
         approved: row.approved,
         enabled: row.enabled,
-        running: process.is_some(),
+        running,
         permissions: package::permission_lines(&m),
         sandbox_warning,
         pending,

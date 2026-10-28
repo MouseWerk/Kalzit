@@ -12,3 +12,22 @@ license = "AGPL-3.0-only"
 [panel]
 path = "panel.js"
 api = 1
+
+[[panel.options]]
+name = "field"
+label = { en = "Field", de = "Feld" }
+type = "string"
+help = { en = "The number field to show; empty: the first number field.", de = "Das Zahlenfeld, das die Kachel zeigt; leer: das erste Zahlenfeld." }
+
+[[panel.options]]
+name = "decimals"
+label = { en = "Decimals", de = "Nachkommastellen" }
+type = "integer"
+min = 0
+max = 10
+
+[[panel.options]]
+name = "label"
+label = { en = "Label", de = "Beschriftung" }
+type = "string"
+help = { en = "Shown above the value instead of the panel title.", de = "Steht statt des Paneltitels über dem Wert." }
