@@ -259,7 +259,14 @@ export function handlePluginAdminRoute(
     }
     plugin.enabled = true;
     plugin.running = true;
-    plugin.process = { state: "idle", starts: 0, failures: 0, sandbox: [], sandboxMissing: [], warnings: [] };
+    plugin.process = {
+      state: "idle",
+      starts: 0,
+      failures: 0,
+      sandbox: [],
+      sandboxMissing: [],
+      warnings: [],
+    };
     return json(200, plugin);
   }
   if (action === "disable" && method === "POST") {
@@ -269,7 +276,14 @@ export function handlePluginAdminRoute(
     return json(200, plugin);
   }
   if (action === "restart" && method === "POST") {
-    plugin.process = { state: "idle", starts: 0, failures: 0, sandbox: [], sandboxMissing: [], warnings: [] };
+    plugin.process = {
+      state: "idle",
+      starts: 0,
+      failures: 0,
+      sandbox: [],
+      sandboxMissing: [],
+      warnings: [],
+    };
     return json(200, plugin);
   }
   if (action === "logs" && method === "GET") {

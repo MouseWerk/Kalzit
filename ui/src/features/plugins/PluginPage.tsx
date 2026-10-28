@@ -517,7 +517,10 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
             </p>
           )}
           {(process?.warnings ?? [])
-            .filter((w) => !(w.reason === "plugin.without_landlock" && plugin.sandboxWarning !== undefined))
+            .filter(
+              (w) =>
+                !(w.reason === "plugin.without_landlock" && plugin.sandboxWarning !== undefined),
+            )
             .map((w) => (
               <p
                 key={`${w.reason}-${w.params.path ?? ""}`}
