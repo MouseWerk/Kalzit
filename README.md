@@ -19,7 +19,7 @@ sources: a MongoDB result stays a set of documents, a Cypher result stays a grap
 edges, and nothing is turned into a table unless you add that step yourself. The server is one
 binary with the web interface built in, and runs on Windows and Linux.
 
-> **Status: early development.** The current version is 0.3.0;
+> **Status: early development.** The current version is 0.3.1;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
 ![A dashboard in the dark theme with a region variable, a time series, a stat, a bar chart and a table](docs/screenshots/dashboard-dark.png)
