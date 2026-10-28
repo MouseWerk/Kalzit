@@ -529,6 +529,7 @@ sources' own.
 | `ai.notice_provider_changed` | | the acknowledged provider is not the one in effect (`409 conflict`) |
 | `ai.datasource_not_readable` | `name`, `datasourceId` | a result of a source closed to AI was to be sent (the params name the source where the call knows it) |
 | `ai.provider_unknown` | | `ai.provider_explain`, `ai.provider_summarize` or `ai.provider_chat` names no server provider |
+| `ai.leaves_network_invalid` | | `leavesNetwork` of a provider is not `yes`, `no` or `auto` |
 | `ai.chat_busy` | | the chat is answering a question already (`409 conflict`) |
 | `ai.chat_sources_invalid` | `max` | more than `max` sources chosen for a chat |
 | `ai.chat_source_not_selected` | `name` | a tool call on a source the chat is not narrowed to |

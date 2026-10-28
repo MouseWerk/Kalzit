@@ -422,10 +422,23 @@ scope: string,
  */
 endpoint: string, 
 /**
- * Whether data leaves the installation's own network, judged from the address
- * (`stays_in_network`).
+ * Whether data leaves the installation's own network: as the administrators say, or, when
+ * they left it open, judged from the address (`stays_in_network`; `leavesNetworkEstimated`).
  */
 leavesNetwork: boolean, 
+/**
+ * The answer comes from the address, not from the administrators: an estimate (a gateway
+ * in the own network may forward to a cloud model).
+ */
+leavesNetworkEstimated: boolean, 
+/**
+ * Whether calls through this provider can run: false when its key cannot be read.
+ */
+usable: boolean, 
+/**
+ * Why it cannot (`ai.key_unreadable`).
+ */
+reason?: string, 
 /**
  * The last connection test: passed, failed, or (absent) not tested since the last change.
  */
@@ -435,6 +448,6 @@ reachable?: boolean,
  */
 noticeAcknowledged: boolean, };
 
-export type AiStatusFunctions = { explain: AiStatusProvider, summarize: AiStatusProvider, chat: AiStatusProvider, };
+export type AiStatusFunctions = { explain?: AiStatusProvider, summarize?: AiStatusProvider, chat?: AiStatusProvider, };
 
 export type AiStatusUsage = { requests: number, tokens: number, requestsLimit: number, tokensLimit: number, orgTokensMonth: number, orgTokensMonthLimit: number, };

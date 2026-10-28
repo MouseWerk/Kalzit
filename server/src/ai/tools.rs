@@ -1020,7 +1020,8 @@ impl Visibility {
         if let Some(known) = self.dashboards.get(id) {
             return *known;
         }
-        let ok = check_resource(&state.db, ctx, Permission::DashboardsRead, Resource::Dashboard(id)).await.is_ok();
+        // As opening it: readable, and not in the trash.
+        let ok = crate::routes::query::readable_model(state, ctx, id).await.is_ok();
         self.dashboards.insert(id.to_string(), ok);
         ok
     }

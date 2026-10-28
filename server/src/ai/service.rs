@@ -209,8 +209,11 @@ pub async fn in_effect_for(state: &AppState, org_id: &str, function: Option<&str
     }
     if let Some(function) = function {
         let chosen = settings::get(state, &format!("ai.provider_{function}")).await?;
+        // Only while its last connection test passed: a changed address or key needs a new pass
+        // before the function uses it, as for switching AI on.
         if let Some(id) = chosen.as_str().filter(|id| !id.is_empty())
             && let Some(row) = store::find(&state.db, None, id).await?
+            && row.tested_ok()
         {
             return Ok(Some(row));
         }
@@ -253,12 +256,22 @@ pub async fn check_switch(
     // A provider chosen for a function is one of the server's, or empty for the default.
     if org_id.is_none() && key.starts_with("ai.provider_") {
         let id = value.as_str().unwrap_or_default();
-        if !id.is_empty() && store::find(&state.db, None, id).await?.is_none() {
-            return Err(ApiError::validation("the provider is not one of the server's")
-                .with_field("value")
-                .because("ai.provider_unknown"));
+        if id.is_empty() {
+            return Ok(());
         }
-        return Ok(());
+        return match store::find(&state.db, None, id).await? {
+            None => Err(ApiError::validation("the provider is not one of the server's")
+                .with_field("value")
+                .because("ai.provider_unknown")),
+            Some(row) if !row.tested_ok() => Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "a provider can be chosen once it passed its connection test",
+            )
+            .with_field("value")
+            .because("ai.enable_needs_tested_provider")),
+            Some(_) => Ok(()),
+        };
     }
     if value.as_bool() != Some(true) {
         return Ok(());
@@ -834,9 +847,18 @@ pub struct AiStatusProvider {
     pub scope: String,
     /// Host and port of the base URL (`llm.intern:11434`), never the path or credentials.
     pub endpoint: String,
-    /// Whether data leaves the installation's own network, judged from the address
-    /// (`stays_in_network`).
+    /// Whether data leaves the installation's own network: as the administrators say, or, when
+    /// they left it open, judged from the address (`stays_in_network`; `leavesNetworkEstimated`).
     pub leaves_network: bool,
+    /// The answer comes from the address, not from the administrators: an estimate (a gateway
+    /// in the own network may forward to a cloud model).
+    pub leaves_network_estimated: bool,
+    /// Whether calls through this provider can run: false when its key cannot be read.
+    pub usable: bool,
+    /// Why it cannot (`ai.key_unreadable`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
     /// The last connection test: passed, failed, or (absent) not tested since the last change.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
@@ -845,15 +867,21 @@ pub struct AiStatusProvider {
     pub notice_acknowledged: bool,
 }
 
-/// The provider in effect for each function, when the server chose one per function (board
-/// AI.dc.html frame 2). Equal to `provider` where nothing was chosen.
+/// The provider in effect for each function (board AI.dc.html frame 2), absent where none is:
+/// the UI shows a function only while its provider is there and usable.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AiStatusFunctions {
-    pub explain: AiStatusProvider,
-    pub summarize: AiStatusProvider,
-    pub chat: AiStatusProvider,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub explain: Option<AiStatusProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub summarize: Option<AiStatusProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub chat: Option<AiStatusProvider>,
 }
 
 /// The caller's tokens and calls today, the organization's tokens this month, and the limits
@@ -895,9 +923,24 @@ async fn status_provider(state: &AppState, user_id: &str, row: ProviderRow) -> A
         Some(port) if !host.is_empty() => format!("{host}:{port}"),
         _ => host.clone(),
     };
+    // The administrators' word where they gave it, else an estimate from the address.
+    let (leaves_network, leaves_network_estimated) = match row.leaves_network.as_deref() {
+        Some("yes") => (true, false),
+        Some("no") => (false, false),
+        _ => (!stays_in_network(&row.base_url), true),
+    };
+    // A key that cannot be read (another secrets key) makes the provider unusable.
+    let reason = match store::load_key(&state.db, &state.secrets, &row.id).await {
+        Ok(_) => None,
+        Err(crate::secrets::LoadError::Database(e)) => return Err(e.into()),
+        Err(crate::secrets::LoadError::Secret { .. }) => Some("ai.key_unreadable".to_string()),
+    };
     Ok(AiStatusProvider {
         notice_acknowledged: store::notice_acknowledged(&state.db, user_id, &row.id).await?,
-        leaves_network: !stays_in_network(&row.base_url),
+        leaves_network,
+        leaves_network_estimated,
+        usable: reason.is_none(),
+        reason,
         reachable: row.last_test_ok.map(|ok| ok != 0),
         scope: if row.org_id.is_some() { "org" } else { "server" }.into(),
         endpoint,
@@ -914,7 +957,13 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
     if !enabled(state).await? || !enabled_in_org(state, org_id).await? {
         return Ok(AiStatus::off(allowed));
     }
-    let Some(row) = in_effect(state, org_id).await? else {
+    // The provider of each function; one chosen for a function works without a server default.
+    let mut rows = Vec::new();
+    for function in FUNCTIONS {
+        rows.push(in_effect_for(state, org_id, Some(function)).await?);
+    }
+    let fallback = rows.iter().flatten().next().cloned();
+    let Some(row) = in_effect(state, org_id).await?.or(fallback) else {
         return Ok(AiStatus { enabled: true, reason: Some("ai.no_provider".into()), ..AiStatus::off(allowed) });
     };
     let (user, _) = today(state, org_id, user_id).await?;
@@ -931,20 +980,23 @@ pub async fn status(state: &AppState, org_id: &str, user_id: &str) -> ApiResult<
     let max_rows = i64::try_from(max_rows_to_model(state).await?).unwrap_or(i64::MAX);
     let provider = status_provider(state, user_id, row).await?;
     let mut by_function = Vec::new();
-    for function in FUNCTIONS {
-        by_function.push(match in_effect_for(state, org_id, Some(function)).await? {
-            Some(row) if row.id != provider.id => status_provider(state, user_id, row).await?,
-            _ => provider.clone(),
+    for row in rows {
+        by_function.push(match row {
+            Some(row) if row.id == provider.id => Some(provider.clone()),
+            Some(row) => Some(status_provider(state, user_id, row).await?),
+            None => None,
         });
     }
-    let [explain, summarize, chat]: [AiStatusProvider; 3] =
+    let [explain, summarize, chat]: [Option<AiStatusProvider>; 3] =
         by_function.try_into().map_err(|_| ApiError::internal("ai", "one provider per function"))?;
+    // Usable while any function can run; each function says for itself.
+    let usable = [&explain, &summarize, &chat].iter().any(|p| p.as_ref().is_some_and(|p| p.usable));
     Ok(AiStatus {
         enabled: true,
-        usable: true,
+        usable,
         org_providers_allowed: allowed,
         notice_acknowledged: Some(acknowledged),
-        reason: None,
+        reason: if usable { None } else { provider.reason.clone() },
         provider: Some(provider),
         functions: Some(AiStatusFunctions { explain, summarize, chat }),
         usage: Some(AiStatusUsage {

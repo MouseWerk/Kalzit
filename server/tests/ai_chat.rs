@@ -838,9 +838,42 @@ async fn a_provider_per_function_a_dashboard_as_context_and_panels_after_their_s
         )
         .await;
     assert_eq!(r.reason(), "ai.provider_unknown", "{}", r.body);
+    // Only once its connection test passed, as for switching AI on.
+    let r = t
+        .send(
+            Method::PATCH,
+            "/api/admin/settings/ai.provider_chat",
+            Some(json!({ "value": chat_provider, "version": version })),
+            Some(&owner),
+        )
+        .await;
+    assert_eq!(r.reason(), "ai.enable_needs_tested_provider", "{}", r.body);
+    sqlx::query("UPDATE ai_providers SET last_test_ok = 1, last_tested_at = 0 WHERE id = $1")
+        .bind(&chat_provider)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
     t.setting("ai.provider_chat", json!(chat_provider), &owner).await;
+    // The administrators say a gateway forwards: their word is the fact, no estimate.
+    let updated = t.get("/api/admin/ai/providers", &owner).await;
+    let stamp =
+        updated.body["items"].as_array().unwrap().iter().find(|p| p["id"] == chat_provider).unwrap()["updatedAt"]
+            .clone();
+    let r = t
+        .send(
+            Method::PATCH,
+            &format!("/api/admin/ai/providers/{chat_provider}"),
+            Some(json!({ "leavesNetwork": "yes", "expectedUpdatedAt": stamp })),
+            Some(&owner),
+        )
+        .await;
+    assert_eq!(r.body["leavesNetwork"], "yes", "{}", r.body);
     let status = t.get(&format!("/api/orgs/{org}/ai/status"), &editor).await;
     assert_eq!(status.body["functions"]["chat"]["id"], chat_provider);
+    assert_eq!(status.body["functions"]["chat"]["leavesNetwork"], true);
+    assert_eq!(status.body["functions"]["chat"]["leavesNetworkEstimated"], false);
+    assert_eq!(status.body["provider"]["leavesNetworkEstimated"], true);
+    assert_eq!(status.body["functions"]["chat"]["reachable"], true, "a flag change keeps the test");
     assert_eq!(status.body["functions"]["chat"]["noticeAcknowledged"], false);
     assert_eq!(status.body["functions"]["explain"]["id"], provider["id"], "the others keep the default");
     // Its own notice first; then the chat goes to it and nowhere else.
@@ -886,6 +919,16 @@ async fn a_provider_per_function_a_dashboard_as_context_and_panels_after_their_s
     assert!(fields.iter().any(|f| f["name"] == "Doppelt"), "the panel's step ran: {record}");
     let stored = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
     assert_eq!(stored.body["messages"][0]["content"]["dashboard"]["title"], "Kundenumsatz");
+    // A context dashboard moved to the trash drops out of the chat and does not block it.
+    let r = t.delete(&format!("/api/orgs/{org}/dashboards/{dashboard}"), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let stored = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    assert!(stored.body["messages"][0]["content"].get("dashboard").is_none(), "{}", stored.body);
+    chat_mock.script(vec![text("Gut.")]);
+    let r = t.ask(&org, &chat, "Und sonst?", &editor).await;
+    assert_eq!(r.event("done")["outcome"], "ok", "{}", r.text);
+    let sent = chat_mock.requests().last().unwrap().to_string();
+    assert!(!sent.contains("kalzit:dashboard"), "{sent}");
 
     // A dashboard the caller may not read is not found.
     t.ack(&org, &viewer).await;

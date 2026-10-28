@@ -381,7 +381,8 @@ async fn status_says_nothing_while_ai_is_off_and_follows_the_provider_in_effect(
         r.body["provider"],
         json!({
             "id": server_id, "name": "openai lokal", "kind": "openai", "model": "modell-1", "host": "127.0.0.1",
-            "scope": "server", "endpoint": endpoint, "leavesNetwork": false, "reachable": true,
+            "scope": "server", "endpoint": endpoint, "leavesNetwork": false, "leavesNetworkEstimated": true,
+            "usable": true, "reachable": true,
             "noticeAcknowledged": false
         })
     );
