@@ -197,7 +197,7 @@ describe("user menu", () => {
     const menu = screen.getByRole("menu", { name: "Account" });
     expect(menuButton.getAttribute("aria-expanded")).toBe("true");
     const items = Array.from(menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"]'));
-    expect(items).toHaveLength(8);
+    expect(items).toHaveLength(9);
     expect(document.activeElement).toBe(items[0]);
 
     await user.keyboard("{ArrowDown}");
@@ -207,7 +207,9 @@ describe("user menu", () => {
     await user.keyboard("{Home}");
     expect(document.activeElement).toBe(items[0]);
     await user.keyboard("{End}");
-    expect(document.activeElement).toBe(within(menu).getByRole("menuitem", { name: "Sign out" }));
+    expect(document.activeElement).toBe(
+      within(menu).getByRole("menuitem", { name: "Sign out and forget this browser" }),
+    );
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
@@ -219,8 +221,8 @@ describe("user menu", () => {
     menuButton.focus();
     await user.keyboard("{ArrowUp}");
     const menu = screen.getByRole("menu", { name: "Account" });
-    // Second to last, right before Sign out.
-    await user.keyboard("{ArrowUp}");
+    // Third to last, right before the two ways to sign out.
+    await user.keyboard("{ArrowUp}{ArrowUp}");
     const account = within(menu).getByRole("menuitem", { name: "Your account" });
     expect(document.activeElement).toBe(account);
     await user.keyboard("{Enter}");
@@ -236,7 +238,9 @@ describe("user menu", () => {
     const { user, menuButton } = await openShell();
     menuButton.focus();
     await user.keyboard("{ArrowUp}");
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Sign out" }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("menuitem", { name: "Sign out and forget this browser" }),
+    );
   });
 
   it("closes when clicking elsewhere without stealing focus back", async () => {
@@ -284,6 +288,16 @@ describe("user menu", () => {
     await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
     expect(location().pathname).toBe("/login");
+  });
+
+  it("signs out and forgets this browser on request", async () => {
+    const { user, menuButton, server, location } = await openShell("/dashboards");
+    await user.click(menuButton);
+    await user.click(screen.getByRole("menuitem", { name: "Sign out and forget this browser" }));
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(location().pathname).toBe("/login");
+    const signOuts = server.calls.filter((call) => call.path.startsWith("/api/auth/logout"));
+    expect(signOuts.map((call) => call.path)).toEqual(["/api/auth/logout?forgetBrowser=true"]);
   });
 
   it("shows who is signed in at the top of the menu", async () => {

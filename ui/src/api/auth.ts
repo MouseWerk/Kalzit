@@ -44,6 +44,8 @@ export interface SetupInput {
 export interface LoginInput {
   email: string;
   password: string;
+  /** "This is not my browser": the browser is not remembered as a device of the account. */
+  forgetBrowser?: boolean;
 }
 
 function isOrgMembership(value: unknown): value is OrgMembership {
@@ -96,8 +98,9 @@ export async function login(input: LoginInput): Promise<Me> {
   return expectShape(await request("POST", "/api/auth/login", input), isMe, "login");
 }
 
-export async function logout(): Promise<void> {
-  await request("POST", "/api/auth/logout");
+/** Signs out; with `forgetBrowser` the browser is no longer a known device of the account. */
+export async function logout(forgetBrowser = false): Promise<void> {
+  await request("POST", forgetBrowser ? "/api/auth/logout?forgetBrowser=true" : "/api/auth/logout");
 }
 
 /** The signed-in user, or null when there is no valid session. */

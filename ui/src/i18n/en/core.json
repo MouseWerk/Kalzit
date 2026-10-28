@@ -16,6 +16,7 @@
   "nav.children": "{name} sections",
   "userMenu.label": "Account",
   "userMenu.signOut": "Sign out",
+  "userMenu.signOutForget": "Sign out and forget this browser",
   "theme.label": "Theme",
   "theme.system": "System",
   "theme.light": "Light",

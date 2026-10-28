@@ -69,6 +69,11 @@ pub fn set_cookie(value: &str, secure: bool) -> HeaderValue {
     super::session::cookie_header(&format!("{}={value}; Max-Age={max_age}", cookie_name(secure)), secure)
 }
 
+/// Removes the device cookie: the browser is no longer a known device of any account.
+pub fn clear_cookie(secure: bool) -> HeaderValue {
+    super::session::cookie_header(&format!("{}=; Max-Age=0", cookie_name(secure)), secure)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

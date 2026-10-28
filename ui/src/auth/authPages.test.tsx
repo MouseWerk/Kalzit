@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { installFakeServer, TEST_USER } from "../test/fakeServer";
+import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { MIN_PASSWORD_LENGTH, passwordStrength } from "./validation";
 
@@ -104,6 +104,42 @@ describe("sign-in page", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     await screen.findByText("Email address or password is not correct.");
     expect(screen.queryByText("You have signed out.")).toBeNull();
+  });
+
+  it("asks the server not to remember a browser that is not the user's", async () => {
+    const server = installFakeServer({ signedIn: false });
+    const { user } = renderApp("/login");
+    await user.click(await screen.findByLabelText("Email address"));
+    await user.paste(TEST_USER.email);
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste(TEST_PASSWORD);
+    const notMine = screen.getByRole("checkbox", { name: /This is not my browser/ });
+    expect((notMine as HTMLInputElement).checked).toBe(false);
+    await user.click(notMine);
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(server.calls.find((call) => call.path === "/api/auth/login")?.body).toEqual({
+        email: TEST_USER.email,
+        password: TEST_PASSWORD,
+        forgetBrowser: true,
+      }),
+    );
+  });
+
+  it("leaves the browser remembered by default", async () => {
+    const server = installFakeServer({ signedIn: false });
+    const { user } = renderApp("/login");
+    await user.click(await screen.findByLabelText("Email address"));
+    await user.paste(TEST_USER.email);
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste(TEST_PASSWORD);
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(server.calls.find((call) => call.path === "/api/auth/login")?.body).toEqual({
+        email: TEST_USER.email,
+        password: TEST_PASSWORD,
+      }),
+    );
   });
 
   it("shows no sign-out confirmation on a plain visit", async () => {

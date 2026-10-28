@@ -87,7 +87,7 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
 
   // Setup is done: signing out leads to sign in, and the setup page only says it is done.
   await page.getByRole("button", { name: t("userMenu.label") }).click();
-  await page.getByRole("menuitem", { name: t("userMenu.signOut") }).click();
+  await page.getByRole("menuitem", { name: t("userMenu.signOut"), exact: true }).click();
   await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
   await page.goto("/setup");
   await expect(
