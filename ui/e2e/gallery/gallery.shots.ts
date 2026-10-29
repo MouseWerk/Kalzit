@@ -1,9 +1,19 @@
+import { createPrivateKey } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
 import { Api, baseUrl, fixturesDir } from "../support/api";
 import { t } from "../support/i18n";
+import {
+  BINARY,
+  filesTable,
+  type PublisherKey,
+  packageOf,
+  publisherKey,
+  testPluginPackage,
+} from "../support/plugin";
 import { boltTarget, GRAPH_FIXTURE } from "../support/services";
+import { ASK_QUESTION, type Assistant, PUE_QUERY, startAssistant } from "./assistant";
 import { GALLERY_MONGO, GALLERY_NOW, HALLS, seedLogs, writeDatacenterDatabase } from "./datacenter";
 
 /**
@@ -45,6 +55,14 @@ interface Seeded {
   live: string;
   pipeline: string;
   steps: string;
+  /** The SQLite file of the metrics, which the stand-in model reads its figures from. */
+  dbFile: string;
+  /** The saved analysis of the Explore AI pictures. */
+  pue: string;
+  /** The AI providers: the local model server and a gateway whose model runs elsewhere. */
+  providers: string[];
+  /** The dashboard with the panels of the KPI tile plugin. */
+  pluginPanels: string;
 }
 
 /**
@@ -94,14 +112,50 @@ async function openPage(
   for (const pattern of [
     /\/api\/orgs\/[^/]+\/(members|dashboards|analyses)(\?|$)/,
     /\/api\/orgs\/[^/]+\/analyses\/[^/?]+(\?|$)/,
+    // The chats of Ask, the installed plugins with their log, and the catalog's last check.
+    /\/api\/orgs\/[^/]+\/ai\/chats(\/[^/?]+)?(\?|$)/,
+    /\/api\/(admin|orgs\/[^/]+)\/ai\/providers(\?|$)/,
+    /\/api\/admin\/plugins(\/[^?]+)?(\?|$)/,
+    /\/api\/admin\/plugin-(keys|catalog)(\?|$)/,
   ]) {
     await context.route(pattern, async (route) => {
+      // Only the answers that are JSON documents; a stream or a change passes untouched.
+      if (route.request().method() !== "GET") return route.continue();
       const response = await route.fetch();
+      if (!(response.headers()["content-type"] ?? "").includes("application/json")) {
+        return route.fulfill({ response });
+      }
       const body: unknown = await response.json();
       await route.fulfill({ response, json: atGalleryTime(body, Date.now()) });
     });
   }
+  // AI usage is counted per calendar day: the days of the run become the gallery's days.
+  await context.route(/\/api\/(admin|orgs\/[^/]+)\/ai\/usage(\?|$)/, async (route) => {
+    const response = await route.fetch();
+    const body: unknown = await response.json();
+    await route.fulfill({ response, json: atGalleryDay(body, Date.now()) });
+  });
   return page;
+}
+
+/** Moves every `day` (YYYY-MM-DD) from the run's calendar to the gallery's, keeping the gaps. */
+function atGalleryDay(value: unknown, realNow: number): unknown {
+  if (Array.isArray(value)) return value.map((item) => atGalleryDay(item, realNow));
+  if (value === null || typeof value !== "object") return value;
+  const shift = Math.round((Date.parse(day(GALLERY_NOW)) - Date.parse(day(realNow))) / DAY);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      key === "day" && typeof item === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item)
+        ? day(Date.parse(item) + shift * DAY)
+        : atGalleryDay(item, realNow),
+    ]),
+  );
+}
+
+/** The calendar day of a moment in UTC, as the usage counts it. */
+function day(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 /** Moves every timestamp near the real time to the gallery moment, keeping whole days apart. */
@@ -280,7 +334,7 @@ function overviewDashboard(sql: string): Record<string, unknown> {
       ),
       stat(
         "hottest",
-        "Hottest rack inlet",
+        "Hottest rack inlet, °C",
         12,
         "SELECT ts AS time, MAX(inlet_c) AS inlet FROM rack_metrics WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
         { unit: "celsius", decimals: 1, thresholds: THRESHOLDS_TEMP },
@@ -288,7 +342,7 @@ function overviewDashboard(sql: string): Record<string, unknown> {
       ),
       stat(
         "network",
-        "Network throughput",
+        "Network, Gbit/s",
         18,
         "SELECT ts AS time, SUM(ingress_bps + egress_bps) AS throughput FROM network WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
         { unit: "bitsps", decimals: 1 },
@@ -743,6 +797,18 @@ async function seed(): Promise<Seeded> {
       visualization: { type: "timeseries", options: {} },
     });
 
+    const pue = await owner.createAnalysis({
+      schemaVersion: 1,
+      title: PUE_TITLE,
+      description: "Power usage effectiveness and IT load of each hall over the day.",
+      timeRange: { from: "now-24h", to: "now" },
+      targets: sqlTarget(sql, PUE_QUERY),
+      steps: [],
+      visualization: { type: "table", options: {} },
+    });
+    const providers = await seedAi(owner, sql, dbFile);
+    const pluginPanels = await seedPlugins(owner, sql);
+
     return {
       sql,
       mongo,
@@ -757,10 +823,284 @@ async function seed(): Promise<Seeded> {
       live,
       pipeline,
       steps,
+      dbFile,
+      pue,
+      providers,
+      pluginPanels,
     };
   } finally {
     await owner.dispose();
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// AI: a stand-in model server, two providers, the metrics source open to AI.
+
+const PUE_TITLE = "PUE and IT load per hall";
+
+/** The stand-in of this worker; a failed scene starts a new worker, which starts it again. */
+let assistant: Assistant | undefined;
+
+async function setServerSetting(api: Api, key: string, value: unknown): Promise<void> {
+  const list = (await (await api.context.get("/api/admin/settings")).json()) as {
+    items: { key: string; version: number }[];
+  };
+  const version = list.items.find((item) => item.key === key)?.version ?? 0;
+  const response = await api.context.patch(`/api/admin/settings/${key}`, {
+    data: { value, version },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
+}
+
+/**
+ * The stand-in running in this worker, with the providers pointing at it: when Ollama's port
+ * was taken and a new worker got another one, the providers move to it.
+ */
+async function ensureAssistant(): Promise<void> {
+  if (assistant !== undefined) return;
+  assistant = await startAssistant(seeded().dbFile, seeded().sql);
+  const owner = await Api.signIn(OWNER.email, OWNER.password);
+  try {
+    const list = (await (await owner.context.get("/api/admin/ai/providers")).json()) as {
+      items: { id: string; baseUrl: string; updatedAt: number }[];
+    };
+    for (const provider of list.items) {
+      if (provider.baseUrl === assistant.baseUrl) continue;
+      const moved = await owner.context.patch(`/api/admin/ai/providers/${provider.id}`, {
+        data: { baseUrl: assistant.baseUrl, expectedUpdatedAt: provider.updatedAt },
+      });
+      expect(moved.ok(), await moved.text()).toBe(true);
+    }
+  } finally {
+    await owner.dispose();
+  }
+}
+
+/**
+ * Two OpenAI-compatible providers on the stand-in: a local model server, the default, and a
+ * gateway marked as sending data out of the network, chosen for summaries. AI on, the metrics
+ * source open to AI.
+ */
+async function seedAi(owner: Api, sql: string, dbFile: string): Promise<string[]> {
+  assistant = await startAssistant(dbFile, sql);
+  const providers: string[] = [];
+  for (const input of [
+    {
+      name: "Local model (Ollama)",
+      baseUrl: assistant.baseUrl,
+      model: "llama3.3:70b",
+      isDefault: true,
+      leavesNetwork: "no",
+    },
+    {
+      name: "LiteLLM gateway",
+      baseUrl: assistant.baseUrl,
+      model: "gpt-4.1-mini",
+      isDefault: false,
+      leavesNetwork: "yes",
+    },
+  ]) {
+    const created = await owner.context.post("/api/admin/ai/providers", {
+      data: { kind: "openai", ...input },
+    });
+    expect(created.ok(), await created.text()).toBe(true);
+    const { id } = (await created.json()) as { id: string };
+    const tested = await owner.context.post(`/api/admin/ai/providers/${id}/test`, { data: {} });
+    expect(((await tested.json()) as { ok: boolean }).ok).toBe(true);
+    providers.push(id);
+  }
+  await setServerSetting(owner, "ai.enabled", true);
+  await setServerSetting(owner, "ai.provider_summarize", providers[1]);
+  const access = await owner.context.put(`/api/orgs/${owner.orgId}/datasources/${sql}/ai-access`, {
+    data: { readable: true, excludedFields: [] },
+  });
+  expect(access.ok(), await access.text()).toBe(true);
+  return providers;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Plugins: a publisher key, a data source plugin and the example KPI tile, all signed.
+
+const PUBLISHER = "Basalt Engineering";
+const BACNET = { id: "dev.basalt.bacnet", name: "BACnet sensors" } as const;
+const KPI = "dev.basalt.panel-kpi";
+const PLUGIN_PANELS = "Site Basalt at a glance";
+
+/** The key the plugin pictures sign with; made once per worker, trusted in the first one. */
+let signingKey: PublisherKey | undefined;
+
+function key(): PublisherKey {
+  if (signingKey === undefined) {
+    const stored = readFileSync(join(fixturesDir(), "gallery-key.json"), "utf8");
+    const { privateKey, ...rest } = JSON.parse(stored) as Omit<PublisherKey, "privateKey"> & {
+      privateKey: string;
+    };
+    signingKey = { ...rest, privateKey: createPrivateKey(privateKey) };
+  }
+  return signingKey;
+}
+
+/** The example panel plugin (examples/plugins/panel-kpi) as this publisher's, signed. */
+function kpiPackage(): Buffer {
+  const dir = join(import.meta.dirname, "..", "..", "..", "examples", "plugins", "panel-kpi");
+  const files = [{ name: "panel.js", data: new Uint8Array(readFileSync(join(dir, "panel.js"))) }];
+  const manifest = readFileSync(join(dir, "kalzit-plugin.toml"), "utf8")
+    .replace(/^id = .*$/m, `id = "${KPI}"`)
+    .replace(/^publisher = .*$/m, `publisher = "${PUBLISHER}"`)
+    // The example asks for the version it ships with; the pictures run on the current one.
+    .replace(/^min_kalzit = .*$/m, 'min_kalzit = "0.1.0"');
+  return packageOf(`${manifest.trimEnd()}\n\n${filesTable(files)}`, files, key());
+}
+
+/** A package of the test plugin as one of this publisher's data source plugins. */
+function dataSourcePackage(
+  id: string,
+  name: string,
+  description: string,
+  defaultPort: number,
+): Buffer {
+  return testPluginPackage(
+    {
+      id,
+      name,
+      publisher: PUBLISHER,
+      description,
+      network: [['setting = "host"', 'form = "host"', `default_port = ${defaultPort}`]],
+    },
+    key(),
+  );
+}
+
+async function installSigned(owner: Api, id: string, file: Buffer): Promise<void> {
+  const installed = await owner.context.post("/api/admin/plugins", {
+    headers: { "Content-Type": "application/zip" },
+    data: file,
+  });
+  expect(installed.ok(), await installed.text()).toBe(true);
+  const { version } = (await installed.json()) as { version?: string };
+  for (const [step, data] of [
+    ["approve", { version: version ?? "1.0.0" }],
+    ["enable", undefined],
+  ] as const) {
+    const answer = await owner.context.post(
+      `/api/admin/plugins/${id}/${step}`,
+      data === undefined ? {} : { data },
+    );
+    expect(answer.ok(), await answer.text()).toBe(true);
+  }
+}
+
+const kpiPanel = (
+  datasourceId: string,
+  id: string,
+  title: string,
+  x: number,
+  sql: string,
+  options: Record<string, unknown>,
+) => ({
+  id,
+  type: KPI,
+  title,
+  grid: { x, y: 0, w: 6, h: 6 },
+  targets: sqlTarget(datasourceId, sql),
+  options,
+});
+
+async function seedPlugins(owner: Api, sql: string): Promise<string> {
+  expect(BINARY, "KALZIT_E2E_PLUGIN_BINARY names the test plugin").not.toBe("");
+  const made = publisherKey();
+  writeFileSync(
+    join(fixturesDir(), "gallery-key.json"),
+    JSON.stringify({
+      keyId: made.keyId,
+      publicKey: made.publicKey,
+      privateKey: made.privateKey.export({ format: "pem", type: "pkcs8" }),
+    }),
+  );
+  signingKey = made;
+  const trusted = await owner.context.post("/api/admin/plugin-keys", {
+    data: { name: PUBLISHER, publicKey: made.publicKey },
+  });
+  expect(trusted.ok(), await trusted.text()).toBe(true);
+  // Without Landlock (some CI kernels) plugins start only when the administrator allows it.
+  const host = (await (await owner.context.get("/api/admin/plugin-host")).json()) as {
+    landlockAvailable?: boolean;
+  };
+  if (host.landlockAvailable === false) {
+    await owner.context.patch("/api/admin/plugin-host", { data: { allowWithoutLandlock: true } });
+  }
+
+  await installSigned(
+    owner,
+    BACNET.id,
+    dataSourcePackage(
+      BACNET.id,
+      BACNET.name,
+      "Reads chillers, air handlers and meters from a BACnet/IP building management system.",
+      47808,
+    ),
+  );
+  await installSigned(owner, KPI, kpiPackage());
+  const bacnet = await owner.createSource("Chiller plant (BACnet)", BACNET.id, {
+    host: "bms.basalt.example",
+  });
+  // One query starts the process, so the pages show it running in its sandbox.
+  await owner.context.post(`/api/orgs/${owner.orgId}/query`, {
+    data: {
+      queries: [{ refId: "A", datasourceId: bacnet, query: { do: "frame" } }],
+      timeRange: { from: GALLERY_NOW - HOUR, to: GALLERY_NOW },
+    },
+  });
+
+  return owner.createDashboard({
+    schemaVersion: 2,
+    title: PLUGIN_PANELS,
+    timeRange: { from: "now-24h", to: "now" },
+    variables: [],
+    panels: [
+      kpiPanel(
+        sql,
+        "it",
+        "IT load, kW",
+        0,
+        "SELECT ts AS time, ROUND(SUM(power_w) / 1000.0, 1) AS kW FROM rack_metrics WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
+        { field: "kW", decimals: 1 },
+      ),
+      kpiPanel(
+        sql,
+        "pue",
+        "PUE, whole site",
+        6,
+        "SELECT ts AS time, SUM(facility_w) * 1.0 / SUM(it_w) AS PUE FROM hall_power WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
+        { field: "PUE", decimals: 2 },
+      ),
+      kpiPanel(
+        sql,
+        "inlet",
+        "Hottest rack inlet, °C",
+        12,
+        "SELECT ts AS time, MAX(inlet_c) AS inlet FROM rack_metrics WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
+        { field: "inlet", decimals: 1 },
+      ),
+      kpiPanel(
+        sql,
+        "network",
+        "Network, Gbit/s",
+        18,
+        "SELECT ts AS time, SUM(ingress_bps + egress_bps) / 1e9 AS gbps FROM network WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
+        { field: "gbps", decimals: 1 },
+      ),
+      {
+        id: "power",
+        type: "timeseries",
+        title: "IT power per hall",
+        grid: { x: 0, y: 6, w: 24, h: 12 },
+        targets: sqlTarget(sql, PER_HALL_POWER),
+        options: {},
+        fieldConfig: { defaults: { unit: "watt", fillOpacity: 12 }, overrides: [] },
+      },
+    ],
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1014,6 +1354,159 @@ for (const scheme of SCHEMES) {
     await expect(page.locator(".uplot")).toHaveCount(1);
     await noEmptyPanels(page);
     await shoot(page, `dashboard-live-${scheme}`);
+    await page.context().close();
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// AI and plugins.
+
+/** Confirms the first-use notice of a provider when it comes, before `next` shows. */
+async function passNotice(page: Page, next: Locator): Promise<void> {
+  const notice = page.getByRole("dialog", { name: t("ai.notice.title") });
+  await expect(notice.or(next).first()).toBeVisible();
+  if (await notice.isVisible()) {
+    await notice.getByRole("button", { name: t("ai.notice.confirm") }).click();
+    await expect(notice).toBeHidden();
+  }
+}
+
+async function exploreAnalysis(page: Page): Promise<Locator> {
+  await page.goto(`/explore?analysis=${seeded().pue}`);
+  await expect(page.getByRole("heading", { name: PUE_TITLE })).toBeVisible();
+  const result = page.getByRole("region", { name: t("explore.result") }).first();
+  await expect(result.getByRole("table")).toBeVisible();
+  await expect(result).toHaveAttribute("aria-busy", "false");
+  return result;
+}
+
+for (const scheme of SCHEMES) {
+  test(`explore, explain a query, ${scheme}`, async ({ browser }) => {
+    await ensureAssistant();
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await exploreAnalysis(page);
+    await page.getByRole("button", { name: t("ai.call.explain"), exact: true }).click();
+    const explanation = page.getByRole("region", { name: t("ai.call.explanationTitle") });
+    await passNotice(page, explanation);
+    await expect(explanation).toContainText("sorted by name");
+    await shoot(page, `explore-explain-${scheme}`);
+    await page.context().close();
+  });
+}
+
+for (const scheme of SCHEMES) {
+  test(`explore, summarize a result, ${scheme}`, async ({ browser }) => {
+    await ensureAssistant();
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    const result = await exploreAnalysis(page);
+    await result.getByRole("button", { name: t("ai.call.summarize"), exact: true }).click();
+    const summary = page.getByRole("region", { name: t("ai.call.summaryTitleExplore") });
+    await passNotice(page, summary);
+    await expect(summary).toContainText("kW on average");
+    await shoot(page, `explore-summarize-${scheme}`);
+    await page.context().close();
+  });
+}
+
+for (const scheme of SCHEMES) {
+  test(`ask, an answer with its steps, ${scheme}`, async ({ browser }) => {
+    await ensureAssistant();
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await page.goto("/ask");
+    await page.getByLabel(t("ai.chat.question")).fill(ASK_QUESTION);
+    await page.getByRole("button", { name: t("ai.chat.send"), exact: true }).click();
+    const answer = page.getByLabel(t("ai.chat.answerLabel"), { exact: true });
+    await passNotice(page, page.getByLabel(t("ai.chat.working")).or(answer).first());
+    await expect(answer).toContainText("had the highest inlet temperatures");
+    await shoot(page, `ask-answer-${scheme}`);
+    await page.context().close();
+  });
+}
+
+for (const scheme of SCHEMES) {
+  test(`administration, AI, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await page.goto("/settings/ai");
+    await expect(page.getByText("LiteLLM gateway").first()).toBeVisible();
+    await shoot(page, `ai-settings-${scheme}`);
+    await page
+      .getByRole("heading", { name: t("ai.admin.functions.title") })
+      .evaluate((heading) => heading.closest("section")?.scrollIntoView({ block: "center" }));
+    await shoot(page, `ai-functions-${scheme}`);
+    await page.context().close();
+  });
+}
+
+for (const scheme of SCHEMES) {
+  test(`administration, plugins, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await page.goto("/settings/plugins");
+    await expect(
+      page.getByRole("row").filter({ hasText: BACNET.name }).getByText(t("plugins.status.running")),
+    ).toBeVisible();
+    await shoot(page, `plugins-installed-${scheme}`);
+
+    await page.goto(`/settings/plugins/${BACNET.id}`);
+    await expect(page.getByRole("heading", { level: 2, name: BACNET.name })).toBeVisible();
+    await shoot(page, `plugin-page-${scheme}`);
+
+    await page.goto("/settings/plugins#trust");
+    await expect(page.getByRole("heading", { name: t("plugins.trust.keys.title") })).toBeVisible();
+    await expect(page.getByText(PUBLISHER).first()).toBeVisible();
+    await shoot(page, `plugins-trust-${scheme}`);
+
+    // Install from file up to the review: the checks passed, the targets to grant. Closing the
+    // dialog takes the package back.
+    await page.goto("/settings/plugins");
+    await page.getByRole("button", { name: t("plugins.install.open") }).click();
+    const dialog = page.getByRole("dialog", { name: t("plugins.install.title") });
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: "modbus-meters-1.0.0.kalzit-plugin",
+      mimeType: "application/zip",
+      buffer: dataSourcePackage(
+        "dev.basalt.modbus",
+        "Modbus meters",
+        "Reads energy meters and PDUs over Modbus TCP.",
+        502,
+      ),
+    });
+    const review = page.getByRole("dialog", {
+      name: t("plugins.install.reviewTitle", { name: "Modbus meters", version: "1.0.0" }),
+    });
+    await expect(review.getByRole("heading", { name: t("plugins.install.checks") })).toBeVisible();
+    await shoot(page, `plugin-install-${scheme}`);
+    await review.getByRole("button", { name: t("admin.common.cancel"), exact: true }).click();
+    await expect(review).toBeHidden();
+    await page.waitForLoadState("networkidle");
+    await page.context().close();
+  });
+}
+
+for (const scheme of SCHEMES) {
+  test(`dashboard with plugin panels, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await openDashboard(page, seeded().pluginPanels, PLUGIN_PANELS);
+    for (const title of [
+      "IT load, kW",
+      "PUE, whole site",
+      "Hottest rack inlet, °C",
+      "Network, Gbit/s",
+    ]) {
+      await expect(
+        page
+          .frameLocator(`iframe[title="${t("panelPlugins.frameTitle", { name: title })}"]`)
+          .locator(".value"),
+      ).toBeVisible();
+    }
+    await expect(page.locator(".uplot")).toHaveCount(1);
+    await noEmptyPanels(page);
+    await shoot(page, `dashboard-plugin-panel-${scheme}`);
     await page.context().close();
   });
 }
