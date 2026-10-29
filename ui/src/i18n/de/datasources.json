@@ -961,7 +961,7 @@
   "datasources.reason.influxdb.endpoint_not_allowed": "Kalzit schickt diese Anfrage nicht ({path}); es liest nur.",
   "datasources.reason.flux.write_refused": "{name}() schreibt Daten und ist nicht erlaubt; Kalzit liest nur.",
   "datasources.reason.flux.package_not_allowed": "Das Paket {name} ist nicht erlaubt: Es schreibt oder erreicht andere Systeme.",
-  "datasources.reason.flux.remote_not_allowed": "Das Argument {name} würde einen anderen Server abfragen und ist nicht erlaubt.",
+  "datasources.reason.flux.remote_not_allowed": "{name} würde einen anderen Server abfragen und ist nicht erlaubt; lies eine solche Spalte als r.{name}.",
   "datasources.reason.influxql.empty": "Die Abfrage ist leer.",
   "datasources.reason.influxql.multiple_statements": "Nur eine Anweisung ist erlaubt.",
   "datasources.reason.influxql.not_read": "Nur SELECT und SHOW sind erlaubt; Kalzit liest nur.",
@@ -977,5 +977,8 @@
   "datasources.reason.loki.credentials_invalid": "Die Zugangsdaten oder die Org-ID enthalten Zeichen, die ein HTTP-Header nicht tragen kann.",
   "datasources.reason.loki.error": "Loki hat mit einem Fehler geantwortet (HTTP {status}): {detail}",
   "datasources.reason.loki.not_an_api_response": "Der Server hat geantwortet (HTTP {status}), aber nicht wie Loki. Prüf die URL.",
-  "datasources.reason.loki.warning": "Loki warnt: {detail}"
+  "datasources.reason.loki.warning": "Loki warnt: {detail}",
+  "datasources.reason.sql.nul_character": "Die Abfrage enthält ein NUL-Zeichen.",
+  "datasources.reason.sql.check_mismatch": "Die Abfrage ließ sich nicht so prüfen, wie sie laufen würde. Schreib sie ohne parameterartigen Text in Kommentaren oder Namen.",
+  "datasources.reason.flux.import_form": "Schreib Importe als import „package“, ohne Alias."
 }

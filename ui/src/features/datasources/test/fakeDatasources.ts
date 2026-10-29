@@ -189,7 +189,7 @@ export const FAKE_KINDS: WireKind[] = [
       setting("basicAuthUser", "string"),
       setting("basicAuthPassword", "string", { secret: true }),
       setting("bearerToken", "string", { secret: true }),
-      setting("tenantId", "string"),
+      setting("tenantId", "string", { target: true }),
       setting("caCert", "text"),
       ...COMMON,
     ],

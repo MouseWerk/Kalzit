@@ -266,11 +266,12 @@ type QueryResult =
   Rejections answer `query_rejected` with the reason. Elasticsearch and OpenSearch sources reach
   only a fixed list of read endpoints (checked on every URL before it is sent) and refuse stored
   scripts and scripts that use `ctx`; HTTP JSON sources send only GET requests below their URL.
-  ClickHouse runs every query over its HTTP interface with `readonly=1` after the SQL check
+  ClickHouse runs every query over its HTTP interface with `max_execution_time`, cancel on hang-up
+  and `readonly=1` after the SQL check, on a checked text built alongside the sent one
   (which also refuses `SETTINGS`, `FORMAT` and the table functions that reach files or other
   servers) and binds values as query parameters. InfluxDB and Loki reach only a fixed list of
-  read endpoints, checked on every URL and redirect; InfluxDB checks Flux (no `to()`/`wideTo()`,
-  an allow-list of imports, no `host`/`token` arguments) and InfluxQL (one `SELECT` without
+  read endpoints, checked on every URL and redirect; InfluxDB checks Flux (no `to`/`wideTo` names,
+  an allow-list of imports without aliases, no `host`/`token` names or keys) and InfluxQL (one `SELECT` without
   `INTO`, or one `SHOW`, sent by GET, which InfluxDB runs only for reads), and binds SQL (3.x) as
   named parameters. Loki log lines answer `documents`, its metric queries and InfluxDB answer
   `frame`.

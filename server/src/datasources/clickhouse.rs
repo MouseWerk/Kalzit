@@ -146,9 +146,16 @@ fn param_value(bind: &Bind) -> String {
     }
 }
 
-/// The query string of one request: the database, read-only mode and the parameters.
-fn query_pairs(database: &str, binds: &[Bind]) -> Vec<(String, String)> {
-    let mut pairs = vec![("database".to_string(), database.to_string()), ("readonly".into(), "1".into())];
+/// The query string of one request: the database, the server-side time limit, stopping the
+/// query when Kalzit hangs up, read-only mode (last: after it, no setting may change) and the
+/// parameters.
+fn query_pairs(database: &str, timeout: Duration, binds: &[Bind]) -> Vec<(String, String)> {
+    let mut pairs = vec![
+        ("database".to_string(), database.to_string()),
+        ("max_execution_time".into(), timeout.as_secs().max(1).to_string()),
+        ("cancel_http_readonly_queries_on_client_close".into(), "1".into()),
+        ("readonly".into(), "1".into()),
+    ];
     pairs.extend(binds.iter().enumerate().map(|(i, b)| (format!("param_p{}", i + 1), param_value(b))));
     pairs
 }
@@ -178,9 +185,9 @@ impl Client {
     }
 
     /// Sends one statement and answers the response once ClickHouse accepted it.
-    async fn send(&self, sql: &str, binds: &[Bind]) -> Result<reqwest::Response, SourceError> {
+    async fn send(&self, sql: &str, binds: &[Bind], timeout: Duration) -> Result<reqwest::Response, SourceError> {
         let mut url = self.base.clone();
-        url.query_pairs_mut().extend_pairs(query_pairs(&self.database, binds));
+        url.query_pairs_mut().extend_pairs(query_pairs(&self.database, timeout, binds));
         let response = self
             .http
             .send_with_body(Method::POST, url, self.headers.clone(), Some(statement(sql).into_bytes()))
@@ -206,7 +213,7 @@ impl Client {
 
     /// A small statement read whole: its column names and rows.
     async fn rows(&self, sql: &str) -> Result<Vec<Vec<Value>>, SourceError> {
-        let response = self.send(sql, &[]).await?;
+        let response = self.send(sql, &[], super::MAX_HEALTH_TIMEOUT).await?;
         let body = crate::http::read_limited(response, MAX_SMALL_RESPONSE).await.map_err(|e| self.failed(e))?;
         let text = String::from_utf8_lossy(&body);
         let mut rows = Vec::new();
@@ -267,7 +274,7 @@ impl DataSourcePlugin for ClickHouse {
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let prepared = sql::prepare_query(self, conn, &req, Engine::ClickHouse).await?;
         let c = client(conn).await?;
-        let response = c.send(&prepared.sql, &prepared.binds).await?;
+        let response = c.send(&prepared.sql, &prepared.binds, req.limits.timeout).await?;
         let server_zone = response
             .headers()
             .get("x-clickhouse-timezone")
@@ -541,12 +548,14 @@ mod tests {
              WHERE (t BETWEEN fromUnixTimestamp64Milli({p2:Int64}, 'UTC') AND fromUnixTimestamp64Milli({p3:Int64}, 'UTC')) \
              AND land = {p4:String} AND id IN ({p5:Int64}, {p6:Int64}) GROUP BY t ORDER BY t"
         );
-        let pairs = query_pairs("db", &p.binds);
+        let pairs = query_pairs("db", Duration::from_secs(30), &p.binds);
         assert_eq!(pairs[0], ("database".into(), "db".into()));
-        assert_eq!(pairs[1], ("readonly".into(), "1".into()));
-        assert_eq!(pairs[2], ("param_p1".into(), "60".into()));
-        assert_eq!(pairs[3], ("param_p2".into(), "1800000000000".into()));
-        assert_eq!(pairs[5], ("param_p4".into(), "Öster\\'reich\\\\".into()));
+        assert_eq!(pairs[1], ("max_execution_time".into(), "30".into()));
+        assert_eq!(pairs[2], ("cancel_http_readonly_queries_on_client_close".into(), "1".into()));
+        assert_eq!(pairs[3], ("readonly".into(), "1".into()), "read-only mode comes after the settings");
+        assert_eq!(pairs[4], ("param_p1".into(), "60".into()));
+        assert_eq!(pairs[5], ("param_p2".into(), "1800000000000".into()));
+        assert_eq!(pairs[7], ("param_p4".into(), "Öster\\'reich\\\\".into()));
         assert_eq!(param_value(&Bind::Null), "\\N");
         assert_eq!(param_value(&Bind::Interval(250)), "250");
         assert_eq!(statement("SELECT 1; "), format!("SELECT 1\nFORMAT {FORMAT}"));
@@ -569,6 +578,34 @@ mod tests {
         assert_eq!(reason("SELECT * FROM remote('db:9000', system.users)"), "sql.function_not_allowed");
         assert_eq!(reason("SELECT * FROM s3('https://x/y.csv')"), "sql.function_not_allowed");
         assert_eq!(reason("SELECT * FROM t WHERE x = {name:String}"), "sql.placeholder");
+        // Text that looks like Kalzit's own parameters, in comments, strings or quoted names,
+        // stays text for the checker: what it checks is what ClickHouse runs.
+        for hidden in [
+            "-- {p1:\nSELECT * FROM url('http://169.254.169.254/latest', CSV) -- }\nSELECT 1",
+            "SELECT 1 /* {p1: */ FROM url('http://x/', CSV) /* } */",
+            "SELECT '{p1:' AS a, * FROM url('http://x/', CSV) AS `}`",
+            "SELECT `{p1:` FROM file('/etc/passwd') AS `}`",
+            "-- {p1:\nKILL QUERY WHERE 1 -- }\nSELECT 1",
+        ] {
+            assert!(prepare(hidden).is_err(), "{hidden}");
+        }
+        assert_eq!(reason("SELECT 1 AS a\0, 2"), "sql.nul_character");
+        for statement in
+            ["KILL QUERY WHERE 1", "SHOW CREATE USER default", "SHOW GRANTS", "SHOW ACCESS", "SYSTEM RELOAD CONFIG"]
+        {
+            assert!(prepare(statement).is_err(), "{statement}");
+        }
+        assert_eq!(reason("SELECT file('/etc/passwd')"), "sql.function_not_allowed");
+        for function in [
+            "oss('x')",
+            "cosn('x')",
+            "icebergLocal('/x')",
+            "deltaLakeAzure('x')",
+            "hudiCluster('c', 'x')",
+            "icebergS3Cluster('c', 'x')",
+        ] {
+            assert_eq!(reason(&format!("SELECT * FROM {function}")), "sql.function_not_allowed", "{function}");
+        }
         // Reads pass, including ClickHouse's own syntax.
         prepare("SELECT count() FROM t FINAL WHERE x > 1 LIMIT 10").unwrap();
         prepare("SELECT 1 -- Kommentar").unwrap();

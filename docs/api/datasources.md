@@ -109,7 +109,7 @@ Fields per kind (common fields omitted):
 | `prometheus` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
 | `clickhouse` | `url`* (the HTTP interface, `http(s)://host[:port][/path]`, usually port 8123 or 8443), `database` (default `default`), `user` (default `default`), `password` S, `caCert` |
 | `influxdb` | `url`* (`http(s)://host[:port][/path]`), `version` (`v1`, `v2` default, `v3`), `organization` (2.x), `database` (the database, or the bucket in 2.x), `user` (1.x), `password` S (1.x), `token` S (2.x and 3.x; with a user it is not sent), `caCert` |
-| `loki` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `tenantId` (sent as `X-Scope-OrgID`), `caCert` |
+| `loki` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `tenantId` (sent as `X-Scope-OrgID`, a target field), `caCert` |
 | `elasticsearch` | `url`* (`http(s)://host[:port][/path]`, no query), `basicAuthUser`, `basicAuthPassword` S, `apiKey` S (sent as `ApiKey <key>`), `bearerToken` S, `caCert`, `index` (default index or pattern), `timeField` (default `@timestamp`; empty: no time filter) |
 | `file` | `path`* (absolute path of a CSV, JSON or NDJSON file), `format` (`auto` default, `csv`, `json`, `ndjson`), `delimiter` (`auto` default, `comma`, `semicolon`, `tab`, `pipe`), `decimal` (`auto` default, `point`, `comma`), `header` (bool, default true) |
 | `http_json` | `url`* (`http(s)://host[:port][/path][?query]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `apiKeyHeader` (a header name such as `X-Api-Key`), `apiKey` S (sent in that header), `caCert`, `documentsPath` (where the documents are in the answer, see below) |
@@ -639,9 +639,10 @@ strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex 
 ### ClickHouse: `{"sql": "..."}`
 
 As the SQL kinds above, with ClickHouse's own syntax (`FINAL`, `PREWHERE`, `ARRAY JOIN`, lambda
-functions). Kalzit sends each query over the HTTP interface by POST with `readonly=1`, so the
-server refuses writes, DDL and setting changes, and adds `FORMAT JSONCompactEachRowWithNamesAndTypes`
-itself; it reads the answer row by row and stops at the row and size limits. Macros and variables
+functions). Kalzit sends each query over the HTTP interface by POST with `max_execution_time`
+(the query time limit), `cancel_http_readonly_queries_on_client_close=1` and then `readonly=1`, so
+the server stops the query at the limit or when Kalzit hangs up and refuses writes, DDL and
+further setting changes; Kalzit adds `FORMAT JSONCompactEachRowWithNamesAndTypes` itself; it reads the answer row by row and stops at the row and size limits. Macros and variables
 become query parameters: `{p1:Int64}` and `param_p1=...` (times as
 `fromUnixTimestamp64Milli({p1:Int64}, 'UTC')`, `$__interval` as `toIntervalSecond` or, below whole
 seconds, `toIntervalMillisecond`). Refused besides what all SQL kinds refuse: `SETTINGS` and
@@ -651,9 +652,12 @@ comments (use `--`), and table functions that read files or reach other servers 
 `UInt32` and floats `number`, 64-bit and larger integers `int64`, `Decimal` `decimal`, `Bool`
 `bool`, `Date` and `Date32` `date`, `DateTime` and `DateTime64` `time` (in the column's zone, else
 the server's from `X-ClickHouse-Timezone`), arrays, maps, tuples and JSON `json`, everything else
-`string` (with a `frame.type_unsupported` notice for unknown types). A query that runs on after
-Kalzit gave up keeps running on the server until its own `max_execution_time`; set one in the
-user's profile.
+`string` (with a `frame.type_unsupported` notice for unknown types). The statement the checker
+reads is built next to the one sent, from the same pieces, and both must tokenize alike apart from
+the parameters (`sql.check_mismatch`), so text in comments, strings or quoted names can never
+change what is checked. A user whose profile is already `readonly = 1` must allow
+`max_execution_time` and `cancel_http_readonly_queries_on_client_close` to be set (a settings
+constraint `changeable_in_readonly`), or use `readonly = 2`.
 
 ### InfluxDB: `{"flux": "..."}`, `{"influxql": "..."}` or `{"sql": "..."}`
 
@@ -672,9 +676,12 @@ become `time`.
   (`flux.write_refused`), imports other than `array`, `date`, `dict`, `experimental` (and its
   `aggregate`, `array`, `date/boundaries`, `geo`, `query`, `table`), `influxdata/influxdb/schema`,
   `influxdata/influxdb/v1`, `interpolate`, `join`, `math`, `regexp`, `runtime`, `sampledata`,
-  `strings`, `system`, `timezone`, `types` and `universe` (`flux.package_not_allowed`), and the
-  call arguments `host` and `token`, which would query another server (`flux.remote_not_allowed`).
-  Code in string interpolations (`"${...}"`) is checked too.
+  `strings`, `system`, `timezone`, `types` and `universe` (`flux.package_not_allowed`), imports
+  with an alias (`import r "..."`, `flux.import_form`), the names `to` and `wideTo` anywhere (also
+  assigned, passed or read from a package), and the names `host` and `token` as names or keys
+  (`host: ...`, `"host": ...`, the shorthand `from(bucket: "b", host)`), which would query another
+  server (`flux.remote_not_allowed`); read such a column as `r.host` or `r["host"]`. Code in
+  string interpolations (`"${...}"`) is checked too.
 - InfluxQL is sent by `GET /query?db=<database>&epoch=ms`, which InfluxDB runs only for reads.
   One `SELECT` without `INTO`, or one `SHOW` (`influxql.*`). Macros: `$__timeFilter` (`time >=
   <from>ms AND time <= <to>ms`), `$__timeFrom`, `$__timeTo` (`<ms>ms`), `$__interval`,
@@ -1675,6 +1682,9 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `promql.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
 | `promql.backtick` | `name` | a value with a backtick inside a `raw` string |
 | `sql.settings_clause` | | a `SETTINGS` clause (ClickHouse) |
+| `sql.nul_character` | | the query contains a NUL character |
+| `sql.check_mismatch` | | ClickHouse: the checked statement and the statement to send do not match |
+| `flux.import_form` | | an import that is not `import "package"` (an alias, say) |
 | `sql.format_clause` | | a `FORMAT` clause (ClickHouse) |
 | `influxdb.query_form` | | not exactly one of `flux`, `influxql` and `sql` |
 | `influxdb.language_unavailable` | `language` | the source's InfluxDB version does not answer this language |
@@ -1688,7 +1698,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `influxdb.endpoint_not_allowed` | `path` | a request (or redirect) to anything but the read endpoints |
 | `flux.write_refused` | `name` | a call of `to()` or `wideTo()` |
 | `flux.package_not_allowed` | `name` | an import of a package that writes or reaches other systems |
-| `flux.remote_not_allowed` | `name` | a `host` or `token` argument, which would query another server |
+| `flux.remote_not_allowed` | `name` | the name or key `host` or `token`, which would query another server |
 | `influxql.empty` | | the InfluxQL query is empty |
 | `influxql.multiple_statements` | | more than one InfluxQL statement |
 | `influxql.not_read` | | an InfluxQL statement other than `SELECT` and `SHOW` |

@@ -103,8 +103,9 @@ protocol is not used. Write the query as for the other SQL sources, with ClickHo
 variables reach ClickHouse as query parameters, never as text. Kalzit sends every query with
 `readonly=1`, adds the result format itself and refuses `SETTINGS` and `FORMAT` clauses and table
 functions that read files or reach other servers (`file`, `url`, `s3`, `remote`, `mysql`, ...).
-Use `--` for comments. Give the user a read-only profile with a `max_execution_time`: Kalzit stops
-reading at its time limit, but only the server ends a long query.
+Use `--` for comments. Kalzit sends the query time limit as `max_execution_time` and asks the
+server to stop a query when Kalzit hangs up. A user whose profile is already `readonly = 1` must
+allow these two settings to change (`changeable_in_readonly`), or use `readonly = 2`.
 
 ### InfluxDB
 
@@ -119,8 +120,9 @@ In the query editor choose the **Language** per query. In Flux, `v.timeRangeStar
 `v.timeRangeStop` and `v.windowPeriod` take the dashboard's time range and interval, as in
 InfluxDB's own tools; InfluxQL has `$__timeFilter` and `GROUP BY time($__interval)`; SQL has the
 SQL macros. Variables go inside strings (`r.host == "$host"`, `host = '$host'`). Kalzit refuses
-Flux that writes (`to()`, `wideTo()`), imports packages that reach other systems (`http`, `sql`,
-`csv`, ...) or names another server, and InfluxQL other than one `SELECT` without `INTO` or one
+Flux that writes (`to`, `wideTo`, in any spelling), imports packages that reach other systems
+(`http`, `sql`, `csv`, ...) or imports with an alias, and Flux that names `host` or `token`
+(read such a column as `r.host`), and InfluxQL other than one `SELECT` without `INTO` or one
 `SHOW`. Series become a time series with one line per series, labelled with their tags.
 
 ### Loki
@@ -130,7 +132,8 @@ stream labels, newest first; **Order** switches to oldest first and **Line limit
 default, at most the row limit) caps the lines. Metric queries
 (`sum by (level) (count_over_time({app="api"}[$__interval]))`) answer a time series like
 Prometheus. The editor suggests the labels of the last six hours and their values inside a
-matcher (`{app="`). For a multi-tenant Loki set the **Loki org ID**. **Live** reruns the query at
+matcher (`{app="`). For a multi-tenant Loki set the **Loki org ID**; changing it needs the
+secrets again, like the URL. **Live** reruns the query at
 the dashboard's interval; Loki's own live tail is not used.
 
 ## Read-only

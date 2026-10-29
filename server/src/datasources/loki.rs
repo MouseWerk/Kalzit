@@ -38,7 +38,7 @@ const SETTINGS: &[SettingField] = &[
     SettingField::new("basicAuthUser", "datasources.settings.basicAuthUser", SettingType::String).target(),
     SettingField::new("basicAuthPassword", "datasources.settings.basicAuthPassword", SettingType::String).secret(),
     SettingField::new("bearerToken", "datasources.settings.bearerToken", SettingType::String).secret(),
-    SettingField::new("tenantId", "datasources.settings.tenantId", SettingType::String),
+    SettingField::new("tenantId", "datasources.settings.tenantId", SettingType::String).target(),
     SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text).target(),
 ];
 /// The client's own limit; the query timeout around each call is usually shorter.

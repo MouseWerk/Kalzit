@@ -225,13 +225,18 @@ pub async fn prepare_query(
 
 /// Expands macros and variables into bind parameters and checks the statement.
 pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared, Rejected> {
+    // NUL marks Kalzit's own placeholders below, so it may not appear in the query itself.
+    if sql.contains(MARK) {
+        return reject("sql.nul_character", "the query contains a NUL character");
+    }
     let pieces = scan(sql, engine)?;
+    // The statement with a marker per bound value; the text sent and the text checked are both
+    // made from it, so they differ exactly at the values Kalzit bound and nowhere else.
     let mut out = String::with_capacity(sql.len() + 16);
     let mut binds = Vec::new();
     let placeholder = |binds: &mut Vec<Bind>, value: Bind| {
-        let text = engine_placeholder(engine, binds.len() + 1, &value);
         binds.push(value);
-        text
+        format!("{MARK}{}{MARK}", binds.len())
     };
     for piece in &pieces {
         match piece {
@@ -328,12 +333,70 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
             }
         }
     }
-    check_statement(&checked_text(engine, &out), engine)?;
-    Ok(Prepared { sql: out, binds })
+    let sent = render(&out, |n| engine_placeholder(engine, n, &binds[n - 1], false));
+    let checked = render(&out, |n| engine_placeholder(engine, n, &binds[n - 1], true));
+    check_statement(&checked, engine)?;
+    if engine == Engine::ClickHouse {
+        same_structure(&sent, &checked)?;
+    }
+    Ok(Prepared { sql: sent, binds })
+}
+
+/// Marks a bound value in the statement while it is built (`prepare`).
+const MARK: char = '\0';
+
+/// The statement with each marker replaced by `placeholder(n)`.
+fn render(marked: &str, placeholder: impl Fn(usize) -> String) -> String {
+    let mut out = String::with_capacity(marked.len() + 16);
+    let mut parts = marked.split(MARK);
+    out.push_str(parts.next().unwrap_or_default());
+    while let (Some(n), Some(rest)) = (parts.next(), parts.next()) {
+        out.push_str(&placeholder(n.parse().expect("a marker holds the bind's number")));
+        out.push_str(rest);
+    }
+    out
+}
+
+/// The text sent and the text checked must tokenize alike, except that each `?` of the checked
+/// text is one ClickHouse parameter `{name:Type}` in the sent one: a guard that the checked
+/// statement is the statement ClickHouse runs.
+fn same_structure(sent: &str, checked: &str) -> Result<(), Rejected> {
+    let tokens = |text: &str| {
+        Tokenizer::new(&ClickHouseDialect {}, text).tokenize().map_err(|e| {
+            Rejected::new("sql.parse_error", format!("the query could not be checked: {e}")).with("detail", e)
+        })
+    };
+    let (sent, checked) = (tokens(sent)?, tokens(checked)?);
+    let differ = || Rejected::new("sql.check_mismatch", "the query could not be checked as it would run");
+    let mut s = sent.iter();
+    for c in &checked {
+        let Some(next) = s.next() else { return Err(differ()) };
+        if matches!(c, Token::Placeholder(p) if p == "?") {
+            if *next != Token::LBrace {
+                return Err(differ());
+            }
+            // A parameter's type may hold parentheses (`Nullable(String)`), never braces.
+            loop {
+                match s.next() {
+                    Some(Token::RBrace) => break,
+                    Some(Token::LBrace) | None => return Err(differ()),
+                    Some(_) => {}
+                }
+            }
+        } else if next != c {
+            return Err(differ());
+        }
+    }
+    if s.next().is_some() { Err(differ()) } else { Ok(()) }
 }
 
 /// The placeholder of the `n`th bound value (counted from 1), as the engine writes it.
-fn engine_placeholder(engine: Engine, n: usize, value: &Bind) -> String {
+fn engine_placeholder(engine: Engine, n: usize, value: &Bind, check: bool) -> String {
+    // The checker's parser does not know ClickHouse's `{p1:Int64}`; the checked text has a plain
+    // `?` where the sent one has the parameter, inside the same expression (`check`).
+    let ch = |ty: &str| if check { "?".to_string() } else { format!("{{p{n}:{ty}}}") };
+    // PostgreSQL's dialect reads `$p1` as a placeholder, so DataFusion checks what it sends.
+    let df = || format!("$p{n}");
     match engine {
         Engine::Postgres => format!("${n}"),
         Engine::MsSql => format!("@P{n}"),
@@ -342,55 +405,27 @@ fn engine_placeholder(engine: Engine, n: usize, value: &Bind) -> String {
         // milliseconds, intervals as whole seconds where they fit (DateTime columns take no
         // millisecond intervals), else as milliseconds (`clickhouse::param_value`).
         Engine::ClickHouse => match value {
-            Bind::Null => format!("{{p{n}:Nullable(String)}}"),
-            Bind::Bool(_) => format!("{{p{n}:Bool}}"),
-            Bind::Int(_) => format!("{{p{n}:Int64}}"),
-            Bind::Float(_) => format!("{{p{n}:Float64}}"),
-            Bind::Text(_) => format!("{{p{n}:String}}"),
-            Bind::Time(_) => format!("fromUnixTimestamp64Milli({{p{n}:Int64}}, 'UTC')"),
-            Bind::Interval(ms) if ms % 1000 == 0 => format!("toIntervalSecond({{p{n}:Int64}})"),
-            Bind::Interval(_) => format!("toIntervalMillisecond({{p{n}:Int64}})"),
+            Bind::Null => ch("Nullable(String)"),
+            Bind::Bool(_) => ch("Bool"),
+            Bind::Int(_) => ch("Int64"),
+            Bind::Float(_) => ch("Float64"),
+            Bind::Text(_) => ch("String"),
+            Bind::Time(_) => format!("fromUnixTimestamp64Milli({}, 'UTC')", ch("Int64")),
+            Bind::Interval(ms) if ms % 1000 == 0 => format!("toIntervalSecond({})", ch("Int64")),
+            Bind::Interval(_) => format!("toIntervalMillisecond({})", ch("Int64")),
         },
         // Each parameter is cast, so DataFusion takes the value's own type instead of checking
         // it against one it inferred (a tag column's dictionary type, say).
         Engine::DataFusion => match value {
-            Bind::Null => format!("$p{n}"),
-            Bind::Bool(_) => format!("CAST($p{n} AS BOOLEAN)"),
-            Bind::Int(_) => format!("CAST($p{n} AS BIGINT)"),
-            Bind::Float(_) => format!("CAST($p{n} AS DOUBLE)"),
-            Bind::Text(_) => format!("CAST($p{n} AS VARCHAR)"),
-            Bind::Time(_) => format!("CAST($p{n} AS TIMESTAMP)"),
-            Bind::Interval(_) => format!("CAST($p{n} AS INTERVAL)"),
+            Bind::Null => df(),
+            Bind::Bool(_) => format!("CAST({} AS BOOLEAN)", df()),
+            Bind::Int(_) => format!("CAST({} AS BIGINT)", df()),
+            Bind::Float(_) => format!("CAST({} AS DOUBLE)", df()),
+            Bind::Text(_) => format!("CAST({} AS VARCHAR)", df()),
+            Bind::Time(_) => format!("CAST({} AS TIMESTAMP)", df()),
+            Bind::Interval(_) => format!("CAST({} AS INTERVAL)", df()),
         },
     }
-}
-
-/// The text the statement check reads: ClickHouse's parameters (`{p1:Int64}`), which the
-/// checker's parser does not know, become `?`. Only Kalzit writes them: `scan` refuses them in
-/// the query text, so outside strings every one is a bound value.
-fn checked_text(engine: Engine, sql: &str) -> String {
-    if engine != Engine::ClickHouse {
-        return sql.to_string();
-    }
-    let mut out = String::with_capacity(sql.len());
-    let mut rest = sql;
-    while let Some(start) = rest.find("{p") {
-        let candidate = &rest[start + 2..];
-        let digits = candidate.find(|c: char| !c.is_ascii_digit()).unwrap_or(candidate.len());
-        match candidate.find('}') {
-            Some(close) if digits > 0 && candidate[digits..].starts_with(':') => {
-                out.push_str(&rest[..start]);
-                out.push('?');
-                rest = &candidate[close + 1..];
-            }
-            _ => {
-                out.push_str(&rest[..start + 2]);
-                rest = candidate;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
 }
 
 /// Whether the query uses `${name:identifier}`, so the caller must load the schema first.
@@ -926,9 +961,25 @@ const CLICKHOUSE_FORBIDDEN_FUNCTIONS: &[&str] = &[
     "executablepool",
     "input",
     "deltalake",
+    "deltalakecluster",
+    "deltalakeazure",
+    "deltalakelocal",
+    "deltalakes3",
     "hudi",
+    "hudicluster",
     "iceberg",
     "icebergs3",
+    "icebergazure",
+    "iceberghdfs",
+    "iceberglocal",
+    "icebergcluster",
+    "icebergs3cluster",
+    "icebergazurecluster",
+    "iceberghdfscluster",
+    "oss",
+    "cosn",
+    "s3queue",
+    "azurequeue",
     "paimon",
     "ytsaurus",
     "arrowflight",

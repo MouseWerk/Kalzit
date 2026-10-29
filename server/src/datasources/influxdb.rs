@@ -855,10 +855,12 @@ enum Token<'a> {
     Ident(&'a str),
     Str(&'a str),
     Punct(char),
+    /// A number, duration or time literal.
+    Number,
 }
 
-/// The tokens of Flux code: strings (their interpolations read as code too), identifiers and
-/// punctuation; comments, numbers, durations and regular expressions dropped.
+/// The tokens of Flux code: strings (their interpolations read as code too), identifiers,
+/// numbers and punctuation; comments and regular expressions dropped.
 fn flux_tokens(text: &str) -> Result<Vec<Token<'_>>, SourceError> {
     let mut tokens = Vec::new();
     flux_scan(text, &mut tokens)?;
@@ -922,6 +924,7 @@ fn flux_scan<'a>(text: &'a str, tokens: &mut Vec<Token<'a>>) -> Result<(), Sourc
             let end = text[i..]
                 .find(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '.' | ':' | '-' | '+')))
                 .map_or(text.len(), |p| i + p);
+            tokens.push(Token::Number);
             i = end;
         } else if c.is_ascii_whitespace() {
             i += 1;
@@ -935,63 +938,71 @@ fn flux_scan<'a>(text: &'a str, tokens: &mut Vec<Token<'a>>) -> Result<(), Sourc
 }
 
 /// A `/` starts a regular expression where a value is expected: after an operator, an opening
-/// bracket, a comma or a colon, or at the start.
+/// bracket, a comma or a colon, or at the start. After a value (a name, number, string or
+/// closing bracket) it divides.
 fn regex_may_start(tokens: &[Token<'_>]) -> bool {
     match tokens.last() {
         None => true,
         Some(Token::Punct(p)) => !matches!(p, ')' | ']' | '}'),
         Some(Token::Ident(w)) => matches!(*w, "and" | "or" | "not" | "return" | "if" | "then" | "else"),
-        Some(Token::Str(_)) => false,
+        Some(Token::Str(_) | Token::Number) => false,
     }
 }
 
 /// Refuses Flux that writes, imports a package that reaches other systems, or names another
-/// server or token.
+/// server or token. Deliberately coarse, so no spelling gets around it:
+/// - an import must be exactly `import "<allowed package>"`, without an alias;
+/// - `to` and `wideTo` may not appear as a name at all (called, assigned, passed or read from a
+///   package such as `experimental.to`);
+/// - `host` and `token` may not appear as a name or key (`host: ...`, `"host": ...`, the
+///   shorthand `from(bucket: "b", host)`), only as a field read from a record (`r.host`).
 fn check_flux(text: &str) -> Result<(), SourceError> {
     let tokens = flux_tokens(text)?;
-    // The open brackets, to tell call arguments from record fields.
-    let mut open: Vec<char> = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
         let next = tokens.get(i + 1);
+        let after_dot = matches!(tokens.get(i.wrapping_sub(1)), Some(Token::Punct('.')));
         match token {
-            Token::Ident("import") => {
-                if let Some(Token::Str(package)) = next
-                    && !FLUX_PACKAGES.contains(package)
-                {
+            Token::Ident("import") => match next {
+                Some(Token::Str(package)) if FLUX_PACKAGES.contains(package) => {}
+                Some(Token::Str(package)) => {
                     return Err(SourceError::rejected(
                         "flux.package_not_allowed",
                         format!("the package {package} is not allowed: it writes or reaches other systems"),
                     )
                     .with("name", *package));
                 }
-            }
-            Token::Ident(name) if FLUX_WRITERS.contains(name) && next == Some(&Token::Punct('(')) => {
+                _ => {
+                    return Err(SourceError::rejected(
+                        "flux.import_form",
+                        "write imports as import \"package\", without an alias",
+                    ));
+                }
+            },
+            Token::Ident(name) if FLUX_WRITERS.contains(name) => {
                 return Err(SourceError::rejected(
                     "flux.write_refused",
                     format!("{name}() writes data and is not allowed"),
                 )
                 .with("name", *name));
             }
-            Token::Ident(name)
-                if FLUX_REMOTE_ARGS.contains(name)
-                    && next == Some(&Token::Punct(':'))
-                    && open.last() == Some(&'(')
-                    && !matches!(tokens.get(i.wrapping_sub(1)), Some(Token::Punct('.'))) =>
-            {
-                return Err(SourceError::rejected(
-                    "flux.remote_not_allowed",
-                    format!("the argument {name} would query another server and is not allowed"),
-                )
-                .with("name", *name));
+            Token::Ident(name) if FLUX_REMOTE_ARGS.contains(name) && !after_dot => {
+                return Err(remote_refused(name));
             }
-            Token::Punct(c @ ('(' | '[' | '{')) => open.push(*c),
-            Token::Punct(')' | ']' | '}') => {
-                open.pop();
+            Token::Str(key) if FLUX_REMOTE_ARGS.contains(key) && next == Some(&Token::Punct(':')) => {
+                return Err(remote_refused(key));
             }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn remote_refused(name: &str) -> SourceError {
+    SourceError::rejected(
+        "flux.remote_not_allowed",
+        format!("{name} would query another server and is not allowed; read it from a record as r.{name}"),
+    )
+    .with("name", name)
 }
 
 /// The words of InfluxQL code, upper-cased, with `;` kept: strings, quoted identifiers, regular
@@ -1539,9 +1550,23 @@ mod tests {
         assert_eq!(reason("from(bucket: \"a\", host: \"https://other\", token: \"t\")"), "flux.remote_not_allowed");
         // A write hidden in a string interpolation is code too.
         assert_eq!(reason("x = \"${to(bucket: \"b\")}\""), "flux.write_refused");
-        // Reads pass: record fields named like the refused words, strings, regexes, comments.
+        // Aliased imports, aliased writers, shorthand and string keys, division taken for a regex.
+        assert_eq!(reason("import r \"experimental/http/requests\"\nr.get(url: \"http://x\")"), "flux.import_form");
+        assert_eq!(reason("import s \"strings\""), "flux.import_form");
+        assert_eq!(
+            reason("w = to\nfrom(bucket: \"a\") |> range(start: -1h) |> w(bucket: \"b\")"),
+            "flux.write_refused"
+        );
+        assert_eq!(reason("import \"experimental\"\ne = experimental.to\nx |> e(bucket: \"b\")"), "flux.write_refused");
+        assert_eq!(reason("f(fn: to)"), "flux.write_refused");
+        assert_eq!(reason("host = \"https://other\"\nfrom(bucket: \"b\", host)"), "flux.remote_not_allowed");
+        assert_eq!(reason("o = {\"host\": \"https://other\"}"), "flux.remote_not_allowed");
+        assert_eq!(reason("from(bucket: \"b\", token)"), "flux.remote_not_allowed");
+        assert_eq!(reason("x = 4 / 2\ny = to(bucket: \"b\") / 1"), "flux.write_refused");
+        assert_eq!(reason("x = 10 /to(bucket: \"b\")/ 2"), "flux.write_refused");
+        // Reads pass: record fields read as r.host, strings, regexes, division, comments.
         check_flux(
-            "import \"strings\"\nfrom(bucket: \"a\") |> range(start: -1h)\n |> filter(fn: (r) => r.host =~ /to\\(/ and r.x == \"to(\")\n |> map(fn: (r) => ({r with host: strings.toUpper(v: r.host), to: 1}))\n // to(bucket: \"x\")\n |> yield(name: \"mean\")",
+            "import \"strings\"\nfrom(bucket: \"a\") |> range(start: -1h)\n |> filter(fn: (r) => r.host =~ /to\\(/ and r[\"host\"] == \"to(\")\n |> map(fn: (r) => ({r with _value: r._value / 2.0, name: strings.toUpper(v: r.host)}))\n // to(bucket: \"x\")\n |> yield(name: \"mean\")",
         )
         .unwrap();
     }

@@ -961,7 +961,7 @@
   "datasources.reason.influxdb.endpoint_not_allowed": "Kalzit does not send this request ({path}); it only reads.",
   "datasources.reason.flux.write_refused": "{name}() writes data and is not allowed; Kalzit only reads.",
   "datasources.reason.flux.package_not_allowed": "The package {name} is not allowed: it writes or reaches other systems.",
-  "datasources.reason.flux.remote_not_allowed": "The argument {name} would query another server and is not allowed.",
+  "datasources.reason.flux.remote_not_allowed": "{name} would query another server and is not allowed; read such a column as r.{name}.",
   "datasources.reason.influxql.empty": "The query is empty.",
   "datasources.reason.influxql.multiple_statements": "Only one statement is allowed.",
   "datasources.reason.influxql.not_read": "Only SELECT and SHOW are allowed; Kalzit only reads.",
@@ -977,5 +977,8 @@
   "datasources.reason.loki.credentials_invalid": "The credentials or the org ID contain characters an HTTP header cannot carry.",
   "datasources.reason.loki.error": "Loki answered with an error (HTTP {status}): {detail}",
   "datasources.reason.loki.not_an_api_response": "The server answered (HTTP {status}), but not like Loki. Check the URL.",
-  "datasources.reason.loki.warning": "Loki warns: {detail}"
+  "datasources.reason.loki.warning": "Loki warns: {detail}",
+  "datasources.reason.sql.nul_character": "The query contains a NUL character.",
+  "datasources.reason.sql.check_mismatch": "The query could not be checked as it would run. Write it without parameter-like text in comments or names.",
+  "datasources.reason.flux.import_form": "Write imports as import “package”, without an alias."
 }
