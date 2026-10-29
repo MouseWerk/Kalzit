@@ -18,6 +18,11 @@ const PATHS = {
   signOut:
     "M9.5 20H5.5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5.5 4h4M15 16.5 19.5 12 15 7.5M19.5 12H9.5",
   lock: "M6.5 10.5h11v9.5h-11zM8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5",
+  // A person with a key: a passkey (the second factor).
+  passkey:
+    "M9 4.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM3 20c0-3.3 2.7-6 6-6 1.2 0 2.3.3 3.2.9M17 12a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM17 17v4M17 19.5h1.6",
+  // A phone: the authenticator app.
+  phone: "M9 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM11 18h2",
   chevron: "M9 6.5 14.5 12 9 17.5",
   back: "M15 6.5 9.5 12l5.5 5.5",
   sidebar: "M4.5 4.5h15v15h-15zM9.5 4.5v15",

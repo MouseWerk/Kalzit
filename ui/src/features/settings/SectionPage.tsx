@@ -1,5 +1,5 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
+import { getRouteApi, Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
@@ -23,6 +23,8 @@ import { AiOrgSection } from "../ai/admin/AiOrgSection";
 import { AiServerSection } from "../ai/admin/AiServerSection";
 import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
 import { PluginsSection } from "../plugins/PluginsSection";
+import { PolicyOverview } from "../security/PolicyOverview";
+import { SecuritySection } from "../security/SecuritySection";
 import { AboutSection } from "./AboutSection";
 import { AcmeSection } from "./AcmeSection";
 import { AppearanceSection } from "./AppearanceSection";
@@ -100,8 +102,10 @@ export function SectionPage() {
   );
 }
 
+const appRoute = getRouteApi("/_app");
+
 function SectionBody({ section }: { section: SectionDef }) {
-  const { t } = useI18n();
+  const { me } = appRoute.useRouteContext();
   switch (section.kind) {
     case "appearance":
       return <ServerSettings section={section} />;
@@ -123,30 +127,18 @@ function SectionBody({ section }: { section: SectionDef }) {
           <AcmeSection />
         </>
       );
-    case "planned":
+    case "signin":
       return (
-        <div className="settings-card settings-card--padded">
-          <div className="settings-planned">
-            <Icon name="activity" />
-            <div>
-              <h3 className="settings-row__title">{t("settings.planned.title")}</h3>
-              <p className="settings-row__description">
-                {section.planned === undefined ? null : t(section.planned)}
-              </p>
-              {section.id === "signin" ? (
-                <Link
-                  to="/settings/$section"
-                  params={{ section: "appearance" }}
-                  hash="signin.page"
-                  className="settings-planned__link"
-                >
-                  {t("settings.planned.signinPage")}
-                </Link>
-              ) : null}
-            </div>
-          </div>
-        </div>
+        <>
+          <ServerSettings section={section} />
+          <PolicyOverview />
+          <PlannedCard section={section} />
+        </>
       );
+    case "accountSecurity":
+      return <SecuritySection email={me.email} />;
+    case "planned":
+      return <PlannedCard section={section} />;
     case "ai":
       return <AiServerSection section={section} />;
     case "aiOrg":
@@ -179,6 +171,34 @@ function SectionBody({ section }: { section: SectionDef }) {
     case "about":
       return <AboutSection />;
   }
+}
+
+/** What a section will hold once it is built, with the way to what exists already. */
+function PlannedCard({ section }: { section: SectionDef }) {
+  const { t } = useI18n();
+  return (
+    <div className="settings-card settings-card--padded">
+      <div className="settings-planned">
+        <Icon name="activity" />
+        <div>
+          <h3 className="settings-row__title">{t("settings.planned.title")}</h3>
+          <p className="settings-row__description">
+            {section.planned === undefined ? null : t(section.planned)}
+          </p>
+          {section.id === "signin" ? (
+            <Link
+              to="/settings/$section"
+              params={{ section: "appearance" }}
+              hash="signin.page"
+              className="settings-planned__link"
+            >
+              {t("settings.planned.signinPage")}
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** The way to the Updates page (`/admin/server/updates`), which has the update settings too. */
@@ -232,7 +252,10 @@ function SettingsCard({
             rowId={id}
             changes={changes}
             canWrite={canWrite}
-            inheritable={inheritable && key.startsWith("appearance.")}
+            inheritable={
+              inheritable &&
+              (key.startsWith("appearance.") || key === "security.two_factor_required")
+            }
             found={found === id}
           />
         );
