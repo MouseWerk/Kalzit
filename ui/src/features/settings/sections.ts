@@ -11,6 +11,8 @@ export type SettingsGroup = "server" | "org" | "personal";
 
 export type SectionKind =
   | "settings"
+  /** The network rows, then the ACME certificates (`AcmeSection`). */
+  | "network"
   | "appearance"
   | "planned"
   | "ai"
@@ -101,7 +103,7 @@ export const SECTIONS: readonly SectionDef[] = [
   {
     id: "network",
     group: "server",
-    kind: "settings",
+    kind: "network",
     label: "settings.section.network.label",
     lead: "settings.section.network.lead",
     keywords: "settings.section.network.keywords",

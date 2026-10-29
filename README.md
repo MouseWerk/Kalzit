@@ -371,7 +371,8 @@ The binary lands in `target/release/kalzit` (`target\release\kalzit.exe`).
 To run Kalzit as a systemd service or a Windows service with a virtual account, see
 "Running as a service" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#running-as-a-service).
 Backups are described under [Backups](docs/ARCHITECTURE.md#backups). The container image is
-described under [Docker](#docker); deb and rpm packages are planned for M5.
+described under [Docker](#docker); the deb and rpm packages with their systemd service under
+[Installation](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm).
 
 ## Configuration
 
@@ -411,7 +412,9 @@ Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, 
 
 - **Own database:** SQLite (default, one server) or PostgreSQL (`database.url`).
 - **HTTPS:** your own certificate and key in PEM (`tls.cert_file`, `tls.key_file`), reloaded
-  without a restart; trusted reverse proxies in `security.trusted_proxies`.
+  without a restart, or without them automatic certificates from Let's Encrypt or another ACME
+  authority, set up in Settings, Network ([HTTPS and certificates](docs/guide/https.md));
+  trusted reverse proxies in `security.trusted_proxies`.
 - **Secrets key** for data source passwords and tokens, first match wins: `KALZIT_SECRETS_KEY`,
   systemd credentials (`kalzit-secrets-key`) on Linux, a DPAPI-protected key file on Windows,
   and as a last resort a `secrets.key` file with mode 0600 in the data directory (with a warning in

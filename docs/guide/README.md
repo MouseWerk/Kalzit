@@ -8,7 +8,8 @@ written as the English interface shows them, with the German label in parenthese
 
 | Page | What it covers |
 |---|---|
-| [Installation](installation.md) | The container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates |
+| [Installation](installation.md) | The deb and rpm packages with their systemd service, paths, updates and removal; the container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates |
+| [HTTPS and certificates](https.md) | HTTPS with your own certificate files or automatic certificates over ACME (Let's Encrypt or another CA): setup, validation, renewal, troubleshooting |
 | [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables (also set by clicks on documents, rows and graph nodes), time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
 | [Panels](panels.md) | Every visualization with its options, the graph panels with node details, selection, pins and the explorer; colours, thresholds, units, value mappings, overrides |

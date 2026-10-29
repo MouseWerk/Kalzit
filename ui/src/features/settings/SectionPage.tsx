@@ -24,6 +24,7 @@ import { AiServerSection } from "../ai/admin/AiServerSection";
 import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
 import { PluginsSection } from "../plugins/PluginsSection";
 import { AboutSection } from "./AboutSection";
+import { AcmeSection } from "./AcmeSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
 import { QueryCacheCard } from "./QueryCacheCard";
@@ -114,6 +115,13 @@ function SectionBody({ section }: { section: SectionDef }) {
         </>
       ) : (
         <ServerSettings section={section} />
+      );
+    case "network":
+      return (
+        <>
+          <ServerSettings section={section} />
+          <AcmeSection />
+        </>
       );
     case "planned":
       return (

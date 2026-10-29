@@ -68,6 +68,11 @@ pub struct Manifest {
     #[serde(default)]
     pub highlights: Vec<Highlight>,
     pub packages: Vec<Package>,
+    /// System packages of the release (`.deb`, `.rpm`), each signed like a package. Servers do
+    /// not install them; they are listed so their hashes and signatures can be checked against
+    /// the signed manifest before an administrator installs one. Older servers ignore the field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub installers: Vec<Package>,
 }
 
 /// One line of the release notes.

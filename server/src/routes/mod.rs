@@ -1,4 +1,5 @@
 pub mod about;
+pub mod acme;
 pub mod admin_orgs;
 pub mod admin_settings;
 pub mod admin_users;
@@ -53,6 +54,7 @@ pub fn all() -> Vec<table::RouteDef> {
         auth::routes(),
         orgs::routes(),
         admin_settings::routes(),
+        acme::routes(),
         branding::routes(),
         audit::routes(),
         folders::routes(),

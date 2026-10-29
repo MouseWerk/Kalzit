@@ -709,5 +709,7 @@
   "admin.settings.ai.provider_summarize.label": "Provider for summaries",
   "admin.settings.ai.provider_summarize.description": "The server’s provider for “Summarize”; empty uses the default provider.",
   "admin.settings.ai.provider_chat.label": "Provider for Ask (chat with tools)",
-  "admin.settings.ai.provider_chat.description": "The server’s provider for “Ask”; empty uses the default provider."
+  "admin.settings.ai.provider_chat.description": "The server’s provider for “Ask”; empty uses the default provider.",
+  "admin.updates.mode.deb": "Kalzit was installed from the deb package, so apt updates it: download the new release’s deb and install it with this command.",
+  "admin.updates.mode.rpm": "Kalzit was installed from the rpm package, so dnf updates it: download the new release’s rpm and install it with this command."
 }

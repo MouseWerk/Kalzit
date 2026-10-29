@@ -122,6 +122,18 @@ const MODE_TEXT: Record<string, MessageKey> = {
   "updates.mode_unsupported_platform": "admin.updates.mode.unsupported",
 };
 
+/** Installed from the deb or rpm: the text and the command that installs a release's package. */
+const PACKAGE_MODES: Record<string, { text: MessageKey; command: (version: string) => string }> = {
+  "updates.mode_deb": {
+    text: "admin.updates.mode.deb",
+    command: (version) => `sudo apt install ./kalzit-${version}-linux-x64.deb`,
+  },
+  "updates.mode_rpm": {
+    text: "admin.updates.mode.rpm",
+    command: (version) => `sudo dnf install ./kalzit-${version}-linux-x64.rpm`,
+  },
+};
+
 type Confirm =
   | { kind: "install"; version: string }
   /** Only on PostgreSQL: planning asks for the own backup up front. */
@@ -570,6 +582,7 @@ function ReleaseCard({
   const working = busy || (data.job.phase !== "idle" && data.job.phase !== "failed");
   const window = nextWindow(data.window, Date.now(), timeZone);
   const scheduled = data.schedule?.version === release.version ? data.schedule : null;
+  const packaged = data.mode.reason === null ? undefined : PACKAGE_MODES[data.mode.reason];
   const groups = (["new", "improved", "fixed", "security"] as const)
     .map((kind) => ({ kind, lines: release.highlights.filter((h) => h.kind === kind) }))
     .filter((g) => g.lines.length > 0);
@@ -645,7 +658,15 @@ function ReleaseCard({
       ) : release.notes === "" ? null : (
         <p className="updates-notes updates-notes--plain">{release.notes}</p>
       )}
-      {data.mode.automatic || !release.staged ? null : (
+      {packaged !== undefined ? (
+        // The package manager owns the binary: the release's package replaces it, no download here.
+        <div className="updates-manual">
+          <p>{t(packaged.text)}</p>
+          <pre className="updates-mono updates-manual__command">
+            {packaged.command(release.version)}
+          </pre>
+        </div>
+      ) : data.mode.automatic || !release.staged ? null : (
         <div className="updates-manual">
           <p>
             {t(MODE_TEXT[data.mode.reason ?? ""] ?? "admin.updates.mode.unsupported")}{" "}
@@ -655,7 +676,7 @@ function ReleaseCard({
         </div>
       )}
       <div className="updates-release__actions">
-        {!release.staged ? (
+        {packaged !== undefined ? null : !release.staged ? (
           <button
             type="button"
             className="button button--primary"

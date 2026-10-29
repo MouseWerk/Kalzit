@@ -709,5 +709,7 @@
   "admin.settings.ai.provider_summarize.label": "Anbieter für Zusammenfassen",
   "admin.settings.ai.provider_summarize.description": "Der Anbieter des Servers für „Zusammenfassen“; leer gilt der Standardanbieter.",
   "admin.settings.ai.provider_chat.label": "Anbieter für Fragen (Chat mit Werkzeugen)",
-  "admin.settings.ai.provider_chat.description": "Der Anbieter des Servers für „Fragen“; leer gilt der Standardanbieter."
+  "admin.settings.ai.provider_chat.description": "Der Anbieter des Servers für „Fragen“; leer gilt der Standardanbieter.",
+  "admin.updates.mode.deb": "Kalzit ist aus dem deb-Paket installiert, darum aktualisiert apt es: Lade das deb der neuen Version herunter und installiere es mit diesem Befehl.",
+  "admin.updates.mode.rpm": "Kalzit ist aus dem rpm-Paket installiert, darum aktualisiert dnf es: Lade das rpm der neuen Version herunter und installiere es mit diesem Befehl."
 }

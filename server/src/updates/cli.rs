@@ -80,12 +80,30 @@ fn enter(data_dir: &Path, rights: &Rights) -> Result<(Layout, std::fs::File)> {
     Ok((layout, lock))
 }
 
+/// The binary of a deb or rpm package belongs to the package manager (`platform`, "Installed
+/// from the deb or rpm package").
+fn refuse_packaged(exe: &Path, what: &str) -> Result<()> {
+    if let Some(package) = platform::installed_package(exe) {
+        let kind = match package {
+            platform::Package::Deb => "deb",
+            platform::Package::Rpm => "rpm",
+        };
+        bail!(
+            "Kalzit was installed from the {kind} package, so the package manager replaces it: download the {kind} \
+             of {what} from the release and install it, e.g. {}",
+            package.command("<version>")
+        );
+    }
+    Ok(())
+}
+
 /// Installs the staged release with the server stopped.
 pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<String> {
     let data_dir = &config.paths.data_dir;
     let rights = Rights::detect(data_dir)?;
     // Opened with this command's own rights, before anything else: the binary to keep.
     let exe = running_binary()?;
+    refuse_packaged(&exe, "the new release")?;
     let exe_file = std::fs::File::open(&exe).with_context(|| format!("opening {}", exe.display()))?;
     let (layout, _lock) = enter(data_dir, &rights)?;
     let current = current_version();
@@ -188,6 +206,7 @@ pub async fn rollback(config: &Config, version: &str, restore_database: bool) ->
     let data_dir = &config.paths.data_dir;
     let rights = Rights::detect(data_dir)?;
     let exe = running_binary()?;
+    refuse_packaged(&exe, &format!("version {version}"))?;
     let exe_file = std::fs::File::open(&exe).with_context(|| format!("opening {}", exe.display()))?;
     let (layout, _lock) = enter(data_dir, &rights)?;
     let current = current_version();

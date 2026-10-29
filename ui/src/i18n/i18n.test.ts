@@ -201,6 +201,7 @@ describe("catalogs", () => {
       "Plugin · {publisher}",
       "Sandbox",
       "Beta",
+      "Let’s Encrypt",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");
