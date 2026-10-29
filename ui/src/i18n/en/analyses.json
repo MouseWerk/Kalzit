@@ -31,6 +31,7 @@
   "analyses.save.optional": "(optional)",
   "analyses.save.descriptionPlaceholder": "What is this analysis for?",
   "analyses.save.summary": "What is saved",
+  "analyses.save.query": "Query (read-only)",
   "analyses.save.visualization": "Visualization {name}",
   "analyses.save.keepRange": "Keep the time range",
   "analyses.save.keepRangeValue": "({range}); unchecked, it opens with the range set at the time",

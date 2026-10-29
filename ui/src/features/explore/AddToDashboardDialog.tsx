@@ -8,6 +8,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { FormAlert } from "../../components/FormAlert";
+import { QueryPreview } from "../../components/QueryPreview";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import {
@@ -33,11 +34,19 @@ interface AddToDashboardDialogProps {
   orgId: string;
   panel: PanelModel;
   range: TextRange;
+  /** Shows the panel's query in full, read-only, before it is saved (a query from Fragen). */
+  showQuery?: boolean;
   onClose: () => void;
 }
 
 /** Puts the Explore query into an existing dashboard (as a new version) or a new one. */
-export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDashboardDialogProps) {
+export function AddToDashboardDialog({
+  orgId,
+  panel,
+  range,
+  showQuery = false,
+  onClose,
+}: AddToDashboardDialogProps) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -136,6 +145,15 @@ export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDash
         }}
       >
         <FormAlert>{add.isError ? errorMessage(t, add.error) : null}</FormAlert>
+        {showQuery
+          ? panel.targets.map((target) => (
+              <QueryPreview
+                key={target.refId}
+                label={t("explore.add.query")}
+                query={target.query}
+              />
+            ))
+          : null}
         <fieldset className="radio-group">
           <legend className="field__label">{t("explore.add.where")}</legend>
           <label className="radio">

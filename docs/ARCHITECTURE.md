@@ -1084,7 +1084,10 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
   would (`datasources:query` for schema and free queries, `dashboards:read` for a panel's stored
   queries, so viewers ask about the panels they see), needs the source open to AI and chosen in
   the composer, runs through the normal query path, and passes its result through `ai::redact`.
-  A refused call is a result with an error the model reads, never a failure of the answer. Each
+  Free queries are refused on outward-facing kinds (`tools::outward_facing`: `http_json` and
+  every plugin kind), where the model would choose where a request goes; `run_panel` refuses a
+  panel whose stored queries name an excluded field or whose steps read one, and redacts all its
+  results with the merged rules of its sources. A refused call is a result with an error the model reads, never a failure of the answer. Each
   call is shown in the chat as it starts and ends (`tool`, `toolResult`) and audited as
   `ai.tool_called` (tool, source or dashboard, query, rows, outcome; no result data). At most
   `ai.max_tool_calls` calls per answer; past it, the model gets one round to answer in words. The
@@ -1092,7 +1095,11 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
   answer when it ends, also when the person stops it (closing the request drops the channel,
   which cancels the round and the running tool). The conversation the provider gets is rebuilt
   from the stored chat (the newest twelve questions); results of sources the person lost or that
-  were closed to AI since are withheld there and in the API. A chat answers one question at a
+  were closed to AI since are withheld there and in the API, and the results still shown are
+  redacted again with the rules as they are now (`redact::restrict_stored`). Where a result shows
+  less than the model saw, the answer's text, call arguments, model-written queries and proposals
+  are withheld too (`chats::checked_turn`), so they are neither shown nor sent again; the stored
+  chat itself never changes. A chat answers one question at a
   time. A question may name a dashboard as context (`dashboards:read`); its title and panels go
   to the model fenced. `run_panel` runs the panel's enabled steps on the server, as summaries do.
 - **A provider per function.** `ai.provider_explain`, `ai.provider_summarize` and

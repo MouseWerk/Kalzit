@@ -414,6 +414,7 @@ function QueryActions({ steps, rights }: { steps: readonly Step[]; rights: Sourc
           orgId={rights.orgId}
           panel={panel}
           range={{ from: "now-24h", to: "now" }}
+          showQuery
           onClose={() => setAdding(false)}
         />
       ) : null}
@@ -428,6 +429,11 @@ export interface AnswerProps {
   outcome: Outcome | undefined;
   error: ChatError | undefined;
   when: string;
+  /**
+   * A stored answer whose words are withheld: one of its results shows less than the model saw
+   * (access changed, or the source's AI rules were tightened since).
+   */
+  withheld?: boolean | undefined;
   /** While the answer is written: Stop is offered, and the card is busy. */
   running: boolean;
   waiting: boolean;
@@ -446,6 +452,7 @@ export function ChatAnswer({
   outcome,
   error,
   when,
+  withheld = false,
   running,
   waiting,
   onStop,
@@ -483,6 +490,7 @@ export function ChatAnswer({
       </span>
       <div className="ask-answer__body">
         <span className="ask-meta">{meta}</span>
+        {withheld ? <p className="ask-result__note">{t("ai.chat.answerWithheld")}</p> : null}
         {steps.map((step, index) => {
           if (step.kind === "text") {
             // biome-ignore lint/suspicious/noArrayIndexKey: the steps are the answer in order.

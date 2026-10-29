@@ -945,3 +945,164 @@ async fn a_provider_per_function_a_dashboard_as_context_and_panels_after_their_s
     assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
     t.finish().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stored_answers_follow_rules_tightened_since() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let editor = t.member(&owner, &org, "ede@example.de", "editor").await;
+    let ds = t.source(&owner, &org, "Kunden").await;
+    let mock = mock().await;
+    t.enable(&owner, &mock, "openai").await;
+    t.ack(&org, &editor).await;
+    t.access(&org, &ds, true, &[], &owner).await;
+
+    // Answered while nothing was excluded: the model saw the addresses and quoted one.
+    let chat = t.new_chat(&org, &editor, &[&ds]).await;
+    mock.script(vec![
+        tool(
+            "run_query",
+            json!({ "datasourceId": ds, "query": { "sql": "SELECT name, email FROM kunden WHERE email <> 'x' ORDER BY name" } }),
+        ),
+        text("Ana schreibt an ana@geheim.example."),
+    ]);
+    let r = t.ask(&org, &chat, "Wer schreibt von wo?", &editor).await;
+    assert_eq!(r.records()[0]["results"][0]["data"]["fields"][1]["values"][0], "ana@geheim.example", "{}", r.text);
+    let path = format!("/api/orgs/{org}/ai/chats/{chat}");
+    let r = t.get(&path, &editor).await;
+    assert!(r.body["messages"][1]["content"].get("withheld").is_none(), "{}", r.body);
+
+    // The field is excluded since: the stored values are replaced, and the model's words and
+    // its query, which quote them, are neither shown nor sent again.
+    t.access(&org, &ds, true, &["kunden.email"], &owner).await;
+    let r = t.get(&path, &editor).await;
+    let answer = &r.body["messages"][1]["content"];
+    assert_eq!(answer["withheld"], true, "{answer}");
+    assert!(!r.text.contains("geheim.example"), "{}", r.text);
+    let call = &answer["rounds"][0]["calls"][0];
+    assert_eq!(call["arguments"], json!({}));
+    assert!(call["record"].get("query").is_none(), "{call}");
+    let result = &call["record"]["results"][0];
+    assert_eq!(result["data"]["fields"][1]["values"], json!(["[excluded]", "[excluded]", "[excluded]"]));
+    assert_eq!(result["data"]["fields"][0]["values"][0], "Ana", "what is still allowed stays");
+    assert_eq!(result["excludedValues"], 3);
+    assert_eq!(answer["rounds"][1]["text"], "");
+    mock.script(vec![text("Gut.")]);
+    let r = t.ask(&org, &chat, "Und jetzt?", &editor).await;
+    assert_eq!(r.event("done")["outcome"], "ok", "{}", r.text);
+    let sent = mock.requests().last().unwrap().clone();
+    assert!(!sent.to_string().contains("geheim.example"), "{sent}");
+    assert!(tool_results(&sent)[0].contains("[excluded]") && tool_results(&sent)[0].contains("Ana"));
+
+    // A lower row limit cuts stored results too.
+    t.setting("ai.max_rows_to_model", json!(1), &owner).await;
+    let r = t.get(&path, &editor).await;
+    let result = &r.body["messages"][1]["content"]["rounds"][0]["calls"][0]["record"]["results"][0];
+    assert_eq!((result["rows"].as_u64(), result["truncated"].as_bool()), (Some(1), Some(true)), "{result}");
+    assert_eq!(result["data"]["fields"][0]["values"], json!(["Ana"]));
+    t.setting("ai.max_rows_to_model", json!(200), &owner).await;
+
+    // The source is closed since: its results are withheld, in the chat and towards the provider.
+    t.access(&org, &ds, false, &["kunden.email"], &owner).await;
+    let r = t.get(&path, &editor).await;
+    assert_eq!(r.body["messages"][1]["content"]["rounds"][0]["calls"][0]["record"]["withheld"], true);
+    mock.script(vec![text("Nicht mehr.")]);
+    t.ask(&org, &chat, "Noch da?", &editor).await;
+    let sent = mock.requests().last().unwrap().clone();
+    assert!(tool_results(&sent)[0].contains("no longer available"), "{sent}");
+    assert!(!sent.to_string().contains("Bo") && !sent.to_string().contains("geheim"), "{sent}");
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_fields() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let editor = t.member(&owner, &org, "ede@example.de", "editor").await;
+    let ds = t.source(&owner, &org, "Kunden").await;
+    let mock = mock().await;
+    t.enable(&owner, &mock, "openai").await;
+    t.ack(&org, &editor).await;
+
+    // An HTTP JSON source, and one of a plugin kind (its plugin not loaded now).
+    let body = json!({ "name": "API", "kind": "http_json", "settings": { "url": "http://127.0.0.1:9/api/" } });
+    let r = t.post(&format!("/api/orgs/{org}/datasources"), body, &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let http = r.body["id"].as_str().unwrap().to_string();
+    let plugin = "0190a000-0000-7000-8000-00000000abcd";
+    sqlx::query(
+        "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+         VALUES ($1, $2, 'Erweiterung', 'dev.example.rest', '{}', $3, $3)",
+    )
+    .bind(plugin)
+    .bind(&org)
+    .bind(T0)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    for id in [&ds, &http, &plugin.to_string()] {
+        t.access(&org, id, true, &["kunden.iban"], &owner).await;
+    }
+    // The source's AI settings say so, for the warning there.
+    for (id, outward) in [(ds.as_str(), false), (http.as_str(), true), (plugin, true)] {
+        let r = t.get(&format!("/api/orgs/{org}/datasources/{id}/ai-access"), &owner).await;
+        assert_eq!(r.body["outwardFacing"], outward, "{}", r.body);
+    }
+
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "title": "Kunden",
+        "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [
+            { "id": "named", "type": "table", "title": "Adressen",
+              "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT name, iban FROM kunden" } } ] },
+            { "id": "renamed", "type": "table", "title": "Umbenannt",
+              "grid": { "x": 0, "y": 8, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT * FROM kunden" } } ],
+              "transformations": [
+                  { "id": "1", "type": "group", "frame": "A", "by": ["name"],
+                    "aggregations": [{ "field": "iban", "op": "first", "name": "konto" }] }
+              ] },
+            { "id": "broken", "type": "table", "title": "Kaputt",
+              "grid": { "x": 0, "y": 16, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds,
+                             "query": { "sql": "SELECT name, umsatz, json_extract('{}', 'geheimwort') AS j FROM kunden" } } ],
+              "transformations": [
+                  { "id": "1", "type": "calculate", "frame": "A", "name": "Doppelt", "expression": "umsatz * 2" }
+              ] }
+        ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+
+    let chat = t.new_chat(&org, &editor, &[]).await;
+    mock.script(vec![
+        tool("run_query", json!({ "datasourceId": http, "query": { "path": "export", "params": { "q": "x" } } })),
+        tool("run_query", json!({ "datasourceId": plugin, "query": { "anything": "goes" } })),
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "named" })),
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "renamed" })),
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "broken" })),
+        text("Fertig."),
+    ]);
+    let r = t.ask(&org, &chat, "Was geht?", &editor).await;
+    let records = r.records();
+    assert_eq!(records.len(), 5, "{}", r.text);
+    assert_eq!(records[0]["error"]["reason"], "ai.outward_source_free_query", "{}", records[0]);
+    assert_eq!(records[0]["error"]["params"]["name"], "API");
+    assert_eq!(records[1]["error"]["reason"], "ai.outward_source_free_query", "{}", records[1]);
+    assert_eq!(records[2]["error"]["reason"], "ai.query_names_excluded_field", "{}", records[2]);
+    assert_eq!(records[3]["error"]["reason"], "ai.panel_step_reads_excluded_field", "{}", records[3]);
+    assert_eq!(records[3]["error"]["params"]["field"], "iban");
+    // A failed query before a panel's steps: its error goes through the source's rules too.
+    assert_eq!(records[4]["status"], "error", "{}", records[4]);
+    let message = records[4]["error"]["message"].as_str().unwrap();
+    assert!(!message.contains("geheimwort") && message.contains("[excluded]"), "{message}");
+    for request in mock.requests() {
+        assert!(!request.to_string().contains("geheimwort"), "{request}");
+    }
+    let tools = t.audited("ai.tool_called").await;
+    assert!(tools.iter().take(2).all(|c| c["outcome"] == "error"), "{tools:?}");
+    t.finish().await;
+}

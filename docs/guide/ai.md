@@ -86,8 +86,14 @@ On a data source's page, the **AI** part (KI) appears while AI is on:
 - **Excluded fields** (Felder ausnehmen): names or dotted paths (`kunden.email`, `iban`) whose
   values the server replaces with `[excluded]` before anything is sent; the model sees only the
   name. Excluding works by name: a field renamed or computed in a query (`email AS kontakt`) is not
-  covered, so in **Ask** a query that names an excluded field is not run at all. Data that must
-  never reach a provider belongs in a source that stays closed.
+  covered, so in **Ask** a query or a panel that names an excluded field is not run at all, nor a
+  panel whose steps read one. Values that serve as the id of a graph node or edge, or as a
+  document's `_id`, are not replaced. Data that must never reach a provider belongs in a source
+  that stays closed.
+- For **HTTP JSON** and **plugin** sources the part warns that the source sends requests
+  outward: there the query decides where a request goes and what it carries, so a query written
+  by the AI could carry data from the chat outward. **Ask** therefore runs only the stored queries
+  of panels on such a source, never a query of its own.
 
 Only people who may edit the data source can change this, and every change is audited. The data
 source list marks opened sources with **AI may read**.
@@ -140,7 +146,8 @@ with tools, each with your rights and only reading:
 
 - it looks up the data sources you may read and reads the schema of those open to AI,
 - it runs read-only queries on them (free queries need the right to query the source, as in
-  Explore; a writing query is refused by the server),
+  Explore; a writing query is refused by the server; on HTTP JSON and plugin sources it runs none
+  of its own, only panels),
 - it finds the panels of dashboards you may read and runs their saved queries, so viewers can ask
   about what their dashboards show,
 - it proposes a query you can open in Explore, where you check it and save it as a panel.
@@ -164,7 +171,8 @@ goes, your requests today, your recent chats and a few suggested questions.
 assistant can run its panels, steps included. After a summary, **Continue in Ask** (In Fragen
 weiterfragen) starts a chat about it. Under an answer, **Save as panel** (Als Panel speichern)
 opens its query in Explore with the save dialog, **Add to dashboard** (Zum Dashboard hinzufügen)
-puts it on a dashboard, and **Adjust query** (Abfrage anpassen) opens it in Explore; a result over
+puts it on a dashboard (both dialogs show the whole query once more, read-only, before you save),
+and **Adjust query** (Abfrage anpassen) opens it in Explore; a result over
 time switches between **Table** and **Time series**. The side pane names the provider that
 answers in Ask ([a provider per function](#a-provider-per-function)), its endpoint, whether it
 passed its last test, and whether data leaves your network (as set on the provider, or judged
@@ -174,7 +182,11 @@ Chats are yours alone; nobody else can read them, administrators included. **Ask
 (Verlauf) lists them with the days until they are deleted: 30 days after their last message by
 default, shorter if your organization chose so. Delete one chat, the chosen ones or all of them at
 any time. A result of a source you may no longer read, or that was closed to AI since, is no longer
-shown in a stored chat and not sent to the model again.
+shown in a stored chat and not sent to the model again. Stored results follow the source's AI
+rules as they are now: a field excluded later is replaced in them too, and a lower row limit cuts
+them. When an answer's results show less than the model saw, its words are withheld as well,
+with the note "Answer withheld because access to its data changed", and are not sent to the model
+again.
 
 Every tool call is in the audit log with the source or dashboard, the query and the number of rows,
 never with result data, your question or the answer.
