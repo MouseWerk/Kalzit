@@ -12,6 +12,12 @@
 //!
 //! Everywhere else (a console, a container, a binary owned by root) Kalzit prepares the update
 //! and the status names the command to run.
+//!
+//! Installed from the deb or rpm package, the package manager owns `/usr/bin/kalzit`: Kalzit
+//! neither replaces it itself nor through `kalzit update apply`, which would leave the package
+//! database behind the installed version. The status says to install the release's package
+//! instead (`apt install ./kalzit-<version>-linux-x64.deb`, `dnf install ./...rpm`); the
+//! package's scripts restart the service.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -61,6 +67,11 @@ pub fn detect_mode(exe: &Path) -> Mode {
     if !cfg!(target_os = "linux") {
         return Mode::Manual("updates.mode_unsupported_platform");
     }
+    match installed_package(exe) {
+        Some(Package::Deb) => return Mode::Manual("updates.mode_deb"),
+        Some(Package::Rpm) => return Mode::Manual("updates.mode_rpm"),
+        None => {}
+    }
     if in_container() {
         return Mode::Manual("updates.mode_container");
     }
@@ -72,6 +83,46 @@ pub fn detect_mode(exe: &Path) -> Mode {
         return Mode::Manual("updates.mode_binary_not_writable");
     }
     Mode::Automatic
+}
+
+/// The package `/usr/bin/kalzit` came from, as its marker file says (deploy/linux/nfpm.yaml).
+pub const PACKAGE_MARKER: &str = "/usr/lib/kalzit/package";
+const PACKAGED_BINARY: &str = "/usr/bin/kalzit";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Package {
+    Deb,
+    Rpm,
+}
+
+impl Package {
+    /// How to install a release's package of this kind.
+    pub fn command(self, version: &str) -> String {
+        match self {
+            Package::Deb => format!("sudo apt install ./kalzit-{version}-linux-x64.deb"),
+            Package::Rpm => format!("sudo dnf install ./kalzit-{version}-linux-x64.rpm"),
+        }
+    }
+}
+
+/// The package manager that owns `exe`: only the packaged binary with its marker.
+pub fn installed_package(exe: &Path) -> Option<Package> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let packaged = std::fs::canonicalize(PACKAGED_BINARY).ok()?;
+    if std::fs::canonicalize(exe).ok()? != packaged {
+        return None;
+    }
+    package_from_marker(&std::fs::read_to_string(PACKAGE_MARKER).ok()?)
+}
+
+fn package_from_marker(text: &str) -> Option<Package> {
+    match text.trim() {
+        "deb" => Some(Package::Deb),
+        "rpm" => Some(Package::Rpm),
+        _ => None,
+    }
 }
 
 /// Whether the server runs in a container: Docker leaves `/.dockerenv`, Podman
@@ -193,6 +244,18 @@ pub fn relaunch(exe: &Path) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_package_marker_names_the_package_manager() {
+        assert_eq!(package_from_marker("deb\n"), Some(Package::Deb));
+        assert_eq!(package_from_marker("rpm"), Some(Package::Rpm));
+        assert_eq!(package_from_marker(""), None);
+        assert_eq!(package_from_marker("snap"), None);
+        assert_eq!(Package::Deb.command("0.5.0"), "sudo apt install ./kalzit-0.5.0-linux-x64.deb");
+        assert_eq!(Package::Rpm.command("0.5.0"), "sudo dnf install ./kalzit-0.5.0-linux-x64.rpm");
+        // A binary somewhere else is not the package's, whatever the marker says.
+        assert_eq!(installed_package(Path::new("/opt/kalzit/kalzit")), None);
+    }
 
     #[test]
     fn the_platform_has_package_names() {

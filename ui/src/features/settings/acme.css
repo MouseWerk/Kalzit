@@ -1,0 +1,132 @@
+@layer components {
+  /*
+   * ACME certificates in "Network, HTTPS and proxy": a status card and a form card in the rows of
+   * the settings board, one explicit Save at the bottom. States are text and quiet tints only.
+   */
+  .acme-field {
+    width: 24rem;
+    max-width: 100%;
+  }
+
+  textarea.acme-field {
+    resize: vertical;
+  }
+
+  .acme-field--tall {
+    min-height: calc(var(--control-height) * 3);
+  }
+
+  .acme-notice {
+    margin: var(--space-3) var(--space-4) 0;
+  }
+
+  .acme-status {
+    align-items: flex-start;
+  }
+
+  .acme-phase {
+    margin: var(--space-1) 0 0;
+    font-weight: var(--font-weight-medium);
+  }
+
+  .acme-phase--valid {
+    color: var(--success-text);
+  }
+
+  .acme-phase--failed {
+    color: var(--danger-text);
+  }
+
+  .acme-phase--off,
+  .acme-phase--waiting,
+  .acme-phase--working {
+    color: var(--text-muted);
+  }
+
+  .acme-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-1) var(--space-4);
+    margin: var(--space-3) 0 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .acme-facts dt {
+    color: var(--text-muted);
+  }
+
+  .acme-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .acme-facts__code {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .acme-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .acme-footer__result {
+    display: grid;
+    flex: 1 1 16rem;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .acme-footer__result:empty {
+    display: none;
+  }
+
+  .acme-footer__result .field__error,
+  .acme-footer__result .settings-hint {
+    margin: 0;
+  }
+
+  .acme-footer__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-inline-start: auto;
+  }
+
+  .acme-checked {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .acme-checked__line {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .acme-checked__line .icon {
+    flex: none;
+    color: var(--success-text);
+  }
+
+  .acme-checked__line--warning .icon {
+    color: var(--warning-text);
+  }
+
+  @media (width < 40rem) {
+    .acme-facts {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .acme-footer__actions {
+      width: 100%;
+    }
+  }
+}

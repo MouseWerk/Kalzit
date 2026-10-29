@@ -5,6 +5,7 @@
 #[path = "../build_info.rs"]
 mod build_info;
 
+pub mod acme;
 pub mod ai;
 pub mod analysis;
 pub mod app;
