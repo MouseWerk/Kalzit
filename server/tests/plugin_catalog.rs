@@ -799,3 +799,47 @@ async fn other_hosts_must_be_public_and_kalzit_itself_is_refused() {
     assert_eq!(r.reason(), "catalog.own_address", "{}", r.body);
     t.finish().await;
 }
+
+/// A panel plugin from the catalog installs through the same path as one uploaded as a file.
+#[tokio::test]
+async fn panel_entries_install_like_files() {
+    let t = test_app().await;
+    let catalog_key = key(1);
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
+    t.turn_on().await;
+    let id = "dev.example.kachel";
+    let bundle = "export {};\n";
+    let manifest = format!(
+        "manifest = 1\nid = \"{id}\"\nname = \"Kachel\"\nversion = \"1.0.0\"\nkind = \"panel\"\nmin_kalzit = \"0.1.0\"\n\
+         shapes = [\"frame\"]\npublisher = \"Example GmbH\"\n\n[panel]\npath = \"dist/panel.js\"\napi = 1\n\n\
+         [files]\n\"dist/panel.js\" = \"{}\"\n",
+        sha(bundle.as_bytes())
+    );
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let sig = kalzit_release::DetachedSignature {
+        key_id: key_id(&catalog_key),
+        signature: base64::engine::general_purpose::STANDARD
+            .encode(catalog_key.sign(&signing::manifest_message(manifest.as_bytes())).to_bytes()),
+    };
+    for (name, bytes) in [
+        ("kalzit-plugin.toml", manifest.into_bytes()),
+        ("kalzit-plugin.sig", serde_json::to_vec(&sig).unwrap()),
+        ("dist/panel.js", bundle.as_bytes().to_vec()),
+    ] {
+        zip.start_file(name, stored).unwrap();
+        zip.write_all(&bytes).unwrap();
+    }
+    let package = zip.finish().unwrap().into_inner();
+    let entry =
+        CatalogEntry { kind: "panel".into(), name: "Kachel".into(), ..t.offer(id, "1.0.0", &catalog_key, package) };
+    t.publish(&index(1, vec![entry]), &catalog_key);
+    assert_eq!(t.refresh().await.status, StatusCode::OK);
+    let item = t.catalog("?kind=panel").await["items"][0].clone();
+    assert_eq!((item["id"].as_str(), item["action"].as_str()), (Some(id), Some("install")), "{item}");
+    let r = t.install(id, "1.0.0").await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["kind"], "panel");
+    assert_eq!(t.audit("plugins.catalog_installed").await.len(), 1);
+    t.finish().await;
+}
