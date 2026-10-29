@@ -248,9 +248,9 @@
       linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
       linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
     background-position:
-      right calc(var(--space-3) + 0.3125rem) center,
+      right calc(var(--space-3) + var(--size-select-chevron)) center,
       right var(--space-3) center;
-    background-size: 0.3125rem 0.3125rem;
+    background-size: var(--size-select-chevron) var(--size-select-chevron);
     background-repeat: no-repeat;
   }
 
@@ -258,6 +258,15 @@
   .select[size]:not([size="1"]) {
     padding-inline-end: var(--space-3);
     background-image: none;
+  }
+
+  /* With forced colors the system draws the select, its arrow included. */
+  @media (forced-colors: active) {
+    .select {
+      appearance: auto;
+      padding-inline-end: var(--space-2);
+      background-image: none;
+    }
   }
 
   /* Notices: tinted fill plus icon, never a colored frame or left bar. */

@@ -668,14 +668,15 @@ pass the same data source target rules (`TargetPolicy`) as built-in sources.
 
 A signed index (the project's, or a mirror an administrator names; there is no default address)
 lists plugins with versions, key ids, download URLs and package hashes (`catalog::CatalogIndex`).
-It is off by default; turning it on is a server setting. Every index carries a growing `sequence`, its publication time and an `expiresAt` at
-most 31 days later. The host remembers the highest sequence it accepted per catalog key
-(`catalog::Accepted`, by the full public key; `parse_index` takes the key whose signature
-verified) and refuses an older or equal one (rollback) and an index past its expiry (freeze),
-so whoever controls the download cannot keep a known-vulnerable version listed. Every entry is
-checked: a valid plugin id, semantic version and kind, a 16-digit key id, an `https` URL
-without user info, a SHA-256 in lowercase hex, and no id with the same version twice. Installing from a file (the package with its
-manifest and signature) always works, also offline, and runs the same checks.
+It is off by default; turning it on is a server setting. Every index carries a growing
+`sequence`, its publication time and an `expiresAt` at most 31 days later. The host remembers
+the highest sequence it accepted per catalog key (`catalog::Accepted`, by the full public key;
+`parse_index` takes the key whose signature verified) and refuses an older or equal one
+(rollback) and an index past its expiry (freeze), so whoever controls the download cannot keep
+a known-vulnerable version listed. Every entry is checked: a valid plugin id, semantic version
+and kind, a 16-digit key id, an `https` URL without user info, a SHA-256 in lowercase hex, and no
+id with the same version twice. Installing from a file (the package with its manifest and
+signature) always works, also offline, and runs the same checks.
 
 - An index may withdraw versions (`revoked`: plugin id, a semver requirement, a reason); they are
   never installed from the catalog and installed versions they match are named in the UI.

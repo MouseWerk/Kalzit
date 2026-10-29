@@ -227,7 +227,9 @@ describe("Plugins, installed", () => {
     const row = within(table).getByRole("link", { name: "KPI tile" }).closest("tr") as HTMLElement;
     expect(within(row).getByText("Active, draws in the browser")).toBeTruthy();
     expect(within(row).queryByText("Not loaded")).toBeNull();
-    expect(screen.getByRole("button", { name: /^Problems/ }).textContent).toContain("0");
+    expect(screen.getByRole("button", { name: /^Problems/ }).textContent?.replace(/\s+/g, "")).toBe(
+      "Problems0",
+    );
   });
 
   it("shows a band while unsigned plugins are allowed, which turns them off", async () => {

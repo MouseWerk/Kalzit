@@ -128,10 +128,10 @@ allowed for the catalog: under **Signature and trust**, **Allow for the catalogâ
 erlaubenâ€¦) on a trusted key, after a confirmation. Trusting a key for plugins alone does not let
 it sign the catalog. The signature lies next to the list at the same address with `.sig`
 appended. Packages and redirects on other hosts than the catalog's own must be public addresses,
-and the catalog address can never be Kalzit itself. **Load again every** (Erneut laden alle) sets how often Kalzit loads it (24 hours by
-default). The three settings can also be set in the environment
-(`KALZIT_SETTING_PLUGINS_CATALOG_ENABLED`, `..._URL`, `..._REFRESH_HOURS`); the tab then shows
-them read-only.
+and the catalog address can never be Kalzit itself. **Load again every** (Erneut laden alle)
+sets how often Kalzit loads it (24 hours by default). The three settings can also be set in the
+environment (`KALZIT_SETTING_PLUGINS_CATALOG_ENABLED`, `..._URL`, `..._REFRESH_HOURS`); the tab
+then shows them read-only.
 
 Kalzit loads the list itself, with the same target rules as data sources (allowed targets,
 metadata addresses refused), over HTTPS only, and sends nothing but its version and platform. It
@@ -238,5 +238,5 @@ and its section "Network connector".
 
 Data source plugins are written in Rust with the Kalzit plugin SDK (`plugin-sdk/`), and packaged
 and signed with the `kalzit-plugin` tool; panel plugins are a JavaScript bundle that speaks the
-panel message API. The author guide is [Writing plugins](../plugins/authoring.md), with the examples in
-`examples/plugins` ("CSV and JSON over HTTP", `dev.kalzit.csv-http`, and the KPI tile).
+panel message API. The author guide is [Writing plugins](../plugins/authoring.md), with the
+examples in `examples/plugins` ("CSV and JSON over HTTP", `dev.kalzit.csv-http`, and the KPI tile).

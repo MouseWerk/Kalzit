@@ -378,7 +378,7 @@
     background-image: radial-gradient(
       circle,
       var(--text-muted) var(--size-switch-knob),
-      transparent calc(var(--size-switch-knob) + 0.5px)
+      transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
     );
     background-position: left center;
     background-size: calc(var(--size-switch-height) - 2 * var(--border-width))
@@ -396,7 +396,7 @@
     background-image: radial-gradient(
       circle,
       var(--text) var(--size-switch-knob),
-      transparent calc(var(--size-switch-knob) + 0.5px)
+      transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
     );
     background-position: right center;
   }
@@ -405,6 +405,48 @@
     border-color: var(--border);
     background-color: var(--bg-surface);
     cursor: not-allowed;
+  }
+
+  /* The contrast theme's strong border is close to its text: on, the knob takes the background. */
+  :root[data-theme="contrast"] .settings-switch:checked {
+    border-color: var(--text);
+    background-color: var(--text);
+    background-image: radial-gradient(
+      circle,
+      var(--bg) var(--size-switch-knob),
+      transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
+    );
+  }
+
+  /*
+   * Forced colors: system colors only, kept as they are so the knob and its side still show the
+   * state; on is filled with the selection color.
+   */
+  @media (forced-colors: active) {
+    .settings-switch {
+      forced-color-adjust: none;
+      border-color: CanvasText;
+      background-color: Canvas;
+      background-image: radial-gradient(
+        circle,
+        CanvasText var(--size-switch-knob),
+        transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
+      );
+    }
+
+    .settings-switch:checked {
+      border-color: Highlight;
+      background-color: Highlight;
+      background-image: radial-gradient(
+        circle,
+        HighlightText var(--size-switch-knob),
+        transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
+      );
+    }
+
+    .settings-switch:disabled {
+      border-color: GrayText;
+    }
   }
 
   /* Segmented choice (the theme): the chosen part carries a quiet fill and weight. */

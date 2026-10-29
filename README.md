@@ -138,7 +138,8 @@ never returned by the API. Plugins add further kinds (see below).
 - Plugins run in a sandbox: on Windows a restricted token in a job object and an AppContainer
   without network, on Linux Landlock, seccomp and namespaces. A plugin has no network of its own
   and reaches only the targets its manifest declares, through Kalzit, which checks every
-  connection.
+  connection. On Linux plugins need Landlock unless an administrator allows them without it;
+  without Landlock a plugin could read Kalzit's files, while its network stays closed.
 - A Rust SDK and the `kalzit-plugin` tool to package and sign, with two examples: "CSV and JSON
   over HTTP" and the panel "KPI tile" ([writing plugins](docs/plugins/authoring.md)).
 
@@ -152,8 +153,10 @@ never returned by the API. Plugins add further kinds (see below).
 - **Ask** (beta): questions about your data in plain words; the assistant reads schemas, runs
   read-only queries and dashboard panels with your rights and shows every step with its query and
   result.
-- AI reads a data source only after it was opened to AI, values of excluded fields never leave the
-  server, everyone sees once which data goes where, and limits per person and organization apply.
+- AI reads a data source only after it was opened to AI; excluded fields are left out by name (a
+  field renamed in a query is not caught), so data that must never reach a provider stays in a
+  source closed to AI. Everyone sees once which data goes where, and limits per person and
+  organization apply.
   Every call is in the audit log, without the question, the answer or any result; chats are
   private and deleted after 30 days by default.
 
@@ -251,7 +254,8 @@ Network and power topology: 88 nodes, colored by label.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/ask-answer-light.webp"><img src="docs/screenshots/gallery/ask-answer-dark.webp" alt="Ask: a question about the hottest racks, the assistant's steps (sources, schema, a read-only SQL query with its result) and the answer; on the right the model, its endpoint and whether data leaves the network"></picture>
 
-Ask: a question in plain words, every step the assistant took with its query and result, then the answer.
+Ask: a question in plain words, every step the assistant took with its query and result, then
+the answer.
 
 | | |
 |---|---|
@@ -264,7 +268,8 @@ Ask: a question in plain words, every step the assistant took with its query and
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-plugin-panel-light.webp"><img src="docs/screenshots/gallery/dashboard-plugin-panel-dark.webp" alt="A dashboard with four KPI tile panels from a panel plugin, each with a value, its change and a sparkline, above a time series of IT power per hall"></picture>
 
-Panels of a plugin (the example "KPI tile"), each in a sealed-off frame, next to a built-in time series.
+Panels of a plugin (the example "KPI tile"), each in a sealed-off frame, next to a built-in
+time series.
 
 | | |
 |---|---|

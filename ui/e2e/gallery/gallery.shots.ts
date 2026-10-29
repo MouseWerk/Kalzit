@@ -921,7 +921,7 @@ async function seedAi(owner: Api, sql: string, dbFile: string): Promise<string[]
 // ---------------------------------------------------------------------------------------------
 // Plugins: a publisher key, a data source plugin and the example KPI tile, all signed.
 
-const PUBLISHER = "Basalt Engineering";
+const PUBLISHER = "basalt.example";
 const BACNET = { id: "dev.basalt.bacnet", name: "BACnet sensors" } as const;
 const KPI = "dev.basalt.panel-kpi";
 const PLUGIN_PANELS = "Site Basalt at a glance";
@@ -1589,7 +1589,7 @@ function catalogView(): Record<string, unknown> {
       "One cell per day, colored by the sum of a field.",
       [],
       "untrusted",
-      "Nordlicht Data GmbH",
+      "nordlicht.example",
     ),
   ];
   const setting = (value: unknown, version: number) => ({ value, version, editable: true });
