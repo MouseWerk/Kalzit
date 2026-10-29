@@ -4,9 +4,9 @@ The plugin routes, exactly as the server implements them (`server/src/routes/plu
 paths are below `/api`. Every `/admin/...` route is `Access::ServerAdmin` (installing and trusting
 plugins is a server action); the organization routes need `plugins:configure` in that
 organization. General rules (docs/ARCHITECTURE.md, "API conventions") apply. How plugins work:
-docs/ARCHITECTURE.md, "Plugins". This version hosts **data source** and **panel** plugins and the
-**catalog**. The panel types of an organization and a panel's frame are routes for its members
-("Panel plugins" below).
+docs/ARCHITECTURE.md, "Plugins". This version hosts **data source** and **panel** plugins and
+the **catalog**. The panel types of an organization and a panel's frame are routes for its
+members ("Panel plugins" below).
 
 Refusals carry a reason from the table at the end: `422 validation` for packages and requests that
 fail a check, `409 conflict` for a state that refuses the step (a downgrade, a changed key, a key

@@ -112,9 +112,10 @@ name, description or key and jumps to it; every section and setting has its own 
   proxy, session, security and log settings are read-only here: they are set in `kalzit.toml` or
   the environment only, so a wrong value can never lock you out.
 - Sections: Appearance and brand, General, Network HTTPS and proxy, Sessions and security,
-  Sign-in (OIDC, LDAP) and Email (both planned for M5), Data sources and targets, Storage and
-  retention, Updates, This organization, Profile and language, Keyboard shortcuts, and Export /
-  import settings.
+  Sign-in (OIDC, LDAP) and Email (both planned for M5), Data sources and targets, Plugins
+  ([Plugins](plugins.md)), AI ([AI](ai.md)), Storage and retention, Updates, This organization,
+  AI of the organization, Plugins of the organization, Profile and language, Keyboard shortcuts,
+  and Export / import settings.
 
 ![Settings: appearance and brand](../screenshots/settings-dark.png)
 

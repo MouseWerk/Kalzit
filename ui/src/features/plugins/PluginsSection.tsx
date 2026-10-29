@@ -198,9 +198,14 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
   const items = list.items;
   const problems = items.filter((plugin) => pluginStatus(t, plugin, now).problem);
   const updates = items.filter((plugin) => plugin.pending !== undefined);
-  const runnable = items.filter((plugin) => plugin.approved && plugin.enabled);
+  // Panel plugins have no process to run; they are not counted here.
+  const runnable = items.filter(
+    (plugin) => plugin.approved && plugin.enabled && plugin.kind !== "panel",
+  );
   const running = runnable.filter((plugin) => plugin.process?.state === "running");
   const shown = filter === "problems" ? problems : filter === "updates" ? updates : items;
+  const sources = items.filter((plugin) => plugin.kind === "datasource").length;
+  const panels = items.filter((plugin) => plugin.kind === "panel").length;
 
   return (
     <div className="plugins">
@@ -209,8 +214,16 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
           <span className="plugins-strip__label">{t("plugins.strip.installed")}</span>
           <span className="plugins-strip__value">{items.length}</span>
           <span className="plugins-strip__sub">
-            {t("plugins.strip.datasources", {
-              count: items.filter((plugin) => plugin.kind === "datasource").length,
+            {t("plugins.strip.kinds", {
+              datasources: t(
+                sources === 1 ? "plugins.strip.datasourcesOne" : "plugins.strip.datasources",
+                {
+                  count: sources,
+                },
+              ),
+              panels: t(panels === 1 ? "plugins.strip.panelsOne" : "plugins.strip.panels", {
+                count: panels,
+              }),
             })}
           </span>
         </div>
