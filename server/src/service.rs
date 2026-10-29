@@ -576,10 +576,11 @@ mod windows_impl {
             service.start::<&OsStr>(&[]).context("starting the service")?;
             wait_for(&service, ServiceState::Running, Duration::from_secs(90))?;
             lines.push(format!("the service is running; the log is in {}", log_hint(settings)));
-            lines.push(
-                "open Kalzit in a browser and enter the setup code from `kalzit setup-code` (in an elevated prompt)"
-                    .into(),
-            );
+            let data = Config::data_dir_hint(Some(&settings.config)).unwrap_or_else(|| settings.data_dir.clone());
+            lines.push(format!(
+                "open Kalzit in a browser and enter the setup code from {} (only administrators can open it)",
+                data.join(crate::routes::setup::TOKEN_FILE).display()
+            ));
         }
         Ok(lines.join("\n"))
     }
