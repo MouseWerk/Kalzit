@@ -3,6 +3,7 @@ import { Api, unique } from "./support/api";
 import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
 import { findOverflow } from "./support/overflow";
+import { BINARY as PLUGIN_BINARY, publisherKey, testPluginPackage } from "./support/plugin";
 import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
@@ -544,6 +545,99 @@ test.describe("Neo4j drawing", () => {
     ).toBeVisible({ timeout: STEP_MS });
     expect(await seriousViolations(page)).toEqual([]);
   });
+});
+
+/**
+ * ELK in a hierarchy panel, under the server's CSP. The graph comes from the test plugin (a graph
+ * of two nodes, `a` KNOWS `b`) instead of Neo4j, so this runs on the Windows runners too, which
+ * have no Linux containers for the graph databases.
+ */
+test("a hierarchy with ELK loads it on demand and lays the graph out left to right", async ({
+  page,
+}) => {
+  test.skip(
+    PLUGIN_BINARY === "",
+    "KALZIT_E2E_PLUGIN_BINARY is not set: the test plugin was not built",
+  );
+  const title = "Graph with ELK";
+  const id = "dev.e2etest.elkgraph";
+  const owner = await Api.owner();
+  let dashboardId = "";
+  try {
+    // Signed with a key trusted for this test, so unsigned plugins stay off for the others.
+    const key = publisherKey();
+    const trusted = await owner.context.post("/api/admin/plugin-keys", {
+      data: { name: unique("ELK test publisher"), publicKey: key.publicKey },
+    });
+    expect(trusted.ok(), await trusted.text()).toBe(true);
+    const host = (await (await owner.context.get("/api/admin/plugin-host")).json()) as {
+      landlockAvailable?: boolean;
+    };
+    if (process.platform === "linux" && host.landlockAvailable === false) {
+      await owner.context.patch("/api/admin/plugin-host", { data: { allowWithoutLandlock: true } });
+    }
+    const installed = await owner.context.post("/api/admin/plugins", {
+      headers: { "Content-Type": "application/zip" },
+      data: testPluginPackage({ id, name: "E2E graph" }, key),
+    });
+    expect(installed.ok(), await installed.text()).toBe(true);
+    for (const [step, data] of [
+      ["approve", { version: "1.0.0" }],
+      ["enable", undefined],
+    ] as const) {
+      const answer = await owner.context.post(
+        `/api/admin/plugins/${id}/${step}`,
+        data === undefined ? {} : { data },
+      );
+      expect(answer.ok(), await answer.text()).toBe(true);
+    }
+    const sourceId = await owner.createSource(unique("Graph (plugin)"), id, {
+      host: "graph.example.test",
+    });
+    dashboardId = await owner.createDashboard({
+      schemaVersion: 1,
+      title: unique("ELK hierarchy"),
+      timeRange: { from: "now-6h", to: "now" },
+      panels: [
+        {
+          id: "tree",
+          type: "hierarchy",
+          title,
+          grid: { x: 0, y: 0, w: 24, h: 12 },
+          targets: [{ refId: "A", datasourceId: sourceId, query: { do: "graph" } }],
+          options: { hierarchyLayout: "elk", elkDirection: "right" },
+        },
+      ],
+    });
+  } finally {
+    await owner.dispose();
+  }
+  await page.addInitScript(() => {
+    (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+  });
+  // ELK's worker is a script of its own, started only by a panel that uses ELK.
+  const elkWorker = page.waitForEvent("worker", {
+    predicate: (worker) => /\/assets\/elk-worker[^/]*\.js$/.test(worker.url()),
+    timeout: 30_000,
+  });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+  const panel = page.getByRole("article", { name: title, exact: true });
+  const drawing = panel.getByRole("application", { name: title, exact: true });
+  const noWebgl = panel.getByText(t("graph.notice.noWebgl"), { exact: true });
+  // The plugin's process starts with the first query.
+  await expect(drawing.or(noWebgl)).toBeVisible({ timeout: 30_000 });
+  test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+  await elkWorker;
+  await expect(panel.getByText(t("graph.layout.elkRunning"), { exact: true })).toBeHidden({
+    timeout: STEP_MS,
+  });
+  await expect(panel.getByText(t("graph.layout.elkFailed"), { exact: true })).toBeHidden();
+  const a = await drawnNode(panel, "a");
+  const b = await drawnNode(panel, "b");
+  expect(a.x).toBeLessThan(b.x);
+  expect(await seriousViolations(page)).toEqual([]);
 });
 
 test("Memgraph: a Cypher query in Explore draws a network", async ({ page }) => {

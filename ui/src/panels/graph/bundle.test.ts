@@ -21,7 +21,7 @@ const ALLOWED = new Set([
   "panels/path/index.tsx",
 ]);
 const GRAPH_AREA = /^panels\/(graph|network|hierarchy|path)\//;
-const GRAPH_PACKAGES = /^(sigma|graphology)(\/|-|$)/;
+const GRAPH_PACKAGES = /^(sigma|graphology|elkjs)(\/|-|$)/;
 
 function resolveModule(from: string, spec: string): string | undefined {
   const base = resolve(dirname(from), spec);
@@ -56,14 +56,18 @@ function importsOf(source: string, followDynamic: boolean): string[] {
   return found;
 }
 
-function closure(entry: string): { files: string[]; packages: string[] } {
+/**
+ * What loads with `entry`. `import()` is followed outside the panels (the pages), unless
+ * `staticOnly`: then only what loads in the same chunk as the entry.
+ */
+function closure(entry: string, staticOnly = false): { files: string[]; packages: string[] } {
   const files = new Set<string>();
   const packages = new Set<string>();
   const visit = (path: string) => {
     if (files.has(path)) return;
     files.add(path);
     const source = readFileSync(path, "utf8");
-    const followDynamic = !rel(path).startsWith("panels/");
+    const followDynamic = !staticOnly && !rel(path).startsWith("panels/");
     for (const spec of importsOf(source, followDynamic)) {
       if (/\.(css|json)$/.test(spec)) continue;
       if (spec.startsWith(".")) {
@@ -95,6 +99,21 @@ describe("graph panel bundle", () => {
   it("reaches only the allowlisted graph modules and no graph library", () => {
     expect(files.filter((path) => GRAPH_AREA.test(path) && !ALLOWED.has(path))).toEqual([]);
     expect(packages.filter((name) => GRAPH_PACKAGES.test(name))).toEqual([]);
+  });
+
+  it("loads elkjs only when a hierarchy picks ELK, not with the graph panels' own chunk", () => {
+    const panels = closure(resolve(SRC, "panels/graph/GraphPanels.tsx"), true);
+    expect(panels.files).toContain("panels/graph/elkLayout.ts");
+    expect(panels.files).not.toContain("panels/graph/elkRunner.ts");
+    expect(panels.packages.filter((name) => name.startsWith("elkjs"))).toEqual([]);
+    // elkLayout.ts reaches elkjs through `import()` of elkRunner.ts, the only module loading it.
+    const layout = readFileSync(resolve(SRC, "panels/graph/elkLayout.ts"), "utf8");
+    expect(importsOf(layout, true)).toContain("./elkRunner");
+    const runner = closure(resolve(SRC, "panels/graph/elkRunner.ts"), true);
+    expect(runner.packages).toEqual(["elkjs/lib/elk-worker.min.js?url"]);
+    expect(
+      importsOf(readFileSync(resolve(SRC, "panels/graph/elkRunner.ts"), "utf8"), true),
+    ).toContain("elkjs/lib/elk.bundled.js");
   });
 
   it("reads mixed and type-only imports as the bundler does", () => {
