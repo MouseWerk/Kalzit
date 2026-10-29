@@ -146,8 +146,17 @@ describe("invitations", () => {
   });
 
   it("copies a pending invitation's link again", async () => {
-    const { user } = await openAdmin("/admin/members", { setupServer: seed(invitation()) });
+    const { user } = await openAdmin("/admin/members", {
+      setupServer: seed(
+        invitation({ delivery: "none", deliveredAt: null }),
+        invitation({ id: "i2", email: "mailed@example.com" }),
+      ),
+    });
     const list = await screen.findByRole("list", { name: "Open invitations" });
+    // A link that went by mail is sent again, never copied.
+    expect(
+      within(list).queryByRole("button", { name: "Copy link for mailed@example.com" }),
+    ).toBeNull();
     await user.click(within(list).getByRole("button", { name: "Copy link for nora@example.com" }));
     expect(await screen.findByText("Link copied.")).toBeTruthy();
     expect(await navigator.clipboard.readText()).toBe("https://kalzit.example.com/invite#token-i1");

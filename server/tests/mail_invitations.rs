@@ -395,9 +395,15 @@ async fn expired_links_resend_with_a_new_link_and_revoked_links_look_unknown() {
     assert_eq!((late.status, late.reason()), (StatusCode::CONFLICT, "mail.invite_expired"));
     let listed = app.get(&format!("/api/orgs/{org}/invitations"), &owner).await;
     assert_eq!(listed.body["items"][0]["state"], "expired");
-    // Copying an expired link is refused; resending makes a new one.
+    // A link that went by mail is never shown again; resending makes a new one.
     let copy = app.get(&format!("/api/orgs/{org}/invitations/{id}/link"), &owner).await;
-    assert_eq!(copy.reason(), "mail.invite_expired");
+    assert_eq!((copy.status, copy.reason()), (StatusCode::CONFLICT, "mail.invite_link_by_mail"));
+    let sealed: (Option<String>,) = sqlx::query_as("SELECT token_ciphertext FROM invitations WHERE id = $1")
+        .bind(&id)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert!(sealed.0.is_none(), "a mailed link keeps no copy");
 
     let resent = app.post(&format!("/api/orgs/{org}/invitations/{id}/resend"), json!({}), &owner).await;
     assert_eq!(resent.status, StatusCode::OK, "{}", resent.body);
@@ -803,5 +809,168 @@ async fn settings_from_the_page_are_checked_before_they_are_saved() {
         sqlx::query_as("SELECT ciphertext FROM server_secrets").fetch_all(&app.state.db).await.unwrap();
     assert!(stored.is_empty());
     drop(smtp);
+    app.finish().await;
+}
+
+// --- Review findings ---
+
+async fn member_with_role(app: &TestApp, owner: &Session, org: &str, name: &str, email: &str, role: &str) -> Session {
+    let s = app.user(owner, name, email).await;
+    let r = app.post(&format!("/api/orgs/{org}/members"), json!({ "email": email, "role": role }), owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    s
+}
+
+#[tokio::test]
+async fn acting_on_invitations_needs_what_they_hand_out() {
+    let app = test_app(Setup::NoMail).await;
+    let (owner, org) = app.setup().await;
+    let r = app
+        .post(
+            &format!("/api/orgs/{org}/roles"),
+            json!({ "name": "Einlader", "permissions": ["users:read", "users:invite", "teams:read", "teams:members", "dashboards:read", "folders:read", "analyses:read"] }),
+            &owner,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let inviter_role = r.body["id"].as_str().unwrap().to_string();
+    let mira = member_with_role(&app, &owner, &org, "Mira", "mira@example.com", &inviter_role).await;
+    let team = app.post(&format!("/api/orgs/{org}/teams"), json!({ "name": "Leitung" }), &owner).await;
+    let team_id = team.body["id"].as_str().unwrap().to_string();
+    let r = app
+        .send(
+            Method::PUT,
+            &format!("/api/orgs/{org}/teams/{team_id}/roles"),
+            Some(json!({ "roles": ["admin"] })),
+            Some(&owner),
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.body);
+
+    // The team hands out admin rights Mira does not hold: no invitation into it.
+    let r = app
+        .post(
+            &format!("/api/orgs/{org}/invitations"),
+            json!({ "emails": ["x@example.com"], "role": "viewer", "teamId": team_id }),
+            &mira,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+
+    // Nor may she copy or revoke the owner's invitation of an admin.
+    let r = app.invite(&org, &["boss@example.com"], "admin", &owner).await;
+    let id = r.body["items"][0]["invitation"]["id"].as_str().unwrap().to_string();
+    let copy = app.get(&format!("/api/orgs/{org}/invitations/{id}/link"), &mira).await;
+    assert_eq!(copy.status, StatusCode::FORBIDDEN, "{}", copy.body);
+    let revoke = app.send(Method::DELETE, &format!("/api/orgs/{org}/invitations/{id}"), None, Some(&mira)).await;
+    assert_eq!(revoke.status, StatusCode::FORBIDDEN);
+    // Her own invitation of a viewer is hers to handle.
+    let r = app.invite(&org, &["viewer@example.com"], "viewer", &mira).await;
+    let own = r.body["items"][0]["invitation"]["id"].as_str().unwrap().to_string();
+    assert_eq!(app.get(&format!("/api/orgs/{org}/invitations/{own}/link"), &mira).await.status, StatusCode::OK);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn a_copied_link_makes_an_unconfirmed_account_until_it_confirms_by_mail() {
+    let app = test_app(Setup::NoMail).await;
+    let (owner, org) = app.setup().await;
+    let r = app.invite(&org, &["nora@example.com"], "viewer", &owner).await;
+    let link = r.body["items"][0]["link"].as_str().unwrap().to_string();
+    let token = link.rsplit('#').next().unwrap().to_string();
+    let accepted = app
+        .public("/api/auth/invitation/accept", json!({ "token": token, "name": "Nora", "password": PASSWORD }))
+        .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.body);
+    assert_eq!(accepted.body["emailConfirmed"], false);
+    let nora = Session { cookie: accepted.session_cookie() };
+    let audit = app.audit().await;
+    let copied_accept = audit.iter().find(|(a, _)| a == "invitation.accepted").unwrap();
+    assert!(copied_accept.1.contains("\"viaCopiedLink\":true"), "{}", copied_accept.1);
+
+    // Another organization cannot add the account by its address.
+    let (jonas,): (String,) = sqlx::query_as("SELECT id FROM users WHERE email = 'jonas@example.com'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    let r = app.post("/api/admin/orgs", json!({ "name": "Werk Nord", "ownerUserId": jonas }), &owner).await;
+    let other = r.body["id"].as_str().unwrap().to_string();
+    let r = app
+        .post(&format!("/api/orgs/{other}/members"), json!({ "email": "nora@example.com", "role": "viewer" }), &owner)
+        .await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "mail.email_unconfirmed"));
+    // Without a mail server the address cannot be confirmed.
+    let r = app.post("/api/me/email-confirmation", json!({}), &nora).await;
+    assert_eq!(r.reason(), "mail.reset_unavailable");
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn an_address_is_confirmed_by_mail() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    let nora = app.user(&owner, "Nora", "nora@example.com").await;
+    sqlx::query("UPDATE users SET email_confirmed = 0 WHERE email = 'nora@example.com'")
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(app.get("/api/me", &nora).await.body["emailConfirmed"], false);
+    let r = app.post("/api/me/email-confirmation", json!({}), &nora).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let token = app.mails()[0].token("confirm-email");
+    let done = app.public("/api/auth/email-confirmation", json!({ "token": token })).await;
+    assert_eq!(done.status, StatusCode::NO_CONTENT, "{}", done.body);
+    assert_eq!(app.get("/api/me", &nora).await.body["emailConfirmed"], true);
+    let again = app.public("/api/auth/email-confirmation", json!({ "token": token })).await;
+    assert_eq!((again.status, again.reason()), (StatusCode::NOT_FOUND, "mail.confirm_invalid"));
+    let r = app.post("/api/me/email-confirmation", json!({}), &nora).await;
+    assert_eq!(r.reason(), "mail.email_confirmed_already");
+    // An account from a mailed invitation is confirmed from the start.
+    app.invite(&org, &["ole@example.com"], "viewer", &owner).await;
+    let invite = app.mails().iter().find(|m| m.to == "ole@example.com").unwrap().token("invite");
+    let accepted = app
+        .public("/api/auth/invitation/accept", json!({ "token": invite, "name": "Ole", "password": PASSWORD }))
+        .await;
+    assert_eq!(accepted.body["emailConfirmed"], true);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn invitations_are_limited_per_organization_and_addresses_are_checked() {
+    let app = test_app(Setup::NoMail).await;
+    let (owner, org) = app.setup().await;
+    let r = app.invite(&org, &["a<b@example.com"], "viewer", &owner).await;
+    assert_eq!((r.field(), r.reason()), ("emails", "mail.address_invalid"));
+    for batch in 0..2 {
+        let emails: Vec<String> = (0..50).map(|n| format!("p{batch}-{n}@example.com")).collect();
+        let r = app
+            .post(&format!("/api/orgs/{org}/invitations"), json!({ "emails": emails, "role": "viewer" }), &owner)
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    }
+    let r = app.invite(&org, &["one-more@example.com"], "viewer", &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "mail.invite_limit"));
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn a_server_admins_password_link_is_for_server_admins() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    let ada = member_with_role(&app, &owner, &org, "Ada", "ada@example.com", "admin").await;
+    let (owner_id,): (String,) = sqlx::query_as("SELECT id FROM users WHERE email = 'jonas@example.com'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    // Jonas is a server admin. Made an org admin like Ada, he is not above her in the organization,
+    // but his password is still not hers to reset.
+    sqlx::query("UPDATE org_members SET role = 'admin' WHERE user_id = $1")
+        .bind(&owner_id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let r = app.post(&format!("/api/orgs/{org}/members/{owner_id}/password-link"), json!({}), &ada).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert!(app.mails().is_empty());
     app.finish().await;
 }

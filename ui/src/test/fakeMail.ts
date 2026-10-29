@@ -40,6 +40,9 @@ export interface FakeMailState {
   completed: { token: string; password: string; signOutEverywhere: boolean }[];
   passwordLinks: string[];
   passwordLinkAnswer?: Refusal | undefined;
+  /** Email confirmation links that work, by token. */
+  confirmations: string[];
+  confirmRequests: number;
 }
 
 export const MAIL_AT = Date.UTC(2026, 9, 29, 13, 20);
@@ -108,6 +111,8 @@ export function mailFake(): FakeArea<FakeMailState> {
     resetRequests: [],
     completed: [],
     passwordLinks: [],
+    confirmations: [],
+    confirmRequests: 0,
   };
   let next = 1;
   return {
@@ -159,6 +164,9 @@ export function mailFake(): FakeArea<FakeMailState> {
         return json(201, { items, mailed: state.mailed });
       }
       if (found === undefined) return error(404, "not_found");
+      if (action === "link" && request.method === "GET" && found.delivery !== "none") {
+        return refusal({ status: 409, code: "conflict", reason: "mail.invite_link_by_mail" });
+      }
       if (action === "link" && request.method === "GET") {
         return json(200, {
           link: `https://kalzit.example.com/invite#token-${found.id}`,
@@ -247,6 +255,22 @@ export function handleMailRoute(
     server.state.signedIn = true;
     server.state.user = user;
     return json(200, user);
+  }
+  if (route === "/api/me/email-confirmation" && method === "POST") {
+    if (!server.state.signedIn) return error(401, "unauthenticated");
+    if (!state.resetAvailable) {
+      return refusal({ status: 409, code: "conflict", reason: "mail.reset_unavailable" });
+    }
+    state.confirmRequests += 1;
+    return json(200, DELIVERED);
+  }
+  if (route === "/api/auth/email-confirmation" && method === "POST") {
+    const token = String(body.token);
+    if (!state.confirmations.includes(token)) {
+      return refusal({ status: 404, code: "not_found", reason: "mail.confirm_invalid" });
+    }
+    state.confirmations = state.confirmations.filter((t) => t !== token);
+    return new Response(null, { status: 204 });
   }
   if (route === "/api/auth/password-reset" && method === "GET") {
     return json(200, { available: state.resetAvailable });

@@ -11,6 +11,7 @@ import { PendingPage } from "../pages/StatusPages";
 import { redirectToStartDashboard } from "../preferences/startDashboard";
 import {
   appRoute,
+  confirmEmailRoute,
   helpRoute,
   inviteRoute,
   loginRoute,
@@ -35,6 +36,7 @@ const routeTree = rootRoute.addChildren([
   helpRoute,
   inviteRoute,
   resetPasswordRoute,
+  confirmEmailRoute,
   appRoute.addChildren([
     homeRoute,
     ...dashboardsRoutes,

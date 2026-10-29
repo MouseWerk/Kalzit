@@ -223,6 +223,35 @@ pub fn password_elsewhere(lang: Lang, host: &str) -> Content {
     Content { text: text(&paragraphs, None, &footer), html: html(&paragraphs, None, &footer), subject }
 }
 
+/// The link that confirms an account's address (`routes::email_confirmation`).
+pub fn confirm_email(lang: Lang, link: &str, host: &str) -> Content {
+    let (subject, paragraphs, button, footer) = match lang {
+        Lang::De => (
+            "E-Mail-Adresse für Kalzit bestätigen".to_string(),
+            vec![
+                format!("Bestätige, dass diese Adresse zu deinem Konto bei {host} gehört."),
+                "Der Link gilt 24 Stunden und genau einmal.".to_string(),
+            ],
+            "Adresse bestätigen",
+            "Warst du das nicht? Ignorier diese Mail.".to_string(),
+        ),
+        Lang::En => (
+            "Confirm your email address for Kalzit".to_string(),
+            vec![
+                format!("Confirm that this address belongs to your account at {host}."),
+                "The link works for 24 hours and only once.".to_string(),
+            ],
+            "Confirm address",
+            "Not you? Ignore this mail.".to_string(),
+        ),
+    };
+    Content {
+        text: text(&paragraphs, Some(link), &footer),
+        html: html(&paragraphs, Some((button, link)), &footer),
+        subject,
+    }
+}
+
 pub fn test_mail(lang: Lang, host: &str) -> Content {
     let (subject, paragraphs, footer) = match lang {
         Lang::De => (

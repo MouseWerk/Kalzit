@@ -184,5 +184,12 @@
   "access.reset.signIn": "Sign in",
   "access.reset.invalidTitle": "This link no longer works.",
   "access.reset.invalidText": "Password links work for 60 minutes and once. Just request a new one.",
-  "access.reset.newLink": "Request a new link"
+  "access.reset.newLink": "Request a new link",
+  "access.confirm.pageTitle": "Confirm address",
+  "access.confirm.checking": "Checking the link…",
+  "access.confirm.doneTitle": "Your email address is confirmed.",
+  "access.confirm.doneText": "Your account can now also be added to further organizations by this address.",
+  "access.confirm.invalidTitle": "This link no longer works.",
+  "access.confirm.invalidText": "Confirmation links work for 24 hours and once. Request a new one under Profile.",
+  "access.confirm.toStart": "Go to Start"
 }

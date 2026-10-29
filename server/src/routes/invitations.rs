@@ -175,7 +175,10 @@ async fn assignable_role(tx: &mut sqlx::AnyConnection, ctx: &OrgCtx, key: &str) 
     Ok(role)
 }
 
-async fn team_of(tx: &mut sqlx::AnyConnection, ctx: &OrgCtx, team_id: &str) -> ApiResult<String> {
+/// The team an invitation names, with the guards of adding a member to it (`teams::ensure_may_join`):
+/// its name, and whether bringing someone in is an org admin's access to its team spaces, which
+/// the caller audits.
+async fn team_of(tx: &mut sqlx::AnyConnection, ctx: &OrgCtx, team_id: &str) -> ApiResult<(String, bool)> {
     // Joining a team is a change of its members.
     ctx.check(Permission::TeamsMembers)?;
     let team: Option<(String,)> = sqlx::query_as("SELECT name FROM teams WHERE id = $1 AND org_id = $2")
@@ -183,7 +186,48 @@ async fn team_of(tx: &mut sqlx::AnyConnection, ctx: &OrgCtx, team_id: &str) -> A
         .bind(&ctx.org_id)
         .fetch_optional(&mut *tx)
         .await?;
-    team.map(|(name,)| name).ok_or_else(|| ApiError::validation("no such team").with_field("teamId"))
+    let Some((name,)) = team else {
+        return Err(ApiError::validation("no such team").with_field("teamId"));
+    };
+    let admin_access = super::teams::ensure_may_join(tx, ctx, team_id).await?;
+    Ok((name, admin_access))
+}
+
+/// Everything an invitation hands out: its role and its team's roles. Acting on an invitation
+/// (copying its link, revoking it) needs all of it, like inviting.
+async fn ensure_holds_invitation(
+    tx: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    role: &str,
+    team_id: Option<&str>,
+) -> ApiResult<()> {
+    let mut wanted = resolve_role(&mut *tx, &ctx.org_id, role).await?.map(|r| r.permissions).unwrap_or_default();
+    if let Some(team_id) = team_id {
+        wanted.extend(super::teams::team_permissions(&mut *tx, &ctx.org_id, team_id).await?);
+    }
+    ensure_holds(&ctx.permissions, &wanted)
+}
+
+/// Counts `n` invitations against the organization's hourly budget (`mail::INVITES_PER_ORG`);
+/// all or none.
+fn count_invitations(state: &AppState, org_id: &str, n: usize) -> ApiResult<()> {
+    let key = format!("invites:{org_id}");
+    let mono = state.clock.monotonic_ms();
+    let mut counted = Vec::new();
+    for _ in 0..n {
+        match state.mail.invites.try_acquire(&key, &key, mono) {
+            Ok(c) => counted.push(c),
+            Err(wait) => {
+                for c in &counted {
+                    state.mail.invites.refund(&key, c);
+                }
+                return Err(ApiError::rate_limited("too many invitations in this organization, wait a while", wait)
+                    .because("mail.invite_limit")
+                    .param("max", crate::mail::INVITES_PER_ORG));
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn is_member(tx: &mut sqlx::AnyConnection, org_id: &str, email: &str) -> ApiResult<bool> {
@@ -203,8 +247,9 @@ fn email_problem(message: &str, reason: &'static str, email: &str) -> ApiError {
     ApiError::new(status, code, message.to_string()).with_field("emails").because(reason).param("email", email)
 }
 
-/// Writes a fresh token (and its sealed copy) to the invitation, starts its days and resets its
-/// delivery.
+/// Writes a fresh token to the invitation, starts its days and resets its delivery. Only a link the
+/// admin passes on (`delivery` `none`) keeps a sealed copy for "Copy link"; a link that goes by
+/// mail is never shown again, so only its mailbox can open it.
 async fn issue_token(
     tx: &mut sqlx::AnyConnection,
     state: &AppState,
@@ -214,16 +259,16 @@ async fn issue_token(
 ) -> ApiResult<(String, String, i64)> {
     let token = links::new_token();
     let token_hash = links::hash(&token);
-    let sealed = links::seal(&state.secrets, id, &token);
+    let sealed = (delivery == "none").then(|| links::seal(&state.secrets, id, &token));
     let expires_at = now + VALID_MS;
     sqlx::query(
         "UPDATE invitations SET token_hash = $1, token_key_id = $2, token_nonce = $3, token_ciphertext = $4, \
          created_at = $5, expires_at = $6, delivery = $7, delivery_detail = NULL, delivered_at = NULL WHERE id = $8",
     )
     .bind(&token_hash)
-    .bind(&sealed.key_id)
-    .bind(&sealed.nonce)
-    .bind(&sealed.ciphertext)
+    .bind(sealed.as_ref().map(|b| b.key_id.as_str()))
+    .bind(sealed.as_ref().map(|b| b.nonce.as_str()))
+    .bind(sealed.as_ref().map(|b| b.ciphertext.as_str()))
     .bind(now)
     .bind(expires_at)
     .bind(delivery)
@@ -249,7 +294,9 @@ async fn create(
     let mut emails = Vec::new();
     for raw in &req.emails {
         let email = super::normalize_email(raw)
-            .map_err(|_| email_problem("not a complete email address", "mail.address_invalid", raw.trim()))?;
+            .ok()
+            .filter(|e| mail::settings::is_address(e))
+            .ok_or_else(|| email_problem("not a complete email address", "mail.address_invalid", raw.trim()))?;
         if !emails.contains(&email) {
             emails.push(email);
         }
@@ -257,13 +304,17 @@ async fn create(
     let mailing = mail::settings::effective(&state).await?;
     let delivery = if mailing.configured() { "pending" } else { "none" };
     let now = state.clock.now_ms();
+    count_invitations(&state, &ctx.org_id, emails.len())?;
 
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
-    let team_name = match &req.team_id {
-        Some(team_id) => Some(team_of(&mut tx, &ctx, team_id).await?),
-        None => None,
+    let (team_name, team_admin_access) = match &req.team_id {
+        Some(team_id) => {
+            let (name, admin) = team_of(&mut tx, &ctx, team_id).await?;
+            (Some(name), admin)
+        }
+        None => (None, false),
     };
     // Old rows go first, so an expired invitation of the same address makes room for the new one.
     sqlx::query(
@@ -274,6 +325,7 @@ async fn create(
     .bind(now - KEEP_EXPIRED_MS)
     .execute(&mut *tx)
     .await?;
+    clear_expired_links(&mut tx, now).await?;
     let mut issued = Vec::new();
     for email in &emails {
         if is_member(&mut tx, &ctx.org_id, email).await? {
@@ -318,6 +370,10 @@ async fn create(
         let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
         let summary = json!({ "invitationId": id, "role": role.key, "teamId": req.team_id });
         audit(&mut tx, &actor, Some(&ctx.org_id), "invitation.created", ("invitation", &id), summary).await?;
+        if let (true, Some(team_id)) = (team_admin_access, &req.team_id) {
+            let access = json!({ "action": "invitation.created", "teamId": team_id, "invitationId": id });
+            super::teams::audit_admin_access(&mut tx, &actor, &ctx.org_id, team_id, access).await?;
+        }
         issued.push(Issued { id, email: email.clone(), token, token_hash, expires_at });
     }
     let (org_name,): (String,) =
@@ -487,6 +543,23 @@ async fn copy_link(
     .bind(&id)
     .fetch_optional(&state.db)
     .await?;
+    let delivery: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT delivery, role, team_id FROM invitations WHERE org_id = $1 AND id = $2 AND accepted_at IS NULL",
+    )
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((delivery, role, team_id)) = delivery else { return Err(ApiError::not_found()) };
+    {
+        let mut conn = state.db.acquire().await?;
+        ensure_holds_invitation(&mut conn, &ctx, &role, team_id.as_deref()).await?;
+    }
+    // A link that went by mail is opened from that mailbox only; it can be sent again.
+    if delivery != "none" {
+        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "the link went by mail; send it again instead")
+            .because("mail.invite_link_by_mail"));
+    }
     let Some(Sealed {
         expires_at,
         token_key_id: Some(key_id),
@@ -497,6 +570,8 @@ async fn copy_link(
         return Err(ApiError::not_found());
     };
     if expires_at <= now {
+        let mut conn = state.db.acquire().await?;
+        clear_expired_links(&mut conn, now).await?;
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "the invitation has expired; send it again")
             .because("mail.invite_expired"));
     }
@@ -543,9 +618,11 @@ async fn resend(
             e
         }
     })?;
-    if current.team_id.is_some() {
-        ctx.check(Permission::TeamsMembers)?;
-    }
+    let team_admin_access = match &current.team_id {
+        Some(team_id) => team_of(&mut tx, &ctx, team_id).await?.1,
+        None => false,
+    };
+    count_invitations(&state, &ctx.org_id, 1)?;
     if is_member(&mut tx, &ctx.org_id, &current.email).await? {
         return Err(email_problem("this address is already a member", "mail.invite_already_member", &current.email));
     }
@@ -553,6 +630,10 @@ async fn resend(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = json!({ "invitationId": id, "wasExpired": current.state == "expired" });
     audit(&mut tx, &actor, Some(&ctx.org_id), "invitation.resent", ("invitation", &id), summary).await?;
+    if let (true, Some(team_id)) = (team_admin_access, &current.team_id) {
+        let access = json!({ "action": "invitation.resent", "teamId": team_id, "invitationId": id });
+        super::teams::audit_admin_access(&mut tx, &actor, &ctx.org_id, team_id, access).await?;
+    }
     let (org_name,): (String,) =
         sqlx::query_as("SELECT name FROM orgs WHERE id = $1").bind(&ctx.org_id).fetch_one(&mut *tx).await?;
     crate::db::commit(tx).await?;
@@ -578,6 +659,7 @@ async fn revoke(
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     let current = load(&mut *tx, &ctx.org_id, &id, now).await?;
+    ensure_holds_invitation(&mut tx, &ctx, &current.role, current.team_id.as_deref()).await?;
     sqlx::query("DELETE FROM invitations WHERE org_id = $1 AND id = $2 AND accepted_at IS NULL")
         .bind(&ctx.org_id)
         .bind(&id)
@@ -602,6 +684,9 @@ pub struct Found {
     pub team_id: Option<String>,
     pub expires_at: i64,
     pub accepted_at: Option<i64>,
+    pub token_hash: String,
+    /// `sent`: the link went by mail, so whoever opens it reads that mailbox.
+    pub delivery: String,
     org_name: String,
     team_name: Option<String>,
     invited_by_name: Option<String>,
@@ -622,7 +707,8 @@ async fn find(state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<Fo
     }
     let found: Option<Found> = if links::is_token(token) {
         sqlx::query_as(
-            "SELECT i.id, i.org_id, i.email, i.role, i.team_id, i.expires_at, i.accepted_at, o.name AS org_name, \
+            "SELECT i.id, i.org_id, i.email, i.role, i.team_id, i.expires_at, i.accepted_at, i.token_hash, \
+             i.delivery, o.name AS org_name, \
              t.name AS team_name, u.name AS invited_by_name FROM invitations i JOIN orgs o ON o.id = i.org_id \
              LEFT JOIN teams t ON t.id = i.team_id LEFT JOIN users u ON u.id = i.invited_by WHERE i.token_hash = $1",
         )
@@ -763,11 +849,12 @@ pub async fn redeem(tx: &mut sqlx::AnyConnection, found: &Found, user_id: &str, 
     // taken.
     let marked = sqlx::query(
         "UPDATE invitations SET accepted_at = $1, accepted_by = $2, token_key_id = NULL, token_nonce = NULL, \
-         token_ciphertext = NULL WHERE id = $3 AND accepted_at IS NULL AND expires_at > $1",
+         token_ciphertext = NULL WHERE id = $3 AND token_hash = $4 AND accepted_at IS NULL AND expires_at > $1",
     )
     .bind(now)
     .bind(user_id)
     .bind(&found.id)
+    .bind(&found.token_hash)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -828,6 +915,8 @@ async fn accept(
         let summary = json!({
             "invitationId": found.id, "userId": user_id, "role": found.role, "teamId": found.team_id,
             "newAccount": new_account,
+            // A link that was passed on rather than mailed: its account's address is unconfirmed.
+            "viaCopiedLink": found.delivery != "sent",
         });
         (summary, user_id.to_string())
     };
@@ -843,7 +932,7 @@ async fn accept(
         let (summary, id) = audit_event(&user.id, false);
         let actor = Actor { user_id: &id, info: &info, at_ms: now };
         audit(&mut tx, &actor, Some(&found.org_id), "invitation.accepted", ("invitation", &found.id), summary).await?;
-        let answer = super::me(&mut *tx, user).await?;
+        let answer = super::me(&mut tx, user).await?;
         crate::db::commit(tx).await?;
         return Ok((out, Json(answer)));
     }
@@ -859,14 +948,16 @@ async fn accept(
     let user_id = super::new_id();
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
-        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at) \
-         VALUES ($1, $2, $3, $4, 0, 0, $5)",
+        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, email_confirmed) \
+         VALUES ($1, $2, $3, $4, 0, 0, $5, $6)",
     )
     .bind(&user_id)
     .bind(&found.email)
     .bind(&name)
     .bind(&hash)
     .bind(now)
+    // Only a link that reached the address by mail confirms it.
+    .bind(i64::from(found.delivery == "sent"))
     .execute(&mut *tx)
     .await
     .map_err(|e| if is_unique_violation(&e) { account_exists() } else { e.into() })?;
@@ -879,10 +970,23 @@ async fn accept(
     let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
     audit(&mut tx, &actor, None, "auth.signed_in", ("user", &user_id), json!({})).await?;
     let user = SessionUser { id: user_id, email: found.email.clone(), name, is_server_admin: 0 };
-    let answer = super::me(&mut *tx, user).await?;
+    let answer = super::me(&mut tx, user).await?;
     crate::db::commit(tx).await?;
     out.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
     Ok((out, Json(answer)))
+}
+
+/// Forgets the sealed copies of expired links: they can no longer be copied, and a rotation of the
+/// secrets key need not carry them.
+pub async fn clear_expired_links(conn: &mut sqlx::AnyConnection, now: i64) -> ApiResult<()> {
+    sqlx::query(
+        "UPDATE invitations SET token_key_id = NULL, token_nonce = NULL, token_ciphertext = NULL \
+         WHERE expires_at <= $1 AND token_key_id IS NOT NULL",
+    )
+    .bind(now)
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 fn account_exists() -> ApiError {

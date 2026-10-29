@@ -475,7 +475,7 @@ pub async fn complete(
     // fail as "busy, nothing changed".
     let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
     let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
-    let answer = me(&mut *tx, user).await?;
+    let answer = me(&mut tx, user).await?;
     crate::db::commit(tx).await?;
     let cache = settings::cache(&state);
     cache.invalidate(None);

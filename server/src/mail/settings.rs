@@ -112,7 +112,9 @@ fn has_control(s: &str) -> bool {
     s.chars().any(char::is_control)
 }
 
-fn is_address(s: &str) -> bool {
+/// A complete address without the characters that would make it more than one address or a
+/// display name; for every address Kalzit sends to.
+pub fn is_address(s: &str) -> bool {
     crate::routes::normalize_email(s).is_ok() && !s.contains(['<', '>', '"', ',', ';', '(', ')', '\\'])
 }
 

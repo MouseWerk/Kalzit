@@ -55,7 +55,7 @@ expires. Test mails count against the connection test limit of the administrator
 |---|---|
 | `GET /orgs/{orgId}/invitations` | Open invitations (pending and expired), newest first, `Page<Invitation>` |
 | `POST /orgs/{orgId}/invitations` | Invite `{emails, role, teamId?}`; `201 {items: [{invitation, link}], mailed}` |
-| `GET /orgs/{orgId}/invitations/{id}/link` | The link of a pending invitation again `{link, expiresAt}` |
+| `GET /orgs/{orgId}/invitations/{id}/link` | The link of a pending invitation to pass on (`delivery` `none`) again `{link, expiresAt}` |
 | `POST /orgs/{orgId}/invitations/{id}/resend` | A new link, seven days from now; the old link stops working; `{invitation, link}` |
 | `DELETE /orgs/{orgId}/invitations/{id}` | Revoke (pending) or remove (expired); its link then answers like an unknown one |
 
@@ -72,8 +72,16 @@ delivery, deliveryDetail, deliveredAt}`; `state` is `pending` or `expired`, `del
 - With a mail server, the mails go out after the invitations are stored; `link` is `null`. When
   the server itself fails, the rest of the batch is marked with the same answer. Without one,
   `link` holds each link for the admin to pass on.
-- A link works for seven days and once. While pending, the token is also kept encrypted with the
-  secrets key, so `GET .../link` can show it again; accepting clears it.
+- A link works for seven days and once. A link to pass on (no mail server, `delivery` `none`) is
+  also kept encrypted with the secrets key while pending, so `GET .../link` can show it again;
+  accepting or expiry clears it. A link that went by mail is never shown again: `GET .../link`
+  answers `409 conflict` `mail.invite_link_by_mail`; send it again instead.
+- Copying, sending again and revoking need everything the invitation hands out (its role and its
+  team's roles), like inviting. A team brings the guards of adding a team member: the team's
+  roles, and for a team with team spaces or team-only content only its maintainers or org admins
+  (audited as `team_space.admin_access`).
+- Invitations count per organization: 100 addresses (new or sent again) per hour, then
+  `429 rate_limited` `mail.invite_limit`.
 - Audit: `invitation.created`, `invitation.resent`, `invitation.revoked`, `invitation.link_copied`,
   `invitation.delivery_failed` (the server's answer, addresses removed), `invitation.accepted`.
 - Invitations of another organization answer `404 not_found`.
@@ -100,6 +108,10 @@ Accepting:
 - with an account for the address: `409 conflict` `mail.invite_account_exists`; sign in, then
   accept with the token alone;
 - signed in as the invited address: joins with the token alone; the session stays;
+- an account made from a link that went by mail has its address confirmed; one made from a link
+  an admin passed on starts unconfirmed (`emailConfirmed: false` in `GET /me`, see "Email
+  confirmation"); `invitation.accepted` records `viaCopiedLink` and pairs with
+  `invitation.link_copied` by the invitation id;
 - signed in as another account: `409 conflict` `mail.invite_other_account`;
 - expired: `mail.invite_expired`; accepted already: `mail.invite_used`.
 
@@ -132,6 +144,22 @@ Accepting:
   Kalzit's own (else `mail.reset_password_elsewhere`), within the same per-account limit.
 - Audit: `auth.password_reset_requested` (account id, or the admin as actor),
   `auth.password_reset_completed` (account id, sessions ended).
+
+## Email confirmation
+
+| Method and path | Access | What |
+|---|---|---|
+| `POST /me/email-confirmation` | signed in | Mails the user's own address a link (24 hours, once); answers like a test mail |
+| `POST /auth/email-confirmation` | public | `{token}`: confirms the address; `204` |
+
+An account whose address is unconfirmed (made from a copied invitation link) is not added to an
+organization by address (`POST /orgs/{orgId}/members` answers `409 conflict`
+`mail.email_unconfirmed`) until its owner confirms it. Single sign-on must never link a provider's
+identity to an account by email unless the address is confirmed: it looks accounts up with
+`email_confirmation::confirmed_account_by_email`, which finds only confirmed, enabled accounts.
+Without a mail server: `mail.reset_unavailable`. Unknown, used or expired links answer
+`404 not_found` `mail.confirm_invalid` and count against the client address. Audit:
+`user.email_confirmation_requested`, `user.email_confirmed`.
 
 ## Reasons
 
@@ -174,6 +202,11 @@ use the `target.*` reasons of the data sources.
 | `mail.invite_already_member` | `email` | the address is a member |
 | `mail.invite_pending` | `email` | the address has a pending invitation |
 | `mail.invite_expired` | | the invitation expired |
+| `mail.invite_link_by_mail` | | the invitation's link went by mail and is not shown again |
+| `mail.invite_limit` | `max` | the organization sent `max` invitations in the last hour |
+| `mail.email_unconfirmed` | | the account has not confirmed its address yet |
+| `mail.email_confirmed_already` | | the address is confirmed already |
+| `mail.confirm_invalid` | | the confirmation link is used, expired, replaced or unknown |
 | `mail.invite_link_unavailable` | | the link cannot be shown again (the secrets key changed); resend |
 | `mail.invite_role_gone` | | the invitation's role was deleted |
 | `mail.invite_invalid` | | the link was revoked or never existed |

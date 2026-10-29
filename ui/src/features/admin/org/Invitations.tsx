@@ -197,18 +197,23 @@ export function PendingInvitations({
                   </>
                 ) : (
                   <>
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      aria-label={t("admin.invitations.copyLinkNamed", { email: invitation.email })}
-                      aria-disabled={copy.isPending}
-                      onClick={() => {
-                        if (!copy.isPending) copy.mutate(invitation);
-                      }}
-                    >
-                      <Icon name="copy" />
-                      {t("admin.invitations.copyLink")}
-                    </button>
+                    {/* Only a link to pass on is shown again; a mailed one is sent again. */}
+                    {invitation.delivery !== "none" ? null : (
+                      <button
+                        type="button"
+                        className="button button--ghost"
+                        aria-label={t("admin.invitations.copyLinkNamed", {
+                          email: invitation.email,
+                        })}
+                        aria-disabled={copy.isPending}
+                        onClick={() => {
+                          if (!copy.isPending) copy.mutate(invitation);
+                        }}
+                      >
+                        <Icon name="copy" />
+                        {t("admin.invitations.copyLink")}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="button button--ghost"

@@ -1055,6 +1055,17 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   password and gets a session; an existing account must be signed in as the invited address.
   Single sign-on, when it comes, calls `redeem` after the provider confirmed the address
   (`invitations::sso_options` lists the providers the page offers).
+- **Copied links and confirmed addresses**: a link that went by mail is never shown again, so only
+  its mailbox opens it; only links to pass on (no mail server) keep a sealed copy, cleared on
+  accept or expiry and skipped by key rotation. An account made from a passed-on link has
+  `users.email_confirmed = 0` until its owner confirms the address by mail
+  (`routes/email_confirmation.rs`); such accounts are not added to organizations by address, and
+  single sign-on must look accounts up by email only through
+  `email_confirmation::confirmed_account_by_email` (confirmed and enabled only). Copying,
+  resending and revoking an invitation need everything it hands out (role and team roles), and a
+  team runs the guards of `teams::ensure_may_join`, shared with adding a team member.
+  Invitations count 100 addresses per organization per hour; mail server checks count like
+  connection tests.
 - **Password reset** (`routes/password_reset.rs`): 60 minutes, once, bound to the account, its
   email and a fingerprint of its password hash, so a link dies when the password changed in
   another way; a newer link replaces older ones. A request answers `202` at once and the lookup,

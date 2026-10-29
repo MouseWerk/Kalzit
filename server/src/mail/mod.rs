@@ -28,6 +28,8 @@ pub const RESET_PER_ACCOUNT: u32 = 3;
 pub const RESET_ACCOUNT_WINDOW_SECS: u64 = 60 * 60;
 /// Links that were unknown, used or expired, per client address in `RESET_WINDOW_SECS`.
 pub const LINK_FAILURES: u32 = 20;
+/// Invitations (addresses, new or sent again) per organization per hour.
+pub const INVITES_PER_ORG: u32 = 100;
 /// Mails sent in the background at the same time (password links); beyond, a request's mail is
 /// dropped with a warning in the log. The answer never depends on it.
 const MAX_BACKGROUND_MAILS: usize = 32;
@@ -39,6 +41,8 @@ pub struct Mail {
     pub reset_network: RateLimiter,
     pub reset_account: RateLimiter,
     pub link_failures: RateLimiter,
+    /// Invitations per organization (`INVITES_PER_ORG`).
+    pub invites: RateLimiter,
     own: tokio::sync::OnceCell<Arc<OwnEndpoints>>,
     tls: tokio::sync::OnceCell<Arc<rustls::ClientConfig>>,
     background: Arc<tokio::sync::Semaphore>,
@@ -53,6 +57,7 @@ impl Default for Mail {
             // rather than refusing, so it answers alike for every email.
             reset_account: RateLimiter::new(RESET_PER_ACCOUNT, RESET_ACCOUNT_WINDOW_SECS, Capacity::LARGE),
             link_failures: RateLimiter::new(LINK_FAILURES, RESET_WINDOW_SECS, Capacity::LARGE),
+            invites: RateLimiter::new(INVITES_PER_ORG, 3600, Capacity::SMALL),
             own: tokio::sync::OnceCell::new(),
             tls: tokio::sync::OnceCell::new(),
             background: Arc::new(tokio::sync::Semaphore::new(MAX_BACKGROUND_MAILS)),

@@ -184,5 +184,12 @@
   "access.reset.signIn": "Anmelden",
   "access.reset.invalidTitle": "Dieser Link gilt nicht mehr.",
   "access.reset.invalidText": "Links zum Zurücksetzen gelten 60 Minuten und einmal. Fordere einfach einen neuen an.",
-  "access.reset.newLink": "Neuen Link anfordern"
+  "access.reset.newLink": "Neuen Link anfordern",
+  "access.confirm.pageTitle": "Adresse bestätigen",
+  "access.confirm.checking": "Link wird geprüft…",
+  "access.confirm.doneTitle": "Deine E-Mail-Adresse ist bestätigt.",
+  "access.confirm.doneText": "Dein Konto kann jetzt auch über diese Adresse in weitere Organisationen aufgenommen werden.",
+  "access.confirm.invalidTitle": "Dieser Link gilt nicht mehr.",
+  "access.confirm.invalidText": "Bestätigungslinks gelten 24 Stunden und einmal. Fordere unter Profil einen neuen an.",
+  "access.confirm.toStart": "Zur Startseite"
 }

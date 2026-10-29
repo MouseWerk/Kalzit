@@ -367,15 +367,25 @@ async fn send_member_link(
         .fetch_optional(&state.db)
         .await?;
     let Some((role,)) = member else { return Err(ApiError::not_found()) };
-    // Nobody acts on someone who holds more than they do.
-    if let Some(role) = resolve_role(&state.db, &ctx.org_id, &role).await? {
-        ensure_holds(&ctx.permissions, &role.permissions)?;
+    // Nobody acts on someone who holds more than they do here: the member's role, their teams'
+    // roles and their own grants in this organization.
+    {
+        let mut conn = state.db.acquire().await?;
+        let mut held = resolve_role(&mut *conn, &ctx.org_id, &role).await?.map(|r| r.permissions).unwrap_or_default();
+        held.extend(super::members::held_through_membership(&mut conn, &ctx.org_id, &user_id).await?);
+        ensure_holds(&ctx.permissions, &held)?;
     }
     let account: Account = sqlx::query_as("SELECT id, email, password_hash FROM users WHERE id = $1 AND disabled = 0")
         .bind(&user_id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(ApiError::not_found)?;
+    // A server admin's password is a server matter: only another server admin sends its link.
+    let (target_admin,): (i64,) =
+        sqlx::query_as("SELECT is_server_admin FROM users WHERE id = $1").bind(&user_id).fetch_one(&state.db).await?;
+    if target_admin != 0 && ctx.user.is_server_admin == 0 {
+        return Err(ApiError::forbidden("only a server admin sends a password link to a server admin"));
+    }
     if account.password_hash.is_none() {
         return Err(ApiError::new(
             StatusCode::CONFLICT,

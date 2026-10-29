@@ -829,6 +829,15 @@ async fn reencrypt_mail(tx: &mut sqlx::AnyConnection, keyring: &Keyring, new: &S
         .await?;
         count += 1;
     }
+    // Expired links can no longer be copied: their sealed copies go instead of moving along.
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+    sqlx::query(
+        "UPDATE invitations SET token_key_id = NULL, token_nonce = NULL, token_ciphertext = NULL \
+         WHERE expires_at <= $1 AND token_key_id IS NOT NULL",
+    )
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     let rows: Vec<(String, String, String, String)> = sqlx::query_as(
         "SELECT id, token_key_id, token_nonce, token_ciphertext FROM invitations WHERE token_key_id IS NOT NULL",
     )

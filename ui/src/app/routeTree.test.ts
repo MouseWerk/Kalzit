@@ -3,6 +3,7 @@ import { type AnyRoute, createMemoryHistory, rootRouteId } from "@tanstack/react
 import { describe, expect, it } from "vitest";
 import {
   appRoute,
+  confirmEmailRoute,
   helpRoute,
   inviteRoute,
   loginRoute,
@@ -34,6 +35,7 @@ describe("route tree", () => {
       helpRoute.id,
       inviteRoute.id,
       resetPasswordRoute.id,
+      confirmEmailRoute.id,
     ]);
     const unguarded = routes
       .filter((route) => route.id !== rootRouteId && route.id !== appRoute.id)

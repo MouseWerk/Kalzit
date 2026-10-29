@@ -30,6 +30,7 @@ import { useRowKeys } from "../components/rows";
 import { LoadState } from "../components/Section";
 import { errorText } from "../errors";
 import { nameMessage, newPasswordMessage } from "../validation";
+import { EmailConfirmation } from "./EmailConfirmation";
 
 const appRoute = getRouteApi("/_app");
 
@@ -139,6 +140,7 @@ function ProfileSection() {
           <span>{me.email}</span>
           <span className="field__hint">{t("admin.account.emailHint")}</span>
         </div>
+        {me.emailConfirmed === false ? <EmailConfirmation email={me.email} /> : null}
       </div>
     </AccountSection>
   );

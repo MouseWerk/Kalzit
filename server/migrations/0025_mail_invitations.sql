@@ -58,3 +58,22 @@ CREATE TABLE server_secrets (
     ciphertext  TEXT NOT NULL,
     PRIMARY KEY (owner, field)
 );
+
+-- Whether the account's email address was shown to reach its owner: an account made through an
+-- invitation link that went by mail is confirmed; one made through a link an admin copied is not,
+-- until its owner confirms the address by mail (`email_confirmations`). Unconfirmed accounts are
+-- never added to an organization by address, and single sign-on never links to one by address.
+-- Accounts from before are taken as confirmed.
+ALTER TABLE users ADD COLUMN email_confirmed BIGINT NOT NULL DEFAULT 1;
+
+-- Links that confirm an account's email address: 24 hours, single use, bound to the address.
+CREATE TABLE email_confirmations (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    email       TEXT NOT NULL,
+    created_at  BIGINT NOT NULL,
+    expires_at  BIGINT NOT NULL,
+    used_at     BIGINT
+);
+
+CREATE INDEX email_confirmations_user ON email_confirmations (user_id);

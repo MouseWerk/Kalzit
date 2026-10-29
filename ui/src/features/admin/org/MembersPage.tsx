@@ -295,7 +295,11 @@ function AddMemberDialog({
     onError: (error) => {
       // Problems with the address belong to its field, where they are announced.
       if (isApiError(error) && error.field === "email") {
-        setEmailError(errorText(t, error, ADD_MEMBER_ERRORS));
+        setEmailError(
+          errorReason(error)?.reason === "mail.email_unconfirmed"
+            ? t("admin.members.unconfirmed")
+            : errorText(t, error, ADD_MEMBER_ERRORS),
+        );
         emailRef.current?.focus();
       }
     },

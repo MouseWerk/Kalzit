@@ -6,7 +6,10 @@ import { type LinkKind, readToken } from "./linksApi";
  * The token of a mailed link, read once from the fragment (or kept in this tab), after which the
  * address is replaced without the fragment, so the token stays out of the history.
  */
-export function useLinkToken(kind: LinkKind, path: "/invite" | "/reset-password"): string {
+export function useLinkToken(
+  kind: LinkKind,
+  path: "/invite" | "/reset-password" | "/confirm-email",
+): string {
   const hash = useLocation({ select: (location) => location.hash });
   const navigate = useNavigate();
   const [token] = useState(() => readToken(kind, hash));

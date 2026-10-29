@@ -263,7 +263,7 @@ pub async fn login(
     let device = (!req.forget_browser)
         .then(|| crate::auth::device::issue(&state.secrets, &row.id, row.password_hash.as_deref(), now));
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
-    let answer = me(&mut *tx, user).await?;
+    let answer = me(&mut tx, user).await?;
     crate::db::commit(tx).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
@@ -317,7 +317,8 @@ pub async fn logout(
 }
 
 pub async fn current(State(state): State<AppState>, CurrentUser(user): CurrentUser) -> ApiResult<Json<Me>> {
-    Ok(Json(me(&state.db, user).await?))
+    let mut conn = state.read_db.acquire().await?;
+    Ok(Json(me(&mut conn, user).await?))
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@ pub mod auth;
 pub mod branding;
 pub mod dashboards;
 pub mod datasources;
+pub mod email_confirmation;
 pub mod explore_history;
 pub mod export;
 pub mod folders;
@@ -93,6 +94,7 @@ pub fn all() -> Vec<table::RouteDef> {
         mail::routes(),
         invitations::routes(),
         password_reset::routes(),
+        email_confirmation::routes(),
     ]
     .into_iter()
     .flatten()
@@ -110,6 +112,9 @@ pub struct Me {
     pub email: String,
     pub name: String,
     pub is_server_admin: bool,
+    /// False for an account made from an invitation link that was passed on rather than mailed,
+    /// until its owner confirms the address (`routes::email_confirmation`).
+    pub email_confirmed: bool,
     pub orgs: Vec<OrgMembership>,
 }
 
@@ -120,16 +125,26 @@ pub struct OrgMembership {
     pub role: String,
 }
 
-/// Reads through `db`: the pool, or, after a change, the change's transaction before its commit.
-pub async fn me<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, user: SessionUser) -> ApiResult<Me> {
+/// Reads through `db`: a pooled connection, or, after a change, the change's transaction before
+/// its commit.
+pub async fn me(db: &mut sqlx::AnyConnection, user: SessionUser) -> ApiResult<Me> {
+    let (confirmed,): (i64,) =
+        sqlx::query_as("SELECT email_confirmed FROM users WHERE id = $1").bind(&user.id).fetch_one(&mut *db).await?;
     let orgs: Vec<OrgMembership> = sqlx::query_as(
         "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id \
          WHERE m.user_id = $1 ORDER BY o.name",
     )
     .bind(&user.id)
-    .fetch_all(db)
+    .fetch_all(&mut *db)
     .await?;
-    Ok(Me { id: user.id, email: user.email, name: user.name, is_server_admin: user.is_server_admin != 0, orgs })
+    Ok(Me {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        is_server_admin: user.is_server_admin != 0,
+        email_confirmed: confirmed != 0,
+        orgs,
+    })
 }
 
 /// Trims and lowercases an email address and checks its rough shape. Delivery is what proves an
@@ -213,6 +228,7 @@ mod access_guard {
         "POST /auth/password-reset",
         "POST /auth/password-reset/inspect",
         "POST /auth/password-reset/complete",
+        "POST /auth/email-confirmation",
     ];
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[
@@ -225,6 +241,8 @@ mod access_guard {
         "POST /me/sessions/revoke-others",
         "GET /me/preferences",
         "PATCH /me/preferences",
+        // Sends the user's own address a confirmation link (docs/api/mail.md).
+        "POST /me/email-confirmation",
     ];
 
     /// The path layout decides the access rule, so a route cannot be scoped to an organization

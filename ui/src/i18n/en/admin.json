@@ -769,5 +769,10 @@
   "admin.members.passwordLink": "Send password link",
   "admin.members.passwordLinkSent": "Password link sent to {email}.",
   "admin.members.passwordLinkNoMail": "This server does not send mail. A server admin can set a new password under Users.",
-  "admin.members.passwordLinkElsewhere": "This account signs in without a password of its own in Kalzit."
+  "admin.members.passwordLinkElsewhere": "This account signs in without a password of its own in Kalzit.",
+  "admin.account.unconfirmed": "This address is not confirmed yet: the account came from an invitation link that was passed on. Until it is confirmed, nobody can add you to another organization by this address.",
+  "admin.account.confirmSend": "Send confirmation link",
+  "admin.account.confirmSent": "Link sent to {email}. It works for 24 hours.",
+  "admin.account.confirmNoMail": "This server does not send mail; the address cannot be confirmed now.",
+  "admin.members.unconfirmed": "This account has not confirmed its email address yet. Invite the person or ask them to confirm the address under Profile."
 }

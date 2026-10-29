@@ -1064,5 +1064,10 @@
   "datasources.reason.mail.invite_account_exists": "Zu dieser Adresse gibt es schon ein Konto; melde dich an, um beizutreten.",
   "datasources.reason.mail.reset_unavailable": "Dieser Server sendet keine Mail; ein Admin kann ein neues Passwort setzen.",
   "datasources.reason.mail.reset_invalid": "Dieser Link gilt nicht mehr.",
-  "datasources.reason.mail.reset_password_elsewhere": "Dieses Konto meldet sich ohne eigenes Passwort in Kalzit an."
+  "datasources.reason.mail.reset_password_elsewhere": "Dieses Konto meldet sich ohne eigenes Passwort in Kalzit an.",
+  "datasources.reason.mail.invite_link_by_mail": "Der Link ging per Mail und wird nicht noch einmal gezeigt; sende die Einladung erneut.",
+  "datasources.reason.mail.invite_limit": "Diese Organisation hat in der letzten Stunde {max} Einladungen verschickt. Warte etwas.",
+  "datasources.reason.mail.email_unconfirmed": "Dieses Konto hat seine E-Mail-Adresse noch nicht bestätigt.",
+  "datasources.reason.mail.email_confirmed_already": "Die Adresse ist schon bestätigt.",
+  "datasources.reason.mail.confirm_invalid": "Dieser Link gilt nicht mehr."
 }

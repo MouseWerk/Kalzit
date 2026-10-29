@@ -124,6 +124,12 @@ export const resetPasswordRoute = createRoute({
   component: lazyRouteComponent(() => import("../auth/ResetPasswordPage"), "ResetPasswordPage"),
 });
 
+export const confirmEmailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/confirm-email",
+  component: lazyRouteComponent(() => import("../auth/ConfirmEmailPage"), "ConfirmEmailPage"),
+});
+
 /**
  * The guide pages needed before signing in (getting started, installation), shipped with the UI
  * and readable without an account. Other names are not found.

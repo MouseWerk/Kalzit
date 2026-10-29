@@ -127,6 +127,11 @@ async fn save(
             settings::check(s, true)?;
             let password = password_for(&state, s, sent).await?;
             // The same check a test mail makes, up to the sign-in; nothing is sent.
+            // Each save connects and signs in: limited like connection tests.
+            let key = format!("mail-check:{}", user.id);
+            state.probe_limiter.try_acquire(&key, &key, state.clock.monotonic_ms()).map_err(|wait| {
+                ApiError::rate_limited("too many checks of the mail server, wait a few minutes", wait)
+            })?;
             let connector = mail::connector(&state).await?;
             let hello = smtp::hello_name(state.config.server.public_url.as_deref());
             smtp::deliver(&connector, s, password.as_deref().map(|p| p.as_str()), &hello, None)
@@ -206,7 +211,9 @@ async fn test(
     Extension(user): Extension<SessionUser>,
     JsonBody(body): JsonBody<TestBody>,
 ) -> ApiResult<Json<smtp::Delivered>> {
-    let to = super::normalize_email(&body.to).map_err(|e| e.with_field("to"))?;
+    let to = super::normalize_email(&body.to).ok().filter(|e| settings::is_address(e)).ok_or_else(|| {
+        ApiError::validation("enter a complete email address").with_field("to").because("mail.address_invalid")
+    })?;
     let sent = password_field(body.password)?;
     let effective = settings::effective(&state).await?;
     let (smtp_settings, password) = match body.settings.map(SmtpSettings::normalized) {

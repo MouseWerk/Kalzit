@@ -769,5 +769,10 @@
   "admin.members.passwordLink": "Passwort-Link senden",
   "admin.members.passwordLinkSent": "Passwort-Link an {email} gesendet.",
   "admin.members.passwordLinkNoMail": "Dieser Server sendet keine Mail. Ein Server-Admin kann das Passwort unter Benutzer neu setzen.",
-  "admin.members.passwordLinkElsewhere": "Dieses Konto meldet sich ohne eigenes Passwort in Kalzit an."
+  "admin.members.passwordLinkElsewhere": "Dieses Konto meldet sich ohne eigenes Passwort in Kalzit an.",
+  "admin.account.unconfirmed": "Diese Adresse ist noch nicht bestätigt: Das Konto entstand aus einem weitergegebenen Einladungslink. Bis zur Bestätigung kann dich niemand über die Adresse in eine weitere Organisation aufnehmen.",
+  "admin.account.confirmSend": "Bestätigungslink senden",
+  "admin.account.confirmSent": "Link an {email} gesendet. Er gilt 24 Stunden.",
+  "admin.account.confirmNoMail": "Dieser Server sendet keine Mail; die Adresse lässt sich gerade nicht bestätigen.",
+  "admin.members.unconfirmed": "Dieses Konto hat seine E-Mail-Adresse noch nicht bestätigt. Lade die Person ein oder bitte sie, die Adresse unter Profil zu bestätigen."
 }

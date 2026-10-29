@@ -94,6 +94,11 @@ export async function inspectPasswordLink(
   );
 }
 
+/** Confirms the address of the link's account (docs/api/mail.md, "Email confirmation"). */
+export async function confirmEmail(token: string): Promise<void> {
+  await request("POST", "/api/auth/email-confirmation", { token });
+}
+
 export async function completePasswordReset(
   token: string,
   password: string,
@@ -106,7 +111,7 @@ export async function completePasswordReset(
   });
 }
 
-export type LinkKind = "invite" | "reset";
+export type LinkKind = "invite" | "reset" | "confirm";
 
 /**
  * Where a link's token waits in this tab once it left the address bar: while its person signs
@@ -115,6 +120,7 @@ export type LinkKind = "invite" | "reset";
 const KEPT: Record<LinkKind, string> = {
   invite: "kalzit.link.invite",
   reset: "kalzit.link.reset",
+  confirm: "kalzit.link.confirm",
 };
 
 /**
