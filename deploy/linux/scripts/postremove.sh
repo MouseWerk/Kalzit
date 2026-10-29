@@ -13,5 +13,6 @@ fi
 if [ "$1" = purge ]; then
     rm -rf /var/lib/kalzit /etc/kalzit
     rm -f /etc/credstore.encrypted/kalzit-secrets-key /etc/credstore/kalzit-secrets-key
+    rm -f /etc/apparmor.d/kalzit
 fi
 exit 0

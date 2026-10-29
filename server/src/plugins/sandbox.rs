@@ -56,11 +56,53 @@ impl std::fmt::Display for CheckReport {
             "sandbox layers missing: {}",
             if self.missing.is_empty() { "none".into() } else { self.missing.join(" ") }
         )?;
-        write!(f, "test program: {} ({})", self.output.trim(), self.exit)
+        // The probe prints its capability sets, one `capabilities ...` line.
+        writeln!(f, "{}", self.output.trim())?;
+        write!(f, "test program: {}", self.exit)
     }
 }
 
-/// Starts this binary (`--version`) the way a plugin is started (Linux), so an operator sees
+/// What `kalzit sandbox-probe` prints: the capability sets of this process, from
+/// `/proc/self/status`, as `capabilities ambient <hex> bounding <hex> effective <hex> permitted <hex>`.
+pub fn probe() -> String {
+    match std::fs::read_to_string("/proc/self/status") {
+        Ok(status) => capability_line(&status),
+        Err(e) => format!("capabilities unknown: {e}"),
+    }
+}
+
+fn capability_line(status: &str) -> String {
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(name).map(|v| v.trim().to_string()))
+            .unwrap_or_else(|| "unknown".into())
+    };
+    format!(
+        "capabilities ambient {} bounding {} effective {} permitted {}",
+        field("CapAmb:"),
+        field("CapBnd:"),
+        field("CapEff:"),
+        field("CapPrm:")
+    )
+}
+
+#[cfg(test)]
+mod check_tests {
+    #[test]
+    fn the_probe_reads_the_capability_sets() {
+        let status = "Name:\tkalzit\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\n\
+                      CapEff:\t0000000000000000\nCapBnd:\t0000000000000400\nCapAmb:\t0000000000000400\n";
+        assert_eq!(
+            super::capability_line(status),
+            "capabilities ambient 0000000000000400 bounding 0000000000000400 effective 0000000000000000 \
+             permitted 0000000000000000"
+        );
+        assert!(super::capability_line("Name:\tx\n").contains("ambient unknown"));
+    }
+}
+
+/// Starts this binary (`kalzit sandbox-probe`) the way a plugin is started (Linux), so an operator sees
 /// which layers this system and the service's own restrictions (systemd hardening, a container)
 /// leave in force. Plugins run with what this reports.
 #[cfg(target_os = "linux")]
@@ -79,7 +121,7 @@ pub async fn check() -> anyhow::Result<CheckReport> {
     std::fs::create_dir(&tmp_dir)?;
     let spec = super::process::Spec {
         program: exe,
-        args: vec!["--version".into()],
+        args: vec!["sandbox-probe".into()],
         package_dir,
         run_dir: run.path().to_path_buf(),
         tmp_dir,
@@ -539,6 +581,10 @@ mod linux {
             let mut layers = 0u16;
             // SAFETY: only system calls on data prepared before the fork.
             unsafe {
+                // No capability of Kalzit's reaches the plugin: the ambient set (the packaged
+                // service has CAP_NET_BIND_SERVICE there, which exec would hand on) is cleared
+                // first, whatever else takes. The bounding set is dropped further down.
+                libc::prctl(libc::PR_CAP_AMBIENT, libc::PR_CAP_AMBIENT_CLEAR_ALL as libc::c_ulong, ZERO, ZERO, ZERO);
                 // A session and process group of its own, outside Kalzit's: the plugin's group
                 // is killed as a whole, and `kill(0)` reaches only it.
                 if libc::setsid() < 0 {
@@ -568,6 +614,12 @@ mod linux {
                     if libc::unshare(libc::CLONE_NEWNET) == 0 {
                         layers |= NETWORK_NAMESPACE;
                     }
+                }
+                // Every capability out of the bounding set, so no exec can gain one. This needs
+                // CAP_SETPCAP, which the process has in its own user namespace; without one the
+                // calls fail and the ambient set above is what keeps the capabilities away.
+                for cap in 0..=63 {
+                    libc::prctl(libc::PR_CAPBSET_DROP, cap as libc::c_ulong, ZERO, ZERO, ZERO);
                 }
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, ONE, ZERO, ZERO, ZERO) == 0 {
                     layers |= NO_NEW_PRIVS;

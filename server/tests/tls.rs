@@ -160,13 +160,38 @@ async fn minimum_tls_version_is_enforced() {
 }
 
 #[tokio::test]
-async fn https_without_certificate_files_serves_a_temporary_one_and_answers_acme() {
+async fn https_without_certificate_files_needs_acme_then_serves_a_temporary_one() {
     let dir = tempfile::tempdir().unwrap();
-    let server = start(dir.path(), |c| {
+    let no_files = |c: &mut Config| {
         c.tls.cert_file = None;
         c.tls.key_file = None;
-    })
-    .await;
+    };
+    // ACME off: no HTTPS with a permanent self-signed certificate (fail closed).
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().join("data");
+    config.server.http_addr = "127.0.0.1:0".into();
+    config.server.https_addr = "127.0.0.1:0".into();
+    let url = config.database_url();
+    let err = match kalzit::server::start(config, Some("tls-test-setup-code-0123".into())).await {
+        Ok(_) => panic!("HTTPS without certificate files and without ACME must not start"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(err.contains("tls.cert_file") && err.contains("ACME"), "{err}");
+    // ACME on (as a save in Settings stores it): HTTPS starts with the temporary certificate.
+    let db = kalzit::db::connect(&url, 1).await.unwrap();
+    // A directory nobody answers at, so the background order fails here instead of reaching a CA.
+    let settings = serde_json::json!({ "enabled": true, "directory": "custom", "directoryUrl": "https://127.0.0.1:9/dir",
+                                       "domains": ["kalzit.example.com"], "acceptTerms": true });
+    sqlx::query(
+        "INSERT INTO server_settings (key, value, version, updated_by, updated_at) VALUES ($1, $2, 1, NULL, 0)",
+    )
+    .bind(kalzit::acme::SETTINGS_KEY)
+    .bind(settings.to_string())
+    .execute(&db)
+    .await
+    .unwrap();
+    db.close().await;
+    let server = start(dir.path(), no_files).await;
     let https = server.https_addr.unwrap();
     let url = format!("https://localhost:{}/healthz", https.port());
     // Not trusted by anyone, but HTTPS works until ACME has a certificate.

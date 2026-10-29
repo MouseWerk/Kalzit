@@ -930,7 +930,7 @@
   "datasources.reason.acme.email_invalid": "Enter an email address, or leave the field empty.",
   "datasources.reason.acme.terms_not_accepted": "Accept the terms of service of the certificate authority.",
   "datasources.reason.acme.certificate_file_set": "Certificate files are set in kalzit.toml (tls.cert_file and tls.key_file); remove them to use ACME.",
-  "datasources.reason.acme.https_off": "HTTPS is off: set server.https_addr in kalzit.toml first.",
+  "datasources.reason.acme.https_off": "TLS-ALPN-01 needs HTTPS: set server.https_addr in kalzit.toml first, or choose HTTP-01.",
   "datasources.reason.acme.http_off": "HTTP-01 needs the HTTP listener (server.http_addr). Choose TLS-ALPN-01 or turn HTTP on.",
   "datasources.reason.acme.off": "ACME is off.",
   "datasources.reason.acme.directory_unreachable": "The certificate authority cannot be reached: {detail}",
@@ -942,5 +942,9 @@
   "datasources.reason.acme.challenge_unsupported": "The certificate authority does not offer {challenge}. Choose the other validation.",
   "datasources.reason.acme.validation_failed": "The certificate authority could not validate the names: {detail}",
   "datasources.reason.acme.rate_limited": "The certificate authority’s rate limit was reached: {detail}",
-  "datasources.reason.acme.certificate_failed": "The certificate could not be issued: {detail}"
+  "datasources.reason.acme.certificate_failed": "The certificate could not be issued: {detail}",
+  "datasources.reason.acme.renew_backoff": "The last attempt failed. Kalzit tries again after the pause shown above; fix the cause and change the settings to try sooner.",
+  "datasources.reason.acme.renew_too_soon": "The certificate in use is still new. Kalzit renews it by itself when it is due; renewing earlier only uses up the certificate authority’s limits.",
+  "datasources.reason.acme.https_later": "HTTPS is off: Kalzit orders and stores the certificate now, and serves it once server.https_addr is set and Kalzit restarted.",
+  "datasources.reason.acme.store_failed": "The certificate is in use but could not be stored; Kalzit tries again after a pause: {detail}"
 }

@@ -299,13 +299,16 @@ the contact itself) and a certificate is ordered in the background when none mat
 
 Body `{ "settings": {...} }`: the checks of a save, without saving. Answers
 `{ "termsOfService": "<url from the directory>" | null, "warnings": [{ "reason", "params", "message" }] }`;
-warnings are `acme.http_port` and `acme.https_port` (the listener is not on the port the CA
+warnings are `acme.https_later` (HTTPS is off; the certificate is served once it is on),
+`acme.http_port` and `acme.https_port` (the listener is not on the port the CA
 connects to).
 
 ### `POST /admin/acme/renew`
 
 Orders a certificate now, also when the current one is not due; answers the view. ACME off is
-`409 conflict` with `acme.off`. Recorded as `tls.certificate_requested`.
+`409 conflict` with `acme.off`; during the pause after a failed attempt `acme.renew_backoff`; for a
+certificate younger than a third of its lifetime that matches the settings `acme.renew_too_soon`
+(the CA's rate limits count every certificate). Recorded as `tls.certificate_requested`.
 
 ### `GET /.well-known/acme-challenge/{token}`
 

@@ -50,13 +50,20 @@ kalzit-0.5.0-linux-x64.deb` checks the manifest's signature too
 | `/etc/credstore.encrypted/kalzit-secrets-key` | The secrets key, encrypted with `systemd-creds` (where that is not possible: `/etc/credstore/kalzit-secrets-key`, readable by root only) |
 
 The service runs as the system account `kalzit` (no login, no shell), which the package creates.
+An existing account named `kalzit` is used only when it is a system account without a login
+shell and its group `kalzit` has no other members; otherwise the installation stops with a
+message, so a person's account never ends up owning Kalzit's data.
 The unit is hardened: the file system is read-only except the data directory
 (`ProtectSystem=strict`, `ReadWritePaths=/var/lib/kalzit`), no new privileges, no access to
 home directories, devices, kernel settings or other processes, and a system call filter. It
 keeps what the plugin sandbox needs (user, IPC and network namespaces, Landlock, seccomp);
 `sudo -u kalzit kalzit sandbox-check` lists the protections plugins get on this system, and the
-packages' tests check that the unit takes none of them away. The service may bind ports below 1024
-(`CAP_NET_BIND_SERVICE`), so HTTPS on 443 and HTTP on 80 work without root.
+packages' tests check that the unit takes none of them away. Ubuntu 23.10 and later refuse user
+namespaces to programs without an AppArmor profile that allows them; the deb therefore installs
+`/etc/apparmor.d/kalzit`, which allows them for `/usr/bin/kalzit` and confines nothing else, and
+loads it when AppArmor is active (`apt purge` deletes it). The service may bind ports below 1024
+(`CAP_NET_BIND_SERVICE`), so HTTPS on 443 and HTTP on 80 work without root; plugins never get
+that capability.
 
 ### Configuration and secrets key
 

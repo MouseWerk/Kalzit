@@ -64,6 +64,14 @@ contents:
     packager: rpm
     file_info:
       mode: 0644
+  # Allows the plugin sandbox's user namespaces where AppArmor restricts them (Ubuntu); loaded by
+  # postinstall.sh when AppArmor is active.
+  - src: "@ROOT@/deploy/linux/apparmor-kalzit"
+    dst: /etc/apparmor.d/kalzit
+    type: config|noreplace
+    packager: deb
+    file_info:
+      mode: 0644
   - src: "@ROOT@/LICENSE"
     dst: /usr/share/doc/kalzit/copyright
     packager: deb

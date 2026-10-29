@@ -1199,9 +1199,15 @@ query, summarize a result, the agent chat) come after it and must go through it.
   `Protect*` kernel, clock, host name and `/proc` settings, `RestrictNamespaces=~cgroup mnt pid
   uts` (user, IPC and network namespaces stay for plugins), `SystemCallFilter=@system-service`
   plus the Landlock calls and `setsid`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-  AF_NETLINK` (`AF_UNIX` for the plugin sockets). `kalzit sandbox-check` starts a test program the
-  way a plugin is started and prints the layers in force; CI (`.github/scripts/package-smoke.sh`)
-  runs it inside a copy of the unit and outside, and fails when the unit takes a layer away.
+  AF_NETLINK` (`AF_UNIX` for the plugin sockets). The sandbox clears the ambient capability set
+  and drops the bounding set before a plugin's exec, so `CAP_NET_BIND_SERVICE` never reaches a
+  plugin. The deb also ships `/etc/apparmor.d/kalzit` (unconfined, `userns,`), loaded in postinst,
+  because Ubuntu's AppArmor otherwise refuses the plugin sandbox its user namespaces. The scripts
+  refuse an existing `kalzit` account that is not a system account, has a login shell, or whose
+  group has other members. `kalzit sandbox-check` starts a test program (`kalzit sandbox-probe`)
+  the way a plugin is started and prints the layers in force and the program's capability sets;
+  CI (`.github/scripts/package-smoke.sh`) runs it inside a copy of the unit and outside, and fails
+  when the unit takes a layer away, a namespace layer is missing or a capability reaches it.
   Removing keeps data, configuration and key; only `apt purge` deletes them. The updater leaves
   a packaged binary to the package manager (`updates.mode_deb`, `updates.mode_rpm`, see Updates).
   The packages require the glibc version the binary needs (read from its symbol versions).
@@ -1247,7 +1253,9 @@ they change. Without them, the HTTPS listener asks `acme::resolver::Certificates
 handshake: the certificate ACME issued, until then a self-signed one made at the start (names
 from the ACME settings or `server.public_url`); a client that offers only the ALPN protocol
 `acme-tls/1` gets the TLS-ALPN-01 challenge certificate of the name it asks for (RFC 8737), or no
-certificate. A new certificate takes effect for the next handshake; nothing restarts.
+certificate. A new certificate takes effect for the next handshake; nothing restarts. The start
+refuses HTTPS without certificate files while ACME is off in the stored settings (fail closed);
+HTTP-01 orders and stores a certificate while HTTPS is still off, so HTTPS can then start with it.
 
 ACME (`server/src/acme`, RFC 8555 through the `instant-acme` crate):
 
@@ -1268,8 +1276,12 @@ ACME (`server/src/acme`, RFC 8555 through the `instant-acme` crate):
   answers are removed when the order ends, whatever happened.
 - **Schedule** (`acme::spawn`, a background task of the server): an order is due when ACME is on
   and no stored certificate matches the names and directory, when two thirds of its lifetime
-  have passed, or on request (`POST /api/admin/acme/renew`). A failure waits 5, 15, 60, 180, 360,
-  then 720 minutes before the next attempt; a save with other settings resets the wait.
+  have passed, or on request (`POST /api/admin/acme/renew`, refused during a failure's pause and
+  for a matching certificate younger than a third of its lifetime). A failure waits 5, 15, 60,
+  180, 360, then 720 minutes before the next attempt; a save with other settings resets the wait.
+  An issued certificate counts only once the resolver serves it; one that could not be stored
+  stays in use from memory and storing is retried after the pause, without a new order.
+  `/.well-known/acme-challenge/` looks up only base64url tokens.
 - **Store** (`acme::store`): `acme/account-<hash of the directory URL>.enc` and
   `acme/certificate.enc` in the data directory (`0700` folder, `0600` files on Unix, written
   through a temporary file and a rename), each AES-256-GCM encrypted with the secrets key, owner

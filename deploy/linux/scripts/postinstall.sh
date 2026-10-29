@@ -33,7 +33,10 @@ chmod 0640 /etc/kalzit/kalzit.toml
 key_name=kalzit-secrets-key
 if [ ! -e "/etc/credstore.encrypted/$key_name" ] && [ ! -e "/etc/credstore/$key_name" ] \
     && [ ! -e /var/lib/kalzit/secrets.key ] && [ ! -e /var/lib/kalzit/kalzit.db ]; then
-    install -d -o root -g root -m 0700 /etc/credstore.encrypted /etc/credstore
+    # Created when missing; existing folders are the system's and keep their owner and mode.
+    for store in /etc/credstore.encrypted /etc/credstore; do
+        [ -d "$store" ] || install -d -o root -g root -m 0700 "$store"
+    done
     umask 077
     stored=false
     if command -v systemd-creds > /dev/null 2>&1; then
@@ -51,6 +54,14 @@ if [ ! -e "/etc/credstore.encrypted/$key_name" ] && [ ! -e "/etc/credstore/$key_
         head -c 32 /dev/urandom | base64 > "/etc/credstore/$key_name"
         chmod 0600 "/etc/credstore/$key_name"
     fi
+fi
+
+# The AppArmor profile (deb only) that lets the plugin sandbox use user namespaces where AppArmor
+# restricts them; loaded before the service starts. Without AppArmor nothing happens.
+if [ -f /etc/apparmor.d/kalzit ] && command -v apparmor_parser > /dev/null 2>&1 \
+    && [ -d /sys/kernel/security/apparmor ]; then
+    apparmor_parser -r -W /etc/apparmor.d/kalzit > /dev/null 2>&1 \
+        || echo "kalzit: the AppArmor profile /etc/apparmor.d/kalzit did not load; plugins may run without namespaces" >&2
 fi
 
 if [ -d /run/systemd/system ]; then

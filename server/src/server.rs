@@ -301,10 +301,18 @@ async fn listen(config: &Config, state: &AppState) -> Result<Running> {
             tls::spawn_reload(rustls.clone(), config.tls.clone());
             rustls
         } else {
+            // Fail closed: without certificate files, HTTPS starts only when ACME is meant to
+            // provide the certificate, never as a permanent self-signed fallback.
+            if !state.acme.settings().0.enabled {
+                anyhow::bail!(
+                    "server.https_addr is set, so tls.cert_file and tls.key_file are required unless ACME is on. \
+                     Turn ACME on in Settings, Network (HTTP-01 works before HTTPS is on), or set the files"
+                );
+            }
             if !state.acme.certificates.has_certificate() {
                 tracing::warn!(
-                    "HTTPS has no certificate yet and serves a temporary self-signed one; set up ACME in \
-                     Settings, Network, or configure tls.cert_file and tls.key_file"
+                    "HTTPS serves a temporary self-signed certificate until ACME has issued one (Settings, \
+                     Network)"
                 );
             }
             RustlsConfig::from_config(tls::acme_server_config(&config.tls, state.acme.certificates.clone())?)

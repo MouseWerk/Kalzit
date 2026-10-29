@@ -55,6 +55,9 @@ sudo test ! -e /var/lib/kalzit/secrets.key || fail "the service fell back to a k
 code=$(sudo kalzit setup-code)
 [ -n "$code" ] || fail "no setup code"
 systemctl show -p NoNewPrivileges -p ProtectSystem kalzit
+if [ -d /sys/kernel/security/apparmor ]; then
+  sudo grep -q '^kalzit ' /sys/kernel/security/apparmor/profiles || fail "the AppArmor profile is not loaded"
+fi
 
 # The sandbox inside the unit (a one-shot copy of it running the check) against the same
 # account outside of any unit.
@@ -69,13 +72,22 @@ sudo systemctl start kalzit-sandbox-check.service || {
   sudo journalctl -u kalzit-sandbox-check --no-pager | tail -n 40
   fail "the sandbox check did not run inside the unit"
 }
-inside=$(sudo journalctl -u kalzit-sandbox-check -o cat --no-pager | grep '^sandbox layers in force:' | tail -n1)
+report=$(sudo journalctl -u kalzit-sandbox-check -o cat --no-pager)
+inside=$(echo "$report" | grep '^sandbox layers in force:' | tail -n1)
 echo "inside the unit:"
-echo "$inside"
+echo "$report" | grep -E '^(sandbox layers|capabilities|test program)' | tail -n4
 [ "$inside" = "$(echo "$outside" | grep '^sandbox layers in force:')" ] \
   || fail "the unit's hardening takes sandbox layers away from plugins"
-echo "$inside" | grep -qw no_new_privs && echo "$inside" | grep -qw seccomp \
-  || fail "plugins run without no_new_privs and seccomp inside the unit"
+# Every layer, the namespaces included: the runner's Ubuntu restricts user namespaces through
+# AppArmor, which the deb's profile lifts for /usr/bin/kalzit.
+for layer in no_new_privs seccomp landlock user_namespace ipc_namespace network_namespace; do
+  echo "$inside" | grep -qw "$layer" || fail "plugins run without $layer inside the unit"
+done
+# The service holds CAP_NET_BIND_SERVICE as an ambient capability; a plugin gets none.
+service_ambient=$(sudo awk '/^CapAmb:/ { print $2 }' "/proc/$pid/status")
+[ "$service_ambient" != 0000000000000000 ] || fail "the service has no ambient capability to test with"
+echo "$report" | grep -q '^capabilities ambient 0000000000000000 bounding 0000000000000000 ' \
+  || fail "a plugin inherits capabilities inside the unit"
 sudo rm /etc/systemd/system/kalzit-sandbox-check.service
 sudo systemctl daemon-reload
 
@@ -93,6 +105,10 @@ sudo test -e /etc/kalzit/kalzit.toml || fail "apt remove deleted the configurati
 sudo apt-get purge -y kalzit
 sudo test ! -e /var/lib/kalzit || fail "apt purge kept the data"
 sudo test ! -e /etc/kalzit || fail "apt purge kept the configuration"
+test ! -e /etc/apparmor.d/kalzit || fail "apt purge kept the AppArmor profile"
+if [ -d /sys/kernel/security/apparmor ]; then
+  ! sudo grep -q '^kalzit ' /sys/kernel/security/apparmor/profiles || fail "the AppArmor profile stayed loaded"
+fi
 sudo test ! -e /etc/credstore.encrypted/kalzit-secrets-key -a ! -e /etc/credstore/kalzit-secrets-key \
   || fail "apt purge kept the secrets key"
 echo "::endgroup::"
@@ -125,6 +141,14 @@ container() {
       sleep 2
     done
   fi
+  # A person's account named kalzit (a login shell, a user id) is never taken over.
+  docker exec "$name" useradd -m -s /bin/sh kalzit
+  if docker exec "$name" sh -c "$install /dist/$(basename "$file")" > /tmp/refused.log 2>&1; then
+    fail "the package in $image took over a login account named kalzit"
+  fi
+  grep -q "is not a system account\|login shell" /tmp/refused.log || { cat /tmp/refused.log; fail "no clear refusal in $image"; }
+  docker exec "$name" userdel -r kalzit
+  docker exec "$name" sh -c "getent group kalzit > /dev/null && groupdel kalzit || true"
   docker exec "$name" sh -c "$install /dist/$(basename "$file")"
   if [ "$systemd" = true ]; then
     docker exec "$name" systemctl enable --now kalzit

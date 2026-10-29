@@ -212,6 +212,19 @@ async fn each_field_is_checked_and_the_settings_are_saved_in_one_step() {
     assert_eq!(r.body["warnings"][0]["reason"], "acme.http_port");
     assert_eq!(r.body["warnings"][0]["params"]["port"], "8080");
 
+    // HTTPS off: TLS-ALPN-01 is refused at its field; HTTP-01 is tested with a warning.
+    let mut alpn = settings(&base, &ca);
+    alpn["challenge"] = json!("tls-alpn-01");
+    let mut https_off = (*t.state.config).clone();
+    https_off.server.https_addr = String::new();
+    let alpn: crate::acme::AcmeSettings = serde_json::from_value(alpn).unwrap();
+    let e = crate::acme::settings::check_against(&alpn, &https_off).unwrap_err();
+    assert_eq!((e.field, e.reason), ("challenge", "acme.https_off"));
+    let http: crate::acme::AcmeSettings = serde_json::from_value(settings(&base, &ca)).unwrap();
+    assert_eq!(crate::acme::settings::check_against(&http, &https_off), Ok(()));
+    let checked = crate::acme::check_connection(&http, &https_off).await.unwrap();
+    assert_eq!(checked.warnings[0].reason, "acme.https_later");
+
     let r = t.save(settings(&base, &ca), 0).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     assert_eq!(r.body["version"], 1);
@@ -258,6 +271,10 @@ async fn http_01_answers_come_from_the_running_order() {
     let r = t.send(Method::GET, "/.well-known/acme-challenge/token-1", None, None).await;
     assert_eq!((r.status, r.text.as_str()), (StatusCode::OK, "token-1.thumbprint"));
     let r = t.send(Method::GET, "/.well-known/acme-challenge/other", None, None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    // Only base64url tokens are looked up.
+    t.state.acme.add_http_challenge("a.b", "never answered");
+    let r = t.send(Method::GET, "/.well-known/acme-challenge/a.b", None, None).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
     t.state.acme.remove_http_challenge("token-1");
     let r = t.send(Method::GET, "/.well-known/acme-challenge/token-1", None, None).await;

@@ -43,6 +43,9 @@ enum Command {
     /// Start a test program in the plugin sandbox and list the protections in force (Linux).
     /// Run it as the service account, or inside the service, to see what plugins get there.
     SandboxCheck,
+    /// The test program of `sandbox-check`: prints its own capability sets.
+    #[command(hide = true)]
+    SandboxProbe,
 }
 
 #[derive(Subcommand)]
@@ -76,6 +79,11 @@ fn main() -> ExitCode {
     // is built; libraries that would pick another one use this.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
+    // Runs inside the sandbox, where no configuration is readable.
+    if matches!(cli.command, Some(Command::SandboxProbe)) {
+        println!("{}", kalzit::plugins::sandbox::probe());
+        return ExitCode::SUCCESS;
+    }
     let config = match Config::load(cli.config.as_deref()) {
         Ok(c) => c,
         Err(e) => {
@@ -175,6 +183,7 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Command::SandboxProbe => unreachable!("handled before the configuration loads"),
         Command::SandboxCheck => {
             let Some(runtime) = runtime() else { return ExitCode::FAILURE };
             match runtime.block_on(kalzit::plugins::sandbox::check()) {

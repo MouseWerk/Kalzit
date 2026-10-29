@@ -425,7 +425,8 @@ impl Config {
             }
         }
         // Without certificate files, HTTPS serves the certificate ACME orders (Settings, Network),
-        // and a temporary self-signed one until then.
+        // and a temporary self-signed one until then; the start refuses it while ACME is off
+        // (`server::listen`), which this check cannot see.
         if self.tls.cert_file.is_some() != self.tls.key_file.is_some() {
             bail!("tls.cert_file and tls.key_file are set together, or neither (then ACME provides the certificate)");
         }

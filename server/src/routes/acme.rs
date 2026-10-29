@@ -120,12 +120,12 @@ async fn renew(
     Extension(info): Extension<RequestInfo>,
 ) -> ApiResult<Json<AcmeView>> {
     let (settings, _) = state.acme.settings();
-    if !settings.enabled {
-        return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "conflict", "ACME is off")
-            .with_field("enabled")
-            .because("acme.off"));
-    }
-    if state.acme.request_renewal() {
+    let requested = state.acme.request_renewal(state.clock.now_ms()).map_err(|refused| {
+        ApiError::new(axum::http::StatusCode::CONFLICT, "conflict", refused.message)
+            .with_field(refused.field)
+            .with_reason_string(refused.reason.to_string(), refused.params)
+    })?;
+    if requested {
         let mut tx = crate::db::begin(&state.db).await?;
         let event = AuditEvent {
             org_id: None,

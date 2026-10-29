@@ -187,11 +187,13 @@ pub fn check_against(settings: &AcmeSettings, config: &Config) -> Result<(), Fie
             "tls.cert_file and tls.key_file are set in kalzit.toml or the environment; remove them to use ACME",
         ));
     }
-    if config.https_addr().is_none() {
+    // With HTTPS still off, HTTP-01 orders the certificate already, so HTTPS starts with it once
+    // server.https_addr is set; TLS-ALPN-01 is answered by the HTTPS listener itself.
+    if config.https_addr().is_none() && settings.challenge == Challenge::TlsAlpn01 {
         return Err(FieldError::new(
-            "enabled",
+            "challenge",
             "acme.https_off",
-            "HTTPS is off: set server.https_addr in kalzit.toml or the environment",
+            "TLS-ALPN-01 needs HTTPS: set server.https_addr in kalzit.toml or the environment, or choose HTTP-01",
         ));
     }
     if settings.challenge == Challenge::Http01 && config.http_addr().is_none() {
@@ -350,7 +352,12 @@ mod tests {
         let mut config = Config::default();
         config.server.https_addr = String::new();
         let s = on(&["kalzit.example.com"]);
-        assert_eq!(check_against(&s, &config).unwrap_err().reason, "acme.https_off");
+        // HTTP-01 orders before HTTPS is on; TLS-ALPN-01 needs the HTTPS listener.
+        assert_eq!(check_against(&s, &config), Ok(()));
+        let mut alpn_off = s.clone();
+        alpn_off.challenge = Challenge::TlsAlpn01;
+        let e = check_against(&alpn_off, &config).unwrap_err();
+        assert_eq!((e.field, e.reason), ("challenge", "acme.https_off"));
         config.server.https_addr = "0.0.0.0:443".into();
         config.server.http_addr = String::new();
         assert_eq!(check_against(&s, &config).unwrap_err().reason, "acme.http_off");

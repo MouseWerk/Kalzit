@@ -161,6 +161,8 @@ struct Runtime {
     failures: u32,
     next_attempt_ms: Option<i64>,
     last_error: Option<LastError>,
+    /// The certificate in use is not stored yet (`retry_store`).
+    unsaved: bool,
 }
 
 pub struct Acme {
@@ -183,6 +185,19 @@ impl std::fmt::Debug for Acme {
 pub fn renew_at(certificate: &StoredCertificate) -> i64 {
     let lifetime = (certificate.not_after_ms - certificate.not_before_ms).max(0);
     certificate.not_after_ms - lifetime / 3
+}
+
+/// Until when a certificate counts as new: a third of its lifetime after it was issued.
+fn young_until(certificate: &StoredCertificate) -> i64 {
+    let lifetime = (certificate.not_after_ms - certificate.not_before_ms).max(0);
+    certificate.not_before_ms + lifetime / 3
+}
+
+/// An HTTP-01 token: base64url without padding (RFC 8555, section 8.3).
+fn is_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 256
+        && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 fn backoff_ms(failures: u32) -> i64 {
@@ -224,6 +239,7 @@ impl Acme {
             failures: 0,
             next_attempt_ms: None,
             last_error: None,
+            unsaved: false,
         };
         Ok(Self {
             certificates,
@@ -261,6 +277,8 @@ impl Acme {
             rt.failures = 0;
             rt.next_attempt_ms = None;
             rt.last_error = None;
+            // A certificate for the old settings is not worth storing any more.
+            rt.unsaved = false;
         }
         rt.settings = settings;
         rt.version = version;
@@ -268,18 +286,39 @@ impl Acme {
         self.wake.notify_one();
     }
 
-    /// Orders a certificate now, even when the current one is not due. False when ACME is off
-    /// or an order is already running.
-    pub fn request_renewal(&self) -> bool {
+    /// Orders a certificate now, even when the current one is not due; false when an order is
+    /// already running. Refused while ACME is off, while a failure's pause runs (the CA's rate
+    /// limits count failures), and while the certificate in use is younger than a third of its
+    /// lifetime and matches the settings (a renewal then only spends the CA's limits).
+    pub fn request_renewal(&self, now_ms: i64) -> Result<bool, FieldError> {
         let mut rt = self.lock();
-        if !rt.settings.enabled || rt.working {
-            return false;
+        if !rt.settings.enabled {
+            return Err(FieldError::new("enabled", "acme.off", "ACME is off"));
+        }
+        if rt.working {
+            return Ok(false);
+        }
+        if rt.next_attempt_ms.is_some_and(|at| at > now_ms) {
+            return Err(FieldError::new(
+                "enabled",
+                "acme.renew_backoff",
+                "the last attempt failed; the next one follows the pause, or change the settings",
+            ));
+        }
+        if let Some(c) = &rt.certificate
+            && !Self::needs_certificate(&rt, now_ms)
+            && now_ms < young_until(c)
+        {
+            return Err(FieldError::new(
+                "enabled",
+                "acme.renew_too_soon",
+                "the certificate in use is new; it is renewed when it is due",
+            ));
         }
         rt.forced = true;
-        rt.next_attempt_ms = None;
         drop(rt);
         self.wake.notify_one();
-        true
+        Ok(true)
     }
 
     /// The certificate does not match the settings or is due for renewal.
@@ -356,9 +395,41 @@ impl Acme {
         }
     }
 
+    /// Stores a certificate that is served but could not be stored, once its pause is over; an
+    /// order is not repeated for it. True when there was one to store.
+    fn retry_store(&self, state: &AppState, now: i64) -> bool {
+        let certificate = {
+            let rt = self.lock();
+            if !rt.unsaved || rt.working || rt.next_attempt_ms.is_some_and(|at| now < at) {
+                return rt.unsaved;
+            }
+            rt.certificate.clone()
+        };
+        let Some(certificate) = certificate else { return false };
+        let stored = store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate);
+        let mut rt = self.lock();
+        match stored {
+            Ok(()) => {
+                rt.unsaved = false;
+                rt.failures = 0;
+                rt.next_attempt_ms = None;
+                rt.last_error = None;
+            }
+            Err(e) => {
+                tracing::error!("the HTTPS certificate in use still cannot be stored: {e:#}");
+                rt.failures += 1;
+                rt.next_attempt_ms = Some(now + backoff_ms(rt.failures));
+            }
+        }
+        true
+    }
+
     /// Orders a certificate when one is due. Runs in the background task only.
     async fn tick(&self, state: &AppState) {
         let now = state.clock.now_ms();
+        if self.retry_store(state, now) {
+            return;
+        }
         let settings = {
             let mut rt = self.lock();
             if !Self::due(&rt, now) {
@@ -378,15 +449,21 @@ impl Acme {
             keyring: &state.secrets,
             now_ms: now,
         };
-        let outcome = issue::obtain(self, &settings, &cx).await;
+        // A certificate counts only once it is served.
+        let outcome = issue::obtain(self, &settings, &cx).await.and_then(|certificate| {
+            self.certificates
+                .set(&certificate.chain_pem, &certificate.key_pem)
+                .map(|()| certificate)
+                .map_err(|e| Failure::new("acme.certificate_failed", format!("{e:#}")))
+        });
         let done = state.clock.now_ms();
         match outcome {
             Ok(certificate) => {
-                if let Err(e) = store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate) {
+                // Not stored, it stays in use from memory and storing is retried after a pause;
+                // the CA is not asked again for it while the server runs.
+                let stored = store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate);
+                if let Err(e) = &stored {
                     tracing::error!("the new HTTPS certificate is served but could not be stored: {e:#}");
-                }
-                if let Err(e) = self.certificates.set(&certificate.chain_pem, &certificate.key_pem) {
-                    tracing::error!("the new HTTPS certificate cannot be served: {e:#}");
                 }
                 tracing::info!(
                     "HTTPS certificate for {} issued by {}, valid until {}",
@@ -403,9 +480,23 @@ impl Acme {
                 {
                     let mut rt = self.lock();
                     rt.certificate = Some(certificate);
-                    rt.failures = 0;
-                    rt.next_attempt_ms = None;
-                    rt.last_error = None;
+                    match stored {
+                        Ok(()) => {
+                            rt.unsaved = false;
+                            rt.failures = 0;
+                            rt.next_attempt_ms = None;
+                            rt.last_error = None;
+                        }
+                        Err(e) => {
+                            rt.unsaved = true;
+                            rt.failures = 1;
+                            rt.next_attempt_ms = Some(done + backoff_ms(1));
+                            let message = format!("{e:#}");
+                            let mut params = BTreeMap::new();
+                            params.insert("detail".to_string(), message.clone());
+                            rt.last_error = Some(LastError { reason: "acme.store_failed", params, message, at: done });
+                        }
+                    }
                 }
                 record(state, "tls.certificate_issued", summary).await;
             }
@@ -540,6 +631,12 @@ pub async fn check_connection(settings: &AcmeSettings, config: &Config) -> Resul
         }
     }
     let mut warnings = Vec::new();
+    if config.https_addr().is_none() {
+        warnings.push(Failure::plain(
+            "acme.https_later",
+            "HTTPS is off: the certificate is ordered and stored; set server.https_addr and restart to serve it",
+        ));
+    }
     match settings.challenge {
         Challenge::Http01 => {
             if let Some(port) = config.http_addr().map(|a| a.port()).filter(|p| *p != 80) {
@@ -563,6 +660,9 @@ pub async fn check_connection(settings: &AcmeSettings, config: &Config) -> Resul
 
 /// Answers HTTP-01 validations: `/.well-known/acme-challenge/<token>` on the HTTP listener.
 pub async fn http_challenge(State(state): State<AppState>, Path(token): Path<String>) -> Response {
+    if !is_token(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     match state.acme.lock_http().get(&token).cloned() {
         Some(answer) => ([(header::CONTENT_TYPE, "application/octet-stream")], answer).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
@@ -621,6 +721,7 @@ mod tests {
             failures: 0,
             next_attempt_ms: None,
             last_error: None,
+            unsaved: false,
         }
     }
 
@@ -657,6 +758,51 @@ mod tests {
         rt.working = false;
         rt.settings.enabled = false;
         assert!(!Acme::due(&rt, 2 * DAY));
+    }
+
+    fn acme_with(rt: Runtime) -> Acme {
+        Acme {
+            certificates: Arc::new(resolver::Certificates::new(&[]).unwrap()),
+            http: Mutex::default(),
+            runtime: Mutex::new(rt),
+            wake: tokio::sync::Notify::new(),
+        }
+    }
+
+    #[test]
+    fn a_renewal_on_request_respects_the_pause_and_a_new_certificate() {
+        let reason = |acme: &Acme, now| acme.request_renewal(now).err().map(|e| e.reason);
+        let good = certificate(&["a.example.com", "b.example.com"], 0, 90 * DAY);
+        // New (younger than 30 of 90 days) and matching: refused.
+        let acme = acme_with(runtime(Some(good.clone())));
+        assert_eq!(reason(&acme, DAY), Some("acme.renew_too_soon"));
+        assert_eq!(acme.request_renewal(31 * DAY), Ok(true));
+        assert!(acme.lock().forced);
+        // Other names: ordered at once, however new the certificate is.
+        let mut rt = runtime(Some(good.clone()));
+        rt.settings.domains.push("c.example.com".into());
+        assert_eq!(acme_with(rt).request_renewal(DAY), Ok(true));
+        // During a failure's pause: refused, after it allowed.
+        let mut rt = runtime(None);
+        rt.next_attempt_ms = Some(2 * DAY);
+        let acme = acme_with(rt);
+        assert_eq!(reason(&acme, DAY), Some("acme.renew_backoff"));
+        assert_eq!(acme.request_renewal(2 * DAY), Ok(true));
+        // Off: refused; running: nothing to do.
+        let mut rt = runtime(None);
+        rt.settings.enabled = false;
+        assert_eq!(reason(&acme_with(rt), DAY), Some("acme.off"));
+        let mut rt = runtime(None);
+        rt.working = true;
+        assert_eq!(acme_with(rt).request_renewal(DAY), Ok(false));
+    }
+
+    #[test]
+    fn only_tokens_are_looked_up() {
+        assert!(is_token("GQa4oFOtuLYVNCLUW3dTh314flM5-DYxMNbQzkC2CJA"));
+        for bad in ["", "a/b", "..", "a b", "a%2F", "ä", &"a".repeat(257)] {
+            assert!(!is_token(bad), "{bad}");
+        }
     }
 
     #[test]

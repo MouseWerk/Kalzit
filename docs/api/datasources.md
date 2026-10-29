@@ -1954,19 +1954,23 @@ reasons appear in the status (`status.lastError`) and the audit log.
 | `acme.email_invalid` | | `email`: not an email address |
 | `acme.terms_not_accepted` | | `acceptTerms`: the CA's terms of service are not accepted |
 | `acme.certificate_file_set` | | `enabled`: `tls.cert_file` and `tls.key_file` are configured; remove them to use ACME |
-| `acme.https_off` | | `enabled`: `server.https_addr` is empty |
+| `acme.https_off` | | `challenge`: TLS-ALPN-01 while `server.https_addr` is empty (HTTP-01 orders before HTTPS is on) |
 | `acme.http_off` | | `challenge`: HTTP-01 without the HTTP listener |
 | `acme.off` | | `409 conflict`: renewing while ACME is off |
+| `acme.renew_backoff` | | `409 conflict`: renewing while the pause after a failed attempt runs |
+| `acme.renew_too_soon` | | `409 conflict`: renewing a certificate younger than a third of its lifetime that matches the settings |
 | `acme.directory_unreachable` | `detail` | the directory (or the CA during an order) cannot be reached |
 | `acme.directory_invalid` | `detail` | the address does not answer as an ACME directory |
 | `acme.http_port` | `port` | warning of a test: HTTP-01 connects to port 80, the HTTP listener is on `port` |
 | `acme.https_port` | `port` | warning of a test: TLS-ALPN-01 connects to port 443, the HTTPS listener is on `port` |
+| `acme.https_later` | | warning of a test: HTTPS is off; the certificate is ordered and stored, and served once `server.https_addr` is set |
 | `acme.account_failed` | `detail` | the CA refused to register or update the account |
 | `acme.order_failed` | `detail` | the CA refused the order |
 | `acme.challenge_unsupported` | `challenge`, `detail` | the CA does not offer the chosen challenge |
 | `acme.validation_failed` | `detail`, `domain` (when known) | the CA could not validate a name |
 | `acme.rate_limited` | `detail` | the CA's rate limit; the next attempt follows the backoff |
-| `acme.certificate_failed` | `detail` | finalizing, downloading or reading the certificate failed |
+| `acme.certificate_failed` | `detail` | finalizing, downloading, reading or serving the certificate failed |
+| `acme.store_failed` | `detail` | the issued certificate is served but could not be stored; storing is retried after the pause, without a new order |
 
 ## Not here yet
 

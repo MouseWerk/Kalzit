@@ -217,7 +217,7 @@
   "settings.acme.conflict": "Someone else saved these settings in the meantime. Their values are shown now; check them and save again.",
   "settings.acme.listenerOff": "off",
   "settings.acme.certificateFiles": "HTTPS uses the certificate files from kalzit.toml (tls.cert_file). To let Kalzit order certificates, remove tls.cert_file and tls.key_file and restart it.",
-  "settings.acme.httpsOff": "HTTPS is off. Set server.https_addr in kalzit.toml (for example 0.0.0.0:443) and restart Kalzit; until a certificate is issued, HTTPS uses a temporary self-signed one.",
+  "settings.acme.httpsOff": "HTTPS is off. With HTTP-01, Kalzit can order the certificate already; then set server.https_addr in kalzit.toml (for example 0.0.0.0:443) and restart Kalzit to serve it.",
   "settings.acme.enabled.label": "Order certificates automatically",
   "settings.acme.enabled.description": "Kalzit orders the HTTPS certificate for the names below and renews it before it expires.",
   "settings.acme.directory.label": "Certificate authority",

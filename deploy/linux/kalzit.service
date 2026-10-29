@@ -28,13 +28,16 @@ LimitNOFILE=65536
 ImportCredential=kalzit-secrets-key
 ImportCredential=kalzit-database-url
 
-# Ports below 1024 (80 and 443 for HTTPS with ACME) without root. Plugins inherit nothing
-# useful from it: they have no network sockets and a network namespace of their own.
+# Ports below 1024 (80 and 443 for HTTPS with ACME) without root. Plugins do not inherit it: the
+# sandbox clears the ambient set and drops the bounding set before a plugin starts
+# (`kalzit sandbox-check` prints the capabilities a plugin gets).
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 # Hardening. The plugin sandbox (docs/ARCHITECTURE.md, "Sandbox") still needs user, IPC and
-# network namespaces, Landlock and seccomp; `kalzit sandbox-check` shows what plugins get.
+# network namespaces, Landlock and seccomp; `kalzit sandbox-check` shows what plugins get. Where
+# AppArmor restricts user namespaces (Ubuntu 23.10 and later), the deb's profile
+# /etc/apparmor.d/kalzit allows them for /usr/bin/kalzit.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/kalzit

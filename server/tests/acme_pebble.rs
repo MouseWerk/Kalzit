@@ -35,12 +35,13 @@ fn pebble() -> Pebble {
     Pebble { directory, ca_pem: std::fs::read_to_string(ca).unwrap() }
 }
 
-async fn start(dir: &Path) -> kalzit::server::Running {
+/// The server with HTTP, and with HTTPS when `https` (which needs ACME on).
+async fn start(dir: &Path, https: bool) -> kalzit::server::Running {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let mut config = Config::default();
     config.paths.data_dir = dir.join("data");
     config.server.http_addr = HTTP.into();
-    config.server.https_addr = HTTPS.into();
+    config.server.https_addr = if https { HTTPS.into() } else { String::new() };
     // The test talks to the API over plain HTTP.
     config.server.redirect_http_to_https = false;
     kalzit::server::start(config, Some(SETUP_CODE.into())).await.unwrap()
@@ -163,45 +164,45 @@ async fn served_for(pebble: &Pebble, domain: &str) -> bool {
 async fn certificates_are_ordered_served_renewed_and_kept() {
     let pebble = pebble();
     let dir = common::private_tempdir();
-    let server = start(dir.path()).await;
+    // HTTPS off at first: HTTP-01 orders the certificate already, answered by the HTTP listener.
+    let server = start(dir.path(), false).await;
     let api = Api::sign_up().await;
-    assert!(!served_for(&pebble, HTTP_DOMAIN).await, "only the temporary certificate before ACME");
-
-    // HTTP-01, answered by the HTTP listener.
-    api.save(settings(&pebble, HTTP_DOMAIN, "http-01")).await;
+    let view = api.save(settings(&pebble, HTTP_DOMAIN, "http-01")).await;
+    assert_eq!(view["server"]["httpsAddr"], Value::Null);
     let view = api.wait_valid(HTTP_DOMAIN).await;
     assert!(view["status"]["certificate"]["renewAt"].as_i64() < view["status"]["certificate"]["notAfter"].as_i64());
-    assert!(served_for(&pebble, HTTP_DOMAIN).await, "the issued certificate is served without a restart");
+    server.shutdown();
+    server.wait().await.unwrap();
 
-    // TLS-ALPN-01, answered by the HTTPS listener; a new name orders a new certificate.
+    // HTTPS turned on: the stored certificate is served at once.
+    let server = start(dir.path(), true).await;
+    assert!(served_for(&pebble, HTTP_DOMAIN).await, "the stored certificate is served after the restart");
+    let api = Api::sign_in().await;
+
+    // TLS-ALPN-01, answered by the HTTPS listener; a new name orders a new certificate, served
+    // without a restart.
     api.save(settings(&pebble, ALPN_DOMAIN, "tls-alpn-01")).await;
     api.wait_valid(ALPN_DOMAIN).await;
-    assert!(served_for(&pebble, ALPN_DOMAIN).await);
+    assert!(served_for(&pebble, ALPN_DOMAIN).await, "the issued certificate is served without a restart");
 
-    // Renewing on request orders again.
-    let before = api.status().await["status"]["certificate"]["issuedAt"].clone();
-    let (status, _) = api.call(reqwest::Method::POST, "/admin/acme/renew", None).await;
-    assert_eq!(status, StatusCode::OK);
-    let deadline = Instant::now() + Duration::from_secs(180);
-    while api.status().await["status"]["certificate"]["issuedAt"] == before {
-        assert!(Instant::now() < deadline, "the renewal did not happen");
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    api.wait_valid(ALPN_DOMAIN).await;
+    // A new certificate is not renewed on request: that would only spend the CA's limits.
+    let (status, body) = api.call(reqwest::Method::POST, "/admin/acme/renew", None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["reason"], "acme.renew_too_soon");
 
     server.shutdown();
     server.wait().await.unwrap();
 
-    // After a restart the stored certificate is served at once.
-    let server = start(dir.path()).await;
+    // After another restart the newest stored certificate is served at once.
+    let server = start(dir.path(), true).await;
     assert!(served_for(&pebble, ALPN_DOMAIN).await, "the stored certificate is served after a restart");
     let api = Api::sign_in().await;
     assert_eq!(api.status().await["status"]["phase"], "valid");
     let (status, audit) = api.call(reqwest::Method::GET, "/admin/audit?limit=100", None).await;
     assert_eq!(status, StatusCode::OK, "{audit}");
     let actions: Vec<&str> = audit["items"].as_array().unwrap().iter().filter_map(|e| e["action"].as_str()).collect();
-    assert_eq!(actions.iter().filter(|a| **a == "tls.certificate_issued").count(), 3, "{actions:?}");
-    assert!(actions.contains(&"tls.acme_changed") && actions.contains(&"tls.certificate_requested"), "{actions:?}");
+    assert_eq!(actions.iter().filter(|a| **a == "tls.certificate_issued").count(), 2, "{actions:?}");
+    assert!(actions.contains(&"tls.acme_changed"), "{actions:?}");
     // Nothing in the data directory shows the key in clear.
     for entry in std::fs::read_dir(dir.path().join("data").join("acme")).unwrap() {
         let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();

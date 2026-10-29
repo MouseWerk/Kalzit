@@ -9,6 +9,12 @@ Kalzit serves HTTPS itself (TLS 1.2 and 1.3, HTTP/2) when `server.https_addr` is
   any other certificate authority that offers ACME, and renews it. Until the first one is issued,
   HTTPS serves a temporary self-signed certificate, which browsers warn about.
 
+HTTPS without certificate files starts only when ACME is on: otherwise Kalzit refuses to start
+and says which files are missing, so a mistyped configuration never ends up serving a self-signed
+certificate for good. To switch an existing server to ACME, turn ACME on with HTTP-01 while HTTPS
+is still off (Kalzit orders and stores the certificate over HTTP), then set `server.https_addr`
+and restart: HTTPS starts with the stored certificate.
+
 Behind a reverse proxy that terminates TLS (nginx, Caddy, Traefik, IIS), Kalzit needs neither: the
 proxy holds the certificate.
 
@@ -66,7 +72,11 @@ the next connection on, without a restart.
 Kalzit renews once two thirds of the lifetime have passed: 30 days before the end of a 90-day
 certificate. A failed attempt is retried after 5 minutes, then 15 minutes, 1, 3 and 6 hours, then
 every 12 hours, so the CA's rate limits are respected; the card shows the reason and the next
-attempt. **Renew now** (Jetzt erneuern) orders at once, for example after fixing DNS.
+attempt. **Renew now** (Jetzt erneuern) orders at once, for example after the certificate was
+revoked. It is refused during the pause after a failed attempt (change the settings to try again
+sooner) and while the certificate in use is younger than a third of its lifetime and matches the
+settings, because every certificate counts against the CA's limits. A certificate that was issued
+but could not be stored stays in use and is stored again after a pause, without a new order.
 
 Every save of the settings (`tls.acme_changed`), every certificate issued
 (`tls.certificate_issued`) and every failed attempt (`tls.certificate_failed`, with the reason)
