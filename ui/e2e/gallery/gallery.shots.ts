@@ -1413,6 +1413,10 @@ for (const scheme of SCHEMES) {
 for (const scheme of SCHEMES) {
   test(`ask, an answer with its steps, ${scheme}`, async ({ browser }) => {
     await ensureAssistant();
+    // One chat in the history: the one of this picture.
+    const owner = await Api.signIn(OWNER.email, OWNER.password);
+    expect((await owner.context.delete(`/api/orgs/${owner.orgId}/ai/chats`)).ok()).toBe(true);
+    await owner.dispose();
     const page = await openPage(browser, scheme);
     await signIn(page);
     await page.goto("/ask");

@@ -276,6 +276,8 @@
     --size-switch-knob: 0.375rem;
     /* A cell of the plugins' status strip: six fit in one row beside the settings list. */
     --size-plugins-tile: 9.5rem;
+    /* The narrowest label column of the facts in the side pane of Ask. */
+    --size-ask-fact-label: 7rem;
   }
 }
 
