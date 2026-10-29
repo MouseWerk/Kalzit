@@ -45,6 +45,21 @@ export const LABEL_TONES = [
 ] as const;
 export type LabelTone = (typeof LABEL_TONES)[number];
 
+/**
+ * How the hierarchy lays out: Kalzit's own layered layout (the default), or ELK's layered
+ * algorithm, which loads only when a panel picks it (elkLayout.ts).
+ */
+export const HIERARCHY_LAYOUTS = ["kalzit", "elk"] as const;
+export type HierarchyLayout = (typeof HIERARCHY_LAYOUTS)[number];
+/** Where ELK lets edges point: from the roots down, to the right, up or to the left. */
+export const ELK_DIRECTIONS = ["down", "right", "up", "left"] as const;
+export type ElkDirection = (typeof ELK_DIRECTIONS)[number];
+export const ELK_EDGE_ROUTINGS = ["orthogonal", "polyline"] as const;
+export type ElkEdgeRouting = (typeof ELK_EDGE_ROUTINGS)[number];
+/** ELK's gaps in px: between the nodes of a layer, and between layers. */
+export const ELK_NODE_SPACING = { min: 5, max: 200, default: 30 } as const;
+export const ELK_LAYER_SPACING = { min: 10, max: 400, default: 80 } as const;
+
 /** Node sizes on screen, in px. */
 export const MIN_SIZE = 2;
 export const MAX_SIZE = 40;
@@ -92,6 +107,12 @@ export interface GraphPanelOptions {
   variable: string;
   /** Node property the variable takes; empty takes the node id. */
   variableProperty: string;
+  /** The hierarchy's layout; the ELK settings below apply only to "elk". */
+  hierarchyLayout: HierarchyLayout;
+  elkDirection: ElkDirection;
+  elkNodeSpacing: number;
+  elkLayerSpacing: number;
+  elkEdgeRouting: ElkEdgeRouting;
 }
 
 /** Longest caption, property key or variable name the graph panels store. */
@@ -171,5 +192,39 @@ export function parseGraphOptions(stored: unknown): GraphPanelOptions {
     clickDetails: value.clickDetails !== false,
     variable,
     variableProperty: text(value.variableProperty),
+    hierarchyLayout: choice(HIERARCHY_LAYOUTS, value.hierarchyLayout, "kalzit"),
+    elkDirection: choice(ELK_DIRECTIONS, value.elkDirection, "down"),
+    elkNodeSpacing: clampInt(
+      value.elkNodeSpacing,
+      ELK_NODE_SPACING.min,
+      ELK_NODE_SPACING.max,
+      ELK_NODE_SPACING.default,
+    ),
+    elkLayerSpacing: clampInt(
+      value.elkLayerSpacing,
+      ELK_LAYER_SPACING.min,
+      ELK_LAYER_SPACING.max,
+      ELK_LAYER_SPACING.default,
+    ),
+    elkEdgeRouting: choice(ELK_EDGE_ROUTINGS, value.elkEdgeRouting, "orthogonal"),
   };
+}
+
+/** The ELK settings of a panel's hierarchy; null when it keeps Kalzit's own layout. */
+export interface ElkSettings {
+  direction: ElkDirection;
+  nodeSpacing: number;
+  layerSpacing: number;
+  edgeRouting: ElkEdgeRouting;
+}
+
+export function elkSettings(options: GraphPanelOptions): ElkSettings | null {
+  return options.hierarchyLayout === "elk"
+    ? {
+        direction: options.elkDirection,
+        nodeSpacing: options.elkNodeSpacing,
+        layerSpacing: options.elkLayerSpacing,
+        edgeRouting: options.elkEdgeRouting,
+      }
+    : null;
 }

@@ -544,6 +544,62 @@ test.describe("Neo4j drawing", () => {
     ).toBeVisible({ timeout: STEP_MS });
     expect(await seriousViolations(page)).toEqual([]);
   });
+
+  test("a hierarchy with ELK loads it on demand and lays the tree out left to right", async ({
+    page,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    let dashboardId = "";
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, ELK)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Category tree with ELK"), sourceId);
+      dashboardId = await owner.createDashboard({
+        ...model,
+        panels: model.panels
+          .filter((p) => p.id === "tree")
+          .map((p) => ({
+            ...p,
+            grid: { x: 0, y: 0, w: 24, h: 12 },
+            options: { hierarchyLayout: "elk", elkDirection: "right" },
+          })),
+      });
+    } finally {
+      await owner.dispose();
+    }
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    // ELK's worker is a script of its own, fetched only by a panel that uses ELK.
+    const elkWorker = page.waitForEvent("worker", {
+      predicate: (worker) => /\/assets\/elk-worker[^/]*\.js$/.test(worker.url()),
+      timeout: STEP_MS,
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const tree = page.getByRole("article", { name: PANELS.tree, exact: true });
+    const drawing = tree.getByRole("application", { name: PANELS.tree, exact: true });
+    const noWebgl = tree.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+    await elkWorker;
+    await expect(tree.getByText(t("graph.layout.elkRunning"), { exact: true })).toBeHidden({
+      timeout: STEP_MS,
+    });
+    await expect(tree.getByText(t("graph.layout.elkFailed"), { exact: true })).toBeHidden();
+    const root = await drawnNode(tree, "All products");
+    const office = await drawnNode(tree, "Office");
+    const seating = await drawnNode(tree, "Seating");
+    expect(root.x).toBeLessThan(office.x);
+    expect(office.x).toBeLessThan(seating.x);
+    expect(await seriousViolations(page)).toEqual([]);
+  });
 });
 
 test("Memgraph: a Cypher query in Explore draws a network", async ({ page }) => {
