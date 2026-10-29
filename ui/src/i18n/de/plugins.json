@@ -76,6 +76,8 @@
   "plugins.layer.ipc_namespace": "Eigener IPC-Namespace",
   "plugins.layer.memory_limit": "Speichergrenze",
   "plugins.layer.network": "Netzwerk-Isolation",
+  "plugins.layer.network_namespace": "Eigener Netzwerk-Namespace",
+  "plugins.layer.app_container": "Eigener App-Container",
   "plugins.layer.restricted_token": "Eingeschränktes Token",
   "plugins.layer.low_integrity": "Niedrige Integritätsstufe",
   "plugins.layer.job_object": "Job-Objekt",

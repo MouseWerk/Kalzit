@@ -12,7 +12,7 @@ categories = ["database", "visualization"]
 # gRPC server; no server types.
 [dependencies]
 futures-util = "0.3.34"
-kalzit-plugin-api = { path = "../plugin-api", version = "0.1.0" }
+kalzit-plugin-api = { path = "../plugin-api", version = "0.1.0", features = ["connector"] }
 serde_json = "1.0.154"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 tonic = { version = "0.14.8", default-features = false, features = ["codegen", "server", "router"] }

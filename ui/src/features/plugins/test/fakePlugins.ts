@@ -100,8 +100,9 @@ export function fakePlugin(fields: PluginFields = {}): WirePlugin {
       startedAt: AT,
       starts: 1,
       failures: 0,
-      sandbox: ["restricted_token", "low_integrity", "job_object"],
-      sandboxMissing: ["network"],
+      sandbox: ["restricted_token", "low_integrity", "job_object", "app_container", "network"],
+      sandboxMissing: [],
+      warnings: [],
     },
     installedAt: AT,
     updatedAt: AT,
@@ -258,7 +259,14 @@ export function handlePluginAdminRoute(
     }
     plugin.enabled = true;
     plugin.running = true;
-    plugin.process = { state: "idle", starts: 0, failures: 0, sandbox: [], sandboxMissing: [] };
+    plugin.process = {
+      state: "idle",
+      starts: 0,
+      failures: 0,
+      sandbox: [],
+      sandboxMissing: [],
+      warnings: [],
+    };
     return json(200, plugin);
   }
   if (action === "disable" && method === "POST") {
@@ -268,7 +276,14 @@ export function handlePluginAdminRoute(
     return json(200, plugin);
   }
   if (action === "restart" && method === "POST") {
-    plugin.process = { state: "idle", starts: 0, failures: 0, sandbox: [], sandboxMissing: [] };
+    plugin.process = {
+      state: "idle",
+      starts: 0,
+      failures: 0,
+      sandbox: [],
+      sandboxMissing: [],
+      warnings: [],
+    };
     return json(200, plugin);
   }
   if (action === "logs" && method === "GET") {

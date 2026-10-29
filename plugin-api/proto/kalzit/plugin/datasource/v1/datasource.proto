@@ -13,7 +13,8 @@
 //   deadline passed), the plugin stops the work in the database too.
 // - Deadlines arrive as the gRPC deadline (`grpc-timeout`) and again as `deadline_unix_ms`, so a
 //   plugin can hand them to its driver.
-// - Network access goes only to the targets the manifest declares, through Kalzit's connector.
+// - Network access goes only to the targets the manifest declares, through Kalzit's connector
+//   (`ConnectRequest` below): the plugin's sandbox has no network of its own.
 //
 // Values without a fixed type in protobuf (frame values, documents, graph properties, settings,
 // variables, queries) travel as UTF-8 JSON text in the forms docs/api/datasources.md describes,
@@ -418,3 +419,63 @@ message ReleaseRequest {
 }
 
 message ReleaseResponse {}
+
+// The network connector (minor 1, feature "network_connector"). A plugin has no network of its
+// own: it asks Kalzit for each connection, and Kalzit hands it a connected TCP stream. Over that
+// stream the plugin speaks its database's protocol, TLS included (it wraps the stream itself).
+//
+// The connector is not a gRPC service, because a socket cannot travel over HTTP/2.
+// Its address is in the plugin's environment, `KALZIT_PLUGIN_CONNECTOR`. Every message is
+// preceded by its length as 4 bytes big-endian and is at most 64 KiB.
+// - Linux: `fd:<n>`, a `SOCK_SEQPACKET` socket the plugin inherits, connected to Kalzit (the
+//   plugin may open no socket itself). One message is one `ConnectRequest` or one
+//   `ConnectResponse`; requests may overlap and are matched by `request_id`. With `connected`,
+//   the same message carries one end of a new stream socket pair (`SCM_RIGHTS`); Kalzit relays
+//   it to the TCP connection, which stays with Kalzit. The connector belongs to the process that
+//   opened it.
+// - Windows: a named pipe Kalzit created; Kalzit serves the plugin's process only, and the plugin
+//   checks that the pipe's server is Kalzit (`KALZIT_PLUGIN_HOST_PID`). One pipe connection asks
+//   for one network connection; after `connected` the pipe itself is the connection: Kalzit
+//   relays its bytes to and from the TCP connection, and closing the pipe closes it.
+//
+// Kalzit refuses (`error`, kind `ERROR_KIND_BLOCKED` with a `target.*` or `plugin.*` reason) a
+// host, port or protocol that is not one of the manifest's targets for the data source's current
+// settings, an address the data source target rules refuse (metadata addresses,
+// `datasources.allowed_targets`, Kalzit's own addresses and database), and connections beyond
+// the plugin's limit. It resolves the name itself and connects to the address it checked. The
+// protocol is a label of the permission: Kalzit checks it against the manifest but does not
+// enforce TLS on the stream.
+message ConnectRequest {
+  // The start's token (`KALZIT_PLUGIN_TOKEN`).
+  string token = 1;
+  // The data source the connection is for, as `Connection.datasource_id` named it; its settings
+  // decide which targets are allowed.
+  string datasource_id = 2;
+  // A host name or address, as the settings or the manifest name it.
+  string host = 3;
+  uint32 port = 4;
+  // What the plugin speaks over the stream; must be the target's protocol.
+  TargetProtocol protocol = 5;
+  // Chosen by the plugin; the answer carries it back (Linux, where requests share one socket).
+  uint64 request_id = 6;
+}
+
+enum TargetProtocol {
+  TARGET_PROTOCOL_UNSPECIFIED = 0;
+  TARGET_PROTOCOL_TCP = 1;
+  TARGET_PROTOCOL_TLS = 2;
+}
+
+message ConnectResponse {
+  oneof result {
+    Connected connected = 1;
+    Error error = 2;
+  }
+  // The request's `request_id`.
+  uint64 request_id = 3;
+}
+
+message Connected {
+  // The address Kalzit connected to, such as "192.0.2.10:5432".
+  string address = 1;
+}

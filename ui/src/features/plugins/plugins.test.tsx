@@ -122,6 +122,7 @@ describe("Plugins, installed", () => {
             lastError: { reason: "plugin.crashed", message: "exit code 0xC0000005", at: now },
             sandbox: [],
             sandboxMissing: [],
+            warnings: [],
           },
         }),
         fakePlugin({
@@ -660,6 +661,37 @@ describe("Plugins, details", () => {
     expect(calls(server, "DELETE", "/api/admin/plugins/nordlicht.snowflake")).toHaveLength(1);
   });
 
+  it("shows the warnings of the plugin's process", async () => {
+    await openPlugins("/settings/plugins/brueckner.hana", (s) => {
+      s.areas.plugins.plugins.push(
+        fakePlugin({
+          id: "brueckner.hana",
+          name: "SAP HANA",
+          process: {
+            state: "running",
+            starts: 1,
+            failures: 0,
+            sandbox: ["restricted_token", "app_container", "network"],
+            sandboxMissing: [],
+            warnings: [
+              {
+                reason: "plugin.secrets_readable",
+                params: { path: "C:\\ProgramData\\Kalzit\\kalzit.toml", accounts: "Users" },
+                message: "C:\\ProgramData\\Kalzit\\kalzit.toml holds secrets and Users may read it",
+              },
+            ],
+          },
+        }),
+      );
+    });
+    expect(
+      await screen.findByText(
+        "C:\\ProgramData\\Kalzit\\kalzit.toml holds secrets and Users may read it. Plugins cannot, but other local accounts can: limit it to SYSTEM, Administrators and the account Kalzit runs as.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Own AppContainer")).toBeTruthy();
+  });
+
   it("says when a crashed plugin starts again and restarts it now", async () => {
     const { user, server } = await openPlugins("/settings/plugins/brueckner.hana", (s) => {
       s.areas.plugins.plugins.push(
@@ -673,6 +705,7 @@ describe("Plugins, details", () => {
             lastError: { reason: "plugin.exited", message: "exit code 126", at: AT },
             sandbox: ["restricted_token"],
             sandboxMissing: [],
+            warnings: [],
           },
         }),
       );

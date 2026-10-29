@@ -109,7 +109,11 @@ impl AppState {
         let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs, Capacity::SMALL);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
-        let plugins = Arc::new(crate::plugins::host::PluginHost::new(&config.paths.data_dir));
+        let plugins = Arc::new(
+            crate::plugins::host::PluginHost::new(&config.paths.data_dir)
+                .with_own_endpoints(crate::plugins::connector::OwnEndpoints::from_config(&config))
+                .with_exposed_secrets(crate::plugins::host::exposed_secrets(&config)),
+        );
         plugins.load(&db, &datasources).await.map_err(|e| anyhow::anyhow!("loading the plugins: {}", e.message))?;
         let touch_limit = crate::auth::session::Touches::limit_for(&db);
         // The touches, plus one for each of the two hourly jobs.
@@ -118,7 +122,7 @@ impl AppState {
         let updates = Arc::new(crate::updates::Updates::new(&config.paths.data_dir, &config.database_url()));
         let read_db = db::read_pool(&db, &config.database_url(), db.options().get_max_connections())
             .unwrap_or_else(|| db.clone());
-        Ok(Self {
+        let state = Self {
             db,
             read_db,
             config: Arc::new(config),
@@ -162,7 +166,11 @@ impl AppState {
             live: Arc::default(),
             ai: Arc::default(),
             plugins,
-        })
+        };
+        // The connector reads data sources and server settings as they are at each connect;
+        // `close` lets go of the state again.
+        state.plugins.attach(state.clone());
+        Ok(state)
     }
 
     /// Stops the background writes and closes every database pool this state opened: the

@@ -108,8 +108,10 @@ impl PluginAccess {
         let base = format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)(A;OICI;FA;;;{user})");
         Ok(match self {
             PluginAccess::None => crate::data_dir::acl::DIR_SDDL.to_string(),
-            PluginAccess::ReadExecute(sid) => format!("{base}(A;OICI;0x1200a9;;;{sid})"),
-            PluginAccess::Modify(sid) => format!("{base}(A;OICI;0x13019f;;;{sid})"),
+            // `AC` (all AppContainers) passes the AppContainer check of the plugin's token; the
+            // plugin's or the start's SID still decides which plugin gets in.
+            PluginAccess::ReadExecute(sid) => format!("{base}(A;OICI;0x1200a9;;;{sid})(A;OICI;0x1200a9;;;AC)"),
+            PluginAccess::Modify(sid) => format!("{base}(A;OICI;0x13019f;;;{sid})(A;OICI;0x13019f;;;AC)"),
         })
     }
 }

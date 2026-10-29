@@ -9,11 +9,19 @@ description = "Example Kalzit data source plugin: a CSV or JSON file from an HTT
 
 [dependencies]
 kalzit-plugin-sdk = { path = "../../../plugin-sdk" }
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+# HTTP/1.1 over the connection Kalzit's network connector opens (the plugin has no network of
+# its own), TLS for https with the operating system's certificate store.
+bytes = "1.12.1"
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-platform-verifier = "0.7.1"
 serde_json = "1.0.154"
-# Parsing runs on a blocking thread (spawn_blocking).
-tokio = { version = "1.54.1", features = ["rt"] }
+# Parsing runs on a blocking thread (spawn_blocking); the HTTP connection on its own task.
+tokio = { version = "1.54.1", features = ["rt", "time", "io-util"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
+url = "2.5.8"
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["rt", "macros"] }

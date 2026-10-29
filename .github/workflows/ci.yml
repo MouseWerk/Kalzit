@@ -138,6 +138,8 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
           EXE: ${{ matrix.exe }}
+          # A base64 public key can start with "/", which Git Bash on Windows would turn into a path.
+          MSYS_NO_PATHCONV: "1"
         run: |
           set -euo pipefail
           tool="target/release/kalzit-plugin$EXE"
