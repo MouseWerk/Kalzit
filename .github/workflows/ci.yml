@@ -630,8 +630,9 @@ jobs:
           if (Test-Path $data) { Copy-Item -Recurse $data (Join-Path $logs 'kalzit') }
           # No event of a source is an error for Get-WinEvent.
           try {
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Kalzit' } -ErrorAction Stop |
-              Format-List TimeCreated, Message | Out-File (Join-Path $logs 'events-kalzit.txt')
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application' } -MaxEvents 500 -ErrorAction Stop |
+              Where-Object { $_.ProviderName -eq 'Kalzit' } |
+              ForEach-Object { "$($_.TimeCreated) $($_.Properties | ForEach-Object { $_.Value })" } | Out-File (Join-Path $logs 'events-kalzit.txt')
           } catch { "no events: $_" | Out-File (Join-Path $logs 'events-kalzit.txt') }
           try {
             Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 50 -ErrorAction Stop |

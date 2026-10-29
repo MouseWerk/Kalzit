@@ -49,7 +49,10 @@ function Invoke-MsiRefused([string[]] $Arguments, [string] $Log, [string] $Why) 
     $texts = @()
     if (Test-Path $path) { $texts += Get-Content $path -Raw }
     try {
-        $texts += Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Kalzit'; StartTime = $start } -ErrorAction Stop |
+        # By log name and time: the source's registration may be rolled back with the installation,
+        # and a filter by provider needs it.
+        $texts += Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $start } -ErrorAction Stop |
+            Where-Object { $_.ProviderName -eq 'Kalzit' } |
             ForEach-Object { $_.Properties | ForEach-Object { "$($_.Value)" } }
     } catch { }
     if (-not ($texts | Where-Object { $_ -match [regex]::Escape($Why) })) {
