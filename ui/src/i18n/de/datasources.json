@@ -984,5 +984,6 @@
   "datasources.reason.sql.identifier_backslash": "Namen in Anführungszeichen dürfen keinen Backslash enthalten.",
   "datasources.reason.sql.hash_comment": "Schreib Kommentare mit --; # ist außerhalb von Zeichenketten nicht erlaubt.",
   "datasources.reason.sql.dollar_in_name": "Ein $ direkt nach einem Namen ist nicht erlaubt; lass vor der Variablen ein Leerzeichen.",
-  "datasources.reason.sql.identifier_characters": "Der Name {name} enthält Zeichen, die Kalzit nicht in einen Namen in Anführungszeichen setzt."
+  "datasources.reason.sql.identifier_characters": "Der Name {name} enthält Zeichen, die Kalzit nicht in einen Namen in Anführungszeichen setzt.",
+  "datasources.reason.sql.dollar_quote": "Ein $ ist nur vor einem Variablennamen oder einem $__-Makro erlaubt; schreib Text in einfache Anführungszeichen."
 }

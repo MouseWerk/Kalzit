@@ -984,5 +984,6 @@
   "datasources.reason.sql.identifier_backslash": "Quoted names may not contain a backslash.",
   "datasources.reason.sql.hash_comment": "Write comments with --; # is not allowed outside strings.",
   "datasources.reason.sql.dollar_in_name": "A $ directly after a name is not allowed; leave a space before the variable.",
-  "datasources.reason.sql.identifier_characters": "The name {name} contains characters Kalzit does not put into a quoted name."
+  "datasources.reason.sql.identifier_characters": "The name {name} contains characters Kalzit does not put into a quoted name.",
+  "datasources.reason.sql.dollar_quote": "A $ is allowed only in front of a variable name or a $__ macro; write text in single quotes."
 }

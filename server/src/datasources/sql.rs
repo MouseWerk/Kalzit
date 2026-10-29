@@ -538,7 +538,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
                 i,
                 matches!(engine, Engine::Postgres | Engine::MsSql | Engine::ClickHouse | Engine::DataFusion),
             )?),
-            b'$' if matches!(engine, Engine::Postgres | Engine::ClickHouse) => dollar_quote_end(sql, i)?,
+            b'$' if engine == Engine::Postgres => dollar_quote_end(sql, i)?,
             // ClickHouse query parameters (`{name:Type}`) written by hand would take values Kalzit
             // never binds; Kalzit writes its own.
             b'{' if engine == Engine::ClickHouse && clickhouse_parameter_at(sql, i) => {
@@ -562,8 +562,15 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             i = end;
             continue;
         }
+        // ClickHouse here-doc strings (`$$...$$`, `$tag$...$tag$`) may be read differently by
+        // ClickHouse and the checker's parser: in ClickHouse a `$` stands only in Kalzit's own
+        // `$name`, `${name}` and `$__macro`, and never right before another `$`.
+        let heredoc = |end: usize| engine == Engine::ClickHouse && bytes.get(end) == Some(&b'$');
         if c == b'$' && sql[i + 1..].starts_with("__") {
             let (piece, end) = scan_macro(sql, i)?;
+            if heredoc(end) {
+                return reject_dollar();
+            }
             pieces.push(Piece::Text(&sql[text_start..i]));
             pieces.push(piece);
             i = end;
@@ -598,6 +605,9 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
                     .with("format", other));
                 }
             };
+            if heredoc(close + 1) {
+                return reject_dollar();
+            }
             pieces.push(Piece::Text(&sql[text_start..i]));
             pieces.push(piece);
             i = close + 1;
@@ -606,11 +616,17 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
         }
         if c == b'$' && sql[i + 1..].chars().next().is_some_and(is_ident_start) {
             let end = sql[i + 1..].find(|ch: char| !is_ident_char(ch)).map_or(sql.len(), |p| i + 1 + p);
+            if heredoc(end) {
+                return reject_dollar();
+            }
             pieces.push(Piece::Text(&sql[text_start..i]));
             pieces.push(Piece::Variable(&sql[i + 1..end]));
             i = end;
             text_start = end;
             continue;
+        }
+        if c == b'$' && engine == Engine::ClickHouse {
+            return reject_dollar();
         }
         // Parameters written by hand would be bound to the wrong values or left unbound.
         let positional = match engine {
@@ -719,6 +735,10 @@ fn skip_clickhouse_name(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
         return reject("sql.identifier_backslash", "quoted names may not contain a backslash");
     }
     Ok(end)
+}
+
+fn reject_dollar<T>() -> Result<T, Rejected> {
+    reject("sql.dollar_quote", "a $ is allowed only in $name, ${name} and $__ macros; write strings in single quotes")
 }
 
 /// `{name:` at `i`: a ClickHouse query parameter.

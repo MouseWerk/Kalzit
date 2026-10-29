@@ -604,6 +604,26 @@ mod tests {
         assert_eq!(reason("SELECT 1 # Kommentar"), "sql.hash_comment");
         assert_eq!(reason("SELECT a$land FROM t"), "sql.dollar_in_name");
         prepare("SELECT a FROM t WHERE land = $land").unwrap();
+        // Here-doc strings, whatever their tag, are refused; Kalzit's own forms still work.
+        for heredoc in [
+            "SELECT $$x$$",
+            "SELECT $$) FROM url('http://x/', CSV) -- $$",
+            "SELECT $tag$x$tag$",
+            "SELECT $land$x$land$",
+            "SELECT ${land}$x$",
+            "SELECT $__interval_ms$x$",
+            "SELECT $ $x$ $",
+            "SELECT $-$x$-$",
+            "SELECT $ä$x$ä$",
+            "SELECT $1",
+            "SELECT 1 + $",
+        ] {
+            assert_eq!(reason(heredoc), "sql.dollar_quote", "{heredoc}");
+        }
+        let p =
+            prepare("SELECT $land, ${land}, $__interval_ms, '$$ in a string' FROM t WHERE $__timeFilter(t)").unwrap();
+        assert!(p.sql.contains("'$$ in a string'"), "{}", p.sql);
+        prepare("SELECT 1 -- a comment with $$ and $tag$").unwrap();
         for statement in
             ["KILL QUERY WHERE 1", "SHOW CREATE USER default", "SHOW GRANTS", "SHOW ACCESS", "SYSTEM RELOAD CONFIG"]
         {

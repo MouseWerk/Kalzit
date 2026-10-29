@@ -648,7 +648,8 @@ become query parameters: `{p1:Int64}` and `param_p1=...` (times as
 seconds, `toIntervalMillisecond`). Refused besides what all SQL kinds refuse: `SETTINGS` and
 `FORMAT` clauses, query parameters written by hand (`{name:Type}`, `sql.placeholder`), `#`
 outside strings (use `--` for comments), backslashes inside quoted names, `$` directly after a
-name, and table functions that read files or reach other servers (`file`, `url`,
+name and here-doc strings (any `$` outside single-quoted strings and comments other than `$name`,
+`${name}` and `$__` macros), and table functions that read files or reach other servers (`file`, `url`,
 `s3`, `remote`, `mysql`, `postgresql`, `jdbc`, `executable`, `input`, ...). Types: `Int8` to
 `UInt32` and floats `number`, 64-bit and larger integers `int64`, `Decimal` `decimal`, `Bool`
 `bool`, `Date` and `Date32` `date`, `DateTime` and `DateTime64` `time` (in the column's zone, else
@@ -1687,6 +1688,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `sql.identifier_backslash` | | ClickHouse: a backslash inside a name in backticks or double quotes, which ClickHouse would read as an escape |
 | `sql.hash_comment` | | ClickHouse: `#` outside strings; write comments with `--` |
 | `sql.dollar_in_name` | | ClickHouse: `$` directly after a name character (`a$b`) |
+| `sql.dollar_quote` | | ClickHouse: a `$` other than in `$name`, `${name}` and `$__` macros, such as here-doc strings (`$$...$$`, `$tag$...$tag$`) |
 | `sql.identifier_characters` | `name` | an identifier variable's value with a NUL, or in ClickHouse with a backtick, double quote or backslash |
 | `sql.check_mismatch` | | ClickHouse: the checked statement and the statement to send do not match |
 | `flux.import_form` | | an import that is not `import "package"` (an alias, say) |
