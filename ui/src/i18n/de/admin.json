@@ -598,7 +598,7 @@
   "admin.updates.fullNotes": "Vollständige Release Notes",
   "admin.updates.discard": "Download entfernen",
   "admin.updates.skip": "Diese Version überspringen",
-  "admin.updates.mode.windowsService": "Unter Windows kann sich Kalzit noch nicht selbst neu starten.",
+  "admin.updates.mode.windowsService": "Kalzit läuft nicht als Windows-Dienst, darum kann es sich nicht selbst neu starten.",
   "admin.updates.mode.notSystemd": "Dieser Server wurde nicht von systemd gestartet, darum kann sich Kalzit nicht selbst neu starten.",
   "admin.updates.mode.binaryNotWritable": "Das Dienstkonto darf das Kalzit-Programm nicht ersetzen.",
   "admin.updates.mode.container": "Kalzit läuft in einem Container: aktualisiere stattdessen das Image.",

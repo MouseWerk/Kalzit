@@ -144,6 +144,8 @@ export interface About {
   platform?: string;
   arch?: string;
   database?: "sqlite" | "postgres";
+  /** Reason codes of configuration a server administrator should change. */
+  configWarnings?: string[];
 }
 
 function isAbout(value: unknown): value is About {
@@ -154,7 +156,12 @@ function isAbout(value: unknown): value is About {
     (value.commit === undefined || typeof value.commit === "string") &&
     (value.platform === undefined || typeof value.platform === "string") &&
     (value.arch === undefined || typeof value.arch === "string") &&
-    (value.database === undefined || value.database === "sqlite" || value.database === "postgres")
+    (value.database === undefined ||
+      value.database === "sqlite" ||
+      value.database === "postgres") &&
+    (value.configWarnings === undefined ||
+      (Array.isArray(value.configWarnings) &&
+        value.configWarnings.every((code) => typeof code === "string")))
   );
 }
 

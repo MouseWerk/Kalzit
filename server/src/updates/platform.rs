@@ -6,9 +6,10 @@
 //! - Linux under systemd, with the binary's folder writable by the service account. The server
 //!   stops gracefully and replaces itself with the new binary (`exec`), so the process id stays
 //!   and systemd keeps supervising it; no privileges are needed for a restart.
-//! - Windows only once Kalzit has its own service integration (with the service installer, see
-//!   docs/PLAN.md, M5). Until then, Windows downloads and verifies, and an administrator runs
-//!   `kalzit update apply` with the server stopped.
+//! - Windows when Kalzit runs as its own Windows service (the MSI installer or `kalzit service
+//!   install`, `crate::service`) and the service account may replace the binary. The server
+//!   stops gracefully and ends the service with a restart request; the service manager starts
+//!   the service again, which runs the new binary at the same path.
 //!
 //! Everywhere else (a console, a container, a binary owned by root) Kalzit prepares the update
 //! and the status names the command to run.
@@ -21,6 +22,7 @@
 
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::UpdateError;
@@ -51,6 +53,25 @@ impl Platform {
     }
 }
 
+/// Set once when this process runs as the Windows service.
+static WINDOWS_SERVICE: AtomicBool = AtomicBool::new(false);
+/// Set when the service should be started again once it has stopped (a handover or a return).
+static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// This process runs as the Windows service (`kalzit service run`).
+pub fn mark_windows_service() {
+    WINDOWS_SERVICE.store(true, Ordering::SeqCst);
+}
+
+pub fn is_windows_service() -> bool {
+    WINDOWS_SERVICE.load(Ordering::SeqCst)
+}
+
+/// Whether `relaunch` asked for the service to be started again.
+pub fn restart_requested() -> bool {
+    RESTART_REQUESTED.load(Ordering::SeqCst)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     /// Installs, restarts and checks itself.
@@ -62,7 +83,7 @@ pub enum Mode {
 /// Whether the server running `exe` may install on its own.
 pub fn detect_mode(exe: &Path) -> Mode {
     if cfg!(windows) {
-        return Mode::Manual("updates.mode_windows_service");
+        return windows_mode(is_windows_service(), || binary_writable(exe));
     }
     if !cfg!(target_os = "linux") {
         return Mode::Manual("updates.mode_unsupported_platform");
@@ -83,6 +104,18 @@ pub fn detect_mode(exe: &Path) -> Mode {
         return Mode::Manual("updates.mode_binary_not_writable");
     }
     Mode::Automatic
+}
+
+/// Windows: automatic only as the Windows service, and only when the service account may replace
+/// the binary (the installer's `SELFUPDATE`, off by default).
+fn windows_mode(service: bool, writable: impl FnOnce() -> bool) -> Mode {
+    if !service {
+        Mode::Manual("updates.mode_windows_service")
+    } else if !writable() {
+        Mode::Manual("updates.mode_binary_not_writable")
+    } else {
+        Mode::Automatic
+    }
 }
 
 /// The package `/usr/bin/kalzit` came from, as its marker file says (deploy/linux/nfpm.yaml).
@@ -218,8 +251,15 @@ pub async fn smoke_test(binary: &Path, version: &str) -> Result<(), UpdateError>
 
 /// Starts `exe` with this process's arguments in its place. On Unix the process image is
 /// replaced, so the process id (and a supervisor's view of it) stays; on Windows the new binary
-/// runs as a child whose exit code this process returns.
+/// runs as a child whose exit code this process returns. The Windows service starts nothing
+/// itself: `exe` is the service's own binary path (a swap or a return put the right binary
+/// there), so it asks for a restart, which the service manager does once the service stopped.
 pub fn relaunch(exe: &Path) -> ExitCode {
+    if is_windows_service() {
+        tracing::info!("the service stops and asks the service manager to start {} again", exe.display());
+        RESTART_REQUESTED.store(true, Ordering::SeqCst);
+        return ExitCode::FAILURE;
+    }
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     tracing::info!("starting {}", exe.display());
     #[cfg(unix)]
@@ -281,6 +321,13 @@ mod tests {
         }
         assert!(binary_writable(&exe));
         assert!(!binary_writable(&dir.path().join("missing").join("kalzit")));
+    }
+
+    #[test]
+    fn windows_installs_on_its_own_only_as_a_writable_service() {
+        assert_eq!(windows_mode(false, || true), Mode::Manual("updates.mode_windows_service"));
+        assert_eq!(windows_mode(true, || false), Mode::Manual("updates.mode_binary_not_writable"));
+        assert_eq!(windows_mode(true, || true), Mode::Automatic);
     }
 
     #[test]

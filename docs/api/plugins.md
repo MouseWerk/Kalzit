@@ -831,6 +831,7 @@ Rules:
 | `plugin.handover_invalid` | | the hand-over does not verify (`422`) |
 | `plugin.start_failed` | `detail` | the process could not be started (`datasource_error`) |
 | `plugin.root_refused` | | Kalzit runs as root on Linux; plugins do not start (`datasource_error`) |
+| `plugin.binary_changed` | `path` | the plugin's program no longer matches the SHA-256 of its signed package; it does not start until installed again (`datasource_error`) |
 | `plugin.network_missing` | | Linux: neither the seccomp network filter nor a network namespace took, and plugins without Landlock are not allowed (`datasource_error`) |
 | `plugin.without_network_limit` | | Linux: the plugin's network is not limited, allowed with `allowWithoutLandlock` (`process.warnings`) |
 | `plugin.secrets_exposed` | `path` | a file of Kalzit's with secrets is readable by plugins (Windows); plugins do not start (`datasource_error`) |
