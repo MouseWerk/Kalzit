@@ -271,7 +271,11 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     crate::routes::datasources::spawn_trash_purge(state.clone());
     crate::ai::chats::spawn_retention(state.clone());
     match listen(&config, &state).await {
-        Ok(running) => Ok(running),
+        Ok(running) => {
+            // Orders and renews certificates once the listeners can answer the challenges.
+            crate::acme::spawn(state.clone());
+            Ok(running)
+        }
         Err(e) => {
             state.close().await;
             Err(e)
@@ -292,8 +296,19 @@ async fn listen(config: &Config, state: &AppState) -> Result<Running> {
     };
 
     if let Some(addr) = config.https_addr() {
-        let rustls = RustlsConfig::from_config(tls::server_config(&config.tls)?);
-        tls::spawn_reload(rustls.clone(), config.tls.clone());
+        let rustls = if config.tls.cert_file.is_some() {
+            let rustls = RustlsConfig::from_config(tls::server_config(&config.tls)?);
+            tls::spawn_reload(rustls.clone(), config.tls.clone());
+            rustls
+        } else {
+            if !state.acme.certificates.has_certificate() {
+                tracing::warn!(
+                    "HTTPS has no certificate yet and serves a temporary self-signed one; set up ACME in \
+                     Settings, Network, or configure tls.cert_file and tls.key_file"
+                );
+            }
+            RustlsConfig::from_config(tls::acme_server_config(&config.tls, state.acme.certificates.clone())?)
+        };
         let service =
             app.clone().layer(Extension(ListenerTls(true))).into_make_service_with_connect_info::<SocketAddr>();
         let handle = Handle::new();
@@ -335,7 +350,8 @@ async fn listening(running: &mut Running, handle: &Handle<SocketAddr>) -> Result
     }
 }
 
-/// Plain HTTP when HTTPS is on: health endpoints answer, everything else moves to HTTPS. A
+/// Plain HTTP when HTTPS is on: health endpoints and ACME validations answer, everything else
+/// moves to HTTPS. A
 /// request that a trusted proxy already received over HTTPS is served normally, otherwise a TLS
 /// proxy in front of the HTTP port would loop forever.
 #[expect(clippy::disallowed_methods, reason = "the HTTP redirect listener has only the health endpoints")]
@@ -344,6 +360,8 @@ fn redirect_router(app: Router, https_port: u16, state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
+        // HTTP-01 validations are answered here, not redirected.
+        .route(crate::acme::CHALLENGE_ROUTE, get(crate::acme::http_challenge))
         .fallback(move |Extension(info): Extension<RequestInfo>, req: Request| {
             let app = app.clone();
             let public = public.clone();

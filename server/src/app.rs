@@ -87,6 +87,9 @@ pub struct AppState {
     pub ai: Arc<crate::ai::service::AiRuntime>,
     /// Installed plugins and their processes (`plugins::host`).
     pub plugins: Arc<crate::plugins::host::PluginHost>,
+    /// Automatic HTTPS certificates (`acme`): their settings, the served certificate and the
+    /// challenge answers.
+    pub acme: Arc<crate::acme::Acme>,
 }
 
 impl AppState {
@@ -108,6 +111,7 @@ impl AppState {
         let setup_limiter = login(Capacity::SMALL);
         let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs, Capacity::SMALL);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
+        let acme = Arc::new(crate::acme::Acme::load(&config, &secrets, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
         let plugins = Arc::new(
             crate::plugins::host::PluginHost::new(&config.paths.data_dir)
@@ -166,6 +170,7 @@ impl AppState {
             live: Arc::default(),
             ai: Arc::default(),
             plugins,
+            acme,
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.
@@ -210,6 +215,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
+        .route(crate::acme::CHALLENGE_ROUTE, get(crate::acme::http_challenge))
         .nest("/api", api)
         .fallback(web::static_files)
         // Each request gets its own "committed" flag, so errors after a commit are not "busy".

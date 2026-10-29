@@ -38,6 +38,77 @@ pub fn app_container(_installation: &std::path::Path, _id: &str) -> std::io::Res
 #[cfg(not(windows))]
 pub fn remove_app_container(_installation: &std::path::Path, _id: &str) {}
 
+/// What `kalzit sandbox-check` found: the layers a plugin started now would run with.
+#[derive(Debug)]
+pub struct CheckReport {
+    pub layers: Vec<&'static str>,
+    pub missing: Vec<&'static str>,
+    /// How the started program ended, and what it printed.
+    pub exit: String,
+    pub output: String,
+}
+
+impl std::fmt::Display for CheckReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "sandbox layers in force: {}", self.layers.join(" "))?;
+        writeln!(
+            f,
+            "sandbox layers missing: {}",
+            if self.missing.is_empty() { "none".into() } else { self.missing.join(" ") }
+        )?;
+        write!(f, "test program: {} ({})", self.output.trim(), self.exit)
+    }
+}
+
+/// Starts this binary (`--version`) the way a plugin is started (Linux), so an operator sees
+/// which layers this system and the service's own restrictions (systemd hardening, a container)
+/// leave in force. Plugins run with what this reports.
+#[cfg(target_os = "linux")]
+pub async fn check() -> anyhow::Result<CheckReport> {
+    use anyhow::Context;
+    use tokio::io::AsyncReadExt;
+    if runs_as_root() {
+        anyhow::bail!(
+            "Kalzit runs as root, so plugins are refused; run it as a service account (the packages use `kalzit`)"
+        );
+    }
+    let exe = std::env::current_exe().context("finding this program")?;
+    let package_dir = exe.parent().context("the program's folder")?.to_path_buf();
+    let run = tempfile::Builder::new().prefix("kalzit-sandbox-check-").tempdir().context("a run directory")?;
+    let tmp_dir = run.path().join("tmp");
+    std::fs::create_dir(&tmp_dir)?;
+    let spec = super::process::Spec {
+        program: exe,
+        args: vec!["--version".into()],
+        package_dir,
+        run_dir: run.path().to_path_buf(),
+        tmp_dir,
+        env: Vec::new(),
+        limits: super::process::Limits::default(),
+        plugin_sid: String::new(),
+        start_sid: String::new(),
+        app_container_sid: String::new(),
+        require_landlock: false,
+        inherit: Vec::new(),
+    };
+    let mut child = spawn(&spec).context("starting the test program in the sandbox")?;
+    let mut output = String::new();
+    child.stdout.read_to_string(&mut output).await.context("reading the test program's output")?;
+    let exit = child
+        .exited
+        .wait_for(Option::is_some)
+        .await
+        .map(|e| e.clone().unwrap_or_default())
+        .unwrap_or_else(|_| "unknown".into());
+    Ok(CheckReport { layers: child.layers, missing: child.missing, exit, output })
+}
+
+/// The check starts a program in the Linux sandbox; elsewhere there is nothing to check here.
+#[cfg(not(target_os = "linux"))]
+pub async fn check() -> anyhow::Result<CheckReport> {
+    anyhow::bail!("the sandbox check runs on Linux; on Windows the plugin page shows the layers of each plugin")
+}
+
 /// Whether Kalzit runs as root (Linux): plugins are refused then, as a sandboxed process of root
 /// would still be root.
 pub fn runs_as_root() -> bool {

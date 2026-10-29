@@ -40,6 +40,9 @@ enum Command {
         #[command(subcommand)]
         action: UpdateCommand,
     },
+    /// Start a test program in the plugin sandbox and list the protections in force (Linux).
+    /// Run it as the service account, or inside the service, to see what plugins get there.
+    SandboxCheck,
 }
 
 #[derive(Subcommand)]
@@ -164,6 +167,19 @@ fn main() -> ExitCode {
             match result {
                 Ok(text) => {
                     println!("{}", text.trim_end());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("kalzit: {e:#}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Command::SandboxCheck => {
+            let Some(runtime) = runtime() else { return ExitCode::FAILURE };
+            match runtime.block_on(kalzit::plugins::sandbox::check()) {
+                Ok(report) => {
+                    println!("{report}");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {

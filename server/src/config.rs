@@ -82,7 +82,8 @@ pub enum Source {
 pub struct ServerConfig {
     /// Plain HTTP listener. Empty string disables it.
     pub http_addr: String,
-    /// HTTPS listener; needs `tls.cert_file` and `tls.key_file`. Empty string disables it.
+    /// HTTPS listener with `tls.cert_file` and `tls.key_file`, or without them the certificate
+    /// ACME orders (`acme`). Empty string disables it.
     pub https_addr: String,
     /// The URL users open, e.g. `https://kalzit.example.com`. Used for the origin check and links.
     pub public_url: Option<String>,
@@ -423,8 +424,10 @@ impl Config {
                     .with_context(|| format!("server.{key} \"{addr}\" is not an address like 0.0.0.0:3000"))?;
             }
         }
-        if !self.server.https_addr.is_empty() && (self.tls.cert_file.is_none() || self.tls.key_file.is_none()) {
-            bail!("server.https_addr is set, so tls.cert_file and tls.key_file are required");
+        // Without certificate files, HTTPS serves the certificate ACME orders (Settings, Network),
+        // and a temporary self-signed one until then.
+        if self.tls.cert_file.is_some() != self.tls.key_file.is_some() {
+            bail!("tls.cert_file and tls.key_file are set together, or neither (then ACME provides the certificate)");
         }
         if !matches!(self.tls.min_version.as_str(), "1.2" | "1.3") {
             bail!("tls.min_version must be \"1.2\" or \"1.3\"");
@@ -815,9 +818,15 @@ mod tests {
     }
 
     #[test]
-    fn https_needs_certificate() {
-        let err = Config::from_sources("[server]\nhttps_addr = \"0.0.0.0:3443\"\n", env(&[])).unwrap_err();
+    fn https_takes_both_certificate_files_or_none() {
+        let half = "[server]\nhttps_addr = \"0.0.0.0:3443\"\n[tls]\ncert_file = \"cert.pem\"\n";
+        let err = Config::from_sources(half, env(&[])).unwrap_err();
+        assert!(format!("{err:#}").contains("tls.key_file"), "{err:#}");
+        let err = Config::from_sources("[tls]\nkey_file = \"key.pem\"\n", env(&[])).unwrap_err();
         assert!(format!("{err:#}").contains("tls.cert_file"), "{err:#}");
+        // Without files, ACME provides the certificate.
+        let c = Config::from_sources("[server]\nhttps_addr = \"0.0.0.0:3443\"\n", env(&[])).unwrap();
+        assert!(c.https_addr().is_some() && c.tls.cert_file.is_none());
     }
 
     #[test]

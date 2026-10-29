@@ -160,6 +160,34 @@ async fn minimum_tls_version_is_enforced() {
 }
 
 #[tokio::test]
+async fn https_without_certificate_files_serves_a_temporary_one_and_answers_acme() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start(dir.path(), |c| {
+        c.tls.cert_file = None;
+        c.tls.key_file = None;
+    })
+    .await;
+    let https = server.https_addr.unwrap();
+    let url = format!("https://localhost:{}/healthz", https.port());
+    // Not trusted by anyone, but HTTPS works until ACME has a certificate.
+    let default_roots = Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
+    assert!(default_roots.get(&url).send().await.is_err());
+    let any = Client::builder().danger_accept_invalid_certs(true).timeout(Duration::from_secs(10)).build().unwrap();
+    assert_eq!(any.get(&url).send().await.unwrap().status(), StatusCode::OK);
+    // HTTP-01 validations reach the HTTP listener instead of being redirected.
+    let client = Client::builder().redirect(redirect::Policy::none()).build().unwrap();
+    let http = server.http_addr.unwrap();
+    let res =
+        client.get(format!("http://127.0.0.1:{}/.well-known/acme-challenge/x", http.port())).send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res = client.get(format!("http://127.0.0.1:{}/explore", http.port())).send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::PERMANENT_REDIRECT);
+    server.shutdown();
+    server.wait().await.unwrap();
+    common::remove_dir(dir);
+}
+
+#[tokio::test]
 async fn busy_port_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
