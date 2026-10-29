@@ -62,7 +62,12 @@ A refused package names the step that failed and why, and the steps after it are
   **Check key and trust...** opens the key dialog and compares the key you paste with the one that
   signed the package.
 - **No matching platform**, **Needs a newer Kalzit**, **Files do not match the manifest**, and the
-  refusals of updates (another plugin, an older version, another key).
+  refusals of updates (another plugin, an older version, another key, or another kind: a panel
+  plugin never becomes a data source plugin or the other way round; remove it and install the
+  package as a new one).
+- A signed update of a plugin that was installed unsigned is a change of publisher: the dialog
+  says the installed plugin is unsigned, names its version and the data sources whose passwords
+  are cleared, and installs only after you type the server's name.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../screenshots/gallery/plugin-install-light.webp"><img src="../screenshots/gallery/plugin-install-dark.webp" alt="Install from file: the checks of a signed package passed and the network targets to grant"></picture>
 
@@ -112,7 +117,8 @@ refused either way; unsigned plugins installed meanwhile keep running when it is
 
 On Linux, **Run plugins without Landlock** lets plugins start on a server whose kernel offers no
 Landlock. Without Landlock nothing keeps a plugin from reading Kalzit's files; the switch also
-asks for the server's name.
+asks for the server's name. Without the switch, a plugin whose network cannot be limited (no
+seccomp filter and no network namespace) does not start at all.
 
 ## Catalog
 
@@ -152,9 +158,13 @@ publishers** (Nur vertraute Herausgeber). **Details** shows the key id, the pack
 and SHA-256. **Install** (Installieren) or **Update to …** (Auf … aktualisieren, offered when the
 list has a newer version than the installed one) downloads the package and opens the same check
 as **Install from file**: the package must be exactly the one the list names (size, SHA-256, id,
-version and key), signed by a trusted key (never unsigned, whatever the switch for unsigned
-plugins says), and then every check of a file follows, with the permissions to grant before
-anything runs. A publisher whose key you do not trust has **Check key…** (Schlüssel prüfen…),
+version, kind, key and network targets), signed by a trusted key (never unsigned, whatever the
+switch for unsigned plugins says), and then every check of a file follows, with the permissions to
+grant before anything runs. Until a version is installed here, its kind and network targets are
+what the list says and marked **from the catalog** (laut Katalog); once its package is here, they
+are the package's own. For a plugin installed unsigned, a signed version in the list is not
+offered as an update: **Review signed …** (Signierte … prüfen) leads to the confirmation of a
+change of publisher. A publisher whose key you do not trust has **Check key…** (Schlüssel prüfen…),
 which opens **Signature and trust** to compare and add the key. Data source plugins and panel
 plugins install from the catalog alike; a panel is then a visualization in the panel editor as
 after an install from a file.
@@ -198,7 +208,9 @@ frame without network, cannot read your session, cookies or other panels, and ca
 Kalzit. (One gap is left to the browser: a browser that does not know the policy that blocks
 WebRTC would let a panel open WebRTC connections; install panel plugins only from publishers you
 trust.) It may ask for more height, change its options while you edit the panel, and ask to open a
-link: Kalzit then shows the address and opens it only when you choose **Open**. A panel that does
+link: Kalzit then shows where it goes (**Goes to**, the site in bold), the full address and the
+link's title as **Text from the plugin**, and opens it only when you choose **Open**. Addresses
+with hidden or direction-changing characters are refused. A panel that does
 not start within 10 seconds, or tries to leave its frame, shows an error with **Try again**. When
 its plugin is turned off, removed or blocked for your organization, the panel says so instead.
 

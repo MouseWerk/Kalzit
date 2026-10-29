@@ -378,8 +378,35 @@ function LinkDialog({
           ? t("panelPlugins.link.inside", { plugin })
           : t("panelPlugins.link.outside", { plugin })}
       </p>
-      {link.title === undefined ? null : <p className="plugin-link__title">{link.title}</p>}
-      <p className="plugin-link__url">{link.url}</p>
+      <dl className="plugin-link">
+        <dt>{t("panelPlugins.link.origin")}</dt>
+        <dd>
+          <strong className="plugin-link__origin">{linkOrigin(link.url)}</strong>
+        </dd>
+        <dt>{t("panelPlugins.link.address")}</dt>
+        <dd className="plugin-link__url">{link.url}</dd>
+        {link.title === undefined ? null : (
+          <>
+            <dt>{t("panelPlugins.link.titleFromPlugin")}</dt>
+            <dd className="plugin-link__title">{link.title}</dd>
+          </>
+        )}
+      </dl>
     </Dialog>
   );
+}
+
+/**
+ * The origin a link leads to, as the browser parses it (scheme, host in its ASCII form, port):
+ * shown on its own so a long or crafted address cannot hide where it goes. A path stays in Kalzit.
+ */
+export function linkOrigin(url: string): string {
+  if (url.startsWith("/")) {
+    return window.location.origin;
+  }
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }

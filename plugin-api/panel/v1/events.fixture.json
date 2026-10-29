@@ -54,7 +54,12 @@
     { "name": "link with an encoded backslash", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "/%5Cevil.example" }, "code": "panel.field_invalid" },
     { "name": "link with dots in a query", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "/d/abc?next=../x" }, "code": null },
     { "name": "link to a page that starts like the API", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "/apis/x" }, "code": null },
-    { "name": "link, relative", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "dashboards/abc" }, "code": "panel.field_invalid" },
+    { "name": "link with a right-to-left override", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "https://example.com‮moc.lapyap" }, "code": "panel.field_invalid" },
+    { "name": "link with a zero-width space in the host", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "https://exa​mple.com/" }, "code": "panel.field_invalid" },
+    { "name": "link with a bidirectional isolate in a path", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "/d/abc⁦x" }, "code": "panel.field_invalid" },
+    { "name": "link with a byte order mark", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "https://﻿example.com" }, "code": "panel.field_invalid" },
+    { "name": "link with a soft hyphen", "event": { "kalzit": "panel", "api": 1, "type": "link", "url": "https://exam­ple.com" }, "code": "panel.field_invalid" },
+    { "name": "link, relative","event": { "kalzit": "panel", "api": 1, "type": "link", "url": "dashboards/abc" }, "code": "panel.field_invalid" },
     { "name": "log of an unknown level", "event": { "kalzit": "panel", "api": 1, "type": "log", "level": "fatal", "text": "x" }, "code": "panel.field_invalid" },
     { "name": "log without text", "event": { "kalzit": "panel", "api": 1, "type": "log", "level": "info", "text": "" }, "code": "panel.field_invalid" },
     { "name": "log with a line break", "event": { "kalzit": "panel", "api": 1, "type": "log", "level": "info", "text": "a\nb" }, "code": "panel.field_invalid" }

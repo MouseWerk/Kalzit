@@ -71,6 +71,8 @@ export interface Plugin {
   running: boolean;
   /** `landlock_missing` or `landlock_missing_allowed` on a Linux host without Landlock. */
   sandboxWarning?: string;
+  /** Why it cannot run until removed and installed anew (`plugin.kind_changed`). */
+  problem?: string;
   permissions: PermissionLine[];
   pending?: PendingUpdate;
   process?: ProcessStatus;
@@ -254,7 +256,14 @@ export function parsePlugin(value: unknown): Plugin {
     installedAt: typeof raw.installedAt === "number" ? raw.installedAt : 0,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : 0,
   };
-  for (const name of ["description", "publisher", "license", "keyId", "sandboxWarning"] as const) {
+  for (const name of [
+    "description",
+    "publisher",
+    "license",
+    "keyId",
+    "sandboxWarning",
+    "problem",
+  ] as const) {
     const field = text(raw[name]);
     if (field !== undefined) plugin[name] = field;
   }
