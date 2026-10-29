@@ -123,6 +123,9 @@ pub enum Refusal {
     ReservedId,
     /// The update is for another plugin.
     OtherPlugin,
+    /// The update is of another kind (a panel for a data source or the other way round): it
+    /// would run in another place with other rights, so it is removed and installed anew.
+    KindChanged,
     /// The update's version is older than the installed one.
     Downgrade,
     /// The update is not signed by the installed version's key, and no hand-over allows its key.
@@ -134,6 +137,7 @@ impl Refusal {
         match self {
             Refusal::ReservedId => "plugin.id_reserved",
             Refusal::OtherPlugin => "plugin.update_other_id",
+            Refusal::KindChanged => "plugin.kind_changed",
             Refusal::Downgrade => "plugin.downgrade",
             Refusal::KeyChanged => "plugin.key_changed",
         }
@@ -158,11 +162,15 @@ pub struct Installed<'a> {
 }
 
 /// Whether `update`, signed by `key` (already verified), may replace `installed`. Both
-/// manifests are valid. An unsigned install may become signed; a signed one stays bound to its
+/// manifests are valid. The kind never changes. An unsigned install may become signed (the host
+/// treats that as a change of publisher, see `becomes_signed`); a signed one stays bound to its
 /// key or the keys it was handed over to.
 pub fn check_update(installed: &Installed, update: &Manifest, key: Option<&VerifyingKey>) -> Result<(), Refusal> {
     if update.id != installed.manifest.id {
         return Err(Refusal::OtherPlugin);
+    }
+    if update.kind != installed.manifest.kind {
+        return Err(Refusal::KindChanged);
     }
     let parse = |v: &str| semver::Version::parse(v).ok();
     match (parse(&installed.manifest.version), parse(&update.version)) {
@@ -188,6 +196,13 @@ pub fn check_update(installed: &Installed, update: &Manifest, key: Option<&Verif
         }
     }
     if reachable.contains(&key_hex(new)) { Ok(()) } else { Err(Refusal::KeyChanged) }
+}
+
+/// Whether an update signed by `key` replaces an unsigned install. `check_update` lets it pass,
+/// but nothing ties the new key to whoever made the unsigned plugin: the host handles it like a
+/// change of publisher, with the administrator's confirmation.
+pub fn becomes_signed(installed: &Installed, key: Option<&VerifyingKey>) -> bool {
+    installed.key.is_none() && key.is_some()
 }
 
 #[cfg(test)]
@@ -324,9 +339,25 @@ linux-x64 = "bin/redis-plugin"
         let other = Installed { handovers: &elsewhere, ..rotated };
         assert_eq!(check_update(&other, &next, Some(&new.verifying_key())), Err(Refusal::KeyChanged));
 
-        // An unsigned install may become signed.
+        // An unsigned install may become signed, which the host confirms as a publisher change.
         let unsigned = Installed { manifest: &installed_manifest, key: None, handovers: &[] };
         assert_eq!(check_update(&unsigned, &next, Some(&stranger.verifying_key())), Ok(()));
+        assert!(becomes_signed(&unsigned, Some(&stranger.verifying_key())));
+        assert!(!becomes_signed(&unsigned, None));
+        assert!(!becomes_signed(&installed, Some(&old.verifying_key())));
+    }
+
+    /// The kind of a plugin never changes in an update, whoever signs it.
+    #[test]
+    fn updates_keep_the_kind() {
+        let k = key(1);
+        let installed_manifest = manifest("1.2.0", "dev.example.redis");
+        let installed = Installed { manifest: &installed_manifest, key: Some(&k.verifying_key()), handovers: &[] };
+        let panel = Manifest { kind: "panel".into(), ..manifest("1.3.0", "dev.example.redis") };
+        assert_eq!(check_update(&installed, &panel, Some(&k.verifying_key())), Err(Refusal::KindChanged));
+        assert_eq!(Refusal::KindChanged.code(), "plugin.kind_changed");
+        let unsigned = Installed { key: None, ..installed };
+        assert_eq!(check_update(&unsigned, &panel, None), Err(Refusal::KindChanged));
     }
 
     /// A verified hand-over from `from` to `to`.

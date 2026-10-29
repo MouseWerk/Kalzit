@@ -263,9 +263,10 @@ pub fn parse_event(message: &str) -> Result<Event, Refused> {
 /// a user name (`https://kalzit.dev@elsewhere` would read as Kalzit), or a path in Kalzit
 /// (`/dashboards/...`, not `//host` or `/\host`, which browsers read as another host, and not
 /// Kalzit's API under `/api`). Never `javascript:`, `data:` or any other scheme. Without white
-/// space or control characters.
+/// space, control characters or format characters (Unicode `Cf`: bidirectional overrides,
+/// zero-width characters), which could make the address shown read as another one.
 pub fn link_allowed(url: &str) -> bool {
-    if url.is_empty() || url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\\') {
+    if url.is_empty() || url.chars().any(|c| c.is_whitespace() || c.is_control() || is_format(c) || c == '\\') {
         return false;
     }
     if let Some(path) = url.strip_prefix('/') {
@@ -287,6 +288,35 @@ pub fn link_allowed(url: &str) -> bool {
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     !authority.is_empty() && !authority.contains('@') && !authority.starts_with(':')
+}
+
+/// Whether `c` is a format character (Unicode general category `Cf`, Unicode 16), as
+/// `/\p{Cf}/u` matches it in the browser.
+pub fn is_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0001}'
+            | '\u{E0020}'..='\u{E007F}'
+    )
 }
 
 fn option_refused(name: &str, message: impl std::fmt::Display) -> Refused {
@@ -451,9 +481,19 @@ mod tests {
             "ftp://example.com",
             "https://example.com/\u{0}",
             "",
+            // Format characters anywhere: a right-to-left override, zero-width space and joiner,
+            // an isolate, a byte order mark, a soft hyphen, a tag character.
+            "https://example.com\u{202E}moc.lapyap",
+            "https://exa\u{200B}mple.com/",
+            "https://example.com/a\u{200D}b",
+            "/d/abc\u{2066}x",
+            "https://\u{FEFF}example.com",
+            "https://exam\u{AD}ple.com",
+            "https://example.com/\u{E0041}",
         ] {
-            assert!(!link_allowed(bad), "{bad}");
+            assert!(!link_allowed(bad), "{bad:?}");
         }
+        assert!(is_format('\u{200B}') && is_format('\u{061C}') && !is_format('a') && !is_format('\u{00E4}'));
     }
 
     #[test]

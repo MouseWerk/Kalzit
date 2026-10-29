@@ -53,11 +53,14 @@ fn key_from_hex(text: &str) -> Option<VerifyingKey> {
 }
 
 /// A reinstall whose key differs from the one that signed the removed plugin of the same id
-/// (or whose former key is unknown), confirmed by the administrator where it matters.
+/// (or whose former key is unknown), or a signed update of an unsigned installed plugin,
+/// confirmed by the administrator where it matters.
 struct Takeover {
     /// The key that signed the removed plugin, if it was signed and is known.
     from_key: Option<String>,
     removed_version: Option<String>,
+    /// The unsigned installed version a signed update replaces.
+    installed_version: Option<String>,
     /// The data sources of the kind, whose stored secrets are cleared.
     datasources: Vec<String>,
 }
@@ -619,6 +622,8 @@ impl PluginHost {
                 } else {
                     old_dirs.push(old.dir.clone());
                     row.name = m.name.clone();
+                    // Always the applied manifest's (an update of another kind is refused).
+                    row.kind = m.kind.clone();
                     row.version = m.version.clone();
                     row.manifest = unpacked.manifest_text.clone();
                     row.signer = signer;
@@ -642,6 +647,7 @@ impl PluginHost {
                 "fromKeyId": t.from_key.as_deref().and_then(key_from_hex).map(|k| signing::key_id(&k)),
                 "toKeyId": verified.key.as_ref().map(signing::key_id),
                 "removedVersion": t.removed_version,
+                "installedVersion": t.installed_version,
                 "version": m.version,
                 "datasources": t.datasources,
                 "secretsCleared": secrets,
@@ -719,6 +725,9 @@ impl PluginHost {
             let handovers = self.handovers(state, &old.id).await?;
             let installed = Installed { manifest: &old_manifest, key: old_key.as_ref(), handovers: &handovers };
             signing::check_update(&installed, m, verified.key.as_ref()).map_err(|r| package::refusal(&r).api())?;
+            if signing::becomes_signed(&installed, verified.key.as_ref()) {
+                takeover = Some(self.check_signed_now(state, old, m, confirm_publisher_change).await?);
+            }
         } else if datasources_has_kind(&state.datasources, &m.id) {
             return Err(HostError::new("plugin.kind_taken", format!("the data source kind {} is taken", m.id)).api());
         } else {
@@ -815,7 +824,48 @@ impl PluginHost {
             }
             return Err(e.api());
         }
-        Ok(Some(Takeover { from_key, removed_version: tombstone.map(|t| t.version), datasources }))
+        Ok(Some(Takeover {
+            from_key,
+            removed_version: tombstone.map(|t| t.version),
+            installed_version: None,
+            datasources,
+        }))
+    }
+
+    /// A signed update of an unsigned installed plugin: nothing ties its key to whoever made the
+    /// unsigned one, so it is a change of publisher like a reinstall with another key. It always
+    /// needs the administrator's confirmation (the plugin is live, with or without data sources)
+    /// and then clears the stored secrets of the kind's data sources.
+    async fn check_signed_now(
+        &self,
+        state: &AppState,
+        old: &PluginRow,
+        m: &Manifest,
+        confirm: bool,
+    ) -> ApiResult<Takeover> {
+        let datasources = store::datasources_of_kind(&state.db, &m.id).await?;
+        if !confirm {
+            return Err(HostError::new(
+                "plugin.publisher_changed",
+                format!(
+                    "the installed plugin {} is unsigned and this update is signed; nothing ties the key to whoever \
+                     made the installed one, and updating clears the stored secrets of its {} data sources \
+                     (repeat with confirmPublisherChange=true)",
+                    m.id,
+                    datasources.len()
+                ),
+            )
+            .with("datasources", datasources.len())
+            .with("installedVersion", &old.version)
+            .with("unsigned", true)
+            .api());
+        }
+        Ok(Takeover {
+            from_key: None,
+            removed_version: None,
+            installed_version: Some(old.version.clone()),
+            datasources,
+        })
     }
 
     /// The verified hand-overs kept for `id`.
@@ -858,7 +908,12 @@ impl PluginHost {
             Some(p) if p.version == version => {
                 old_dir = Some(old.dir.clone());
                 let m = manifest::parse(&p.manifest).map_err(|e| ApiError::internal("plugin manifest", e))?;
+                if m.kind != old.kind {
+                    // Refused at upload already; a stored update of another kind never runs.
+                    return Err(package::refusal(&signing::Refusal::KindChanged).api());
+                }
                 row.name = m.name;
+                row.kind = m.kind;
                 row.version = p.version.clone();
                 row.manifest = p.manifest.clone();
                 row.signer = p.signer.clone();

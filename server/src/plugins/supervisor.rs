@@ -572,6 +572,12 @@ impl Supervisor {
                 "this host offers no Landlock, so the plugin's file system access cannot be limited; an administrator can allow plugins without it",
             )
         };
+        let network_missing = || {
+            HostError::new(
+                "plugin.network_missing",
+                "the plugin's network could not be limited on this host (no seccomp filter, no network namespace); an administrator can allow plugins without it",
+            )
+        };
         if require_landlock && !super::sandbox::landlock_available() {
             return Err(landlock_missing());
         }
@@ -641,6 +647,10 @@ impl Supervisor {
                 if e.raw_os_error() == Some(super::sandbox::LANDLOCK_REFUSED) && require_landlock {
                     return Err(landlock_missing());
                 }
+                #[cfg(target_os = "linux")]
+                if e.raw_os_error() == Some(super::sandbox::NETWORK_REFUSED) && require_landlock {
+                    return Err(network_missing());
+                }
                 return Err(HostError::new("plugin.start_failed", format!("the plugin could not be started: {e}"))
                     .with("detail", e));
             }
@@ -678,15 +688,13 @@ impl Supervisor {
             return Err(landlock_missing());
         }
         // Linux: without the socket filter or a network namespace the plugin would reach the
-        // network past the connector. Required like Landlock, with the same switch.
+        // network past the connector. Required like Landlock, with the same switch; the child
+        // refuses to exec without it already, this holds should it report otherwise.
         let unlimited = !child.layers.contains(&"network") && !child.layers.contains(&"network_namespace");
         if cfg!(target_os = "linux") && require_landlock && unlimited {
             child.control.kill();
             cleanup(child.exited.clone(), &run_dir).await;
-            return Err(HostError::new(
-                "plugin.network_missing",
-                "the plugin's network could not be limited on this host (no seccomp filter, no network namespace); an administrator can allow plugins without it",
-            ));
+            return Err(network_missing());
         }
         tracing::info!(plugin = %self.id, pid = child.pid, sandbox = ?child.layers, missing = ?child.missing, "plugin process started");
         let context = connector::Context::new(
