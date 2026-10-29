@@ -535,6 +535,17 @@ fn time_point(value: Option<&Value>, now: i64, default: i64) -> ApiResult<i64> {
     Ok(now.saturating_sub(n.saturating_mul(unit_ms)))
 }
 
+/// Whether both ends of `timeRange` in `args` are absent, `now` or relative (`now-7d`): no epoch
+/// milliseconds.
+fn relative_range(args: &Value) -> bool {
+    let Some(range) = args.get("timeRange").filter(|v| !v.is_null()) else { return true };
+    ["from", "to"].iter().all(|key| match range.get(*key) {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.trim() == "now" || s.trim().starts_with("now-"),
+        Some(_) => false,
+    })
+}
+
 fn time_range(args: &Value, now: i64) -> ApiResult<TimeRange> {
     let range = args.get("timeRange").filter(|v| !v.is_null());
     let range = TimeRange {
@@ -801,8 +812,10 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let datasource_ids: Vec<String> =
         items.iter().map(|i| i.datasource_id.clone()).collect::<BTreeSet<_>>().into_iter().collect();
     let mut policies = BTreeMap::new();
+    let mut outward = false;
     for id in &datasource_ids {
         let ds = find_in_org(&scope.state.db, &scope.ctx.org_id, id, false).await?;
+        outward |= outward_facing(scope.state, &ds.kind);
         // A viewer of the panel learns that one of its sources is closed, not which.
         let may_read =
             check_resource(&scope.state.db, scope.ctx, Permission::DatasourcesRead, Resource::Datasource(&ds.id))
@@ -821,6 +834,16 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
             return Err(if may_read { e.param("name", &ds.name).param("datasourceId", &ds.id) } else { e });
         }
         policies.insert(ds.id, policy);
+    }
+    // The range reaches the source with the query; on a source that sends requests outward, a
+    // range of exact times the model chose could carry data in its digits. Only relative ends.
+    if outward && !relative_range(args) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            "this panel reads a source that sends requests outward; its time range takes only \"now\" or \"now-<n><unit>\"",
+        )
+        .because("ai.outward_source_time_range"));
     }
     // As for a free query: a stored query that names an excluded field could pass its values
     // under another name, and so could a step that reads one into a new field or a new name.
@@ -927,6 +950,31 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
     None
 }
 
+/// The excluded field a join of the panel's enabled steps takes in with one of its frames: the
+/// field names of the queries' frames, before any step ran.
+fn joined_excluded(
+    policy: &redact::DataPolicy,
+    steps: &[crate::analysis::Step],
+    inputs: &[(String, crate::analysis::steps::Input)],
+) -> Option<String> {
+    use crate::analysis::StepKind;
+    use crate::analysis::steps::Input;
+    for step in steps {
+        let StepKind::Join { left, right, .. } = &step.kind else { continue };
+        for (name, input) in inputs {
+            if name != left && name != right {
+                continue;
+            }
+            if let Input::Frame(frame) = input
+                && let Some(f) = frame.fields().iter().find(|f| policy.excludes(&f.name))
+            {
+                return Some(f.name.clone());
+            }
+        }
+    }
+    None
+}
+
 /// The results of a panel after its steps, as the panel shows them: the steps read every query
 /// (one that failed fails the call, as for a summary), run off the request threads within the
 /// query timeout, and each frame or graph they leave goes through `ai::redact` with `all`, the
@@ -965,6 +1013,17 @@ async fn stepped_records(
             }
             None => return Err(ApiError::internal("ai", format!("no outcome for {ref_id}"))),
         }
+    }
+    // A join renames the fields of both frames (`A.email`); rather than rely on matching those
+    // names, a join of a frame that holds an excluded field keeps the panel from AI.
+    if let Some(field) = joined_excluded(all, steps, &inputs) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            format!("a step of this panel joins {field}, a field excluded from AI"),
+        )
+        .because("ai.panel_step_reads_excluded_field")
+        .param("field", field));
     }
     let timeout = crate::settings::get(scope.state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
     let steps = steps.to_vec();
@@ -1316,6 +1375,15 @@ mod tests {
         assert_eq!(names_excluded(&policy, &json!({ "sql": "SELECT name FROM kunden" })), None);
         let mongo = json!({ "collection": "kunden", "pipeline": "[{\"$project\": {\"email\": 1}}]" });
         assert_eq!(names_excluded(&policy, &mongo).as_deref(), Some("kunden.email"));
+    }
+
+    #[test]
+    fn only_relative_ranges_count_as_relative() {
+        assert!(relative_range(&json!({})));
+        assert!(relative_range(&json!({ "timeRange": { "from": "now-7d", "to": "now" } })));
+        assert!(relative_range(&json!({ "timeRange": { "from": "now-2h" } })));
+        assert!(!relative_range(&json!({ "timeRange": { "from": 1_700_000_123_456_i64, "to": "now" } })));
+        assert!(!relative_range(&json!({ "timeRange": { "from": "now-1d", "to": 42 } })));
     }
 
     #[test]

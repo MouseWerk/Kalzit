@@ -94,6 +94,8 @@ On a data source's page, the **AI** part (KI) appears while AI is on:
   outward: there the query decides where a request goes and what it carries, so a query written
   by the AI could carry data from the chat outward. **Ask** therefore runs only the stored queries
   of panels on such a source, never a query of its own.
+- Open a database to AI only if it has no extensions that reach the network or files (such as
+  `dblink` or pgsql-http): the assistant's queries run with the source's login.
 
 Only people who may edit the data source can change this, and every change is audited. The data
 source list marks opened sources with **AI may read**.
@@ -186,7 +188,7 @@ shown in a stored chat and not sent to the model again. Stored results follow th
 rules as they are now: a field excluded later is replaced in them too, and a lower row limit cuts
 them. When an answer's results show less than the model saw, its words are withheld as well,
 with the note "Answer withheld because access to its data changed", and are not sent to the model
-again.
+again; so are the words of every later answer in that chat.
 
 Every tool call is in the audit log with the source or dashboard, the query and the number of rows,
 never with result data, your question or the answer.

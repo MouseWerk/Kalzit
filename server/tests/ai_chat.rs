@@ -993,6 +993,11 @@ async fn stored_answers_follow_rules_tightened_since() {
     let sent = mock.requests().last().unwrap().clone();
     assert!(!sent.to_string().contains("geheim.example"), "{sent}");
     assert!(tool_results(&sent)[0].contains("[excluded]") && tool_results(&sent)[0].contains("Ana"));
+    // An answer after a withheld one is withheld too: the model had the data in front of it.
+    let r = t.get(&path, &editor).await;
+    let later = &r.body["messages"][3]["content"];
+    assert_eq!(later["withheld"], true, "{later}");
+    assert_eq!(later["rounds"][0]["text"], "", "{later}");
 
     // A lower row limit cuts stored results too.
     t.setting("ai.max_rows_to_model", json!(1), &owner).await;
@@ -1011,6 +1016,7 @@ async fn stored_answers_follow_rules_tightened_since() {
     let sent = mock.requests().last().unwrap().clone();
     assert!(tool_results(&sent)[0].contains("no longer available"), "{sent}");
     assert!(!sent.to_string().contains("Bo") && !sent.to_string().contains("geheim"), "{sent}");
+    assert!(!sent.to_string().contains("Gut."), "a later answer's words are not sent again: {sent}");
     t.finish().await;
 }
 
@@ -1041,7 +1047,7 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
     .await
     .unwrap();
     for id in [&ds, &http, &plugin.to_string()] {
-        t.access(&org, id, true, &["kunden.iban"], &owner).await;
+        t.access(&org, id, true, &["kunden.iban", "kunden.email"], &owner).await;
     }
     // The source's AI settings say so, for the warning there.
     for (id, outward) in [(ds.as_str(), false), (http.as_str(), true), (plugin, true)] {
@@ -1064,6 +1070,17 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
                   { "id": "1", "type": "group", "frame": "A", "by": ["name"],
                     "aggregations": [{ "field": "iban", "op": "first", "name": "konto" }] }
               ] },
+            { "id": "joined", "type": "table", "title": "Verbunden",
+              "grid": { "x": 0, "y": 24, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT * FROM kunden" } },
+                           { "refId": "B", "datasourceId": ds, "query": { "sql": "SELECT name, umsatz FROM kunden" } } ],
+              "transformations": [
+                  { "id": "1", "type": "join", "left": "A", "right": "B",
+                    "on": { "by": "key", "leftField": "name", "rightField": "name" }, "mode": "inner" }
+              ] },
+            { "id": "remote", "type": "table", "title": "Entfernt",
+              "grid": { "x": 0, "y": 32, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": http, "query": { "path": "items" } } ] },
             { "id": "broken", "type": "table", "title": "Kaputt",
               "grid": { "x": 0, "y": 16, "w": 12, "h": 8 },
               "targets": [ { "refId": "A", "datasourceId": ds,
@@ -1084,11 +1101,28 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
         tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "named" })),
         tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "renamed" })),
         tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "broken" })),
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "joined" })),
+        tool(
+            "run_panel",
+            json!({ "dashboardId": dashboard, "panelId": "remote",
+                    "timeRange": { "from": 1_799_000_123_456_i64, "to": "now" } }),
+        ),
+        tool(
+            "run_panel",
+            json!({ "dashboardId": dashboard, "panelId": "remote", "timeRange": { "from": "now-7d", "to": "now" } }),
+        ),
         text("Fertig."),
     ]);
     let r = t.ask(&org, &chat, "Was geht?", &editor).await;
     let records = r.records();
-    assert_eq!(records.len(), 5, "{}", r.text);
+    assert_eq!(records.len(), 8, "{}", r.text);
+    // A join renames the fields of both frames (`A.email`); joining a frame with an excluded
+    // field is refused.
+    assert_eq!(records[5]["error"]["reason"], "ai.panel_step_reads_excluded_field", "{}", records[5]);
+    assert_eq!(records[5]["error"]["params"]["field"], "email");
+    // On a panel of an outward-facing source, exact times could carry data; relative ones pass.
+    assert_eq!(records[6]["error"]["reason"], "ai.outward_source_time_range", "{}", records[6]);
+    assert_ne!(records[7]["error"]["reason"], "ai.outward_source_time_range", "{}", records[7]);
     assert_eq!(records[0]["error"]["reason"], "ai.outward_source_free_query", "{}", records[0]);
     assert_eq!(records[0]["error"]["params"]["name"], "API");
     assert_eq!(records[1]["error"]["reason"], "ai.outward_source_free_query", "{}", records[1]);

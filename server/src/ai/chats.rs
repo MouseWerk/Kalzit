@@ -289,13 +289,21 @@ async fn delete_chat(conn: &mut sqlx::AnyConnection, id: &str) -> Result<(), sql
 pub async fn visible_messages(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiResult<Vec<StoredMessage>> {
     let mut visibility = Visibility::default();
     let mut out = Vec::new();
+    let mut tainted = false;
     for (seq, role, created_at, content) in messages(state, chat_id).await? {
         let content = if role == "assistant" {
             match serde_json::from_value::<Turn>(content.clone()) {
                 Ok(turn) => {
-                    serde_json::to_value(checked_turn(state, ctx, &mut visibility, turn).await).unwrap_or(Value::Null)
+                    let turn = checked_turn(state, ctx, &mut visibility, turn, tainted).await;
+                    tainted |= turn.withheld;
+                    serde_json::to_value(turn).unwrap_or(Value::Null)
                 }
-                Err(_) => content,
+                // An answer that cannot be read cannot be checked: shown as stored, but the
+                // answers after it are treated as if it were withheld.
+                Err(_) => {
+                    tainted = true;
+                    content
+                }
             }
         } else {
             match serde_json::from_value::<Question>(content.clone()) {
@@ -317,8 +325,16 @@ pub async fn visible_messages(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> 
 }
 
 /// An answer as the person may see it now: each record checked again (`Visibility::check`), and
-/// the model's words withheld where a record shows less than the model saw.
-async fn checked_turn(state: &AppState, ctx: &OrgCtx, visibility: &mut Visibility, mut turn: Turn) -> Turn {
+/// the model's words withheld where a record shows less than the model saw, or where an earlier
+/// answer of the chat was withheld (`tainted`): the model had that answer's data in front of it
+/// and may quote it later on.
+async fn checked_turn(
+    state: &AppState,
+    ctx: &OrgCtx,
+    visibility: &mut Visibility,
+    mut turn: Turn,
+    tainted: bool,
+) -> Turn {
     let mut hides = false;
     for round in &mut turn.rounds {
         for call in &mut round.calls {
@@ -329,7 +345,7 @@ async fn checked_turn(state: &AppState, ctx: &OrgCtx, visibility: &mut Visibilit
             }
         }
     }
-    if hides {
+    if hides || tainted {
         withhold_words(&mut turn);
     }
     turn
@@ -390,6 +406,17 @@ pub async fn conversation(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiR
             _ => out.push(message),
         }
     };
+    // Answers before the newest twelve questions are not sent, but one of them withheld still
+    // withholds the words of every answer after it.
+    let mut tainted = false;
+    for (_, role, _, content) in &stored[..first_kept] {
+        if role == "assistant" && !tainted {
+            tainted = match serde_json::from_value::<Turn>(content.clone()) {
+                Ok(turn) => checked_turn(state, ctx, &mut visibility, turn, false).await.withheld,
+                Err(_) => true,
+            };
+        }
+    }
     for (_, role, _, content) in stored.into_iter().skip(first_kept) {
         match role.as_str() {
             "user" => {
@@ -402,8 +429,12 @@ pub async fn conversation(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiR
                 push(Message::user(text), &mut out);
             }
             "assistant" => {
-                let Ok(turn) = serde_json::from_value::<Turn>(content) else { continue };
-                let turn = checked_turn(state, ctx, &mut visibility, turn).await;
+                let Ok(turn) = serde_json::from_value::<Turn>(content) else {
+                    tainted = true;
+                    continue;
+                };
+                let turn = checked_turn(state, ctx, &mut visibility, turn, tainted).await;
+                tainted |= turn.withheld;
                 for round in turn.rounds {
                     let mut parts = Vec::new();
                     if !round.text.trim().is_empty() {

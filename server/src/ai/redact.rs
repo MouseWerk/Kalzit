@@ -187,10 +187,16 @@ impl DataPolicy {
         out
     }
 
-    /// Whether the value at `path` (a field name or dotted path) is excluded.
+    /// Whether the value at `path` (a field name or dotted path) is excluded. Besides the path
+    /// itself and dotted suffixes, the last segments are compared: a step that joins frames names
+    /// their fields `A.email` and `B.email`, which `kunden.email` must cover too.
     pub fn excludes(&self, path: &str) -> bool {
         let path = fold(path);
-        self.excluded.iter().any(|e| *e == path || ends_with_segment(e, &path) || ends_with_segment(&path, e))
+        let last = |s: &str| s.rsplit('.').next().unwrap_or(s).to_string();
+        let path_last = last(&path);
+        self.excluded
+            .iter()
+            .any(|e| *e == path || ends_with_segment(e, &path) || ends_with_segment(&path, e) || last(e) == path_last)
     }
 }
 
@@ -515,6 +521,8 @@ mod tests {
         assert!(p.excludes("iban") && p.excludes("konto.iban"), "a bare entry excludes nested paths");
         assert!(p.excludes("adresse"));
         assert!(!p.excludes("emails") && !p.excludes("xemail") && !p.excludes("name"));
+        assert!(p.excludes("A.email") && p.excludes("B.Email"), "a joined frame's fields are covered");
+        assert!(!p.excludes("A.emails"));
     }
 
     #[test]
