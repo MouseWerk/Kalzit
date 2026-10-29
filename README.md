@@ -139,7 +139,9 @@ never returned by the API. Plugins add further kinds (see below).
   without network, on Linux Landlock, seccomp and namespaces. A plugin has no network of its own
   and reaches only the targets its manifest declares, through Kalzit, which checks every
   connection. On Linux plugins need Landlock unless an administrator allows them without it;
-  without Landlock a plugin could read Kalzit's files, while its network stays closed.
+  without Landlock a plugin could read Kalzit's files. Its network stays closed through the
+  seccomp filter or a network namespace; only if plugins are allowed without Landlock and the host
+  offers neither, a plugin starts with an unlimited network and its page warns about it.
 - A Rust SDK and the `kalzit-plugin` tool to package and sign, with two examples: "CSV and JSON
   over HTTP" and the panel "KPI tile" ([writing plugins](docs/plugins/authoring.md)).
 
