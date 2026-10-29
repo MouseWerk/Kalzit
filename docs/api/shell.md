@@ -170,6 +170,9 @@ interface About {
   platform?: string;   // "windows", "linux", "macos"
   arch?: string;       // "x64", "arm64"
   database?: "sqlite" | "postgres";
+  // Server administrators only, when there is one: what to change in the configuration.
+  // "config.database_password_in_file": database.url in kalzit.toml holds the password.
+  configWarnings?: string[];
 }
 ```
 

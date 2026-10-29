@@ -21,7 +21,7 @@ pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/admin/users", Access::ServerAdmin, list),
         route(Method::POST, "/admin/users", Access::ServerAdmin, create),
-        route(Method::PATCH, "/admin/users/{userId}", Access::ServerAdmin, update),
+        route(Method::PATCH, "/admin/users/{userId}", Access::ServerAdmin, update).changes_rights(),
     ]
 }
 

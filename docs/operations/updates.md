@@ -56,9 +56,16 @@ Automatic installation needs a restart Kalzit can do safely by itself:
   `Restart=on-failure` makes systemd start Kalzit again if a new version crashes during its
   trial; that start returns to the previous version. A binary owned by root (`/usr/local/bin`)
   stays manual, which some administrators prefer.
-- **Windows**: not yet. Kalzit has no Windows service integration so far (it comes with the
-  service installer, docs/PLAN.md, M5), so Windows downloads and verifies, and you install from the
-  command line (next section).
+- **Windows as the Kalzit service** (the MSI package or `kalzit service install`, see
+  docs/guide/installation.md, "Windows"), installed with `SELFUPDATE=1` (`--self-update 1`; off by
+  default, read the guide's note on its risk first): the service account may replace `kalzit.exe`
+  in the program folder. Kalzit stops gracefully, puts the new binary in
+  place and ends the service with a restart request; the service's recovery actions start it
+  again two seconds later, now with the new version, for the same trial as on Linux. A failed
+  trial returns the same way. With the default `SELFUPDATE=0` the program folder stays for
+  Administrators only and you install with the next MSI package or from the command line (next
+  section). Kalzit started in a console on Windows also installs from the
+  command line.
 - **Containers**: never; update the image.
 - **deb and rpm packages**: never, and `kalzit update apply` and `kalzit update rollback` refuse
   as well: the package manager owns `/usr/bin/kalzit` (marker `/usr/lib/kalzit/package`), and a
@@ -82,10 +89,10 @@ servers ignore the field. `kalzit-sign verify ... --installer <file>` checks a d
 With the release downloaded or uploaded (it shows as "ready to install"):
 
 ```
-# Linux: systemctl stop kalzit        Windows: stop Kalzit (or its service wrapper)
+# Linux: systemctl stop kalzit        Windows: Stop-Service Kalzit (elevated PowerShell)
 kalzit update status
 kalzit update apply                    # PostgreSQL: add --acknowledge-no-backup after pg_dump
-# Linux: systemctl start kalzit       Windows: start Kalzit again
+# Linux: systemctl start kalzit       Windows: Start-Service Kalzit
 ```
 
 Use the same `--config` or `KALZIT_CONFIG` as the service. `kalzit update apply` refuses while a
@@ -105,9 +112,9 @@ it reads from the data directory, which the service account can write, is truste
 - Files from the data directory are opened only as regular files, never through a link.
 - On Windows the folders below `updates/` are checked not to be links or junctions before they are
   used. The copy into the binary's folder and its hash check protect the binary itself. The service
-  account could still swap such a folder for a junction between that check and its use; until
-  Kalzit's own Windows service integration runs these steps as the service account, keep the
-  service account a virtual account (`NT SERVICE\Kalzit`) that nothing else uses.
+  account could still swap such a folder for a junction between that check and its use, so keep
+  the service account a virtual account (`NT SERVICE\Kalzit`, as the installer sets up) that
+  nothing else uses; a service with self-update on installs as that account itself.
 
 ## Offline installations
 
@@ -149,8 +156,9 @@ its recorded SHA-256) and starts the previous version.
 
 - Linux replaces the process with the previous binary at once.
 - Windows: when the health check fails or the start fails, the server stops and starts the
-  previous binary. When the time runs out while the server hangs, it only ends; the return happens
-  at the next start (by you, or by a service wrapper that restarts Kalzit).
+  previous binary (the service: through a restart by the service manager). When the time runs out
+  while the server hangs, it only ends; the return happens at the next start, which for the
+  service its recovery actions make a few seconds later, and in a console you make.
 - A `plan.json` that this version cannot read (damaged, or written by a newer format) is moved
   aside as `plan-<time>.unreadable.json` with an error in the log: check which binary is in place
   and restore a backup from `updates/backups` if needed.
@@ -174,6 +182,31 @@ service account on Linux (mode 0600). They contain password hashes, sessions and
 source secrets, but not the key that decrypts them (docs/ARCHITECTURE.md, "Backups"). "Back up
 now" adds a manual backup; the newest `updates.keep_versions` manual backups are kept. Downloads
 are recorded in the audit log.
+
+## Code signing for Windows (project owner, once)
+
+The release workflow signs `kalzit.exe` and the MSI package with Authenticode in two small jobs
+that use the GitHub environment `windows-signing` and nothing else (`.github/workflows/release.yml`,
+`packaging/windows/sign.ps1`); the MSI is built in between in a job without secrets. Create the
+environment `windows-signing` (Settings, Environments) with yourself as required reviewer and tags
+`v*` only, then choose one way:
+
+1. **Microsoft Artifact Signing** (formerly Azure Trusted Signing; recommended: public CAs no
+   longer issue code-signing certificates with an exportable key, and here the key stays in
+   Microsoft's HSM). Create an Artifact Signing account and a certificate profile in Azure, and an
+   Entra ID app registration with the role "Artifact Signing Certificate Profile Signer" on the
+   profile. In `windows-signing`, set the variables `KALZIT_ARTIFACT_SIGNING_ENDPOINT` (such as
+   `https://weu.codesigning.azure.net`), `KALZIT_ARTIFACT_SIGNING_ACCOUNT` and
+   `KALZIT_ARTIFACT_SIGNING_PROFILE`, and the secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and
+   `AZURE_CLIENT_SECRET`. The signing client is downloaded from NuGet, pinned by version and SHA-256.
+2. **A PFX file** with an exportable key: the secrets `KALZIT_WINDOWS_CERT` (the PFX in base64,
+   `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`) and
+   `KALZIT_WINDOWS_CERT_PASSWORD`. The certificate is imported into the runner's user store for
+   the signing and removed with its key afterwards; the password is never on a command line.
+
+The time stamp server is DigiCert's for a PFX and Microsoft's for Artifact Signing; the variable
+`KALZIT_WINDOWS_TIMESTAMP_URL` overrides it. Without either way the files stay unsigned, and the
+release notes say so.
 
 ## Release key (project owner, once)
 

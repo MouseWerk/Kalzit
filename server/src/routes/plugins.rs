@@ -33,10 +33,10 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/admin/plugins", Access::ServerAdmin, list),
         route(Method::POST, "/admin/plugins", Access::ServerAdmin, install),
         route(Method::GET, "/admin/plugins/{pluginId}", Access::ServerAdmin, get_one),
-        route(Method::DELETE, "/admin/plugins/{pluginId}", Access::ServerAdmin, remove),
+        route(Method::DELETE, "/admin/plugins/{pluginId}", Access::ServerAdmin, remove).changes_rights(),
         route(Method::POST, "/admin/plugins/{pluginId}/approve", Access::ServerAdmin, approve),
         route(Method::POST, "/admin/plugins/{pluginId}/enable", Access::ServerAdmin, enable),
-        route(Method::POST, "/admin/plugins/{pluginId}/disable", Access::ServerAdmin, disable),
+        route(Method::POST, "/admin/plugins/{pluginId}/disable", Access::ServerAdmin, disable).changes_rights(),
         route(Method::POST, "/admin/plugins/{pluginId}/restart", Access::ServerAdmin, restart),
         route(Method::GET, "/admin/plugins/{pluginId}/logs", Access::ServerAdmin, logs),
         route(Method::POST, "/admin/plugins/{pluginId}/handovers", Access::ServerAdmin, add_handover),
@@ -50,7 +50,8 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/admin/plugin-catalog/refresh", Access::ServerAdmin, catalog_refresh),
         route(Method::POST, "/admin/plugin-catalog/install", Access::ServerAdmin, catalog_install),
         route(Method::GET, "/orgs/{orgId}/plugins", Access::Org(Permission::PluginsConfigure), org_list),
-        route(Method::PUT, "/orgs/{orgId}/plugins/{pluginId}/block", Access::Org(Permission::PluginsConfigure), block),
+        route(Method::PUT, "/orgs/{orgId}/plugins/{pluginId}/block", Access::Org(Permission::PluginsConfigure), block)
+            .changes_rights(),
         route(
             Method::DELETE,
             "/orgs/{orgId}/plugins/{pluginId}/block",

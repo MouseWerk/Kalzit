@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type DragEvent, useId, useRef, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { type Language, type MessageKey, type Translate, useI18n } from "../../../i18n/i18n";
+import { formatBytes } from "../../../lib/bytes";
 import { fromWall, wallOf } from "../../../lib/zonedTime";
 import { errorReason, reasonText } from "../../datasources/reasons";
 import { adminKeys, listServerSettings, updateServerSetting } from "../api";
@@ -50,21 +51,6 @@ function reasonOf(t: Translate, view: ReasonView): string {
 function failure(t: Translate, error: unknown): string {
   const reason = errorReason(error);
   return (reason === undefined ? undefined : reasonText(t, reason)) ?? errorText(t, error);
-}
-
-function formatBytes(bytes: number, language: Language): string {
-  const units = ["byte", "kilobyte", "megabyte", "gigabyte"] as const;
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  return new Intl.NumberFormat(language, {
-    style: "unit",
-    unit: units[unit],
-    maximumFractionDigits: unit === 0 ? 0 : 1,
-  }).format(value);
 }
 
 function formatDuration(ms: number): string {

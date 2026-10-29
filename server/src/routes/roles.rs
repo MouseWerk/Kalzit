@@ -28,9 +28,9 @@ pub fn routes() -> Vec<RouteDef> {
     use Permission::{RolesRead, RolesWrite};
     vec![
         route(Method::GET, "/orgs/{orgId}/roles", Org(RolesRead), list),
-        route(Method::POST, "/orgs/{orgId}/roles", Org(RolesWrite), create),
-        route(Method::PATCH, "/orgs/{orgId}/roles/{roleId}", Org(RolesWrite), update),
-        route(Method::DELETE, "/orgs/{orgId}/roles/{roleId}", Org(RolesWrite), delete),
+        route(Method::POST, "/orgs/{orgId}/roles", Org(RolesWrite), create).changes_rights(),
+        route(Method::PATCH, "/orgs/{orgId}/roles/{roleId}", Org(RolesWrite), update).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/roles/{roleId}", Org(RolesWrite), delete).changes_rights(),
     ]
 }
 

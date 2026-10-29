@@ -100,6 +100,11 @@ const PLATFORM_LABEL: Record<string, string> = {
   macos: "macOS",
 };
 
+/** The texts of the configuration warnings the server reports (docs/api/shell.md, "About"). */
+const CONFIG_WARNING: Record<string, MessageKey> = {
+  "config.database_password_in_file": "settings.about.warning.databasePasswordInFile",
+};
+
 function ProductCard() {
   const { t } = useI18n();
   const about = useQuery({ queryKey: ["about"], queryFn: getAbout, staleTime: Infinity });
@@ -134,6 +139,13 @@ function ProductCard() {
           )}
         </dl>
       )}
+      {(data?.configWarnings ?? [])
+        .filter((code) => code in CONFIG_WARNING)
+        .map((code) => (
+          <p key={code} className="about-text" role="note">
+            {t(CONFIG_WARNING[code] as MessageKey)}
+          </p>
+        ))}
     </Card>
   );
 }

@@ -18,7 +18,9 @@ use super::{clean_name, new_id};
 use crate::app::AppState;
 use crate::audit::{AuditEvent, record};
 use crate::authz::{Access, AccessIndex, OrgCtx, Permission, Resource, check_resource, resource_permissions};
-use crate::datasources::{self, Datasource, FieldError, HealthReport, Kind, SettingField, SourceSchema, find_in_org};
+use crate::datasources::{
+    self, Datasource, DefaultValue, FieldError, HealthReport, Kind, SettingField, SourceSchema, find_in_org,
+};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -101,7 +103,14 @@ async fn kinds(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>)
             name: k.name,
             shapes: k.plugin.shapes(),
             hint_key: k.hint_key,
-            settings: k.all_settings().copied().collect(),
+            // The query cache is on by default for some kinds only (`cache::enabled_by_default`).
+            settings: k
+                .all_settings()
+                .map(|f| match f.name {
+                    "cacheEnabled" => f.default(DefaultValue::Bool(datasources::cache::enabled_by_default(k.kind()))),
+                    _ => *f,
+                })
+                .collect(),
             plugin: state.plugins.kind_texts(k.kind()),
         })
         .collect();

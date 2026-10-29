@@ -10,6 +10,7 @@
 #   workflows  anything under .github/ (then every other flag is true as well)
 #   docs_only  only documentation changed (docs/, Markdown files, LICENSE)
 #   docker     the container image: server or ui, the Dockerfile, .dockerignore or deploy/
+#   installer  the Windows installer: server or packaging/
 #
 # changes.sh BASE HEAD   compares two commits (renames count as a deletion and an addition, so
 #                        the old path counts too)
@@ -26,6 +27,7 @@ audit=false
 workflows=false
 docs=false
 image=false
+packaging=false
 unknown=false
 count=0
 
@@ -60,6 +62,8 @@ classify() {
       ui=true ;;
     Dockerfile | .dockerignore | deploy/*)
       image=true ;;
+    packaging/*)
+      packaging=true ;;
     docs/* | *.md | LICENSE)
       docs=true ;;
     *)
@@ -93,9 +97,11 @@ e2e=false
 if [ "$server" = true ] || [ "$ui" = true ]; then e2e=true; fi
 docker=false
 if [ "$e2e" = true ] || [ "$image" = true ]; then docker=true; fi
+installer=false
+if [ "$server" = true ] || [ "$packaging" = true ]; then installer=true; fi
 docs_only=false
 if [ "$docs" = true ] && [ "$server" = false ] && [ "$ui" = false ] && [ "$audit" = false ] \
-  && [ "$image" = false ]; then
+  && [ "$image" = false ] && [ "$packaging" = false ]; then
   docs_only=true
 fi
 
@@ -106,3 +112,4 @@ echo "audit=$audit"
 echo "workflows=$workflows"
 echo "docs_only=$docs_only"
 echo "docker=$docker"
+echo "installer=$installer"

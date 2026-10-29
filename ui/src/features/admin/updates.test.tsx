@@ -273,7 +273,7 @@ describe("updates page", () => {
         ),
     });
     expect(await screen.findByText("kalzit update apply")).toBeTruthy();
-    expect(screen.getByText(/On Windows, Kalzit cannot restart itself yet/)).toBeTruthy();
+    expect(screen.getByText(/Kalzit does not run as its Windows service/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Install now" })).toBeNull();
   });
 

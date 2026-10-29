@@ -374,6 +374,11 @@ pub struct QueryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub explore: Option<bool>,
+    /// Runs every query in its source even when the server's query cache holds its answer, and
+    /// keeps the new answer ("Refresh"). `Cache-Control: no-cache` does the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub refresh: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -444,6 +449,10 @@ pub struct PanelQueryRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub variables: BTreeMap<String, Value>,
+    /// As `QueryRequest::refresh`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub refresh: Option<bool>,
 }
 
 /// Live updates (`GET /api/orgs/{orgId}/live`, a WebSocket; docs/api/live.md): subscribes to a
@@ -843,10 +852,39 @@ pub enum QueryOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         steps: Option<Vec<StepPlace>>,
+        /// Whether the answer came from the server's query cache, for runs that use it
+        /// (docs/api/datasources.md, "Query cache").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        cache: Option<CacheInfo>,
     },
     Err {
         error: ErrorBody,
     },
+}
+
+/// What the query cache did for one answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CacheInfo {
+    pub status: CacheStatus,
+    /// How old the answer is: 0 for one that just ran.
+    pub age_ms: u64,
+    /// How long the answer is kept from when it ran.
+    pub ttl_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum CacheStatus {
+    /// Kept from an earlier run.
+    Hit,
+    /// Ran in the source and is kept now.
+    Miss,
+    /// Ran in the source because the caller asked to refresh; kept now in place of the older one.
+    Refresh,
 }
 
 /// What the caller may do on one data source, from their role and grants together; the routes
@@ -1010,6 +1048,8 @@ mod tests {
             TimeRange::decl(&cfg),
             QueryResponse::decl(&cfg),
             QueryOutcome::decl(&cfg),
+            CacheInfo::decl(&cfg),
+            CacheStatus::decl(&cfg),
             StepPlace::decl(&cfg),
             RanIn::decl(&cfg),
             ErrorEnvelope::decl(&cfg),

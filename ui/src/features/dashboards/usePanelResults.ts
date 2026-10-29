@@ -1,4 +1,5 @@
 import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
 import { graphStepsByQuery } from "../../analysis/panel";
 import { asSteps, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
@@ -63,6 +64,10 @@ export interface PanelLiveOptions {
 export function usePanelResults(input: PanelQueryInput) {
   const { orgId, dashboardId, panel, range, source } = input;
   const client = useQueryClient();
+  // The Refresh button asks the data sources themselves: the run after `manual` changed passes
+  // the server's query cache by (`refresh`). Opening, auto refresh and new ranges use it.
+  const manual = input.manual;
+  const lastManual = useRef(manual);
   const kindOf = useSourceKinds(orgId);
   const { variables, targets, refIds, queryKey, graphSteps } = panelRequest(input, kindOf);
   return useQuery<TargetOutcome[]>({
@@ -86,11 +91,14 @@ export function usePanelResults(input: PanelQueryInput) {
     ...BUSY_RETRY,
     queryFn: ({ signal }): Promise<TargetOutcome[]> =>
       panelQueries.run(async () => {
+        const refresh = manual !== lastManual.current;
+        lastManual.current = manual;
         const common = {
           timeRange: range,
           variables,
           maxDataPoints: MAX_DATA_POINTS,
           intervalMs: intervalFor(range),
+          ...(refresh ? { refresh: true } : {}),
         };
         const response =
           source === "stored"

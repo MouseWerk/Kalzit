@@ -147,6 +147,21 @@ describe("server settings rows", () => {
     expect(within(await row("datasources.max_rows")).getByRole("spinbutton")).toBeTruthy();
   });
 
+  it("shows the query cache now and empties it", async () => {
+    const { user, server, admin } = await openAdmin("/settings/datasources", {
+      isServerAdmin: true,
+    });
+    const status = await screen.findByText(/12 answers kept/);
+    expect(status.textContent).toBe(
+      "12 answers kept, 3.4 MB of 268.4 MB. 75% of 40 loads came from the cache (30) since the server started.",
+    );
+    await user.click(screen.getByRole("button", { name: "Empty cache" }));
+    await waitFor(() => expect(admin.queryCache.entries).toBe(0));
+    expect(sent(server, "DELETE")).toEqual(["/api/admin/query-cache"]);
+    expect(await screen.findByText(/^0 answers kept/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Empty cache" })).toHaveProperty("disabled", true);
+  });
+
   it("names a value from the environment and one from the configuration only", async () => {
     await openAdmin("/settings/storage", { isServerAdmin: true });
     await screen.findByRole("heading", { level: 2, name: "Storage and retention" });

@@ -144,6 +144,8 @@ export interface About {
   platform?: string;
   arch?: string;
   database?: "sqlite" | "postgres";
+  /** Reason codes of configuration a server administrator should change. */
+  configWarnings?: string[];
 }
 
 function isAbout(value: unknown): value is About {
@@ -154,7 +156,12 @@ function isAbout(value: unknown): value is About {
     (value.commit === undefined || typeof value.commit === "string") &&
     (value.platform === undefined || typeof value.platform === "string") &&
     (value.arch === undefined || typeof value.arch === "string") &&
-    (value.database === undefined || value.database === "sqlite" || value.database === "postgres")
+    (value.database === undefined ||
+      value.database === "sqlite" ||
+      value.database === "postgres") &&
+    (value.configWarnings === undefined ||
+      (Array.isArray(value.configWarnings) &&
+        value.configWarnings.every((code) => typeof code === "string")))
   );
 }
 
@@ -187,4 +194,39 @@ export async function getLicenses(): Promise<LicenseEntry[]> {
     throw new ApiError("invalid_response", 200, "unexpected licenses response");
   }
   return list;
+}
+
+/** The server's query cache now (`GET /api/admin/query-cache`, docs/api/datasources.md). */
+export interface QueryCacheStats {
+  enabled: boolean;
+  maxBytes: number;
+  entries: number;
+  bytes: number;
+  hits: number;
+  misses: number;
+}
+
+function isQueryCacheStats(value: unknown): value is QueryCacheStats {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === "boolean" &&
+    ["maxBytes", "entries", "bytes", "hits", "misses"].every(
+      (key) => typeof value[key] === "number",
+    )
+  );
+}
+
+export const QUERY_CACHE_KEY = ["query-cache"] as const;
+
+export async function getQueryCache(): Promise<QueryCacheStats> {
+  return expectShape(
+    await request("GET", "/api/admin/query-cache"),
+    isQueryCacheStats,
+    "query cache",
+  );
+}
+
+/** Forgets every kept answer; the next load of each query asks its source again. */
+export async function clearQueryCache(): Promise<void> {
+  await request("DELETE", "/api/admin/query-cache");
 }

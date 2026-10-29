@@ -20,7 +20,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::{Path, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ use crate::folders::{self, Tree};
 use crate::net::RequestInfo;
 use crate::saved_analyses::{self, AnalysisModel};
 use crate::settings;
-use crate::shapes::{FieldDistribution, Page, PanelDistributionRequest, PanelQueryRequest, QueryResponse};
+use crate::shapes::{FieldDistribution, Page, PanelDistributionRequest, PanelQueryRequest};
 
 pub fn routes() -> Vec<RouteDef> {
     use Access::OrgMember;
@@ -51,10 +51,10 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/analyses", OrgMember, create),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, save),
-        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, trash),
-        route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/restore", OrgMember, restore),
-        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}/purge", OrgMember, purge),
-        route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}/owner", OrgMember, set_owner),
+        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, trash).changes_rights(),
+        route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/restore", OrgMember, restore).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}/purge", OrgMember, purge).changes_rights(),
+        route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}/owner", OrgMember, set_owner).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/uses", OrgMember, uses),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/versions", OrgMember, versions),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/versions/{version}", OrgMember, version),
@@ -716,6 +716,10 @@ async fn save(
     saved_analyses::check_visualization(&model, Some(&stored))?;
     saved_analyses::check_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     let new = NewVersion { model: &model, folder_id: folder_id.as_deref(), restored_from: None };
+    // Another folder can mean other readers: no answer kept under the old place may stay. Taken
+    // before the write, so a client that goes away cannot skip it.
+    let _bump =
+        (folder_id != row.folder_id).then(|| state.datasources.query_cache().bump_on_drop(Some(ctx.org_id.clone())));
     Ok(Json(write_version(&state, &ctx, &info, &row, new).await?))
 }
 
@@ -1174,8 +1178,9 @@ async fn run(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path((_, id)): Path<(String, String)>,
-    JsonBody(req): JsonBody<PanelQueryRequest>,
-) -> ApiResult<Json<QueryResponse>> {
+    headers: HeaderMap,
+    JsonBody(mut req): JsonBody<PanelQueryRequest>,
+) -> ApiResult<super::query::Answer> {
     let row = load(&state, &ctx, &id, Permission::AnalysesRead).await?;
     // A trashed analysis runs nothing; it is restored first, like a trashed dashboard.
     if row.deleted_at.is_some() {
@@ -1183,7 +1188,8 @@ async fn run(
     }
     let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
-    Ok(Json(super::query::run_stored_panel(&state, &ctx, &model, panel, req).await?))
+    req.refresh = Some(super::query::wants_refresh(&headers, req.refresh));
+    Ok(super::query::answer(super::query::run_stored_panel(&state, &ctx, &model, panel, req).await?))
 }
 
 /// The field distribution of one of the analysis's stored queries (`refId`) over its whole

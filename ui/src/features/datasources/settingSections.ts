@@ -6,7 +6,7 @@ import { kindFamily } from "./kindMarks";
  * belongs to one by its name; a setting this UI does not know yet lands in "behavior", so a new
  * server option shows without a UI change.
  */
-export const SECTIONS = ["connection", "auth", "tls", "limits", "behavior"] as const;
+export const SECTIONS = ["connection", "auth", "tls", "limits", "cache", "behavior"] as const;
 export type Section = (typeof SECTIONS)[number];
 
 const SECTION_OF: Readonly<Record<string, Section>> = {
@@ -44,6 +44,8 @@ const SECTION_OF: Readonly<Record<string, Section>> = {
   maxResponseBytes: "limits",
   maxNodes: "limits",
   maxEdges: "limits",
+  cacheEnabled: "cache",
+  cacheTtlSecs: "cache",
 };
 
 export function sectionOf(name: string): Section {

@@ -36,6 +36,7 @@ jobs:
       e2e: ${{ steps.areas.outputs.e2e }}
       audit: ${{ steps.areas.outputs.audit }}
       docker: ${{ steps.areas.outputs.docker }}
+      installer: ${{ steps.areas.outputs.installer }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@v7
@@ -618,6 +619,67 @@ jobs:
           # .output starts with a dot; without this the traces and screenshots are left out.
           include-hidden-files: true
           retention-days: 14
+
+  # The Windows installer (packaging/windows): the MSI package built as the release builds it
+  # (with the faster e2e profile), then installed on the runner, which is thrown away afterwards:
+  # service running as NT SERVICE\Kalzit, HTTP health, data folder access, firewall rule,
+  # recovery after a crash, graceful stop, uninstall with and without the data, and the same
+  # through `kalzit service install|uninstall` (.github/scripts/msi-test.ps1).
+  msi:
+    name: msi (windows-latest)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.installer == 'true') }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: msi
+          save-if: ${{ github.event_name != 'merge_group' }}
+      # The health check needs no web interface, so the UI is not built here.
+      - run: cargo build --profile e2e --locked -p kalzit --bin kalzit
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+      - name: Build the MSI package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path server/Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          ./packaging/windows/build.ps1 -Exe target/e2e/kalzit.exe -Version $version -Out dist/kalzit-ci-windows-x64.msi
+          ./packaging/windows/check-msi.ps1 -Msi dist/kalzit-ci-windows-x64.msi -Exe target/e2e/kalzit.exe
+      - name: Install, check and uninstall
+        shell: pwsh
+        run: ./.github/scripts/msi-test.ps1 -Msi dist/kalzit-ci-windows-x64.msi -Exe target/e2e/kalzit.exe -Logs "$env:RUNNER_TEMP/msi-logs"
+      - name: Collect the logs
+        if: failure()
+        shell: pwsh
+        run: |
+          $logs = "$env:RUNNER_TEMP/msi-logs"
+          New-Item -ItemType Directory -Force $logs | Out-Null
+          $data = Join-Path $env:ProgramData 'Kalzit\data\logs'
+          if (Test-Path $data) { Copy-Item -Recurse $data (Join-Path $logs 'kalzit') }
+          # No event of a source is an error for Get-WinEvent.
+          try {
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application' } -MaxEvents 500 -ErrorAction Stop |
+              Where-Object { $_.ProviderName -eq 'Kalzit' } |
+              ForEach-Object { "$($_.TimeCreated) $($_.Properties | ForEach-Object { $_.Value })" } | Out-File (Join-Path $logs 'events-kalzit.txt')
+          } catch { "no events: $_" | Out-File (Join-Path $logs 'events-kalzit.txt') }
+          try {
+            Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 50 -ErrorAction Stop |
+              Format-List TimeCreated, Message | Out-File (Join-Path $logs 'events-scm.txt')
+          } catch { "no events: $_" | Out-File (Join-Path $logs 'events-scm.txt') }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: msi-logs
+          path: ${{ runner.temp }}/msi-logs
 
   # The container image (Dockerfile): built for linux/amd64 with the faster e2e profile, then run
   # on its own and from deploy/docker/compose.postgres.yaml (.github/scripts/docker-smoke.sh).

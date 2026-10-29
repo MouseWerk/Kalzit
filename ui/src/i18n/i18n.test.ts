@@ -165,6 +165,7 @@ describe("catalogs", () => {
       "Undefined",
       "DBPointer",
       "Explore",
+      "Cache",
       "Community",
       "Labels",
       "Label",
