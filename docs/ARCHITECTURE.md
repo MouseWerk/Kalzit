@@ -334,8 +334,9 @@ installed plugins, install from a file, signature and trust, a page per plugin, 
 organization's block list; plugin kinds in "Add data source" with a JSON query editor), the Rust
 SDK with the packaging tool and example plugins, the panel message API and the panel host
 (panel types in the visualization picker, the sandboxed frame, the options editor from the
-manifest), and Kalzit's network connector, the only network a plugin has. The catalog follows in
-M4 (marked (M4) below).
+manifest), Kalzit's network connector, the only network a plugin has, and the catalog's host side
+(`plugins::catalog`: settings, the checked index, browsing and installing from it in the Catalog
+tab).
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
 serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a
@@ -675,6 +676,34 @@ so whoever controls the download cannot keep a known-vulnerable version listed. 
 checked: a valid plugin id, semantic version and kind, a 16-digit key id, an `https` URL
 without user info, a SHA-256 in lowercase hex, and no id with the same version twice. Installing from a file (the package with its
 manifest and signature) always works, also offline, and runs the same checks.
+
+- An index may withdraw versions (`revoked`: plugin id, a semver requirement, a reason); they are
+  never installed from the catalog and installed versions they match are named in the UI.
+  Optional `description`, `publisher` and `network` texts of an entry are for browsing only; the
+  review before approval shows the package's own manifest.
+- The host side is `plugins::catalog` (settings `plugins.catalog_enabled`, off by default,
+  `plugins.catalog_url`, no default host, and `plugins.catalog_refresh_hours`). Kalzit itself
+  loads the index and `<url>.sig` (a detached signature like a package's) with the one HTTP
+  client (`crate::http`): the data source target policy, HTTPS only on every hop, 30 s and 4 MiB
+  for the index, 10 minutes and the entry's size for a package. Redirects are followed hop by
+  hop: the configured host and port use a client that may reach a private mirror but never
+  Kalzit's own ports (`LocalGuard`), every other host one that refuses all but public addresses
+  (`LocalGuard::is_private`), both resolving through the target policy and connecting to the
+  checked address. The signature must verify with a key allowed for the catalog: Kalzit's plugin
+  keys or publisher keys an administrator marked `may_sign_catalog` (a column of `plugin_keys`);
+  trust for plugins alone is not enough. Then
+  `parse_index` with the accepted sequences. The first list of an address pins its key (another
+  key needs `acceptKeyChange`), and the highest sequence is kept per key and per address. The index
+  taken, its key, the accepted sequences (never lowered, also across URL changes) and the last failure are the row of `plugin_catalog`
+  (migration 0024); a failure keeps the index taken before, and the same bytes served again count
+  as unchanged until their expiry. A background loop refreshes when due (`spawn_background`).
+- Installing from the catalog: the entry must be listed in a current, unexpired index and not
+  withdrawn; the package is streamed into the host's private upload directory and must match
+  the entry's size and SHA-256, its manifest the entry's id and version, and its signature a
+  trusted key with the entry's key id (never unsigned from the catalog). Then it goes through
+  `PluginHost::install` unchanged: the same checks, update rules, approval and sandbox as an
+  uploaded file. Refusals and installs are in the audit log (`plugins.install_refused` with
+  `source: "catalog"`, `plugins.catalog_installed`, `plugins.catalog_refreshed`).
 
 ### Sandbox
 

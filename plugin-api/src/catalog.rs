@@ -7,6 +7,11 @@
 //! each key, and `parse_index` takes the key whose signature verified, so a host can neither
 //! compare one key's index with another key's number nor forget to name the key. The host
 //! stores `Accepted` durably and calls `Accepted::record` only after it has taken the index.
+//!
+//! An index may revoke plugin versions (`revoked`): a host refuses to install them from the
+//! catalog and shows the revocation on installed plugins it matches. The texts an entry carries
+//! for browsing (description, publisher, network targets) are what the publisher says; the host
+//! shows the package's own manifest before anything is approved.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,6 +40,45 @@ pub struct CatalogIndex {
     /// After this (Unix seconds) the index is stale and refused.
     pub expires_at: u64,
     pub plugins: Vec<CatalogEntry>,
+    /// Plugin versions withdrawn by the publisher of the index (a known vulnerability, a leaked
+    /// key): never installed from the catalog, shown on installed plugins they match.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revoked: Vec<Revocation>,
+}
+
+/// Withdrawn versions of one plugin.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Revocation {
+    pub id: String,
+    /// A semver requirement (`*`, `<1.2.3`, `=1.0.0`): the versions withdrawn.
+    pub versions: String,
+    /// Why, in a short text for administrators.
+    pub reason: String,
+}
+
+impl Revocation {
+    /// Whether this revocation withdraws `version` of `id`. A pre-release is matched as its
+    /// release (`1.5.0-rc.1` as `1.5.0`): semver requirements never match pre-releases, so `*`
+    /// would otherwise miss them. A version that does not parse is withdrawn by any revocation of
+    /// its id, so nothing escapes a withdrawal by its form.
+    pub fn covers(&self, id: &str, version: &str) -> bool {
+        if self.id != id {
+            return false;
+        }
+        let Ok(req) = semver::VersionReq::parse(&self.versions) else { return false };
+        match semver::Version::parse(version) {
+            Ok(v) => req.matches(&semver::Version::new(v.major, v.minor, v.patch)),
+            Err(_) => true,
+        }
+    }
+}
+
+impl CatalogIndex {
+    /// The revocation that withdraws `version` of `id`, if any.
+    pub fn revocation(&self, id: &str, version: &str) -> Option<&Revocation> {
+        self.revoked.iter().find(|r| r.covers(id, version))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,7 +97,23 @@ pub struct CatalogEntry {
     /// SHA-256 of the package file, lowercase hex.
     pub sha256: String,
     pub size: u64,
+    /// One line about the plugin, for browsing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The publisher's name as the index states it; a neutral label, not a verified identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<String>,
+    /// The network targets the package declares, in words (`*.example.com:443`), for browsing.
+    /// The host shows the package's own targets before they are approved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network: Vec<String>,
 }
+
+/// Longest description of an entry and longest reason of a revocation, in characters.
+pub const MAX_TEXT_CHARS: usize = 280;
+
+/// Most network targets an entry lists.
+pub const MAX_NETWORK_ENTRIES: usize = 32;
 
 /// The highest sequence accepted per catalog key (by its full public key in hex).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +152,11 @@ pub enum CatalogError {
         index: usize,
         reason: &'static str,
     },
+    /// A revocation that is not well formed, with its position and why.
+    Revocation {
+        index: usize,
+        reason: &'static str,
+    },
 }
 
 impl CatalogError {
@@ -104,8 +169,36 @@ impl CatalogError {
             CatalogError::Expired { .. } => "catalog.expired",
             CatalogError::ImplausibleTimes => "catalog.times_implausible",
             CatalogError::Entry { .. } => "catalog.entry_invalid",
+            CatalogError::Revocation { .. } => "catalog.revocation_invalid",
         }
     }
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CatalogError::TooLarge => write!(f, "the index is larger than {MAX_INDEX_BYTES} bytes"),
+            CatalogError::Invalid(e) => write!(f, "the index is not valid: {e}"),
+            CatalogError::FormatUnsupported(v) => {
+                write!(f, "the index has format {v}, which this Kalzit does not read")
+            }
+            CatalogError::Rollback { sequence, accepted } => {
+                write!(f, "the index has sequence {sequence}, but {accepted} was accepted already (rollback)")
+            }
+            CatalogError::Expired { expires_at } => write!(f, "the index expired at {expires_at}"),
+            CatalogError::ImplausibleTimes => write!(f, "the index's publication or expiry time is not plausible"),
+            CatalogError::Entry { index, reason } => write!(f, "plugin entry {index} is not valid ({reason})"),
+            CatalogError::Revocation { index, reason } => write!(f, "revocation {index} is not valid ({reason})"),
+        }
+    }
+}
+
+/// A short text for people: not empty, at most `max` characters, no control or bidirectional
+/// override characters.
+fn plain_text(text: &str, max: usize) -> bool {
+    !text.trim().is_empty()
+        && text.chars().count() <= max
+        && !text.chars().any(|c| c.is_control() || crate::manifest::is_bidi_control(c))
 }
 
 fn lower_hex(text: &str, len: usize) -> bool {
@@ -143,6 +236,29 @@ fn check_entry(entry: &CatalogEntry) -> Result<(), &'static str> {
     }
     if !lower_hex(&entry.sha256, 64) {
         return Err("sha256");
+    }
+    if entry.description.as_deref().is_some_and(|d| !plain_text(d, MAX_TEXT_CHARS)) {
+        return Err("description");
+    }
+    if entry.publisher.as_deref().is_some_and(|p| !plain_text(p, 64)) {
+        return Err("publisher");
+    }
+    let target_ok = |t: &String| plain_text(t, 255) && !t.chars().any(char::is_whitespace);
+    if entry.network.len() > MAX_NETWORK_ENTRIES || !entry.network.iter().all(target_ok) {
+        return Err("network");
+    }
+    Ok(())
+}
+
+fn check_revocation(r: &Revocation) -> Result<(), &'static str> {
+    if !crate::manifest::valid_id(&r.id) {
+        return Err("id");
+    }
+    if r.versions.len() > 128 || semver::VersionReq::parse(&r.versions).is_err() {
+        return Err("versions");
+    }
+    if !plain_text(&r.reason, MAX_TEXT_CHARS) {
+        return Err("reason");
     }
     Ok(())
 }
@@ -186,6 +302,12 @@ pub fn parse_index(
             return Err(CatalogError::Entry { index: i, reason: "repeated" });
         }
     }
+    if index.revoked.len() > 4096 {
+        return Err(CatalogError::Revocation { index: 4096, reason: "count" });
+    }
+    for (i, r) in index.revoked.iter().enumerate() {
+        check_revocation(r).map_err(|reason| CatalogError::Revocation { index: i, reason })?;
+    }
     Ok(index)
 }
 
@@ -211,11 +333,15 @@ mod tests {
             url: "https://plugins.example.dev/redis-1.2.0.kalzit-plugin".into(),
             sha256: "3f1a2b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708".into(),
             size: 1234,
+            description: None,
+            publisher: None,
+            network: vec![],
         }
     }
 
     fn index_with(sequence: u64, published_at: u64, expires_at: u64, plugins: Vec<CatalogEntry>) -> Vec<u8> {
-        serde_json::to_vec(&CatalogIndex { format: 1, sequence, published_at, expires_at, plugins }).unwrap()
+        serde_json::to_vec(&CatalogIndex { format: 1, sequence, published_at, expires_at, plugins, revoked: vec![] })
+            .unwrap()
     }
 
     fn index(sequence: u64, published_at: u64, expires_at: u64) -> Vec<u8> {
@@ -276,6 +402,11 @@ mod tests {
             (CatalogEntry { id: "postgres".into(), ..entry() }, "id"),
             (CatalogEntry { version: "1.2".into(), ..entry() }, "version"),
             (CatalogEntry { kind: "app".into(), ..entry() }, "kind"),
+            (CatalogEntry { description: Some("Neu\u{202E}".into()), ..entry() }, "description"),
+            (CatalogEntry { description: Some("x".repeat(MAX_TEXT_CHARS + 1)), ..entry() }, "description"),
+            (CatalogEntry { publisher: Some(" ".into()), ..entry() }, "publisher"),
+            (CatalogEntry { network: vec!["db.example.dev 443".into()], ..entry() }, "network"),
+            (CatalogEntry { network: vec!["a:1".into(); MAX_NETWORK_ENTRIES + 1], ..entry() }, "network"),
         ];
         for (bad, reason) in cases {
             let bytes = index_with(5, NOW - 60, NOW + 60, vec![entry(), bad]);
@@ -292,5 +423,54 @@ mod tests {
             parse_index(&index_with(5, NOW - 60, NOW + 60, vec![entry(), next]), &key(1), &Accepted::default(), NOW)
                 .is_ok()
         );
+    }
+
+    fn with_revoked(revoked: Vec<Revocation>) -> Vec<u8> {
+        let index = CatalogIndex {
+            format: 1,
+            sequence: 5,
+            published_at: NOW - 60,
+            expires_at: NOW + 60,
+            plugins: vec![entry()],
+            revoked,
+        };
+        serde_json::to_vec(&index).unwrap()
+    }
+
+    fn revocation(versions: &str) -> Revocation {
+        Revocation { id: "dev.example.redis".into(), versions: versions.into(), reason: "CVE-2026-0001".into() }
+    }
+
+    /// Revocations name versions by a semver requirement; the index says which entry or installed
+    /// version they withdraw, and malformed ones refuse the whole index.
+    #[test]
+    fn revocations_withdraw_matching_versions() {
+        let i = parse_index(&with_revoked(vec![revocation("<1.2.1")]), &key(1), &Accepted::default(), NOW).unwrap();
+        assert_eq!(i.revocation("dev.example.redis", "1.2.0").map(|r| r.reason.as_str()), Some("CVE-2026-0001"));
+        assert!(i.revocation("dev.example.redis", "1.2.1").is_none());
+        assert!(i.revocation("dev.example.other", "1.0.0").is_none());
+        assert!(revocation("*").covers("dev.example.redis", "9.9.9"));
+        assert!(revocation("*").covers("dev.example.redis", "not-a-version"));
+        // Pre-releases count as their release, which plain requirements never match otherwise.
+        assert!(revocation("*").covers("dev.example.redis", "1.5.0-rc.1"));
+        assert!(revocation("<1.2.1").covers("dev.example.redis", "1.2.0-beta.2"));
+        assert!(revocation("=1.5.0").covers("dev.example.redis", "1.5.0-rc.1"));
+        assert!(!revocation("<1.2.1").covers("dev.example.redis", "1.3.0-rc.1"));
+        assert!(!revocation("*").covers("dev.example.other", "1.0.0"));
+        // An index without revocations reads as before.
+        let plain = parse_index(&index(5, NOW - 60, NOW + 60), &key(1), &Accepted::default(), NOW).unwrap();
+        assert!(plain.revoked.is_empty());
+
+        for (bad, reason) in [
+            (Revocation { id: "redis".into(), ..revocation("*") }, "id"),
+            (revocation("about 1.0"), "versions"),
+            (Revocation { reason: String::new(), ..revocation("*") }, "reason"),
+            (Revocation { reason: "a\nb".into(), ..revocation("*") }, "reason"),
+        ] {
+            let e =
+                parse_index(&with_revoked(vec![revocation("*"), bad]), &key(1), &Accepted::default(), NOW).unwrap_err();
+            assert_eq!(e, CatalogError::Revocation { index: 1, reason }, "{reason}");
+            assert_eq!(e.code(), "catalog.revocation_invalid");
+        }
     }
 }

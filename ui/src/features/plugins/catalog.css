@@ -1,0 +1,234 @@
+@layer components {
+  /*
+   * Verwaltung > Plugins > Katalog after the board docs/design/blueprint/Plugins.dc.html, frames
+   * 5A and 5B: the card while it is off, the status line of the signed list, the categories, the
+   * search and the entries. Tokens only; the chosen category is a quiet tint and weight, never a
+   * frame or a bar.
+   */
+  .catalog-off__body {
+    justify-items: start;
+    padding: var(--space-6) var(--space-4);
+  }
+
+  .catalog-off__icon {
+    display: grid;
+    width: var(--size-kind-mark);
+    height: var(--size-kind-mark);
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+  }
+
+  .catalog-off__lead {
+    max-width: var(--size-plugin-column);
+    line-height: var(--line-height);
+  }
+
+  .catalog-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .catalog-switch input {
+    width: var(--icon-size);
+    height: var(--icon-size);
+  }
+
+  /* A setting row: what it is on the left, the control on the right. */
+  .catalog-setting {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .catalog-setting__text {
+    display: grid;
+    flex: 1 1 var(--size-ai-request);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .catalog-setting__control {
+    display: grid;
+    flex: 1 1 var(--size-ai-request);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  /* The signed list's status line (frame 5B). */
+  .catalog-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .catalog-status .icon {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  .catalog-status__sep {
+    color: var(--border-strong);
+  }
+
+  .catalog-status__spacer {
+    flex: 1 1 auto;
+  }
+
+  .catalog-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .catalog-browse {
+    display: grid;
+    grid-template-columns: minmax(0, var(--size-sidebar-min)) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  .catalog-nav {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .catalog-nav__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    text-align: start;
+  }
+
+  .catalog-nav__trusted {
+    margin-top: var(--space-3);
+    color: var(--text-muted);
+  }
+
+  .catalog-results {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .catalog-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+  }
+
+  .catalog-search .icon {
+    flex: none;
+  }
+
+  .catalog-search__input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+
+  .catalog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-ai-request), 100%), 1fr));
+    gap: var(--space-3);
+  }
+
+  .catalog-card {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .catalog-card__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  .catalog-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: auto;
+  }
+
+  .catalog-card__spacer {
+    flex: 1 1 auto;
+  }
+
+  .catalog-card__state {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .catalog-card__state .icon {
+    width: var(--icon-size);
+    height: var(--icon-size);
+  }
+
+  .catalog-key .icon,
+  .plugins-chip .icon {
+    width: var(--icon-size);
+    height: var(--icon-size);
+  }
+
+  /* State colors last: a key nobody here trusts, a withdrawn version. Text and icons only. */
+  .catalog-key[data-trusted="false"] .icon,
+  .catalog-card__state[data-state="revoked"],
+  .catalog-card__revoked {
+    color: var(--danger-text);
+  }
+
+  @media (width < 40rem) {
+    .catalog-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .catalog-browse {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .catalog-nav {
+      display: flex;
+      flex-wrap: wrap;
+    }
+
+    .catalog-nav__trusted {
+      margin-top: 0;
+    }
+  }
+}

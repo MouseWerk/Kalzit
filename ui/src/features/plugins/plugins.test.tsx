@@ -637,17 +637,6 @@ describe("Plugins, signature and trust", () => {
   });
 });
 
-describe("Plugins, catalog", () => {
-  it("is off with an explanation, and its switch is locked until a later version", async () => {
-    await openPlugins("/settings/plugins#catalog");
-    expect(await screen.findByRole("heading", { name: "The catalog is off" })).toBeTruthy();
-    const toggle = screen.getByRole("switch", { name: "Use the catalog" }) as HTMLInputElement;
-    expect(toggle.disabled).toBe(true);
-    expect(toggle.checked).toBe(false);
-    expect(screen.getByText("Comes with a later version.")).toBeTruthy();
-  });
-});
-
 describe("Plugins, details", () => {
   it("shows the manifest, the sandbox, the log and where it is used, and removes it", async () => {
     const { user, server, location } = await openPlugins(

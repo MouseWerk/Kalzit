@@ -424,6 +424,12 @@ impl PluginHost {
             .collect()
     }
 
+    /// The keys plugins and the catalog index may be signed with: Kalzit's own plugin keys and
+    /// the publisher keys an administrator trusts (`plugins::catalog`).
+    pub async fn trusted_keys(&self, db: &sqlx::AnyPool) -> ApiResult<Vec<TrustedKey>> {
+        Ok(self.trusted(&store::keys(db).await?))
+    }
+
     /// Whether the key that signed `row` is still trusted.
     fn still_trusted(&self, signer: &str, public_key: Option<&str>, keys: &[KeyRow]) -> bool {
         match signer {

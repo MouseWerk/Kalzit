@@ -86,6 +86,8 @@ mod tests {
         "updates",
         "live",
         "plugin",
+        // The plugin catalog, documented in docs/api/plugins.md.
+        "catalog",
         // Documented in docs/api/ai.md.
         "ai",
     ];

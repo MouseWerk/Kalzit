@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type DragEvent, type RefObject, useId, useRef, useState } from "react";
+import { type DragEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
@@ -15,6 +15,7 @@ import {
   pluginAction,
   removePlugin,
 } from "./api";
+import { type CatalogItem, installFromCatalog } from "./catalogApi";
 import { refreshPlugins } from "./hooks";
 import { PluginMark } from "./parts";
 import { groupedKeyId, permissionText, pluginReasonText, sameLine } from "./status";
@@ -49,6 +50,7 @@ export function failedStep(reason: string | undefined): StepId {
     case "plugin.id_reserved":
       return "signature";
     case "plugin.package_invalid":
+    case "catalog.package_mismatch":
       return "checksum";
     case "plugin.platform_missing":
     case "plugin.platform_unsupported":
@@ -296,34 +298,54 @@ export function StepList({ steps, busy }: { steps: readonly Step[]; busy: boolea
   );
 }
 
+/** Where the package comes from: a file the administrator chose, or an entry of the catalog. */
+type Source = { kind: "file"; file: File } | { kind: "catalog"; id: string; version: string };
+
 type Stage =
   | { kind: "choose" }
-  | { kind: "checking"; packageText: string; file: File }
-  | { kind: "refused"; packageText: string; file: File | undefined; error: unknown }
+  | { kind: "checking"; packageText: string; source: Source }
+  | { kind: "refused"; packageText: string; source: Source | undefined; error: unknown }
   | { kind: "review"; packageText: string; plugin: Plugin; prior: Plugin | undefined };
 
+/** The package line of a catalog entry: name, version, where it comes from and its size. */
+function catalogPackageText(language: string, entry: CatalogItem): string {
+  return `${entry.name} ${entry.version} · ${entry.urlHost} · ${sizeText(language, entry.size)}`;
+}
+
 /**
- * Install from a file (board frames 3 and 4): the package is uploaded, the server checks it,
- * and the dialog shows the checks from its answer, then the permissions to grant, marked new
- * where an update adds them. Nothing runs before the administrator grants them: a new plugin is
- * stored disabled and unapproved, and Cancel removes it again. A refused package names the step
- * and the reason.
+ * Install from a file (board frames 3 and 4), or from the catalog (frame 5B): the package is
+ * uploaded (or downloaded by the server from the catalog), the server checks it, and the dialog
+ * shows the checks from its answer, then the permissions to grant, marked new where an update
+ * adds them. Both ways share every step. Nothing runs before the administrator grants them: a
+ * new plugin is stored disabled and unapproved, and Cancel removes it again. A refused package
+ * names the step and the reason.
  */
 export function InstallDialog({
   list,
   onClose,
   onTrustKey,
   onAllowUnsigned,
+  catalogEntry,
 }: {
   list: PluginList;
   onClose: () => void;
   onTrustKey: (keyId: string) => void;
   onAllowUnsigned: () => void;
+  /** Install this catalog entry instead of asking for a file. */
+  catalogEntry?: CatalogItem | undefined;
 }) {
   const { t, language } = useI18n();
   const queryClient = useQueryClient();
   const inputId = useId();
-  const [stage, setStage] = useState<Stage>({ kind: "choose" });
+  const [stage, setStage] = useState<Stage>(() =>
+    catalogEntry === undefined
+      ? { kind: "choose" }
+      : {
+          kind: "checking",
+          packageText: catalogPackageText(language, catalogEntry),
+          source: { kind: "catalog", id: catalogEntry.id, version: catalogEntry.version },
+        },
+  );
   const [over, setOver] = useState(false);
   const [granted, setGranted] = useState(false);
   const [start, setStart] = useState(true);
@@ -337,12 +359,15 @@ export function InstallDialog({
 
   const upload = useMutation({
     mutationFn: ({
-      file,
+      source,
       confirmPublisherChange,
     }: {
-      file: File;
+      source: Source;
       confirmPublisherChange: boolean;
-    }) => installPlugin(file, confirmPublisherChange),
+    }) =>
+      source.kind === "file"
+        ? installPlugin(source.file, confirmPublisherChange)
+        : installFromCatalog(source.id, source.version, confirmPublisherChange),
     onSuccess: (plugin, _file) => {
       const prior = list.items.find((item) => item.id === plugin.id);
       setStage((current) => ({
@@ -357,11 +382,26 @@ export function InstallDialog({
       setStage((current) => ({
         kind: "refused",
         packageText: current.kind === "checking" ? current.packageText : "",
-        file: current.kind === "checking" ? current.file : undefined,
+        source: current.kind === "checking" ? current.source : undefined,
         error,
       }));
+      // A refused catalog package is in the audit log; the catalog shows the state as it is now.
+      if (catalogEntry !== undefined) refresh();
     },
   });
+
+  // A catalog entry is sent once, when the dialog opens.
+  const sent = useRef(false);
+  useEffect(() => {
+    if (catalogEntry === undefined || sent.current) {
+      return;
+    }
+    sent.current = true;
+    upload.mutate({
+      source: { kind: "catalog", id: catalogEntry.id, version: catalogEntry.version },
+      confirmPublisherChange: false,
+    });
+  }, [catalogEntry, upload]);
 
   const confirm = useMutation({
     mutationFn: async ({ plugin, run }: { plugin: Plugin; run: boolean }) => {
@@ -399,20 +439,21 @@ export function InstallDialog({
     const packageText = `${file.name} · ${sizeText(language, file.size)}`;
     setGranted(false);
     setMissingGrant(false);
-    setStage({ kind: "checking", packageText, file });
-    upload.mutate({ file, confirmPublisherChange: false });
+    const source: Source = { kind: "file", file };
+    setStage({ kind: "checking", packageText, source });
+    upload.mutate({ source, confirmPublisherChange: false });
   }
 
   /** Sends the refused package again, confirming the change of publisher. */
-  function installAnyway(packageText: string, file: File) {
+  function installAnyway(packageText: string, source: Source) {
     if (typedName.trim() !== serverName()) {
       setWrongName(true);
       nameRef.current?.focus();
       return;
     }
     setTypedName("");
-    setStage({ kind: "checking", packageText, file });
-    upload.mutate({ file, confirmPublisherChange: true });
+    setStage({ kind: "checking", packageText, source });
+    upload.mutate({ source, confirmPublisherChange: true });
   }
 
   function cancel() {
@@ -460,7 +501,13 @@ export function InstallDialog({
 
   let body = null;
   let footer = null;
-  let title = t("plugins.install.title");
+  let title =
+    catalogEntry === undefined
+      ? t("plugins.install.title")
+      : t("plugins.catalog.installTitle", {
+          name: catalogEntry.name,
+          version: catalogEntry.version,
+        });
   if (stage.kind === "choose") {
     body = (
       <div className="plugin-dialog">
@@ -478,7 +525,11 @@ export function InstallDialog({
       <div className="plugin-dialog">
         <h3 className="plugin-dialog__heading">{t("plugins.install.checking")}</h3>
         <StepList steps={checkingSteps(t, stage.packageText)} busy />
-        <p className="plugins-hint">{t("plugins.install.checkingText")}</p>
+        <p className="plugins-hint">
+          {stage.source.kind === "catalog"
+            ? t("plugins.catalog.checkingText")
+            : t("plugins.install.checkingText")}
+        </p>
       </div>
     );
     footer = (
@@ -486,8 +537,8 @@ export function InstallDialog({
         {t("admin.common.cancel")}
       </button>
     );
-  } else if (stage.kind === "refused" && isPublisherChange(stage.error) && stage.file) {
-    const file = stage.file;
+  } else if (stage.kind === "refused" && isPublisherChange(stage.error) && stage.source) {
+    const source = stage.source;
     const packageText = stage.packageText;
     title = t("plugins.publisher.title");
     body = (
@@ -511,7 +562,7 @@ export function InstallDialog({
         <button
           type="button"
           className="button button--danger"
-          onClick={() => installAnyway(packageText, file)}
+          onClick={() => installAnyway(packageText, source)}
         >
           {t("plugins.publisher.install")}
         </button>
@@ -543,6 +594,9 @@ export function InstallDialog({
             {t("plugins.install.platformHint", { platform: list.platform ?? "" })}
           </p>
         ) : null}
+        {reason?.reason === "catalog.package_mismatch" ? (
+          <p className="plugins-hint">{t("plugins.catalog.mismatchHint")}</p>
+        ) : null}
       </div>
     );
     footer = (
@@ -561,13 +615,15 @@ export function InstallDialog({
             {t("plugins.install.toTrust")}
           </button>
         ) : null}
-        <button
-          type="button"
-          className="button button--secondary"
-          onClick={() => setStage({ kind: "choose" })}
-        >
-          {t("plugins.install.another")}
-        </button>
+        {catalogEntry === undefined ? (
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setStage({ kind: "choose" })}
+          >
+            {t("plugins.install.another")}
+          </button>
+        ) : null}
         <span className="plugin-dialog__spacer" />
         <button type="button" className="button button--ghost" onClick={onClose}>
           {t("plugins.install.close")}
