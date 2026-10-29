@@ -20,7 +20,7 @@ use crate::settings;
 pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/orgs/{orgId}/team-context", Access::OrgMember, get),
-        route(Method::PUT, "/orgs/{orgId}/team-context", Access::OrgMember, put),
+        route(Method::PUT, "/orgs/{orgId}/team-context", Access::OrgMember, put).changes_rights(),
     ]
 }
 

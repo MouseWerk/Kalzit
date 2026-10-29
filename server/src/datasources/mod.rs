@@ -1259,10 +1259,10 @@ impl DataSources {
                 .with_file_dirs(&file_dirs)
                 .with_protected(&self.protected.0, &self.protected.1),
         );
-        // Changed target rules may block sources that answered before: no kept answer of theirs
-        // may outlive the rules it was read under.
+        // Changed target rules may block sources that answered before: no kept answer may be
+        // served under other rules than it was read under (a new generation, `cache::Stamp`).
         if cache.as_ref().is_some_and(|c| *c.policy != *policy) {
-            self.cache.clear();
+            self.cache.policy_changed();
         }
         *cache = Some(CachedPolicy { dirs, allowed, file_dirs, built: Instant::now(), policy: policy.clone() });
         Ok(policy)
@@ -1769,11 +1769,12 @@ async fn run_one(
     let (Some((use_, limit)), Some(ttl_ms)) = (cache, ttl_ms) else {
         return execute(state, ctx, &ds, &kind, item, run, limits).await;
     };
-    // The current target rules first: a change of them empties the cache (`DataSources::policy`),
-    // so an answer of a source they now block is never served.
+    // The current target rules first: a change of them starts a new generation
+    // (`DataSources::policy`), so an answer read under the old ones is neither served nor kept.
     if let Err(e) = registry.policy(state).await {
         return QueryOutcome::Err { error: api_error_body(e) };
     }
+    let stamp = registry.cache.stamp(&ctx.org_id, &ds.id);
     let now = state.clock.now_ms();
     let range = cache::round_range(run.range, run.interval_ms, ttl_ms, now);
     let caller = cache::Caller {
@@ -1801,21 +1802,55 @@ async fn run_one(
             max_rows: limits.max_rows,
         },
     );
-    if use_.mode == cache::CacheMode::Use
-        && let Some(hit) = registry.cache.get(&key, now)
-    {
-        let cache::Stored { result, steps } = hit.stored;
-        return QueryOutcome::Ok { result, steps, cache: Some(hit.info) };
+    if use_.mode == cache::CacheMode::Use {
+        let found = registry.cache.get(&key, stamp, now);
+        let served = match found {
+            Some(found) => serve_hit(state, ctx, &key, found, &limits).await,
+            None => None,
+        };
+        registry.cache.count(served.is_some());
+        if let Some(outcome) = served {
+            return outcome;
+        }
     }
+    let budget = limits.budget.clone();
     let mut outcome = execute(state, ctx, &ds, &kind, item, Run { range, ..run }, limits).await;
     if let QueryOutcome::Ok { result, steps, cache: info } = &mut outcome {
         // A graph step that failed may have run out of time: such an answer is not kept.
         let complete = steps.as_ref().is_none_or(|places| places.iter().all(|p| p.error.is_none()));
-        let kept = complete && registry.cache.put(key, &ctx.org_id, &ds.id, result, steps.as_ref(), now, ttl_ms, limit);
+        let stored = (&*result, steps.as_ref());
+        let kept = complete && registry.cache.put(key, &ctx.org_id, &ds.id, stored, stamp, now, ttl_ms, limit, &budget);
         let status = if use_.mode == cache::CacheMode::Refresh { CacheStatus::Refresh } else { CacheStatus::Miss };
         *info = Some(CacheInfo { status, age_ms: 0, ttl_ms: if kept { ttl_ms as u64 } else { 0 } });
     }
     outcome
+}
+
+/// What a hit costs the request: the answer is read only after it got a query slot (hits wait
+/// with the other queries of the user and the server) and its bytes were charged against the
+/// request's response budget and the server's in-flight pool, twice its stored size for the
+/// parsed copy. `None` when it does not fit in the query's time or the budget, or no longer
+/// reads: then the query runs in its source as a miss, and is cut there as any answer is.
+async fn serve_hit(
+    state: &AppState,
+    ctx: &OrgCtx,
+    key: &cache::Key,
+    found: cache::Found,
+    limits: &Limits,
+) -> Option<QueryOutcome> {
+    let read = async {
+        let _slots = state.datasources.slots(state, &ctx.user.id).await.ok()?;
+        if !limits.budget.take(found.stored_bytes().saturating_mul(2)) {
+            return None;
+        }
+        let stored = found.parse();
+        if stored.is_none() {
+            state.datasources.cache.remove(key);
+        }
+        stored
+    };
+    let cache::Stored { result, steps } = tokio::time::timeout(limits.timeout, read).await.ok()??;
+    Some(QueryOutcome::Ok { result, steps, cache: Some(found.info) })
 }
 
 /// Runs one query in its source (and its graph steps), without the cache.

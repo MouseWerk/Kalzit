@@ -3124,8 +3124,9 @@ async fn the_query_cache_never_crosses_rights() {
             "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT n FROM zahl ORDER BY n" } }],
             "transformations": [], "options": {}, "fieldConfig": {} }]
     });
-    let folder = t.post("/folders", json!({ "name": "Geheim", "restricted": true })).await;
-    let folder = folder.body["id"].as_str().unwrap().to_string();
+    let created_folder = t.post("/folders", json!({ "name": "Geheim", "restricted": true })).await;
+    let folder = created_folder.body["id"].as_str().unwrap().to_string();
+    let folder_version = created_folder.body["version"].clone();
     let created = t.post("/dashboards", json!({ "model": model, "folderId": folder })).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
     let dashboard = created.body["id"].as_str().unwrap().to_string();
@@ -3134,6 +3135,17 @@ async fn the_query_cache_never_crosses_rights() {
     assert_eq!((r.status, r.cache.as_str()), (StatusCode::OK, "miss"), "{}", r.text);
     assert_eq!(t.panel(&t.owner, &dashboard, "p1", body.clone()).await.cache, "hit");
     assert_eq!(t.panel(&viewer, &dashboard, "p1", body.clone()).await.status, StatusCode::NOT_FOUND);
+    // A new name of the folder changes no rights: the answer stays.
+    let renamed = t
+        .send(
+            Method::PATCH,
+            &t.path(&format!("/folders/{folder}")),
+            Some(json!({ "name": "Ganz geheim", "version": folder_version })),
+            Some(&t.owner),
+        )
+        .await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.text);
+    assert_eq!(t.panel(&t.owner, &dashboard, "p1", body.clone()).await.cache, "hit");
 
     // A grant lets the viewer read it: their first run is theirs, not the owner's answer.
     t.add_row(&file, 3).await;
@@ -3211,9 +3223,10 @@ async fn the_query_cache_follows_settings_and_changes() {
         .unwrap();
     assert_eq!(n, 1);
 
-    // Trashing the source forgets its answers.
+    // Trashing the source ends its answers (a new generation; they go when next asked for).
+    let before = t.state.datasources.query_cache().stamp(&t.org, &ds);
     t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&t.owner)).await;
-    assert!(t.state.datasources.query_cache().is_empty());
+    assert_ne!(t.state.datasources.query_cache().stamp(&t.org, &ds), before);
 
     // Kinds say whether they cache by default.
     let kinds = t.get("/datasource-kinds").await;
@@ -3224,5 +3237,41 @@ async fn the_query_cache_follows_settings_and_changes() {
     assert_eq!(default_of("postgres"), true);
     assert_eq!(default_of("prometheus"), false);
     assert_eq!(default_of("mongodb"), false);
+    t.finish().await;
+}
+
+/// Hits cost the request what an answer read from the source costs: many references to one kept
+/// answer are charged against the response budget, and those that no longer fit run in the
+/// source (and are cut there) instead of multiplying the copy. Everything is given back after.
+#[tokio::test]
+async fn query_cache_hits_are_charged_to_the_response_budget() {
+    let t = T::new().await;
+    let rows: Vec<String> = (0..200).map(|i| format!("({i}, 'Eine Zeile mit etwas Text, Nummer {i:05}')")).collect();
+    let sql = format!("CREATE TABLE zeilen (n INTEGER, t TEXT); INSERT INTO zeilen VALUES {};", rows.join(", "));
+    let file = t.sqlite_file("zeilen.db", &sql).await;
+    let ds = t.create_sqlite("Zeilen", &file).await;
+    let one =
+        |ref_id: String| json!({ "refId": ref_id, "datasourceId": ds, "query": { "sql": "SELECT n, t FROM zeilen" } });
+    let r = t.query(&t.owner, json!([one("A".into())])).await;
+    assert_eq!(r.body["results"]["A"]["cache"]["status"], "miss", "{}", r.text);
+    let stored = t.state.datasources.query_cache().stats().bytes;
+
+    // Room for about two charged hits (twice the stored size each) in one request.
+    t.set("datasources.max_response_bytes", json!(stored * 5));
+    let many: Vec<Value> = (0..20).map(|i| one(format!("R{i}"))).collect();
+    let r = t.query(&t.owner, Value::Array(many)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let results = r.body["results"].as_object().unwrap();
+    let hits = results.values().filter(|o| o["cache"]["status"] == "hit").count();
+    assert!((1..=3).contains(&hits), "hits within the budget: {hits}");
+    assert!(
+        results
+            .values()
+            .filter(|o| o["cache"]["status"] != "hit")
+            .all(|o| o["error"].is_object() || o["result"]["frame"]["meta"]["rowsTruncated"] == true),
+        "the others ran in the source and were cut there: {}",
+        r.text
+    );
+    assert_eq!(t.state.datasources.inflight_available(), 1_073_741_824);
     t.finish().await;
 }

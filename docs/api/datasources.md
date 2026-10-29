@@ -1390,16 +1390,24 @@ schema never use it. AI calls that run queries use it with their AI data rules i
   step share the answer, and the newest data shown is at most one step old. A range further in the
   past is used as asked.
 - **Only answers.** Errors, timeouts and answers whose graph steps failed are never kept.
-- **Forgotten** when the data source is changed, trashed or purged, when the server's target rules
-  change, when rights in the organization change (grants, roles, members, teams, restricted folders
-  and their owners, owners of dashboards and analyses, a source's AI access; a server
-  administrator changing a user forgets all answers), when the TTL ends, and when memory runs
-  short (least recently used first).
+- **No longer served** when the data source is changed, trashed or purged, when the server's
+  target rules change, when rights or visibility in the organization change (grants, roles,
+  members, teams, team context, folders moved, restricted, trashed, restored, purged or given
+  another owner, dashboards and analyses moved to another folder, trashed, restored, purged or
+  given another owner, plugins blocked, organization settings, a source's AI access; a server
+  administrator changing a user, disabling or removing a plugin ends all answers), and when the
+  TTL ends. A folder's new name changes nothing. An answer read while such a change happened is
+  not kept. Least recently used answers go first when memory runs short.
+- **Hits cost like answers.** A hit waits for a query slot like any query and counts against the
+  request's response memory (`datasources.max_response_bytes`) and the server's
+  (`datasources.max_inflight_bytes`) at twice its stored size. One that does not fit runs in its
+  source instead and is cut there, as any answer is.
 - **Settings.** Per data source `cacheEnabled` and `cacheTtlSecs` (see [Kinds](#kinds-get-orgsorgiddatasource-kinds)).
   Server-wide `datasources.cache_enabled` (default true; off, nothing is kept and what was kept is
   let go) and `datasources.cache_max_bytes` (default 256 MiB, 1 MiB to 64 GiB): the memory all
-  answers may take together, counted as their serialized size. One answer larger than a quarter of
-  it is not kept. Both apply at the next query.
+  answers may take together, counted as their serialized size plus 512 bytes each. One answer
+  larger than a quarter of it is not kept, and one organization's answers take at most half of
+  it. Both apply at the next query.
 
 Every query answer that the cache had a part in carries `cache`:
 

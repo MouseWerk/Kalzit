@@ -341,13 +341,26 @@ contract:
   and steps, cursor, rounded range, interval, data points, variables and identifier variables, row
   limit). Authorization always runs before the cache, in the routes, so the cache never decides
   access; being per user, an entry cannot reach anyone else even where rules would allow it.
-- **Invalidation.** `DataSources::forget` (source changed, trashed, purged) drops its entries; a
-  change of the target rules (`DataSources::policy`) and turning the cache off drop all; routes
-  marked `RouteDef::changes_rights` (grants, roles, members, teams, folders, owners, AI access)
-  drop the organization's entries once they succeed, server routes all entries.
-- **Memory.** Entries are kept serialized and counted by their size plus a fixed overhead, within
-  `datasources.cache_max_bytes`; least recently used first, one entry at most a quarter of the
-  limit. Expired entries go when they are next asked for or pushed out.
+- **Invalidation by generations.** Each entry carries a `Stamp`: the generations of rights
+  server-wide and of its organization, of the target rules and of its data source, taken before
+  the query ran. `DataSources::forget` (source changed, trashed, purged), a change of the target
+  rules (`DataSources::policy`), routes marked `RouteDef::changes_rights` once they succeed
+  (grants, roles, members, teams, folder trash, restore, purge and owner, dashboard and analysis
+  trash, restore, purge and owner, plugin block, disable and removal, organization settings,
+  team context, AI access; server routes for all organizations) and handlers that move a folder,
+  restrict it or move a dashboard or analysis to another folder bump one. An entry under an older
+  stamp is never served and goes when asked for; an answer read under an older stamp is not
+  kept. No scan under the lock. A folder's new name changes nothing. Turning the cache off or
+  emptying it drops everything.
+- **Hits cost like answers.** A hit takes a query slot of the user and the server and is charged
+  against the request's `ResponseBudget` (and with it the server's in-flight pool) at twice its
+  stored size before it is parsed; one that does not fit runs in its source as a miss and is cut
+  there. Keeping an answer serializes it through a writer that stops at the entry cap and draws
+  the copy from the same budget, given back once the copy belongs to the cache.
+- **Memory.** Entries are kept serialized and counted by their buffer plus 512 bytes, within
+  `datasources.cache_max_bytes`; least recently used first, one organization at most half and one
+  entry at most a quarter of the limit. Expired entries go when they are next asked for or pushed
+  out.
 - **Never kept:** errors, timeouts and answers with a failed graph step. Hits are counted
   (`GET /admin/query-cache`), not audited.
 

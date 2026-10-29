@@ -51,9 +51,9 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/analyses", OrgMember, create),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, save),
-        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, trash),
-        route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/restore", OrgMember, restore),
-        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}/purge", OrgMember, purge),
+        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, trash).changes_rights(),
+        route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/restore", OrgMember, restore).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}/purge", OrgMember, purge).changes_rights(),
         route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}/owner", OrgMember, set_owner).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/uses", OrgMember, uses),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/versions", OrgMember, versions),
@@ -716,7 +716,13 @@ async fn save(
     saved_analyses::check_visualization(&model, Some(&stored))?;
     saved_analyses::check_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     let new = NewVersion { model: &model, folder_id: folder_id.as_deref(), restored_from: None };
-    Ok(Json(write_version(&state, &ctx, &info, &row, new).await?))
+    let moved = folder_id != row.folder_id;
+    let saved = write_version(&state, &ctx, &info, &row, new).await?;
+    // Another folder can mean other readers: no answer kept under the old place may stay.
+    if moved {
+        state.datasources.query_cache().rights_changed(Some(&ctx.org_id));
+    }
+    Ok(Json(saved))
 }
 
 /// Writes a new version on top of `row`. Answers the saved analysis, or the version conflict with

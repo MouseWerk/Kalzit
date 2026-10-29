@@ -22,9 +22,10 @@ pub struct RouteDef {
     /// Relative to `/api`, with axum path parameters (`/orgs/{orgId}/teams`).
     pub path: &'static str,
     pub access: Access,
-    /// The route changes who may see what (grants, roles, members, teams, restricted folders,
-    /// AI data rules): once it succeeds, the query cache forgets the organization's answers
-    /// (all of them for a server route).
+    /// The route changes who may see what (grants, roles, members, teams, folders, owners, trash,
+    /// plugins, organization settings, AI data rules): once it succeeds, the query cache serves
+    /// none of the organization's kept answers any more (none at all for a server route; a new
+    /// generation, `datasources::cache::Stamp`).
     pub changes_rights: bool,
     handler: MethodRouter<AppState>,
 }
@@ -89,11 +90,7 @@ async fn enforce(
             let org_id = req.extensions().get::<OrgCtx>().map(|c| c.org_id.clone());
             let res = next.run(req).await;
             if res.status().is_success() {
-                let cache = state.datasources.query_cache();
-                match org_id {
-                    Some(org_id) => cache.forget_org(&org_id),
-                    None => cache.clear(),
-                }
+                state.datasources.query_cache().rights_changed(org_id.as_deref());
             }
             res
         }

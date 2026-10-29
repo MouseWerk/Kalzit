@@ -6,7 +6,10 @@
 //!   permissions and the caller's own scope (the AI data rules of an AI call) next to the
 //!   query: what one person ran is never served to another. The routes authorize every request
 //!   before the cache is asked, so losing a right ends the hits at once; a change of rights also
-//!   empties the organization's entries (`routes::table`, `RouteDef::changes_rights`).
+//!   ends the organization's entries (`routes::table`, `RouteDef::changes_rights`).
+//! - **Generations, not scans.** Every entry carries the generations it was read under (rights
+//!   server-wide and of its organization, target rules, its data source, `Stamp`); a change bumps
+//!   one, and an entry under an older one is never served and goes when next asked for.
 //! - **Everything that shapes the answer** is in the key: data source and its settings version
 //!   (`updated_at`), kind and its shapes, the query in canonical form, graph steps, cursor, the
 //!   time range (rounded, below), interval, data points, variables and which may be
@@ -16,16 +19,22 @@
 //!   range, and loads within the step share the answer. Ranges in the past stay as asked.
 //! - **Only answers.** Errors, timeouts and graph steps that failed are never kept.
 //! - **Bounded.** One server-wide memory limit (`datasources.cache_max_bytes`); the least recently
-//!   used entries go first. Entries are kept serialized, so the limit counts real bytes.
+//!   used entries go first, one organization holds at most half and one entry a quarter of it.
+//!   Entries are kept serialized and counted with a generous fixed overhead. Keeping an answer
+//!   serializes it only up to that quarter and within the request's response budget.
+//! - **Hits cost like answers.** A hit takes a query slot and is charged against the request's
+//!   response budget and the server's in-flight pool before it is read (`run_one`); one that does
+//!   not fit runs in its source as a miss would.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use super::frame::ResponseBudget;
 use crate::shapes::{CacheInfo, CacheStatus, QueryResult, Shape, StepPlace, TimeRange};
 
 /// TTL of a source that caches without its own (`cacheTtlSecs`).
@@ -36,8 +45,12 @@ pub const MAX_TTL_SECS: u64 = 86_400;
 const MIN_STEP_MS: i64 = 1_000;
 /// One entry takes at most this share of the limit, so one huge answer cannot empty the cache.
 const MAX_ENTRY_SHARE: usize = 4;
-/// Bytes an entry holds besides its answer (key, ids, bookkeeping), estimated.
-const ENTRY_OVERHEAD: usize = 160;
+/// Bytes an entry holds besides its answer: the key in three maps, the entry, its organization's
+/// share and the allocator's rounding take less than this.
+const ENTRY_OVERHEAD: usize = 512;
+/// One organization's entries take at most this share of the limit, so it cannot push out all
+/// others.
+const MAX_ORG_SHARE: usize = 2;
 
 /// Kinds whose sources cache unless their settings say otherwise: databases whose answers change
 /// at the pace of their data. Metrics (Prometheus), sources that report changes as they happen
@@ -175,21 +188,54 @@ struct StoredRef<'a> {
     steps: Option<&'a Vec<StepPlace>>,
 }
 
+/// The generations an entry was kept under: rights server-wide, the target rules, the rights of
+/// its organization and its data source. An entry whose stamp is no longer the current one is
+/// never served and goes when it is next asked for (invalidation in O(1), without a scan).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stamp {
+    global: u64,
+    policy: u64,
+    org: u64,
+    source: u64,
+}
+
+#[derive(Default)]
+struct Generations {
+    global: u64,
+    policy: u64,
+    /// Bounded by the organizations and data sources that ever changed.
+    orgs: HashMap<String, u64>,
+    sources: HashMap<String, u64>,
+}
+
 /// One kept answer.
 struct Entry {
-    body: std::sync::Arc<[u8]>,
-    org_id: String,
-    datasource_id: String,
+    body: Arc<Vec<u8>>,
+    org_id: Arc<str>,
+    stamp: Stamp,
     stored_ms: i64,
     expires_ms: i64,
-    /// Its place in the use order (`Inner::order`).
+    /// Its place in the use order (`Inner::order` and its organization's).
     tick: u64,
 }
 
 impl Entry {
+    /// The memory it holds, counted generously: the answer's buffer and a fixed share for the
+    /// key, the maps and the allocator, which is more than they take.
     fn size(&self) -> usize {
-        self.body.len() + self.org_id.len() + self.datasource_id.len() + ENTRY_OVERHEAD
+        entry_size(self.body.capacity(), self.org_id.len())
     }
+}
+
+fn entry_size(body: usize, org_id: usize) -> usize {
+    body.div_ceil(16) * 16 + org_id + ENTRY_OVERHEAD
+}
+
+/// An organization's entries, so one organization cannot push out all others.
+#[derive(Default)]
+struct OrgShare {
+    bytes: usize,
+    order: BTreeMap<u64, Key>,
 }
 
 #[derive(Default)]
@@ -197,40 +243,79 @@ struct Inner {
     entries: HashMap<Key, Entry>,
     /// Entries by their last use, oldest first.
     order: BTreeMap<u64, Key>,
+    orgs: HashMap<Arc<str>, OrgShare>,
     tick: u64,
     bytes: usize,
 }
 
 impl Inner {
     fn remove(&mut self, key: &Key) {
-        if let Some(e) = self.entries.remove(key) {
-            self.order.remove(&e.tick);
-            self.bytes -= e.size();
+        let Some(e) = self.entries.remove(key) else { return };
+        let size = e.size();
+        self.order.remove(&e.tick);
+        self.bytes -= size;
+        if let Some(share) = self.orgs.get_mut(&e.org_id) {
+            share.order.remove(&e.tick);
+            share.bytes -= size;
+            if share.order.is_empty() {
+                self.orgs.remove(&e.org_id);
+            }
         }
     }
 
-    fn retain(&mut self, keep: impl Fn(&Entry) -> bool) {
-        let gone: Vec<Key> = self.entries.iter().filter(|(_, e)| !keep(e)).map(|(k, _)| *k).collect();
-        for key in gone {
+    /// Drops the least recently used entries until all of them fit in `limit`.
+    fn fit(&mut self, limit: usize) {
+        while self.bytes > limit {
+            let Some((_, key)) = self.order.first_key_value().map(|(t, k)| (*t, *k)) else { break };
             self.remove(&key);
         }
     }
 
-    /// Drops the least recently used entries until `bytes` fits.
-    fn fit(&mut self, limit: usize) {
-        while self.bytes > limit {
-            let Some((_, key)) = self.order.pop_first() else { break };
-            if let Some(e) = self.entries.remove(&key) {
-                self.bytes -= e.size();
+    /// Drops the organization's least recently used entries until its share fits in `limit`.
+    fn fit_org(&mut self, org_id: &str, limit: usize) {
+        loop {
+            let Some(share) = self.orgs.get(org_id) else { return };
+            if share.bytes <= limit {
+                return;
             }
+            let Some(key) = share.order.first_key_value().map(|(_, k)| *k) else { return };
+            self.remove(&key);
+        }
+    }
+
+    /// Marks `key` as just used.
+    fn touch(&mut self, key: &Key) {
+        self.tick += 1;
+        let tick = self.tick;
+        let Some(e) = self.entries.get_mut(key) else { return };
+        let old = std::mem::replace(&mut e.tick, tick);
+        let org = e.org_id.clone();
+        self.order.remove(&old);
+        self.order.insert(tick, *key);
+        if let Some(share) = self.orgs.get_mut(&org) {
+            share.order.remove(&old);
+            share.order.insert(tick, *key);
         }
     }
 }
 
-/// A hit: the kept answer and how old it is.
-pub struct Hit {
-    pub stored: Stored,
+/// A kept answer as found, not yet read: the caller charges it against its request before it
+/// parses it (`Found::parse`).
+pub struct Found {
+    body: Arc<Vec<u8>>,
     pub info: CacheInfo,
+}
+
+impl Found {
+    /// Bytes the answer takes in the cache, as kept.
+    pub fn stored_bytes(&self) -> usize {
+        self.body.len()
+    }
+
+    /// The answer; `None` when it no longer reads (then it is a miss).
+    pub fn parse(&self) -> Option<Stored> {
+        serde_json::from_slice(&self.body).ok()
+    }
 }
 
 /// Counts and size, for `GET /admin/query-cache`.
@@ -243,10 +328,44 @@ pub struct Stats {
     pub misses: u64,
 }
 
+/// Serializes an answer into memory, at most `cap` bytes and only while the request's budget
+/// (and with it the server's in-flight pool) has room for the copy; what it drew goes back when
+/// it is dropped, since the copy then belongs to the cache.
+struct CappedWriter<'a> {
+    buf: Vec<u8>,
+    cap: usize,
+    budget: &'a ResponseBudget,
+    drawn: usize,
+}
+
+impl std::io::Write for CappedWriter<'_> {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if self.buf.len() + data.len() > self.cap || !self.budget.take(data.len()) {
+            return Err(std::io::Error::other("the answer is too large for the cache"));
+        }
+        self.drawn += data.len();
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for CappedWriter<'_> {
+    fn drop(&mut self) {
+        if self.drawn > 0 {
+            self.budget.give_back(self.drawn);
+        }
+    }
+}
+
 /// The cache of one server, in `DataSources`.
 #[derive(Default)]
 pub struct QueryCache {
     inner: Mutex<Inner>,
+    generations: Mutex<Generations>,
     hits: AtomicU64,
     misses: AtomicU64,
 }
@@ -256,68 +375,108 @@ impl QueryCache {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The kept answer of `key`, if it is younger than its TTL. Counts a hit or a miss.
-    pub fn get(&self, key: &Key, now_ms: i64) -> Option<Hit> {
-        let found = {
-            let mut inner = self.lock();
-            let fresh = inner.entries.get(key).map(|e| e.expires_ms > now_ms);
-            match fresh {
-                Some(true) => {
-                    inner.tick += 1;
-                    let tick = inner.tick;
-                    let e = inner.entries.get_mut(key).expect("the entry was just found");
-                    let old = std::mem::replace(&mut e.tick, tick);
-                    let found = (e.body.clone(), e.stored_ms, e.expires_ms);
-                    inner.order.remove(&old);
-                    inner.order.insert(tick, *key);
-                    Some(found)
-                }
-                Some(false) => {
-                    inner.remove(key);
-                    None
-                }
-                None => None,
-            }
-        };
-        // Parsed outside the lock; an entry that no longer parses is a miss and goes.
-        let hit = found.and_then(|(body, stored_ms, expires_ms)| {
-            let stored = serde_json::from_slice::<Stored>(&body).ok();
-            if stored.is_none() {
-                self.lock().remove(key);
-            }
-            stored.map(|stored| Hit {
-                stored,
-                info: CacheInfo {
-                    status: CacheStatus::Hit,
-                    age_ms: (now_ms - stored_ms).max(0) as u64,
-                    ttl_ms: (expires_ms - stored_ms).max(0) as u64,
-                },
-            })
-        });
-        let counter = if hit.is_some() { &self.hits } else { &self.misses };
-        counter.fetch_add(1, Ordering::Relaxed);
-        hit
+    fn generations(&self) -> std::sync::MutexGuard<'_, Generations> {
+        self.generations.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Keeps an answer for `ttl_ms` within `limit` bytes for all entries; an answer larger than a
-    /// quarter of the limit is not kept. `false` when it was not kept.
+    /// The current generations for an answer of `datasource_id` in `org_id`. Taken before a
+    /// query runs: an answer is kept and served only under the stamp it was read under.
+    pub fn stamp(&self, org_id: &str, datasource_id: &str) -> Stamp {
+        let g = self.generations();
+        Stamp {
+            global: g.global,
+            policy: g.policy,
+            org: g.orgs.get(org_id).copied().unwrap_or(0),
+            source: g.sources.get(datasource_id).copied().unwrap_or(0),
+        }
+    }
+
+    /// Rights changed in an organization (`None`: on the whole server): its kept answers are no
+    /// longer served.
+    pub fn rights_changed(&self, org_id: Option<&str>) {
+        let mut g = self.generations();
+        match org_id {
+            Some(org_id) => *g.orgs.entry(org_id.to_string()).or_default() += 1,
+            None => g.global += 1,
+        }
+    }
+
+    /// The target rules changed: no answer read under the old ones is served.
+    pub fn policy_changed(&self) {
+        self.generations().policy += 1;
+    }
+
+    /// A data source changed, went to the trash or was purged: its answers are no longer served.
+    pub fn forget_datasource(&self, datasource_id: &str) {
+        *self.generations().sources.entry(datasource_id.to_string()).or_default() += 1;
+    }
+
+    /// Counts a load the cache answered (`true`) or could not answer.
+    pub fn count(&self, hit: bool) {
+        let counter = if hit { &self.hits } else { &self.misses };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The kept answer of `key`, if it is younger than its TTL and was kept under `stamp` (the
+    /// current one). A stale or expired entry goes.
+    pub fn get(&self, key: &Key, stamp: Stamp, now_ms: i64) -> Option<Found> {
+        let mut inner = self.lock();
+        let entry = inner.entries.get(key)?;
+        if entry.expires_ms <= now_ms || entry.stamp != stamp {
+            inner.remove(key);
+            return None;
+        }
+        let found = Found {
+            body: entry.body.clone(),
+            info: CacheInfo {
+                status: CacheStatus::Hit,
+                age_ms: (now_ms - entry.stored_ms).max(0) as u64,
+                ttl_ms: (entry.expires_ms - entry.stored_ms).max(0) as u64,
+            },
+        };
+        inner.touch(key);
+        Some(found)
+    }
+
+    /// Forgets the entry of `key` (an answer that no longer reads).
+    pub fn remove(&self, key: &Key) {
+        self.lock().remove(key);
+    }
+
+    /// Keeps an answer for `ttl_ms` within `limit` bytes for all entries and half of it for one
+    /// organization. Not kept: an answer larger than a quarter of the limit (serializing stops
+    /// there), one whose copy does not fit in the request's `budget`, and one read under a stamp
+    /// that is no longer current. `false` when it was not kept.
     #[expect(clippy::too_many_arguments, reason = "the parts of one entry")]
     pub fn put(
         &self,
         key: Key,
         org_id: &str,
         datasource_id: &str,
-        result: &QueryResult,
-        steps: Option<&Vec<StepPlace>>,
+        stored: (&QueryResult, Option<&Vec<StepPlace>>),
+        stamp: Stamp,
         now_ms: i64,
         ttl_ms: i64,
         limit: usize,
+        budget: &ResponseBudget,
     ) -> bool {
-        let Ok(body) = serde_json::to_vec(&StoredRef { result, steps }) else { return false };
+        let entry_cap = limit / MAX_ENTRY_SHARE;
+        let fixed = entry_size(0, org_id.len());
+        if entry_cap <= fixed || self.stamp(org_id, datasource_id) != stamp {
+            return false;
+        }
+        let mut writer = CappedWriter { buf: Vec::new(), cap: entry_cap - fixed, budget, drawn: 0 };
+        let (result, steps) = stored;
+        if serde_json::to_writer(&mut writer, &StoredRef { result, steps }).is_err() {
+            return false;
+        }
+        let mut body = std::mem::take(&mut writer.buf);
+        drop(writer);
+        body.shrink_to_fit();
         let entry = Entry {
-            body: body.into(),
-            org_id: org_id.to_string(),
-            datasource_id: datasource_id.to_string(),
+            body: Arc::new(body),
+            org_id: Arc::from(org_id),
+            stamp,
             stored_ms: now_ms,
             expires_ms: now_ms.saturating_add(ttl_ms),
             tick: 0,
@@ -325,14 +484,18 @@ impl QueryCache {
         let size = entry.size();
         let mut inner = self.lock();
         inner.remove(&key);
-        if size > limit / MAX_ENTRY_SHARE {
+        if size > entry_cap {
             return false;
         }
+        inner.fit_org(org_id, (limit / MAX_ORG_SHARE).saturating_sub(size));
         inner.fit(limit.saturating_sub(size));
         inner.tick += 1;
         let tick = inner.tick;
         inner.order.insert(tick, key);
         inner.bytes += size;
+        let share = inner.orgs.entry(entry.org_id.clone()).or_default();
+        share.order.insert(tick, key);
+        share.bytes += size;
         inner.entries.insert(key, Entry { tick, ..entry });
         true
     }
@@ -345,21 +508,12 @@ impl QueryCache {
         }
     }
 
-    /// Forgets every answer of a data source (changed, trashed or purged).
-    pub fn forget_datasource(&self, datasource_id: &str) {
-        self.lock().retain(|e| e.datasource_id != datasource_id);
-    }
-
-    /// Forgets every answer of an organization (its rights changed).
-    pub fn forget_org(&self, org_id: &str) {
-        self.lock().retain(|e| e.org_id != org_id);
-    }
-
-    /// Forgets everything (the cache was turned off or emptied, or rights changed server-wide).
+    /// Lets go of everything (the cache was turned off or emptied).
     pub fn clear(&self) {
         let mut inner = self.lock();
         inner.entries.clear();
         inner.order.clear();
+        inner.orgs.clear();
         inner.bytes = 0;
     }
 
@@ -412,9 +566,16 @@ mod tests {
         QueryResult::Frame { frame: Frame::new(vec![field]).unwrap() }
     }
 
-    fn number(hit: &Hit) -> Value {
-        let QueryResult::Frame { frame } = &hit.stored.result else { panic!("a frame") };
+    fn number(found: &Found) -> Value {
+        let QueryResult::Frame { frame } = found.parse().unwrap().result else { panic!("a frame") };
         frame.fields()[0].values[0].clone()
+    }
+
+    /// Keeps the answer `n` under the current stamp of `org` with a roomy budget.
+    fn put(cache: &QueryCache, key: Key, org: &str, n: i64, now: i64, ttl: i64, limit: usize) -> bool {
+        let stamp = cache.stamp(org, "ds");
+        let r = stored(n);
+        cache.put(key, org, "ds", (&r, None), stamp, now, ttl, limit, &ResponseBudget::new(1 << 30))
     }
 
     /// The key changes with every part of the caller's rights, so no answer crosses them.
@@ -490,58 +651,125 @@ mod tests {
     fn answers_live_for_their_ttl() {
         let cache = QueryCache::default();
         let k = [1; 32];
-        assert!(cache.get(&k, 0).is_none());
-        assert!(cache.put(k, "o", "ds", &stored(7), None, 1_000, 60_000, 1 << 20));
-        let hit = cache.get(&k, 31_000).expect("a hit within the TTL");
-        assert_eq!(number(&hit), json!(7));
-        assert_eq!((hit.info.status, hit.info.age_ms, hit.info.ttl_ms), (CacheStatus::Hit, 30_000, 60_000));
-        assert!(cache.get(&k, 61_000).is_none(), "expired");
+        let s = cache.stamp("o", "ds");
+        assert!(cache.get(&k, s, 0).is_none());
+        assert!(put(&cache, k, "o", 7, 1_000, 60_000, 1 << 20));
+        let found = cache.get(&k, s, 31_000).expect("a hit within the TTL");
+        assert_eq!(number(&found), json!(7));
+        assert_eq!((found.info.status, found.info.age_ms, found.info.ttl_ms), (CacheStatus::Hit, 30_000, 60_000));
+        assert!(cache.get(&k, s, 61_000).is_none(), "expired");
         assert!(cache.is_empty(), "an expired entry goes");
-        assert_eq!(cache.stats().hits, 1);
-        assert_eq!(cache.stats().misses, 2);
+        cache.count(true);
+        cache.count(false);
+        assert_eq!((cache.stats().hits, cache.stats().misses), (1, 1));
     }
 
     #[test]
     fn the_least_recently_used_answer_goes_first() {
         let cache = QueryCache::default();
-        let one = cache.put([1; 32], "o", "ds", &stored(1), None, 0, 60_000, 1 << 20);
-        assert!(one);
+        assert!(put(&cache, [1; 32], "o", 1, 0, 60_000, 1 << 20));
         let size = cache.stats().bytes;
-        // Room for exactly three entries of this size (and each within a quarter of the limit
-        // only when the limit is at least four of them).
+        // Room for four entries of this size, each within a quarter of the limit; one
+        // organization may use half of it, so these spread over two.
         let limit = size * 4;
-        cache.put([2; 32], "o", "ds", &stored(2), None, 0, 60_000, limit);
-        cache.put([3; 32], "o", "ds", &stored(3), None, 0, 60_000, limit);
-        cache.put([4; 32], "o", "ds", &stored(4), None, 0, 60_000, limit);
+        put(&cache, [2; 32], "p", 2, 0, 60_000, limit);
+        put(&cache, [3; 32], "o", 3, 0, 60_000, limit);
+        put(&cache, [4; 32], "p", 4, 0, 60_000, limit);
         assert_eq!(cache.stats().entries, 4);
+        let s = |org| cache.stamp(org, "ds");
         // 1 was used last; 2 is now the oldest.
-        assert!(cache.get(&[1; 32], 1).is_some());
-        cache.put([5; 32], "o", "ds", &stored(5), None, 0, 60_000, limit);
-        assert!(cache.get(&[2; 32], 1).is_none(), "the least recently used went");
-        assert!(cache.get(&[1; 32], 1).is_some());
+        assert!(cache.get(&[1; 32], s("o"), 1).is_some());
+        put(&cache, [5; 32], "q", 5, 0, 60_000, limit);
+        assert!(cache.get(&[2; 32], s("p"), 1).is_none(), "the least recently used went");
+        assert!(cache.get(&[1; 32], s("o"), 1).is_some());
         assert!(cache.stats().bytes <= limit);
         // A lower limit takes effect at once.
         cache.limit(size);
         assert_eq!(cache.stats().entries, 1);
         // An answer larger than a quarter of the limit is not kept.
-        assert!(!cache.put([6; 32], "o", "ds", &stored(6), None, 0, 60_000, size));
+        assert!(!put(&cache, [6; 32], "o", 6, 0, 60_000, size));
     }
 
+    /// One organization fills at most half of the cache, so it cannot push all others out.
     #[test]
-    fn sources_and_organizations_are_forgotten() {
+    fn one_organization_takes_at_most_half() {
         let cache = QueryCache::default();
-        cache.put([1; 32], "o", "a", &stored(1), None, 0, 60_000, 1 << 20);
-        cache.put([2; 32], "o", "b", &stored(2), None, 0, 60_000, 1 << 20);
-        cache.put([3; 32], "p", "c", &stored(3), None, 0, 60_000, 1 << 20);
-        cache.forget_datasource("a");
-        assert!(cache.get(&[1; 32], 1).is_none());
-        assert!(cache.get(&[2; 32], 1).is_some());
-        cache.forget_org("o");
-        assert!(cache.get(&[2; 32], 1).is_none());
-        assert!(cache.get(&[3; 32], 1).is_some());
+        put(&cache, [0; 32], "o", 0, 0, 60_000, 1 << 20);
+        let size = cache.stats().bytes;
         cache.clear();
-        assert_eq!(cache.stats().entries, 0);
-        assert_eq!(cache.stats().bytes, 0);
+        let limit = size * 8;
+        for i in 0..4 {
+            assert!(put(&cache, [i; 32], "a", i.into(), 0, 60_000, limit));
+        }
+        for i in 10..20 {
+            assert!(put(&cache, [i; 32], "l", (i - 10).into(), 0, 60_000, limit));
+        }
+        for i in 0..4 {
+            assert!(cache.get(&[i; 32], cache.stamp("a", "ds"), 1).is_some(), "{i} stays");
+        }
+        let loud = (10..20).filter(|i| cache.get(&[*i; 32], cache.stamp("l", "ds"), 1).is_some()).count();
+        assert_eq!(loud, 4, "half of the limit");
+    }
+
+    /// Changes are generations: no scan, and an entry kept under another one is never served.
+    #[test]
+    fn rights_rules_and_sources_end_entries_without_a_scan() {
+        let cache = QueryCache::default();
+        put(&cache, [1; 32], "o", 1, 0, 60_000, 1 << 20);
+        put(&cache, [3; 32], "p", 3, 0, 60_000, 1 << 20);
+        let before = cache.stamp("o", "ds");
+        cache.rights_changed(Some("o"));
+        assert_ne!(cache.stamp("o", "ds"), before);
+        assert!(cache.get(&[1; 32], cache.stamp("o", "ds"), 1).is_none(), "the organization's rights changed");
+        assert!(cache.get(&[3; 32], cache.stamp("p", "ds"), 1).is_some(), "another organization keeps its");
+        cache.forget_datasource("ds");
+        assert!(cache.get(&[3; 32], cache.stamp("p", "ds"), 1).is_none(), "the source changed");
+        put(&cache, [3; 32], "p", 3, 0, 60_000, 1 << 20);
+        cache.policy_changed();
+        assert!(cache.get(&[3; 32], cache.stamp("p", "ds"), 1).is_none(), "the target rules changed");
+        put(&cache, [3; 32], "p", 3, 0, 60_000, 1 << 20);
+        cache.rights_changed(None);
+        assert!(cache.get(&[3; 32], cache.stamp("p", "ds"), 1).is_none(), "rights changed server-wide");
+        // An answer read before a change is not kept after it.
+        let stale = cache.stamp("o", "ds");
+        cache.rights_changed(Some("o"));
+        let budget = ResponseBudget::new(1 << 20);
+        let r = stored(1);
+        assert!(!cache.put([9; 32], "o", "ds", (&r, None), stale, 0, 60_000, 1 << 20, &budget));
+        cache.clear();
+        assert_eq!((cache.stats().entries, cache.stats().bytes), (0, 0));
+    }
+
+    /// Keeping an answer copies it within the request's budget and the entry cap, and gives the
+    /// copy's bytes back to the budget afterwards; a huge answer stops at the cap.
+    #[test]
+    fn keeping_an_answer_is_bounded() {
+        let cache = QueryCache::default();
+        let big = QueryResult::Frame {
+            frame: Frame::new(vec![Field {
+                name: "s".into(),
+                field_type: FieldType::String,
+                unit: None,
+                values: (0..10_000).map(|i| json!(format!("Zeile {i}"))).collect(),
+                labels: None,
+            }])
+            .unwrap(),
+        };
+        let stamp = cache.stamp("o", "ds");
+        let budget = ResponseBudget::new(1 << 20);
+        // Above a quarter of the limit: serializing stops there; the budget is whole again.
+        assert!(!cache.put([1; 32], "o", "ds", (&big, None), stamp, 0, 60_000, 64 * 1024, &budget));
+        assert_eq!(budget.remaining(), 1 << 20);
+        // Within the cap, but the request's budget has no room for the copy.
+        let small = ResponseBudget::new(4096);
+        assert!(!cache.put([1; 32], "o", "ds", (&big, None), stamp, 0, 60_000, 64 << 20, &small));
+        assert_eq!(small.remaining(), 4096);
+        // With room for both it is kept, and the copy's bytes go back to the request.
+        assert!(cache.put([1; 32], "o", "ds", (&big, None), stamp, 0, 60_000, 64 << 20, &budget));
+        assert_eq!(budget.remaining(), 1 << 20);
+        let found = cache.get(&[1; 32], stamp, 1).unwrap();
+        assert!(cache.stats().bytes > found.stored_bytes() + ENTRY_OVERHEAD - 1);
+        assert!(matches!(found.parse().unwrap().result, QueryResult::Frame { .. }));
     }
 
     #[test]

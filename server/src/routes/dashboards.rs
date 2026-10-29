@@ -40,9 +40,9 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/dashboards/validate", OrgMember, validate),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, save),
-        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash),
-        route(Method::POST, "/orgs/{orgId}/dashboards/{dashboardId}/restore", OrgMember, restore),
-        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}/purge", OrgMember, purge),
+        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash).changes_rights(),
+        route(Method::POST, "/orgs/{orgId}/dashboards/{dashboardId}/restore", OrgMember, restore).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}/purge", OrgMember, purge).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/versions", OrgMember, versions),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/versions/{version}", OrgMember, version),
         route(
@@ -770,7 +770,13 @@ async fn save(
         added_library: added_library(&model, Some(&stored)),
         added_analyses: added_analyses(&model, Some(&stored)),
     };
-    Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
+    let moved = folder_id != row.folder_id;
+    let saved = write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?;
+    // Another folder can mean other readers: no answer kept under the old place may stay.
+    if moved {
+        state.datasources.query_cache().rights_changed(Some(&ctx.org_id));
+    }
+    Ok(Json(saved))
 }
 
 /// A move across team spaces of a dashboard or saved analysis in `from_folder` that `owner` owns,
