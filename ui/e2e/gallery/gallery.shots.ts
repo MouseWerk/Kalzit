@@ -1022,6 +1022,11 @@ async function seedPlugins(owner: Api, sql: string): Promise<string> {
     data: { name: PUBLISHER, publicKey: made.publicKey },
   });
   expect(trusted.ok(), await trusted.text()).toBe(true);
+  // The same key signs the catalog list of the catalog picture.
+  const catalog = await owner.context.put(`/api/admin/plugin-keys/${made.keyId}/catalog`, {
+    data: { maySignCatalog: true },
+  });
+  expect(catalog.ok(), await catalog.text()).toBe(true);
   // Without Landlock (some CI kernels) plugins start only when the administrator allows it.
   const host = (await (await owner.context.get("/api/admin/plugin-host")).json()) as {
     landlockAvailable?: boolean;

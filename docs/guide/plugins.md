@@ -20,8 +20,8 @@ A strip on top counts the installed plugins, how many run, the problems, waiting
 catalog and whether unsigned plugins are allowed. **All**, **Problems** and **Updates** filter the
 table, which shows per plugin:
 
-- **Plugin**: its name and id, which is also the id of its data source kind.
-- **Kind**: Data source (Datenquelle); panel plugins follow later.
+- **Plugin**: its name and id, which is also the id of its data source kind or panel type.
+- **Kind**: **Data source** (Datenquelle) or **Panel**.
 - **Publisher, signature**: the publisher as the manifest names it (a neutral badge, not a
   confirmed identity) and the signature: **Signed by Kalzit**, **Signed** with the key id in groups
   of four, **Unsigned**, or **Key no longer trusted**.
@@ -63,6 +63,8 @@ A refused package names the step that failed and why, and the steps after it are
   signed the package.
 - **No matching platform**, **Needs a newer Kalzit**, **Files do not match the manifest**, and the
   refusals of updates (another plugin, an older version, another key).
+
+<picture><source media="(prefers-color-scheme: light)" srcset="../screenshots/gallery/plugin-install-light.webp"><img src="../screenshots/gallery/plugin-install-dark.webp" alt="Install from file: the checks of a signed package passed and the network targets to grant"></picture>
 
 ## A plugin's page
 
@@ -153,12 +155,16 @@ as **Install from file**: the package must be exactly the one the list names (si
 version and key), signed by a trusted key (never unsigned, whatever the switch for unsigned
 plugins says), and then every check of a file follows, with the permissions to grant before
 anything runs. A publisher whose key you do not trust has **Check key…** (Schlüssel prüfen…),
-which opens **Signature and trust** to compare and add the key.
+which opens **Signature and trust** to compare and add the key. Data source plugins and panel
+plugins install from the catalog alike; a panel is then a visualization in the panel editor as
+after an install from a file.
 
 The list can withdraw versions (for example after a security problem): they are marked
 **Withdrawn** (Zurückgezogen) and cannot be installed, and an installed version the list withdraws
 is named at the top of the tab, with the reason. Refreshing the list by hand and every install
 from it are recorded in the audit log, as are changes of its settings.
+
+<picture><source media="(prefers-color-scheme: light)" srcset="../screenshots/gallery/plugins-catalog-light.webp"><img src="../screenshots/gallery/plugins-catalog-dark.webp" alt="The Catalog tab: a signed list of data source and panel plugins to install or update"></picture>
 
 ## Plugins of the organization
 
@@ -196,13 +202,41 @@ link: Kalzit then shows the address and opens it only when you choose **Open**. 
 not start within 10 seconds, or tries to leave its frame, shows an error with **Try again**. When
 its plugin is turned off, removed or blocked for your organization, the panel says so instead.
 
+<picture><source media="(prefers-color-scheme: light)" srcset="../screenshots/gallery/dashboard-plugin-panel-light.webp"><img src="../screenshots/gallery/dashboard-plugin-panel-dark.webp" alt="A dashboard with four KPI tile panels from a panel plugin above a time series"></picture>
+
+The release comes with the example panel **KPI tile** (`dev.kalzit.panel-kpi`, signed with
+Kalzit's key): the last value of a number field with a sparkline, with the options Field,
+Decimals and Label.
+
 Viewers see a plugin's panels on the dashboards they may read; adding one needs the right to edit
 the dashboard. The browser's developer console shows a plugin's log lines and what Kalzit
 refused from it, for the plugin's author.
 
 ## Sandbox and network
 
-What the sandbox holds on Windows and Linux is described in the
-[API reference](../api/plugins.md#sandbox). The network is not limited by the sandbox yet: Kalzit
-checks every configured target against the data source target rules before each call, and the
-approval rests on the signature and the targets the manifest declares.
+A data source plugin runs in a sandbox of the operating system, and the plugin's page lists the
+layers in force and any that are missing on this server:
+
+- **Windows**: a restricted token at low integrity in a job object (memory and process limits,
+  ended with Kalzit), inside an AppContainer of its own without network access. A plugin can
+  read neither Kalzit's data directory nor other processes. On Windows plugins do not start while
+  one of Kalzit's files with secrets (`kalzit.toml` with a password, the TLS key) is readable by
+  them; the plugin's page names the file. A file other local accounts may read is a warning there.
+- **Linux**: Landlock (the file system read-only and visible only where needed), a seccomp filter
+  that refuses network sockets and other risky system calls, and, where the system allows it,
+  user and network namespaces. Without Landlock plugins do not start unless **Run plugins without
+  Landlock** is on, and they never run while Kalzit runs as root.
+
+A plugin has **no network of its own**. It asks Kalzit for every connection, and Kalzit connects
+only to a target the plugin's manifest declares for that data source's settings, checked against
+the data source target rules (allowed targets, cloud metadata addresses refused) and never to
+Kalzit itself; then it passes the connection through. Refused connections appear in the plugin's
+log and in the audit log. The exact lists are in the [API reference](../api/plugins.md#sandbox)
+and its section "Network connector".
+
+## Writing plugins
+
+Data source plugins are written in Rust with the Kalzit plugin SDK (`plugin-sdk/`), and packaged
+and signed with the `kalzit-plugin` tool; panel plugins are a JavaScript bundle that speaks the
+panel message API. The author guide is [Writing plugins](../plugins/authoring.md), with the examples in
+`examples/plugins` ("CSV and JSON over HTTP", `dev.kalzit.csv-http`, and the KPI tile).
