@@ -924,11 +924,13 @@ async fn update(
         }
     }
     let updated = answer(&mut tx, &ctx, &folder_id).await?;
+    // Restricting or moving changes who sees what is inside; a new name does not. Taken before
+    // the commit, so a client that goes away cannot skip it.
+    let _bump = changed
+        .iter()
+        .any(|c| *c == "parentId" || *c == "restricted")
+        .then(|| state.datasources.query_cache().bump_on_drop(Some(ctx.org_id.clone())));
     crate::db::commit(tx).await?;
-    // Restricting or moving changes who sees what is inside; a new name does not.
-    if changed.iter().any(|c| *c == "parentId" || *c == "restricted") {
-        state.datasources.query_cache().rights_changed(Some(&ctx.org_id));
-    }
     Ok(updated)
 }
 

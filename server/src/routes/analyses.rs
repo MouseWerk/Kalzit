@@ -716,13 +716,11 @@ async fn save(
     saved_analyses::check_visualization(&model, Some(&stored))?;
     saved_analyses::check_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     let new = NewVersion { model: &model, folder_id: folder_id.as_deref(), restored_from: None };
-    let moved = folder_id != row.folder_id;
-    let saved = write_version(&state, &ctx, &info, &row, new).await?;
-    // Another folder can mean other readers: no answer kept under the old place may stay.
-    if moved {
-        state.datasources.query_cache().rights_changed(Some(&ctx.org_id));
-    }
-    Ok(Json(saved))
+    // Another folder can mean other readers: no answer kept under the old place may stay. Taken
+    // before the write, so a client that goes away cannot skip it.
+    let _bump =
+        (folder_id != row.folder_id).then(|| state.datasources.query_cache().bump_on_drop(Some(ctx.org_id.clone())));
+    Ok(Json(write_version(&state, &ctx, &info, &row, new).await?))
 }
 
 /// Writes a new version on top of `row`. Answers the saved analysis, or the version conflict with

@@ -344,22 +344,26 @@ contract:
 - **Invalidation by generations.** Each entry carries a `Stamp`: the generations of rights
   server-wide and of its organization, of the target rules and of its data source, taken before
   the query ran. `DataSources::forget` (source changed, trashed, purged), a change of the target
-  rules (`DataSources::policy`), routes marked `RouteDef::changes_rights` once they succeed
-  (grants, roles, members, teams, folder trash, restore, purge and owner, dashboard and analysis
-  trash, restore, purge and owner, plugin block, disable and removal, organization settings,
-  team context, AI access; server routes for all organizations) and handlers that move a folder,
-  restrict it or move a dashboard or analysis to another folder bump one. An entry under an older
+  rules (`DataSources::policy`), routes marked `RouteDef::changes_rights` (grants, roles, members,
+  teams, folder trash, restore, purge and owner, dashboard and analysis trash, restore, purge and
+  owner, plugin block, disable and removal, organization settings, AI access; server routes for
+  all organizations) and handlers that move a folder, restrict it or move a dashboard or analysis
+  to another folder bump one. Routes and handlers hold a drop guard
+  (`QueryCache::bump_on_drop`, taken before the commit), so a client that goes away mid-change
+  cannot skip the bump; a failed change bumps too, which costs only kept answers. An entry under an older
   stamp is never served and goes when asked for; an answer read under an older stamp is not
   kept. No scan under the lock. A folder's new name changes nothing. Turning the cache off or
   emptying it drops everything.
 - **Hits cost like answers.** A hit takes a query slot of the user and the server and is charged
-  against the request's `ResponseBudget` (and with it the server's in-flight pool) at twice its
-  stored size before it is parsed; one that does not fit runs in its source as a miss and is cut
-  there. Keeping an answer serializes it through a writer that stops at the entry cap and draws
+  against the request's `ResponseBudget` (and with it the server's in-flight pool) before it is
+  parsed: what the answer held when it was read from its source (`cache::held_size`, counted as
+  the budget counts it, 32 bytes per value), at least twice its stored size. One that does not
+  fit runs in its source as a miss and is cut there. Keeping an answer serializes it through a writer that stops at the entry cap and draws
   the copy from the same budget, given back once the copy belongs to the cache.
 - **Memory.** Entries are kept serialized and counted by their buffer plus 512 bytes, within
-  `datasources.cache_max_bytes`; least recently used first, one organization at most half and one
-  entry at most a quarter of the limit. Expired entries go when they are next asked for or pushed
+  `datasources.cache_max_bytes`; least recently used first, one organization at most half, one
+  person at most a quarter of their organization's half and one entry at most a quarter of the
+  limit; a lowered limit applies all of them at once. Expired entries go when they are next asked for or pushed
   out.
 - **Never kept:** errors, timeouts and answers with a failed graph step. Hits are counted
   (`GET /admin/query-cache`), not audited.

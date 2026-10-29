@@ -1819,7 +1819,8 @@ async fn run_one(
         // A graph step that failed may have run out of time: such an answer is not kept.
         let complete = steps.as_ref().is_none_or(|places| places.iter().all(|p| p.error.is_none()));
         let stored = (&*result, steps.as_ref());
-        let kept = complete && registry.cache.put(key, &ctx.org_id, &ds.id, stored, stamp, now, ttl_ms, limit, &budget);
+        let kept = complete
+            && registry.cache.put(key, (&ctx.org_id, &ctx.user.id), &ds.id, stored, stamp, now, ttl_ms, limit, &budget);
         let status = if use_.mode == cache::CacheMode::Refresh { CacheStatus::Refresh } else { CacheStatus::Miss };
         *info = Some(CacheInfo { status, age_ms: 0, ttl_ms: if kept { ttl_ms as u64 } else { 0 } });
     }
@@ -1828,9 +1829,10 @@ async fn run_one(
 
 /// What a hit costs the request: the answer is read only after it got a query slot (hits wait
 /// with the other queries of the user and the server) and its bytes were charged against the
-/// request's response budget and the server's in-flight pool, twice its stored size for the
-/// parsed copy. `None` when it does not fit in the query's time or the budget, or no longer
-/// reads: then the query runs in its source as a miss, and is cut there as any answer is.
+/// request's response budget and the server's in-flight pool (`Found::charge`: what it held
+/// when it was read, at least twice its stored size). `None` when it does not fit in the
+/// query's time or the budget, or no longer reads: then the query runs in its source as a
+/// miss, and is cut there as any answer is.
 async fn serve_hit(
     state: &AppState,
     ctx: &OrgCtx,
@@ -1840,7 +1842,7 @@ async fn serve_hit(
 ) -> Option<QueryOutcome> {
     let read = async {
         let _slots = state.datasources.slots(state, &ctx.user.id).await.ok()?;
-        if !limits.budget.take(found.stored_bytes().saturating_mul(2)) {
+        if !limits.budget.take(found.charge()) {
             return None;
         }
         let stored = found.parse();

@@ -51,6 +51,10 @@ const ENTRY_OVERHEAD: usize = 512;
 /// One organization's entries take at most this share of the limit, so it cannot push out all
 /// others.
 const MAX_ORG_SHARE: usize = 2;
+/// One person's entries take at most this share of their organization's.
+const MAX_USER_SHARE: usize = 4;
+/// The bytes the budget counts for one value (`frame::value_size`).
+const VALUE_SIZE: usize = 32;
 
 /// Kinds whose sources cache unless their settings say otherwise: databases whose answers change
 /// at the pace of their data. Metrics (Prometheus), sources that report changes as they happen
@@ -211,11 +215,16 @@ struct Generations {
 /// One kept answer.
 struct Entry {
     body: Arc<Vec<u8>>,
+    /// What the answer held in memory when it was read, counted as the response budget counts
+    /// it (`held_size`); a hit is charged at least this.
+    held: usize,
     org_id: Arc<str>,
+    /// `org/user`: whose answer it is, for the share of one person.
+    user_key: Arc<str>,
     stamp: Stamp,
     stored_ms: i64,
     expires_ms: i64,
-    /// Its place in the use order (`Inner::order` and its organization's).
+    /// Its place in the use order (`Inner::order` and its organization's and person's).
     tick: u64,
 }
 
@@ -223,19 +232,83 @@ impl Entry {
     /// The memory it holds, counted generously: the answer's buffer and a fixed share for the
     /// key, the maps and the allocator, which is more than they take.
     fn size(&self) -> usize {
-        entry_size(self.body.capacity(), self.org_id.len())
+        entry_size(self.body.capacity(), self.org_id.len() + self.user_key.len())
     }
 }
 
-fn entry_size(body: usize, org_id: usize) -> usize {
-    body.div_ceil(16) * 16 + org_id + ENTRY_OVERHEAD
+fn entry_size(body: usize, ids: usize) -> usize {
+    body.div_ceil(16) * 16 + ids + ENTRY_OVERHEAD
 }
 
-/// An organization's entries, so one organization cannot push out all others.
+/// What an answer holds in memory once parsed, counted as the response budget counts an answer
+/// read from its source (`frame::value_size`): 32 bytes for every value, the text of strings,
+/// keys and entries of objects.
+pub fn held_size(result: &QueryResult) -> usize {
+    use super::frame::{map_size, string_size, value_size};
+    match result {
+        QueryResult::Frame { frame } => {
+            frame.fields().iter().map(|f| string_size(&f.name) + f.values.iter().map(value_size).sum::<usize>()).sum()
+        }
+        QueryResult::Documents { documents } => documents.documents.iter().map(|d| VALUE_SIZE + d.get().len()).sum(),
+        QueryResult::Graph { graph } => {
+            let nodes = graph.nodes.iter().map(|n| {
+                string_size(&n.id) + n.labels.iter().map(string_size).sum::<usize>() + map_size(&n.properties)
+            });
+            let edges = graph.edges.iter().map(|e| {
+                string_size(&e.id)
+                    + string_size(&e.edge_type)
+                    + string_size(&e.from)
+                    + string_size(&e.to)
+                    + map_size(&e.properties)
+            });
+            nodes.chain(edges).sum()
+        }
+    }
+}
+
+/// The entries of one organization or one person, so neither can push out all others.
 #[derive(Default)]
-struct OrgShare {
+struct Share {
     bytes: usize,
     order: BTreeMap<u64, Key>,
+}
+
+/// Shares by organization or by person.
+#[derive(Default)]
+struct Shares(HashMap<Arc<str>, Share>);
+
+impl Shares {
+    fn add(&mut self, owner: &Arc<str>, tick: u64, key: Key, size: usize) {
+        let share = self.0.entry(owner.clone()).or_default();
+        share.order.insert(tick, key);
+        share.bytes += size;
+    }
+
+    fn remove(&mut self, owner: &str, tick: u64, size: usize) {
+        if let Some(share) = self.0.get_mut(owner) {
+            share.order.remove(&tick);
+            share.bytes -= size;
+            if share.order.is_empty() {
+                self.0.remove(owner);
+            }
+        }
+    }
+
+    fn touch(&mut self, owner: &str, old: u64, tick: u64, key: Key) {
+        if let Some(share) = self.0.get_mut(owner) {
+            share.order.remove(&old);
+            share.order.insert(tick, key);
+        }
+    }
+
+    /// The oldest entry of `owner` while its share is above `limit`.
+    fn over(&self, owner: &str, limit: usize) -> Option<Key> {
+        let share = self.0.get(owner)?;
+        if share.bytes <= limit {
+            return None;
+        }
+        share.order.first_key_value().map(|(_, k)| *k)
+    }
 }
 
 #[derive(Default)]
@@ -243,7 +316,8 @@ struct Inner {
     entries: HashMap<Key, Entry>,
     /// Entries by their last use, oldest first.
     order: BTreeMap<u64, Key>,
-    orgs: HashMap<Arc<str>, OrgShare>,
+    orgs: Shares,
+    users: Shares,
     tick: u64,
     bytes: usize,
 }
@@ -254,31 +328,28 @@ impl Inner {
         let size = e.size();
         self.order.remove(&e.tick);
         self.bytes -= size;
-        if let Some(share) = self.orgs.get_mut(&e.org_id) {
-            share.order.remove(&e.tick);
-            share.bytes -= size;
-            if share.order.is_empty() {
-                self.orgs.remove(&e.org_id);
-            }
-        }
+        self.orgs.remove(&e.org_id, e.tick, size);
+        self.users.remove(&e.user_key, e.tick, size);
     }
 
     /// Drops the least recently used entries until all of them fit in `limit`.
     fn fit(&mut self, limit: usize) {
         while self.bytes > limit {
-            let Some((_, key)) = self.order.first_key_value().map(|(t, k)| (*t, *k)) else { break };
+            let Some(key) = self.order.first_key_value().map(|(_, k)| *k) else { break };
             self.remove(&key);
         }
     }
 
     /// Drops the organization's least recently used entries until its share fits in `limit`.
     fn fit_org(&mut self, org_id: &str, limit: usize) {
-        loop {
-            let Some(share) = self.orgs.get(org_id) else { return };
-            if share.bytes <= limit {
-                return;
-            }
-            let Some(key) = share.order.first_key_value().map(|(_, k)| *k) else { return };
+        while let Some(key) = self.orgs.over(org_id, limit) {
+            self.remove(&key);
+        }
+    }
+
+    /// The same for one person's share.
+    fn fit_user(&mut self, user_key: &str, limit: usize) {
+        while let Some(key) = self.users.over(user_key, limit) {
             self.remove(&key);
         }
     }
@@ -289,13 +360,11 @@ impl Inner {
         let tick = self.tick;
         let Some(e) = self.entries.get_mut(key) else { return };
         let old = std::mem::replace(&mut e.tick, tick);
-        let org = e.org_id.clone();
+        let (org, user) = (e.org_id.clone(), e.user_key.clone());
         self.order.remove(&old);
         self.order.insert(tick, *key);
-        if let Some(share) = self.orgs.get_mut(&org) {
-            share.order.remove(&old);
-            share.order.insert(tick, *key);
-        }
+        self.orgs.touch(&org, old, tick, *key);
+        self.users.touch(&user, old, tick, *key);
     }
 }
 
@@ -303,6 +372,7 @@ impl Inner {
 /// parses it (`Found::parse`).
 pub struct Found {
     body: Arc<Vec<u8>>,
+    held: usize,
     pub info: CacheInfo,
 }
 
@@ -310,6 +380,12 @@ impl Found {
     /// Bytes the answer takes in the cache, as kept.
     pub fn stored_bytes(&self) -> usize {
         self.body.len()
+    }
+
+    /// What a hit is charged against the request's response budget: what the answer held when
+    /// it was read from its source, and at least twice its stored size for the parsed copy.
+    pub fn charge(&self) -> usize {
+        self.held.max(self.body.len().saturating_mul(2))
     }
 
     /// The answer; `None` when it no longer reads (then it is a miss).
@@ -361,6 +437,18 @@ impl Drop for CappedWriter<'_> {
     }
 }
 
+/// See `QueryCache::bump_on_drop`.
+pub struct RightsBump<'a> {
+    cache: &'a QueryCache,
+    org_id: Option<String>,
+}
+
+impl Drop for RightsBump<'_> {
+    fn drop(&mut self) {
+        self.cache.rights_changed(self.org_id.as_deref());
+    }
+}
+
 /// The cache of one server, in `DataSources`.
 #[derive(Default)]
 pub struct QueryCache {
@@ -401,6 +489,13 @@ impl QueryCache {
         }
     }
 
+    /// Bumps the rights generation of `org_id` (`None`: server-wide) when dropped: a route that
+    /// changes rights holds it while it runs, so a client that goes away mid-change cannot skip
+    /// it. A failed change bumps too, which costs only kept answers.
+    pub fn bump_on_drop(&self, org_id: Option<String>) -> RightsBump<'_> {
+        RightsBump { cache: self, org_id }
+    }
+
     /// The target rules changed: no answer read under the old ones is served.
     pub fn policy_changed(&self) {
         self.generations().policy += 1;
@@ -428,6 +523,7 @@ impl QueryCache {
         }
         let found = Found {
             body: entry.body.clone(),
+            held: entry.held,
             info: CacheInfo {
                 status: CacheStatus::Hit,
                 age_ms: (now_ms - entry.stored_ms).max(0) as u64,
@@ -443,15 +539,15 @@ impl QueryCache {
         self.lock().remove(key);
     }
 
-    /// Keeps an answer for `ttl_ms` within `limit` bytes for all entries and half of it for one
-    /// organization. Not kept: an answer larger than a quarter of the limit (serializing stops
+    /// Keeps an answer for `ttl_ms` within `limit` bytes for all entries, half of it for one
+    /// organization and an eighth for one person (`owner`: organization and user). Not kept: an answer larger than a quarter of the limit (serializing stops
     /// there), one whose copy does not fit in the request's `budget`, and one read under a stamp
     /// that is no longer current. `false` when it was not kept.
     #[expect(clippy::too_many_arguments, reason = "the parts of one entry")]
     pub fn put(
         &self,
         key: Key,
-        org_id: &str,
+        owner: (&str, &str),
         datasource_id: &str,
         stored: (&QueryResult, Option<&Vec<StepPlace>>),
         stamp: Stamp,
@@ -460,8 +556,10 @@ impl QueryCache {
         limit: usize,
         budget: &ResponseBudget,
     ) -> bool {
+        let (org_id, user_id) = owner;
+        let user_key = format!("{org_id}/{user_id}");
         let entry_cap = limit / MAX_ENTRY_SHARE;
-        let fixed = entry_size(0, org_id.len());
+        let fixed = entry_size(0, org_id.len() + user_key.len());
         if entry_cap <= fixed || self.stamp(org_id, datasource_id) != stamp {
             return false;
         }
@@ -475,7 +573,9 @@ impl QueryCache {
         body.shrink_to_fit();
         let entry = Entry {
             body: Arc::new(body),
+            held: held_size(result),
             org_id: Arc::from(org_id),
+            user_key: Arc::from(user_key.as_str()),
             stamp,
             stored_ms: now_ms,
             expires_ms: now_ms.saturating_add(ttl_ms),
@@ -487,24 +587,34 @@ impl QueryCache {
         if size > entry_cap {
             return false;
         }
+        inner.fit_user(&user_key, (limit / MAX_ORG_SHARE / MAX_USER_SHARE).saturating_sub(size));
         inner.fit_org(org_id, (limit / MAX_ORG_SHARE).saturating_sub(size));
         inner.fit(limit.saturating_sub(size));
         inner.tick += 1;
         let tick = inner.tick;
         inner.order.insert(tick, key);
         inner.bytes += size;
-        let share = inner.orgs.entry(entry.org_id.clone()).or_default();
-        share.order.insert(tick, key);
-        share.bytes += size;
+        inner.orgs.add(&entry.org_id, tick, key, size);
+        inner.users.add(&entry.user_key, tick, key, size);
         inner.entries.insert(key, Entry { tick, ..entry });
         true
     }
 
-    /// Keeps at most `limit` bytes (a lowered limit takes effect at once).
+    /// Keeps at most `limit` bytes, half of it per organization and an eighth per person (a
+    /// lowered limit takes effect at once).
     pub fn limit(&self, limit: usize) {
         let mut inner = self.lock();
         if inner.bytes > limit {
             inner.fit(limit);
+        }
+        let over = |shares: &Shares, cap: usize| -> Vec<Arc<str>> {
+            shares.0.iter().filter(|(_, s)| s.bytes > cap).map(|(o, _)| o.clone()).collect()
+        };
+        for org in over(&inner.orgs, limit / MAX_ORG_SHARE) {
+            inner.fit_org(&org, limit / MAX_ORG_SHARE);
+        }
+        for user in over(&inner.users, limit / MAX_ORG_SHARE / MAX_USER_SHARE) {
+            inner.fit_user(&user, limit / MAX_ORG_SHARE / MAX_USER_SHARE);
         }
     }
 
@@ -513,7 +623,8 @@ impl QueryCache {
         let mut inner = self.lock();
         inner.entries.clear();
         inner.order.clear();
-        inner.orgs.clear();
+        inner.orgs.0.clear();
+        inner.users.0.clear();
         inner.bytes = 0;
     }
 
@@ -575,7 +686,9 @@ mod tests {
     fn put(cache: &QueryCache, key: Key, org: &str, n: i64, now: i64, ttl: i64, limit: usize) -> bool {
         let stamp = cache.stamp(org, "ds");
         let r = stored(n);
-        cache.put(key, org, "ds", (&r, None), stamp, now, ttl, limit, &ResponseBudget::new(1 << 30))
+        // One person per key, so the share of one person does not decide these tests.
+        let user = format!("u{:03}", key[0]);
+        cache.put(key, (org, &user), "ds", (&r, None), stamp, now, ttl, limit, &ResponseBudget::new(1 << 30))
     }
 
     /// The key changes with every part of the caller's rights, so no answer crosses them.
@@ -685,7 +798,7 @@ mod tests {
         assert!(cache.stats().bytes <= limit);
         // A lower limit takes effect at once.
         cache.limit(size);
-        assert_eq!(cache.stats().entries, 1);
+        assert!(cache.stats().bytes <= size && cache.stats().entries <= 1);
         // An answer larger than a quarter of the limit is not kept.
         assert!(!put(&cache, [6; 32], "o", 6, 0, 60_000, size));
     }
@@ -735,9 +848,67 @@ mod tests {
         cache.rights_changed(Some("o"));
         let budget = ResponseBudget::new(1 << 20);
         let r = stored(1);
-        assert!(!cache.put([9; 32], "o", "ds", (&r, None), stale, 0, 60_000, 1 << 20, &budget));
+        assert!(!cache.put([9; 32], ("o", "u"), "ds", (&r, None), stale, 0, 60_000, 1 << 20, &budget));
         cache.clear();
         assert_eq!((cache.stats().entries, cache.stats().bytes), (0, 0));
+    }
+
+    /// Small numbers take a few bytes as text but 32 each in memory: a hit is charged at least
+    /// what the answer was charged when it was read from its source.
+    #[test]
+    fn hits_are_charged_at_least_what_the_miss_was() {
+        let values: Vec<Value> = (0..20_000).map(|i| json!(i % 10)).collect();
+        let miss_charge: usize = values.iter().map(super::super::frame::value_size).sum();
+        let name = "n".to_string();
+        let frame = Frame::new(vec![Field {
+            name: name.clone(),
+            field_type: FieldType::Number,
+            unit: None,
+            values,
+            labels: None,
+        }])
+        .unwrap();
+        let result = QueryResult::Frame { frame };
+        assert!(held_size(&result) >= miss_charge + super::super::frame::string_size(&name));
+        let cache = QueryCache::default();
+        let stamp = cache.stamp("o", "ds");
+        let budget = ResponseBudget::new(64 << 20);
+        assert!(cache.put([1; 32], ("o", "u"), "ds", (&result, None), stamp, 0, 60_000, 64 << 20, &budget));
+        let found = cache.get(&[1; 32], stamp, 1).unwrap();
+        assert!(found.stored_bytes() * 2 < miss_charge, "the text alone would undercount");
+        assert!(found.charge() >= miss_charge, "{} < {miss_charge}", found.charge());
+        // A small answer is still charged twice its text.
+        let small = stored(1);
+        assert!(cache.put([2; 32], ("o", "u"), "ds", (&small, None), stamp, 0, 60_000, 64 << 20, &budget));
+        let found = cache.get(&[2; 32], stamp, 1).unwrap();
+        assert!(found.charge() >= found.stored_bytes() * 2);
+    }
+
+    /// One person holds at most an eighth of the limit (a quarter of the organization's half),
+    /// and a lowered limit applies the shares at once.
+    #[test]
+    fn one_person_takes_at_most_an_eighth_and_lower_limits_apply_shares() {
+        let cache = QueryCache::default();
+        put(&cache, [0; 32], "o", 0, 0, 60_000, 1 << 20);
+        let size = cache.stats().bytes;
+        cache.clear();
+        let budget = ResponseBudget::new(1 << 30);
+        let limit = size * 32;
+        let stamp = cache.stamp("o", "ds");
+        let r = stored(1);
+        for i in 0..10 {
+            // The same length of owner as the measured entry ("o", "u000").
+            assert!(cache.put([i; 32], ("o", "u001"), "ds", (&r, None), stamp, 0, 60_000, limit, &budget));
+        }
+        let kept = (0..10).filter(|i| cache.get(&[*i; 32], stamp, 1).is_some()).count();
+        assert_eq!(kept, 4, "an eighth of the limit");
+        for i in 10..30 {
+            let user = format!("u{:03}", i % 4 + 2);
+            assert!(cache.put([i; 32], ("o", user.as_str()), "ds", (&r, None), stamp, 0, 60_000, limit, &budget));
+        }
+        // Lowered: the organization keeps at most half of the new limit.
+        cache.limit(size * 4);
+        assert!(cache.stats().bytes <= size * 2, "{} > {}", cache.stats().bytes, size * 2);
     }
 
     /// Keeping an answer copies it within the request's budget and the entry cap, and gives the
@@ -758,14 +929,14 @@ mod tests {
         let stamp = cache.stamp("o", "ds");
         let budget = ResponseBudget::new(1 << 20);
         // Above a quarter of the limit: serializing stops there; the budget is whole again.
-        assert!(!cache.put([1; 32], "o", "ds", (&big, None), stamp, 0, 60_000, 64 * 1024, &budget));
+        assert!(!cache.put([1; 32], ("o", "u"), "ds", (&big, None), stamp, 0, 60_000, 64 * 1024, &budget));
         assert_eq!(budget.remaining(), 1 << 20);
         // Within the cap, but the request's budget has no room for the copy.
         let small = ResponseBudget::new(4096);
-        assert!(!cache.put([1; 32], "o", "ds", (&big, None), stamp, 0, 60_000, 64 << 20, &small));
+        assert!(!cache.put([1; 32], ("o", "u"), "ds", (&big, None), stamp, 0, 60_000, 64 << 20, &small));
         assert_eq!(small.remaining(), 4096);
         // With room for both it is kept, and the copy's bytes go back to the request.
-        assert!(cache.put([1; 32], "o", "ds", (&big, None), stamp, 0, 60_000, 64 << 20, &budget));
+        assert!(cache.put([1; 32], ("o", "u"), "ds", (&big, None), stamp, 0, 60_000, 64 << 20, &budget));
         assert_eq!(budget.remaining(), 1 << 20);
         let found = cache.get(&[1; 32], stamp, 1).unwrap();
         assert!(cache.stats().bytes > found.stored_bytes() + ENTRY_OVERHEAD - 1);

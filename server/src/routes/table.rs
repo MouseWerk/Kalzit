@@ -88,11 +88,10 @@ async fn enforce(
     match authorize(&state, access, req).await {
         Ok(req) if changes_rights => {
             let org_id = req.extensions().get::<OrgCtx>().map(|c| c.org_id.clone());
-            let res = next.run(req).await;
-            if res.status().is_success() {
-                state.datasources.query_cache().rights_changed(org_id.as_deref());
-            }
-            res
+            // Bumped when the handler ends, also when the client goes away and the request is
+            // dropped mid-change, after a commit it can no longer see.
+            let _bump = state.datasources.query_cache().bump_on_drop(org_id);
+            next.run(req).await
         }
         Ok(req) => next.run(req).await,
         Err(e) => e.into_response(),
