@@ -351,7 +351,7 @@
   "ai.chat.dateYesterday": "Yesterday, {time}",
   "ai.reason.ai.query_names_excluded_field": "The query names “{field}”, a field excluded from AI. It is not run, since another name could pass its values on.",
   "ai.reason.ai.outward_source_free_query": "“{name}” sends requests outward. In Ask, only the stored queries of panels run on it, never queries the AI writes.",
-  "ai.reason.ai.outward_source_time_range": "This panel reads a source that sends requests outward. Its time range then takes only “now” or “now-7d” and the like, no exact times.",
+  "ai.reason.ai.outward_source_time_range": "This panel reads a source that sends requests outward. Its time range then takes only a preset from 5 minutes to 1 year, or the dashboard’s saved range.",
   "ai.reason.ai.panel_step_reads_excluded_field": "A step of this panel reads “{field}”, a field excluded from AI. The panel is not run for AI, since the step could pass its values on under another name.",
   "ai.admin.functions.title": "Which provider for what",
   "ai.admin.functions.lead": "Applies to every organization without a provider of its own. Each provider asks for the notice once at its first call.",

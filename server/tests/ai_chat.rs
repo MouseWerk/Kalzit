@@ -1111,18 +1111,24 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
             "run_panel",
             json!({ "dashboardId": dashboard, "panelId": "remote", "timeRange": { "from": "now-7d", "to": "now" } }),
         ),
+        tool(
+            "run_panel",
+            json!({ "dashboardId": dashboard, "panelId": "remote", "timeRange": { "from": "now-4711m", "to": "now" } }),
+        ),
         text("Fertig."),
     ]);
     let r = t.ask(&org, &chat, "Was geht?", &editor).await;
     let records = r.records();
-    assert_eq!(records.len(), 8, "{}", r.text);
+    assert_eq!(records.len(), 9, "{}", r.text);
     // A join renames the fields of both frames (`A.email`); joining a frame with an excluded
     // field is refused.
     assert_eq!(records[5]["error"]["reason"], "ai.panel_step_reads_excluded_field", "{}", records[5]);
     assert_eq!(records[5]["error"]["params"]["field"], "email");
-    // On a panel of an outward-facing source, exact times could carry data; relative ones pass.
+    // On a panel of an outward-facing source, a range the model picks freely could carry data:
+    // only presets and the dashboard's own range pass.
     assert_eq!(records[6]["error"]["reason"], "ai.outward_source_time_range", "{}", records[6]);
     assert_ne!(records[7]["error"]["reason"], "ai.outward_source_time_range", "{}", records[7]);
+    assert_eq!(records[8]["error"]["reason"], "ai.outward_source_time_range", "a free count: {}", records[8]);
     assert_eq!(records[0]["error"]["reason"], "ai.outward_source_free_query", "{}", records[0]);
     assert_eq!(records[0]["error"]["params"]["name"], "API");
     assert_eq!(records[1]["error"]["reason"], "ai.outward_source_free_query", "{}", records[1]);

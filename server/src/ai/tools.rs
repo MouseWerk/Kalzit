@@ -535,15 +535,26 @@ fn time_point(value: Option<&Value>, now: i64, default: i64) -> ApiResult<i64> {
     Ok(now.saturating_sub(n.saturating_mul(unit_ms)))
 }
 
-/// Whether both ends of `timeRange` in `args` are absent, `now` or relative (`now-7d`): no epoch
-/// milliseconds.
-fn relative_range(args: &Value) -> bool {
+/// The starts a time range of a panel on an outward-facing source may have: a fixed list, so the
+/// model cannot put data into the digits of a range that travels with the request.
+const PRESET_FROM: &[&str] = &[
+    "now-5m", "now-15m", "now-30m", "now-1h", "now-3h", "now-6h", "now-12h", "now-24h", "now-2d", "now-7d", "now-30d",
+    "now-90d", "now-1y",
+];
+
+/// Whether `timeRange` in `args` is absent, the dashboard's saved range (`saved_from`,
+/// `saved_to`), or a preset start (`PRESET_FROM`) up to `now`; each end absent keeps its default.
+fn preset_range(args: &Value, saved_from: &str, saved_to: &str) -> bool {
     let Some(range) = args.get("timeRange").filter(|v| !v.is_null()) else { return true };
-    ["from", "to"].iter().all(|key| match range.get(*key) {
-        None | Some(Value::Null) => true,
-        Some(Value::String(s)) => s.trim() == "now" || s.trim().starts_with("now-"),
-        Some(_) => false,
-    })
+    let end = |key: &str| match range.get(key) {
+        None | Some(Value::Null) => Some(None),
+        Some(Value::String(s)) => Some(Some(s.trim().to_string())),
+        Some(_) => None,
+    };
+    let (Some(from), Some(to)) = (end("from"), end("to")) else { return false };
+    let saved = from.as_deref() == Some(saved_from) && to.as_deref().is_none_or(|t| t == saved_to);
+    let preset = from.as_deref().is_none_or(|f| PRESET_FROM.contains(&f)) && to.as_deref().is_none_or(|t| t == "now");
+    saved || preset
 }
 
 fn time_range(args: &Value, now: i64) -> ApiResult<TimeRange> {
@@ -836,12 +847,13 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         policies.insert(ds.id, policy);
     }
     // The range reaches the source with the query; on a source that sends requests outward, a
-    // range of exact times the model chose could carry data in its digits. Only relative ends.
-    if outward && !relative_range(args) {
+    // range the model chose freely could carry data in its digits. Only presets and the
+    // dashboard's own range.
+    if outward && !preset_range(args, &model.time_range.from, &model.time_range.to) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "ai_unavailable",
-            "this panel reads a source that sends requests outward; its time range takes only \"now\" or \"now-<n><unit>\"",
+            "this panel reads a source that sends requests outward; its time range takes only a preset (now-5m to now-1y) or the dashboard's own",
         )
         .because("ai.outward_source_time_range"));
     }
@@ -1378,12 +1390,23 @@ mod tests {
     }
 
     #[test]
-    fn only_relative_ranges_count_as_relative() {
-        assert!(relative_range(&json!({})));
-        assert!(relative_range(&json!({ "timeRange": { "from": "now-7d", "to": "now" } })));
-        assert!(relative_range(&json!({ "timeRange": { "from": "now-2h" } })));
-        assert!(!relative_range(&json!({ "timeRange": { "from": 1_700_000_123_456_i64, "to": "now" } })));
-        assert!(!relative_range(&json!({ "timeRange": { "from": "now-1d", "to": 42 } })));
+    fn outward_panels_take_only_preset_ranges() {
+        let ok = |args: Value| preset_range(&args, "now-6h", "now");
+        assert!(ok(json!({})));
+        assert!(ok(json!({ "timeRange": null })));
+        assert!(ok(json!({ "timeRange": { "from": "now-7d", "to": "now" } })));
+        assert!(ok(json!({ "timeRange": { "from": "now-1y" } })));
+        assert!(ok(json!({ "timeRange": { "from": "now-6h", "to": "now" } })), "the dashboard's own");
+        assert!(preset_range(&json!({ "timeRange": { "from": "now-2w", "to": "now-1w" } }), "now-2w", "now-1w"));
+        for bad in [
+            json!({ "timeRange": { "from": 1_700_000_123_456_i64, "to": "now" } }),
+            json!({ "timeRange": { "from": "now-1d", "to": 42 } }),
+            json!({ "timeRange": { "from": "now-1234567m", "to": "now" } }),
+            json!({ "timeRange": { "from": "now-2h" } }),
+            json!({ "timeRange": { "from": "now-7d", "to": "now-1d" } }),
+        ] {
+            assert!(!ok(bad.clone()), "{bad}");
+        }
     }
 
     #[test]

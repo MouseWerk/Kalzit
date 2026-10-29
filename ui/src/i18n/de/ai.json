@@ -351,7 +351,7 @@
   "ai.chat.dateYesterday": "Gestern, {time}",
   "ai.reason.ai.query_names_excluded_field": "Die Abfrage nennt „{field}“, ein für KI ausgenommenes Feld. Kalzit führt sie nicht aus, weil ein anderer Name dessen Werte weitergeben könnte.",
   "ai.reason.ai.outward_source_free_query": "„{name}“ sendet Anfragen nach außen. In Fragen laufen darauf nur die gespeicherten Abfragen von Panels, keine Abfragen der KI.",
-  "ai.reason.ai.outward_source_time_range": "Dieses Panel liest eine Quelle, die Anfragen nach außen sendet. Sein Zeitraum nimmt dann nur „now“ oder „now-7d“ und Ähnliches, keine genauen Zeitpunkte.",
+  "ai.reason.ai.outward_source_time_range": "Dieses Panel liest eine Quelle, die Anfragen nach außen sendet. Sein Zeitraum nimmt dann nur eine Vorgabe von 5 Minuten bis 1 Jahr oder den gespeicherten Zeitraum des Dashboards.",
   "ai.reason.ai.panel_step_reads_excluded_field": "Ein Schritt dieses Panels liest „{field}“, ein für KI ausgenommenes Feld. Kalzit führt das Panel für KI nicht aus, weil der Schritt dessen Werte unter anderem Namen weitergeben könnte.",
   "ai.admin.functions.title": "Welcher Anbieter wofür",
   "ai.admin.functions.lead": "Gilt für alle Organisationen ohne eigenen Anbieter. Jeder Anbieter fragt beim ersten Aufruf einmal nach dem Hinweis.",
