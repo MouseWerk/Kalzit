@@ -4,6 +4,7 @@ import { formatBytes } from "../../lib/bytes";
 import { LoadState } from "../admin/components/Section";
 import { errorText } from "../admin/errors";
 import { clearQueryCache, getQueryCache, QUERY_CACHE_KEY } from "./api";
+import "./settings.css";
 
 /**
  * The query cache as it is now, under its settings in Data sources: how many answers it keeps
