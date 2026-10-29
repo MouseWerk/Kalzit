@@ -75,6 +75,11 @@ async fn change_password(
     if req.current.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(wrong_current());
     }
+    // With a second factor, a new password needs a fresh confirmation of it (`second_factor`).
+    if crate::auth::second_factor::methods(&state.db, &user.id).await?.any() {
+        let token = session::read_cookie(&headers, info.https).ok_or_else(ApiError::unauthenticated)?;
+        crate::auth::second_factor::require_fresh(&state.db, &session::hash_token(&token), now).await?;
+    }
     // Its own budget. A failure also counts for the account's sign-ins from all addresses
     // (`AppState::account_limiter`), which does not refuse here: the caller has a session.
     use crate::auth::ratelimit::{account_key, network_key};

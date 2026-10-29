@@ -152,13 +152,15 @@ pub fn idle_cutoff(cfg: &SessionConfig, now_ms: i64) -> i64 {
     if idle_ms > 0 { now_ms - idle_ms } else { i64::MIN }
 }
 
-/// Removes every session past its lifetime or idle limit; returns how many.
+/// Removes every session past its lifetime or idle limit, and every expired half-signed-in state
+/// of a second step (`second_factor`); returns how many sessions.
 pub async fn delete_ended(db: &AnyPool, cfg: &SessionConfig, now_ms: i64) -> Result<u64, sqlx::Error> {
     let done = sqlx::query("DELETE FROM sessions WHERE expires_at <= $1 OR last_seen_at <= $2")
         .bind(now_ms)
         .bind(idle_cutoff(cfg, now_ms))
         .execute(db)
         .await?;
+    sqlx::query("DELETE FROM sign_in_challenges WHERE expires_at <= $1").bind(now_ms).execute(db).await?;
     Ok(done.rows_affected())
 }
 

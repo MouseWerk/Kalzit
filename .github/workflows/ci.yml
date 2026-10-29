@@ -190,7 +190,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
-      - run: cargo test --locked --test api --test access --test explore_history --test team_spaces postgres -- --nocapture
+      - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test two_factor postgres -- --nocapture
 
   # The privilege switch of `kalzit update apply|rollback` (server/tests/update_rights.rs): run as
   # root on a data directory a service account owns, which needs sudo, so it is ignored elsewhere.
