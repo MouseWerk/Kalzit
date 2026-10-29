@@ -316,12 +316,57 @@ type QueryResult =
 - **Live updates** (docs/api/live.md): a WebSocket per browser tab (`routes::live`) carries
   subscriptions to a panel's stored queries or to free queries, authorized like their REST routes
   on subscribe and again every 30 seconds. Equal subscriptions share one feed (`live`), a task
-  that runs the queries through `run_queries_with` (all query limits apply, with the
-  organization's live slot pool `live:{orgId}`) and makes the result message once for every
+  that runs the queries through `run_queries_with` (all query limits apply, never the query
+  cache, with the organization's live slot pool `live:{orgId}`) and makes the result message once for every
   connection; held results count against a live memory budget. A kind reports changes through
   the optional `DataSourcePlugin::watch` (MongoDB: change streams with resume tokens, on their own
   client and pool, at most 8 per source); without one, or for a moving range, the feed polls. Slow clients are dropped instead of buffered; a stopping server
   closes every connection with a reason.
+
+### Query cache (`datasources/cache.rs`, M5)
+
+Answers of read-only queries are kept in memory (docs/api/datasources.md, "Query cache"). The
+contract:
+
+- **Where.** `run_one` asks the cache after the item is resolved in the caller's organization, the
+  kind is available to it, the target rules are current and the limits are known, and before a
+  query slot or connection is taken. Callers choose with `CacheUse` through `run_queries_cached`:
+  free queries, panels, saved analyses and variable options use it (`refresh` bypasses the read and
+  replaces the entry), AI tools use it scoped by the AI data rules, everything else
+  (`run_queries`, `run_queries_with`: live feeds, exports, annotations) never does. The server
+  setting `datasources.cache_enabled` and the source's `cacheEnabled` (default per kind,
+  `cache::enabled_by_default`) must both be on.
+- **Rights in the key.** The key is a SHA-256 over the caller (organization, user, role, sorted
+  permissions, scope) and the query (source id and `updated_at`, kind and shapes, canonical query
+  and steps, cursor, rounded range, interval, data points, variables and identifier variables, row
+  limit). Authorization always runs before the cache, in the routes, so the cache never decides
+  access; being per user, an entry cannot reach anyone else even where rules would allow it.
+- **Invalidation by generations.** Each entry carries a `Stamp`: the generations of rights
+  server-wide and of its organization, of the target rules and of its data source, taken before
+  the query ran. `DataSources::forget` (source changed, trashed, purged), a change of the target
+  rules (`DataSources::policy`), routes marked `RouteDef::changes_rights` (grants, roles, members,
+  teams, folder trash, restore, purge and owner, dashboard and analysis trash, restore, purge and
+  owner, plugin block, disable and removal, organization settings, AI access; server routes for
+  all organizations) and handlers that move a folder, restrict it or move a dashboard or analysis
+  to another folder bump one. Routes and handlers hold a drop guard
+  (`QueryCache::bump_on_drop`, taken before the commit), so a client that goes away mid-change
+  cannot skip the bump; a route answering with an error disarms it, so refused changes keep the
+  answers. An entry under an older stamp is never served and goes when asked for; an answer read under an older stamp is not
+  kept. No scan under the lock. A folder's new name changes nothing. Turning the cache off or
+  emptying it drops everything.
+- **Hits cost like answers.** A hit takes a query slot of the user and the server and is charged
+  against the request's `ResponseBudget` (and with it the server's in-flight pool) before it is
+  parsed: what the answer held when it was read from its source (`cache::held_size`, counted as
+  the budget counts it, 32 bytes per value), at least twice its stored size. One that does not
+  fit runs in its source as a miss and is cut there. Keeping an answer serializes it through a writer that stops at the entry cap and draws
+  the copy from the same budget, given back once the copy belongs to the cache.
+- **Memory.** Entries are kept serialized and counted by their buffer plus 512 bytes, within
+  `datasources.cache_max_bytes`; least recently used first, one organization at most half, one
+  person at most a quarter of their organization's half and one entry at most a quarter of the
+  limit; a lowered limit applies all of them at once. Expired entries go when they are next asked for or pushed
+  out.
+- **Never kept:** errors, timeouts and answers with a failed graph step. Hits are counted
+  (`GET /admin/query-cache`), not audited.
 
 ## Plugins
 

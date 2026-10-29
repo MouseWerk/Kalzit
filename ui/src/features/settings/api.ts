@@ -188,3 +188,38 @@ export async function getLicenses(): Promise<LicenseEntry[]> {
   }
   return list;
 }
+
+/** The server's query cache now (`GET /api/admin/query-cache`, docs/api/datasources.md). */
+export interface QueryCacheStats {
+  enabled: boolean;
+  maxBytes: number;
+  entries: number;
+  bytes: number;
+  hits: number;
+  misses: number;
+}
+
+function isQueryCacheStats(value: unknown): value is QueryCacheStats {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === "boolean" &&
+    ["maxBytes", "entries", "bytes", "hits", "misses"].every(
+      (key) => typeof value[key] === "number",
+    )
+  );
+}
+
+export const QUERY_CACHE_KEY = ["query-cache"] as const;
+
+export async function getQueryCache(): Promise<QueryCacheStats> {
+  return expectShape(
+    await request("GET", "/api/admin/query-cache"),
+    isQueryCacheStats,
+    "query cache",
+  );
+}
+
+/** Forgets every kept answer; the next load of each query asks its source again. */
+export async function clearQueryCache(): Promise<void> {
+  await request("DELETE", "/api/admin/query-cache");
+}
