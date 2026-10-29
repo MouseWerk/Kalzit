@@ -32,42 +32,56 @@ pub struct Context<'a> {
     pub shared: Option<Shared<'a>>,
 }
 
-#[derive(Clone, Copy)]
 pub struct Shared<'a> {
-    pub db: &'a sqlx::AnyPool,
-    pub cluster: &'a crate::cluster::Cluster,
+    pub state: &'a crate::app::AppState,
+    /// This order's id: its rows in `acme_challenges` carry it, and only they are removed.
+    pub order_id: String,
 }
 
-/// How long the leader waits after sharing a TLS-ALPN-01 answer before it lets the CA validate:
-/// the other servers load it when the change reaches them (at once by NOTIFY, else at their
-/// next poll).
-const ALPN_SPREAD: Duration = Duration::from_secs(6);
+/// How long the leader waits for the other servers to serve a shared answer before it lets the
+/// CA validate (they load it when the change reaches them, at once by NOTIFY, else at their
+/// next poll); past that the order goes on and a server that is behind may fail the validation.
+const SPREAD_WAIT: Duration = Duration::from_secs(30);
 
 impl Shared<'_> {
     async fn answer(&self, kind: &str, name: &str, value: &str, now_ms: i64) -> Result<(), Failure> {
+        let db = &self.state.db;
+        let not_shared = |e: sqlx::Error| {
+            Failure::new("acme.challenge_not_shared", format!("sharing the challenge answer: {e}")).with("detail", e)
+        };
         sqlx::query(
-            "INSERT INTO acme_challenges (kind, name, value, created_at) VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (kind, name) DO UPDATE SET value = excluded.value, created_at = excluded.created_at",
+            "INSERT INTO acme_challenges (kind, name, value, order_id, created_at) VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (kind, name) DO UPDATE SET value = excluded.value, order_id = excluded.order_id, \
+             created_at = excluded.created_at",
         )
         .bind(kind)
         .bind(name)
         .bind(value)
+        .bind(&self.order_id)
         .bind(now_ms)
-        .execute(self.db)
+        .execute(db)
         .await
-        .map_err(|e| {
-            Failure::new("acme.challenge_not_shared", format!("sharing the challenge answer: {e}")).with("detail", e)
-        })?;
-        self.cluster.publish(crate::cluster::Change::AcmeChallenges);
+        .map_err(not_shared)?;
+        self.state.cluster.announce(db, crate::cluster::Change::AcmeChallenges).await;
+        // Every running server confirms that it serves the answers as they are now.
+        let rows = super::challenge_rows(db).await.map_err(not_shared)?;
+        let fingerprint = super::challenge_fingerprint(&rows);
+        if !crate::cluster::await_challenges(self.state, &fingerprint, SPREAD_WAIT).await {
+            tracing::warn!(
+                "not every server confirmed the challenge answer for {name} within {SPREAD_WAIT:?}; validating anyway"
+            );
+        }
         Ok(())
     }
 
-    /// Removes every shared answer: one order runs at a time, on the leader.
+    /// Removes this order's shared answers.
     async fn clear(&self) {
-        if let Err(e) = sqlx::query("DELETE FROM acme_challenges").execute(self.db).await {
+        let db = &self.state.db;
+        let removed = sqlx::query("DELETE FROM acme_challenges WHERE order_id = $1").bind(&self.order_id).execute(db);
+        if let Err(e) = removed.await {
             tracing::warn!("removing the shared challenge answers: {e}");
         }
-        self.cluster.publish(crate::cluster::Change::AcmeChallenges);
+        self.state.cluster.announce(db, crate::cluster::Change::AcmeChallenges).await;
     }
 }
 
@@ -166,7 +180,6 @@ async fn order(
                 answered.alpn.push(domain.clone());
                 if let Some(shared) = &cx.shared {
                     shared.answer("alpn", &domain, &hex::encode(digest.as_ref()), cx.now_ms).await?;
-                    tokio::time::sleep(ALPN_SPREAD).await;
                 }
             }
         }

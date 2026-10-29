@@ -47,6 +47,13 @@ const MAX_SLEEP: Duration = Duration::from_secs(3600);
 const DNS_TIMEOUT: Duration = Duration::from_secs(10);
 /// A server that does not lead looks this often whether it leads now.
 const NOT_LEADING_RECHECK: Duration = Duration::from_secs(10);
+/// The claim of a certificate order among several servers (`cluster::leader_claim`): one at a
+/// time, held for longer than an order can take (validation and issuing get 2 minutes each).
+const ORDER_JOB: &str = "acme:order";
+const ORDER_LEASE: Duration = Duration::from_secs(15 * 60);
+/// HTTP-01 lookups in the database a server answers per second while another server's order
+/// runs (`http_challenge`); more are answered `404`.
+const SHARED_LOOKUPS_PER_SEC: u32 = 20;
 
 /// Why an order failed or a check found a problem, with a reason the UI translates.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -181,12 +188,32 @@ pub struct Acme {
     wake: tokio::sync::Notify,
     /// TLS-ALPN-01 answers this server serves for the leader's order (`sync_challenges`).
     shared_alpn: Mutex<HashSet<String>>,
+    /// Another server's order runs: its HTTP-01 answers are looked up in the database.
+    shared_order: std::sync::atomic::AtomicBool,
+    /// The shared lookups of the current second (`take_lookup`).
+    lookups: Mutex<(std::time::Instant, u32)>,
 }
 
 impl std::fmt::Debug for Acme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Acme").finish_non_exhaustive()
     }
+}
+
+/// The shared challenge answers (`acme_challenges`) as (kind, name, value), in a fixed order.
+pub async fn challenge_rows(db: &sqlx::AnyPool) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    sqlx::query_as("SELECT kind, name, value FROM acme_challenges ORDER BY kind, name").fetch_all(db).await
+}
+
+/// What the leader and the other servers compare to know that a server serves the shared
+/// answers as they are now (`cluster::await_challenges`).
+pub fn challenge_fingerprint(rows: &[(String, String, String)]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for (kind, name, value) in rows {
+        hash.update(format!("{kind}\t{name}\t{value}\n").as_bytes());
+    }
+    hex::encode(hash.finalize())
 }
 
 /// When a certificate is renewed: once two thirds of its lifetime have passed (30 days before
@@ -270,6 +297,8 @@ impl Acme {
             runtime: Mutex::new(runtime),
             wake: tokio::sync::Notify::new(),
             shared_alpn: Mutex::default(),
+            shared_order: std::sync::atomic::AtomicBool::new(false),
+            lookups: Mutex::new((std::time::Instant::now(), 0)),
         })
     }
 
@@ -474,36 +503,51 @@ impl Acme {
         }
     }
 
-    /// Serves the TLS-ALPN-01 answers of the leader's running order (`acme_challenges`), so the
-    /// server the certificate authority reaches answers it. HTTP-01 answers are looked up when
-    /// asked for (`http_challenge`).
+    /// Serves the challenge answers of the leader's running order (`acme_challenges`), so the
+    /// server the certificate authority reaches answers it: TLS-ALPN-01 answers are loaded into
+    /// the resolver, HTTP-01 answers are looked up when asked for (`http_challenge`, only while
+    /// an order runs). Then confirms to the leader which answers this server serves
+    /// (`cluster::ack_challenges`), which it waits for before the CA validates.
     pub async fn sync_challenges(&self, state: &AppState) {
-        let rows: Vec<(String, String)> =
-            match sqlx::query_as("SELECT name, value FROM acme_challenges WHERE kind = 'alpn'")
-                .fetch_all(&state.db)
-                .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    tracing::warn!("reading the challenge answers of the other servers: {e}");
-                    return;
+        let rows = match challenge_rows(&state.db).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!("reading the challenge answers of the other servers: {e}");
+                return;
+            }
+        };
+        let fingerprint = challenge_fingerprint(&rows);
+        self.shared_order.store(!rows.is_empty(), std::sync::atomic::Ordering::SeqCst);
+        {
+            let mut served = self.shared_alpn.lock().unwrap_or_else(|p| p.into_inner());
+            let wanted: HashSet<String> =
+                rows.iter().filter(|(kind, _, _)| kind == "alpn").map(|(_, domain, _)| domain.clone()).collect();
+            for gone in served.difference(&wanted) {
+                self.certificates.remove_challenge(gone);
+            }
+            served.clear();
+            for (_, domain, digest) in rows.into_iter().filter(|(kind, _, _)| kind == "alpn") {
+                let Ok(digest) = hex::decode(&digest) else { continue };
+                match self.certificates.add_challenge(&domain, &digest) {
+                    Ok(()) => {
+                        served.insert(domain);
+                    }
+                    Err(e) => tracing::warn!("answering the TLS-ALPN-01 challenge for {domain}: {e:#}"),
                 }
-            };
-        let mut served = self.shared_alpn.lock().unwrap_or_else(|p| p.into_inner());
-        let wanted: HashSet<String> = rows.iter().map(|(domain, _)| domain.clone()).collect();
-        for gone in served.difference(&wanted) {
-            self.certificates.remove_challenge(gone);
-        }
-        served.clear();
-        for (domain, digest) in rows {
-            let Ok(digest) = hex::decode(&digest) else { continue };
-            match self.certificates.add_challenge(&domain, &digest) {
-                Ok(()) => {
-                    served.insert(domain);
-                }
-                Err(e) => tracing::warn!("answering the TLS-ALPN-01 challenge for {domain}: {e:#}"),
             }
         }
+        crate::cluster::ack_challenges(state, &fingerprint).await;
+    }
+
+    /// Takes one of the shared HTTP-01 lookups of this second (`SHARED_LOOKUPS_PER_SEC`).
+    fn take_lookup(&self) -> bool {
+        let mut window = self.lookups.lock().unwrap_or_else(|p| p.into_inner());
+        let now = std::time::Instant::now();
+        if now.duration_since(window.0) >= Duration::from_secs(1) {
+            *window = (now, 0);
+        }
+        window.1 += 1;
+        window.1 <= SHARED_LOOKUPS_PER_SEC
     }
 
     /// Stores a certificate that is served but could not be stored, once its pause is over; an
@@ -541,13 +585,26 @@ impl Acme {
         self.refresh_shared(state).await;
         let now = state.clock.now_ms();
         self.retry_store(state, now).await;
+        if !Self::due(&self.lock(), now) {
+            return;
+        }
+        // Several servers: one order at a time across all of them, only while the lease holds in
+        // the database (a leader that paused past its lease does not order on an old belief).
+        if !crate::cluster::leader_claim(state, ORDER_JOB, Duration::ZERO, ORDER_LEASE).await {
+            return;
+        }
         let settings = {
             let mut rt = self.lock();
-            if !Self::due(&rt, now) {
-                return;
+            if Self::due(&rt, now) {
+                rt.working = true;
+                Some(rt.settings.clone())
+            } else {
+                None
             }
-            rt.working = true;
-            rt.settings.clone()
+        };
+        let Some(settings) = settings else {
+            crate::cluster::leader_done(state, ORDER_JOB).await;
+            return;
         };
         tracing::info!(
             "ordering an HTTPS certificate for {} from {}",
@@ -559,7 +616,10 @@ impl Acme {
             db_url: &state.config.database_url(),
             keyring: &state.secrets,
             now_ms: now,
-            shared: state.cluster.coordinated().then_some(issue::Shared { db: &state.db, cluster: &state.cluster }),
+            shared: state
+                .cluster
+                .coordinated()
+                .then(|| issue::Shared { state, order_id: uuid::Uuid::now_v7().to_string() }),
         };
         // A certificate counts only once it is served.
         let outcome = issue::obtain(self, &settings, &cx).await.and_then(|certificate| {
@@ -637,6 +697,7 @@ impl Acme {
                 record(state, "tls.certificate_failed", summary).await;
             }
         }
+        crate::cluster::leader_done(state, ORDER_JOB).await;
         let mut rt = self.lock();
         rt.working = false;
         rt.forced = false;
@@ -776,8 +837,13 @@ pub async fn http_challenge(State(state): State<AppState>, Path(token): Path<Str
     }
     let mut answer = state.acme.lock_http().get(&token).cloned();
     // The leader of several servers on one database ordered; the load balancer may have sent the
-    // validation here.
-    if answer.is_none() && state.cluster.coordinated() {
+    // validation here. Only while that order runs, and a limited number per second, so the
+    // public route cannot be used to load the database.
+    if answer.is_none()
+        && state.cluster.coordinated()
+        && state.acme.shared_order.load(std::sync::atomic::Ordering::SeqCst)
+        && state.acme.take_lookup()
+    {
         answer = sqlx::query_as::<_, (String,)>("SELECT value FROM acme_challenges WHERE kind = 'http' AND name = $1")
             .bind(&token)
             .fetch_optional(&state.read_db)
@@ -900,6 +966,8 @@ mod tests {
             runtime: Mutex::new(rt),
             wake: tokio::sync::Notify::new(),
             shared_alpn: Mutex::default(),
+            shared_order: std::sync::atomic::AtomicBool::new(false),
+            lookups: Mutex::new((std::time::Instant::now(), 0)),
         }
     }
 

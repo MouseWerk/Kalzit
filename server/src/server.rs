@@ -107,15 +107,24 @@ impl Running {
         }
         let deadline = *self.hard_deadline.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let budget = close_budget(deadline, Instant::now());
-        let closed_in_time = tokio::time::timeout(budget, self.state.close()).await.is_ok();
-        if !closed_in_time {
+        let state = self.state.clone();
+        let mut closing = tokio::spawn(async move { state.close().await });
+        let closed_in_time = tokio::time::timeout(budget, &mut closing).await.is_ok();
+        let lock = self.instance_lock.take();
+        if closed_in_time {
+            // Only now may the next server (an update's new version) open the database.
+            drop(lock);
+        } else {
             tracing::warn!(
                 "the database did not close within {budget:?}; a statement still waits for a lock another \
                  program holds. Nothing committed is lost; the next start completes the WAL checkpoint"
             );
+            // The instance lock goes when the close has finished, or with the process.
+            tokio::spawn(async move {
+                let _ = closing.await;
+                drop(lock);
+            });
         }
-        // Only now may the next server (an update's new version) open the database.
-        drop(self.instance_lock.take());
         outcome.map(|()| Stopped { closed_in_time })
     }
 
@@ -280,7 +289,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         tracing::warn!("{warning}");
     }
     // Before the database opens: a second server on the same SQLite file stops here.
-    let instance_lock = db::InstanceLock::acquire(&config.database_url())?;
+    let instance_lock = db::InstanceLock::acquire(&config.database_url(), &config.paths.data_dir)?;
     let pool = db::connect(&config.database_url(), config.database.max_connections).await?;
     tracing::info!(
         "data directory {}, database {} ready",

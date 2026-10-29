@@ -82,7 +82,11 @@ struct Server {
 
 impl Server {
     async fn start(url: &str) -> Self {
-        let dir = common::private_tempdir();
+        Self::start_in(url, Arc::new(common::private_tempdir())).await
+    }
+
+    /// A server on the data directory `dir` (a restart uses the one before).
+    async fn start_in(url: &str, dir: Arc<tempfile::TempDir>) -> Self {
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
         config.database.url = Some(url.to_string());
@@ -90,7 +94,7 @@ impl Server {
         let state = AppState::new(config, pool, Arc::new(SystemClock), None).await.unwrap();
         state.cluster.set_options(fast());
         kalzit::cluster::start(&state).await.unwrap();
-        Self { state, dir: Arc::new(dir) }
+        Self { state, dir }
     }
 
     async fn status(&self, path: &str, cookie: &str) -> StatusCode {
@@ -263,6 +267,63 @@ async fn postgres_a_run_once_job_runs_once() {
     eventually("the other server leads", Duration::from_secs(10), || async { b.state.cluster.is_leader() }).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(runs.load(Ordering::SeqCst), 1);
+    b.finish().await;
+    schema.drop_schema().await;
+}
+
+/// A server that restarts on its data directory after a crash (its old row still fresh, never
+/// signed off) does not count its earlier run as another server: it runs as a single server, and
+/// the old row is marked stopped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_a_restarted_single_server_has_no_peers() {
+    let Some(schema) = schema().await else { return };
+    let first = Server::start(&schema.url).await;
+    // A crash: the loops end, nothing is signed off.
+    first.state.background.stop().await;
+    let again = Server::start_in(&schema.url, first.dir.clone()).await;
+    assert!(!again.state.cluster.has_peers(), "the earlier run of the same server is no peer");
+    assert!(
+        !matches!(again.state.updates.mode(), kalzit::updates::platform::Mode::Manual("updates.mode_cluster")),
+        "a single server keeps its own update mode"
+    );
+    let view = kalzit::cluster::view(&again.state).await.unwrap();
+    assert_eq!(view.mode, "single");
+    let earlier = view.instances.iter().find(|i| !i.current).unwrap();
+    assert!(earlier.stopped_at.is_some() && !earlier.alive);
+    first.state.close().await;
+    drop(first);
+    again.finish().await;
+    schema.drop_schema().await;
+}
+
+/// A change written without its announcement (as when a process ends between the commit and the
+/// announcement) still reaches the other server within a poll, through the fingerprints.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_a_change_without_announcement_is_taken_by_the_fingerprints() {
+    let Some(schema) = schema().await else { return };
+    let a = Server::start(&schema.url).await;
+    let b = Server::start(&schema.url).await;
+    let key = "audit.retention_days";
+    assert_eq!(kalzit::settings::get(&b.state, key).await.unwrap(), json!(365));
+    // Let the fingerprints take their baseline first.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    sqlx::query(
+        "INSERT INTO server_settings (key, value, version, updated_by, updated_at) VALUES ($1, '45', 1, NULL, 0)",
+    )
+    .bind(key)
+    .execute(&a.state.db)
+    .await
+    .unwrap();
+    let (events,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cluster_events WHERE kind = 'settings'")
+        .fetch_one(&a.state.db)
+        .await
+        .unwrap();
+    assert_eq!(events, 0, "nothing was announced");
+    eventually("the other server takes the unannounced change", Duration::from_secs(10), || async {
+        kalzit::settings::get(&b.state, key).await.unwrap() == json!(45)
+    })
+    .await;
+    a.finish().await;
     b.finish().await;
     schema.drop_schema().await;
 }

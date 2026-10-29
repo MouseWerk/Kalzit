@@ -979,8 +979,8 @@ impl Updates {
             }
             return;
         }
-        // Several servers on one database: the leader checks once a day for all of them; "Check
-        // now" works on every server.
+        // Several servers on one database: the leader checks once a day for all of them
+        // (`cluster::leader_claim`); "Check now" works on every server.
         if !state.cluster.is_leader() {
             return;
         }
@@ -989,9 +989,18 @@ impl Updates {
         if daily == Some(true)
             && due
             && lock(&self.handover).is_none()
-            && let Err(e) = self.check(state, &Actor::default()).await
+            && crate::cluster::leader_claim(
+                state,
+                "updates:daily_check",
+                Duration::from_secs(86_400),
+                Duration::from_secs(600),
+            )
+            .await
         {
-            tracing::debug!("the daily update check did not run: {}", e.message);
+            if let Err(e) = self.check(state, &Actor::default()).await {
+                tracing::debug!("the daily update check did not run: {}", e.message);
+            }
+            crate::cluster::leader_done(state, "updates:daily_check").await;
         }
     }
 

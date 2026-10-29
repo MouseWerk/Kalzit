@@ -66,6 +66,6 @@ async fn clear(
     audit::record(&mut conn, &event).await?;
     state.datasources.query_cache().clear();
     // The other servers on the same database empty theirs too.
-    state.cluster.publish(crate::cluster::Change::CacheCleared);
+    state.cluster.announce(&state.db, crate::cluster::Change::CacheCleared).await;
     Ok(StatusCode::NO_CONTENT)
 }

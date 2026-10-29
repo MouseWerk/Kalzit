@@ -4,16 +4,21 @@
 -- same tables with one server in them.
 
 -- One row per server process that started on this database: `id` is new at every start, `host`
--- the machine's name, `address` the listeners it serves. A server writes `heartbeat_at` every few
--- seconds and `stopped_at` when it stops cleanly; rows of servers stopped or silent for a day go.
+-- the machine's name, `data_dir` its data directory (one server per host and data directory, so a
+-- row of the same host and directory is an earlier run of the same server), `address` the
+-- listeners it serves. A server writes `heartbeat_at` every few seconds and `stopped_at` when it
+-- stops cleanly; rows of servers stopped or silent for a day go. `acme_seen` is the fingerprint of
+-- the certificate challenge answers the server serves now, which the leader waits for.
 CREATE TABLE cluster_instances (
     id            TEXT PRIMARY KEY,
     host          TEXT NOT NULL,
+    data_dir      TEXT NOT NULL,
     version       TEXT NOT NULL,
     address       TEXT NOT NULL,
     started_at    BIGINT NOT NULL,
     heartbeat_at  BIGINT NOT NULL,
-    stopped_at    BIGINT
+    stopped_at    BIGINT,
+    acme_seen     TEXT
 );
 
 -- The leader: the one server that runs the jobs that must run once (retention cleanups, the
@@ -65,11 +70,12 @@ CREATE TABLE acme_shared (
 
 -- Challenge answers of a running order, so the server the certificate authority reaches answers
 -- it: `kind` is `http` (`name` the token, `value` the key authorization) or `alpn` (`name` the
--- domain, `value` the digest in hex).
+-- domain, `value` the digest in hex), `order_id` the order that wrote them.
 CREATE TABLE acme_challenges (
     kind        TEXT NOT NULL,
     name        TEXT NOT NULL,
     value       TEXT NOT NULL,
+    order_id    TEXT NOT NULL,
     created_at  BIGINT NOT NULL,
     PRIMARY KEY (kind, name)
 );

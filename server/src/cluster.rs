@@ -2,7 +2,9 @@
 //! "Several servers on one database"; docs/operations/high-availability.md).
 //!
 //! - **Identity and heartbeat.** Every server process gets a new id at start and keeps its row in
-//!   `cluster_instances` fresh (`Options::heartbeat`); a clean stop marks it stopped.
+//!   `cluster_instances` fresh (`Options::heartbeat`); a clean stop marks it stopped. One server
+//!   per host and data directory (`db::InstanceLock`), so an earlier row of the same host and
+//!   directory is this server's own earlier run.
 //! - **Leader.** One server leads and runs the jobs that must run once (retention cleanups, the
 //!   plugin catalog refresh, certificate orders, the daily update check). The leader holds a lease
 //!   row (`cluster_leader`) that it renews with every heartbeat; once the lease has passed in the
@@ -12,28 +14,30 @@
 //!   while its server can no longer tell that it leads. With the lease the leader knows how long
 //!   it leads: it stops counting itself the leader one heartbeat before its lease could pass,
 //!   measured from before the renewal was sent, so two servers never both believe they lead.
-//! - **Run once.** On top of the leader, each such job claims its run in `cluster_jobs` with the
-//!   interval it keeps (`spawn_job`): a run is claimed only when the last finished one is an
-//!   interval old, so a leader change in the middle of an interval does not run it twice.
-//! - **Changes.** What servers keep in memory and another server can change (settings, the query
-//!   cache's generations, data source connections, plugins, certificates) is announced as a row
-//!   in `cluster_events` plus a PostgreSQL `NOTIFY`; every server reads new rows when notified and
-//!   at least every `Options::poll`, so a lost notification (a reconnect) only delays a change.
-//!   A server that could not read the events for longer than they are kept drops everything it
-//!   keeps (`flush`).
+//! - **Run once.** On top of the leader, each such job claims its run in `cluster_jobs`
+//!   (`leader_claim`, `spawn_job`): only while the claiming server holds a valid lease in the
+//!   database (checked in the same statement, so a server that paused does not act on an old
+//!   belief), and only when the last finished run is an interval old.
+//! - **Changes.** What servers keep in memory and another server can change is announced as a row
+//!   in `cluster_events` plus a PostgreSQL `NOTIFY`. Where the change has a transaction, the row is
+//!   written in it (`record`): it exists exactly when the change does. Changes made after a commit
+//!   are written before the request answers (`announce`) or, from synchronous code, through a
+//!   queue the stop flushes (`publish`). Every server reads new rows when notified and at least
+//!   every `Options::poll`, and compares cheap fingerprints of the shared tables at the same time
+//!   (`Reconciler`), so a change whose announcement was lost is still taken within one poll.
 //!
 //! SQLite serves one server (`db::InstanceLock`): there the server registers itself, leads alone
 //! and announces nothing.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde::Serialize;
 use sqlx::AnyPool;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::Notify;
 
 use crate::app::AppState;
 use crate::db::{JobError, Schedule};
@@ -42,9 +46,9 @@ use crate::db::{JobError, Schedule};
 pub const CHANNEL: &str = "kalzit_cluster";
 /// How long announced changes are kept.
 const EVENT_KEEP_MS: i64 = 60 * 60 * 1000;
-/// How far back each read of the events looks behind the newest one it saw: an event written
-/// just before another may become visible just after it.
-const LOOKBACK_MS: i64 = 10_000;
+/// How far back each read of the events looks behind the newest one it saw: an event written in
+/// a transaction that commits later than others may become visible after them.
+const LOOKBACK_MS: i64 = 30_000;
 /// How long rows of stopped or silent servers stay in `cluster_instances`.
 const INSTANCE_KEEP_MS: i64 = 24 * 60 * 60 * 1000;
 /// How often the leader removes old events, rows of servers long gone and unused packages.
@@ -53,6 +57,9 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(60);
 const SQLITE_HEARTBEAT: Duration = Duration::from_secs(30);
 /// The events are read this often while the NOTIFY connection is down.
 const POLL_WITHOUT_NOTIFY: Duration = Duration::from_secs(1);
+/// A failed plugin sync is tried again after this, doubling up to `SYNC_RETRY_MAX`.
+const SYNC_RETRY_FIRST: Duration = Duration::from_secs(5);
+const SYNC_RETRY_MAX: Duration = Duration::from_secs(300);
 
 /// The database's clock in milliseconds since 1970.
 const PG_NOW: &str = "CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)";
@@ -78,6 +85,8 @@ pub enum Change {
     AcmeChallenges,
     /// An administrator asked for a certificate now; the leader orders it.
     AcmeRenew,
+    /// The first-run setup is done: the setup gates close.
+    SetupDone,
 }
 
 impl Change {
@@ -92,6 +101,7 @@ impl Change {
             Self::Acme => ("acme", String::new()),
             Self::AcmeChallenges => ("acme:challenges", String::new()),
             Self::AcmeRenew => ("acme:renew", String::new()),
+            Self::SetupDone => ("setup", String::new()),
         }
     }
 
@@ -106,6 +116,7 @@ impl Change {
             "acme" => Self::Acme,
             "acme:challenges" => Self::AcmeChallenges,
             "acme:renew" => Self::AcmeRenew,
+            "setup" => Self::SetupDone,
             _ => return None,
         })
     }
@@ -121,7 +132,7 @@ pub struct Options {
     pub heartbeat: Duration,
     /// How long a lease lasts without renewal: the longest a crashed leader's jobs wait.
     pub lease: Duration,
-    /// How often the events are read without a notification.
+    /// How often the events and fingerprints are read without a notification.
     pub poll: Duration,
     /// How often a run-once job looks whether its run is due.
     pub job_check: Duration,
@@ -138,6 +149,15 @@ impl Default for Options {
     }
 }
 
+/// One plugin sync at a time, again when asked during one, and after a failure with a pause.
+#[derive(Default)]
+struct PluginSync {
+    running: AtomicBool,
+    again: AtomicBool,
+    /// When a failed sync is tried again, and the pause after the next failure.
+    retry: Mutex<Option<(Instant, Duration)>>,
+}
+
 /// This server's place among the servers on its database. One per `AppState`.
 pub struct Cluster {
     id: String,
@@ -152,16 +172,20 @@ pub struct Cluster {
     leader_until: Mutex<Option<Instant>>,
     /// The term of the lease this server holds, 0 when it holds none.
     term: AtomicI64,
-    /// Other servers started on the database within `INSTANCE_KEEP_MS`.
+    /// Other servers run on the database now.
     has_peers: AtomicBool,
+    /// `has_peers` was counted at least once.
+    peers_known: AtomicBool,
     /// The NOTIFY connection is up.
     listening: AtomicBool,
-    /// Changes waiting to be written.
-    outbox: OnceLock<mpsc::UnboundedSender<Change>>,
+    /// Changes waiting to be written (`publish`), flushed by `stop`.
+    pending: Mutex<Vec<Change>>,
+    pending_ready: Notify,
     /// Wakes the reader of the events (a notification arrived).
     wake: Notify,
     /// Set by `stop`: nothing is written any more.
     stopped: AtomicBool,
+    plugin_sync: PluginSync,
 }
 
 /// One server in the instance view (`GET /api/admin/instances`).
@@ -185,7 +209,7 @@ pub struct InstanceView {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterView {
-    /// `single` (SQLite, or PostgreSQL with no other server seen) or `cluster`.
+    /// `single` (SQLite, or PostgreSQL with no other server running) or `cluster`.
     pub mode: &'static str,
     /// `sqlite` or `postgres`.
     pub database: &'static str,
@@ -231,8 +255,37 @@ fn host_name() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
+/// The data directory as stored with the instance: resolved, so two spellings are one.
+fn data_dir_key(state: &AppState) -> String {
+    let dir = &state.config.paths.data_dir;
+    std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone()).to_string_lossy().into_owned()
+}
+
 fn millis(d: Duration) -> i64 {
     i64::try_from(d.as_millis()).unwrap_or(i64::MAX)
+}
+
+/// Writes `change` for the other servers inside the caller's transaction, so the announcement
+/// exists exactly when the change does; the NOTIFY is sent by PostgreSQL at the commit. Nothing
+/// on SQLite, which serves one server. `origin` is the writing server's id (`Cluster::id`), or
+/// empty where it is not at hand: then that server applies its own change once more, which is
+/// harmless.
+pub async fn record(conn: &mut sqlx::AnyConnection, origin: &str, change: &Change) -> Result<(), sqlx::Error> {
+    if conn.backend_name() != "PostgreSQL" {
+        return Ok(());
+    }
+    let (kind, scope) = change.encode();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO cluster_events (id, origin, kind, scope, created_at) VALUES ($1, $2, $3, $4, {PG_NOW})"
+    )))
+    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(origin)
+    .bind(kind)
+    .bind(scope)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("SELECT pg_notify($1, '')").bind(CHANNEL).execute(&mut *conn).await?;
+    Ok(())
 }
 
 impl Default for Cluster {
@@ -252,10 +305,13 @@ impl Cluster {
             leader_until: Mutex::new(None),
             term: AtomicI64::new(0),
             has_peers: AtomicBool::new(false),
+            peers_known: AtomicBool::new(false),
             listening: AtomicBool::new(false),
-            outbox: OnceLock::new(),
+            pending: Mutex::default(),
+            pending_ready: Notify::new(),
             wake: Notify::new(),
             stopped: AtomicBool::new(false),
+            plugin_sync: PluginSync::default(),
         }
     }
 
@@ -280,7 +336,8 @@ impl Cluster {
     }
 
     /// Whether this server runs the jobs that must run once. A server that runs alone (SQLite,
-    /// or the loops never started) always does.
+    /// or the loops never started) always does. Each such job also claims its run in the
+    /// database (`leader_claim`), which checks the lease there.
     pub fn is_leader(&self) -> bool {
         if !self.coordinated() {
             return true;
@@ -288,24 +345,53 @@ impl Cluster {
         self.leader_until.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|until| Instant::now() < until)
     }
 
-    /// Other servers started on this database recently (a day): they count for the update mode
-    /// and the instance view.
+    /// Other servers run on this database now: they count for the update mode and the view.
     pub fn has_peers(&self) -> bool {
         self.has_peers.load(Ordering::SeqCst)
     }
 
-    /// Announces a change to the other servers; nothing on a server that runs alone.
+    /// Queues a change for the other servers, for synchronous code after a commit; `stop`
+    /// flushes the queue, and the fingerprints catch what a crash loses. Nothing on a server
+    /// that runs alone.
     pub fn publish(&self, change: Change) {
-        if let Some(outbox) = self.outbox.get() {
-            let _ = outbox.send(change);
+        if !self.coordinated() || self.stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).push(change);
+        self.pending_ready.notify_one();
+    }
+
+    /// Writes a change for the other servers before the caller goes on (after a commit, before a
+    /// request answers); queued when the database cannot take it now.
+    pub async fn announce(&self, db: &AnyPool, change: Change) {
+        if !self.coordinated() {
+            return;
+        }
+        if let Err(e) = write_events(db, &self.id, std::slice::from_ref(&change)).await {
+            tracing::debug!("announcing a change, queued instead: {e}");
+            self.publish(change);
         }
     }
 
-    fn publisher(&self) -> Option<Publisher> {
-        let outbox = self.outbox.get()?.clone();
-        Some(Arc::new(move |change| {
-            let _ = outbox.send(change);
-        }))
+    fn publisher(self: &Arc<Self>) -> Publisher {
+        let cluster = Arc::downgrade(self);
+        Arc::new(move |change| {
+            if let Some(cluster) = cluster.upgrade() {
+                cluster.publish(change);
+            }
+        })
+    }
+
+    fn take_pending(&self) -> Vec<Change> {
+        let mut pending = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|e| e.into_inner()));
+        pending.dedup();
+        pending
+    }
+
+    fn requeue(&self, mut changes: Vec<Change>) {
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        changes.append(&mut pending);
+        *pending = changes;
     }
 
     fn set_leader(&self, until: Option<Instant>, term: i64) {
@@ -331,6 +417,24 @@ fn listen_address(state: &AppState) -> String {
         .join(", ")
 }
 
+async fn insert_instance(state: &AppState, db: &AnyPool, now: i64) -> Result<(), sqlx::Error> {
+    let cluster = &state.cluster;
+    sqlx::query(
+        "INSERT INTO cluster_instances (id, host, data_dir, version, address, started_at, heartbeat_at, stopped_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)",
+    )
+    .bind(&cluster.id)
+    .bind(&cluster.host)
+    .bind(data_dir_key(state))
+    .bind(env!("CARGO_PKG_VERSION"))
+    .bind(listen_address(state))
+    .bind(now)
+    .bind(now)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// Registers this server and starts its heartbeat; on PostgreSQL also the leader election, the
 /// announcing of changes and the reading of other servers' changes. Tries to lead once before it
 /// returns, so the jobs started next know whether they run here.
@@ -344,48 +448,42 @@ pub async fn start(state: &AppState) -> Result<()> {
         spawn_heartbeat(state.clone(), false);
         return Ok(());
     }
+    // Until the other servers are counted, the server installs no update on its own.
+    state.updates.set_clustered(true);
     let db = state.db.clone();
     let now = db_now(&db, postgres).await?;
+    insert_instance(state, &db, now).await?;
+    // An earlier run of this server (same host and data directory, which one server holds at a
+    // time) that ended without signing off.
     sqlx::query(
-        "INSERT INTO cluster_instances (id, host, version, address, started_at, heartbeat_at, stopped_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, NULL)",
+        "UPDATE cluster_instances SET stopped_at = heartbeat_at \
+         WHERE host = $1 AND data_dir = $2 AND id <> $3 AND stopped_at IS NULL",
     )
-    .bind(&cluster.id)
     .bind(&cluster.host)
-    .bind(env!("CARGO_PKG_VERSION"))
-    .bind(listen_address(state))
-    .bind(now)
-    .bind(now)
+    .bind(data_dir_key(state))
+    .bind(&cluster.id)
     .execute(&db)
     .await?;
     cluster.coordinated.store(true, Ordering::SeqCst);
-    let (outbox, inbox) = mpsc::unbounded_channel();
-    let _ = cluster.outbox.set(outbox);
-    if let Some(publisher) = cluster.publisher() {
-        crate::settings::cache(state).set_publisher(publisher.clone());
-        state.datasources.set_publisher(publisher);
-    }
+    let publisher = cluster.publisher();
+    state.datasources.set_publisher(publisher);
     if let Err(e) = lead(state, &cluster).await {
         tracing::warn!("trying to lead: {e}");
     }
     check_peers(state, &cluster).await;
     spawn_heartbeat(state.clone(), true);
-    spawn_writer(state.clone(), inbox);
+    spawn_writer(state.clone());
     spawn_reader(state.clone(), now);
     spawn_listener(state.clone());
     // Plugins another server installed whose packages this one has not unpacked yet.
-    let synced = state.clone();
-    state.background.spawn(async move {
-        if let Err(e) = synced.plugins.sync(&synced).await {
-            tracing::warn!("taking over the plugins of the other servers: {}", e.message);
-        }
-    });
+    request_plugin_sync(state);
     tracing::info!(instance = %cluster.id, host = %cluster.host, "registered with the other servers on this database");
     Ok(())
 }
 
-/// Hands over the lease and marks this server stopped (`AppState::close`). Quick: the next
-/// server takes over at its next heartbeat instead of waiting for the lease to pass.
+/// Writes what is still queued, hands over the lease and marks this server stopped
+/// (`AppState::close`). Quick: the next server takes over at its next heartbeat instead of
+/// waiting for the lease to pass.
 pub async fn stop(state: &AppState) {
     let cluster = &state.cluster;
     if !cluster.started.load(Ordering::SeqCst) || cluster.stopped.swap(true, Ordering::SeqCst) {
@@ -397,6 +495,10 @@ pub async fn stop(state: &AppState) {
         return;
     }
     let stop = async {
+        let pending = cluster.take_pending();
+        if !pending.is_empty() {
+            write_events(&state.db, &cluster.id, &pending).await?;
+        }
         cluster.set_leader(None, 0);
         sqlx::query("UPDATE cluster_leader SET expires_at = 0 WHERE id = 'leader' AND holder = $1")
             .bind(&cluster.id)
@@ -410,7 +512,7 @@ pub async fn stop(state: &AppState) {
             .await?;
         Ok::<_, sqlx::Error>(())
     };
-    match tokio::time::timeout(Duration::from_secs(2), stop).await {
+    match tokio::time::timeout(Duration::from_secs(3), stop).await {
         Ok(Ok(())) => {}
         Ok(Err(e)) => tracing::warn!("signing off from the other servers: {e}"),
         Err(_) => tracing::warn!("signing off from the other servers took too long; the lease runs out on its own"),
@@ -453,29 +555,44 @@ async fn lead(state: &AppState, cluster: &Cluster) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// How young a heartbeat is for its server to count as running.
+fn freshness(options: &Options) -> i64 {
+    millis(options.lease).max(millis(options.heartbeat) * 3)
+}
+
+/// Counts the other servers running now: not stopped, a fresh heartbeat, and not an earlier run
+/// of this server (same host and data directory). Until a count succeeds the mode stays unknown,
+/// and no update is installed on its own.
 async fn check_peers(state: &AppState, cluster: &Cluster) {
-    let postgres = cluster.coordinated();
     let peers = async {
-        let now = db_now(&state.db, postgres).await?;
+        let now = db_now(&state.db, true).await?;
         let (n,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM cluster_instances WHERE id <> $1 AND COALESCE(stopped_at, heartbeat_at) > $2",
+            "SELECT COUNT(*) FROM cluster_instances WHERE id <> $1 AND stopped_at IS NULL AND heartbeat_at >= $2 \
+             AND NOT (host = $3 AND data_dir = $4)",
         )
         .bind(&cluster.id)
-        .bind(now - INSTANCE_KEEP_MS)
+        .bind(now - freshness(&cluster.options()))
+        .bind(&cluster.host)
+        .bind(data_dir_key(state))
         .fetch_one(&state.db)
         .await?;
         Ok::<_, sqlx::Error>(n > 0)
     };
-    // SQLite never has peers: the instance lock keeps a second server away.
-    match if postgres { peers.await } else { Ok(false) } {
+    match peers.await {
         Ok(peers) => {
             let before = cluster.has_peers.swap(peers, Ordering::SeqCst);
+            cluster.peers_known.store(true, Ordering::SeqCst);
             state.updates.set_clustered(peers);
             if peers && !before {
-                tracing::info!("other Kalzit servers use this database; updates are installed per server");
+                tracing::info!("other Kalzit servers run on this database; updates are installed per server");
             }
         }
-        Err(e) => tracing::debug!("counting the other servers: {e}"),
+        Err(e) => {
+            if !cluster.peers_known.load(Ordering::SeqCst) {
+                state.updates.set_clustered(true);
+            }
+            tracing::debug!("counting the other servers: {e}");
+        }
     }
 }
 
@@ -521,10 +638,14 @@ fn spawn_heartbeat(state: AppState, postgres: bool) {
                 tracing::warn!("renewing the leader lease: {e}");
             }
             check_peers(&state, &cluster).await;
-            if cluster.is_leader() && last_maintenance.is_none_or(|at| at.elapsed() >= MAINTENANCE_EVERY) {
+            if cluster.is_leader()
+                && last_maintenance.is_none_or(|at| at.elapsed() >= MAINTENANCE_EVERY)
+                && leader_claim(&state, "cluster:maintain", MAINTENANCE_EVERY, MAINTENANCE_EVERY).await
+            {
                 last_maintenance = Some(Instant::now());
-                if let Err(e) = maintain(&state).await {
-                    tracing::debug!("removing old cluster rows: {e}");
+                match maintain(&state).await {
+                    Ok(()) => leader_done(&state, "cluster:maintain").await,
+                    Err(e) => tracing::debug!("removing old cluster rows: {e}"),
                 }
             }
         }
@@ -541,18 +662,7 @@ async fn heartbeat(state: &AppState, cluster: &Cluster, postgres: bool) -> Resul
         .rows_affected();
     if written == 0 {
         // Removed while this server could not write (a day without a heartbeat): back in.
-        sqlx::query(
-            "INSERT INTO cluster_instances (id, host, version, address, started_at, heartbeat_at, stopped_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, NULL)",
-        )
-        .bind(&cluster.id)
-        .bind(&cluster.host)
-        .bind(env!("CARGO_PKG_VERSION"))
-        .bind(listen_address(state))
-        .bind(now)
-        .bind(now)
-        .execute(state.background.db())
-        .await?;
+        insert_instance(state, state.background.db(), now).await?;
     }
     Ok(())
 }
@@ -578,32 +688,26 @@ async fn maintain(state: &AppState) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Writes announced changes as rows and wakes the other servers with a NOTIFY. A change that
-/// cannot be written now is tried again; the queue holds it meanwhile.
-fn spawn_writer(state: AppState, mut inbox: mpsc::UnboundedReceiver<Change>) {
+/// Writes queued changes as rows and wakes the other servers with a NOTIFY. A change that cannot
+/// be written now is tried again; the queue holds it meanwhile, and `stop` flushes it.
+fn spawn_writer(state: AppState) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {
         let cluster = state.cluster.clone();
-        let mut pending: Vec<Change> = Vec::new();
         loop {
-            if pending.is_empty() {
-                tokio::select! {
-                    () = stopping.cancelled() => return,
-                    change = inbox.recv() => match change {
-                        Some(change) => pending.push(change),
-                        None => return,
-                    },
+            tokio::select! {
+                () = stopping.cancelled() => return,
+                () = cluster.pending_ready.notified() => {}
+            }
+            loop {
+                let pending = cluster.take_pending();
+                if pending.is_empty() {
+                    break;
                 }
-            }
-            while let Ok(change) = inbox.try_recv() {
-                pending.push(change);
-            }
-            pending.dedup();
-            match write_events(&state, &cluster, &pending).await {
-                Ok(()) => pending.clear(),
-                Err(e) => {
+                if let Err(e) = write_events(&state.db, &cluster.id, &pending).await {
                     tracing::warn!("announcing {} change(s) to the other servers, trying again: {e}", pending.len());
+                    cluster.requeue(pending);
                     tokio::select! {
                         () = stopping.cancelled() => return,
                         () = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -614,21 +718,12 @@ fn spawn_writer(state: AppState, mut inbox: mpsc::UnboundedReceiver<Change>) {
     });
 }
 
-async fn write_events(state: &AppState, cluster: &Cluster, changes: &[Change]) -> Result<(), sqlx::Error> {
-    let insert =
-        format!("INSERT INTO cluster_events (id, origin, kind, scope, created_at) VALUES ($1, $2, $3, $4, {PG_NOW})");
+async fn write_events(db: &AnyPool, origin: &str, changes: &[Change]) -> Result<(), sqlx::Error> {
+    let mut tx = crate::db::begin(db).await?;
     for change in changes {
-        let (kind, scope) = change.encode();
-        sqlx::query(sqlx::AssertSqlSafe(insert.clone()))
-            .bind(uuid::Uuid::now_v7().to_string())
-            .bind(&cluster.id)
-            .bind(kind)
-            .bind(scope)
-            .execute(&state.db)
-            .await?;
+        record(&mut tx, origin, change).await?;
     }
-    sqlx::query("SELECT pg_notify($1, '')").bind(CHANNEL).execute(&state.db).await?;
-    Ok(())
+    crate::db::commit(tx).await
 }
 
 /// Listens for notifications and wakes the reader; reconnects after a lost connection. While it
@@ -690,13 +785,15 @@ struct EventRow {
     created_at: i64,
 }
 
-/// Reads the other servers' changes when notified and every `Options::poll`, and applies them.
+/// Reads the other servers' changes when notified and every `Options::poll`, applies them, and
+/// compares the fingerprints of the shared tables.
 fn spawn_reader(state: AppState, started_ms: i64) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {
         let cluster = state.cluster.clone();
         let mut reader = Reader { since: started_ms - LOOKBACK_MS, seen: HashMap::new(), last_read: Instant::now() };
+        let mut reconciler = Reconciler::default();
         loop {
             let poll =
                 if cluster.listening.load(Ordering::SeqCst) { cluster.options().poll } else { POLL_WITHOUT_NOTIFY };
@@ -708,6 +805,10 @@ fn spawn_reader(state: AppState, started_ms: i64) {
             if let Err(e) = reader.read(&state, &cluster).await {
                 tracing::debug!("reading the changes of the other servers: {e}");
             }
+            if let Err(e) = reconciler.compare(&state).await {
+                tracing::debug!("comparing the shared tables: {e}");
+            }
+            retry_plugin_sync(&state);
         }
     });
 }
@@ -755,22 +856,102 @@ impl Reader {
     }
 }
 
+/// Fingerprints of what the servers share, compared at every poll: a change whose announcement
+/// was lost (the process ended between its commit and the announcement, a queue that could not
+/// be written) is taken within one poll anyway. The first comparison only takes the baseline.
+#[derive(Default)]
+struct Reconciler {
+    settings: Option<String>,
+    plugins: Option<String>,
+    acme: Option<String>,
+    challenges: Option<String>,
+    datasources: Option<String>,
+    /// Each data source's `updated_at` and `deleted_at` when the fingerprint last changed.
+    sources: Option<HashMap<String, (i64, Option<i64>)>>,
+}
+
+/// One query: an MD5 per area, so the comparison costs one round trip whatever the tables hold.
+const FINGERPRINTS: &str = "SELECT \
+     md5(COALESCE((SELECT string_agg(key || ':' || version, ',' ORDER BY key) FROM server_settings), '') || '|' || \
+         COALESCE((SELECT string_agg(org_id || '/' || key || ':' || version, ',' ORDER BY org_id, key) \
+                   FROM org_settings), '')), \
+     md5(COALESCE((SELECT string_agg(id || ':' || updated_at || ':' || dir || ':' || approved || ':' || enabled \
+                   || ':' || COALESCE(pending_dir, ''), ',' ORDER BY id) FROM plugins), '') || '|' || \
+         COALESCE((SELECT string_agg(key_id, ',' ORDER BY key_id) FROM plugin_keys), '') || '|' || \
+         COALESCE((SELECT string_agg(org_id || ':' || plugin_id, ',' ORDER BY org_id, plugin_id) \
+                   FROM plugin_org_blocks), '') || '|' || \
+         COALESCE((SELECT string_agg(allow_unsigned || ':' || allow_without_landlock, ',') FROM plugin_host), '')), \
+     md5(COALESCE((SELECT string_agg(name || ':' || updated_at, ',' ORDER BY name) FROM acme_shared), '')), \
+     md5(COALESCE((SELECT string_agg(kind || ':' || name || ':' || value, ',' ORDER BY kind, name) \
+                   FROM acme_challenges), '')), \
+     md5(COALESCE((SELECT string_agg(id || ':' || updated_at || ':' || COALESCE(deleted_at, 0), ',' ORDER BY id) \
+                   FROM datasources), ''))";
+
+/// Whether `now` differs from a known `before`; takes it as known either way.
+fn moved(before: &mut Option<String>, now: String) -> bool {
+    let changed = before.as_ref().is_some_and(|b| *b != now);
+    *before = Some(now);
+    changed
+}
+
+impl Reconciler {
+    async fn compare(&mut self, state: &AppState) -> Result<(), sqlx::Error> {
+        let (settings, plugins, acme, challenges, datasources): (String, String, String, String, String) =
+            sqlx::query_as(FINGERPRINTS).fetch_one(&state.db).await?;
+        let settings_moved = moved(&mut self.settings, settings);
+        if settings_moved {
+            crate::settings::cache(state).invalidate_all_here();
+        }
+        if moved(&mut self.plugins, plugins) {
+            request_plugin_sync(state);
+        }
+        // The ACME settings are a server setting.
+        if moved(&mut self.acme, acme) || settings_moved {
+            state.acme.refresh_shared(state).await;
+        }
+        if moved(&mut self.challenges, challenges) {
+            state.acme.sync_challenges(state).await;
+        }
+        if moved(&mut self.datasources, datasources) || self.sources.is_none() {
+            self.sources_changed(state).await?;
+        }
+        // The setup another server finished while its announcement was lost.
+        if state.setup.is_open().await {
+            let (done,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM setup_lock").fetch_one(&state.db).await?;
+            if done > 0 {
+                state.setup.close().await;
+            }
+        }
+        Ok(())
+    }
+
+    /// Forgets the data sources whose row changed since the last look (kept answers, pools,
+    /// plugin grants); the first look only takes the baseline.
+    async fn sources_changed(&mut self, state: &AppState) -> Result<(), sqlx::Error> {
+        let rows: Vec<(String, i64, Option<i64>)> =
+            sqlx::query_as("SELECT id, updated_at, deleted_at FROM datasources").fetch_all(&state.db).await?;
+        let now: HashMap<String, (i64, Option<i64>)> = rows.into_iter().map(|(id, u, d)| (id, (u, d))).collect();
+        if let Some(before) = &self.sources {
+            for (id, was) in before {
+                if now.get(id) != Some(was) {
+                    state.datasources.forget_here(id);
+                }
+            }
+        }
+        self.sources = Some(now);
+        Ok(())
+    }
+}
+
 /// Applies another server's change to what this one keeps.
 async fn apply(state: &AppState, change: Change) {
     tracing::debug!(?change, "a change of another server");
     match change {
-        Change::Settings(org) => crate::settings::cache(state).invalidate_here(org.as_deref()),
+        Change::Settings(org) => crate::settings::cache(state).invalidate(org.as_deref()),
         Change::Rights(org) => state.datasources.query_cache().rights_changed_here(org.as_deref()),
         Change::CacheCleared => state.datasources.query_cache().clear(),
         Change::Datasource(id) => state.datasources.forget_here(&id),
-        Change::Plugins => {
-            let synced = state.clone();
-            state.background.spawn(async move {
-                if let Err(e) = synced.plugins.sync(&synced).await {
-                    tracing::warn!("taking over the plugin changes of another server: {}", e.message);
-                }
-            });
-        }
+        Change::Plugins => request_plugin_sync(state),
         Change::Acme => state.acme.refresh_shared(state).await,
         Change::AcmeChallenges => state.acme.sync_challenges(state).await,
         Change::AcmeRenew => {
@@ -780,6 +961,53 @@ async fn apply(state: &AppState, change: Change) {
                 tracing::info!("a certificate order asked for on another server was refused: {}", refused.message);
             }
         }
+        Change::SetupDone => state.setup.close().await,
+    }
+}
+
+/// Starts a plugin sync (`PluginHost::sync`) in the background, or asks the running one to go
+/// once more. A sync that fails or leaves a plugin out is tried again with a growing pause.
+pub fn request_plugin_sync(state: &AppState) {
+    let sync = &state.cluster.plugin_sync;
+    sync.again.store(true, Ordering::SeqCst);
+    if sync.running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let state = state.clone();
+    let background = state.background.clone();
+    background.spawn(async move {
+        let sync = &state.cluster.plugin_sync;
+        while sync.again.swap(false, Ordering::SeqCst) {
+            let complete = match state.plugins.sync(&state).await {
+                Ok(complete) => complete,
+                Err(e) => {
+                    tracing::warn!("taking over the plugin changes of the other servers: {}", e.message);
+                    false
+                }
+            };
+            let mut retry = sync.retry.lock().unwrap_or_else(|e| e.into_inner());
+            *retry = if complete {
+                None
+            } else {
+                let pause = retry.map_or(SYNC_RETRY_FIRST, |(_, pause)| (pause * 2).min(SYNC_RETRY_MAX));
+                Some((Instant::now() + pause, pause))
+            };
+        }
+        sync.running.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Starts the retry of a failed plugin sync once its pause is over.
+fn retry_plugin_sync(state: &AppState) {
+    let due = state
+        .cluster
+        .plugin_sync
+        .retry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|(at, _)| Instant::now() >= at);
+    if due {
+        request_plugin_sync(state);
     }
 }
 
@@ -788,8 +1016,38 @@ async fn flush(state: &AppState) {
     crate::settings::cache(state).invalidate_all_here();
     state.datasources.query_cache().rights_changed_here(None);
     state.acme.refresh_shared(state).await;
-    if let Err(e) = state.plugins.sync(state).await {
-        tracing::warn!("taking over the plugin changes of the other servers: {}", e.message);
+    request_plugin_sync(state);
+}
+
+/// Claims the next run of the leader-only action `name` for this server: true when it may run
+/// now. Alone (SQLite) always true. Otherwise only on the leader, and only when the database
+/// confirms the lease in the same statement (a server that paused past its lease does not act on
+/// its old belief), the last finished run is `interval` old and nobody else holds a valid claim.
+/// The claim lasts `lease`; a run that fails keeps it for this server's retries. Call
+/// `leader_done` after the run.
+pub async fn leader_claim(state: &AppState, name: &str, interval: Duration, lease: Duration) -> bool {
+    let cluster = &state.cluster;
+    if !cluster.coordinated() {
+        return true;
+    }
+    if !cluster.is_leader() {
+        return false;
+    }
+    match claim(&state.db, cluster, name, interval, lease).await {
+        Ok(claimed) => claimed,
+        Err(e) => {
+            tracing::debug!("claiming {name}: {e}");
+            false
+        }
+    }
+}
+
+/// Records the run of `name` as finished (`leader_claim`).
+pub async fn leader_done(state: &AppState, name: &str) {
+    if state.cluster.coordinated()
+        && let Err(e) = done(&state.db, &state.cluster, name).await
+    {
+        tracing::debug!("recording the run of {name}: {e}");
     }
 }
 
@@ -826,7 +1084,9 @@ where
                     JobError::Failed(e.to_string())
                 }
             };
-            if !claim(&db, &cluster, name, interval).await.map_err(busy)? {
+            // A run may take long; the claim lasts its interval, at least a minute.
+            let lease = interval.max(Duration::from_secs(60));
+            if !claim(&db, &cluster, name, interval, lease).await.map_err(busy)? {
                 return Ok(());
             }
             run.await?;
@@ -835,46 +1095,35 @@ where
     });
 }
 
-/// Claims the next run of `name` when the last finished one is `interval` old and nobody else
-/// holds a claim that is still valid. A claim this server already holds (a run that failed) is
-/// claimed again.
-async fn claim(db: &AnyPool, cluster: &Cluster, name: &str, interval: Duration) -> Result<bool, sqlx::Error> {
+/// Claims the next run of `name` (see `leader_claim`).
+async fn claim(
+    db: &AnyPool,
+    cluster: &Cluster,
+    name: &str,
+    interval: Duration,
+    lease: Duration,
+) -> Result<bool, sqlx::Error> {
     let now = db_now(db, true).await?;
-    let due: Option<(i64, Option<String>, i64)> =
-        sqlx::query_as("SELECT last_done_at, holder, lease_until FROM cluster_jobs WHERE name = $1")
-            .bind(name)
-            .fetch_optional(db)
-            .await?;
-    let interval_ms = millis(interval);
-    match &due {
-        None => {
-            sqlx::query(
-                "INSERT INTO cluster_jobs (name, holder, lease_until, last_done_at) VALUES ($1, NULL, 0, 0) \
-                 ON CONFLICT (name) DO NOTHING",
-            )
-            .bind(name)
-            .execute(db)
-            .await?;
-        }
-        Some((last, holder, until)) => {
-            let others = holder.as_deref().is_some_and(|h| h != cluster.id) && *until >= now;
-            if now - last < interval_ms || others {
-                return Ok(false);
-            }
-        }
-    }
-    // A run may take long; the claim lasts its interval, at least a minute.
-    let lease = interval_ms.max(60_000);
+    sqlx::query(
+        "INSERT INTO cluster_jobs (name, holder, lease_until, last_done_at) VALUES ($1, NULL, 0, 0) \
+         ON CONFLICT (name) DO NOTHING",
+    )
+    .bind(name)
+    .execute(db)
+    .await?;
     let claimed = sqlx::query(
         "UPDATE cluster_jobs SET holder = $1, lease_until = $2 \
-         WHERE name = $3 AND last_done_at <= $4 AND (lease_until < $5 OR holder = $6)",
+         WHERE name = $3 AND last_done_at <= $4 AND (lease_until < $5 OR holder = $6) \
+         AND EXISTS (SELECT 1 FROM cluster_leader WHERE id = 'leader' AND holder = $7 AND expires_at >= $8)",
     )
     .bind(&cluster.id)
-    .bind(now + lease)
+    .bind(now + millis(lease))
     .bind(name)
-    .bind(now - interval_ms)
+    .bind(now - millis(interval))
     .bind(now)
     .bind(&cluster.id)
+    .bind(&cluster.id)
+    .bind(now)
     .execute(db)
     .await?
     .rows_affected();
@@ -890,6 +1139,49 @@ async fn done(db: &AnyPool, cluster: &Cluster, name: &str) -> Result<(), sqlx::E
         .execute(db)
         .await?;
     Ok(())
+}
+
+/// Records which challenge answers this server serves now (`acme::Acme::sync_challenges`), for
+/// the leader's `await_challenges`.
+pub async fn ack_challenges(state: &AppState, fingerprint: &str) {
+    if !state.cluster.coordinated() {
+        return;
+    }
+    let written = sqlx::query("UPDATE cluster_instances SET acme_seen = $1 WHERE id = $2")
+        .bind(fingerprint)
+        .bind(&state.cluster.id)
+        .execute(&state.db)
+        .await;
+    if let Err(e) = written {
+        tracing::debug!("recording the challenge answers served: {e}");
+    }
+}
+
+/// Waits until every other running server serves the challenge answers with `fingerprint`, at
+/// most `within`; false when one did not in time (the order goes on, and the CA may reach that
+/// server).
+pub async fn await_challenges(state: &AppState, fingerprint: &str, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        let behind = async {
+            let now = db_now(&state.db, true).await?;
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM cluster_instances WHERE id <> $1 AND stopped_at IS NULL AND heartbeat_at >= $2 \
+                 AND (acme_seen IS NULL OR acme_seen <> $3)",
+            )
+            .bind(&state.cluster.id)
+            .bind(now - freshness(&state.cluster.options()))
+            .bind(fingerprint)
+            .fetch_one(&state.db)
+            .await?;
+            Ok::<_, sqlx::Error>(n)
+        };
+        match behind.await {
+            Ok(0) => return true,
+            Ok(_) | Err(_) if Instant::now() >= deadline => return false,
+            _ => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -923,7 +1215,7 @@ pub async fn view(state: &AppState) -> Result<ClusterView, sqlx::Error> {
         (Some(cluster.id.clone()), 0, i64::MAX, None)
     };
     let leader = holder.filter(|_| expires_at >= now);
-    let fresh = millis(options.lease).max(millis(if postgres { options.heartbeat } else { SQLITE_HEARTBEAT }) * 3);
+    let fresh = if postgres { freshness(&options) } else { millis(SQLITE_HEARTBEAT) * 3 };
     let instances: Vec<InstanceView> = rows
         .into_iter()
         .map(|r| {
@@ -943,7 +1235,7 @@ pub async fn view(state: &AppState) -> Result<ClusterView, sqlx::Error> {
             }
         })
         .collect();
-    let mode = if postgres && instances.iter().any(|i| !i.current) { "cluster" } else { "single" };
+    let mode = if postgres && instances.iter().any(|i| !i.current && i.alive) { "cluster" } else { "single" };
     let transport = match (postgres, cluster.listening.load(Ordering::SeqCst)) {
         (false, _) => "none",
         (true, true) => "notify",
@@ -983,6 +1275,7 @@ mod tests {
             Change::Acme,
             Change::AcmeChallenges,
             Change::AcmeRenew,
+            Change::SetupDone,
         ];
         for change in changes {
             let (kind, scope) = change.encode();
@@ -996,14 +1289,40 @@ mod tests {
     fn a_server_alone_leads() {
         let cluster = Cluster::new();
         assert!(cluster.is_leader() && !cluster.coordinated() && !cluster.has_peers());
+        // Publishing without the loops is a no-op.
+        cluster.publish(Change::Plugins);
+        assert!(cluster.take_pending().is_empty());
         cluster.coordinated.store(true, Ordering::SeqCst);
         assert!(!cluster.is_leader(), "coordinated, it leads only with a lease");
         cluster.set_leader(Some(Instant::now() + Duration::from_secs(5)), 3);
         assert!(cluster.is_leader());
         cluster.set_leader(Some(Instant::now() - Duration::from_millis(1)), 3);
         assert!(!cluster.is_leader(), "a belief that ran out is no lead");
-        // Publishing without the loops is a no-op.
+    }
+
+    #[test]
+    fn the_queue_keeps_order_and_takes_back_what_failed() {
+        let cluster = Cluster::new();
+        cluster.coordinated.store(true, Ordering::SeqCst);
         cluster.publish(Change::Plugins);
+        cluster.publish(Change::Plugins);
+        cluster.publish(Change::Acme);
+        let first = cluster.take_pending();
+        assert_eq!(first, vec![Change::Plugins, Change::Acme], "repeats in a row are one");
+        cluster.publish(Change::CacheCleared);
+        cluster.requeue(first);
+        assert_eq!(cluster.take_pending(), vec![Change::Plugins, Change::Acme, Change::CacheCleared]);
+        cluster.stopped.store(true, Ordering::SeqCst);
+        cluster.publish(Change::Plugins);
+        assert!(cluster.take_pending().is_empty(), "nothing queues after the stop flushed");
+    }
+
+    #[test]
+    fn a_fingerprint_moves_only_after_a_baseline() {
+        let mut before = None;
+        assert!(!moved(&mut before, "a".into()), "the first look takes the baseline");
+        assert!(!moved(&mut before, "a".into()));
+        assert!(moved(&mut before, "b".into()));
     }
 
     #[tokio::test]
@@ -1012,5 +1331,10 @@ mod tests {
         let now = db_now(&db, false).await.unwrap();
         let local = crate::clock::Clock::now_ms(&crate::clock::SystemClock);
         assert!((now - local).abs() < 5_000, "{now} vs {local}");
+        // Recording on SQLite writes nothing: one server, nobody to tell.
+        let mut conn = db.acquire().await.unwrap();
+        record(&mut conn, "x", &Change::Plugins).await.unwrap();
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cluster_events").fetch_one(&mut *conn).await.unwrap();
+        assert_eq!(n, 0);
     }
 }

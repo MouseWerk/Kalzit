@@ -689,7 +689,13 @@ impl PluginHost {
             "permissions": package::permission_lines(m),
         });
         self.record(&mut tx, actor, action, &row.id, summary, now).await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
+        // Checked in full (`materialize` unpacks again a directory without the mark).
+        let unpacked = row.pending.as_ref().map_or(&row.dir, |p| &p.dir);
+        if let Err(e) = write_complete_mark(&self.dir("packages").join(format!("{unpacked}{COMPLETE_SUFFIX}"))) {
+            tracing::warn!(plugin = %row.id, "marking the package as complete: {e}");
+        }
         for id in &cleared {
             state.datasources.forget(id);
         }
@@ -700,7 +706,6 @@ impl PluginHost {
         for old in old_dirs {
             remove_dir(&self.dir("packages").join(old));
         }
-        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -972,13 +977,13 @@ impl PluginHost {
         store::put(&mut tx, &row, actor.user_id).await?;
         let summary = json!({ "version": version, "permissions": package::permission_lines(&m) });
         self.record(&mut tx, actor, "plugins.approved", id, summary, now).await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         self.unregister(id, &state.datasources).await;
         self.reregister(state, id).await;
         if let Some(dir) = old_dir {
             remove_dir(&self.dir("packages").join(dir));
         }
-        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -1003,6 +1008,7 @@ impl PluginHost {
         store::put(&mut tx, &row, actor.user_id).await?;
         let action = if enabled { "plugins.enabled" } else { "plugins.disabled" };
         self.record(&mut tx, actor, action, id, json!({ "version": row.version }), now).await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         self.unregister(id, &state.datasources).await;
         if enabled {
@@ -1014,7 +1020,6 @@ impl PluginHost {
             }
             self.reregister(state, id).await;
         }
-        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -1043,6 +1048,7 @@ impl PluginHost {
         let mut tx = crate::db::begin(&state.db).await?;
         store::delete(&mut tx, &row, actor.user_id, now).await?;
         self.record(&mut tx, actor, "plugins.removed", id, json!({ "version": row.version }), now).await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         self.unregister(id, &state.datasources).await;
         remove_dir(&self.dir("packages").join(&row.dir));
@@ -1050,7 +1056,6 @@ impl PluginHost {
             remove_dir(&self.dir("packages").join(&p.dir));
         }
         super::sandbox::remove_app_container(&self.dir("run"), id);
-        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(())
     }
 
@@ -1086,6 +1091,7 @@ impl PluginHost {
             now,
         )
         .await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         // Plugins signed with it may run again.
         for p in store::all(&state.db).await? {
@@ -1093,7 +1099,6 @@ impl PluginHost {
                 self.reregister(state, &p.id).await;
             }
         }
-        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -1169,6 +1174,7 @@ impl PluginHost {
         let summary =
             json!({ "keyId": key.key_id, "name": key.name, "stopped": stopped, "droppedUpdates": dropped_ids });
         self.record(&mut tx, actor, "plugins.key_removed", key_id, summary, now).await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         for id in &stopped {
             self.unregister(id, &state.datasources).await;
@@ -1176,7 +1182,6 @@ impl PluginHost {
         for dir in dirs {
             remove_dir(&self.dir("packages").join(dir));
         }
-        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(stopped)
     }
 
@@ -1228,9 +1233,9 @@ impl PluginHost {
             let summary = json!({ "allowWithoutLandlock": new.allow_without_landlock });
             self.record(&mut tx, actor, action, "server", summary, now).await?;
         }
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         self.without_landlock.store(new.allow_without_landlock, Ordering::SeqCst);
-        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(())
     }
 
@@ -1246,6 +1251,7 @@ impl PluginHost {
             let action = if blocked { "plugins.blocked" } else { "plugins.unblocked" };
             self.record(&mut tx, actor, action, id, json!({}), now).await?;
         }
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         state.datasources.set_blocked(org_id, id, blocked);
         if blocked && let Some(supervisor) = self.supervisor(id) {
@@ -1258,9 +1264,6 @@ impl PluginHost {
             for (source,) in sources {
                 supervisor.grants().revoke(&source);
             }
-        }
-        if changed {
-            state.cluster.publish(crate::cluster::Change::Plugins);
         }
         Ok(changed)
     }
@@ -1279,10 +1282,32 @@ impl PluginHost {
     /// and switches, and which plugins run. A plugin no longer runnable, or now from another
     /// package, stops; one that may run starts, its package unpacked first from the copy the
     /// installing server shared (`plugin_packages`) when it is not here yet.
-    pub async fn sync(&self, state: &AppState) -> ApiResult<()> {
+    ///
+    /// Answers whether everything that may run here runs: `false` when a package could not be
+    /// unpacked or a plugin not registered, and the caller tries again later (`cluster`).
+    pub async fn sync(&self, state: &AppState) -> ApiResult<bool> {
         let _changes = self.changes.lock().await;
-        state.datasources.set_blocks(store::blocks(&state.db).await?);
-        self.without_landlock.store(store::switches(&state.db).await?.allow_without_landlock, Ordering::SeqCst);
+        // Newly blocked organizations: what the plugin was handed of their sources goes, with
+        // its open connections, as on the server where the block was set (`set_blocked`).
+        let before: std::collections::HashSet<(String, String)> = state.datasources.blocks().into_iter().collect();
+        let blocks = store::blocks(&state.db).await?;
+        let added: Vec<(String, String)> = blocks.iter().filter(|b| !before.contains(*b)).cloned().collect();
+        state.datasources.set_blocks(blocks);
+        for (org_id, plugin_id) in added {
+            if let Some(supervisor) = self.supervisor(&plugin_id) {
+                let sources: Vec<(String,)> =
+                    sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND kind = $2")
+                        .bind(&org_id)
+                        .bind(&plugin_id)
+                        .fetch_all(&state.db)
+                        .await?;
+                for (source,) in sources {
+                    supervisor.grants().revoke(&source);
+                }
+            }
+        }
+        let switches = store::switches(&state.db).await?;
+        self.without_landlock.store(switches.allow_without_landlock, Ordering::SeqCst);
         let rows = store::all(&state.db).await?;
         let keys = store::keys(&state.db).await?;
         let registered = self.registered.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -1298,69 +1323,114 @@ impl PluginHost {
                 self.unregister(id, &state.datasources).await;
             }
         }
+        // Read again: what was just stopped (an update, an approval) starts from its new package.
+        let registered = self.registered.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut complete = true;
         for row in rows.iter().filter(|r| r.approved && r.enabled && !registered.contains_key(&r.id)) {
-            if let Err(e) = self.materialize(state, row).await {
+            if row.signer == "unsigned" && !switches.allow_unsigned {
+                tracing::warn!(plugin = %row.id, "the plugin is unsigned and unsigned plugins are not allowed; it does not run on this server");
+                continue;
+            }
+            if let Err(e) = self.materialize(state, &row.id, &row.dir, &row.manifest).await {
                 tracing::warn!(plugin = %row.id, "the plugin's package is not on this server: {}", e.message);
+                complete = false;
                 continue;
             }
             if let Err(e) = self.register(row, &keys, &state.datasources) {
                 tracing::warn!(plugin = %row.id, reason = e.reason, "the plugin does not run: {}", e.message);
+                complete = false;
             }
         }
-        Ok(())
+        // Packages no plugin refers to any more (an update or removal on another server).
+        let wanted: std::collections::HashSet<&str> = rows
+            .iter()
+            .flat_map(|r| std::iter::once(r.dir.as_str()).chain(r.pending.as_ref().map(|p| p.dir.as_str())))
+            .collect();
+        if let Ok(entries) = std::fs::read_dir(self.dir("packages")) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let base = name.strip_suffix(COMPLETE_SUFFIX).unwrap_or(&name);
+                if wanted.contains(base) {
+                    continue;
+                }
+                if name.ends_with(COMPLETE_SUFFIX) {
+                    let _ = std::fs::remove_file(entry.path());
+                } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    remove_dir(&entry.path());
+                }
+            }
+        }
+        Ok(complete)
     }
 
-    /// Unpacks the shared package of `row` into its directory when this server does not have it,
-    /// with the checks of an installation: a valid package whose manifest is exactly the one the
-    /// installing server checked and stored, every file as the manifest lists it.
-    async fn materialize(&self, state: &AppState, row: &PluginRow) -> ApiResult<()> {
-        let dir = self.dir("packages").join(&row.dir);
-        if dir.exists() {
-            return Ok(());
-        }
-        self.prepare().map_err(|e| HostError::from(e).api())?;
+    /// Unpacks the shared package `dir` of plugin `id` when this server does not have it, with
+    /// the checks of an installation: a valid package whose manifest is exactly `manifest_text`
+    /// (the one the installing server checked and stored), every file as the manifest lists it.
+    /// It is unpacked into a temporary directory and renamed into place only once checked, then
+    /// marked complete (`<dir>.complete`); a directory without the mark is unpacked again.
+    async fn materialize(&self, state: &AppState, id: &str, dir_name: &str, manifest_text: &str) -> ApiResult<()> {
+        let dir = self.dir("packages").join(dir_name);
+        let mark = self.dir("packages").join(format!("{dir_name}{COMPLETE_SUFFIX}"));
         let shared: Option<(String,)> = sqlx::query_as("SELECT archive FROM plugin_packages WHERE dir = $1")
-            .bind(&row.dir)
+            .bind(dir_name)
             .fetch_optional(&state.db)
             .await?;
+        if dir.exists() {
+            // Complete, or installed here before shared copies existed.
+            if mark.exists() || shared.is_none() {
+                return Ok(());
+            }
+            remove_dir(&dir);
+        }
         let Some((archive,)) = shared else {
             return Err(HostError::new("plugin.package_missing", "no server shared the package").api());
         };
+        self.prepare().map_err(|e| HostError::from(e).api())?;
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, archive.as_bytes())
             .map_err(|e| ApiError::internal("plugin package", e))?;
         let upload = self.upload_path().map_err(|e| e.api())?;
+        let partial = self.dir("packages").join(format!(".partial-{dir_name}"));
+        remove_dir(&partial);
         let unpacked = async {
             tokio::fs::write(&upload, &bytes).await.map_err(|e| HostError::from(e).api())?;
-            let manifest = manifest::parse(&row.manifest).map_err(|e| ApiError::internal("plugin manifest", e))?;
+            let manifest = manifest::parse(manifest_text).map_err(|e| ApiError::internal("plugin manifest", e))?;
             let is_panel = manifest.plugin_kind() == manifest::PluginKind::Panel;
-            let access =
-                if is_panel { PluginAccess::None } else { PluginAccess::ReadExecute(package::plugin_sid(&row.id)) };
-            package::private_dir(&dir, &access).map_err(|e| HostError::from(e).api())?;
-            let (archive, into) = (upload.clone(), dir.clone());
+            let access = if is_panel { PluginAccess::None } else { PluginAccess::ReadExecute(package::plugin_sid(id)) };
+            package::private_dir(&partial, &access).map_err(|e| HostError::from(e).api())?;
+            let (archive, into) = (upload.clone(), partial.clone());
             let unpacked = tokio::task::spawn_blocking(move || package::unpack(&archive, &into))
                 .await
                 .map_err(|e| ApiError::internal("plugin unpack", e))?
                 .map_err(HostError::api)?;
-            if unpacked.manifest_text != row.manifest {
+            if unpacked.manifest_text != manifest_text {
                 return Err(HostError::new("plugin.package_invalid", "the manifest differs from the one installed")
                     .with("issues", "manifest")
                     .api());
             }
             if is_panel {
-                panels::check_bundle(&unpacked.manifest, &dir).map_err(HostError::api)?;
+                panels::check_bundle(&unpacked.manifest, &partial).map_err(HostError::api)?;
             } else {
-                let program = package::binary(&unpacked.manifest, &dir).map_err(HostError::api)?;
+                let program = package::binary(&unpacked.manifest, &partial).map_err(HostError::api)?;
                 package::make_executable(&program).map_err(|e| HostError::from(e).api())?;
             }
+            std::fs::rename(&partial, &dir).map_err(|e| HostError::from(e).api())?;
+            write_complete_mark(&mark).map_err(|e| HostError::from(e).api())?;
             Ok(())
         }
         .await;
         let _ = std::fs::remove_file(&upload);
         if unpacked.is_err() {
-            remove_dir(&dir);
+            remove_dir(&partial);
         }
         unpacked
     }
+}
+
+/// The mark next to a package directory that says it was unpacked and checked in full.
+const COMPLETE_SUFFIX: &str = ".complete";
+
+fn write_complete_mark(mark: &Path) -> std::io::Result<()> {
+    std::fs::write(mark, b"")
 }
 
 /// Keeps the uploaded package in the database, in the installation's transaction, for the other
@@ -1391,6 +1461,10 @@ fn datasources_has_kind(datasources: &DataSources, id: &str) -> bool {
 /// Removes a directory and everything in it. A process that just ended may still hold a file
 /// on Windows for a moment, so a failure is tried again for a few seconds, then logged.
 fn remove_dir(dir: &Path) {
+    // A package's mark of completeness goes first: a half-removed package never counts as whole.
+    let mut mark = dir.as_os_str().to_owned();
+    mark.push(COMPLETE_SUFFIX);
+    let _ = std::fs::remove_file(mark);
     if !dir.exists() || std::fs::remove_dir_all(dir).is_ok() {
         return;
     }

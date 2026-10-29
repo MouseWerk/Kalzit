@@ -344,7 +344,7 @@ administrators only; read only.
 }
 ```
 
-`mode` is `single` (SQLite, or no other server on the database within a day) or `cluster`;
+`mode` is `single` (SQLite, or no other server running on the database) or `cluster`;
 `database` is `sqlite` or `postgres`; `transport` says how changes of other servers arrive:
 `notify`, `poll` (the notification connection is down) or `none` (SQLite). `leaderSince` is when
 the current leader took over (`null` while no lease is valid; on SQLite the server's start).

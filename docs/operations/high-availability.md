@@ -12,9 +12,12 @@ requests that were running answer `503` once and can be sent again.
 
 SQLite serves exactly one server. A second server started on the same SQLite database stops at
 once with "another Kalzit server is already running on the SQLite database ..." (the first one
-holds `kalzit.db.lock` next to the database file; the lock goes with its process, also after a
-crash). To go from SQLite to several servers, move to PostgreSQL first; Kalzit has no copy tool
-between the two yet.
+holds `kalzit.db.lock` next to the database file until the database is closed; the lock goes with
+its process, also after a crash). The lock is an operating system file lock taken by path: it
+does not see the same database reached through a hard link under another name, and file sharing
+that does not pass locks between a host and a container (CIFS shares, some Docker Desktop bind
+mounts) hides it; keep the data directory on a local disk of the one machine. To go from SQLite
+to several servers, move to PostgreSQL first; Kalzit has no copy tool between the two yet.
 
 ## What every server needs
 
@@ -25,7 +28,8 @@ between the two yet.
   encrypted or signed with it. A server with another key cannot read them; it logs which stored
   secrets it cannot use. A key file in each data directory is per machine and does not work here.
 - **Its own data directory.** Nothing in it is shared: logs, plugin packages as unpacked, update
-  downloads and backups stay per server. Do not put the data directory on shared storage.
+  downloads and backups stay per server. Do not put the data directory on shared storage. A
+  second server started with a data directory another one uses stops at once (`kalzit-server.lock`).
 - **The same version**, apart from the minutes of a rolling update (below).
 - Clocks set by NTP. Kalzit decides who leads and when jobs are due by the database's clock, so a
   wrong host clock does not break that; it does shift the times in logs and sign-in limits.
@@ -62,27 +66,45 @@ that has the request.
 The leader holds a lease in the database and renews it every 5 seconds; it lasts 15 seconds. A
 server that stops cleanly hands the lease over at once, and the next one leads within 5 seconds.
 After a crash or a network split another server takes over once 15 seconds have passed. Each
-run-once job also claims its run in the database, so a change of leader never runs a job twice
-within its interval. Verwaltung, Instanzen (Administration, Instances) shows the leader and since
+run-once job, the catalog refresh, the update check and every certificate order also claim their
+run in the database, in one statement that checks the lease there as well: a change of leader
+never runs a job twice within its interval, and a server that was paused (a frozen virtual
+machine) does not act on a lease that has passed meanwhile. Verwaltung, Instanzen (Administration, Instances) shows the leader and since
 when it leads.
 
 ## How changes reach the other servers
 
-Settings, rights (and with them the query cache), data sources, plugins and
-certificates changed on one server are announced through the database: a row in
-`cluster_events` and a PostgreSQL `NOTIFY`. The other servers apply them within a second. When the
-notification connection is down (a reconnect, a pooler that does not pass `LISTEN`), every server
-reads the rows every second instead (every 5 seconds while notifications work, as a backstop).
-What this guarantees:
+Settings, rights (and with them the query cache), data sources, plugins, certificates and the
+first-run setup changed on one server are announced through the database: a row in
+`cluster_events` and a PostgreSQL `NOTIFY`. Settings, plugin changes and the setup write the row
+in the same transaction as the change, so the announcement exists exactly when the change does;
+rights changes are written before the request answers. The other servers apply them within a
+second. When the notification connection is down (a reconnect, a pooler that does not pass
+`LISTEN`), every server reads the rows every second instead (every 5 seconds while notifications
+work).
+
+At every such read each server also compares fingerprints of what the servers share: the stored
+settings, plugins with their keys, blocks and switches, the shared certificate, the running
+order's challenge answers and the data sources. Whatever differs is taken over, whether or not
+its announcement arrived (a process that ended right after a commit, a queue that could not be
+written). What this guarantees:
 
 - A change is in effect on the server that made it as soon as it answered.
-- Another server applies it at the latest after its next read of the events: usually under a
-  second, at most about 5 seconds, or a second without notifications.
-- Settings are read again from the database every 30 seconds in any case; sessions, permissions,
-  data sources, AI providers and grants are read from the database with every request, so a
-  revoked session or permission is refused on every server at once.
-- A server that could not read the events for close to an hour (they are kept for one) drops
-  everything it keeps in memory and reads it again.
+- Another server applies it at the latest after its next read: usually under a second, at most
+  about 5 seconds, or a second without notifications. This holds for settings, plugins (which
+  ones run, their keys, the organizations' blocks with the connections they had, the switch for
+  plugins without Landlock), the certificate, challenge answers and data sources, also when the
+  announcement was lost.
+- Sessions, permissions, grants and AI providers are read from the database with every request,
+  so a revoked session or permission is refused on every server at once.
+- A rights generation of the query cache whose announcement was lost (the process ended between
+  the commit and writing it) is not caught by a fingerprint; permissions are checked on every
+  request before the cache, so this never serves an answer to someone who may no longer see it,
+  only an answer up to its cache time old.
+- A plugin that cannot be started on a server (its package not unpacked, a refused check) is
+  tried again after 5 seconds, then with a growing pause up to 5 minutes.
+- A server that could not read the events for close to an hour drops everything it keeps in
+  memory and reads it again.
 - The query cache keeps answers per server. A change of rights or of a data source ends the kept
   answers on every server; permissions are checked on every request before the cache, so an
   answer is never served to someone who may no longer see it.
@@ -104,11 +126,17 @@ connection for Kalzit, keeps notifications.
 - **TLS certificate files** (`tls.cert_file`, `tls.key_file`) are read from each server's disk:
   deploy the same files to every server, or terminate TLS at the load balancer. Certificates
   Kalzit orders over ACME are shared through the database (encrypted with the secrets key): the
-  leader orders and renews, every server serves the same certificate. HTTP-01 validations are
-  answered by whichever server the certificate authority reaches. For TLS-ALPN-01 the load balancer
-  must pass port 443 through as TCP (no TLS termination there); prefer HTTP-01 behind a balancer.
-- **The binary** is not replaced by Kalzit itself while other servers use the database: "Install
-  now" and planned updates are refused (Updates shows why), see below.
+  leader orders and renews, every server serves the same certificate, and a server that missed
+  the announcement takes it at its next read. While an order runs, the leader waits until every
+  running server confirms that it serves the challenge answers (at most 30 seconds) before the
+  certificate authority validates; HTTP-01 validations are then answered by whichever server it
+  reaches (looked up in the database only while an order runs, at most 20 lookups a second). For
+  TLS-ALPN-01 the load balancer must pass port 443 through as TCP (no TLS termination there);
+  prefer HTTP-01 behind a balancer.
+- **The binary** is not replaced by Kalzit itself while other servers run on the database, or
+  while a server on PostgreSQL could not yet count them (just after its start, or while the
+  database does not answer): "Install now" and planned updates are refused (Updates shows why),
+  see below. A server that restarts alone counts as alone; its own earlier run does not count.
 
 ## Rolling updates
 

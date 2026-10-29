@@ -1023,9 +1023,6 @@ struct CacheInner {
 #[derive(Default)]
 pub struct Cache {
     inner: Mutex<CacheInner>,
-    /// Tells the other servers on the same database about a change (`cluster`); unset for a
-    /// single server.
-    publisher: std::sync::OnceLock<crate::cluster::Publisher>,
 }
 
 impl Cache {
@@ -1059,20 +1056,6 @@ impl Cache {
         }
     }
 
-    /// Sends invalidations to the other servers on the same database (`cluster`).
-    pub fn set_publisher(&self, publisher: crate::cluster::Publisher) {
-        let _ = self.publisher.set(publisher);
-    }
-
-    /// Drops the cached rows of the server (`None`) or one organization, here and on the other
-    /// servers on the same database.
-    pub fn invalidate(&self, org_id: Option<&str>) {
-        self.invalidate_here(org_id);
-        if let Some(publish) = self.publisher.get() {
-            publish(crate::cluster::Change::Settings(org_id.map(str::to_string)));
-        }
-    }
-
     /// Drops every cached row (another server may have changed anything while this one could
     /// not hear about it).
     pub fn invalidate_all_here(&self) {
@@ -1082,8 +1065,10 @@ impl Cache {
         inner.orgs.clear();
     }
 
-    /// `invalidate` on this server only: another server reported the change.
-    pub fn invalidate_here(&self, org_id: Option<&str>) {
+    /// Drops the cached rows of the server (`None`) or one organization on this server. The
+    /// other servers on the same database learn of the write from `store` and `reset`, which
+    /// announce it in the write's transaction (`cluster::record`).
+    pub fn invalidate(&self, org_id: Option<&str>) {
         let mut inner = self.lock();
         inner.generation += 1;
         match org_id {
@@ -1272,6 +1257,11 @@ pub async fn reset(
         }
     }
     .rows_affected();
+    if affected == 1 {
+        // The other servers on the same database drop their copy (`cluster`); in this
+        // transaction, so the announcement exists exactly when the write does.
+        crate::cluster::record(conn, "", &crate::cluster::Change::Settings(org_id.map(str::to_string))).await?;
+    }
     Ok((affected == 1).then_some(next))
 }
 
@@ -1345,6 +1335,11 @@ pub async fn store(
             }
         }
         .rows_affected();
+    if affected == 1 {
+        // The other servers on the same database drop their copy (`cluster`); in this
+        // transaction, so the announcement exists exactly when the write does.
+        crate::cluster::record(conn, "", &crate::cluster::Change::Settings(org_id.map(str::to_string))).await?;
+    }
     Ok((affected == 1).then_some(next))
 }
 

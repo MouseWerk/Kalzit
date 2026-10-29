@@ -1153,7 +1153,12 @@ impl DataSources {
         !blocked.is_empty() && blocked.contains(&(org_id.to_string(), kind.to_string()))
     }
 
-    /// Replaces every block (at start).
+    /// Every block now, as (organization, kind).
+    pub fn blocks(&self) -> Vec<(String, String)> {
+        self.blocked.read().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+    }
+
+    /// Replaces every block (at start, and when another server changed them).
     pub fn set_blocks(&self, blocks: Vec<(String, String)>) {
         *self.blocked.write().unwrap_or_else(|e| e.into_inner()) = blocks.into_iter().collect();
     }

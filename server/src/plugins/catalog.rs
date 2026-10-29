@@ -1069,8 +1069,9 @@ pub fn spawn_background(state: AppState) {
         loop {
             // Once for all servers on one database: the leader refreshes, the others read the
             // stored index.
-            if state.cluster.is_leader() {
+            if crate::cluster::leader_claim(&state, "plugins:catalog", TICK, TICK).await {
                 state.catalog.tick(&state).await;
+                crate::cluster::leader_done(&state, "plugins:catalog").await;
             }
             tokio::select! {
                 () = stopping.cancelled() => return,
