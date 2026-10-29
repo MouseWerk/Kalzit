@@ -190,14 +190,11 @@ jobs:
           CERT: ${{ secrets.KALZIT_WINDOWS_CERT }}
           CERT_PASSWORD: ${{ secrets.KALZIT_WINDOWS_CERT_PASSWORD }}
         run: ./packaging/windows/sign.ps1 -Files "dist/kalzit-$($env:VERSION.TrimStart('v'))-windows-x64.exe" -Mode $env:MODE -TimestampUrl $env:TIMESTAMP_URL
-      - name: The program runs and names its version, hash
+      # The program is not run here, next to the signing secrets; `windows-msi` runs it.
+      - name: Hash
         id: hash
         shell: bash
-        run: |
-          set -euo pipefail
-          file="dist/kalzit-${VERSION#v}-windows-x64.exe"
-          "$file" --version | grep -qw "${VERSION#v}"
-          echo "sha256=$(sha256sum "$file" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        run: echo "sha256=$(sha256sum "dist/kalzit-${VERSION#v}-windows-x64.exe" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kalzit-windows-x64-signed-exe
@@ -228,17 +225,22 @@ jobs:
           set -euo pipefail
           test -n "$EXPECTED"
           printf '%s  %s\n' "$EXPECTED" "dist/kalzit-${VERSION#v}-windows-x64.exe" | sha256sum -c -
+      - name: The signed program runs and names its version
+        shell: bash
+        run: |
+          "dist/kalzit-${VERSION#v}-windows-x64.exe" --version | grep -qw "${VERSION#v}"
       - name: Install WiX
         run: |
           dotnet tool install --global wix --version 5.0.2
           wix extension add --global WixToolset.UI.wixext/5.0.2
-          wix extension add --global WixToolset.Util.wixext/5.0.2
       - name: Build the MSI package
         shell: pwsh
         run: |
           $version = $env:VERSION.TrimStart('v')
           New-Item -ItemType Directory -Force msi | Out-Null
           ./packaging/windows/build.ps1 -Exe "dist/kalzit-$version-windows-x64.exe" -Version $version -Out "msi/kalzit-$version-windows-x64.msi"
+          # Only a package that carries exactly the signed program goes on to be signed.
+          ./packaging/windows/check-msi.ps1 -Msi "msi/kalzit-$version-windows-x64.msi" -Exe "dist/kalzit-$version-windows-x64.exe"
       - name: Hash
         id: hash
         shell: bash

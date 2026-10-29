@@ -244,15 +244,17 @@ without it.
    | | open the port(s) in Windows Defender Firewall | not ticked |
 
 3. When it is done, open `http://localhost:3000` (or the port you chose). The setup code for the
-   first sign-in: open PowerShell with **Run as administrator** and run
-   `& "C:\Program Files\Kalzit\kalzit.exe" setup-code`. Continue with
+   first sign-in is in `setup-token.txt` in the data folder, which only administrators can open:
+   in PowerShell opened with **Run as administrator**,
+   `Get-Content C:\ProgramData\Kalzit\data\setup-token.txt`. Continue with
    [Getting started](getting-started.md#first-setup).
 
 What the package sets up:
 
-- `kalzit.exe` in the program folder. Only Administrators and SYSTEM may change the folder (and,
-  for updates, the service account); everyone may run the program. The folder is not added to
-  `PATH`: call `kalzit.exe` with its full path.
+- `kalzit.exe` in the program folder. Only Administrators and SYSTEM may change the folder (with
+  `SELFUPDATE=1` also the service account); everyone may run the program. The folder is not added
+  to `PATH`: call `kalzit.exe` with its full path. The installer's own steps run from a copy of
+  the program inside the package, never from the installed file.
 - The service `Kalzit` (automatic start, account `NT SERVICE\Kalzit`) with a single privilege,
   `SeChangeNotifyPrivilege`: no impersonation, so a compromised service cannot turn itself into
   SYSTEM. After a failure the service manager starts it again (after 2 s, 5 s, then every 30 s).
@@ -311,8 +313,17 @@ msiexec /i kalzit-0.5.0-windows-x64.msi /qn HTTPS=certificate HTTPSPORT=443 `
 | `HTTPSPORT` | HTTPS port | `3443` |
 | `CERTFILE`, `KEYFILE` | certificate chain and private key (PEM) for `HTTPS=certificate` | |
 | `FIREWALL` | `1` opens the port(s) in Windows Defender Firewall | not set |
-| `SELFUPDATE` | `1`: the service account may replace `kalzit.exe`, so updates install on their own; `0`: the program folder stays for Administrators only | `1` |
+| `SELFUPDATE` | `0`: the program folder stays for Administrators only, and updates come with a new MSI package; `1`: the service account may replace `kalzit.exe`, so the built-in updater installs on its own (see the note below) | `0` |
 | `REMOVEDATA` | when uninstalling: `1` also removes the data folder and `kalzit.toml` | not set |
+
+**`SELFUPDATE=1` and its risk.** With it, the service account may change `kalzit.exe` and what lies
+next to it. Should the service ever be taken over, the attacker could change code that an
+administrator later runs with full rights, and so become an administrator. Kalzit loads DLLs only
+from System32 and the installer never runs the installed file, but an administrator who starts
+that `kalzit.exe` elevated (for `kalzit update`, `kalzit setup-code`, `kalzit service`) runs what
+the service account left there. With `SELFUPDATE=1`, do not run the installed program elevated:
+read the setup code from `setup-token.txt`, and use a `kalzit.exe` downloaded from the release for
+command-line work. With `SELFUPDATE=0` (the default) running it elevated is safe.
 
 With an existing `kalzit.toml`, `PORT`, `DATADIR` and the HTTPS properties are not used. Values
 must not contain a quote (`"`). The settings are read at the first installation and at upgrades,
@@ -332,7 +343,7 @@ what is in it), then in an elevated prompt:
 
 | Command | What it does |
 |---|---|
-| `kalzit service install` | creates the service for this `kalzit.exe`, writes `kalzit.toml` (unless it exists), secures the data folder and starts the service. Options as the properties above: `--port`, `--data-dir`, `--https` (`off`, `self-signed` or `certificate`), `--https-port`, `--cert-file`, `--key-file`, `--open-firewall`, `--self-update 0`; `--no-start` sets up without starting; `--config` uses another configuration file than `%ProgramData%\Kalzit\kalzit.toml` |
+| `kalzit service install` | creates the service for this `kalzit.exe`, writes `kalzit.toml` (unless it exists), secures the data folder and starts the service. Options as the properties above: `--port`, `--data-dir`, `--https` (`off`, `self-signed` or `certificate`), `--https-port`, `--cert-file`, `--key-file`, `--open-firewall`, `--self-update 1` (off by default, see the note on `SELFUPDATE`); `--no-start` sets up without starting; `--config` uses another configuration file than `%ProgramData%\Kalzit\kalzit.toml` |
 | `kalzit service uninstall` | stops and removes the service and the firewall rule; the data and `kalzit.toml` stay. `--remove-data` removes them too |
 | `kalzit service run` | what the service manager starts; in a console, use `kalzit serve` |
 
@@ -359,20 +370,20 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
 
 ### Updates
 
-- **The built-in updater** (Administration (Verwaltung) > Updates) installs on its own when Kalzit
-  runs as the service with self-update on (the default): it stops the service gracefully, backs
-  up the database, puts the new `kalzit.exe` in place and the service manager starts it again. If
-  the new version does not report healthy, Kalzit returns to the previous one with the backup
-  ([Updates guide](../operations/updates.md)). Settings, Apps keeps showing the version the MSI
-  package installed; the Updates page shows the one that runs.
-- **A newer MSI package** installs over the previous one: the service stops, the program is
-  replaced, the service starts again; `kalzit.toml` and the data stay. The new version migrates
-  the database on its first start, without the updater's backup and automatic return, so back up
-  the data folder first ([Backups](../ARCHITECTURE.md#backups)). An older package than the one
-  installed is refused.
-- With `SELFUPDATE=0`, the Updates page downloads and verifies, and you install from an elevated
-  prompt: `Stop-Service Kalzit`, `kalzit update apply`, `Start-Service Kalzit`, or with the next MSI
-  package.
+- **A newer MSI package** (the default way) installs over the previous one: the service stops, the
+  program is replaced, the service starts again; `kalzit.toml` and the data stay. The new version
+  migrates the database on its first start, without the updater's backup and automatic return,
+  so back up the data folder first ([Backups](../ARCHITECTURE.md#backups)). An older package than
+  the one installed is refused. The Updates page (Administration (Verwaltung) > Updates) tells you
+  when a release is out; it can also download and verify it for `kalzit update apply` from an
+  elevated prompt (`Stop-Service Kalzit`, `& "C:\Program Files\Kalzit\kalzit.exe" update apply`,
+  `Start-Service Kalzit`).
+- **The built-in updater installs on its own** only with `SELFUPDATE=1` (see the note on its
+  risk above): it stops the service gracefully, backs up the database, puts the new `kalzit.exe`
+  in place and the service manager starts it again. If the new version does not report healthy,
+  Kalzit returns to the previous one with the backup ([Updates guide](../operations/updates.md)).
+  Settings, Apps keeps showing the version the MSI package installed; the Updates page shows the
+  one that runs.
 
 ### Uninstalling
 

@@ -1239,7 +1239,17 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
     `StartServices`, as LocalSystem, only at the first installation and at upgrades, never at a
     repair; and by `kalzit service install`) runs as SYSTEM over folders a user may have prepared
     beforehand, so it takes over nothing it did not make or Kalzit made, and refuses instead,
-    with the reason in the MSI log (WixQuietExec64 captures the output) and the event log:
+    with the reason in the event log. The MSI runs both of its steps (configure, cleanup) from
+    its own copy of `kalzit.exe` in the Binary table, which msiexec unpacks into its protected
+    folder (`--program` names the installed file), never from the installed program, which the
+    service account may change with self-update. `icacls`, `sc` and `netsh` are called by their
+    full path in System32 (`GetSystemDirectoryW`), never by a bare name the program folder could
+    answer. `kalzit.exe` is linked with `/DEPENDENTLOADFLAG:0x800` and calls
+    `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` first thing, so neither its imports
+    nor DLLs loaded later come from the program folder. Paths are normalized before any
+    comparison with system folders (`\\?\`, device and network paths and `.`/`..` refused, the
+    deepest existing folder resolved with `GetFinalPathNameByHandleW`). A quote in any MSI
+    setting stops the installation through a launch condition:
     - The program folder first, before anything else is touched: not a drive root, Program
       Files or the Windows folder itself, nothing in it but Kalzit's files (`kalzit.exe`,
       `LICENSE.txt` and what the updater leaves), nobody else may change it (installer service
@@ -1278,10 +1288,11 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
       (inbound rule `Kalzit`, TCP, the configuration's ports).
     - Values come in with a space before the closing quote (`"[DATADIR] "`), so a folder ending
       in a backslash does not escape the quote; a value with a quote is refused.
-  - With self-update on (`SELFUPDATE`, `--self-update`, default 1) the service account may modify
-    the program folder, so the updater can swap the binary, as on Linux with a binary owned by the
-    service account; with 0 it may not, and updates are installed with `kalzit update apply` or a
-    new MSI.
+  - Self-update is off by default (`SELFUPDATE=0`, `--self-update 0`): only SYSTEM and
+    Administrators may change the program folder, and updates come with a new MSI (or
+    `kalzit update apply`). With 1 the service account may modify it, so the updater can swap the
+    binary, as on Linux with a binary owned by the service account; then the service account can
+    change code an administrator might run elevated, which the installation guide warns about.
   - `kalzit service cleanup` (before the MSI removes the program, not during an upgrade, and in
     `kalzit service uninstall`) removes the firewall rule and, with `REMOVEDATA=1` /
     `--remove-data`, the data directory and `kalzit.toml`. A data directory is removed only when
@@ -1392,7 +1403,7 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   in the job that holds the key. Windows files are signed with Authenticode in two small jobs
   (`windows-sign-exe`, `windows-sign-msi`) that alone use the environment `windows-signing`,
   which holds only the code-signing secrets; the MSI is built from the signed program in between,
-  in a job without any secret (`windows-msi`). Signing uses Microsoft Artifact Signing (the key
+  in a job without any secret (`windows-msi`), which also runs the signed program once and checks that the package carries exactly it, as installed file and as setup copy (`packaging/windows/check-msi.ps1`). Signing uses Microsoft Artifact Signing (the key
   stays in Microsoft's HSM; recommended) or a PFX imported into the runner's user store for the
   signing only; nothing but signtool runs while key material is present
   (`packaging/windows/sign.ps1`, docs/operations/updates.md). Without either both stay unsigned

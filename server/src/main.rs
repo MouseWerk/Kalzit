@@ -74,6 +74,9 @@ enum ServiceCommand {
     Configure {
         #[command(flatten)]
         options: ServiceOptions,
+        /// The installed program (the MSI runs this step from its own copy of kalzit.exe).
+        #[arg(long, value_name = "FILE")]
+        program: Option<String>,
     },
     /// The MSI package's step before it removes the program (firewall rule, data on request).
     #[command(hide = true)]
@@ -112,6 +115,9 @@ enum UpdateCommand {
 fn main() -> ExitCode {
     // One rustls crypto provider for the whole process (ring), before any TLS client or server
     // is built; libraries that would pick another one use this.
+    // Windows: DLLs loaded at run time come from System32 only, never from the program folder.
+    #[cfg(windows)]
+    kalzit::service::restrict_dll_search();
     let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     let command = match cli.command.unwrap_or(Command::Serve) {
@@ -331,9 +337,13 @@ fn service(action: ServiceCommand, config: Option<PathBuf>) -> ExitCode {
             (options.settings(config, default_data_dir).and_then(|s| service::install(&s, !no_start)), false)
         }
         ServiceCommand::Uninstall { remove_data } => (service::uninstall(&config, remove_data), false),
-        ServiceCommand::Configure { options } => {
+        ServiceCommand::Configure { options, program } => {
             let result = options.settings(config, default_data_dir).and_then(|s| {
-                let exe = std::env::current_exe()?;
+                let exe = match program.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+                    Some(p) if p.contains('"') => anyhow::bail!("--program must not contain a quote"),
+                    Some(p) => PathBuf::from(p),
+                    None => std::env::current_exe()?,
+                };
                 service::configure(&s, &exe).map(|lines| lines.join("\n"))
             });
             (result, true)

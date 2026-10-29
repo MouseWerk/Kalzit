@@ -37,16 +37,23 @@ function Invoke-Msi([string[]] $Arguments, [string] $Log) {
     if ($p.ExitCode -ne 0) { Fail "msiexec $($Arguments -join ' ') ended with $($p.ExitCode) (log: $Log)" }
 }
 
-# An installation Kalzit's setup step refuses: it fails, rolls back, and the log says why.
+# An installation that is refused (a launch condition, or Kalzit's setup step): it fails, rolls
+# back, and the MSI log or the event log (source Kalzit, where the setup step reports) says why.
 function Invoke-MsiRefused([string[]] $Arguments, [string] $Log, [string] $Why) {
     $path = Join-Path $Logs $Log
+    $start = Get-Date
     $all = $Arguments + @('/qn', '/norestart', '/l*v', $path)
     $p = Start-Process msiexec.exe -ArgumentList $all -Wait -PassThru
     if ($p.ExitCode -eq 0) { Fail "msiexec $($Arguments -join ' ') succeeded, but should be refused ($Why)" }
     if (Get-KalzitService) { Fail "the service is left after the refused installation ($Why)" }
-    # The setup step's output is in the MSI log (WixQuietExec64); its encoding varies.
-    if (-not ((Get-Content $path -Raw) -match [regex]::Escape($Why))) {
-        Fail "the log $Log does not say '$Why'"
+    $texts = @()
+    if (Test-Path $path) { $texts += Get-Content $path -Raw }
+    try {
+        $texts += Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Kalzit'; StartTime = $start } -ErrorAction Stop |
+            ForEach-Object { $_.Properties | ForEach-Object { "$($_.Value)" } }
+    } catch { }
+    if (-not ($texts | Where-Object { $_ -match [regex]::Escape($Why) })) {
+        Fail "neither the log $Log nor the event log says '$Why'"
     }
     Write-Host "refused as expected: $Why"
 }
@@ -98,6 +105,8 @@ function Assert-PrivateDataDir([string] $Dir) {
 # --- MSI ------------------------------------------------------------------------------------
 
 Step 'Refuse folders someone else prepared'
+# A quote in a setting stops the installation before anything runs.
+Invoke-MsiRefused @('/i', $Msi, 'DATADIR="C:\Kalzit""Data"') 'refused-quote.log' 'contains a quote'
 # A configuration folder Users may write, as a user could create it in %ProgramData%.
 $configFolder = Split-Path -Parent $configFile
 New-Item -ItemType Directory -Force $configFolder | Out-Null
@@ -144,10 +153,13 @@ if (-not $programAcl.AreAccessRulesProtected) { Fail 'the program folder inherit
 $writers = $programAcl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) |
     Where-Object { ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0 } |
     ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique
-$expectedWriters = @('S-1-5-18', 'S-1-5-32-544', (Get-ServiceSid)) | Sort-Object
+# Self-update is off by default: only SYSTEM and Administrators may change the program.
+$expectedWriters = @('S-1-5-18', 'S-1-5-32-544') | Sort-Object
 if (($writers -join ',') -ne ($expectedWriters -join ',')) {
-    Fail "the program folder may be changed by $($writers -join ', '), expected SYSTEM, Administrators and the service"
+    Fail "the program folder may be changed by $($writers -join ', '), expected SYSTEM and Administrators"
 }
+$token = Join-Path $dataDir 'setup-token.txt'
+if (-not (Test-Path $token) -or -not (Get-Content $token -Raw).Trim()) { Fail "no setup code in $token" }
 $exeInstalled = Join-Path ${env:ProgramFiles} 'Kalzit\kalzit.exe'
 $code = & $exeInstalled setup-code --config $configFile
 if ($LASTEXITCODE -ne 0 -or -not $code) { Fail 'kalzit setup-code printed no code' }
@@ -194,10 +206,15 @@ icacls $logsFolder /remove:g '*S-1-5-32-545' | Out-Null
 EndStep
 
 Step 'Reinstall on the kept data, then uninstall with REMOVEDATA=1'
-Invoke-Msi @('/i', $Msi, 'PORT=1') 'reinstall.log'
+Invoke-Msi @('/i', $Msi, 'PORT=1', 'SELFUPDATE=1') 'reinstall.log'
 Assert-Running | Out-Null
 # The kept configuration wins over the PORT given now.
 Wait-Ready "http://127.0.0.1:$Port/readyz"
+# With SELFUPDATE=1 the service account may replace the program.
+$writers = (Get-Acl (Join-Path ${env:ProgramFiles} 'Kalzit')).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) |
+    Where-Object { ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0 } |
+    ForEach-Object { $_.IdentityReference.Value }
+if ($writers -notcontains (Get-ServiceSid)) { Fail 'SELFUPDATE=1 did not let the service account update the program' }
 Invoke-Msi @('/x', $Msi, 'REMOVEDATA=1') 'uninstall-remove-data.log'
 if (Test-Path $dataDir) { Fail 'the data folder is still there' }
 if (Test-Path $configFile) { Fail 'the configuration is still there' }

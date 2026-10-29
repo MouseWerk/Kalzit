@@ -10,10 +10,13 @@
   actions and the firewall rule; it refuses folders someone else could have prepared. Before the
   program goes, `kalzit service cleanup` removes the firewall rule and, on request, the data.
 
-  Both steps run through WixQuietExec64 (no console window; their output goes to the MSI log),
-  only at the first installation and at upgrades, never at a repair: the settings are read once.
-  Values are quoted with a space before the closing quote ("[DATADIR] "), so a folder ending in a
-  backslash cannot escape the quote; Kalzit trims the space and refuses any quote in a value.
+  Both steps run as LocalSystem from the package's own copy of kalzit.exe (the Binary table,
+  which msiexec unpacks into its protected folder), never from the installed program, which the
+  service account may change with SELFUPDATE=1. They run only at the first installation and at
+  upgrades, never at a repair: the settings are read once. Errors go to the event log. Values are
+  quoted with a space before the closing quote ("[DATADIR] "), so a folder ending in a backslash
+  cannot escape the quote; Kalzit trims the space, and a quote in a setting stops the
+  installation (launch condition) before anything runs.
 
   Settings (wizard or msiexec properties, see the guide): PORT, DATADIR, HTTPS (off, self-signed,
   certificate), HTTPSPORT, CERTFILE, KEYFILE, FIREWALL, SELFUPDATE; REMOVEDATA when uninstalling.
@@ -46,13 +49,19 @@
     <Property Id="PORT" Value="3000" Secure="yes" />
     <Property Id="HTTPS" Value="off" Secure="yes" />
     <Property Id="HTTPSPORT" Value="3443" Secure="yes" />
-    <Property Id="SELFUPDATE" Value="1" Secure="yes" />
+    <Property Id="SELFUPDATE" Value="0" Secure="yes" />
     <Property Id="DATADIR" Secure="yes" />
     <Property Id="CERTFILE" Secure="yes" />
     <Property Id="KEYFILE" Secure="yes" />
     <Property Id="FIREWALL" Secure="yes" />
     <Property Id="REMOVEDATA" Secure="yes" />
     <SetProperty Id="DATADIR" Value="[CommonAppDataFolder]Kalzit\data" Before="AppSearch" Sequence="both" Condition="NOT DATADIR" />
+
+    <!-- No setting may contain a quote: it would end the quoted value on Kalzit's command line. -->
+    <Property Id="KALZITQUOTE" Value="&quot;" />
+    <Launch
+        Condition="Installed OR NOT (DATADIR &gt;&lt; KALZITQUOTE OR CERTFILE &gt;&lt; KALZITQUOTE OR KEYFILE &gt;&lt; KALZITQUOTE OR PORT &gt;&lt; KALZITQUOTE OR HTTPS &gt;&lt; KALZITQUOTE OR HTTPSPORT &gt;&lt; KALZITQUOTE OR FIREWALL &gt;&lt; KALZITQUOTE OR SELFUPDATE &gt;&lt; KALZITQUOTE OR INSTALLFOLDER &gt;&lt; KALZITQUOTE)"
+        Message="A setting contains a quote (&quot;), which no folder, file or value of Kalzit may contain." />
 
     <!-- An existing configuration is kept; the wizard then skips the settings. -->
     <Property Id="CONFIGEXISTS">
@@ -109,23 +118,25 @@
       <ComponentGroupRef Id="KalzitProgram" />
     </Feature>
 
-    <!-- Kalzit's own steps run as LocalSystem from the installed program: configure once the
-         service exists and before it starts, clean up before the program is removed (not when
-         an upgrade removes the previous version). Errors go to the MSI log and the event log. -->
-    <SetProperty
+    <!-- Kalzit's own steps run as LocalSystem from the package's copy of kalzit.exe: configure
+         once the service exists and before it starts (its program option names the installed file),
+         clean up before the program is removed (not when an upgrade removes the previous
+         version). Errors go to the event log. -->
+    <Binary Id="KalzitSetup" SourceFile="$(ExePath)" />
+    <CustomAction
         Id="KalzitConfigure"
-        Value="&quot;[#KalzitExe]&quot; service configure --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --data-dir &quot;[DATADIR] &quot; --port &quot;[PORT]&quot; --https &quot;[HTTPS]&quot; --https-port &quot;[HTTPSPORT]&quot; --cert-file &quot;[CERTFILE] &quot; --key-file &quot;[KEYFILE] &quot; --open-firewall &quot;[FIREWALL]&quot; --self-update &quot;[SELFUPDATE]&quot;"
-        Before="KalzitConfigure"
-        Sequence="execute"
-        Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
-    <CustomAction Id="KalzitConfigure" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="check" />
-    <SetProperty
+        BinaryRef="KalzitSetup"
+        ExeCommand="service configure --program &quot;[#KalzitExe] &quot; --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --data-dir &quot;[DATADIR] &quot; --port &quot;[PORT]&quot; --https &quot;[HTTPS]&quot; --https-port &quot;[HTTPSPORT]&quot; --cert-file &quot;[CERTFILE] &quot; --key-file &quot;[KEYFILE] &quot; --open-firewall &quot;[FIREWALL]&quot; --self-update &quot;[SELFUPDATE]&quot;"
+        Execute="deferred"
+        Impersonate="no"
+        Return="check" />
+    <CustomAction
         Id="KalzitCleanup"
-        Value="&quot;[#KalzitExe]&quot; service cleanup --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --remove-data &quot;[REMOVEDATA]&quot;"
-        Before="KalzitCleanup"
-        Sequence="execute"
-        Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-    <CustomAction Id="KalzitCleanup" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="ignore" />
+        BinaryRef="KalzitSetup"
+        ExeCommand="service cleanup --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --remove-data &quot;[REMOVEDATA]&quot;"
+        Execute="deferred"
+        Impersonate="no"
+        Return="ignore" />
     <InstallExecuteSequence>
       <Custom Action="KalzitConfigure" After="InstallServices" Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="KalzitCleanup" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />

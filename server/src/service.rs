@@ -59,8 +59,9 @@ pub struct ServiceOptions {
     /// Open the ports in Windows Defender Firewall (inbound rule "Kalzit").
     #[arg(long, value_name = "1|0", num_args = 0..=1, default_missing_value = "1")]
     pub open_firewall: Option<String>,
-    /// Let the service account replace the program file, so updates install on their own
-    /// [default: 1].
+    /// Let the service account replace the program file, so updates install on their own. Then the
+    /// service account can change code administrators may run: do not run that kalzit.exe
+    /// elevated [default: 0].
     #[arg(long, value_name = "1|0", num_args = 0..=1, default_missing_value = "1")]
     pub self_update: Option<String>,
 }
@@ -162,7 +163,7 @@ impl ServiceOptions {
             https,
             https_port,
             open_firewall: flag(&self.open_firewall, false)?,
-            self_update: flag(&self.self_update, true)?,
+            self_update: flag(&self.self_update, false)?,
         })
     }
 }
@@ -762,9 +763,10 @@ mod windows_impl {
         Ok(())
     }
 
-    /// Folders a data directory must not be or lie in.
+    /// Folders a data directory must not be or lie in, as the file system names them.
     fn system_folders() -> (Vec<PathBuf>, Vec<PathBuf>) {
-        let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
+        let var =
+            |name: &str| std::env::var_os(name).map(|v| normalized(Path::new(&v)).unwrap_or_else(|_| PathBuf::from(v)));
         let within: Vec<PathBuf> = ["windir", "SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
             .iter()
             .filter_map(|n| var(n))
@@ -795,6 +797,60 @@ mod windows_impl {
             );
         }
         Ok(())
+    }
+
+    /// Turns off the search of the program folder (and the working directory) for DLLs loaded at
+    /// run time: System32 only. With `/DEPENDENTLOADFLAG:0x800` (build.rs) for the imports, a DLL
+    /// placed next to `kalzit.exe` is never loaded.
+    pub fn restrict_dll_search() {
+        use windows::Win32::System::LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories};
+        // SAFETY: changes the process's DLL search order; no pointers involved.
+        let _ = unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) };
+    }
+
+    /// A program of Windows by its full path in System32 (`icacls.exe`, `sc.exe`, `netsh.exe`): a
+    /// bare name would be looked up in the program folder first.
+    fn system_tool(name: &str) -> PathBuf {
+        use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
+        let mut buffer = [0u16; 260];
+        // SAFETY: `buffer` is writable for its length.
+        let n = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+        let dir = if n > 0 && n < buffer.len() {
+            PathBuf::from(String::from_utf16_lossy(&buffer[..n]))
+        } else {
+            PathBuf::from(r"C:\Windows\System32")
+        };
+        dir.join(name)
+    }
+
+    /// The path as the file system names it, before it is compared with system folders: `\\?\`,
+    /// `\\.\` and network paths, and `.` or `..` in it, are refused; the deepest existing folder
+    /// is resolved (long names, the real spelling) and the rest appended.
+    pub(super) fn normalized(path: &Path) -> Result<PathBuf> {
+        let text = path.to_string_lossy();
+        if text.starts_with(r"\\") || text.starts_with("//") {
+            bail!("{} is a device, long or network path; use a plain local path such as C:\\...", path.display());
+        }
+        if !path.is_absolute() {
+            bail!("{} is not an absolute path", path.display());
+        }
+        if path.components().any(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir)) {
+            bail!("{} contains . or ..", path.display());
+        }
+        let mut existing = path;
+        let mut rest = Vec::new();
+        while !existing.exists() {
+            rest.push(existing.file_name().context("no part of the path exists")?.to_os_string());
+            existing = existing.parent().context("no part of the path exists")?;
+        }
+        let mut out = final_path(existing).with_context(|| format!("resolving {}", existing.display()))?;
+        if out.to_string_lossy().starts_with(r"\\") {
+            bail!("{} lies on a network share", path.display());
+        }
+        for part in rest.iter().rev() {
+            out.push(part);
+        }
+        Ok(out)
     }
 
     /// The program folder holds Kalzit's files only, and nobody else may change it: checked, then
@@ -856,6 +912,7 @@ mod windows_impl {
     pub fn configure(settings: &Settings, exe: &Path) -> Result<Vec<String>> {
         let sid = service_sid(SERVICE_NAME);
         let mut lines = Vec::new();
+        let exe = &normalized(exe)?;
         // The program folder first: nothing else is touched when it is not Kalzit's own.
         lock_program_folder(exe, &sid, settings.self_update)?;
         let config_dir = settings.config.parent().context("the configuration file has no folder")?.to_path_buf();
@@ -885,6 +942,7 @@ mod windows_impl {
         } else {
             settings.data_dir.clone()
         };
+        let data_dir = normalized(&data_dir)?;
         let (within, exact) = system_folders();
         let program_dir = exe.parent().context("the program path has no folder")?.to_path_buf();
         let mut within = within;
@@ -905,6 +963,7 @@ mod windows_impl {
                     Some(pair)
                 }
                 Https::Certificate { cert, key } => {
+                    let (cert, key) = (&normalized(cert)?, &normalized(key)?);
                     check_certificate(cert, key, &sid)?;
                     for file in [cert, key] {
                         // The service account reads the files where they are, so a renewed
@@ -1099,12 +1158,15 @@ mod windows_impl {
         Ok((cert, key))
     }
 
-    fn run_tool(program: &str, args: &[std::ffi::OsString]) -> Result<()> {
-        let output =
-            std::process::Command::new(program).args(args).output().with_context(|| format!("running {program}"))?;
+    fn run_tool(program: &Path, args: &[std::ffi::OsString]) -> Result<()> {
+        let output = std::process::Command::new(program)
+            .args(args)
+            .output()
+            .with_context(|| format!("running {}", program.display()))?;
         if !output.status.success() {
             bail!(
-                "{program} {} failed: {}",
+                "{} {} failed: {}",
+                program.display(),
                 args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "),
                 String::from_utf8_lossy(&output.stdout).trim()
             );
@@ -1115,7 +1177,7 @@ mod windows_impl {
     fn icacls(path: &Path, args: &[&str]) -> Result<()> {
         let mut all: Vec<std::ffi::OsString> = vec![path.as_os_str().to_owned()];
         all.extend(args.iter().map(std::ffi::OsString::from));
-        run_tool("icacls", &all)
+        run_tool(&system_tool("icacls.exe"), &all)
     }
 
     /// The description; only `SeChangeNotifyPrivilege` in the service's token (no impersonation,
@@ -1133,7 +1195,7 @@ mod windows_impl {
                 "Kalzit: visualize and analyze your data. Data and logs: see kalzit.toml in %ProgramData%\\Kalzit.",
             )
             .context("setting the description")?;
-        run_tool("sc.exe", &["privs".into(), SERVICE_NAME.into(), "SeChangeNotifyPrivilege".into()])?;
+        run_tool(&system_tool("sc.exe"), &["privs".into(), SERVICE_NAME.into(), "SeChangeNotifyPrivilege".into()])?;
         let restart =
             |secs| ServiceAction { action_type: ServiceActionType::Restart, delay: Duration::from_secs(secs) };
         service
@@ -1161,7 +1223,7 @@ mod windows_impl {
     }
 
     fn netsh(args: &[String]) -> std::io::Result<std::process::Output> {
-        std::process::Command::new("netsh").args(["advfirewall", "firewall"]).args(args).output()
+        std::process::Command::new(system_tool("netsh.exe")).args(["advfirewall", "firewall"]).args(args).output()
     }
 
     fn open_firewall(ports: &str) -> Result<()> {
@@ -1353,6 +1415,21 @@ mod windows_impl {
         }
 
         #[test]
+        fn paths_are_normalized_before_they_are_compared() {
+            let windows = PathBuf::from(std::env::var_os("windir").unwrap());
+            let lower = PathBuf::from(windows.to_string_lossy().to_lowercase());
+            let n = normalized(&lower.join("Missing").join("Deeper")).unwrap();
+            assert!(n.starts_with(normalized(&windows).unwrap()), "{}", n.display());
+            assert!(n.ends_with(Path::new("Missing").join("Deeper")));
+            let long = format!(r"\\?\{}", windows.display());
+            for refused in [long.as_str(), r"\\server\share\kalzit", r"\\.\C:\kalzit", "relative"] {
+                assert!(normalized(Path::new(refused)).is_err(), "{refused}");
+            }
+            assert!(normalized(&windows.join("..").join("ProgramData")).is_err());
+            assert!(system_tool("icacls.exe").is_file());
+        }
+
+        #[test]
         fn virtual_account_sids_follow_from_the_name() {
             // `sc showsid TrustedInstaller`
             assert_eq!(service_sid("TrustedInstaller"), TRUSTED_INSTALLER);
@@ -1419,7 +1496,7 @@ mod tests {
         assert_eq!(s.https, Https::Off);
         assert_eq!(s.data_dir, absolute("data"));
         assert!(!s.open_firewall);
-        assert!(s.self_update);
+        assert!(!s.self_update);
     }
 
     #[test]

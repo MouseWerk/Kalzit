@@ -3,11 +3,10 @@
   Builds the Kalzit MSI package (kalzit-<version>-windows-x64.msi) from a built kalzit.exe.
 
 .DESCRIPTION
-  Needs WiX v5 and its UI and Util extensions:
+  Needs WiX v5 and its UI extension:
 
     dotnet tool install --global wix --version 5.0.2
     wix extension add --global WixToolset.UI.wixext/5.0.2
-    wix extension add --global WixToolset.Util.wixext/5.0.2
 
   The release workflow (.github/workflows/release.yml) and the CI job `msi` run this script; it
   works the same on a development machine. The MSI version is the release version without a
@@ -22,9 +21,8 @@ param(
     [Parameter(Mandatory)] [string] $Out,
     # The WiX command, for a WiX that is not on PATH (for example `dotnet path\to\wix.dll`).
     [string[]] $Wix = @('wix'),
-    # The UI and Util extensions by name (from the global cache) or as paths to their DLLs.
-    [string] $UiExtension = 'WixToolset.UI.wixext',
-    [string] $UtilExtension = 'WixToolset.Util.wixext'
+    # The UI extension by name (from the global cache) or as a path to its DLL.
+    [string] $UiExtension = 'WixToolset.UI.wixext'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,7 +42,6 @@ $arguments = @($Wix | Select-Object -Skip 1) + @(
     '-arch', 'x64',
     '-culture', 'en-US',
     '-ext', $UiExtension,
-    '-ext', $UtilExtension,
     '-d', "Version=$msiVersion",
     '-d', "ExePath=$exePath",
     '-d', "LicensePath=$license",

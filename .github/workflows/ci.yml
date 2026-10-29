@@ -611,12 +611,12 @@ jobs:
         run: |
           dotnet tool install --global wix --version 5.0.2
           wix extension add --global WixToolset.UI.wixext/5.0.2
-          wix extension add --global WixToolset.Util.wixext/5.0.2
       - name: Build the MSI package
         shell: pwsh
         run: |
           $version = (Select-String -Path server/Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           ./packaging/windows/build.ps1 -Exe target/e2e/kalzit.exe -Version $version -Out dist/kalzit-ci-windows-x64.msi
+          ./packaging/windows/check-msi.ps1 -Msi dist/kalzit-ci-windows-x64.msi -Exe target/e2e/kalzit.exe
       - name: Install, check and uninstall
         shell: pwsh
         run: ./.github/scripts/msi-test.ps1 -Msi dist/kalzit-ci-windows-x64.msi -Exe target/e2e/kalzit.exe -Logs "$env:RUNNER_TEMP/msi-logs"

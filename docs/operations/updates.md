@@ -57,13 +57,14 @@ Automatic installation needs a restart Kalzit can do safely by itself:
   trial; that start returns to the previous version. A binary owned by root (`/usr/local/bin`)
   stays manual, which some administrators prefer.
 - **Windows as the Kalzit service** (the MSI package or `kalzit service install`, see
-  docs/guide/installation.md, "Windows"), with self-update on (the default): the service account
-  may replace `kalzit.exe` in the program folder. Kalzit stops gracefully, puts the new binary in
+  docs/guide/installation.md, "Windows"), installed with `SELFUPDATE=1` (`--self-update 1`; off by
+  default, read the guide's note on its risk first): the service account may replace `kalzit.exe`
+  in the program folder. Kalzit stops gracefully, puts the new binary in
   place and ends the service with a restart request; the service's recovery actions start it
   again two seconds later, now with the new version, for the same trial as on Linux. A failed
-  trial returns the same way. Installed with `SELFUPDATE=0` (or `--self-update 0`), the program
-  folder stays for Administrators only and you install from the command line (next section) or
-  with the next MSI package. Kalzit started in a console on Windows also installs from the
+  trial returns the same way. With the default `SELFUPDATE=0` the program folder stays for
+  Administrators only and you install with the next MSI package or from the command line (next
+  section). Kalzit started in a console on Windows also installs from the
   command line.
 - **Containers**: never; update the image.
 
