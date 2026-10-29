@@ -9,7 +9,7 @@ import { getPanel, setExternalPanels } from "../../../panels/registry";
 import type { PanelSeries } from "../../../panels/types";
 import { expectConsoleOutput } from "../../../test/console";
 import type { PanelPluginInfo } from "./api";
-import { PluginFrame, READY_TIMEOUT_MS, sameSeries } from "./PluginFrame";
+import { linkOrigin, PluginFrame, READY_TIMEOUT_MS, sameSeries } from "./PluginFrame";
 import { PluginOptionsEditor, pluginPanelType } from "./types";
 
 const INFO: PanelPluginInfo = {
@@ -212,6 +212,11 @@ describe("the panel frame", () => {
     fromFrame(target, event({ type: "link", url: "https://evil.example/" }));
     expect(within(dialog).queryByText("https://evil.example/")).toBeNull();
     expect(within(dialog).getByText("https://example.com/runbook")).toBeTruthy();
+    // The origin as parsed, on its own and in bold; the title labelled as the plugin's text.
+    const origin = within(dialog).getByText("https://example.com");
+    expect(origin.tagName).toBe("STRONG");
+    expect(within(dialog).getByText("Goes to")).toBeTruthy();
+    expect(within(dialog).getByText("Text from the plugin")).toBeTruthy();
     expect(within(dialog).getByText("Runbook")).toBeTruthy();
     // Cancel has the focus, so Enter does not open it.
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -226,6 +231,13 @@ describe("the panel frame", () => {
       "_blank",
       "noopener,noreferrer",
     );
+  });
+
+  it("shows where a link goes as the browser parses it", () => {
+    expect(linkOrigin("https://Example.COM:443/a?b#c")).toBe("https://example.com");
+    expect(linkOrigin("http://10.0.0.1:8080/x")).toBe("http://10.0.0.1:8080");
+    expect(linkOrigin("https://bücher.example/")).toBe("https://xn--bcher-kva.example");
+    expect(linkOrigin("/d/abc")).toBe(window.location.origin);
   });
 
   it("keeps log lines to five per second and events to twenty", () => {

@@ -11,13 +11,15 @@
 //! An index may revoke plugin versions (`revoked`): a host refuses to install them from the
 //! catalog and shows the revocation on installed plugins it matches. The texts an entry carries
 //! for browsing (description, publisher, network targets) are what the publisher says; the host
-//! shows the package's own manifest before anything is approved.
+//! shows the package's own manifest before anything is approved. A downloaded package must match
+//! its entry's kind and network targets (`same_network`), so the list cannot understate them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 
+use crate::manifest::{Manifest, NetworkTarget};
 use crate::signing::key_hex;
 
 /// The index format this crate reads.
@@ -103,8 +105,9 @@ pub struct CatalogEntry {
     /// The publisher's name as the index states it; a neutral label, not a verified identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publisher: Option<String>,
-    /// The network targets the package declares, in words (`*.example.com:443`), for browsing.
-    /// The host shows the package's own targets before they are approved.
+    /// The network targets the package declares, in words (`target_words`: `db.example.com:443`
+    /// for a fixed host, `*:6379` or `*` for a host from the settings), for browsing. A package
+    /// whose targets differ is refused; the host shows its own targets before they are approved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub network: Vec<String>,
 }
@@ -248,6 +251,31 @@ fn check_entry(entry: &CatalogEntry) -> Result<(), &'static str> {
         return Err("network");
     }
     Ok(())
+}
+
+/// A network target in the words of a catalog entry: `host:port` for a fixed host, `*:port` for a
+/// host from the settings with a default port and no port field, `*` for any other target from
+/// the settings (a URL, or a port from a field). Lowercase.
+pub fn target_words(t: &NetworkTarget) -> String {
+    let words = match (&t.host, t.port) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.clone(),
+        (None, _) if t.form.as_deref() == Some("host") && t.port_setting.is_none() => {
+            t.default_port.map_or_else(|| "*".to_string(), |p| format!("*:{p}"))
+        }
+        (None, _) => "*".to_string(),
+    };
+    words.to_lowercase()
+}
+
+/// Whether `listed` (an entry's `network`) names exactly the targets of `manifest`, in any
+/// order and case: no target left out, none added.
+pub fn same_network(listed: &[String], manifest: &Manifest) -> bool {
+    let mut declared: Vec<String> = manifest.permissions.network.iter().map(target_words).collect();
+    let mut listed: Vec<String> = listed.iter().map(|t| t.to_lowercase()).collect();
+    declared.sort();
+    listed.sort();
+    declared == listed
 }
 
 fn check_revocation(r: &Revocation) -> Result<(), &'static str> {
@@ -423,6 +451,50 @@ mod tests {
             parse_index(&index_with(5, NOW - 60, NOW + 60, vec![entry(), next]), &key(1), &Accepted::default(), NOW)
                 .is_ok()
         );
+    }
+
+    /// The words of each target form, and that the list must name the package's targets exactly.
+    #[test]
+    fn entries_name_the_package_targets_in_words() {
+        let fixed = NetworkTarget {
+            host: Some("License.Example.dev".into()),
+            port: Some(443),
+            protocol: Some("tls".into()),
+            ..Default::default()
+        };
+        let by_host = NetworkTarget {
+            setting: Some("host".into()),
+            form: Some("host".into()),
+            default_port: Some(6379),
+            ..Default::default()
+        };
+        let by_port_field = NetworkTarget { port_setting: Some("port".into()), ..by_host.clone() };
+        let by_url = NetworkTarget { setting: Some("url".into()), form: Some("url".into()), ..Default::default() };
+        assert_eq!(target_words(&fixed), "license.example.dev:443");
+        assert_eq!(target_words(&by_host), "*:6379");
+        assert_eq!(target_words(&by_port_field), "*");
+        assert_eq!(target_words(&by_url), "*");
+
+        let mut m: Manifest = toml::from_str(
+            r#"
+manifest = 1
+id = "dev.example.redis"
+name = "Redis"
+version = "1.0.0"
+kind = "datasource"
+min_kalzit = "0.4.0"
+shapes = ["frame"]
+[files]
+"#,
+        )
+        .unwrap();
+        assert!(same_network(&[], &m));
+        assert!(!same_network(&["*:6379".into()], &m), "a target the package does not declare");
+        m.permissions.network = vec![fixed, by_host];
+        assert!(same_network(&["*:6379".into(), "LICENSE.example.dev:443".into()], &m));
+        assert!(!same_network(&["*:6379".into()], &m), "a target left out");
+        assert!(!same_network(&[], &m));
+        assert!(!same_network(&["*:6380".into(), "license.example.dev:443".into()], &m));
     }
 
     fn with_revoked(revoked: Vec<Revocation>) -> Vec<u8> {

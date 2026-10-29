@@ -51,6 +51,15 @@ export function pluginStatus(t: Translate, plugin: Plugin, now: number): PluginS
       problem: true,
     };
   }
+  // Stored as another kind than its package (an update of Kalzit 0.4.0): it does not run.
+  if (plugin.problem !== undefined) {
+    return {
+      tone: "unreachable",
+      label: "plugins.status.notLoaded",
+      detail: pluginReasonText(t, { reason: plugin.problem }),
+      problem: true,
+    };
+  }
   if (!plugin.enabled) {
     return { tone: "untested", label: "plugins.status.off", problem: false };
   }

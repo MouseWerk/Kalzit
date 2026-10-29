@@ -12,6 +12,9 @@
   "panelPlugins.link.title": "Open link?",
   "panelPlugins.link.outside": "The panel “{plugin}” wants to open this address in a new tab:",
   "panelPlugins.link.inside": "The panel “{plugin}” wants to open this page of Kalzit:",
+  "panelPlugins.link.origin": "Goes to",
+  "panelPlugins.link.address": "Full address",
+  "panelPlugins.link.titleFromPlugin": "Text from the plugin",
   "panelPlugins.link.open": "Open",
   "panelPlugins.link.cancel": "Cancel"
 }

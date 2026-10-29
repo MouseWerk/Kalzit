@@ -416,6 +416,9 @@ pub fn refusal(r: &signing::Refusal) -> HostError {
     let message = match r {
         signing::Refusal::ReservedId => "ids under io.kalzit. and dev.kalzit. need Kalzit's own plugin key",
         signing::Refusal::OtherPlugin => "the package is for another plugin",
+        signing::Refusal::KindChanged => {
+            "the update is of another kind than the installed plugin; remove the plugin and install the package as a new one"
+        }
         signing::Refusal::Downgrade => "the package is older than the installed version",
         signing::Refusal::KeyChanged => {
             "the update is not signed by the installed version's key or a key it was handed over to"
@@ -424,6 +427,7 @@ pub fn refusal(r: &signing::Refusal) -> HostError {
     let reason = match r {
         signing::Refusal::ReservedId => "plugin.id_reserved",
         signing::Refusal::OtherPlugin => "plugin.update_other_id",
+        signing::Refusal::KindChanged => "plugin.kind_changed",
         signing::Refusal::Downgrade => "plugin.downgrade",
         signing::Refusal::KeyChanged => "plugin.key_changed",
     };
