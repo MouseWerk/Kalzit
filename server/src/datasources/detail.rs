@@ -95,6 +95,8 @@ mod tests {
         "catalog",
         // Documented in docs/api/ai.md.
         "ai",
+        // ACME certificates (docs/api/datasources.md, "HTTPS certificates").
+        "acme",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.

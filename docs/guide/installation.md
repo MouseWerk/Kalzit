@@ -1,10 +1,117 @@
 # Installation
 
-Kalzit is one program, `kalzit`, with the web interface built in. Run it as a container image, or
-build the binary from source and run it directly or as a service (see the
+Kalzit is one program, `kalzit`, with the web interface built in. On Linux, install the deb or
+rpm package, which runs it as a systemd service; or run it as a container image; or build the
+binary from source and run it directly or as a service (see the
 [README](../../README.md#quick-start) and "Running as a service" in
 [ARCHITECTURE](../ARCHITECTURE.md#running-as-a-service)). After the installation, continue with
-[Getting started](getting-started.md).
+[Getting started](getting-started.md). HTTPS, with your own certificate or one from Let's Encrypt,
+is described in [HTTPS and certificates](https.md).
+
+## Debian, Ubuntu, Fedora, RHEL (deb and rpm)
+
+Every release has `kalzit-<version>-linux-x64.deb` and `kalzit-<version>-linux-x64.rpm` for x86-64.
+They need the glibc the release binary was built against (the package says which and refuses an
+older system): Debian 13, Ubuntu 24.04, Fedora 41, RHEL, Rocky and AlmaLinux 10 or newer. Both
+are listed with their size, SHA-256 and signature in the release's signed manifest
+(`kalzit-<version>-manifest.json`), next to the binaries.
+
+### Install
+
+Download the package from the [releases](https://github.com/MouseWerk/Kalzit/releases), then:
+
+```sh
+# Debian, Ubuntu
+sudo apt install ./kalzit-0.5.0-linux-x64.deb
+# Fedora, RHEL, Rocky, Alma
+sudo dnf install ./kalzit-0.5.0-linux-x64.rpm
+sudo systemctl enable --now kalzit
+```
+
+The deb starts the service at once; the rpm follows the system's preset, which on Fedora and RHEL
+leaves new services off, so it is started with `systemctl enable --now kalzit`. Open
+`http://<server>:3000` and enter the setup code, which `sudo kalzit setup-code` prints
+([Getting started](getting-started.md)).
+
+To check a download against the signed manifest, compare its SHA-256 with the `installers` entry
+of the manifest (`sha256sum kalzit-0.5.0-linux-x64.deb`); `kalzit-sign verify --public-key <key>
+--manifest kalzit-0.5.0-manifest.json --signature kalzit-0.5.0-manifest.json.sig --installer
+kalzit-0.5.0-linux-x64.deb` checks the manifest's signature too
+([updates](../operations/updates.md)).
+
+### What the package installs
+
+| Path | What it is |
+|---|---|
+| `/usr/bin/kalzit` | The program |
+| `/usr/lib/systemd/system/kalzit.service` | The service; change it with `sudo systemctl edit kalzit` |
+| `/etc/kalzit/kalzit.toml` | The configuration: root may write it, the service only read it (`root:kalzit`, `0640`). Your changes stay on updates |
+| `/var/lib/kalzit` | The data directory (database, ACME certificates, plugins), owned by `kalzit`, mode `0700` |
+| `/etc/credstore.encrypted/kalzit-secrets-key` | The secrets key, encrypted with `systemd-creds` (where that is not possible: `/etc/credstore/kalzit-secrets-key`, readable by root only) |
+
+The service runs as the system account `kalzit` (no login, no shell), which the package creates.
+An existing account named `kalzit` is used only when it is a system account without a login
+shell and its group `kalzit` has no other members; otherwise the installation stops with a
+message, so a person's account never ends up owning Kalzit's data.
+The unit is hardened: the file system is read-only except the data directory
+(`ProtectSystem=strict`, `ReadWritePaths=/var/lib/kalzit`), no new privileges, no access to
+home directories, devices, kernel settings or other processes, and a system call filter. It
+keeps what the plugin sandbox needs (user, IPC and network namespaces, Landlock, seccomp);
+`sudo -u kalzit kalzit sandbox-check` lists the protections plugins get on this system, and the
+packages' tests check that the unit takes none of them away. Ubuntu 23.10 and later refuse user
+namespaces to programs without an AppArmor profile that allows them; the deb therefore installs
+`/etc/apparmor.d/kalzit`, which allows them for `/usr/bin/kalzit` and confines nothing else, and
+loads it when AppArmor is active (`apt purge` deletes it). The service may bind ports below 1024
+(`CAP_NET_BIND_SERVICE`), so HTTPS on 443 and HTTP on 80 work without root; plugins never get
+that capability.
+
+### Configuration and secrets key
+
+Edit `/etc/kalzit/kalzit.toml` and restart: `sudo systemctl restart kalzit`. The settings are
+described in the [README](../../README.md#configuration). Logs are in the journal:
+`journalctl -u kalzit`.
+
+The first installation creates the secrets key in the system credential store and the service
+imports it (`ImportCredential=`), so the key is neither in the data directory nor in an
+environment variable. It is encrypted with the host's credential key
+(`/var/lib/systemd/credential.secret`), not with a TPM, so a restored backup on other hardware
+still works when that file is restored with it. Back up both the key and that file with your
+data: without the key, the stored data source passwords cannot be decrypted. A data directory
+that already holds a database or a key file keeps its key; the package never replaces one.
+
+To use your own key, write it before the first start:
+`openssl rand -base64 32 | sudo systemd-creds encrypt --name=kalzit-secrets-key -
+/etc/credstore.encrypted/kalzit-secrets-key`. `kalzit secrets rotate` changes it later (the
+service stopped, the new key in `KALZIT_SECRETS_NEW_KEY`, then the credential file replaced).
+
+### Updates
+
+Installed from a package, the package manager owns `/usr/bin/kalzit`: **Administration**
+(Verwaltung) > **Updates** shows a new release with its notes and the command that installs it,
+and neither the web interface nor `kalzit update apply` replaces the program. Download the new
+package and install it like the first one:
+
+```sh
+sudo apt install ./kalzit-0.5.1-linux-x64.deb   # or: sudo dnf install ./kalzit-0.5.1-linux-x64.rpm
+```
+
+The package restarts a running service; the new version migrates the database on its first
+start. Back up `/var/lib/kalzit` first (the package does not); see the
+[updates guide](../operations/updates.md) for backups and PostgreSQL.
+
+### Remove
+
+`sudo apt remove kalzit` or `sudo dnf remove kalzit` stops and disables the service and removes
+the program. The data directory, the configuration and the secrets key stay, so a later
+installation finds everything again. `sudo apt purge kalzit` also deletes `/var/lib/kalzit`,
+`/etc/kalzit` and the secrets key; rpm has no purge, so there they are deleted by hand:
+
+```sh
+sudo rm -rf /var/lib/kalzit /etc/kalzit
+sudo rm -f /etc/credstore.encrypted/kalzit-secrets-key /etc/credstore/kalzit-secrets-key
+```
+
+The `kalzit` account stays in both cases (`sudo userdel kalzit` removes it).
 
 ## Docker
 

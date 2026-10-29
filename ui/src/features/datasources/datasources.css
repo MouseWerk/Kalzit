@@ -964,7 +964,7 @@
     width: auto;
     min-width: 0;
     border: 0;
-    background: transparent;
+    background-color: transparent;
   }
 
   .ds-filters__test {

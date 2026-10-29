@@ -160,6 +160,59 @@ async fn minimum_tls_version_is_enforced() {
 }
 
 #[tokio::test]
+async fn https_without_certificate_files_needs_acme_then_serves_a_temporary_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let no_files = |c: &mut Config| {
+        c.tls.cert_file = None;
+        c.tls.key_file = None;
+    };
+    // ACME off: no HTTPS with a permanent self-signed certificate (fail closed).
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().join("data");
+    config.server.http_addr = "127.0.0.1:0".into();
+    config.server.https_addr = "127.0.0.1:0".into();
+    let url = config.database_url();
+    let err = match kalzit::server::start(config, Some("tls-test-setup-code-0123".into())).await {
+        Ok(_) => panic!("HTTPS without certificate files and without ACME must not start"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(err.contains("tls.cert_file") && err.contains("ACME"), "{err}");
+    // ACME on (as a save in Settings stores it): HTTPS starts with the temporary certificate.
+    let db = kalzit::db::connect(&url, 1).await.unwrap();
+    // A directory nobody answers at, so the background order fails here instead of reaching a CA.
+    let settings = serde_json::json!({ "enabled": true, "directory": "custom", "directoryUrl": "https://127.0.0.1:9/dir",
+                                       "domains": ["kalzit.example.com"], "acceptTerms": true });
+    sqlx::query(
+        "INSERT INTO server_settings (key, value, version, updated_by, updated_at) VALUES ($1, $2, 1, NULL, 0)",
+    )
+    .bind(kalzit::acme::SETTINGS_KEY)
+    .bind(settings.to_string())
+    .execute(&db)
+    .await
+    .unwrap();
+    db.close().await;
+    let server = start(dir.path(), no_files).await;
+    let https = server.https_addr.unwrap();
+    let url = format!("https://localhost:{}/healthz", https.port());
+    // Not trusted by anyone, but HTTPS works until ACME has a certificate.
+    let default_roots = Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
+    assert!(default_roots.get(&url).send().await.is_err());
+    let any = Client::builder().danger_accept_invalid_certs(true).timeout(Duration::from_secs(10)).build().unwrap();
+    assert_eq!(any.get(&url).send().await.unwrap().status(), StatusCode::OK);
+    // HTTP-01 validations reach the HTTP listener instead of being redirected.
+    let client = Client::builder().redirect(redirect::Policy::none()).build().unwrap();
+    let http = server.http_addr.unwrap();
+    let res =
+        client.get(format!("http://127.0.0.1:{}/.well-known/acme-challenge/x", http.port())).send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res = client.get(format!("http://127.0.0.1:{}/explore", http.port())).send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::PERMANENT_REDIRECT);
+    server.shutdown();
+    server.wait().await.unwrap();
+    common::remove_dir(dir);
+}
+
+#[tokio::test]
 async fn busy_port_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

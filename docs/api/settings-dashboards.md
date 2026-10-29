@@ -233,6 +233,90 @@ versions: the previous value for a setting whose `source` was `database`, a `res
 was `default`, so undo never stores a copy of the default. The settings pages undo a single
 change the same way.
 
+## HTTPS certificates
+
+Automatic certificates over ACME (guide: docs/guide/https.md), server administrators only. The
+settings are dependent fields and are saved in one step, not as registry settings: they are
+stored as one value (`tls.acme` in `server_settings`) with a version, and are not part of the
+settings export. Problems are answered as `422 validation` with `error.field` (the field's name
+below) and a reason from docs/api/datasources.md, "HTTPS certificates (ACME)".
+
+```json
+{
+  "settings": {
+    "enabled": true,
+    "directory": "letsencrypt",
+    "directoryUrl": "",
+    "directoryCa": "",
+    "domains": ["kalzit.example.com"],
+    "email": "ops@example.com",
+    "challenge": "http-01",
+    "acceptTerms": true
+  },
+  "version": 2,
+  "status": {
+    "phase": "valid",
+    "certificate": {
+      "domains": ["kalzit.example.com"],
+      "issuer": "R11",
+      "notBefore": 1793000000000,
+      "notAfter": 1800776000000,
+      "issuedAt": 1793000000000,
+      "directoryUrl": "https://acme-v02.api.letsencrypt.org/directory",
+      "renewAt": 1798184000000
+    },
+    "nextAttemptAt": null,
+    "lastError": null,
+    "failures": 0
+  },
+  "server": { "httpAddr": "0.0.0.0:80", "httpsAddr": "0.0.0.0:443", "certificateFiles": false }
+}
+```
+
+`directory` is `letsencrypt`, `letsencrypt_staging` or `custom` (then `directoryUrl`, an
+`https://` address, and optionally `directoryCa`, PEM certificates trusted for it); `challenge`
+is `http-01` or `tls-alpn-01`. `status.phase` is `off`, `waiting` (no matching certificate yet,
+or due), `working` (an order runs), `valid` or `failed` (`lastError` with `reason`, `params`,
+`message` and `at`; `nextAttemptAt` is the next try). `storeError` (same form, `acme.store_failed`)
+says the certificate in use could not be stored; storing is retried, and renewal is not held back. `server` repeats what the configuration
+says about the listeners; `certificateFiles` is true when `tls.cert_file` is set, which rules
+ACME out.
+
+### `GET /admin/acme`
+
+The view above.
+
+### `PUT /admin/acme`
+
+Body `{ "settings": {...}, "version": <the version edited> }`. Names are trimmed, lower-cased and
+deduplicated. On, every field is checked, then the server's listeners (`acme.https_off`,
+`acme.http_off`, `acme.certificate_file_set`), then the directory (fetched over HTTPS) and every
+name (resolved); off, only the form of the fields, and that HTTPS does not need ACME
+(`acme.needed_for_https` while `server.https_addr` is set without certificate files). An older `version` answers
+`409 version_conflict` with the stored view as `current`. Saved, the answer is the new view, the
+audit log records `tls.acme_changed` (names, directory, challenge, whether a contact is set; never
+the contact itself) and a certificate is ordered in the background when none matches.
+
+### `POST /admin/acme/test`
+
+Body `{ "settings": {...} }`: the checks of a save, without saving. Answers
+`{ "termsOfService": "<url from the directory>" | null, "warnings": [{ "reason", "params", "message" }] }`;
+warnings are `acme.https_later` (HTTPS is off; the certificate is served once it is on),
+`acme.http_port` and `acme.https_port` (the listener is not on the port the CA
+connects to).
+
+### `POST /admin/acme/renew`
+
+Orders a certificate now, also when the current one is not due; answers the view. ACME off is
+`409 conflict` with `acme.off`; during the pause after a failed attempt `acme.renew_backoff`; for a
+certificate younger than a third of its lifetime that matches the settings `acme.renew_too_soon`
+(the CA's rate limits count every certificate). Recorded as `tls.certificate_requested`.
+
+### `GET /.well-known/acme-challenge/{token}`
+
+Not under `/api` and without sign-in: the HTTP-01 answer of a running order, on every listener
+(also the HTTP listener that redirects everything else to HTTPS); `404` for any other token.
+
 ## Appearance and brand
 
 ### `GET /branding`

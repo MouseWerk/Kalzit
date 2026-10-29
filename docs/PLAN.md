@@ -299,8 +299,10 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   Capabilities) und erreichen nur die im Manifest erklärten Ziele über Kalzit.
   Panel-Nachrichten-API und Panel-Host sind fertig: Panel-Plugins erscheinen in der
   Visualisierungsauswahl, laufen im abgeschotteten iframe ohne Netz und ohne Zugriff auf Kalzit,
-  ihr Optionseditor entsteht aus dem Manifest. Der Katalog folgt. Die Oberfläche folgt dem
-  Board `docs/design/blueprint/Plugins.dc.html`.
+  ihr Optionseditor entsteht aus dem Manifest. Der Katalog ist fertig (standardmäßig aus, ohne
+  voreingestellte Adresse, signierte Liste mit Schutz vor Rücksprung und Ablauf, Rücknahmen,
+  Installation über denselben Weg wie eine Datei). Die Oberfläche folgt dem Board
+  `docs/design/blueprint/Plugins.dc.html`.
 
 ## 8. Windows- und Linux-Server
 
@@ -329,7 +331,7 @@ TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich
 | Bereich | Einstellungen |
 |---|---|
 | Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`/kalzit`), HTTP → HTTPS-Umleitung |
-| TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt, minimale TLS-Version 1.2, HTTP/2 |
+| TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt (HTTP-01, TLS-ALPN-01; in der UI mit einem Speichern nach Prüfung, weil ein falscher Wert nicht aussperrt: HTTPS behält das bisherige Zertifikat), minimale TLS-Version 1.2, HTTP/2 |
 | Reverse Proxy | vertrauenswürdige Proxys (IP-Bereiche), `X-Forwarded-*` nur von diesen (`Forwarded` nach RFC 7239 folgt in M5), Beispielkonfigurationen für nginx, Caddy, IIS, Traefik |
 | Sicherheit | HSTS (an, Dauer), CSP, Cookie-Flags, CORS (aus), erlaubte Einbettung (`frame-ancestors`), Login-Ratenlimit |
 | Sitzungen | Dauer, Leerlauf-Timeout, gleichzeitige Sitzungen, "Angemeldet bleiben" |
@@ -442,6 +444,20 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Schalter in den Server-Einstellungen schaltet alle KI-Funktionen ein oder aus, und ohne
    verbundenen Anbieter erscheinen keine KI-Knöpfe oder -Hinweise in der Oberfläche. KI fragt nur
    mit den Rechten des angemeldeten Benutzers ab, nur lesend; Zugangsdaten liegen im Credential Store.
+   **Stand: abgeschlossen (Oktober 2026, Version 0.4.0).** Enthalten: Host für
+   Datenquellen-Plugins (gRPC-Protokoll 1, Installation aus Datei mit allen Prüfungen, Signaturen
+   und vertraute Schlüssel, Freigabe der Netzwerkziele, Prozesse mit Überwachung und Neustart),
+   Sandbox auf Windows (eingeschränktes Token, Job Object, AppContainer ohne Netz) und Linux
+   (Landlock, seccomp, Namespaces), Netzwerk nur über Kalzits Connector, Plugin-Seiten unter
+   Verwaltung > Plugins und Sperre je Organisation, Rust-SDK mit `kalzit-plugin` zum Packen und
+   Signieren, Panel-Plugins im abgeschotteten iframe mit Optionseditor aus dem Manifest, der
+   signierte Katalog (standardmäßig aus) und die Beispiele „CSV and JSON over HTTP“ und „KPI
+   tile“. KI: OpenAI-kompatibler und Anthropic-Client, Anbieter des Servers und der Organisation,
+   ein Anbieter je Funktion, Angabe „Daten verlassen das eigene Netz“, Grenzen, Hinweis vor dem
+   ersten Aufruf, Freigabe und ausgenommene Felder je Quelle, Erklären, Entwerfen und
+   Zusammenfassen, „Fragen“ (Beta) mit Werkzeugen, Verlauf und Aufbewahrung, Audit jedes Aufrufs.
+   Offen für M6: `Release`-Aufrufe an Plugins bei geänderten oder gelöschten Quellen; Kategorien
+   über die Art hinaus im Katalog; der Schalter „Über Proxy laden“ des Katalog-Boards.
 
    Entscheidungen des Inhabers zur KI (27.10.2026), Architektur in `docs/ARCHITECTURE.md` („AI“),
    API in `docs/api/ai.md`:

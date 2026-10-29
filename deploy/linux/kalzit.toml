@@ -1,0 +1,18 @@
+# Kalzit configuration (docs/guide/installation.md, "Configuration"). Values set here are shown
+# read-only in Settings. The package keeps your changes on updates.
+
+[server]
+# Plain HTTP. For HTTPS with a certificate from Let's Encrypt, set https_addr (for example
+# "0.0.0.0:443"), keep HTTP on port 80 for the HTTP-01 challenge (or use TLS-ALPN-01), and turn
+# ACME on in Settings, Network (docs/guide/https.md).
+http_addr = "0.0.0.0:3000"
+# https_addr = "0.0.0.0:443"
+# public_url = "https://kalzit.example.com"
+
+# [tls]
+# Your own certificate instead of ACME:
+# cert_file = "/etc/kalzit/tls/cert.pem"
+# key_file = "/etc/kalzit/tls/key.pem"
+
+[paths]
+data_dir = "/var/lib/kalzit"

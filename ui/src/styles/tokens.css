@@ -272,6 +272,18 @@
     --size-ai-tile: 12rem;
     --size-ai-label: 10rem;
     --size-ai-chip-input: 8rem;
+    /* The on/off switch of a settings row: a pill with a round knob. */
+    --size-switch-width: 2.125rem;
+    --size-switch-height: 1.25rem;
+    --size-switch-knob: 0.375rem;
+    /* The soft edge of the knob, so its circle is not jagged. */
+    --size-switch-knob-edge: 0.5px;
+    /* Each of the two triangles that draw the chevron of a select. */
+    --size-select-chevron: 0.3125rem;
+    /* A cell of the plugins' status strip: six fit in one row beside the settings list. */
+    --size-plugins-tile: 9.5rem;
+    /* The narrowest label column of the facts in the side pane of Ask. */
+    --size-ask-fact-label: 7rem;
   }
 }
 

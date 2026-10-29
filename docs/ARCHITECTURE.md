@@ -125,7 +125,7 @@ Guards that keep this airtight:
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
   `plugins:configure`, `settings:read|write`, `org:write|delete`. Installing plugins is a server
-  action for server admins (M4), not an organization permission.
+  action for server admins, not an organization permission.
 - **Built-in roles** (pinned by a test, so a new permission is granted only by an explicit edit):
   - `viewer`: `dashboards:read`, `folders:read`, `analyses:read`, `teams:read`. Viewers do not
     run their own queries; the panel query route runs the stored queries of a dashboard they may
@@ -218,7 +218,7 @@ type QueryResult =
 
 ## Data sources
 
-- A data source plugin implements one trait (built-ins are compiled in; external plugins (M4) use
+- A data source plugin implements one trait (built-ins are compiled in; external plugins use
   the same contract over gRPC, see "Plugins"). Kinds are registered in `registry::KindRegistry`:
 
   ```rust
@@ -525,8 +525,8 @@ process, a network target or the gRPC protocol.
   the order of parts, cut batches at `TARGET_PART_BYTES` and say `Full` one row past the row
   limit or one part past the byte budget, so the host cuts with its own notice. Errors map to
   `Error` kinds; logs go to stderr. Its tests serve a plugin on a real pipe or socket.
-- Network: `kalzit_plugin_sdk::net` is the place for the client of Kalzit's connector (M4,
-  being built separately); until it lands it connects directly.
+- Network: `kalzit_plugin_sdk::net::connect` is the client of Kalzit's connector (see "Network
+  connector"); a plugin has no other way out.
 - `plugin-tool/` (binary `kalzit-plugin`): `keygen`, `package` (writes `[files]` with the
   hashes, checks the manifest as the host does, signs with a key file or
   `KALZIT_PLUGIN_SIGNING_KEY`), `sign`, `attach-signature` and `verify`. A tool of its own, so `kalzit-sign` stays
@@ -549,8 +549,8 @@ process, a network target or the gRPC protocol.
   trait. It is the protocol's reference: built-in kinds answer through it exactly what they
   answer directly (tested with SQLite), so what the protocol cannot express shows up there
   first, and plugin SDKs are tested against it. The query path keeps calling built-in kinds
-  directly; the host will wrap a plugin process in a `DataSourcePlugin` (M4), so routes, limits,
-  live updates and the target checks stay the same for every kind.
+  directly; the host wraps a plugin process in a `DataSourcePlugin` (`plugins::remote::Remote`), so
+  routes, limits, live updates and the target checks stay the same for every kind.
 
 ### Manifest (`kalzit-plugin.toml`)
 
@@ -673,18 +673,19 @@ pass the same data source target rules (`TargetPolicy`) as built-in sources.
   in `plugin_handovers`. Installed plugins are the table `plugins` (migration 0020), with the
   exact manifest, the signer and its key, the approval, the switch and an update that waits.
 
-### Catalog (M4)
+### Catalog
 
-A signed index hosted by the project lists plugins with versions, key ids, download URLs and
-package hashes (`catalog::CatalogIndex`). It is off by default; turning it on is a server
-setting. Every index carries a growing `sequence`, its publication time and an `expiresAt` at
-most 31 days later. The host remembers the highest sequence it accepted per catalog key
-(`catalog::Accepted`, by the full public key; `parse_index` takes the key whose signature
-verified) and refuses an older or equal one (rollback) and an index past its expiry (freeze),
-so whoever controls the download cannot keep a known-vulnerable version listed. Every entry is
-checked: a valid plugin id, semantic version and kind, a 16-digit key id, an `https` URL
-without user info, a SHA-256 in lowercase hex, and no id with the same version twice. Installing from a file (the package with its
-manifest and signature) always works, also offline, and runs the same checks.
+A signed index (the project's, or a mirror an administrator names; there is no default address)
+lists plugins with versions, key ids, download URLs and package hashes (`catalog::CatalogIndex`).
+It is off by default; turning it on is a server setting. Every index carries a growing
+`sequence`, its publication time and an `expiresAt` at most 31 days later. The host remembers
+the highest sequence it accepted per catalog key (`catalog::Accepted`, by the full public key;
+`parse_index` takes the key whose signature verified) and refuses an older or equal one
+(rollback) and an index past its expiry (freeze), so whoever controls the download cannot keep
+a known-vulnerable version listed. Every entry is checked: a valid plugin id, semantic version
+and kind, a 16-digit key id, an `https` URL without user info, a SHA-256 in lowercase hex, and no
+id with the same version twice. Installing from a file (the package with its manifest and
+signature) always works, also offline, and runs the same checks.
 
 - An index may withdraw versions (`revoked`: plugin id, a semver requirement, a reason); they are
   never installed from the catalog and installed versions they match are named in the UI.
@@ -869,10 +870,11 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   panels the write adds or changes, so stored dashboards and library panels keep loading,
   querying and saving unchanged when a rule tightens. Reads never run it. The document explorer
   and the schema panel take no options; the distribution's `path` and the card's `titlePath` are
-  field paths of up to 500 characters without control characters. A new panel type (plugins)
-  adds its own check there
-  when it lands, and its default and editor options to the contract fixture
-  (`ui/src/panels/contract.test.ts`); unknown types are left alone.
+  field paths of up to 500 characters without control characters. A new built-in panel type adds
+  its own check there, and its default and editor options to the contract fixture
+  (`ui/src/panels/contract.test.ts`); unknown types, panel plugins among them, are left alone on
+  save: a plugin panel's options are checked against its `[[panel.options]]` in the editor, and
+  only the declared ones that fit reach its frame.
 - Series names (`distinctSeriesNames`, `ui/src/panels/frame.ts`): a series is named by its display
   name, else its name template, else its field name with labels. Without a display name or
   template, series with labels are named by the label values that differ between them in the
@@ -967,9 +969,9 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
 
 ## AI
 
-Built-in AI (M4; owner decisions in docs/PLAN.md, section 12, API in docs/api/ai.md). This
-section is the core every AI function builds on; the functions themselves (explain or draft a
-query, summarize a result, the agent chat) come after it and must go through it.
+Built-in AI (owner decisions in docs/PLAN.md, section 12, API in docs/api/ai.md). This section
+is the core every AI function builds on, then the functions themselves (explain or draft a
+query, summarize a result, the agent chat "Fragen"), which all go through it.
 
 - **Off by default, one switch.** `ai.enabled` (server setting, default `false`) gates every AI
   call (`409 ai_unavailable`, `ai.disabled`). `GET /api/orgs/{orgId}/ai/status` tells the UI
@@ -1106,7 +1108,9 @@ query, summarize a result, the agent chat) come after it and must go through it.
   `ai.provider_chat` choose a server provider per function (`service::in_effect_for`, from the
   call's purpose); an organization's own provider still applies to all functions. The notice is
   per provider, so the status names each function's provider with its acknowledgement, endpoint,
-  last test and whether its address stays in the own network (`service::stays_in_network`).
+  last test and whether data leaves the own network: as the administrators set it on the provider
+  (`leaves_network`, `yes` or `no`), or, left open, judged from its address
+  (`service::stays_in_network`, reported as `leavesNetworkEstimated`).
 - **Prompt injection (tool use in the chat).** Everything that comes back
   from a data source, a document or a web page is untrusted input to the model: it may contain
   text written to steer it. So tools are read-only by construction (they run queries through the
@@ -1195,7 +1199,33 @@ query, summarize a result, the agent chat) come after it and must go through it.
 
 ### Running as a service
 
-- Linux (systemd): run as a dedicated user and let systemd create the directories:
+- Linux packages (`deploy/linux`, built with nfpm by `deploy/linux/package.sh`): the deb and rpm
+  install `/usr/bin/kalzit`, the unit `kalzit.service`, `/etc/kalzit/kalzit.toml` (`root:kalzit`,
+  `0640`, kept on updates) and the marker `/usr/lib/kalzit/package` (`deb` or `rpm`). The
+  scripts create the system account `kalzit`, the data directory `/var/lib/kalzit` (`0700`) and,
+  on a first installation whose data directory holds no secrets yet, the secrets key in the
+  credential store (`systemd-creds encrypt --with-key=host` into `/etc/credstore.encrypted`, else
+  `/etc/credstore` readable by root), which the unit imports (`ImportCredential=`). The unit runs
+  `kalzit --config /etc/kalzit/kalzit.toml serve` as `kalzit` with `CAP_NET_BIND_SERVICE` only and
+  hardening that leaves the plugin sandbox intact: `ProtectSystem=strict` with
+  `ReadWritePaths=/var/lib/kalzit`, `NoNewPrivileges`, `PrivateTmp`, `PrivateDevices`, the
+  `Protect*` kernel, clock, host name and `/proc` settings, `RestrictNamespaces=~cgroup mnt pid
+  uts` (user, IPC and network namespaces stay for plugins), `SystemCallFilter=@system-service`
+  plus the Landlock calls and `setsid`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+  AF_NETLINK` (`AF_UNIX` for the plugin sockets). The sandbox clears the ambient capability set
+  and drops the bounding set before a plugin's exec, so `CAP_NET_BIND_SERVICE` never reaches a
+  plugin. The deb also ships `/etc/apparmor.d/kalzit` (unconfined, `userns,`), loaded in postinst,
+  because Ubuntu's AppArmor otherwise refuses the plugin sandbox its user namespaces. The scripts
+  refuse an existing `kalzit` account that is not a system account, has a login shell, or whose
+  group has other members. `kalzit sandbox-check` starts a test program (`kalzit sandbox-probe`)
+  the way a plugin is started and prints the layers in force and the program's capability sets;
+  CI (`.github/scripts/package-smoke.sh`) runs it inside a copy of the unit and outside, and fails
+  when the unit takes a layer away, a namespace layer is missing or a capability reaches it.
+  Removing keeps data, configuration and key; only `apt purge` deletes them. The updater leaves
+  a packaged binary to the package manager (`updates.mode_deb`, `updates.mode_rpm`, see Updates).
+  The packages require the glibc version the binary needs (read from its symbol versions).
+- Linux (systemd) without the packages: run as a dedicated user and let systemd create the
+  directories:
 
   ```ini
   [Service]
@@ -1227,6 +1257,57 @@ query, summarize a result, the agent chat) come after it and must go through it.
   others), or the start is refused. Changing the service account later means granting the new
   account access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`) and
   making it or Administrators the owner.
+
+## HTTPS certificates
+
+`server/src/tls.rs` builds the rustls configuration (ring, TLS 1.2 or 1.3, ALPN `h2` and
+`http/1.1`). With `tls.cert_file` and `tls.key_file` it serves those files and reloads them when
+they change. Without them, the HTTPS listener asks `acme::resolver::Certificates` for every
+handshake: the certificate ACME issued, until then a self-signed one made at the start (names
+from the ACME settings or `server.public_url`); a client that offers only the ALPN protocol
+`acme-tls/1` gets the TLS-ALPN-01 challenge certificate of the name it asks for (RFC 8737), or no
+certificate. A new certificate takes effect for the next handshake; nothing restarts. The start
+refuses HTTPS without certificate files while ACME is off in the stored settings (fail closed);
+HTTP-01 orders and stores a certificate while HTTPS is still off, so HTTPS can then start with it.
+
+ACME (`server/src/acme`, RFC 8555 through the `instant-acme` crate):
+
+- **Settings** (`acme::settings`): one value `tls.acme` in `server_settings`, with a version,
+  saved by `PUT /api/admin/acme` in one step after the checks (each field, the listeners the
+  challenge needs, the directory fetched over HTTPS, every name resolved); the first problem is
+  answered with its field and an `acme.*` reason. They are not registry settings: their fields
+  depend on each other, so the settings page saves them together instead of one by one with undo
+  (CLAUDE.md).
+- **Transport** (`acme::transport`): the protocol's requests go through Kalzit's one HTTP client
+  (`crate::http`): system certificates plus an optional CA for a custom directory, no proxy, the
+  target check (never a metadata address or Kalzit's own database).
+- **Order** (`acme::issue`): the account of the directory (registered on first use, its contact
+  updated when it changed, registered again when the CA no longer knows it), an order for all
+  names, per name the chosen challenge answered by this server (HTTP-01 from a token map that
+  `GET /.well-known/acme-challenge/{token}` serves on every listener, TLS-ALPN-01 from the
+  resolver), polling until ready, a new P-256 key and CSR, polling for the chain. Challenge
+  answers are removed when the order ends, whatever happened.
+- **Schedule** (`acme::spawn`, a background task of the server): an order is due when ACME is on
+  and no stored certificate matches the names and directory, when two thirds of its lifetime
+  have passed, or on request (`POST /api/admin/acme/renew`, refused during a failure's pause and
+  for a matching certificate younger than a third of its lifetime). A failure waits 5, 15, 60,
+  180, 360, then 720 minutes before the next attempt; a save with other settings resets the wait.
+  An issued certificate counts only once the resolver serves it; one that could not be stored
+  stays in use from memory and storing is retried after the pause, without a new order.
+  `/.well-known/acme-challenge/` looks up only base64url tokens.
+- **Store** (`acme::store`): `acme/account-<hash of the directory URL>.enc` and
+  `acme/certificate.enc` in the data directory (`0700` folder, `0600` files on Unix, written
+  through a temporary file and a rename), each AES-256-GCM encrypted with the secrets key, owner
+  `acme` and the file's purpose as associated data. `kalzit secrets rotate` re-encrypts them after
+  the database. A file that cannot be read is logged and a new certificate is ordered.
+- **Audit**: `tls.acme_changed`, `tls.certificate_requested` (by an administrator),
+  `tls.certificate_issued` and `tls.certificate_failed` (by the server, with reason and next
+  attempt). Private keys and the contact address never reach the log or the audit log.
+
+Several servers behind one load balancer each order and answer for themselves; HTTP-01 answers
+live in one process's memory. CI orders real certificates from pebble, Let's Encrypt's test
+server (job `acme`, `server/tests/acme_pebble.rs`); the checks and routes are unit-tested on
+Windows and Linux (`acme::api_tests`).
 
 ## Storage (SQLite)
 

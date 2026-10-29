@@ -58,6 +58,10 @@ catalog.
 | KI | AI | Die eingebauten Funktionen, die ein Sprachmodell nutzen; standardmäßig aus. | AI (im Deutschen), Künstliche Intelligenz |
 | KI-Anbieter | AI provider | Der Dienst, der die Antworten liefert: eine OpenAI-kompatible API (auch lokal, etwa Ollama) oder Anthropic. | Provider (im Deutschen), LLM-Anbieter |
 | Schlüssel (KI) | API key | Der Zugangsschlüssel eines KI-Anbieters; nur verschlüsselt gespeichert, nie angezeigt. | API-Key (im Deutschen), Token (für den Schlüssel) |
+| Fragen | Ask | Der Chat über die eigenen Daten (Beta): die KI liest Schemas und führt lesende Abfragen und Panels mit den Rechten der fragenden Person aus. Name der Funktion. | |
+| Plugin | Plugin | Eine Erweiterung aus einem signierten Paket: ein Datenquellen-Typ (eigener Prozess in einer Sandbox) oder ein Panel-Typ (im abgeschotteten Rahmen im Browser). | |
+| Herausgeber | Publisher | Wer ein Plugin veröffentlicht, wie es das Manifest nennt; bestätigt wird nur der Schlüssel, der es signiert. | |
+| Katalog | Catalog | Die signierte Liste von Plugins zum Installieren; standardmäßig aus. | |
 
 ## Schreibweise / Style
 

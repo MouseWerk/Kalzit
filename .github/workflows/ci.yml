@@ -647,6 +647,122 @@ jobs:
           cache-to: ${{ github.event_name != 'merge_group' && 'type=gha,scope=kalzit-image-amd64,mode=max' || '' }}
       - run: .github/scripts/docker-smoke.sh kalzit:ci
 
+  # The deb and rpm (deploy/linux): built with nfpm from a Linux binary (the faster e2e profile),
+  # then installed, started, checked and removed on the runner under its own systemd and in
+  # Debian and Fedora containers (.github/scripts/package-smoke.sh). Release tags build them
+  # from the release binary (release.yml).
+  packages:
+    name: packages
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-profile
+          save-if: false
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: cargo build --profile e2e --locked -p kalzit --bin kalzit
+      - name: Install nfpm
+        env:
+          NFPM_VERSION: 2.47.0
+          NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+        run: |
+          set -euo pipefail
+          archive="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/$archive"
+          echo "$NFPM_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" nfpm
+          sudo install -m 0755 "$RUNNER_TEMP/nfpm" /usr/local/bin/nfpm
+      - name: Build the packages
+        run: |
+          version="$(grep -m1 '^version = ' server/Cargo.toml | cut -d'"' -f2)"
+          deploy/linux/package.sh "$version" target/e2e/kalzit dist
+          ls -l dist
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+      - run: .github/scripts/package-smoke.sh dist
+
+  # Ordering certificates from pebble, Let's Encrypt's ACME test server, built from its source at
+  # a fixed tag: HTTP-01, TLS-ALPN-01, renewal and the encrypted store (server/tests/acme_pebble.rs).
+  # pebble validates on 127.0.0.1 (pebble-challtestsrv answers every name with it); the test's
+  # names resolve there for the server's own check too. Linux only; Windows runs the ACME unit
+  # and API tests in `server`.
+  acme:
+    name: acme (pebble)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: letsencrypt/pebble
+          ref: v2.10.1
+          path: pebble-src
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: pebble-src/go.mod
+          cache: false
+      - name: Build pebble
+        working-directory: pebble-src
+        run: |
+          mkdir -p "$RUNNER_TEMP/pebble-bin"
+          go build -o "$RUNNER_TEMP/pebble-bin/" ./cmd/pebble ./cmd/pebble-challtestsrv
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Build the test
+        run: cargo test --locked -p kalzit --test acme_pebble --no-run
+      - name: Start pebble
+        working-directory: pebble-src
+        env:
+          PEBBLE_VA_NOSLEEP: "1"
+          PEBBLE_WFE_NONCEREJECT: "0"
+          PEBBLE_AUTHZREUSE: "0"
+        run: |
+          set -euo pipefail
+          echo "127.0.0.1 http.kalzit.test alpn.kalzit.test" | sudo tee -a /etc/hosts
+          # DNS only: the challenge servers of challtestsrv would take Kalzit's ports.
+          nohup "$RUNNER_TEMP/pebble-bin/pebble-challtestsrv" -defaultIPv4 127.0.0.1 -defaultIPv6 "" \
+            -http01 "" -https01 "" -tlsalpn01 "" -doh "" -dnsserver ":8053" -management ":8055" \
+            > "$RUNNER_TEMP/challtestsrv.log" 2>&1 &
+          challtestsrv=$!
+          nohup "$RUNNER_TEMP/pebble-bin/pebble" -config test/config/pebble-config.json -dnsserver 127.0.0.1:8053 \
+            > "$RUNNER_TEMP/pebble.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS --cacert test/certs/pebble.minica.pem https://localhost:14000/dir > /dev/null; then
+              kill -0 "$challtestsrv" || { cat "$RUNNER_TEMP/challtestsrv.log"; exit 1; }
+              echo "pebble is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/pebble.log" "$RUNNER_TEMP/challtestsrv.log"
+          exit 1
+      - name: Order certificates from pebble
+        env:
+          KALZIT_TEST_PEBBLE_DIRECTORY: https://localhost:14000/dir
+          KALZIT_TEST_PEBBLE_CA: ${{ github.workspace }}/pebble-src/test/certs/pebble.minica.pem
+        run: cargo test --locked -p kalzit --test acme_pebble -- --ignored --nocapture
+      - name: pebble log
+        if: failure()
+        run: cat "$RUNNER_TEMP/pebble.log" "$RUNNER_TEMP/challtestsrv.log"
+
   audit:
     name: audit
     needs: changes
