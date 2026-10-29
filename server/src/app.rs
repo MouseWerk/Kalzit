@@ -77,6 +77,8 @@ pub struct AppState {
     pub export_users: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// The bounds of exports; tests make them small.
     pub export_limits: Arc<std::sync::RwLock<crate::routes::export::Limits>>,
+    /// The plugin catalog: its index and installs from it (`plugins::catalog`).
+    pub catalog: Arc<crate::plugins::catalog::Catalog>,
     /// Checks, downloads and installations of new versions (`updates`).
     pub updates: Arc<crate::updates::Updates>,
     /// Live update connections and their feeds (`live`).
@@ -159,6 +161,7 @@ impl AppState {
             exports: Arc::new(tokio::sync::Semaphore::new(crate::routes::export::MAX_EXPORTS)),
             export_users: Arc::default(),
             export_limits: Arc::default(),
+            catalog: Arc::default(),
             updates,
             live: Arc::default(),
             ai: Arc::default(),

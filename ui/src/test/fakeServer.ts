@@ -9,6 +9,7 @@ import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboard
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
 import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
 import { exploreHistoryFake } from "../features/explore/test/fakeExploreHistory";
+import { catalogFake, handleCatalogRoute } from "../features/plugins/test/fakeCatalog";
 import { handlePluginAdminRoute, pluginsFake } from "../features/plugins/test/fakePlugins";
 import { shellFake } from "../shell/test/fakeShell";
 
@@ -112,6 +113,7 @@ const AREA_FAKES = {
   dashboardFeatures: dashboardFeaturesFake,
   dashboards: dashboardsFake,
   plugins: pluginsFake,
+  pluginCatalog: catalogFake,
   shell: shellFake,
 };
 
@@ -505,6 +507,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       }
     }
     return (
+      handleCatalogRoute(areaStates.pluginCatalog, path, method, input) ??
       handlePluginAdminRoute(areaStates.plugins, path, method, input) ??
       handleAiAdminRoute(areaStates.aiAdmin, server, path, method, input) ??
       handleAdminRoute(server, path, method, body) ??

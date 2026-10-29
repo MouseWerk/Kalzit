@@ -125,6 +125,8 @@ export interface TrustedKey {
   addedAt: number;
   /** The installed plugins signed with it. */
   plugins: string[];
+  /** The administrator allowed it to sign the catalog index too. */
+  maySignCatalog: boolean;
 }
 
 export interface OrgPlugin {
@@ -373,7 +375,15 @@ function parseKey(value: unknown): TrustedKey {
     name: text(raw.name) ?? "",
     addedAt: typeof raw.addedAt === "number" ? raw.addedAt : 0,
     plugins: strings(raw.plugins),
+    maySignCatalog: raw.maySignCatalog === true,
   };
+}
+
+/** Allows a trusted publisher key to sign the catalog index, or takes that back. */
+export async function setKeyCatalog(keyId: string, maySignCatalog: boolean): Promise<TrustedKey> {
+  return parseKey(
+    await request("PUT", `/api/admin/plugin-keys/${enc(keyId)}/catalog`, { maySignCatalog }),
+  );
 }
 
 export async function listKeys(signal?: AbortSignal): Promise<TrustedKey[]> {

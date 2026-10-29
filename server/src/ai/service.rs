@@ -460,6 +460,7 @@ pub fn local_guard(state: &AppState, base_url: &url::Url) -> Option<crate::http:
     let own = [state.config.http_addr(), state.config.https_addr()];
     own.iter().flatten().any(|l| l.port() == port).then(|| crate::http::LocalGuard {
         refused: crate::datasources::Detail::new("ai.base_url_kalzit", "the address is this Kalzit server"),
+        private: None,
     })
 }
 

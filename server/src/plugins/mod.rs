@@ -12,9 +12,12 @@
 //!   against its manifest and the target rules.
 //! - `remote`: a plugin process as a `DataSourcePlugin`; `host`: the plugins of this server,
 //!   their kinds in the registry and the administrator's actions on them.
+//! - `catalog`: the signed catalog index (off by default), its checks and installing from it
+//!   through the same path as a file.
 //! - `panels`: the panel plugins that may be shown and the sandboxed frame document that carries
 //!   a panel's bundle (the message exchange itself runs in the browser).
 
+pub mod catalog;
 pub mod connector;
 pub mod host;
 pub mod in_process;
