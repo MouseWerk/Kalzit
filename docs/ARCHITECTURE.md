@@ -660,8 +660,13 @@ manifest and signature) always works, also offline, and runs the same checks.
   `plugins.catalog_url`, no default host, and `plugins.catalog_refresh_hours`). Kalzit itself
   loads the index and `<url>.sig` (a detached signature like a package's) with the one HTTP
   client (`crate::http`): the data source target policy, HTTPS only on every hop, 30 s and 4 MiB
-  for the index, 10 minutes and the entry's size for a package. The signature must verify with a
-  key trusted for plugins (Kalzit's plugin keys or an administrator's publisher keys); then
+  for the index, 10 minutes and the entry's size for a package. Redirects are followed hop by
+  hop: the configured host and port use a client that may reach a private mirror but never
+  Kalzit's own ports (`LocalGuard`), every other host one that refuses all but public addresses
+  (`LocalGuard::is_private`), both resolving through the target policy and connecting to the
+  checked address. The signature must verify with a key allowed for the catalog: Kalzit's plugin
+  keys or publisher keys an administrator marked `may_sign_catalog` (a column of `plugin_keys`);
+  trust for plugins alone is not enough. Then
   `parse_index` with the accepted sequences. The first list of an address pins its key (another
   key needs `acceptKeyChange`), and the highest sequence is kept per key and per address. The index
   taken, its key, the accepted sequences (never lowered, also across URL changes) and the last failure are the row of `plugin_catalog`

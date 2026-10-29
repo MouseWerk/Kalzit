@@ -48,6 +48,7 @@ export interface WireKey {
   name: string;
   addedAt: number;
   plugins: string[];
+  maySignCatalog?: boolean;
 }
 
 export interface FakePluginsState {
@@ -175,6 +176,15 @@ export function handlePluginAdminRoute(
       };
       state.keys.push(key);
       return json(201, key);
+    }
+    const keyAction = route.split("/")[5];
+    if (keyAction === "catalog" && method === "PUT") {
+      const key = state.keys.find((candidate) => candidate.keyId === keyId);
+      if (key === undefined) {
+        return refusal(404, "not_found", "plugin.key_unknown");
+      }
+      key.maySignCatalog = body.maySignCatalog === true;
+      return json(200, key);
     }
     if (method === "DELETE") {
       const key = state.keys.find((candidate) => candidate.keyId === keyId);

@@ -13,6 +13,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Method, Request, StatusCode, header};
+use axum::response::IntoResponse;
 use base64::Engine;
 use ed25519_dalek::{Signer as _, SigningKey};
 use http_body_util::BodyExt;
@@ -116,9 +117,15 @@ async fn serve(files: Arc<Files>) -> (SocketAddr, String) {
             let files = files.clone();
             async move {
                 files.hits.fetch_add(1, Ordering::SeqCst);
-                match files.files.lock().unwrap().get(&path) {
-                    Some(bytes) => (StatusCode::OK, bytes.clone()),
-                    None => (StatusCode::NOT_FOUND, Vec::new()),
+                let found = files.files.lock().unwrap().get(&path).cloned();
+                match found {
+                    // `REDIRECT <url>`: a redirect there, as a mirror or a CDN answers.
+                    Some(bytes) if bytes.starts_with(b"REDIRECT ") => {
+                        let target = String::from_utf8_lossy(&bytes[9..]).into_owned();
+                        (StatusCode::FOUND, [(header::LOCATION, target)], Vec::new()).into_response()
+                    }
+                    Some(bytes) => (StatusCode::OK, bytes).into_response(),
+                    None => (StatusCode::NOT_FOUND, Vec::new()).into_response(),
                 }
             }
         }),
@@ -243,6 +250,20 @@ impl TestApp {
         let public = base64::engine::general_purpose::STANDARD.encode(k.verifying_key().as_bytes());
         let r = self.send(Method::POST, "/admin/plugin-keys", Some(json!({ "name": name, "publicKey": public }))).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    }
+
+    /// Trusts `k` and allows it to sign the catalog.
+    async fn trust_catalog(&self, k: &SigningKey, name: &str) {
+        self.trust(k, name).await;
+        let r = self
+            .send(
+                Method::PUT,
+                &format!("/admin/plugin-keys/{}/catalog", key_id(k)),
+                Some(json!({ "maySignCatalog": true })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        assert_eq!(r.body["maySignCatalog"], true);
     }
 
     /// Serves `index` signed by `signer` at /index.json; answers the exact bytes.
@@ -390,7 +411,7 @@ async fn the_catalog_is_off_by_default_and_connects_nowhere() {
 async fn the_index_signature_is_checked() {
     let t = test_app().await;
     let (catalog_key, stranger) = (key(1), key(2));
-    t.trust(&catalog_key, "Katalog GmbH").await;
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
     t.turn_on().await;
 
     // Not signed at all.
@@ -453,7 +474,7 @@ async fn the_index_signature_is_checked() {
 async fn rollbacks_and_expired_indexes_are_refused() {
     let mut t = test_app().await;
     let catalog_key = key(1);
-    t.trust(&catalog_key, "Katalog GmbH").await;
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
     t.turn_on().await;
     let pkg = package(ID, "1.0.0", Some(&catalog_key), false, "");
     let entry = t.offer(ID, "1.0.0", &catalog_key, pkg);
@@ -506,7 +527,7 @@ async fn rollbacks_and_expired_indexes_are_refused() {
 async fn installs_from_the_catalog_use_the_same_checks() {
     let t = test_app().await;
     let (catalog_key, publisher, other) = (key(1), key(3), key(4));
-    t.trust(&catalog_key, "Katalog GmbH").await;
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
     t.trust(&publisher, "Example GmbH").await;
     t.trust(&other, "Andere GmbH").await;
     // Unsigned packages are allowed for files here, but never come from the catalog.
@@ -622,7 +643,7 @@ async fn installs_from_the_catalog_use_the_same_checks() {
 async fn revoked_entries_are_refused_and_shown() {
     let t = test_app().await;
     let catalog_key = key(1);
-    t.trust(&catalog_key, "Katalog GmbH").await;
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
     t.turn_on().await;
     let first = t.offer(ID, "1.0.0", &catalog_key, package(ID, "1.0.0", Some(&catalog_key), false, ""));
     t.publish(&index(1, vec![first.clone()]), &catalog_key);
@@ -669,8 +690,8 @@ async fn only_server_admins_reach_the_catalog() {
 async fn the_catalog_key_is_pinned_to_its_address() {
     let t = test_app().await;
     let (first, second) = (key(1), key(2));
-    t.trust(&first, "Katalog GmbH").await;
-    t.trust(&second, "Neuer Schlüssel").await;
+    t.trust_catalog(&first, "Katalog GmbH").await;
+    t.trust_catalog(&second, "Neuer Schlüssel").await;
     t.turn_on().await;
     t.publish(&index(5, vec![]), &first);
     assert_eq!(t.refresh().await.status, StatusCode::OK);
@@ -700,5 +721,69 @@ async fn the_catalog_key_is_pinned_to_its_address() {
     assert_eq!(t.catalog("").await["state"], "untrusted");
     let r = t.install(ID, "1.0.0").await;
     assert_eq!(r.reason(), "catalog.signer_untrusted", "{}", r.body);
+    t.finish().await;
+}
+
+/// Only Kalzit's keys and keys an administrator allowed may sign the catalog: trusting a
+/// publisher key for plugins is not enough.
+#[tokio::test]
+async fn only_keys_allowed_for_the_catalog_sign_it() {
+    let t = test_app().await;
+    let publisher = key(3);
+    t.trust(&publisher, "Example GmbH").await;
+    t.turn_on().await;
+    t.publish(&index(1, vec![]), &publisher);
+    let r = t.refresh().await;
+    assert_eq!(r.reason(), "catalog.signer_untrusted", "{}", r.body);
+    let keys = t.send(Method::GET, "/admin/plugin-keys", None).await;
+    assert_eq!(keys.body["items"][0]["maySignCatalog"], false);
+
+    let path = format!("/admin/plugin-keys/{}/catalog", key_id(&publisher));
+    assert_eq!(t.send(Method::PUT, &path, Some(json!({ "maySignCatalog": true }))).await.status, StatusCode::OK);
+    assert_eq!(t.refresh().await.status, StatusCode::OK);
+    assert_eq!(t.catalog("").await["state"], "ready");
+    assert_eq!(t.audit("plugins.key_catalog_allowed").await.len(), 1);
+
+    // Taken back: the list stays, but nothing is installed from it.
+    assert_eq!(t.send(Method::PUT, &path, Some(json!({ "maySignCatalog": false }))).await.status, StatusCode::OK);
+    assert_eq!(t.catalog("").await["state"], "untrusted");
+    let r = t
+        .send(Method::PUT, "/admin/plugin-keys/0000000000000000/catalog", Some(json!({ "maySignCatalog": true })))
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    // Only server administrators.
+    let org_admin = t.member("admin").await;
+    let r = t.send_as(&org_admin, Method::PUT, &path, Some(json!({ "maySignCatalog": true }))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    t.finish().await;
+}
+
+/// The catalog's own host may be a private mirror, but packages and redirects on any other host
+/// must be public, and the catalog address can never be Kalzit's own port.
+#[tokio::test]
+async fn other_hosts_must_be_public_and_kalzit_itself_is_refused() {
+    let t = test_app().await;
+    let catalog_key = key(1);
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
+    t.turn_on().await;
+    let pkg = package(ID, "1.0.0", Some(&catalog_key), false, "");
+    let mut entry = t.offer(ID, "1.0.0", &catalog_key, pkg);
+    // The same server under another name: a private address of another host.
+    let port = t.base.rsplit(':').next().unwrap().to_string();
+    entry.url = format!("https://127.0.0.1:{port}/pkg/{ID}-1.0.0.kalzit-plugin");
+    t.publish(&index(1, vec![entry]), &catalog_key);
+    assert_eq!(t.refresh().await.status, StatusCode::OK, "the configured private host is allowed");
+    let r = t.install(ID, "1.0.0").await;
+    assert_eq!(r.reason(), "catalog.private_target", "{}", r.body);
+
+    // A redirect of the index to a private address elsewhere is refused at that hop.
+    t.files.put("index.json", format!("REDIRECT https://127.0.0.1:{port}/index.json").into_bytes());
+    let r = t.refresh().await;
+    assert_eq!(r.reason(), "catalog.private_target", "{}", r.body);
+
+    // Kalzit's own listening port (127.0.0.1:3999 in these tests).
+    t.setting("plugins.catalog_url", json!("https://localhost:3999/index.json")).await;
+    let r = t.refresh().await;
+    assert_eq!(r.reason(), "catalog.own_address", "{}", r.body);
     t.finish().await;
 }

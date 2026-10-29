@@ -20,3 +20,7 @@ CREATE TABLE plugin_catalog (
     error_params   TEXT,
     error_at       BIGINT
 );
+
+-- Publisher keys an administrator explicitly allowed to sign the catalog index. Trusting a key for
+-- plugins alone does not let it sign the catalog; Kalzit's own plugin keys always may.
+ALTER TABLE plugin_keys ADD COLUMN may_sign_catalog BIGINT NOT NULL DEFAULT 0;

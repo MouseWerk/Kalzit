@@ -632,6 +632,8 @@
   "datasources.reason.catalog.url_invalid": "The catalog address is not a valid URL.",
   "datasources.reason.catalog.unreachable": "The catalog could not be reached: {detail}",
   "datasources.reason.catalog.https_required": "Kalzit loads the catalog and its packages over HTTPS only; {host} was not.",
+  "datasources.reason.catalog.private_target": "The catalog may reach only public addresses outside its own host; this address is private, local or link-local.",
+  "datasources.reason.catalog.own_address": "The catalog address points at this Kalzit server.",
   "datasources.reason.catalog.too_large": "The catalog or package is larger than allowed ({bytes} bytes).",
   "datasources.reason.catalog.signature_missing": "The catalog has no signature next to it (the address with .sig appended).",
   "datasources.reason.catalog.signature_invalid": "The catalog list does not match its signature: it was changed after signing or is damaged. It was not taken.",

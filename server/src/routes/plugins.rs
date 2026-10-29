@@ -43,6 +43,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/admin/plugin-keys", Access::ServerAdmin, list_keys),
         route(Method::POST, "/admin/plugin-keys", Access::ServerAdmin, add_key),
         route(Method::DELETE, "/admin/plugin-keys/{keyId}", Access::ServerAdmin, remove_key),
+        route(Method::PUT, "/admin/plugin-keys/{keyId}/catalog", Access::ServerAdmin, set_key_catalog),
         route(Method::GET, "/admin/plugin-host", Access::ServerAdmin, host_settings),
         route(Method::PATCH, "/admin/plugin-host", Access::ServerAdmin, patch_host_settings),
         route(Method::GET, "/admin/plugin-catalog", Access::ServerAdmin, catalog_view),
@@ -428,6 +429,8 @@ struct KeyView {
     added_at: i64,
     /// The installed plugins signed with it.
     plugins: Vec<String>,
+    /// The administrator allowed it to sign the catalog index too.
+    may_sign_catalog: bool,
 }
 
 async fn key_view(state: &AppState, k: KeyRow) -> ApiResult<KeyView> {
@@ -435,7 +438,8 @@ async fn key_view(state: &AppState, k: KeyRow) -> ApiResult<KeyView> {
     let public_key = hex::decode(&k.public_key)
         .map(|b| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b))
         .unwrap_or_default();
-    Ok(KeyView { key_id: k.key_id, public_key, name: k.name, added_at: k.added_at, plugins })
+    let may_sign_catalog = crate::plugins::catalog::may_sign_catalog(&state.db, &k.key_id).await?;
+    Ok(KeyView { key_id: k.key_id, public_key, name: k.name, added_at: k.added_at, plugins, may_sign_catalog })
 }
 
 #[derive(Serialize)]
@@ -499,6 +503,33 @@ async fn remove_key(
         .remove_key(&state, &path.key_id, query.confirm.unwrap_or(false), &actor(&user, &info, None))
         .await?;
     Ok(Json(Stopped { stopped }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KeyCatalogBody {
+    may_sign_catalog: bool,
+}
+
+/// `PUT /admin/plugin-keys/{keyId}/catalog`: allows a trusted publisher key to sign the catalog
+/// index, or takes that back.
+async fn set_key_catalog(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    Path(path): Path<KeyPath>,
+    JsonBody(body): JsonBody<KeyCatalogBody>,
+) -> ApiResult<Json<KeyView>> {
+    crate::plugins::catalog::set_may_sign_catalog(
+        &state,
+        &path.key_id,
+        body.may_sign_catalog,
+        &actor(&user, &info, None),
+    )
+    .await?;
+    let k =
+        store::keys(&state.db).await?.into_iter().find(|k| k.key_id == path.key_id).ok_or_else(ApiError::not_found)?;
+    Ok(Json(key_view(&state, k).await?))
 }
 
 #[derive(Serialize)]

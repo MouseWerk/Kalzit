@@ -22,7 +22,7 @@ dropped), `plugins.handover_added`, `plugins.unsigned_allowed`, `plugins.unsigne
 `plugins.landlock_optional`, `plugins.landlock_required`, `plugins.connect_refused` (a network
 connection the connector refused, with `datasourceId`, `host`, `port` and `reason`; bounded as
 "Network connector" says, no actor), `plugins.connect_refusals_suppressed` (refusals not logged
-one by one, with `total` and `byReason`), `plugins.catalog_refreshed` (a refresh an administrator
+one by one, with `total` and `byReason`), `plugins.key_catalog_allowed`, `plugins.key_catalog_disallowed`, `plugins.catalog_refreshed` (a refresh an administrator
 asked for: the sequence and number of entries, or the reason it failed, and the catalog's host;
 `resourceId` `catalog`), `plugins.catalog_installed` (version, SHA-256, key id and host of a
 package installed from the catalog, next to its `plugins.installed` or `plugins.updated`), and in
@@ -199,7 +199,7 @@ Empty while the plugin is not registered.
 `POST` `{ "name": "Example GmbH", "publicKey": "<32 bytes, base64 or hex>" }` answers `201`:
 
 ```json
-{ "keyId": "17e204d64429eae4", "publicKey": "<base64>", "name": "Example GmbH", "addedAt": 1800000000000, "plugins": [] }
+{ "keyId": "17e204d64429eae4", "publicKey": "<base64>", "name": "Example GmbH", "addedAt": 1800000000000, "plugins": [], "maySignCatalog": false }
 ```
 
 A key that is trusted already is refused (`plugin.key_exists`); a weak or malformed key too
@@ -216,6 +216,13 @@ Kalzit's own plugin keys are compiled in (`server/src/plugins/package.rs`): the 
 `581c30a0d8384cfd`, which the release workflow signs Kalzit's plugins with, and the offline backup
 key `df87ab1649696788`; a build may add more with `KALZIT_PLUGIN_PUBLIC_KEYS`. They are never listed
 here; release keys are never trusted for plugins.
+
+### Catalog signing: `PUT /admin/plugin-keys/{keyId}/catalog`
+
+`{ "maySignCatalog": true }` allows a trusted publisher key to sign the catalog index too, `false`
+takes that back; answers the key as above (`404` for an unknown key). Trusting a key for plugins
+alone does not let it sign the catalog; Kalzit's own plugin keys always may. Recorded as
+`plugins.key_catalog_allowed` and `plugins.key_catalog_disallowed`. The UI asks before allowing.
 
 ### Hand-overs: `POST /admin/plugins/{pluginId}/handovers`
 
@@ -253,6 +260,15 @@ plugin), through the one HTTP client with the data source target rules
 4 MiB of index, 4 KiB of signature and 256 MiB of package. Requests carry Kalzit's version (user
 agent) and platform (`x-kalzit-platform`) and nothing else.
 
+Addresses: requests to the configured host and port may reach whatever that host resolves to,
+so an administrator can point the catalog at a private mirror, but never Kalzit's own listening
+ports (`catalog.own_address`); when the configured host resolves to public addresses, only public
+addresses are used for it. Every other host, a package host named in the index or a redirect
+elsewhere, must resolve to public addresses only: loopback, private, shared, link-local and
+unique-local addresses are refused (`catalog.private_target`). Redirects (at most 5) are followed
+hop by hop, each over HTTPS and checked this way; names are resolved once per connection and the
+connection goes to the checked address.
+
 Settings (server, `PATCH /admin/settings/{key}`, recorded as `settings.updated`; environment
 variables `KALZIT_SETTING_PLUGINS_CATALOG_*` override them):
 
@@ -265,8 +281,10 @@ variables `KALZIT_SETTING_PLUGINS_CATALOG_*` override them):
 **The index** is the JSON of `kalzit_plugin_api::catalog::CatalogIndex`, its signature a file next
 to it at the same address with `.sig` appended, JSON like a package's
 (`{ "keyId", "signature" }`), an Ed25519 signature over `kalzit-plugin-catalog-v1\n` followed by
-the index's exact bytes. It must be signed by a key trusted for plugins: Kalzit's own plugin keys
-or a publisher key an administrator added. An index is taken only when
+the index's exact bytes. It must be signed by a key allowed for the catalog: Kalzit's own plugin
+keys, or a trusted publisher key an administrator explicitly allowed to
+(`PUT /admin/plugin-keys/{keyId}/catalog`); trusting a key for plugins alone is not enough. An
+index is taken only when
 
 - its signature verifies (`catalog.signature_missing`, `catalog.signer_untrusted`,
   `catalog.signature_invalid`), and with the key pinned for this address: the first list taken
@@ -750,7 +768,9 @@ Rules:
 | `catalog.too_large` | `bytes` | the index, its signature or a package is larger than allowed (`422`) |
 | `catalog.signature_missing` | | there is no signature next to the index (`422`) |
 | `catalog.signature_invalid` | | the index does not match its signature, or the signature cannot be read; always refused (`422`) |
-| `catalog.signer_untrusted` | `keyId` | the index is signed with a key this server does not trust for plugins, or no longer trusts the key of the stored index (install) (`422`) |
+| `catalog.signer_untrusted` | `keyId` | the index is signed with a key not allowed for the catalog, or the stored index's key is allowed no more (install) (`422`) |
+| `catalog.private_target` | | a host other than the configured one (a package host, a redirect) resolves to a loopback, private or link-local address, or the configured public host does (`422 datasource_target_blocked`) |
+| `catalog.own_address` | | the catalog address points at one of Kalzit's own listening ports on this computer (`422 datasource_target_blocked`) |
 | `catalog.key_changed` | `keyId`, `previousKeyId` | the index of this address is signed by another key than the one pinned for it; repeat the refresh with `acceptKeyChange=true` (`409`) |
 | `catalog.invalid` | | the index is not valid JSON of the index format (`422`) |
 | `catalog.format_unsupported` | `format` | the index has a format this Kalzit does not read (`422`) |

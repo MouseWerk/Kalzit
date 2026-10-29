@@ -32,7 +32,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::datasources::Detail;
 use crate::error::{ApiError, ApiResult};
-use crate::http::{self, HttpClient, HttpError, HttpOptions};
+use crate::http::{self, HttpClient, HttpError, HttpOptions, LocalGuard};
 
 /// The time limit of each request for the index and for its signature.
 pub const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
@@ -40,6 +40,8 @@ pub const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The largest signature file accepted.
 const MAX_SIGNATURE_BYTES: usize = 4 * 1024;
+/// Redirects followed per request; each hop is checked like the first.
+const MAX_REDIRECTS: usize = 5;
 /// How often the background loop looks whether a refresh is due.
 const TICK: Duration = Duration::from_secs(5 * 60);
 /// After a failed refresh, the next try comes after this long at the latest.
@@ -108,6 +110,9 @@ impl Failure {
             | "catalog.entry_revoked"
             | "catalog.key_changed" => (StatusCode::CONFLICT, "conflict"),
             "catalog.unreachable" | "catalog.download_failed" => (StatusCode::BAD_GATEWAY, "datasource_error"),
+            "catalog.private_target" | "catalog.own_address" => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked")
+            }
             r if r.starts_with("target.") => (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"),
             // The index's own refusals (`kalzit_plugin_api::catalog::CatalogError::code`).
             "catalog.too_large"
@@ -290,40 +295,86 @@ impl Catalog {
         *self.extra_root_pem.write().unwrap_or_else(|e| e.into_inner()) = pem;
     }
 
-    async fn client(&self, state: &AppState, timeout: Duration) -> Result<HttpClient, Failure> {
+    /// The clients of one catalog operation for the configured address `url` (see `Clients`).
+    async fn clients(&self, state: &AppState, url: &str, timeout: Duration) -> Result<Clients, Failure> {
         let policy =
             state.datasources.policy(state).await.map_err(|e| Failure::new("catalog.unreachable", e.message))?;
+        let parsed =
+            Url::parse(url).map_err(|e| Failure::new("catalog.url_invalid", format!("{url} is not a URL: {e}")))?;
+        let host = parsed.host_str().unwrap_or_default().trim_matches(['[', ']']).to_string();
+        let port = parsed.port_or_known_default().unwrap_or(443);
+        let private = || {
+            Detail::new("catalog.private_target", "the catalog may reach only public addresses outside its own host")
+        };
+        let public_only = LocalGuard { refused: private(), private: Some(private()) };
+        // The configured host itself: an administrator may point it at a private mirror (its
+        // addresses decide), but never at Kalzit's own listening ports.
+        let own_ports: Vec<u16> =
+            [state.config.http_addr(), state.config.https_addr()].into_iter().flatten().map(|a| a.port()).collect();
+        let resolved = policy
+            .resolve_all(&host, port)
+            .await
+            .map_err(|e| Failure::from_http(&HttpError::from(e), "catalog.unreachable"))?;
+        let home_private = resolved.iter().any(|a| LocalGuard::is_private(a.ip()));
+        let home_guard = if !home_private {
+            Some(public_only.clone())
+        } else if own_ports.contains(&port) {
+            Some(LocalGuard {
+                refused: Detail::new("catalog.own_address", "the catalog address points at this Kalzit server"),
+                private: None,
+            })
+        } else {
+            None
+        };
         let extra_root_pem = self.extra_root_pem.read().unwrap_or_else(|e| e.into_inner()).clone();
-        http::client(HttpOptions { timeout, extra_root_pem, policy })
+        let build = |guard: Option<LocalGuard>| {
+            http::client_guarded(
+                HttpOptions { timeout, extra_root_pem: extra_root_pem.clone(), policy: policy.clone() },
+                guard,
+            )
             .map_err(|e| Failure::new("catalog.unreachable", e.to_string()).with("detail", e))
+        };
+        Ok(Clients { home: build(home_guard)?, public: build(Some(public_only))?, host, port })
     }
 
-    /// One GET over HTTPS (redirects too), with the platform named and nothing else of Kalzit's.
-    async fn get(client: &HttpClient, url: &str, reason: &str) -> Result<reqwest::Response, Failure> {
-        let url =
+    /// One GET over HTTPS with the platform named and nothing else of Kalzit's. Redirects are
+    /// followed here, each hop over HTTPS and with the client its host calls for.
+    async fn get(clients: &Clients, url: &str, reason: &str) -> Result<reqwest::Response, Failure> {
+        let mut url =
             Url::parse(url).map_err(|e| Failure::new("catalog.url_invalid", format!("{url} is not a URL: {e}")))?;
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json, application/octet-stream"));
         if let Some(platform) = super::platform() {
             headers.insert("x-kalzit-platform", HeaderValue::from_static(platform));
         }
-        let hop = |_: &Method, u: &Url| {
-            if u.scheme() == "https" {
-                Ok(())
-            } else {
-                Err(Detail::new("catalog.https_required", "the catalog and its packages are loaded over HTTPS only")
-                    .with("host", u.host_str().unwrap_or_default()))
+        for _ in 0..=MAX_REDIRECTS {
+            if url.scheme() != "https" {
+                return Err(Failure::new(
+                    "catalog.https_required",
+                    "the catalog and its packages are loaded over HTTPS only",
+                )
+                .with("host", url.host_str().unwrap_or_default()));
             }
-        };
-        let response = client
-            .send_checked(Method::GET, url, headers, None, Some(&hop))
-            .await
-            .map_err(|e| Failure::from_http(&e, reason))?;
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            return Err(Failure::new(reason, format!("the server answered {status}")).with("detail", status));
+            let response = clients
+                .for_url(&url)
+                .send_once(Method::GET, url.clone(), headers.clone(), None)
+                .await
+                .map_err(|e| Failure::from_http(&e, reason))?;
+            if response.status().is_redirection()
+                && let Some(location) = response.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok())
+            {
+                url = url
+                    .join(location)
+                    .map_err(|e| Failure::new("catalog.url_invalid", format!("invalid redirect target: {e}")))?;
+                continue;
+            }
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                return Err(Failure::new(reason, format!("the server answered {status}")).with("detail", status));
+            }
+            return Ok(response);
         }
-        Ok(response)
+        Err(Failure::new(reason, format!("more than {MAX_REDIRECTS} redirects")).with("detail", "redirects"))
     }
 
     /// Loads the index and its signature, checks them and keeps the index. The result of the try
@@ -343,7 +394,7 @@ impl Catalog {
         }
         let now = state.clock.now_ms();
         let mut saved = load(&state.db).await?;
-        let trusted = state.plugins.trusted_keys(&state.db).await?;
+        let trusted = catalog_keys(state).await?;
         let outcome = self.fetch(state, &cfg.url, &trusted, &saved, now, accept_key_change).await;
         saved.attempted_at = Some(now);
         let summary = match outcome {
@@ -391,7 +442,7 @@ impl Catalog {
         now: i64,
         accept_key_change: bool,
     ) -> Result<Fetched, Failure> {
-        let client = self.client(state, INDEX_TIMEOUT).await?;
+        let client = self.clients(state, url, INDEX_TIMEOUT).await?;
         let response = Self::get(&client, url, "catalog.unreachable").await?;
         let bytes = http::read_limited(response, catalog::MAX_INDEX_BYTES)
             .await
@@ -506,8 +557,9 @@ impl Catalog {
         view.checked_at = saved.checked_at;
         let now_secs = u64::try_from(state.clock.now_ms() / 1000).unwrap_or_default();
         let trusted = state.plugins.trusted_keys(&state.db).await?;
+        let signers = catalog_keys(state).await?;
         let signer_trusted =
-            saved.key_hex.as_deref().and_then(key_from_hex).is_some_and(|k| trusted.iter().any(|t| t.key == k));
+            saved.key_hex.as_deref().and_then(key_from_hex).is_some_and(|k| signers.iter().any(|t| t.key == k));
         // A list whose key is trusted no more, or past its expiry, offers nothing to install.
         view.state = if !signer_trusted {
             "untrusted"
@@ -601,7 +653,7 @@ impl Catalog {
         state: &AppState,
         id: &str,
         version: &str,
-    ) -> Result<(CatalogEntry, HttpClient), Failure> {
+    ) -> Result<(CatalogEntry, Clients), Failure> {
         let internal = |e: ApiError| Failure::new("catalog.download_failed", e.message);
         let cfg = config(state).await.map_err(internal)?;
         if !cfg.enabled {
@@ -618,7 +670,7 @@ impl Catalog {
             return Err(Failure::from_index(&catalog::CatalogError::Expired { expires_at: index.expires_at }));
         }
         // The key that signed the stored index must still be trusted.
-        let trusted = state.plugins.trusted_keys(&state.db).await.map_err(internal)?;
+        let trusted = catalog_keys(state).await.map_err(internal)?;
         let signer = saved.key_hex.as_deref().and_then(key_from_hex);
         if !signer.is_some_and(|k| trusted.iter().any(|t| t.key == k)) {
             let key_id = signer.as_ref().map(signing::key_id).unwrap_or_default();
@@ -642,7 +694,7 @@ impl Catalog {
             return Err(Failure::new("catalog.too_large", "the package is larger than a plugin package may be")
                 .with("bytes", MAX_PACKAGE_BYTES));
         }
-        let client = self.client(state, DOWNLOAD_TIMEOUT).await?;
+        let client = self.clients(state, &cfg.url, DOWNLOAD_TIMEOUT).await?;
         Ok((entry, client))
     }
 
@@ -688,7 +740,7 @@ fn verify(index: &[u8], signature: &[u8], trusted: &[TrustedKey]) -> Result<Veri
 }
 
 /// Streams the entry's package into `target`: at most its size, and its SHA-256 must match.
-async fn download(client: &HttpClient, entry: &CatalogEntry, target: &Path) -> Result<(), Failure> {
+async fn download(client: &Clients, entry: &CatalogEntry, target: &Path) -> Result<(), Failure> {
     let mut response = Catalog::get(client, &entry.url, "catalog.download_failed").await?;
     let mismatch = |field: &str| {
         Failure::new(
@@ -756,6 +808,78 @@ async fn compare(archive: &Path, entry: &CatalogEntry, trusted: Vec<TrustedKey>)
 
 fn host_failure(e: super::HostError) -> Failure {
     Failure { reason: e.reason.to_string(), params: e.params, message: e.message }
+}
+
+/// The clients of one catalog operation. Requests to the configured host (and port) use `home`:
+/// public addresses only, unless the administrator pointed the address at a private host, and
+/// never Kalzit's own ports. Every other host (another package host, a redirect elsewhere) uses
+/// `public`, which refuses loopback, private and link-local addresses. Both resolve names through
+/// the target rules and connect to the address they checked.
+struct Clients {
+    home: HttpClient,
+    public: HttpClient,
+    host: String,
+    port: u16,
+}
+
+impl Clients {
+    fn for_url(&self, url: &Url) -> &HttpClient {
+        let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']);
+        if host.eq_ignore_ascii_case(&self.host) && url.port_or_known_default() == Some(self.port) {
+            &self.home
+        } else {
+            &self.public
+        }
+    }
+}
+
+/// The keys that may sign the catalog index: Kalzit's own plugin keys, and the trusted publisher
+/// keys an administrator explicitly allowed to (`may_sign_catalog`). Trusting a key for plugins
+/// alone does not let it sign the catalog.
+async fn catalog_keys(state: &AppState) -> ApiResult<Vec<TrustedKey>> {
+    let trusted = state.plugins.trusted_keys(&state.db).await?;
+    let allowed: Vec<(String,)> =
+        sqlx::query_as("SELECT public_key FROM plugin_keys WHERE may_sign_catalog = 1").fetch_all(&state.db).await?;
+    let allowed: Vec<VerifyingKey> = allowed.iter().filter_map(|(k,)| key_from_hex(k)).collect();
+    Ok(trusted.into_iter().filter(|t| t.signer == Signer::Kalzit || allowed.contains(&t.key)).collect())
+}
+
+/// Whether the trusted publisher key `key_id` may sign the catalog.
+pub async fn may_sign_catalog(db: &sqlx::AnyPool, key_id: &str) -> ApiResult<bool> {
+    let row: Option<(i64,)> = sqlx::query_as("SELECT may_sign_catalog FROM plugin_keys WHERE key_id = $1")
+        .bind(key_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.is_some_and(|(v,)| v == 1))
+}
+
+/// Allows the trusted publisher key `key_id` to sign the catalog, or takes that back; recorded
+/// as `plugins.key_catalog_allowed` or `plugins.key_catalog_disallowed`.
+pub async fn set_may_sign_catalog(state: &AppState, key_id: &str, allowed: bool, actor: &Actor<'_>) -> ApiResult<()> {
+    let mut tx = crate::db::begin(&state.db).await?;
+    let changed = sqlx::query("UPDATE plugin_keys SET may_sign_catalog = $1 WHERE key_id = $2")
+        .bind(i64::from(allowed))
+        .bind(key_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if changed == 0 {
+        return Err(ApiError::not_found());
+    }
+    let action = if allowed { "plugins.key_catalog_allowed" } else { "plugins.key_catalog_disallowed" };
+    let event = AuditEvent {
+        org_id: None,
+        actor_user_id: Some(actor.user_id),
+        actor_address: Some(actor.address.clone()),
+        action,
+        resource_type: Some("plugin"),
+        resource_id: Some(key_id),
+        summary: json!({ "keyId": key_id }),
+        at_ms: state.clock.now_ms(),
+    };
+    audit::record(&mut tx, &event).await?;
+    crate::db::commit(tx).await?;
+    Ok(())
 }
 
 /// Removes the downloaded package when the install ends, however it ends.

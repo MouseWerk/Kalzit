@@ -262,4 +262,34 @@ describe("Plugins, catalog", () => {
     expect(await screen.findByText("The catalog could not be loaded.")).toBeTruthy();
     expect(screen.getAllByText(/does not match its signature/).length).toBeGreaterThan(0);
   });
+
+  it("lets a trusted key sign the catalog only after a confirmation", async () => {
+    const { user, server } = await openAdmin("/settings/plugins#trust", {
+      isServerAdmin: true,
+      setupServer: (s) => {
+        s.areas.plugins.keys.push({
+          keyId: "7f3a91c20d5be4a8",
+          publicKey: "AAAA",
+          name: "Nordlicht Data GmbH",
+          addedAt: CATALOG_AT,
+          plugins: [],
+        });
+      },
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Allow for the catalog: Nordlicht Data GmbH" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Let Nordlicht Data GmbH sign the catalog?",
+    });
+    expect(within(dialog).getByText(/7F3A 91C2 0D5B E4A8/)).toBeTruthy();
+    expect(calls(server, "PUT", "/catalog")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Allow for the catalog" }));
+    expect(await screen.findByText("May sign the catalog")).toBeTruthy();
+    expect(
+      calls(server, "PUT", "/api/admin/plugin-keys/7f3a91c20d5be4a8/catalog")[0]?.body,
+    ).toEqual({
+      maySignCatalog: true,
+    });
+  });
 });

@@ -102,6 +102,9 @@ pub struct HttpClient {
 pub struct LocalGuard {
     /// What a refusal answers with.
     pub refused: crate::datasources::Detail,
+    /// Also refuse every address that is not public (`is_private`), with this answer: for a
+    /// client that must only reach the internet (the plugin catalog's hops to other hosts).
+    pub private: Option<crate::datasources::Detail>,
 }
 
 impl LocalGuard {
@@ -112,8 +115,44 @@ impl LocalGuard {
         ip.is_loopback() || ip.is_unspecified() || std::net::UdpSocket::bind((ip, 0)).is_ok()
     }
 
+    /// Whether `ip` is not a public address: loopback, unspecified, private (RFC 1918), shared
+    /// (100.64.0.0/10), link-local, broadcast, documentation and benchmarking ranges, IPv6 unique
+    /// local and link-local; IPv4 mapped into IPv6 counts as the IPv4 address.
+    pub fn is_private(ip: std::net::IpAddr) -> bool {
+        match ip.to_canonical() {
+            std::net::IpAddr::V4(v4) => {
+                let [a, b, ..] = v4.octets();
+                v4.is_loopback()
+                    || v4.is_unspecified()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_documentation()
+                    || (a == 100 && (64..128).contains(&b))
+                    || (a == 198 && (18..20).contains(&b))
+                    || a == 0
+                    || a >= 240
+            }
+            std::net::IpAddr::V6(v6) => {
+                let first = v6.segments()[0];
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || (first & 0xfe00) == 0xfc00
+                    || (first & 0xffc0) == 0xfe80
+                    || (first & 0xff00) == 0xff00
+                    || (first == 0x2001 && v6.segments()[1] == 0x0db8)
+            }
+        }
+    }
+
     fn check(&self, ip: std::net::IpAddr) -> Result<(), Blocked> {
-        if Self::is_local(ip) { Err(Blocked(self.refused.clone())) } else { Ok(()) }
+        if Self::is_local(ip) {
+            return Err(Blocked(self.refused.clone()));
+        }
+        match &self.private {
+            Some(refused) if Self::is_private(ip) => Err(Blocked(refused.clone())),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -435,9 +474,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn private_addresses_are_known_in_every_form() {
+        for private in [
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(LocalGuard::is_private(private.parse().unwrap()), "{private}");
+        }
+        for public in ["1.1.1.1", "8.8.8.8", "2606:4700::1111", "::ffff:1.1.1.1"] {
+            assert!(!LocalGuard::is_private(public.parse().unwrap()), "{public}");
+        }
+    }
+
     #[tokio::test]
     async fn a_guarded_client_refuses_local_targets_by_literal_and_by_name() {
-        let guard = LocalGuard { refused: crate::datasources::Detail::new("ai.base_url_kalzit", "Kalzit itself") };
+        let guard = LocalGuard {
+            refused: crate::datasources::Detail::new("ai.base_url_kalzit", "Kalzit itself"),
+            private: None,
+        };
         let policy = TargetPolicy::new(std::path::Path::new("."), "sqlite::memory:", &[], &[]);
         let c = client_guarded(
             HttpOptions { timeout: Duration::from_secs(5), extra_root_pem: None, policy: Arc::new(policy) },

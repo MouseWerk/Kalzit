@@ -632,6 +632,8 @@
   "datasources.reason.catalog.url_invalid": "Die Adresse des Katalogs ist keine gültige URL.",
   "datasources.reason.catalog.unreachable": "Der Katalog war nicht erreichbar: {detail}",
   "datasources.reason.catalog.https_required": "Kalzit lädt den Katalog und seine Pakete nur über HTTPS; {host} war es nicht.",
+  "datasources.reason.catalog.private_target": "Der Katalog darf außerhalb seines eigenen Hosts nur öffentliche Adressen erreichen; diese Adresse ist privat, lokal oder link-lokal.",
+  "datasources.reason.catalog.own_address": "Die Adresse des Katalogs zeigt auf diesen Kalzit-Server.",
   "datasources.reason.catalog.too_large": "Katalog oder Paket ist größer als erlaubt ({bytes} Byte).",
   "datasources.reason.catalog.signature_missing": "Neben dem Katalog liegt keine Signatur (die Adresse mit angehängtem .sig).",
   "datasources.reason.catalog.signature_invalid": "Die Katalogliste passt nicht zu ihrer Signatur, weil sie nach dem Signieren geändert wurde oder beschädigt ist. Kalzit hat sie nicht übernommen.",

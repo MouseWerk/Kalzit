@@ -120,8 +120,11 @@ To use it, a server administrator enters the **Address of the catalog** (Adresse
 the Catalog tab, an `https://` address of the list, and turns on **Use the catalog** (Katalog
 verwenden). There is no address by default; it can be the project's catalog or your own mirror in
 the internal network. The list must be signed with Kalzit's plugin key or a publisher key you
-trust under **Signature and trust**; its signature lies next to it at the same address with `.sig`
-appended. **Load again every** (Erneut laden alle) sets how often Kalzit loads it (24 hours by
+allowed for the catalog: under **Signature and trust**, **Allow for the catalog…** (Für den Katalog
+erlauben…) on a trusted key, after a confirmation. Trusting a key for plugins alone does not let
+it sign the catalog. The signature lies next to the list at the same address with `.sig`
+appended. Packages and redirects on other hosts than the catalog's own must be public addresses,
+and the catalog address can never be Kalzit itself. **Load again every** (Erneut laden alle) sets how often Kalzit loads it (24 hours by
 default). The three settings can also be set in the environment
 (`KALZIT_SETTING_PLUGINS_CATALOG_ENABLED`, `..._URL`, `..._REFRESH_HOURS`); the tab then shows
 them read-only.
