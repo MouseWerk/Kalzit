@@ -175,6 +175,8 @@
     --brand-mariadb: #003545;
     --brand-sqlite: #003b57;
     --brand-prometheus: #e6522c;
+    --brand-influxdb: #22adf6;
+    --brand-clickhouse: #ffcc01;
     --brand-mongodb: #47a248;
     --brand-elasticsearch: #005571;
     --brand-opensearch: #005eb8;

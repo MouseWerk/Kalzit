@@ -1,4 +1,6 @@
+import clickhouse from "../../assets/logos/clickhouse.svg?raw";
 import elasticsearch from "../../assets/logos/elasticsearch.svg?raw";
+import influxdb from "../../assets/logos/influxdb.svg?raw";
 import mariadb from "../../assets/logos/mariadb.svg?raw";
 import mongodb from "../../assets/logos/mongodb.svg?raw";
 import mysql from "../../assets/logos/mysql.svg?raw";
@@ -34,7 +36,10 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   mysql: "sql",
   mssql: "sql",
   sqlite: "sqlFile",
+  clickhouse: "sql",
   prometheus: "metrics",
+  influxdb: "metrics",
+  loki: "search",
   mongodb: "documents",
   elasticsearch: "search",
   opensearch: "search",
@@ -47,7 +52,9 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
 
 /** The files as bundled: one filled path each on a 24 px box, read once at load. */
 const LOGO_FILES = {
+  clickhouse,
   elasticsearch,
+  influxdb,
   mariadb,
   mongodb,
   mysql,
@@ -70,14 +77,16 @@ export const LOGO_PATHS = Object.fromEntries(
 
 /**
  * The logos per kind. A kind that serves two products (MySQL and MariaDB, Elasticsearch and
- * OpenSearch) shows both. SQL Server, Memgraph and TigerGraph have no file their owners allow to
+ * OpenSearch) shows both. SQL Server, Loki, Memgraph and TigerGraph have no file their owners allow to
  * be copied into another product, so they keep the glyph (NOTICE.md).
  */
 export const KIND_LOGOS: Readonly<Record<string, readonly LogoName[]>> = {
   postgres: ["postgresql"],
   mysql: ["mysql", "mariadb"],
   sqlite: ["sqlite"],
+  clickhouse: ["clickhouse"],
   prometheus: ["prometheus"],
+  influxdb: ["influxdb"],
   mongodb: ["mongodb"],
   elasticsearch: ["elasticsearch", "opensearch"],
   opensearch: ["opensearch"],

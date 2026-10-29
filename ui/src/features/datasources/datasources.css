@@ -723,6 +723,14 @@
     color: var(--brand-prometheus);
   }
 
+  .kind-logo[data-logo="influxdb"] {
+    color: var(--brand-influxdb);
+  }
+
+  .kind-logo[data-logo="clickhouse"] {
+    color: var(--brand-clickhouse);
+  }
+
   .kind-logo[data-logo="mongodb"] {
     color: var(--brand-mongodb);
   }

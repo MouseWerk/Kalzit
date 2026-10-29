@@ -279,9 +279,17 @@ export interface FieldsSchema {
   fields: FieldSchema[];
 }
 
+/** Loki: the stream labels with some of their values, for label matchers. */
+export interface LabelsSchema {
+  kind: "labels";
+  labels: string[];
+  values: Record<string, string[]>;
+}
+
 export type SourceSchema =
   | SqlSchema
   | PromSchema
+  | LabelsSchema
   | CollectionsSchema
   | GraphSourceSchema
   | IndicesSchema

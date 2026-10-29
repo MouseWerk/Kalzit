@@ -37,8 +37,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 ## Kinds: `GET /orgs/{orgId}/datasource-kinds`
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
-`sqlite`, `mssql`, `prometheus`, `elasticsearch`, `file`, `http_json`, `mongodb`, `neo4j`,
-`memgraph`, `tigergraph`.
+`sqlite`, `mssql`, `clickhouse`, `prometheus`, `influxdb`, `loki`, `elasticsearch`, `file`,
+`http_json`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
 
 ```json
 {
@@ -73,6 +73,13 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   - `sqlite`: "The file is opened read-only. It must lie in a directory a server administrator
     allowed."
   - `prometheus`: "Use a token or account that can only query."
+  - `clickhouse`: "Use a user whose profile is read-only (readonly = 1) and has a
+    max_execution_time. Kalzit also sends every query with readonly = 1 and checks it, but only
+    the server's permissions are a real boundary."
+  - `influxdb`: "Use a token (or user) that can only read the buckets or databases you want to
+    show. Kalzit sends only queries and checks each one, but only InfluxDB's permissions are a
+    real boundary."
+  - `loki`: "Kalzit sends only read requests. Use credentials that can only query."
   - `elasticsearch`: "Use an account or API key with only the read privilege on the indices
     (and `monitor` on the cluster for the version check). Kalzit sends only searches, counts and
     mapping reads, but only the cluster's permissions are a real boundary."
@@ -104,6 +111,9 @@ Fields per kind (common fields omitted):
 | `sqlite` | `path`* (absolute path of the file) |
 | `mssql` | `host`*, `port` (1433), `database`*, `user`*, `password` S, `encrypt` (bool, default true), `trustServerCertificate` (bool, default false), `caCert` |
 | `prometheus` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
+| `clickhouse` | `url`* (the HTTP interface, `http(s)://host[:port][/path]`, usually port 8123 or 8443), `database` (default `default`), `user` (default `default`), `password` S, `caCert` |
+| `influxdb` | `url`* (`http(s)://host[:port][/path]`), `version` (`v1`, `v2` default, `v3`), `organization` (2.x), `database` (the database, or the bucket in 2.x), `user` (1.x), `password` S (1.x), `token` S (2.x and 3.x; with a user it is not sent), `caCert` |
+| `loki` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `tenantId` (sent as `X-Scope-OrgID`, a target field), `caCert` |
 | `elasticsearch` | `url`* (`http(s)://host[:port][/path]`, no query), `basicAuthUser`, `basicAuthPassword` S, `apiKey` S (sent as `ApiKey <key>`), `bearerToken` S, `caCert`, `index` (default index or pattern), `timeField` (default `@timestamp`; empty: no time filter) |
 | `file` | `path`* (absolute path of a CSV, JSON or NDJSON file), `format` (`auto` default, `csv`, `json`, `ndjson`), `delimiter` (`auto` default, `comma`, `semicolon`, `tab`, `pipe`), `decimal` (`auto` default, `point`, `comma`), `header` (bool, default true) |
 | `http_json` | `url`* (`http(s)://host[:port][/path][?query]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `apiKeyHeader` (a header name such as `X-Api-Key`), `apiKey` S (sent in that header), `caCert`, `documentsPath` (where the documents are in the answer, see below) |
@@ -129,7 +139,8 @@ i18n keys the UI needs: `datasources.settings.<name>` for every field name above
 `queryTimeoutSecs`, `maxRows`, `cacheEnabled` and `cacheTtlSecs`, and `datasources.kinds.<kind>.hint` for each kind. For
 `mongodb`, `maxRows` limits documents. TigerGraph's `url`, `secret` and `graph` use the labels
 `datasources.settings.gsqlUrl`, `datasources.settings.restppSecret` and
-`datasources.settings.graph`.
+`datasources.settings.graph`. InfluxDB's `version` and `database` use
+`datasources.settings.influxVersion` and `datasources.settings.influxDatabase`.
 
 ## List: `GET /orgs/{orgId}/datasources`
 
@@ -440,6 +451,17 @@ SQL kinds:
 { "kind": "metrics", "metrics": ["up", "http_requests_total"], "labels": ["instance", "job"] }
 ```
 
+ClickHouse answers `tables` from `system.columns` of the source's database (at most 20,000
+columns). InfluxDB answers `tables` for the source's `database`: one table per measurement with
+its fields (type `float`, `integer`, `string`, `boolean`) and tags (type `tag`), read with
+`SHOW FIELD KEYS` and `SHOW TAG KEYS` (1.x and 2.x) or from `information_schema.columns` (3.x);
+no tables without a database. Loki answers the stream labels of the last six hours and the values
+of the first 50 labels (at most 200 each):
+
+```json
+{ "kind": "labels", "labels": ["app", "level"], "values": { "app": ["api", "web"], "level": ["error", "info"] } }
+```
+
 Elasticsearch and OpenSearch: the indices matching the source's `index` (all when it is empty),
 by name, without hidden ones (starting with `.`), at most 1,000, with their mapped fields (object
 fields as dotted paths, multi-fields as `name.sub`, at most 5,000 per index) and the mapping type:
@@ -621,6 +643,87 @@ limit), so `[$__interval]` covers one step;
 `$__range`, `$__timeFrom`, `$__timeTo` (Unix seconds). Variables are allowed only inside quoted
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
+
+### ClickHouse: `{"sql": "..."}`
+
+As the SQL kinds above, with ClickHouse's own syntax (`FINAL`, `PREWHERE`, `ARRAY JOIN`, lambda
+functions). Kalzit sends each query over the HTTP interface by POST with `max_execution_time`
+(the query time limit), `cancel_http_readonly_queries_on_client_close=1` and then `readonly=1`, so
+the server stops the query at the limit or when Kalzit hangs up and refuses writes, DDL and
+further setting changes; Kalzit adds `FORMAT JSONCompactEachRowWithNamesAndTypes` itself; it reads the answer row by row and stops at the row and size limits. Macros and variables
+become query parameters: `{p1:Int64}` and `param_p1=...` (times as
+`fromUnixTimestamp64Milli({p1:Int64}, 'UTC')`, `$__interval` as `toIntervalSecond` or, below whole
+seconds, `toIntervalMillisecond`). Refused besides what all SQL kinds refuse: `SETTINGS` and
+`FORMAT` clauses, query parameters written by hand (`{name:Type}`, `sql.placeholder`), `#`
+outside strings (use `--` for comments), backslashes inside quoted names, `$` directly after a
+name and here-doc strings (any `$` outside single-quoted strings and comments other than `$name`,
+`${name}` and `$__` macros), and table functions that read files or reach other servers (`file`, `url`,
+`s3`, `remote`, `mysql`, `postgresql`, `jdbc`, `executable`, `input`, ...). Types: `Int8` to
+`UInt32` and floats `number`, 64-bit and larger integers `int64`, `Decimal` `decimal`, `Bool`
+`bool`, `Date` and `Date32` `date`, `DateTime` and `DateTime64` `time` (in the column's zone, else
+the server's from `X-ClickHouse-Timezone`), arrays, maps, tuples and JSON `json`, everything else
+`string` (with a `frame.type_unsupported` notice for unknown types). The statement the checker
+reads is built next to the one sent, from the same pieces, and both must tokenize alike apart from
+the parameters (`sql.check_mismatch`), so text in comments, strings or quoted names can never
+change what is checked. A user whose profile is already `readonly = 1` must allow
+`max_execution_time` and `cancel_http_readonly_queries_on_client_close` to be set (a settings
+constraint `changeable_in_readonly`), or use `readonly = 2`.
+
+### InfluxDB: `{"flux": "..."}`, `{"influxql": "..."}` or `{"sql": "..."}`
+
+Exactly one language per query (`influxdb.query_form`): Flux for 1.8 and 2.x, InfluxQL for every
+version, SQL for 3.x; another is `influxdb.language_unavailable`. The answer is one frame. Series
+over time (Flux tables with `_time` and `_value`, InfluxQL series starting with `time`) become a
+`time` field and one value field per series, named like `cpu.usage {host="a"}` with the series'
+group key or tags as `labels`; other answers (`SHOW ...`, Flux tables without `_time`) are a table
+of their columns. SQL answers are read as JSON lines; columns named `time` and RFC 3339 texts
+become `time`.
+
+- Flux is sent to `POST /api/v2/query?org=<organization>`. Macros: `v.timeRangeStart`,
+  `v.timeRangeStop` (RFC 3339 times), `v.windowPeriod` (the interval as a duration),
+  `v.bucket` (the source's `database` as a string), and `$__timeFrom`, `$__timeTo`,
+  `$__interval`, `$__interval_ms`, `$__range`. Refused: calls of `to()` and `wideTo()`
+  (`flux.write_refused`), imports other than `array`, `date`, `dict`, `experimental` (and its
+  `aggregate`, `array`, `date/boundaries`, `geo`, `query`, `table`), `influxdata/influxdb/schema`,
+  `influxdata/influxdb/v1`, `interpolate`, `join`, `math`, `regexp`, `runtime`, `sampledata`,
+  `strings`, `system`, `timezone`, `types` and `universe` (`flux.package_not_allowed`), imports
+  with an alias (`import r "..."`, `flux.import_form`), the names `to` and `wideTo` anywhere (also
+  assigned, passed or read from a package), and the names `host` and `token` as names or keys
+  (`host: ...`, `"host": ...`, the shorthand `from(bucket: "b", host)`), which would query another
+  server (`flux.remote_not_allowed`); read such a column as `r.host` or `r["host"]`. Code in
+  string interpolations (`"${...}"`) is checked too.
+- InfluxQL is sent by `GET /query?db=<database>&epoch=ms`, which InfluxDB runs only for reads.
+  One `SELECT` without `INTO`, or one `SHOW` (`influxql.*`). Macros: `$__timeFilter` (`time >=
+  <from>ms AND time <= <to>ms`), `$__timeFrom`, `$__timeTo` (`<ms>ms`), `$__interval`,
+  `$__interval_ms`, `$__range`.
+- SQL is sent to `POST /api/v3/query_sql` (`format: jsonl`) and checked like the SQL kinds;
+  macros and variables become named parameters (`$p1`), each cast to its type
+  (`CAST($p1 AS TIMESTAMP)`, `CAST($p2 AS VARCHAR)`).
+
+Variables in Flux and InfluxQL are allowed only inside strings (`"..."` in Flux, `'...'` in
+InfluxQL) and InfluxQL regular expressions (`/.../`), escaped for them; a list becomes `a|b` with
+regex characters escaped (`influxdb.variable_outside_string` elsewhere). Kalzit never calls the
+write or delete APIs: every request, redirects included, must be one of `GET /ping`,
+`GET /health`, `GET /query`, `POST /api/v2/query`, `GET /api/v2/buckets` and
+`POST /api/v3/query_sql` below the source's URL (`influxdb.endpoint_not_allowed`).
+
+### Loki: `{"logql": "...", "limit": 1000, "direction": "backward", "instant": false, "minStepMs": 15000}`
+
+A range query by default (`/loki/api/v1/query_range`, step as for Prometheus), an instant query at
+`timeRange.to` with `"instant": true`. `limit` (default 1,000, at most the row limit) caps the log
+lines; `direction` is `backward` (newest first, default) or `forward`.
+
+- Log queries answer `documents`, one per line, newest first (oldest first going forward):
+  `{"time": {"$type": "date", "value": "<ms>"}, "timestampNs": "<ns>", "line": "...", "labels":
+  {...}}`, with `metadata` where Loki has structured metadata for the line. When Loki answered
+  exactly `limit` lines, `truncated` is set with `documents.limit`: there may be more in the range.
+- Metric queries (`rate(...)`, `count_over_time(...)`) answer a frame as Prometheus does.
+
+Macros and variables as for Prometheus (`$__interval`, `$__rate_interval`, `$__range`, ...);
+variables only inside quoted strings, a list as `a|b` with regex characters escaped in `=~`, `!~`
+and `|~`. Warnings from Loki become `loki.warning` notices. Kalzit sends only GET requests to
+`query`, `query_range`, `labels`, `label/<name>/values` and `status/buildinfo` below
+`/loki/api/v1/` (`loki.endpoint_not_allowed`), never to push, delete or tail.
 
 ### Elasticsearch and OpenSearch: `{"lucene": "..."}` or `{"dsl": {...}}`
 
@@ -1662,6 +1765,35 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `promql.variable_missing` | `name` | a variable without a value |
 | `promql.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
 | `promql.backtick` | `name` | a value with a backtick inside a `raw` string |
+| `sql.settings_clause` | | a `SETTINGS` clause (ClickHouse) |
+| `sql.nul_character` | | the query contains a NUL character |
+| `sql.identifier_backslash` | | ClickHouse: a backslash inside a name in backticks or double quotes, which ClickHouse would read as an escape |
+| `sql.hash_comment` | | ClickHouse: `#` outside strings; write comments with `--` |
+| `sql.dollar_in_name` | | ClickHouse: `$` directly after a name character (`a$b`) |
+| `sql.dollar_quote` | | ClickHouse: a `$` other than in `$name`, `${name}` and `$__` macros, such as here-doc strings (`$$...$$`, `$tag$...$tag$`) |
+| `sql.identifier_characters` | `name` | an identifier variable's value with a NUL, or in ClickHouse with a backtick, double quote or backslash |
+| `sql.check_mismatch` | | ClickHouse: the checked statement and the statement to send do not match |
+| `flux.import_form` | | an import that is not `import "package"` (an alias, say) |
+| `sql.format_clause` | | a `FORMAT` clause (ClickHouse) |
+| `influxdb.query_form` | | not exactly one of `flux`, `influxql` and `sql` |
+| `influxdb.language_unavailable` | `language` | the source's InfluxDB version does not answer this language |
+| `influxdb.query_too_large` | `bytes` | the query text is over `bytes` |
+| `influxdb.database_missing` | | an SQL query without a database in the settings |
+| `influxdb.macro_unknown` | `name` | an unknown `$__` macro |
+| `influxdb.variable_outside_string` | `name` | a variable outside a string or regular expression |
+| `influxdb.variable_missing` | `name` | a variable without a value |
+| `influxdb.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
+| `influxdb.unclosed` | | an unclosed quote, regular expression or comment |
+| `influxdb.endpoint_not_allowed` | `path` | a request (or redirect) to anything but the read endpoints |
+| `flux.write_refused` | `name` | a call of `to()` or `wideTo()` |
+| `flux.package_not_allowed` | `name` | an import of a package that writes or reaches other systems |
+| `flux.remote_not_allowed` | `name` | the name or key `host` or `token`, which would query another server |
+| `influxql.empty` | | the InfluxQL query is empty |
+| `influxql.multiple_statements` | | more than one InfluxQL statement |
+| `influxql.not_read` | | an InfluxQL statement other than `SELECT` and `SHOW` |
+| `influxql.select_into` | | `SELECT ... INTO`, which writes |
+| `loki.empty` | | the LogQL query is empty |
+| `loki.endpoint_not_allowed` | `path` | a request (or redirect) to anything but the read endpoints |
 | `elasticsearch.query_form` | | both `lucene` and `dsl` |
 | `elasticsearch.index_missing` | | neither the query nor the source names an index |
 | `elasticsearch.index_invalid` | `index` | not an index name or pattern list (see above) |
@@ -1869,6 +2001,15 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
 | `prometheus.error` | `status`, `detail` | Prometheus answered an error |
 | `prometheus.result_type` | `type` | an unexpected result type |
+| `clickhouse.credentials_invalid` | | the user or password contains characters a header cannot carry |
+| `clickhouse.error` | `code`, `detail` | ClickHouse answered an error (`code`: its error code) |
+| `clickhouse.not_clickhouse` | `status` | the server answered without a ClickHouse answer |
+| `influxdb.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `influxdb.error` | `status`, `detail` | InfluxDB answered an error |
+| `influxdb.not_an_api_response` | | the server did not answer like InfluxDB |
+| `loki.credentials_invalid` | | the credentials or tenant contain characters a header cannot carry |
+| `loki.error` | `status`, `detail` | Loki answered an error |
+| `loki.not_an_api_response` | `status` | the server answered without a Loki API response |
 | `elasticsearch.error` | `status`, `detail` | Elasticsearch or OpenSearch answered an error (`detail`: its type and reason) |
 | `elasticsearch.not_an_api_response` | `status` | the server answered without a search API response |
 | `elasticsearch.credentials_invalid` | | the credentials contain characters a header cannot carry |
@@ -1926,6 +2067,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 | `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
+| `loki.warning` | `detail` | notice: a warning from Loki |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
 | `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |
 | `elasticsearch.shard_failures` | `count` | notice: `count` shards failed; the result may be incomplete |

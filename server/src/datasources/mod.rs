@@ -9,6 +9,7 @@
 mod api_tests;
 pub mod bolt;
 pub mod cache;
+pub mod clickhouse;
 pub mod csv;
 pub mod cypher;
 pub mod detail;
@@ -20,7 +21,9 @@ pub mod frame;
 pub mod graph;
 pub mod gsql;
 pub mod http_json;
+pub mod influxdb;
 pub mod json_documents;
+pub mod loki;
 pub mod mongodb;
 pub mod mssql;
 pub mod mysql;
@@ -243,6 +246,11 @@ pub enum SourceSchema {
     Metrics {
         metrics: Vec<String>,
         labels: Vec<String>,
+    },
+    /// Log stream labels with some of their values, for label matchers (Loki).
+    Labels {
+        labels: Vec<String>,
+        values: BTreeMap<String, Vec<String>>,
     },
     /// Search indices with their mapped fields (Elasticsearch, OpenSearch).
     Indices {
