@@ -429,9 +429,9 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, saved analyses, live updates with change streams, Docker image | Done |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels with node details, explorer mode, graph steps, variables across result shapes, new sign-in and setup with sample data | Done |
 | M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | In progress |
-| M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, InfluxDB, Loki, ClickHouse | Planned |
-| M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs | Planned |
-| M7 Expansion | Alerting, public links, provisioning as code, further sources (Graphite, Redis, Oracle, traces) | Planned |
+| M5 Operations | OIDC, LDAP and Active Directory, SAML and SCIM, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, query cache, usage insights, InfluxDB, Loki, ClickHouse | Planned |
+| M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label) | Planned |
+| M7 Expansion | Alerting, public links and snapshots, scheduled reports, provisioning as code with Git and a CLI, deeper analysis and Explore, dashboard tabs, XY and map panels, forecast and outlier steps, graph analysis (algorithms, filters, schema, map layout), an MCP server, further sources (Graphite, Redis, Oracle, traces, BigQuery, Snowflake, Databricks) | Planned |
 | M8 Plugin store | Community store for plugins: a site with every plugin, submissions by community authors, review and signing, revocations; the source of the catalog in Kalzit | Planned |
 
 ## Documentation
