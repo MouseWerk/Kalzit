@@ -334,7 +334,8 @@ impl DataSourcePlugin for ClickHouse {
 enum Decoder {
     Number,
     Int64,
-    Decimal,
+    /// With the column's scale (digits after the point).
+    Decimal(u32),
     Bool,
     Text,
     Date,
@@ -354,7 +355,7 @@ impl Decoder {
                 Self::Number
             }
             "Int64" | "UInt64" | "Int128" | "UInt128" | "Int256" | "UInt256" => Self::Int64,
-            "Decimal" | "Decimal32" | "Decimal64" | "Decimal128" | "Decimal256" => Self::Decimal,
+            "Decimal" | "Decimal32" | "Decimal64" | "Decimal128" | "Decimal256" => Self::Decimal(decimal_scale(t)),
             "Bool" | "Boolean" => Self::Bool,
             "String" | "FixedString" | "UUID" | "Enum8" | "Enum16" | "Enum" | "IPv4" | "IPv6" => Self::Text,
             "Date" | "Date32" => Self::Date,
@@ -368,7 +369,7 @@ impl Decoder {
         match self {
             Self::Number => FieldType::Number,
             Self::Int64 => FieldType::Int64,
-            Self::Decimal => FieldType::Decimal,
+            Self::Decimal(_) => FieldType::Decimal,
             Self::Bool => FieldType::Bool,
             Self::Text | Self::Other => FieldType::String,
             Self::Date => FieldType::Date,
@@ -396,12 +397,14 @@ impl Decoder {
                 Value::Number(n) => Value::String(n.to_string()),
                 _ => Value::Null,
             },
-            Self::Decimal => {
-                // The number as ClickHouse wrote it, every digit kept.
+            Self::Decimal(scale) => {
+                // The number as ClickHouse wrote it, every digit kept, with the column's scale:
+                // ClickHouse leaves out trailing zeros (12.5 in a Decimal(10, 2) is 12.50).
                 let digits = text.trim_matches('"');
                 let plain = !digits.is_empty()
-                    && digits.trim_start_matches('-').bytes().all(|b| b.is_ascii_digit() || b == b'.');
-                if plain { Value::String(digits.to_string()) } else { Value::Null }
+                    && digits.trim_start_matches('-').bytes().all(|b| b.is_ascii_digit() || b == b'.')
+                    && digits.bytes().filter(|b| *b == b'.').count() <= 1;
+                if plain { Value::String(with_scale(digits, *scale)) } else { Value::Null }
             }
             Self::Bool => match parsed() {
                 Value::Bool(b) => Value::Bool(b),
@@ -425,6 +428,30 @@ impl Decoder {
             Self::Other => Value::String(text.to_string()),
         }
     }
+}
+
+/// The scale of `Decimal(P, S)` or `Decimal32(S)` (and the 64, 128 and 256 forms); 0 for
+/// `Decimal(P)`.
+fn decimal_scale(type_name: &str) -> u32 {
+    let args = type_name.split_once('(').and_then(|(_, a)| a.strip_suffix(')')).unwrap_or("");
+    let parts: Vec<&str> = args.split(',').map(str::trim).collect();
+    let scale = if type_name.starts_with("Decimal(") { parts.get(1) } else { parts.first() };
+    scale.and_then(|s| s.parse().ok()).unwrap_or(0)
+}
+
+/// `digits` with at least `scale` digits after the point.
+fn with_scale(digits: &str, scale: u32) -> String {
+    let scale = scale as usize;
+    let have = digits.split_once('.').map_or(0, |(_, f)| f.len());
+    if have >= scale {
+        return digits.to_string();
+    }
+    let mut out = digits.to_string();
+    if have == 0 {
+        out.push('.');
+    }
+    out.extend(std::iter::repeat_n('0', scale - have));
+    out
 }
 
 /// The type inside `Nullable(...)` and `LowCardinality(...)`.
@@ -689,8 +716,8 @@ mod tests {
         let lines = [
             r#"["t","t_utc","n","big","price","name","day","tags","ok"]"#,
             r#"["DateTime","DateTime64(3, 'UTC')","Nullable(UInt32)","Int64","Decimal(10, 2)","LowCardinality(String)","Date","Array(String)","Bool"]"#,
-            r#"["2026-10-29 13:00:00","2026-10-29 12:00:00.250",7,"9007199254740993",12.50,"Graz","2026-10-29",["a","b"],true]"#,
-            r#"["2026-10-29 14:00:00","2026-10-29 13:00:00.000",null,"1",-1.00,"Linz","2026-10-30",[],false]"#,
+            r#"["2026-10-29 13:00:00","2026-10-29 12:00:00.250",7,"9007199254740993",12.5,"Graz","2026-10-29",["a","b"],true]"#,
+            r#"["2026-10-29 14:00:00","2026-10-29 13:00:00.000",null,"1",-1,"Linz","2026-10-30",[],false]"#,
             r#"["2026-10-29 15:00:00","2026-10-29 14:00:00.000",1,"2",0.00,"Wien","2026-10-31",[],true]"#,
         ];
         let mut results = Vec::new();

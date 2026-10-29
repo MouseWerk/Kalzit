@@ -397,8 +397,10 @@ impl Client {
     ) -> Result<Vec<u8>, SourceError> {
         let params: serde_json::Map<String, Value> =
             binds.iter().enumerate().map(|(i, b)| (format!("p{}", i + 1), sql_param(b))).collect();
-        let body = json!({ "db": self.database()?, "q": text, "format": "jsonl", "params": params });
-        let response = self.send(Endpoint::Sql, &[], Some(body), "application/jsonl").await?;
+        // InfluxDB 3 answers `format: json` (one array of row objects) with `Accept:
+        // application/json`; it refuses `application/jsonl` as an Accept value.
+        let body = json!({ "db": self.database()?, "q": text, "format": "json", "params": params });
+        let response = self.send(Endpoint::Sql, &[], Some(body), "application/json").await?;
         self.read(response, max_bytes, charge).await
     }
 }
@@ -507,14 +509,14 @@ impl DataSourcePlugin for InfluxDb {
                         None,
                     )
                     .await?;
-                for line in String::from_utf8_lossy(&body).lines().filter(|l| !l.trim().is_empty()) {
-                    let row: Value = serde_json::from_str(line).map_err(|_| not_influx())?;
-                    let (Some(t), Some(col)) = (row["table_name"].as_str(), row["column_name"].as_str()) else {
+                for row in sql_rows(&body)? {
+                    let field = |name: &str| row.iter().find(|(k, _)| k == name).and_then(|(_, v)| v.as_str());
+                    let (Some(t), Some(col)) = (field("table_name"), field("column_name")) else {
                         continue;
                     };
                     tables.entry(t.to_string()).or_default().push(TableColumn {
                         name: col.to_string(),
-                        data_type: row["data_type"].as_str().unwrap_or("").to_string(),
+                        data_type: field("data_type").unwrap_or("").to_string(),
                     });
                 }
             }
@@ -1396,19 +1398,31 @@ fn flux_frame(body: &[u8], req: &SourceQuery) -> Result<FrameBuilder, SourceErro
     Ok(frame)
 }
 
-/// SQL answers (JSON lines, one object per row, columns in the order of the statement) as a
-/// frame; types from the values, `time` and RFC 3339 texts as times.
-fn jsonl_frame(body: &[u8], req: &SourceQuery) -> Result<FrameBuilder, SourceError> {
+/// The rows of an SQL answer, each with its columns in the order of the statement: one JSON
+/// array of objects (`format: json`), or JSON lines.
+fn sql_rows(body: &[u8]) -> Result<Vec<Vec<(String, Value)>>, SourceError> {
     let text = String::from_utf8_lossy(body);
+    if text.trim_start().starts_with('[') {
+        let rows: Vec<OrderedObject> = serde_json::from_str(&text).map_err(|_| not_influx())?;
+        return Ok(rows.into_iter().map(|OrderedObject(entries)| entries).collect());
+    }
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| serde_json::from_str::<OrderedObject>(line).map(|OrderedObject(e)| e).map_err(|_| not_influx()))
+        .collect()
+}
+
+/// SQL answers (one object per row, columns in the order of the statement) as a frame; types
+/// from the values, `time` and RFC 3339 texts as times.
+fn jsonl_frame(body: &[u8], req: &SourceQuery) -> Result<FrameBuilder, SourceError> {
     let mut names: Vec<String> = Vec::new();
     let mut rows: Vec<BTreeMap<String, Value>> = Vec::new();
     let mut cut = false;
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+    for entries in sql_rows(body)? {
         if rows.len() >= req.limits.max_rows {
             cut = true;
             break;
         }
-        let OrderedObject(entries) = serde_json::from_str(line).map_err(|_| not_influx())?;
         let mut row = BTreeMap::new();
         for (k, v) in entries {
             if !names.contains(&k) {
@@ -1684,6 +1698,9 @@ mod tests {
 
         let lines = "{\"time\":\"2027-01-15T08:00:00\",\"host\":\"a\",\"usage\":1.5}\n{\"time\":\"2027-01-15T08:00:30\",\"usage\":2}\n";
         let frame = jsonl_frame(lines.as_bytes(), &req(json!({}))).unwrap().finish();
+        // The JSON array InfluxDB 3 answers with `format: json` reads the same.
+        let array = format!("[{}]", lines.trim().replace('\n', ","));
+        assert_eq!(jsonl_frame(array.as_bytes(), &req(json!({}))).unwrap().finish(), frame);
         let names: Vec<&str> = frame.fields().iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["time", "host", "usage"]);
         assert_eq!(frame.fields()[0].field_type, FieldType::Time);
