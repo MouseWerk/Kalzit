@@ -9,6 +9,10 @@
 //! - `KALZIT_TEST_PROMETHEUS_URL`: `http://host:port`
 //! - `KALZIT_TEST_ELASTICSEARCH_URL`, `KALZIT_TEST_OPENSEARCH_URL`: `http://[user:password@]host:port`
 //! - `KALZIT_TEST_NEO4J_URL`, `KALZIT_TEST_MEMGRAPH_URL`: `bolt://[user:password@]host:port`
+//! - `KALZIT_TEST_CLICKHOUSE_URL`: `http://user:password@host:port/database` (the HTTP interface)
+//! - `KALZIT_TEST_INFLUXDB2_URL`: `http://<org>:<token>@host:port/<bucket>`
+//! - `KALZIT_TEST_INFLUXDB3_URL`: `http://host:port/<database>` (3.x Core without authentication)
+//! - `KALZIT_TEST_LOKI_URL`: `http://host:port`
 //!
 //! SQLite and a fake Prometheus are tested in `src/datasources/api_tests.rs` on every run, and
 //! TigerGraph against a fake server in `src/datasources/tigergraph/tests.rs`.
@@ -1250,4 +1254,283 @@ async fn elasticsearch_hits_aggregations_and_refusals() {
 #[tokio::test]
 async fn opensearch_hits_aggregations_and_refusals() {
     search_cluster("KALZIT_TEST_OPENSEARCH_URL", "OpenSearch").await;
+}
+
+/// A plain HTTP client for setting up test data in the HTTP sources below.
+fn setup_client() -> kalzit::http::HttpClient {
+    let policy = kalzit::datasources::targets::TargetPolicy::new(
+        &std::env::temp_dir().join("kalzit-none"),
+        "sqlite::memory:",
+        &[],
+        &[],
+    );
+    kalzit::http::client(kalzit::http::HttpOptions {
+        timeout: std::time::Duration::from_secs(60),
+        extra_root_pem: None,
+        policy: Arc::new(policy),
+    })
+    .unwrap()
+}
+
+/// Sends a setup request (a write the source itself never sends) and answers the body as text.
+async fn setup_request(method: reqwest::Method, url: &str, headers: &[(&str, String)], body: String) -> String {
+    let mut map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers {
+        map.insert(reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap(), value.parse().unwrap());
+    }
+    let res = setup_client()
+        .send_with_body(method, reqwest::Url::parse(url).unwrap(), map, Some(body.into_bytes()))
+        .await
+        .unwrap();
+    let status = res.status();
+    let text = res.text().await.unwrap();
+    assert!(status.is_success(), "{url}: {status}: {text}");
+    text
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+}
+
+impl T {
+    /// Runs one query over the last ten minutes.
+    async fn query_recent(&self, id: &str, query: Value, variables: Value) -> Value {
+        let now = now_ms();
+        let body = json!({
+            "queries": [{ "refId": "A", "datasourceId": id, "query": query }],
+            "timeRange": { "from": now - 600_000, "to": now + 60_000 },
+            "variables": variables
+        });
+        let (status, body) = self.send(Method::POST, "/query", Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["results"]["A"].clone()
+    }
+}
+
+/// ClickHouse: macros and variables as query parameters, types, the schema, refused writes.
+#[tokio::test]
+async fn clickhouse_reads_with_parameters_and_refuses_writes() {
+    let Some(url) = env("KALZIT_TEST_CLICKHOUSE_URL") else { return };
+    let (host, port, user, password, database) = parts(&url);
+    let base = format!("http://{host}:{port}/");
+    let auth = [("x-clickhouse-user", user.clone()), ("x-clickhouse-key", password.clone().unwrap_or_default())];
+    let now = now_ms();
+    for statement in [
+        "DROP TABLE IF EXISTS kalzit_events".to_string(),
+        "CREATE TABLE kalzit_events (t DateTime64(3, 'UTC'), land LowCardinality(String), n UInt32, big Int64, \
+         preis Decimal(10, 2)) ENGINE = MergeTree ORDER BY t"
+            .to_string(),
+        format!(
+            "INSERT INTO kalzit_events VALUES (fromUnixTimestamp64Milli({}), 'Österreich', 3, 9007199254740993, 12.50), \
+             (fromUnixTimestamp64Milli({}), 'Schweiz', 4, 1, 7.25)",
+            now - 120_000,
+            now - 60_000
+        ),
+    ] {
+        setup_request(Method::POST, &format!("{base}?database={database}"), &auth, statement).await;
+    }
+    let t = T::new(None).await;
+    let id = t
+        .create("clickhouse", json!({ "url": base, "database": database, "user": user }), secrets(password.clone()))
+        .await;
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+
+    let r = t
+        .query_recent(
+            &id,
+            json!({ "sql": "SELECT t, land, n, big, preis FROM kalzit_events WHERE $__timeFilter(t) AND land = $land ORDER BY t" }),
+            json!({ "land": "Österreich" }),
+        )
+        .await;
+    assert_eq!(types(&r), ["time", "string", "number", "int64", "decimal"], "{r}");
+    let fields = &r["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"], json!([now - 120_000]), "{r}");
+    assert_eq!(fields[3]["values"], json!(["9007199254740993"]), "{r}");
+    assert_eq!(fields[4]["values"], json!(["12.50"]), "{r}");
+    assert!(r["result"]["frame"]["meta"]["executedQuery"].as_str().unwrap().contains("{p3:String}"), "{r}");
+
+    let r = t
+        .query_recent(
+            &id,
+            json!({ "sql": "SELECT toStartOfInterval(t, $__interval) AS zeit, count() AS anzahl FROM kalzit_events GROUP BY zeit ORDER BY zeit" }),
+            json!({}),
+        )
+        .await;
+    assert_eq!(types(&r).len(), 2, "{r}");
+
+    for refused in [
+        "INSERT INTO kalzit_events VALUES (now(), 'x', 1, 1, 1)",
+        "SELECT * FROM kalzit_events SETTINGS readonly = 0",
+        "SELECT * FROM url('http://127.0.0.1:1/', CSV, 'a String')",
+    ] {
+        let r = t.query_recent(&id, json!({ "sql": refused }), json!({})).await;
+        assert_eq!(r["error"]["code"], "query_rejected", "{refused}: {r}");
+    }
+    let r = t.query_recent(&id, json!({ "sql": "SELECT number FROM numbers(3)" }), json!({})).await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["values"], json!(["0", "1", "2"]), "{r}");
+
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert_eq!(schema["kind"], "tables", "{schema}");
+    assert!(schema["tables"].as_array().unwrap().iter().any(|t| t["name"] == "kalzit_events"), "{schema}");
+    t.finish().await;
+}
+
+/// InfluxDB 2.x: Flux and InfluxQL with the time range and variables, refused writes.
+#[tokio::test]
+async fn influxdb2_flux_and_influxql() {
+    // `http://<org>:<token>@host:port/<bucket>`.
+    let Some(url) = env("KALZIT_TEST_INFLUXDB2_URL") else { return };
+    let (host, port, org, token, bucket) = parts(&url);
+    let token = token.expect("the URL carries the token as its password");
+    let base = format!("http://{host}:{port}/");
+    let now = now_ms();
+    setup_request(
+        Method::POST,
+        &format!("{base}api/v2/write?org={org}&bucket={bucket}&precision=ms"),
+        &[("authorization", format!("Token {token}"))],
+        format!(
+            "cpu,host=a usage=1.5 {}\ncpu,host=a usage=2.5 {}\ncpu,host=b usage=7 {}",
+            now - 120_000,
+            now - 60_000,
+            now - 60_000
+        ),
+    )
+    .await;
+    let t = T::new(None).await;
+    let id = t
+        .create(
+            "influxdb",
+            json!({ "url": base, "version": "v2", "organization": org, "database": bucket }),
+            json!({ "token": token }),
+        )
+        .await;
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+
+    let flux = "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"cpu\" and r.host == \"$host\")";
+    let r = t.query_recent(&id, json!({ "flux": flux }), json!({ "host": "a" })).await;
+    assert_eq!(types(&r), ["time", "number"], "{r}");
+    assert_eq!(r["result"]["frame"]["fields"][1]["values"], json!([1.5, 2.5]), "{r}");
+    assert_eq!(r["result"]["frame"]["fields"][1]["labels"]["host"], "a", "{r}");
+
+    let r = t
+        .query_recent(&id, json!({ "influxql": "SELECT usage FROM cpu WHERE $__timeFilter GROUP BY host" }), json!({}))
+        .await;
+    assert_eq!(types(&r).len(), 3, "a time field and one per host: {r}");
+
+    for (query, reason) in [
+        (
+            json!({ "flux": "from(bucket: v.bucket) |> range(start: -1h) |> to(bucket: \"kopie\")" }),
+            "flux.write_refused",
+        ),
+        (json!({ "influxql": "DROP MEASUREMENT cpu" }), "influxql.not_read"),
+        (json!({ "influxql": "SELECT * INTO kopie FROM cpu" }), "influxql.select_into"),
+        (json!({ "sql": "SELECT 1" }), "influxdb.language_unavailable"),
+    ] {
+        let r = t.query_recent(&id, query.clone(), json!({})).await;
+        assert_eq!(r["error"]["reason"], reason, "{query}: {r}");
+    }
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert!(schema["tables"].as_array().unwrap().iter().any(|t| t["name"] == "cpu"), "{schema}");
+    t.finish().await;
+}
+
+/// InfluxDB 3.x: SQL with named parameters, InfluxQL, the schema.
+#[tokio::test]
+async fn influxdb3_sql_and_influxql() {
+    // `http://host:port/<database>`, without authentication.
+    let Some(url) = env("KALZIT_TEST_INFLUXDB3_URL") else { return };
+    let (host, port, _, _, database) = parts(&url);
+    let base = format!("http://{host}:{port}/");
+    let now = now_ms();
+    setup_request(
+        Method::POST,
+        &format!("{base}api/v3/write_lp?db={database}&precision=millisecond"),
+        &[],
+        format!("cpu,host=a usage=1.5 {}\ncpu,host=b usage=7 {}", now - 120_000, now - 60_000),
+    )
+    .await;
+    let t = T::new(None).await;
+    let id = t.create("influxdb", json!({ "url": base, "version": "v3", "database": database }), json!({})).await;
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+
+    let r = t
+        .query_recent(
+            &id,
+            json!({ "sql": "SELECT time, host, usage FROM cpu WHERE $__timeFilter(time) AND host = $host ORDER BY time" }),
+            json!({ "host": "a" }),
+        )
+        .await;
+    assert_eq!(types(&r), ["time", "string", "number"], "{r}");
+    assert_eq!(r["result"]["frame"]["fields"][2]["values"], json!([1.5]), "{r}");
+
+    let r = t.query_recent(&id, json!({ "influxql": "SELECT usage FROM cpu WHERE $__timeFilter" }), json!({})).await;
+    assert!(r["result"].is_object(), "{r}");
+    let r = t.query_recent(&id, json!({ "sql": "DELETE FROM cpu" }), json!({})).await;
+    assert_eq!(r["error"]["code"], "query_rejected", "{r}");
+    let r = t.query_recent(&id, json!({ "flux": "buckets()" }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "influxdb.language_unavailable", "{r}");
+
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert!(schema["tables"].as_array().unwrap().iter().any(|t| t["name"] == "cpu"), "{schema}");
+    t.finish().await;
+}
+
+/// Loki: log lines as documents, metric queries as frames, labels and their values.
+#[tokio::test]
+async fn loki_logs_metrics_and_labels() {
+    let Some(url) = env("KALZIT_TEST_LOKI_URL") else { return };
+    let base = url.trim_end_matches('/').to_string();
+    let now = now_ms();
+    let ns = |ms: i64| (i128::from(ms) * 1_000_000).to_string();
+    let push = json!({ "streams": [
+        { "stream": { "app": "kalzit", "level": "error" },
+          "values": [[ns(now - 120_000), "Fehler beim Laden"], [ns(now - 60_000), "Fehler beim Speichern"]] },
+        { "stream": { "app": "kalzit", "level": "info" }, "values": [[ns(now - 90_000), "Alles gut"]] }
+    ] });
+    setup_request(
+        Method::POST,
+        &format!("{base}/loki/api/v1/push"),
+        &[("content-type", "application/json".into())],
+        push.to_string(),
+    )
+    .await;
+    let t = T::new(None).await;
+    let id = t.create("loki", json!({ "url": base }), json!({})).await;
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+
+    // Loki may take a moment to answer pushed lines.
+    let mut r = Value::Null;
+    for _ in 0..30 {
+        r = t.query_recent(&id, json!({ "logql": "{app=\"$app\"} |= \"Fehler\"" }), json!({ "app": "kalzit" })).await;
+        if r["result"]["documents"]["documents"].as_array().is_some_and(|d| d.len() == 2) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    let docs = r["result"]["documents"]["documents"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(docs.len(), 2, "{r}");
+    assert_eq!(docs[0]["line"], "Fehler beim Speichern", "newest first: {r}");
+    assert_eq!(docs[0]["labels"]["level"], "error", "{r}");
+    assert_eq!(docs[0]["time"]["value"], (now - 60_000).to_string(), "{r}");
+
+    let r = t
+        .query_recent(
+            &id,
+            json!({ "logql": "sum by (level) (count_over_time({app=\"kalzit\"}[$__interval]))" }),
+            json!({}),
+        )
+        .await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["type"], "time", "{r}");
+
+    let r = t.query_recent(&id, json!({ "logql": "{app=$app}" }), json!({ "app": "kalzit" })).await;
+    assert_eq!(r["error"]["code"], "query_rejected", "{r}");
+
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert_eq!(schema["kind"], "labels", "{schema}");
+    assert!(schema["values"]["app"].as_array().unwrap().contains(&json!("kalzit")), "{schema}");
+    t.finish().await;
 }

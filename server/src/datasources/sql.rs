@@ -15,7 +15,7 @@ use sqlparser::ast::{
     BinaryOperator, Expr, ObjectName, ObjectNamePart, Query, Select, SetExpr, Statement, TableAlias, TableFactor,
     Visit, Visitor,
 };
-use sqlparser::dialect::{Dialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{ClickHouseDialect, Dialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
@@ -28,6 +28,11 @@ pub enum Engine {
     MySql,
     Sqlite,
     MsSql,
+    /// ClickHouse over HTTP: values are sent as query parameters (`{p1:Int64}`, `param_p1=...`).
+    ClickHouse,
+    /// Apache DataFusion, the SQL engine of InfluxDB 3: values are sent as named parameters
+    /// (`$p1`), each cast to its type so the engine never has to guess one.
+    DataFusion,
 }
 
 /// Why a query is not run, answered as `query_rejected` with its reason code.
@@ -224,12 +229,9 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
     let mut out = String::with_capacity(sql.len() + 16);
     let mut binds = Vec::new();
     let placeholder = |binds: &mut Vec<Bind>, value: Bind| {
+        let text = engine_placeholder(engine, binds.len() + 1, &value);
         binds.push(value);
-        match engine {
-            Engine::Postgres => format!("${}", binds.len()),
-            Engine::MsSql => format!("@P{}", binds.len()),
-            Engine::MySql | Engine::Sqlite => "?".to_string(),
-        }
+        text
     };
     for piece in &pieces {
         match piece {
@@ -326,8 +328,69 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
             }
         }
     }
-    check_statement(&out, engine)?;
+    check_statement(&checked_text(engine, &out), engine)?;
     Ok(Prepared { sql: out, binds })
+}
+
+/// The placeholder of the `n`th bound value (counted from 1), as the engine writes it.
+fn engine_placeholder(engine: Engine, n: usize, value: &Bind) -> String {
+    match engine {
+        Engine::Postgres => format!("${n}"),
+        Engine::MsSql => format!("@P{n}"),
+        Engine::MySql | Engine::Sqlite => "?".to_string(),
+        // ClickHouse parses each parameter's text as the type written here. Times travel as Unix
+        // milliseconds, intervals as whole seconds where they fit (DateTime columns take no
+        // millisecond intervals), else as milliseconds (`clickhouse::param_value`).
+        Engine::ClickHouse => match value {
+            Bind::Null => format!("{{p{n}:Nullable(String)}}"),
+            Bind::Bool(_) => format!("{{p{n}:Bool}}"),
+            Bind::Int(_) => format!("{{p{n}:Int64}}"),
+            Bind::Float(_) => format!("{{p{n}:Float64}}"),
+            Bind::Text(_) => format!("{{p{n}:String}}"),
+            Bind::Time(_) => format!("fromUnixTimestamp64Milli({{p{n}:Int64}}, 'UTC')"),
+            Bind::Interval(ms) if ms % 1000 == 0 => format!("toIntervalSecond({{p{n}:Int64}})"),
+            Bind::Interval(_) => format!("toIntervalMillisecond({{p{n}:Int64}})"),
+        },
+        // Each parameter is cast, so DataFusion takes the value's own type instead of checking
+        // it against one it inferred (a tag column's dictionary type, say).
+        Engine::DataFusion => match value {
+            Bind::Null => format!("$p{n}"),
+            Bind::Bool(_) => format!("CAST($p{n} AS BOOLEAN)"),
+            Bind::Int(_) => format!("CAST($p{n} AS BIGINT)"),
+            Bind::Float(_) => format!("CAST($p{n} AS DOUBLE)"),
+            Bind::Text(_) => format!("CAST($p{n} AS VARCHAR)"),
+            Bind::Time(_) => format!("CAST($p{n} AS TIMESTAMP)"),
+            Bind::Interval(_) => format!("CAST($p{n} AS INTERVAL)"),
+        },
+    }
+}
+
+/// The text the statement check reads: ClickHouse's parameters (`{p1:Int64}`), which the
+/// checker's parser does not know, become `?`. Only Kalzit writes them: `scan` refuses them in
+/// the query text, so outside strings every one is a bound value.
+fn checked_text(engine: Engine, sql: &str) -> String {
+    if engine != Engine::ClickHouse {
+        return sql.to_string();
+    }
+    let mut out = String::with_capacity(sql.len());
+    let mut rest = sql;
+    while let Some(start) = rest.find("{p") {
+        let candidate = &rest[start + 2..];
+        let digits = candidate.find(|c: char| !c.is_ascii_digit()).unwrap_or(candidate.len());
+        match candidate.find('}') {
+            Some(close) if digits > 0 && candidate[digits..].starts_with(':') => {
+                out.push_str(&rest[..start]);
+                out.push('?');
+                rest = &candidate[close + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..start + 2]);
+                rest = candidate;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Whether the query uses `${name:identifier}`, so the caller must load the schema first.
@@ -365,7 +428,10 @@ fn quote_identifier(engine: Engine, name: &str) -> String {
         .map(|part| match engine {
             Engine::MySql => format!("`{}`", part.replace('`', "``")),
             Engine::MsSql => format!("[{}]", part.replace(']', "]]")),
-            Engine::Postgres | Engine::Sqlite => format!("\"{}\"", part.replace('"', "\"\"")),
+            Engine::ClickHouse => format!("`{}`", part.replace('\\', "\\\\").replace('`', "\\`")),
+            Engine::Postgres | Engine::Sqlite | Engine::DataFusion => {
+                format!("\"{}\"", part.replace('"', "\"\""))
+            }
         })
         .collect::<Vec<_>>()
         .join(".")
@@ -396,18 +462,28 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
         // Everything the engine treats as opaque is skipped as a whole.
         let skip_to = match c {
             b'\'' => Some(skip_string(bytes, i, b'\'', backslash_escapes(engine, bytes, i))?),
-            b'"' => Some(skip_string(bytes, i, b'"', engine == Engine::MySql)?),
+            b'"' => Some(skip_string(bytes, i, b'"', matches!(engine, Engine::MySql | Engine::ClickHouse))?),
             b'`' if matches!(engine, Engine::MySql | Engine::Sqlite) => Some(skip_string(bytes, i, b'`', false)?),
+            b'`' if engine == Engine::ClickHouse => Some(skip_string(bytes, i, b'`', true)?),
             b'[' if matches!(engine, Engine::MsSql | Engine::Sqlite) => Some(skip_bracket(bytes, i)?),
             b'-' if bytes.get(i + 1) == Some(&b'-') => match line_comment_after_dashes(sql, i + 2, engine)? {
                 true => Some(skip_line(bytes, i)),
                 false => None,
             },
+            // ClickHouse's `#` comments are not read as comments by the checker's parser, so they are
+            // left to it, which refuses them; `--` works in both.
             b'#' if engine == Engine::MySql => Some(skip_line(bytes, i)),
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                Some(skip_block_comment(bytes, i, matches!(engine, Engine::Postgres | Engine::MsSql))?)
+            b'/' if bytes.get(i + 1) == Some(&b'*') => Some(skip_block_comment(
+                bytes,
+                i,
+                matches!(engine, Engine::Postgres | Engine::MsSql | Engine::ClickHouse | Engine::DataFusion),
+            )?),
+            b'$' if matches!(engine, Engine::Postgres | Engine::ClickHouse) => dollar_quote_end(sql, i)?,
+            // ClickHouse query parameters (`{name:Type}`) written by hand would take values Kalzit
+            // never binds; Kalzit writes its own.
+            b'{' if engine == Engine::ClickHouse && clickhouse_parameter_at(sql, i) => {
+                return reject("sql.placeholder", "write variables as $name; parameter placeholders are not supported");
             }
-            b'$' if engine == Engine::Postgres => dollar_quote_end(sql, i)?,
             // U&"..." and U&'...' spell names and text with escapes the checker would not decode,
             // so a forbidden function could hide behind them.
             b'U' | b'u'
@@ -489,6 +565,8 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
                     && matches!(bytes.get(i + 1), Some(b'P' | b'p'))
                     && bytes.get(i + 2).is_some_and(u8::is_ascii_digit)
             }
+            Engine::DataFusion => c == b'$' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit),
+            Engine::ClickHouse => false,
         };
         if positional {
             return reject("sql.placeholder", "write variables as $name; parameter placeholders are not supported");
@@ -573,11 +651,19 @@ fn is_column_reference(s: &str) -> bool {
         })
 }
 
-/// MySQL strings take backslash escapes; PostgreSQL only in `E'...'`.
+/// `{name:` at `i`: a ClickHouse query parameter.
+fn clickhouse_parameter_at(sql: &str, i: usize) -> bool {
+    let rest = sql[i + 1..].trim_start();
+    let len = rest.find(|c: char| !is_ident_char(c)).unwrap_or(rest.len());
+    len > 0 && rest.starts_with(is_ident_start) && rest[len..].trim_start().starts_with(':')
+}
+
+/// MySQL and ClickHouse strings take backslash escapes; PostgreSQL (and DataFusion) only in
+/// `E'...'`.
 fn backslash_escapes(engine: Engine, bytes: &[u8], quote: usize) -> bool {
     match engine {
-        Engine::MySql => true,
-        Engine::Postgres => {
+        Engine::MySql | Engine::ClickHouse => true,
+        Engine::Postgres | Engine::DataFusion => {
             quote > 0
                 && matches!(bytes[quote - 1], b'E' | b'e')
                 && (quote < 2 || !is_ident_char(bytes[quote - 2] as char))
@@ -666,7 +752,8 @@ fn dollar_quote_end(sql: &str, start: usize) -> Result<Option<usize>, Rejected> 
 
 fn dialect(engine: Engine) -> Box<dyn Dialect> {
     match engine {
-        Engine::Postgres => Box::new(PostgreSqlDialect {}),
+        Engine::Postgres | Engine::DataFusion => Box::new(PostgreSqlDialect {}),
+        Engine::ClickHouse => Box::new(ClickHouseDialect {}),
         Engine::MySql => Box::new(MySqlDialect {}),
         Engine::Sqlite => Box::new(SQLiteDialect {}),
         Engine::MsSql => Box::new(MsSqlDialect {}),
@@ -809,12 +896,52 @@ const FORBIDDEN_PREFIXES: &[&str] = &[
     "dblink",
 ];
 
+/// ClickHouse functions (in lower case) that read files, reach other servers or run programs.
+/// `readonly=1` refuses most of them already (they need temporary tables); this is the second
+/// line, and keeps the refusal readable.
+const CLICKHOUSE_FORBIDDEN_FUNCTIONS: &[&str] = &[
+    "file",
+    "filecluster",
+    "url",
+    "urlcluster",
+    "s3",
+    "s3cluster",
+    "gcs",
+    "azureblobstorage",
+    "azureblobstoragecluster",
+    "hdfs",
+    "hdfscluster",
+    "remote",
+    "remotesecure",
+    "cluster",
+    "clusterallreplicas",
+    "mysql",
+    "postgresql",
+    "mongodb",
+    "redis",
+    "sqlite",
+    "jdbc",
+    "odbc",
+    "executable",
+    "executablepool",
+    "input",
+    "deltalake",
+    "hudi",
+    "iceberg",
+    "icebergs3",
+    "paimon",
+    "ytsaurus",
+    "arrowflight",
+    "kafka",
+];
+
 /// Refuses a forbidden function, by name. Only function calls are checked (a table called `edit`
 /// is fine), and the PostgreSQL prefix families only on PostgreSQL.
 fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<Rejected> {
     let by_prefix = |n: &str| engine == Engine::Postgres && FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p));
+    let clickhouse = |n: &str| engine == Engine::ClickHouse && CLICKHOUSE_FORBIDDEN_FUNCTIONS.contains(&n);
     match last_name_part(name) {
-        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) => {
+        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) || clickhouse(&n) => {
             let message = format!("{n} is not allowed: it reaches files, other servers or other sessions");
             ControlFlow::Break(Rejected::new("sql.function_not_allowed", message).with("name", n))
         }
@@ -843,6 +970,17 @@ impl Visitor for ReadOnlyCheck {
         }
         if matches!(*query.body, SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_)) {
             return ControlFlow::Break(Rejected::new("sql.not_select", "only SELECT and WITH queries are allowed"));
+        }
+        // ClickHouse: `SETTINGS` would change the limits Kalzit sets, `FORMAT` the answer Kalzit
+        // reads.
+        if query.settings.is_some() {
+            return ControlFlow::Break(Rejected::new("sql.settings_clause", "SETTINGS clauses are not allowed"));
+        }
+        if query.format_clause.is_some() {
+            return ControlFlow::Break(Rejected::new(
+                "sql.format_clause",
+                "FORMAT clauses are not allowed; Kalzit chooses the result format",
+            ));
         }
         ControlFlow::Continue(())
     }
