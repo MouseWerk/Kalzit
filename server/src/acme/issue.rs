@@ -27,6 +27,48 @@ pub struct Context<'a> {
     pub db_url: &'a str,
     pub keyring: &'a Keyring,
     pub now_ms: i64,
+    /// Several servers on one database (`cluster`): the challenge answers go to the database
+    /// too, so the server the certificate authority reaches answers.
+    pub shared: Option<Shared<'a>>,
+}
+
+#[derive(Clone, Copy)]
+pub struct Shared<'a> {
+    pub db: &'a sqlx::AnyPool,
+    pub cluster: &'a crate::cluster::Cluster,
+}
+
+/// How long the leader waits after sharing a TLS-ALPN-01 answer before it lets the CA validate:
+/// the other servers load it when the change reaches them (at once by NOTIFY, else at their
+/// next poll).
+const ALPN_SPREAD: Duration = Duration::from_secs(6);
+
+impl Shared<'_> {
+    async fn answer(&self, kind: &str, name: &str, value: &str, now_ms: i64) -> Result<(), Failure> {
+        sqlx::query(
+            "INSERT INTO acme_challenges (kind, name, value, created_at) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (kind, name) DO UPDATE SET value = excluded.value, created_at = excluded.created_at",
+        )
+        .bind(kind)
+        .bind(name)
+        .bind(value)
+        .bind(now_ms)
+        .execute(self.db)
+        .await
+        .map_err(|e| {
+            Failure::new("acme.challenge_not_shared", format!("sharing the challenge answer: {e}")).with("detail", e)
+        })?;
+        self.cluster.publish(crate::cluster::Change::AcmeChallenges);
+        Ok(())
+    }
+
+    /// Removes every shared answer: one order runs at a time, on the leader.
+    async fn clear(&self) {
+        if let Err(e) = sqlx::query("DELETE FROM acme_challenges").execute(self.db).await {
+            tracing::warn!("removing the shared challenge answers: {e}");
+        }
+        self.cluster.publish(crate::cluster::Change::AcmeChallenges);
+    }
 }
 
 /// Orders a certificate for `settings`. The challenge answers are removed again whatever
@@ -35,6 +77,9 @@ pub async fn obtain(acme: &Acme, settings: &AcmeSettings, cx: &Context<'_>) -> R
     let mut answered = Answered { acme, http: Vec::new(), alpn: Vec::new() };
     let result = order(acme, settings, cx, &mut answered).await;
     drop(answered);
+    if let Some(shared) = &cx.shared {
+        shared.clear().await;
+    }
     result
 }
 
@@ -109,12 +154,20 @@ async fn order(
             Challenge::Http01 => {
                 acme.add_http_challenge(&challenge.token, key_authorization.as_str());
                 answered.http.push(challenge.token.clone());
+                if let Some(shared) = &cx.shared {
+                    shared.answer("http", &challenge.token, key_authorization.as_str(), cx.now_ms).await?;
+                }
             }
             Challenge::TlsAlpn01 => {
+                let digest = key_authorization.digest();
                 acme.certificates
-                    .add_challenge(&domain, key_authorization.digest().as_ref())
+                    .add_challenge(&domain, digest.as_ref())
                     .map_err(|e| Failure::new("acme.certificate_failed", format!("{e:#}")))?;
                 answered.alpn.push(domain.clone());
+                if let Some(shared) = &cx.shared {
+                    shared.answer("alpn", &domain, &hex::encode(digest.as_ref()), cx.now_ms).await?;
+                    tokio::time::sleep(ALPN_SPREAD).await;
+                }
             }
         }
         challenge.set_ready().await.map_err(|e| failure("acme.validation_failed", e).with("domain", &domain))?;

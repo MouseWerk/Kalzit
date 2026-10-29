@@ -119,6 +119,7 @@ const MODE_TEXT: Record<string, MessageKey> = {
   "updates.mode_not_systemd": "admin.updates.mode.notSystemd",
   "updates.mode_binary_not_writable": "admin.updates.mode.binaryNotWritable",
   "updates.mode_container": "admin.updates.mode.container",
+  "updates.mode_cluster": "admin.updates.mode.cluster",
   "updates.mode_unsupported_platform": "admin.updates.mode.unsupported",
 };
 

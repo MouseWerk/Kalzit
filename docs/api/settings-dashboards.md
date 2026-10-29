@@ -317,7 +317,41 @@ certificate younger than a third of its lifetime that matches the settings `acme
 ### `GET /.well-known/acme-challenge/{token}`
 
 Not under `/api` and without sign-in: the HTTP-01 answer of a running order, on every listener
-(also the HTTP listener that redirects everything else to HTTPS); `404` for any other token.
+(also the HTTP listener that redirects everything else to HTTPS); `404` for any other token. With
+several servers on one database, every server answers the leader's tokens.
+
+## Instances
+
+The Kalzit servers on this database (docs/operations/high-availability.md). Server
+administrators only; read only.
+
+### `GET /admin/instances`
+
+```json
+{
+  "mode": "cluster",
+  "database": "postgres",
+  "transport": "notify",
+  "leaderSince": 1800000000000,
+  "leaderTerm": 4,
+  "heartbeatSecs": 5,
+  "leaseSecs": 15,
+  "instances": [
+    { "id": "0196...", "host": "kalzit-a", "version": "0.5.0", "address": "0.0.0.0:3000",
+      "startedAt": 1800000000000, "heartbeatAt": 1800000300000, "stoppedAt": null,
+      "alive": true, "leader": true, "current": true }
+  ]
+}
+```
+
+`mode` is `single` (SQLite, or no other server on the database within a day) or `cluster`;
+`database` is `sqlite` or `postgres`; `transport` says how changes of other servers arrive:
+`notify`, `poll` (the notification connection is down) or `none` (SQLite). `leaderSince` is when
+the current leader took over (`null` while no lease is valid; on SQLite the server's start).
+`instances` lists every server that started on the database within a day, newest first: `alive`
+when it did not stop and its heartbeat is younger than the lease, `leader` for the holder of a
+valid lease, `current` for the server that answered. Times are Unix milliseconds of the
+database's clock.
 
 ## Appearance and brand
 

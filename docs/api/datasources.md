@@ -2016,6 +2016,7 @@ history `reasonCode`). `updates.mode_*` explain `mode.reason`, why a server only
 | `updates.mode_unsupported_platform` | | this system has no update support |
 | `updates.mode_deb` | | installed from the deb package: install the new release's deb with apt |
 | `updates.mode_rpm` | | installed from the rpm package: install the new release's rpm with dnf |
+| `updates.mode_cluster` | | other Kalzit servers use the same database: update each server on its own with its package (docs/operations/high-availability.md) |
 
 ### HTTPS certificates (ACME)
 
@@ -2053,6 +2054,7 @@ reasons appear in the status (`status.lastError`) and the audit log.
 | `acme.rate_limited` | `detail` | the CA's rate limit; the next attempt follows the backoff |
 | `acme.certificate_failed` | `detail` | finalizing, downloading, reading or serving the certificate failed |
 | `acme.store_failed` | `detail` | in `status.storeError`: the issued certificate is served but could not be stored; storing is retried after a pause, renewal goes on as usual |
+| `acme.challenge_not_shared` | `detail` | several servers on one database: the challenge answer could not be written to the database for the other servers |
 | `acme.needed_for_https` | | `enabled`: turning ACME off while `server.https_addr` is set without certificate files; the next start would refuse HTTPS |
 
 ## Not here yet

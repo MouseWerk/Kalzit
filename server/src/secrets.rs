@@ -693,7 +693,8 @@ async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_
             );
         }
         let reencrypted = reencrypt_all(db, &keyring, &keyring.current).await?
-            + crate::acme::store::reencrypt(data_dir, &keyring, &keyring.current)?;
+            + crate::acme::store::reencrypt(data_dir, &keyring, &keyring.current)?
+            + crate::acme::store::reencrypt_shared(db, &keyring, &keyring.current).await?;
         let next_step = format!("{OLD_KEY_ENV} is no longer needed; remove it");
         return Ok(Rotation { reencrypted, key_id: keyring.current.id.clone(), source, next_step });
     }
@@ -718,8 +719,9 @@ async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_
     }
     // The ACME account and certificate files follow the database; an interrupted run leaves
     // both keys loadable, so files already moved stay readable.
-    let reencrypted =
-        reencrypt_all(db, &keyring, &new).await? + crate::acme::store::reencrypt(data_dir, &keyring, &new)?;
+    let reencrypted = reencrypt_all(db, &keyring, &new).await?
+        + crate::acme::store::reencrypt(data_dir, &keyring, &new)?
+        + crate::acme::store::reencrypt_shared(db, &keyring, &new).await?;
     let next_step = match &store {
         Some(store) => {
             store.promote_pending()?;

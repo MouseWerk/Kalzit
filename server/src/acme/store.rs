@@ -192,6 +192,112 @@ fn create_folder(dir: &Path) -> Result<()> {
     }
 }
 
+/// Whether `name` is one of this folder's files: the certificate or an account. Names read from
+/// the database are checked with it before they become paths.
+fn is_store_file(name: &str) -> bool {
+    if name == CERTIFICATE_FILE {
+        return true;
+    }
+    name.strip_prefix("account-")
+        .and_then(|rest| rest.strip_suffix(&format!(".{EXTENSION}")))
+        .is_some_and(|hash| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// The folder's files as they are on disk (still encrypted), by name.
+fn local_files(data_dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+    let dir = folder(data_dir);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_store_file(&name) || !entry.file_type()?.is_file() || entry.metadata()?.len() > MAX_FILE_BYTES {
+            continue;
+        }
+        files.push((name, std::fs::read(entry.path())?));
+    }
+    Ok(files)
+}
+
+/// Copies the account and certificate files into the database (`acme_shared`) for the other
+/// servers on it (`cluster`). They stay encrypted with the secrets key, which all servers share.
+pub async fn share(db: &sqlx::AnyPool, data_dir: &Path, now_ms: i64) -> Result<()> {
+    let dir = data_dir.to_path_buf();
+    let files = tokio::task::spawn_blocking(move || local_files(&dir)).await??;
+    for (name, bytes) in files {
+        let text = String::from_utf8(bytes).with_context(|| format!("{name} is damaged"))?;
+        sqlx::query(
+            "INSERT INTO acme_shared (name, envelope, updated_at) VALUES ($1, $2, $3) \
+             ON CONFLICT (name) DO UPDATE SET envelope = excluded.envelope, updated_at = excluded.updated_at",
+        )
+        .bind(&name)
+        .bind(&text)
+        .bind(now_ms)
+        .execute(db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Writes the files another server shared (`share`) where they differ from this server's; the
+/// database's copy wins. Answers whether a file changed.
+pub async fn pull(db: &sqlx::AnyPool, data_dir: &Path) -> Result<bool> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT name, envelope FROM acme_shared").fetch_all(db).await?;
+    if rows.is_empty() {
+        return Ok(false);
+    }
+    let dir = data_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let mut changed = false;
+        for (name, envelope) in rows {
+            // Never a path from the database: only the folder's own names, and only what parses.
+            if !is_store_file(&name) || serde_json::from_str::<Envelope>(&envelope).is_err() {
+                tracing::warn!("ignoring the shared ACME file {name:?}: not a certificate or account file");
+                continue;
+            }
+            let local = std::fs::read(folder(&dir).join(&name)).ok();
+            if local.as_deref() != Some(envelope.as_bytes()) {
+                write_file(&dir, &name, envelope.as_bytes())?;
+                changed = true;
+            }
+        }
+        Ok(changed)
+    })
+    .await?
+}
+
+/// Re-encrypts the shared copies (`share`) not yet under `new`, like the files
+/// (`kalzit secrets rotate`).
+pub async fn reencrypt_shared(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -> Result<usize> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT name, envelope FROM acme_shared").fetch_all(db).await?;
+    let mut count = 0;
+    for (name, text) in rows {
+        let envelope: Envelope = serde_json::from_str(&text)
+            .with_context(|| format!("the shared ACME file {name} is damaged; nothing was changed there"))?;
+        if envelope.key_id == new.id() {
+            continue;
+        }
+        let field = envelope.field.clone();
+        let blob = Blob { key_id: envelope.key_id, nonce: envelope.nonce, ciphertext: envelope.ciphertext };
+        let plain = keyring
+            .decrypt(OWNER, &field, &blob)
+            .map_err(|e| anyhow::anyhow!("the shared ACME file {name} cannot be decrypted: {e}"))?;
+        let fresh = encrypt_with(new, OWNER, &field, &plain);
+        let envelope = Envelope { field, key_id: fresh.key_id, nonce: fresh.nonce, ciphertext: fresh.ciphertext };
+        sqlx::query("UPDATE acme_shared SET envelope = $1 WHERE name = $2")
+            .bind(serde_json::to_string(&envelope)?)
+            .bind(&name)
+            .execute(db)
+            .await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// Re-encrypts every file not yet under `new` (`kalzit secrets rotate`). A file that cannot be
 /// decrypted stops the rotation, like a blob in the database.
 pub fn reencrypt(data_dir: &Path, keyring: &Keyring, new: &SecretKey) -> Result<usize> {

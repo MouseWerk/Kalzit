@@ -288,6 +288,8 @@ pub struct PluginHost {
     without_landlock: Arc<AtomicBool>,
     /// The panel plugins that may be shown (`plugins::panels`).
     panels: PanelRegistry,
+    /// The package directory each registered plugin runs from (`sync`).
+    registered: Mutex<HashMap<String, String>>,
     /// Kalzit's own addresses, which no plugin connection reaches.
     own: Arc<OwnEndpoints>,
     /// Kalzit's database, for the audit log of refused connects; set by `load`.
@@ -309,6 +311,7 @@ impl PluginHost {
             changes: tokio::sync::Mutex::new(()),
             without_landlock: Arc::default(),
             panels: PanelRegistry::default(),
+            registered: Mutex::default(),
             own: Arc::default(),
             db: OnceLock::new(),
             exposed: Arc::default(),
@@ -458,6 +461,7 @@ impl PluginHost {
         if manifest.plugin_kind() == manifest::PluginKind::Panel {
             // Nothing runs on the server: the panel may be shown.
             self.panels.insert(&row.id, ActivePanel { manifest: Arc::new(manifest), package_dir });
+            self.registered.lock().unwrap_or_else(|e| e.into_inner()).insert(row.id.clone(), row.dir.clone());
             return Ok(true);
         }
         let program = package::binary(&manifest, &package_dir)?;
@@ -486,12 +490,14 @@ impl PluginHost {
             .register(kind, Origin::Plugin { version: m.version.clone() })
             .map_err(|e| HostError::new("plugin.kind_taken", e.to_string()))?;
         self.running.lock().unwrap_or_else(|e| e.into_inner()).insert(row.id.clone(), supervisor);
+        self.registered.lock().unwrap_or_else(|e| e.into_inner()).insert(row.id.clone(), row.dir.clone());
         Ok(true)
     }
 
     /// Takes the plugin's kind out of the registry and ends its process. Running queries finish
     /// on the kind they hold; new ones answer `datasource.kind_unavailable`.
     async fn unregister(&self, id: &str, datasources: &DataSources) {
+        self.registered.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
         self.panels.remove(id);
         let _ = datasources.registry().unregister(id);
         let supervisor = self.running.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
@@ -632,6 +638,11 @@ impl PluginHost {
         if fresh {
             store::delete_tombstone(&mut tx, &row.id).await?;
         }
+        if state.cluster.coordinated() {
+            // The other servers on the same database unpack it from here (`sync`).
+            let package_dir = row.pending.as_ref().map_or(&row.dir, |p| &p.dir);
+            share_package(&mut tx, archive, package_dir, now).await?;
+        }
         let mut cleared = Vec::new();
         if let Some(t) = &takeover {
             // A new publisher starts a new line of keys, and the secrets entered for the former
@@ -667,6 +678,7 @@ impl PluginHost {
         for old in old_dirs {
             remove_dir(&self.dir("packages").join(old));
         }
+        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -895,6 +907,7 @@ impl PluginHost {
         if let Some(dir) = old_dir {
             remove_dir(&self.dir("packages").join(dir));
         }
+        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -930,6 +943,7 @@ impl PluginHost {
             }
             self.reregister(state, id).await;
         }
+        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -965,6 +979,7 @@ impl PluginHost {
             remove_dir(&self.dir("packages").join(&p.dir));
         }
         super::sandbox::remove_app_container(&self.dir("run"), id);
+        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(())
     }
 
@@ -1007,6 +1022,7 @@ impl PluginHost {
                 self.reregister(state, &p.id).await;
             }
         }
+        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(row)
     }
 
@@ -1089,6 +1105,7 @@ impl PluginHost {
         for dir in dirs {
             remove_dir(&self.dir("packages").join(dir));
         }
+        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(stopped)
     }
 
@@ -1142,6 +1159,7 @@ impl PluginHost {
         }
         crate::db::commit(tx).await?;
         self.without_landlock.store(new.allow_without_landlock, Ordering::SeqCst);
+        state.cluster.publish(crate::cluster::Change::Plugins);
         Ok(())
     }
 
@@ -1170,6 +1188,9 @@ impl PluginHost {
                 supervisor.grants().revoke(&source);
             }
         }
+        if changed {
+            state.cluster.publish(crate::cluster::Change::Plugins);
+        }
         Ok(changed)
     }
 
@@ -1182,6 +1203,114 @@ impl PluginHost {
     pub fn status(&self, id: &str) -> Option<Status> {
         self.supervisor(id).map(|s| s.status())
     }
+
+    /// Takes the plugin changes another server on the same database made (`cluster`): the blocks
+    /// and switches, and which plugins run. A plugin no longer runnable, or now from another
+    /// package, stops; one that may run starts, its package unpacked first from the copy the
+    /// installing server shared (`plugin_packages`) when it is not here yet.
+    pub async fn sync(&self, state: &AppState) -> ApiResult<()> {
+        let _changes = self.changes.lock().await;
+        state.datasources.set_blocks(store::blocks(&state.db).await?);
+        self.without_landlock.store(store::switches(&state.db).await?.allow_without_landlock, Ordering::SeqCst);
+        let rows = store::all(&state.db).await?;
+        let keys = store::keys(&state.db).await?;
+        let registered = self.registered.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        for (id, dir) in &registered {
+            let keep = rows.iter().any(|r| {
+                &r.id == id
+                    && &r.dir == dir
+                    && r.approved
+                    && r.enabled
+                    && self.still_trusted(&r.signer, r.public_key.as_deref(), &keys)
+            });
+            if !keep {
+                self.unregister(id, &state.datasources).await;
+            }
+        }
+        for row in rows.iter().filter(|r| r.approved && r.enabled && !registered.contains_key(&r.id)) {
+            if let Err(e) = self.materialize(state, row).await {
+                tracing::warn!(plugin = %row.id, "the plugin's package is not on this server: {}", e.message);
+                continue;
+            }
+            if let Err(e) = self.register(row, &keys, &state.datasources) {
+                tracing::warn!(plugin = %row.id, reason = e.reason, "the plugin does not run: {}", e.message);
+            }
+        }
+        Ok(())
+    }
+
+    /// Unpacks the shared package of `row` into its directory when this server does not have it,
+    /// with the checks of an installation: a valid package whose manifest is exactly the one the
+    /// installing server checked and stored, every file as the manifest lists it.
+    async fn materialize(&self, state: &AppState, row: &PluginRow) -> ApiResult<()> {
+        let dir = self.dir("packages").join(&row.dir);
+        if dir.exists() {
+            return Ok(());
+        }
+        self.prepare().map_err(|e| HostError::from(e).api())?;
+        let shared: Option<(String,)> = sqlx::query_as("SELECT archive FROM plugin_packages WHERE dir = $1")
+            .bind(&row.dir)
+            .fetch_optional(&state.db)
+            .await?;
+        let Some((archive,)) = shared else {
+            return Err(HostError::new("plugin.package_missing", "no server shared the package").api());
+        };
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, archive.as_bytes())
+            .map_err(|e| ApiError::internal("plugin package", e))?;
+        let upload = self.upload_path().map_err(|e| e.api())?;
+        let unpacked = async {
+            tokio::fs::write(&upload, &bytes).await.map_err(|e| HostError::from(e).api())?;
+            let manifest = manifest::parse(&row.manifest).map_err(|e| ApiError::internal("plugin manifest", e))?;
+            let is_panel = manifest.plugin_kind() == manifest::PluginKind::Panel;
+            let access =
+                if is_panel { PluginAccess::None } else { PluginAccess::ReadExecute(package::plugin_sid(&row.id)) };
+            package::private_dir(&dir, &access).map_err(|e| HostError::from(e).api())?;
+            let (archive, into) = (upload.clone(), dir.clone());
+            let unpacked = tokio::task::spawn_blocking(move || package::unpack(&archive, &into))
+                .await
+                .map_err(|e| ApiError::internal("plugin unpack", e))?
+                .map_err(HostError::api)?;
+            if unpacked.manifest_text != row.manifest {
+                return Err(HostError::new("plugin.package_invalid", "the manifest differs from the one installed")
+                    .with("issues", "manifest")
+                    .api());
+            }
+            if is_panel {
+                panels::check_bundle(&unpacked.manifest, &dir).map_err(HostError::api)?;
+            } else {
+                let program = package::binary(&unpacked.manifest, &dir).map_err(HostError::api)?;
+                package::make_executable(&program).map_err(|e| HostError::from(e).api())?;
+            }
+            Ok(())
+        }
+        .await;
+        let _ = std::fs::remove_file(&upload);
+        if unpacked.is_err() {
+            remove_dir(&dir);
+        }
+        unpacked
+    }
+}
+
+/// Keeps the uploaded package in the database, in the installation's transaction, for the other
+/// servers on the same database (`PluginHost::materialize`).
+async fn share_package(
+    tx: &mut sqlx::Transaction<'static, sqlx::Any>,
+    archive: &Path,
+    dir: &str,
+    now_ms: i64,
+) -> ApiResult<()> {
+    let bytes = tokio::fs::read(archive).await.map_err(|e| HostError::from(e).api())?;
+    let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
+    let text = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+    sqlx::query("INSERT INTO plugin_packages (dir, archive, sha256, created_at) VALUES ($1, $2, $3, $4)")
+        .bind(dir)
+        .bind(text)
+        .bind(sha)
+        .bind(now_ms)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 fn datasources_has_kind(datasources: &DataSources, id: &str) -> bool {

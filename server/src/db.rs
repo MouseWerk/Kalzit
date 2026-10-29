@@ -1,8 +1,8 @@
 //! The server's own database: SQLite by default, PostgreSQL for larger installations. Both run
 //! the same portable migrations through sqlx's `Any` driver.
 //!
-//! SQLite runs on one host with the database on a local disk; shared storage or several Kalzit
-//! servers on one database need PostgreSQL.
+//! SQLite runs on one host with the database on a local disk and serves one Kalzit server
+//! (`InstanceLock`); shared storage or several Kalzit servers on one database need PostgreSQL.
 
 use std::cell::Cell;
 use std::future::Future;
@@ -101,6 +101,56 @@ async fn refuse_newer_schema(pool: &AnyPool) -> Result<()> {
         ),
         _ => Ok(()),
     }
+}
+
+/// One Kalzit server per SQLite database: an exclusive lock on `<database file>.lock` next to the
+/// file, held while the server runs. The operating system lets go of it when the process ends,
+/// a crash included, so a restart never waits for a stale lock. Two servers on one SQLite file
+/// would each keep their own caches and leader and fight over its single write lock; several
+/// servers need PostgreSQL (`cluster`).
+#[derive(Debug)]
+pub struct InstanceLock {
+    _file: std::fs::File,
+}
+
+impl InstanceLock {
+    /// The lock for the database of `url`; `None` for PostgreSQL and in-memory databases. Fails
+    /// when another server holds it, naming the file and the way out.
+    pub fn acquire(url: &str) -> Result<Option<Self>> {
+        let Some(file) = sqlite_file(url) else { return Ok(None) };
+        let path = lock_path(&file);
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .with_context(|| format!("opening the lock file {}", path.display()))?;
+        match lock.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: lock })),
+            Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
+                "another Kalzit server is already running on the SQLite database {} (it holds {}). SQLite serves \
+                 one Kalzit server: stop the other one first, or move to PostgreSQL to run several servers on one \
+                 database (docs/operations/high-availability.md)",
+                file.display(),
+                path.display()
+            ),
+            Err(std::fs::TryLockError::Error(e)) => Err(e).with_context(|| format!("locking {}", path.display())),
+        }
+    }
+}
+
+/// `kalzit.db.lock` for `kalzit.db`; links are resolved first, so two spellings of one database
+/// share the lock (before the first start only the folder exists, and is resolved instead).
+fn lock_path(file: &Path) -> PathBuf {
+    let resolved = std::fs::canonicalize(file).ok().or_else(|| {
+        let dir = file.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let name = file.file_name()?;
+        std::fs::canonicalize(dir).ok().map(|d| d.join(name))
+    });
+    let mut name = resolved.unwrap_or_else(|| file.to_path_buf()).into_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
 }
 
 /// A second, small pool on the same SQLite file whose connections wait only `busy_timeout` for a
@@ -595,22 +645,28 @@ where
 /// Deletes sessions that have ended, every hour. Sessions are otherwise only deleted when their
 /// cookie is presented again, and most expired cookies never come back.
 pub fn spawn_session_cleanup(state: crate::app::AppState) {
-    let background = state.background.clone();
-    spawn_job(&background, "removing ended sessions", Schedule::hourly(), move || {
-        let state = state.clone();
-        async move {
-            let now = state.clock.now_ms();
-            match crate::auth::session::delete_ended(state.background.db(), &state.config.sessions, now).await {
-                Ok(0) => Ok(()),
-                Ok(n) => {
-                    tracing::debug!("removed {n} ended sessions");
-                    Ok(())
+    let cluster_state = state.clone();
+    crate::cluster::spawn_job(
+        &cluster_state,
+        "sessions:cleanup",
+        "removing ended sessions",
+        Schedule::hourly(),
+        move || {
+            let state = state.clone();
+            async move {
+                let now = state.clock.now_ms();
+                match crate::auth::session::delete_ended(state.background.db(), &state.config.sessions, now).await {
+                    Ok(0) => Ok(()),
+                    Ok(n) => {
+                        tracing::debug!("removed {n} ended sessions");
+                        Ok(())
+                    }
+                    Err(e) if crate::error::is_contention(&e) => Err(JobError::Busy(e.to_string())),
+                    Err(e) => Err(JobError::Failed(e.to_string())),
                 }
-                Err(e) if crate::error::is_contention(&e) => Err(JobError::Busy(e.to_string())),
-                Err(e) => Err(JobError::Failed(e.to_string())),
             }
-        }
-    });
+        },
+    );
 }
 
 #[cfg(test)]

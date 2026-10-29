@@ -112,6 +112,12 @@ export const SERVER_SECTIONS: readonly AdminSectionLink[] = [
     visible: (access) => access.isServerAdmin,
   },
   {
+    to: "/admin/server/instances",
+    label: "admin.instances.title",
+    description: "admin.instances.lead",
+    visible: (access) => access.isServerAdmin,
+  },
+  {
     to: "/admin/server/audit",
     label: "admin.serverAudit.title",
     description: "admin.serverAudit.lead",

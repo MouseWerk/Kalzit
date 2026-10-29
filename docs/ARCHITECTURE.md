@@ -367,6 +367,9 @@ contract:
   out.
 - **Never kept:** errors, timeouts and answers with a failed graph step. Hits are counted
   (`GET /admin/query-cache`), not audited.
+- **Several servers.** Each server keeps its own entries and counters; rights generations, data
+  source changes and "Empty cache" reach the other servers on the same database
+  (`cluster::Change`, "Several servers on one database").
 
 ## Plugins
 
@@ -1441,8 +1444,16 @@ ACME (`server/src/acme`, RFC 8555 through the `instant-acme` crate):
   `tls.certificate_issued` and `tls.certificate_failed` (by the server, with reason and next
   attempt). Private keys and the contact address never reach the log or the audit log.
 
-Several servers behind one load balancer each order and answer for themselves; HTTP-01 answers
-live in one process's memory. CI orders real certificates from pebble, Let's Encrypt's test
+Several servers on one PostgreSQL database ("Several servers on one database"): only the leader
+orders and renews. It copies the encrypted account and certificate files into `acme_shared`
+(`store::share`, as they are on disk, so they stay encrypted with the shared secrets key) and
+announces the change; every server writes them to its own `acme` folder (`store::pull`, names
+checked against the folder's own) and serves the certificate from the next handshake on, also
+at its start and before a new leader's first order. Challenge answers go to `acme_challenges`:
+an HTTP-01 token missing from the process's map is looked up there, so the server the CA
+reaches answers; TLS-ALPN-01 answers are loaded by every server when announced, and the leader
+waits 6 s before it lets the CA validate. "Renew now" on another server is passed to the leader.
+`kalzit secrets rotate` re-encrypts the shared copies as well. CI orders real certificates from pebble, Let's Encrypt's test
 server (job `acme`, `server/tests/acme_pebble.rs`); the checks and routes are unit-tested on
 Windows and Linux (`acme::api_tests`).
 
@@ -1451,6 +1462,11 @@ Windows and Linux (`acme::api_tests`).
 - SQLite runs on one host with its file on a local disk: a data directory on a network drive
   (UNC path or mapped network drive on Windows, NFS, CIFS/SMB, 9p and similar on Linux) is refused
   at start. Shared storage or several Kalzit servers on one database need PostgreSQL.
+- One server per SQLite database: `server::start` takes an exclusive lock on `<database>.lock`
+  next to the file (`db::InstanceLock`, links resolved first) before the database opens, and a
+  second server stops with an error that names the file and PostgreSQL. The operating system
+  releases the lock with the process, a crash included; a stop releases it only after the
+  database is closed, so an update's next version never opens it early.
 - WAL mode (`kalzit.db` plus `kalzit.db-wal` and `kalzit.db-shm`), `synchronous = FULL`, a 15 s
   busy timeout and `journal_size_limit` = 64 MiB. Readers never wait for writers. Every
   transaction starts through `db::begin`: `BEGIN IMMEDIATE` on SQLite, so it holds the write lock
@@ -1489,6 +1505,79 @@ Windows and Linux (`acme::api_tests`).
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive
   letter, an unknown drive type, systems other than Windows and Linux).
+
+## Several servers on one database
+
+Two or more servers behind a load balancer on one PostgreSQL database (`server/src/cluster.rs`,
+migration 0025; operator guide docs/operations/high-availability.md). PostgreSQL's own
+availability is the operator's. SQLite serves one server (`db::InstanceLock`, "Storage").
+
+- **Identity.** Every process gets a new UUID at start and a row in `cluster_instances` (host,
+  version, listen addresses, started, heartbeat, stopped). The heartbeat is written every 5 s
+  (`cluster::Options`), a clean stop sets `stopped_at`; the leader deletes rows silent or stopped
+  for a day. On SQLite the row is written by a background write (a start never waits for the
+  lock), every 30 s, and a start marks every other row stopped: it holds the instance lock.
+- **Leader: a lease row, not an advisory lock.** `cluster_leader` holds `holder`, `term`,
+  `expires_at` and `since`, in the database's clock (`clock_timestamp()`), so host clocks do not
+  matter. With every heartbeat a server renews its lease or takes an expired one (one `UPDATE`
+  with the condition, a new term on takeover). Why not `pg_advisory_lock`: an advisory lock is
+  bound to one connection, which a transaction-mode pooler (PgBouncer) does not keep, and while a
+  half-open connection still holds it, its server cannot tell whether it leads; the lease works
+  through any pooler and tells its holder how long it leads. The holder counts itself the leader
+  until one heartbeat before the lease could expire, measured from before the renewal was sent
+  (lease 15 s, heartbeat 5 s), so two servers never both act as leader; a missed renewal is
+  tolerated once. A clean stop sets `expires_at` to 0: the next server leads at its next
+  heartbeat. After a crash the lead moves once the lease passed (at most 20 s).
+- **Run once.** `cluster::spawn_job` wraps `db::spawn_job`: alone (SQLite, or the loops not
+  started, as in unit tests) the job runs on its schedule as before. With several servers each
+  server looks every 30 s (at most the interval); the leader claims the run in `cluster_jobs`
+  only when the last finished run is an interval old and no other server holds a valid claim,
+  runs it and records it as done. A failed run keeps the claim for its holder's retries. Jobs
+  under this rule: session cleanup, audit, Explore history and AI chat retention, data source
+  trash purge. The plugin catalog refresh, the daily update check and ACME orders run on the
+  leader only (their own loops ask `Cluster::is_leader`; their due times are in the database
+  already). Backups before an update exist only for SQLite.
+- **Changes between servers.** What a server keeps in memory and another server can change is
+  announced as `cluster::Change`: settings of the server or an organization
+  (`settings::Cache::invalidate`), a rights generation of the query cache
+  (`QueryCache::rights_changed`, also from `RightsBump`), a changed data source
+  (`DataSources::forget`: kept answers, connection pool, plugin grants), the query cache emptied,
+  plugins (install, approve, enable, disable, remove, keys, switches, blocks), ACME settings and
+  certificate, ACME challenge answers and "Renew now". The hooks are installed by
+  `cluster::start` (`set_publisher`); a change applied for another server goes through the
+  `*_here` variants, which do not announce again. A writer task inserts each change into
+  `cluster_events` (id, origin, kind, scope, database time) and sends `pg_notify('kalzit_cluster',
+  '')`; a dedicated `PgListener` connection wakes the reader, which reads the rows newer than the
+  newest it saw less 10 s (rows written just before others may become visible just after them;
+  ids already applied are skipped) every 5 s anyway, and every second while the listener is
+  down. Rows go after an hour. A server that could not read for close to that drops everything
+  it keeps (`flush`: settings, a new global rights generation, certificate, plugins).
+  Guarantees: a change holds on its own server when the request answers; on the others after the
+  next read, normally well under a second, at most the poll interval; a change lost entirely (the
+  process ended between commit and announcement) is bounded by the settings cache's 30 s and by
+  the per-request checks: sessions, memberships, permissions, grants, data sources and AI
+  providers are read from the database on every request, so authorization never depends on an
+  announcement. The policy generation of the query cache is not announced: each server derives
+  its target rules from the settings and bumps its own generation when they differ.
+- **Plugin packages.** A package installed with several servers is also stored, base64, in
+  `plugin_packages` in the installation's transaction. `PluginHost::sync` (on a plugin change
+  and at start) stops plugins whose row no longer allows them or whose package directory changed
+  and starts the runnable ones; a package not on disk is unpacked from that copy with the checks
+  of an installation (valid package, the stored manifest byte for byte, every file as listed)
+  before it is registered. The leader deletes copies no plugin refers to.
+- **Per server.** Rate limits (sign-ins, password checks, setup codes, connection tests), AI and
+  query concurrency limits, the query cache's entries and counters, live feeds, exports, plugin
+  processes and logs, update downloads, backups and history, TLS certificate files. The update
+  mode is `updates.mode_cluster` while other servers used the database within a day: "Install
+  now" and planned installations are refused; each server is updated with its package.
+- **Admin view.** `GET /api/admin/instances` (`cluster::view`): mode, database, how changes
+  arrive, leader with term and since, and every row with alive (heartbeat within the lease, or
+  three SQLite heartbeats), leader and current flags. Verwaltung, Instanzen shows it.
+- **Tests.** `server/tests/cluster.rs`: two servers in one throwaway PostgreSQL schema (CI job
+  `postgres`) for one leader and failover after a clean stop and after a silent one, a settings
+  change and a rights and data source generation reaching the other server within seconds, a
+  session ended on one server refused on the other, and a run-once job running once; and the
+  refusal of a second server on one SQLite database on every system.
 
 ## Backups
 

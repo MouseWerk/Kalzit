@@ -13,8 +13,9 @@
 //!
 //! Organization settings are the `org_settings` table, then the default. A setting set in the
 //! environment or file is read-only in the UI. Database values are cached per process and the
-//! cache is dropped on every write; other server processes on the same database see a change
-//! within `CACHE_TTL_MS`.
+//! cache is dropped on every write; other server processes on the same database drop theirs when
+//! the change reaches them (`cluster`, usually within a second), and at the latest after
+//! `CACHE_TTL_MS`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
@@ -1022,6 +1023,9 @@ struct CacheInner {
 #[derive(Default)]
 pub struct Cache {
     inner: Mutex<CacheInner>,
+    /// Tells the other servers on the same database about a change (`cluster`); unset for a
+    /// single server.
+    publisher: std::sync::OnceLock<crate::cluster::Publisher>,
 }
 
 impl Cache {
@@ -1055,8 +1059,31 @@ impl Cache {
         }
     }
 
-    /// Drops the cached rows of the server (`None`) or one organization.
+    /// Sends invalidations to the other servers on the same database (`cluster`).
+    pub fn set_publisher(&self, publisher: crate::cluster::Publisher) {
+        let _ = self.publisher.set(publisher);
+    }
+
+    /// Drops the cached rows of the server (`None`) or one organization, here and on the other
+    /// servers on the same database.
     pub fn invalidate(&self, org_id: Option<&str>) {
+        self.invalidate_here(org_id);
+        if let Some(publish) = self.publisher.get() {
+            publish(crate::cluster::Change::Settings(org_id.map(str::to_string)));
+        }
+    }
+
+    /// Drops every cached row (another server may have changed anything while this one could
+    /// not hear about it).
+    pub fn invalidate_all_here(&self) {
+        let mut inner = self.lock();
+        inner.generation += 1;
+        inner.server = None;
+        inner.orgs.clear();
+    }
+
+    /// `invalidate` on this server only: another server reported the change.
+    pub fn invalidate_here(&self, org_id: Option<&str>) {
         let mut inner = self.lock();
         inner.generation += 1;
         match org_id {

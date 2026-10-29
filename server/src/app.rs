@@ -90,6 +90,9 @@ pub struct AppState {
     /// Automatic HTTPS certificates (`acme`): their settings, the served certificate and the
     /// challenge answers.
     pub acme: Arc<crate::acme::Acme>,
+    /// This server among the servers on the same database: leader, run-once jobs and the
+    /// changes they announce to each other (`cluster`).
+    pub cluster: Arc<crate::cluster::Cluster>,
 }
 
 impl AppState {
@@ -171,6 +174,7 @@ impl AppState {
             ai: Arc::default(),
             plugins,
             acme,
+            cluster: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.
@@ -183,6 +187,8 @@ impl AppState {
     /// files in the data directory stay open, and Windows cannot delete them (tests delete their
     /// temporary data directory right after).
     pub async fn close(&self) {
+        // First, while the database is open: the next server takes over the lead at once.
+        crate::cluster::stop(self).await;
         // Live connections are not requests the listeners wait for; they are told to close.
         self.live.shutdown(crate::live::SHUTDOWN_WAIT).await;
         self.plugins.shutdown().await;

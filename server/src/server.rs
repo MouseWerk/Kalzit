@@ -78,6 +78,8 @@ pub struct Running {
     state: AppState,
     /// When the process ends regardless of the stop (Windows console close and shutdown).
     hard_deadline: Arc<std::sync::Mutex<Option<Instant>>>,
+    /// Keeps a second server off the same SQLite database until this one has closed it.
+    instance_lock: Option<db::InstanceLock>,
 }
 
 impl Running {
@@ -112,6 +114,8 @@ impl Running {
                  program holds. Nothing committed is lost; the next start completes the WAL checkpoint"
             );
         }
+        // Only now may the next server (an update's new version) open the database.
+        drop(self.instance_lock.take());
         outcome.map(|()| Stopped { closed_in_time })
     }
 
@@ -275,6 +279,8 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     if let Some(warning) = db::ambiguity(&config.database_url()) {
         tracing::warn!("{warning}");
     }
+    // Before the database opens: a second server on the same SQLite file stops here.
+    let instance_lock = db::InstanceLock::acquire(&config.database_url())?;
     let pool = db::connect(&config.database_url(), config.database.max_connections).await?;
     tracing::info!(
         "data directory {}, database {} ready",
@@ -293,15 +299,22 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
             return Err(e);
         }
     };
+    // Registers this server among the servers on the database and tries to lead, so the jobs
+    // below know whether they run here.
+    if let Err(e) = crate::cluster::start(&state).await {
+        state.close().await;
+        return Err(e.context("registering this server on the database"));
+    }
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());
     crate::routes::explore_history::spawn_retention(state.clone());
     crate::routes::datasources::spawn_trash_purge(state.clone());
     crate::ai::chats::spawn_retention(state.clone());
     match listen(&config, &state).await {
-        Ok(running) => {
+        Ok(mut running) => {
             // Orders and renews certificates once the listeners can answer the challenges.
             crate::acme::spawn(state.clone());
+            running.instance_lock = instance_lock;
             Ok(running)
         }
         Err(e) => {
@@ -321,6 +334,7 @@ async fn listen(config: &Config, state: &AppState) -> Result<Running> {
         listeners: JoinSet::new(),
         state: state.clone(),
         hard_deadline: Arc::default(),
+        instance_lock: None,
     };
 
     if let Some(addr) = config.https_addr() {

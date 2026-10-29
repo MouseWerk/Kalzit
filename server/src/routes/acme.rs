@@ -113,6 +113,8 @@ async fn save(
     crate::db::commit(tx).await?;
     crate::settings::cache(&state).invalidate(None);
     state.acme.apply_saved(settings, version);
+    // The other servers on the same database take the settings; the leader orders.
+    state.cluster.publish(crate::cluster::Change::Acme);
     Ok(Json(view(&state)))
 }
 
@@ -128,6 +130,10 @@ async fn renew(
             .with_reason_string(refused.reason.to_string(), refused.params)
     })?;
     if requested {
+        // The leader of several servers on one database orders.
+        if !state.cluster.is_leader() {
+            state.cluster.publish(crate::cluster::Change::AcmeRenew);
+        }
         let mut tx = crate::db::begin(&state.db).await?;
         let event = AuditEvent {
             org_id: None,

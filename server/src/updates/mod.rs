@@ -354,6 +354,9 @@ pub struct Updates {
     handover: Mutex<Option<Handover>>,
     handover_requested: tokio::sync::Notify,
     uploading: std::sync::atomic::AtomicBool,
+    /// Other Kalzit servers use the same database (`cluster`): this one does not replace its own
+    /// binary, each server is updated on its own with its package.
+    clustered: std::sync::atomic::AtomicBool,
 }
 
 impl Updates {
@@ -383,7 +386,14 @@ impl Updates {
             handover: Mutex::new(None),
             handover_requested: tokio::sync::Notify::new(),
             uploading: std::sync::atomic::AtomicBool::new(false),
+            clustered: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Whether other servers run on the same database (`cluster::Cluster`); then installing is
+    /// refused with `updates.mode_cluster`.
+    pub fn set_clustered(&self, clustered: bool) {
+        self.clustered.store(clustered, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn layout(&self) -> &Layout {
@@ -428,17 +438,27 @@ impl Updates {
         read(&self.exe).clone().ok_or_else(|| UpdateError::InstallFailed("the running binary is unknown".into()))
     }
 
-    /// Whether this server installs on its own, or why not (cached after the first look).
+    /// Whether this server installs on its own, or why not (the platform's answer is cached
+    /// after the first look). Several servers on one database never install on their own: one
+    /// binary replacing itself would leave the others on the old version in the middle of a
+    /// migration, so every server is updated with its package, one after the other. A server
+    /// that cannot install on its own anyway keeps its own reason (the package command).
     pub fn mode(&self) -> Mode {
-        if let Some(mode) = *read(&self.mode) {
-            return mode;
+        let cached = *read(&self.mode);
+        let mode = cached.unwrap_or_else(|| {
+            let mode = match read(&self.exe).as_deref() {
+                Some(exe) => platform::detect_mode(exe),
+                None => Mode::Manual("updates.mode_binary_not_writable"),
+            };
+            *write(&self.mode) = Some(mode);
+            mode
+        });
+        match mode {
+            Mode::Automatic if self.clustered.load(std::sync::atomic::Ordering::SeqCst) => {
+                Mode::Manual("updates.mode_cluster")
+            }
+            mode => mode,
         }
-        let mode = match read(&self.exe).as_deref() {
-            Some(exe) => platform::detect_mode(exe),
-            None => Mode::Manual("updates.mode_binary_not_writable"),
-        };
-        *write(&self.mode) = Some(mode);
-        mode
     }
 
     fn set_job(&self, job: Job) {
@@ -957,6 +977,11 @@ impl Updates {
             if let Err(e) = self.apply_as(state, &schedule.version, ack, &actor, true).await {
                 tracing::warn!("the scheduled installation of {} failed: {}", schedule.version, e.message);
             }
+            return;
+        }
+        // Several servers on one database: the leader checks once a day for all of them; "Check
+        // now" works on every server.
+        if !state.cluster.is_leader() {
             return;
         }
         let daily = crate::settings::get(state, "updates.check_daily").await.ok().and_then(|v| v.as_bool());

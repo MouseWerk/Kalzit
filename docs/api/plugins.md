@@ -798,6 +798,7 @@ Rules:
 | `plugin.package_unreadable` | | the upload is empty, not a zip archive, or broken (`422`) |
 | `plugin.package_too_large` | `maxBytes` | the package is larger than allowed unpacked (`422`) |
 | `plugin.package_invalid` | `issues` | a bad entry path, a link, a device, an encrypted entry, two paths differing only in case, or files that do not match the manifest (`package.*` codes in the message) (`422`) |
+| `plugin.package_missing` | | several servers on one database: no server shared the package of an installed plugin, so this server cannot run it (logged; install it again) |
 | `plugin.manifest_missing` | | the package has no readable `kalzit-plugin.toml` (`422`) |
 | `plugin.manifest_invalid` | `issues` | the manifest is not valid (`manifest.*` codes) (`422`) |
 | `plugin.kalzit_too_old` | `minKalzit` | the plugin needs a newer Kalzit (`422`) |

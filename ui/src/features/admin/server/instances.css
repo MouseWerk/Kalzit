@@ -1,0 +1,25 @@
+/*
+ * The Instances page: the status strip and table of the Updates board (updates.css), plus the
+ * server cell with its badges. Tokens only; the leader and this server are neutral badges, a gone
+ * server is muted text, never a colored bar.
+ */
+@layer components {
+  .instances__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-4) var(--space-4) var(--space-2);
+  }
+
+  .instances__server {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .instances__row--gone td {
+    color: var(--text-muted);
+  }
+}
