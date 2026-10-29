@@ -70,7 +70,10 @@ limits (default 30 s and 100,000 rows) are the maximum. A result cut off at the 
 | MySQL, MariaDB | Host, Port (3306), Database, User name, Password, TLS mode (disabled, preferred, required, verify_ca, verify_identity), CA certificate | frame |
 | Microsoft SQL Server | Host, Port (1433), Database, User name, Password, Encrypt the connection, Trust the server certificate (only for tests), CA certificate | frame |
 | SQLite | Absolute path of the file; opened read-only, only from folders an admin allowed | frame |
+| ClickHouse (HTTP interface) | URL (port 8123, or 8443 with TLS), Database (`default`), User name (`default`), Password, CA certificate | frame |
 | Prometheus (also Mimir, Thanos, VictoriaMetrics) | URL, Basic auth user name and password, Bearer token, CA certificate | frame |
+| InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | URL, InfluxDB version (v1, v2, v3), Organization (2.x), Database or bucket, User name and Password (1.x), API token (2.x, 3.x), CA certificate | frame |
+| Loki (LogQL) | URL, Basic auth or Bearer token, Loki org ID (`X-Scope-OrgID`, for multi-tenant setups), CA certificate | documents (log lines), frame (metric queries) |
 | Elasticsearch, OpenSearch | URL, Basic auth, API key or Bearer token, CA certificate, Default index or pattern, Time field (default `@timestamp`; empty for no time filter) | documents (hits), frame (aggregations) |
 | CSV, JSON, NDJSON file | Absolute path of the file (from a folder an admin allowed for files), File format, CSV delimiter, Decimal mark, "The first line holds the column names" | frame (CSV), documents (JSON, NDJSON) |
 | HTTP JSON | URL, Basic auth or Bearer token, Header and value for an API key, CA certificate, Path to the documents in the answer | documents |
@@ -90,7 +93,45 @@ server, a view or a range that ends now runs the query again at the dashboard's 
 like every other kind. See [Explore](explore.md#documents) and
 [Dashboards](dashboards.md#live-updates).
 
-InfluxDB, Loki and ClickHouse (M5) and Graphite, Redis, Oracle, Tempo and Jaeger (M7) are planned.
+Graphite, Redis, Oracle, Tempo and Jaeger (M7) are planned.
+
+### ClickHouse
+
+ClickHouse is queried with SQL over its HTTP interface (port 8123, or 8443 with TLS); the native
+protocol is not used. Write the query as for the other SQL sources, with ClickHouse's own syntax
+(`FINAL`, `PREWHERE`, `ARRAY JOIN`); the macros (`$__timeFilter(t)`, `$__interval`, ...) and
+variables reach ClickHouse as query parameters, never as text. Kalzit sends every query with
+`readonly=1`, adds the result format itself and refuses `SETTINGS` and `FORMAT` clauses and table
+functions that read files or reach other servers (`file`, `url`, `s3`, `remote`, `mysql`, ...).
+Use `--` for comments. Give the user a read-only profile with a `max_execution_time`: Kalzit stops
+reading at its time limit, but only the server ends a long query.
+
+### InfluxDB
+
+Pick the **InfluxDB version**: 1.x answers InfluxQL (and Flux from 1.8 when it is turned on), 2.x
+Flux and InfluxQL, 3.x SQL and InfluxQL. 2.x needs the **Organization** for Flux and an
+**API token**; 1.x with authentication takes a user name and password; 3.x takes a token, or none
+when the server runs without authentication. **Database or bucket** is the default for InfluxQL
+and SQL and becomes `v.bucket` in Flux; the schema (measurements, fields, tags) for suggestions is
+read from it.
+
+In the query editor choose the **Language** per query. In Flux, `v.timeRangeStart`,
+`v.timeRangeStop` and `v.windowPeriod` take the dashboard's time range and interval, as in
+InfluxDB's own tools; InfluxQL has `$__timeFilter` and `GROUP BY time($__interval)`; SQL has the
+SQL macros. Variables go inside strings (`r.host == "$host"`, `host = '$host'`). Kalzit refuses
+Flux that writes (`to()`, `wideTo()`), imports packages that reach other systems (`http`, `sql`,
+`csv`, ...) or names another server, and InfluxQL other than one `SELECT` without `INTO` or one
+`SHOW`. Series become a time series with one line per series, labelled with their tags.
+
+### Loki
+
+Log queries (`{app="api"} |= "error"`) show one entry per log line with its time, the line and the
+stream labels, newest first; **Order** switches to oldest first and **Line limit** (1,000 by
+default, at most the row limit) caps the lines. Metric queries
+(`sum by (level) (count_over_time({app="api"}[$__interval]))`) answer a time series like
+Prometheus. The editor suggests the labels of the last six hours and their values inside a
+matcher (`{app="`). For a multi-tenant Loki set the **Loki org ID**. **Live** reruns the query at
+the dashboard's interval; Loki's own live tail is not used.
 
 ## Read-only
 
@@ -99,13 +140,16 @@ Data sources are read-only. Kalzit rejects queries that change data, in every ki
 - SQL sources accept one `SELECT` or `WITH` statement (parsed, not pattern-matched) and run it in
   a read-only transaction where the engine has one.
 - Cypher runs in a read transaction; GSQL is parsed and refused when it writes; MongoDB pipelines
-  that write are refused; search and HTTP sources reach only read endpoints.
+  that write are refused; search, Loki and HTTP sources reach only read endpoints.
+- ClickHouse queries run with `readonly=1`; InfluxDB queries are checked per language (no
+  `to()` in Flux, no `INTO` in InfluxQL) and InfluxQL is sent the way InfluxDB runs only reads.
 - A query that would change data is refused with a message ("Data sources are read-only").
 
 The settings form still asks for a **read-only login**, and that is the real protection: a
 PostgreSQL role with only `SELECT`, a MySQL user with only the `SELECT` privilege, a SQL Server
 login in `db_datareader`, a MongoDB user with the `read` role, a Neo4j user with the `reader` role,
-TigerGraph's `queryreader`. Kalzit refuses MongoDB logins that may do more and servers without
+TigerGraph's `queryreader`, a ClickHouse user with a `readonly = 1` profile, an InfluxDB token with
+only read permissions on its buckets. Kalzit refuses MongoDB logins that may do more and servers without
 access control; for Memgraph and TigerGraph it checks the user's rights and refuses a user that
 may write (Memgraph Community needs **Allow a user that may write**, where only the query check
 protects the data).

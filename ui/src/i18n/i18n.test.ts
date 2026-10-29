@@ -133,6 +133,8 @@ describe("catalogs", () => {
       "Details",
       "Median {ms} ms",
       "Lucene",
+      "InfluxQL",
+      "SQL (3.x)",
       "CSV",
       "NDJSON",
       "orders/open",

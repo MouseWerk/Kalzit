@@ -111,14 +111,16 @@ again at an interval.
 | MySQL, MariaDB | frame | Supported |
 | Microsoft SQL Server | frame | Supported |
 | SQLite | frame | Supported |
+| ClickHouse (HTTP interface) | frame | Supported |
 | Prometheus | frame | Supported |
+| InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | frame | Supported |
+| Loki (LogQL) | documents (log lines), frame (metric queries) | Supported |
 | Elasticsearch, OpenSearch | documents (hits), frame (aggregations) | Supported |
 | CSV, JSON and NDJSON files | frame (CSV), documents (JSON, NDJSON) | Supported |
 | HTTP JSON | documents | Supported |
 | MongoDB | documents | Supported |
 | Neo4j, Memgraph (Cypher over Bolt) | graph | Supported |
 | TigerGraph 3.10+ and 4.x (GSQL) | graph | Supported |
-| InfluxDB, Loki, ClickHouse | frame | Planned (M5) |
 | Graphite, Redis, Oracle, Tempo, Jaeger | various | Planned (M7) |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and

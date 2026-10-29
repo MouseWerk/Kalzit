@@ -15,15 +15,25 @@ import type { CompletionResult } from "./completion";
 import {
   type Token,
   tokenizeCypher,
+  tokenizeFlux,
   tokenizeGsql,
   tokenizeJson,
+  tokenizeLogql,
   tokenizeLucene,
   tokenizePromql,
   tokenizeSql,
 } from "./syntax";
 import "./editors.css";
 
-export type CodeLanguage = "sql" | "promql" | "json" | "cypher" | "gsql" | "lucene";
+export type CodeLanguage =
+  | "sql"
+  | "promql"
+  | "logql"
+  | "flux"
+  | "json"
+  | "cypher"
+  | "gsql"
+  | "lucene";
 
 /**
  * The contract every query text editor implements. Query editors depend on this, not on an
@@ -47,6 +57,8 @@ export interface CodeEditorProps {
 const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   sql: tokenizeSql,
   promql: tokenizePromql,
+  logql: tokenizeLogql,
+  flux: tokenizeFlux,
   json: tokenizeJson,
   cypher: tokenizeCypher,
   gsql: tokenizeGsql,
