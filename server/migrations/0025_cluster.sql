@@ -3,16 +3,16 @@
 -- clock, so the servers' own clocks never decide who leads or when a job is due. SQLite has the
 -- same tables with one server in them.
 
--- One row per server process that started on this database: `id` is new at every start, `host`
--- the machine's name, `data_dir` its data directory (one server per host and data directory, so a
--- row of the same host and directory is an earlier run of the same server), `address` the
--- listeners it serves. A server writes `heartbeat_at` every few seconds and `stopped_at` when it
--- stops cleanly; rows of servers stopped or silent for a day go. `acme_seen` is the fingerprint of
--- the certificate challenge answers the server serves now, which the leader waits for.
+-- One row per server process that started on this database: `id` is new at every start, `node_id`
+-- the random id kept in the data directory (`kalzit-node-id`), the same for every run of one
+-- server, `host` the machine's name, `address` the listeners it serves. A server writes
+-- `heartbeat_at` every few seconds and `stopped_at` when it stops cleanly; rows of servers stopped
+-- or silent for a day go. `acme_seen` is the fingerprint of the certificate challenge answers the
+-- server serves now, which the leader waits for.
 CREATE TABLE cluster_instances (
     id            TEXT PRIMARY KEY,
+    node_id       TEXT NOT NULL,
     host          TEXT NOT NULL,
-    data_dir      TEXT NOT NULL,
     version       TEXT NOT NULL,
     address       TEXT NOT NULL,
     started_at    BIGINT NOT NULL,
@@ -59,6 +59,17 @@ CREATE TABLE cluster_events (
 
 CREATE INDEX cluster_events_created ON cluster_events (created_at);
 
+-- A counter per area of shared state, raised in the transaction of every announced change
+-- (`cluster::record`): every server compares them at each poll, so a change whose event row it
+-- missed is taken anyway. A few rows, read in one query.
+CREATE TABLE cluster_versions (
+    area     TEXT PRIMARY KEY,
+    version  BIGINT NOT NULL
+);
+
+INSERT INTO cluster_versions (area, version) VALUES
+    ('settings', 0), ('rights', 0), ('cache', 0), ('datasources', 0), ('plugins', 0), ('acme', 0),
+    ('challenges', 0), ('setup', 0);
 -- The ACME account and certificate files (`acme::store`), shared through the database so every
 -- server serves the certificate the leader ordered. `envelope` is the file's content as it is on
 -- disk: AES-256-GCM encrypted with the secrets key, which all servers share.

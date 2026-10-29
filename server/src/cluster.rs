@@ -186,6 +186,62 @@ pub struct Cluster {
     /// Set by `stop`: nothing is written any more.
     stopped: AtomicBool,
     plugin_sync: PluginSync,
+    /// The node id (`node_id`), set by `boot`.
+    node: Mutex<String>,
+    /// The database's time when this run registered (`start`).
+    started_ms: AtomicI64,
+    /// The database's time and the shared state's counters when this server began to load what
+    /// it keeps (`boot`): the reader replays the events from then, and the reconciler compares
+    /// against these counters first, so nothing changed during the start is missed.
+    boot: Mutex<Option<Snapshot>>,
+}
+
+/// The shared state's counters at one moment (`cluster_versions`, and the data sources).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Snapshot {
+    at_ms: i64,
+    versions: std::collections::BTreeMap<String, i64>,
+    /// Count, newest `updated_at`, count in the trash, newest `deleted_at`: the data sources
+    /// change without an announcement in their own transaction, so they are compared this way.
+    sources: (i64, i64, i64, i64),
+    /// Each data source's `updated_at` and `deleted_at`, to forget exactly the changed ones.
+    source_rows: HashMap<String, (i64, Option<i64>)>,
+}
+
+impl Snapshot {
+    async fn read(db: &AnyPool) -> Result<Self, sqlx::Error> {
+        let at_ms = db_now(db, true).await?;
+        let versions: Vec<(String, i64)> =
+            sqlx::query_as("SELECT area, version FROM cluster_versions").fetch_all(db).await?;
+        let sources: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COALESCE(MAX(updated_at), 0), COUNT(deleted_at), COALESCE(MAX(deleted_at), 0) \
+             FROM datasources",
+        )
+        .fetch_one(db)
+        .await?;
+        Ok(Self { at_ms, versions: versions.into_iter().collect(), sources, source_rows: HashMap::new() })
+    }
+
+    async fn read_source_rows(&mut self, db: &AnyPool) -> Result<(), sqlx::Error> {
+        let rows: Vec<(String, i64, Option<i64>)> =
+            sqlx::query_as("SELECT id, updated_at, deleted_at FROM datasources").fetch_all(db).await?;
+        self.source_rows = rows.into_iter().map(|(id, u, d)| (id, (u, d))).collect();
+        Ok(())
+    }
+}
+
+/// Takes the moment before a server on PostgreSQL loads what it keeps in memory (plugins, the
+/// certificate, settings): `AppState::new` calls it first, and `start` replays and compares from
+/// it. Nothing for SQLite.
+pub async fn boot(cluster: &Cluster, db: &AnyPool, url: &str, data_dir: &std::path::Path) -> Result<()> {
+    *cluster.node.lock().unwrap_or_else(|e| e.into_inner()) = node_id(data_dir)?;
+    if !is_postgres(url) {
+        return Ok(());
+    }
+    let mut snapshot = Snapshot::read(db).await?;
+    snapshot.read_source_rows(db).await?;
+    *cluster.boot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot);
+    Ok(())
 }
 
 /// One server in the instance view (`GET /api/admin/instances`).
@@ -255,10 +311,46 @@ fn host_name() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-/// The data directory as stored with the instance: resolved, so two spellings are one.
-fn data_dir_key(state: &AppState) -> String {
-    let dir = &state.config.paths.data_dir;
-    std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone()).to_string_lossy().into_owned()
+/// The file in the data directory that holds this server's node id.
+pub const NODE_ID_FILE: &str = "kalzit-node-id";
+
+/// This server's node id: a random id made once and kept in the data directory, the same for
+/// every run of the server and independent of its host name or path. Rows of the same node id are
+/// this server's earlier runs (`check_peers`). A copied data directory carries the id along; such a
+/// copy is still counted as a peer while it keeps writing heartbeats after this start.
+pub fn node_id(data_dir: &std::path::Path) -> Result<String> {
+    let file = data_dir.join(NODE_ID_FILE);
+    match std::fs::read_to_string(&file) {
+        Ok(text) => {
+            let id = text.trim();
+            if uuid::Uuid::parse_str(id).is_ok() {
+                return Ok(id.to_string());
+            }
+            tracing::warn!("{} does not hold a node id; making a new one", file.display());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(anyhow::Error::new(e).context(format!("reading {}", file.display()))),
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let temp = data_dir.join(format!("{NODE_ID_FILE}.tmp"));
+    std::fs::write(&temp, format!("{id}\n"))
+        .and_then(|()| std::fs::rename(&temp, &file))
+        .map_err(|e| anyhow::Error::new(e).context(format!("writing {}", file.display())))?;
+    Ok(id)
+}
+
+/// The counter in `cluster_versions` a change raises (`record`).
+fn area(change: &Change) -> &'static str {
+    match change {
+        Change::Settings(_) => "settings",
+        Change::Rights(_) => "rights",
+        Change::CacheCleared => "cache",
+        Change::Datasource(_) => "datasources",
+        Change::Plugins => "plugins",
+        Change::Acme | Change::AcmeRenew => "acme",
+        Change::AcmeChallenges => "challenges",
+        Change::SetupDone => "setup",
+    }
 }
 
 fn millis(d: Duration) -> i64 {
@@ -284,6 +376,12 @@ pub async fn record(conn: &mut sqlx::AnyConnection, origin: &str, change: &Chang
     .bind(scope)
     .execute(&mut *conn)
     .await?;
+    // The counter the other servers compare at every poll (`Reconciler`), so a missed row is
+    // still noticed.
+    sqlx::query("UPDATE cluster_versions SET version = version + 1 WHERE area = $1")
+        .bind(area(change))
+        .execute(&mut *conn)
+        .await?;
     sqlx::query("SELECT pg_notify($1, '')").bind(CHANNEL).execute(&mut *conn).await?;
     Ok(())
 }
@@ -312,12 +410,20 @@ impl Cluster {
             wake: Notify::new(),
             stopped: AtomicBool::new(false),
             plugin_sync: PluginSync::default(),
+            node: Mutex::default(),
+            started_ms: AtomicI64::new(0),
+            boot: Mutex::default(),
         }
     }
 
     /// This server's id, new at every start.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The node id kept in the data directory (`node_id`); empty before `boot`.
+    pub fn node(&self) -> String {
+        self.node.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Changes the timings; before `start` (tests).
@@ -417,15 +523,32 @@ fn listen_address(state: &AppState) -> String {
         .join(", ")
 }
 
+/// Marks this server's earlier runs (same node id) stopped once their heartbeat is no longer
+/// fresh: they ended without signing off. A row of the same node id that still writes heartbeats
+/// (a copied data directory running elsewhere) is left alone.
+async fn mark_earlier_runs(state: &AppState, cluster: &Cluster) -> Result<(), sqlx::Error> {
+    let now = db_now(&state.db, true).await?;
+    sqlx::query(
+        "UPDATE cluster_instances SET stopped_at = heartbeat_at \
+         WHERE node_id = $1 AND id <> $2 AND stopped_at IS NULL AND heartbeat_at < $3",
+    )
+    .bind(cluster.node())
+    .bind(&cluster.id)
+    .bind(now - freshness(&cluster.options()))
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
 async fn insert_instance(state: &AppState, db: &AnyPool, now: i64) -> Result<(), sqlx::Error> {
     let cluster = &state.cluster;
     sqlx::query(
-        "INSERT INTO cluster_instances (id, host, data_dir, version, address, started_at, heartbeat_at, stopped_at) \
+        "INSERT INTO cluster_instances (id, node_id, host, version, address, started_at, heartbeat_at, stopped_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)",
     )
     .bind(&cluster.id)
+    .bind(cluster.node())
     .bind(&cluster.host)
-    .bind(data_dir_key(state))
     .bind(env!("CARGO_PKG_VERSION"))
     .bind(listen_address(state))
     .bind(now)
@@ -451,19 +574,15 @@ pub async fn start(state: &AppState) -> Result<()> {
     // Until the other servers are counted, the server installs no update on its own.
     state.updates.set_clustered(true);
     let db = state.db.clone();
+    if cluster.node().is_empty() {
+        // `AppState::new` takes the node id and the moment before loading (`boot`); a state
+        // built otherwise takes them now.
+        boot(&cluster, &db, &state.config.database_url(), &state.config.paths.data_dir).await?;
+    }
     let now = db_now(&db, postgres).await?;
+    cluster.started_ms.store(now, Ordering::SeqCst);
     insert_instance(state, &db, now).await?;
-    // An earlier run of this server (same host and data directory, which one server holds at a
-    // time) that ended without signing off.
-    sqlx::query(
-        "UPDATE cluster_instances SET stopped_at = heartbeat_at \
-         WHERE host = $1 AND data_dir = $2 AND id <> $3 AND stopped_at IS NULL",
-    )
-    .bind(&cluster.host)
-    .bind(data_dir_key(state))
-    .bind(&cluster.id)
-    .execute(&db)
-    .await?;
+    mark_earlier_runs(state, &cluster).await?;
     cluster.coordinated.store(true, Ordering::SeqCst);
     let publisher = cluster.publisher();
     state.datasources.set_publisher(publisher);
@@ -473,7 +592,10 @@ pub async fn start(state: &AppState) -> Result<()> {
     check_peers(state, &cluster).await;
     spawn_heartbeat(state.clone(), true);
     spawn_writer(state.clone());
-    spawn_reader(state.clone(), now);
+    // Replayed and compared from the moment before the start loaded anything.
+    let since = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(now, |b| b.at_ms);
+    spawn_reader(state.clone(), since);
+    spawn_reconciler(state.clone());
     spawn_listener(state.clone());
     // Plugins another server installed whose packages this one has not unpacked yet.
     request_plugin_sync(state);
@@ -560,23 +682,31 @@ fn freshness(options: &Options) -> i64 {
     millis(options.lease).max(millis(options.heartbeat) * 3)
 }
 
-/// Counts the other servers running now: not stopped, a fresh heartbeat, and not an earlier run
-/// of this server (same host and data directory). Until a count succeeds the mode stays unknown,
-/// and no update is installed on its own.
+/// Whether a row is another server running now: not stopped, a fresh heartbeat, and not an
+/// earlier run of this server (the same node id with no heartbeat since this run started).
+fn is_peer(cluster: &Cluster, id: &str, node: &str, heartbeat_at: i64, stopped: bool, now: i64) -> bool {
+    id != cluster.id
+        && !stopped
+        && now - heartbeat_at <= freshness(&cluster.options())
+        && (node != cluster.node() || heartbeat_at > cluster.started_ms.load(Ordering::SeqCst))
+}
+
+/// Counts the other servers running now (`is_peer`) and marks this server's earlier runs
+/// stopped once silent. Until a count succeeds the mode stays unknown, and no update is installed
+/// on its own.
 async fn check_peers(state: &AppState, cluster: &Cluster) {
     let peers = async {
+        mark_earlier_runs(state, cluster).await?;
         let now = db_now(&state.db, true).await?;
-        let (n,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM cluster_instances WHERE id <> $1 AND stopped_at IS NULL AND heartbeat_at >= $2 \
-             AND NOT (host = $3 AND data_dir = $4)",
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT id, node_id, heartbeat_at FROM cluster_instances WHERE id <> $1 AND stopped_at IS NULL \
+             AND heartbeat_at >= $2",
         )
         .bind(&cluster.id)
         .bind(now - freshness(&cluster.options()))
-        .bind(&cluster.host)
-        .bind(data_dir_key(state))
-        .fetch_one(&state.db)
+        .fetch_all(&state.db)
         .await?;
-        Ok::<_, sqlx::Error>(n > 0)
+        Ok::<_, sqlx::Error>(rows.iter().any(|(id, node, at)| is_peer(cluster, id, node, *at, false, now)))
     };
     match peers.await {
         Ok(peers) => {
@@ -785,16 +915,17 @@ struct EventRow {
     created_at: i64,
 }
 
-/// Reads the other servers' changes when notified and every `Options::poll`, applies them, and
-/// compares the fingerprints of the shared tables.
-fn spawn_reader(state: AppState, started_ms: i64) {
+/// Reads the other servers' changes when notified and every `Options::poll`, and applies them.
+fn spawn_reader(state: AppState, since_ms: i64) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {
         let cluster = state.cluster.clone();
-        let mut reader = Reader { since: started_ms - LOOKBACK_MS, seen: HashMap::new(), last_read: Instant::now() };
-        let mut reconciler = Reconciler::default();
+        let mut reader = Reader { since: since_ms - LOOKBACK_MS, seen: HashMap::new(), last_read: Instant::now() };
         loop {
+            if let Err(e) = reader.read(&state, &cluster).await {
+                tracing::debug!("reading the changes of the other servers: {e}");
+            }
             let poll =
                 if cluster.listening.load(Ordering::SeqCst) { cluster.options().poll } else { POLL_WITHOUT_NOTIFY };
             tokio::select! {
@@ -802,13 +933,6 @@ fn spawn_reader(state: AppState, started_ms: i64) {
                 () = cluster.wake.notified() => {}
                 () = tokio::time::sleep(poll) => {}
             }
-            if let Err(e) = reader.read(&state, &cluster).await {
-                tracing::debug!("reading the changes of the other servers: {e}");
-            }
-            if let Err(e) = reconciler.compare(&state).await {
-                tracing::debug!("comparing the shared tables: {e}");
-            }
-            retry_plugin_sync(&state);
         }
     });
 }
@@ -856,89 +980,103 @@ impl Reader {
     }
 }
 
-/// Fingerprints of what the servers share, compared at every poll: a change whose announcement
-/// was lost (the process ended between its commit and the announcement, a queue that could not
-/// be written) is taken within one poll anyway. The first comparison only takes the baseline.
-#[derive(Default)]
-struct Reconciler {
-    settings: Option<String>,
-    plugins: Option<String>,
-    acme: Option<String>,
-    challenges: Option<String>,
-    datasources: Option<String>,
-    /// Each data source's `updated_at` and `deleted_at` when the fingerprint last changed.
-    sources: Option<HashMap<String, (i64, Option<i64>)>>,
+/// Compares the shared state's counters every `Options::poll` on a timer of its own, whatever the
+/// notifications do, and retries a failed plugin sync when its pause is over.
+fn spawn_reconciler(state: AppState) {
+    let stopping = state.background.stopping();
+    let background = state.background.clone();
+    background.spawn(async move {
+        let cluster = state.cluster.clone();
+        let boot = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut reconciler = Reconciler { last: boot, failures: 0 };
+        loop {
+            tokio::select! {
+                () = stopping.cancelled() => return,
+                () = tokio::time::sleep(cluster.options().poll) => {}
+            }
+            match reconciler.compare(&state).await {
+                Ok(()) => reconciler.failures = 0,
+                Err(e) => {
+                    reconciler.failures += 1;
+                    if reconciler.failures >= COMPARE_FAILURES_WARN {
+                        tracing::warn!(
+                            failures = reconciler.failures,
+                            "comparing the shared state with the other servers keeps failing: {e}"
+                        );
+                    } else {
+                        tracing::debug!("comparing the shared state with the other servers: {e}");
+                    }
+                }
+            }
+            retry_plugin_sync(&state);
+        }
+    });
 }
 
-/// One query: an MD5 per area, so the comparison costs one round trip whatever the tables hold.
-const FINGERPRINTS: &str = "SELECT \
-     md5(COALESCE((SELECT string_agg(key || ':' || version, ',' ORDER BY key) FROM server_settings), '') || '|' || \
-         COALESCE((SELECT string_agg(org_id || '/' || key || ':' || version, ',' ORDER BY org_id, key) \
-                   FROM org_settings), '')), \
-     md5(COALESCE((SELECT string_agg(id || ':' || updated_at || ':' || dir || ':' || approved || ':' || enabled \
-                   || ':' || COALESCE(pending_dir, ''), ',' ORDER BY id) FROM plugins), '') || '|' || \
-         COALESCE((SELECT string_agg(key_id, ',' ORDER BY key_id) FROM plugin_keys), '') || '|' || \
-         COALESCE((SELECT string_agg(org_id || ':' || plugin_id, ',' ORDER BY org_id, plugin_id) \
-                   FROM plugin_org_blocks), '') || '|' || \
-         COALESCE((SELECT string_agg(allow_unsigned || ':' || allow_without_landlock, ',') FROM plugin_host), '')), \
-     md5(COALESCE((SELECT string_agg(name || ':' || updated_at, ',' ORDER BY name) FROM acme_shared), '')), \
-     md5(COALESCE((SELECT string_agg(kind || ':' || name || ':' || value, ',' ORDER BY kind, name) \
-                   FROM acme_challenges), '')), \
-     md5(COALESCE((SELECT string_agg(id || ':' || updated_at || ':' || COALESCE(deleted_at, 0), ',' ORDER BY id) \
-                   FROM datasources), ''))";
+/// Failed comparisons in a row from which each is logged as a warning.
+const COMPARE_FAILURES_WARN: u32 = 3;
 
-/// Whether `now` differs from a known `before`; takes it as known either way.
-fn moved(before: &mut Option<String>, now: String) -> bool {
-    let changed = before.as_ref().is_some_and(|b| *b != now);
-    *before = Some(now);
-    changed
+/// Compares the counters every announced change raises in its transaction (`record`) and the data
+/// sources' cheap aggregates with what this server last took, starting from the moment before it
+/// loaded anything (`boot`): a change whose event row this server missed is taken within one poll
+/// anyway. Its own changes move the counters too; taking them again is harmless.
+struct Reconciler {
+    last: Option<Snapshot>,
+    failures: u32,
 }
 
 impl Reconciler {
     async fn compare(&mut self, state: &AppState) -> Result<(), sqlx::Error> {
-        let (settings, plugins, acme, challenges, datasources): (String, String, String, String, String) =
-            sqlx::query_as(FINGERPRINTS).fetch_one(&state.db).await?;
-        let settings_moved = moved(&mut self.settings, settings);
-        if settings_moved {
+        let mut now = Snapshot::read(&state.db).await?;
+        let Some(last) = self.last.take() else {
+            now.read_source_rows(&state.db).await?;
+            self.last = Some(now);
+            return Ok(());
+        };
+        let changed: std::collections::HashSet<String> = now
+            .versions
+            .iter()
+            .filter(|(area, version)| last.versions.get(*area) != Some(*version))
+            .map(|(area, _)| area.clone())
+            .collect();
+        let moved = |area: &str| changed.contains(area);
+        if moved("settings") {
             crate::settings::cache(state).invalidate_all_here();
         }
-        if moved(&mut self.plugins, plugins) {
+        if moved("rights") {
+            // Which organization is not known here: every kept answer goes.
+            state.datasources.query_cache().rights_changed_here(None);
+        }
+        if moved("cache") {
+            state.datasources.query_cache().clear();
+        }
+        if moved("plugins") {
             request_plugin_sync(state);
         }
         // The ACME settings are a server setting.
-        if moved(&mut self.acme, acme) || settings_moved {
+        if moved("acme") || moved("settings") {
             state.acme.refresh_shared(state).await;
         }
-        if moved(&mut self.challenges, challenges) {
+        if moved("challenges") {
             state.acme.sync_challenges(state).await;
         }
-        if moved(&mut self.datasources, datasources) || self.sources.is_none() {
-            self.sources_changed(state).await?;
+        if moved("datasources") || now.sources != last.sources {
+            now.read_source_rows(&state.db).await?;
+            for (id, was) in &last.source_rows {
+                if now.source_rows.get(id) != Some(was) {
+                    state.datasources.forget_here(id);
+                }
+            }
+        } else {
+            now.source_rows = last.source_rows;
         }
-        // The setup another server finished while its announcement was lost.
-        if state.setup.is_open().await {
+        if (moved("setup") || state.setup.is_open().await) && state.setup.is_open().await {
             let (done,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM setup_lock").fetch_one(&state.db).await?;
             if done > 0 {
                 state.setup.close().await;
             }
         }
-        Ok(())
-    }
-
-    /// Forgets the data sources whose row changed since the last look (kept answers, pools,
-    /// plugin grants); the first look only takes the baseline.
-    async fn sources_changed(&mut self, state: &AppState) -> Result<(), sqlx::Error> {
-        let rows: Vec<(String, i64, Option<i64>)> =
-            sqlx::query_as("SELECT id, updated_at, deleted_at FROM datasources").fetch_all(&state.db).await?;
-        let now: HashMap<String, (i64, Option<i64>)> = rows.into_iter().map(|(id, u, d)| (id, (u, d))).collect();
-        if let Some(before) = &self.sources {
-            for (id, was) in before {
-                if now.get(id) != Some(was) {
-                    state.datasources.forget_here(id);
-                }
-            }
-        }
-        self.sources = Some(now);
+        self.last = Some(now);
         Ok(())
     }
 }
