@@ -7,11 +7,12 @@
 //! - `get_schema`: a source's schema, only for a source open to AI and with `datasources:query`
 //!   (as `GET .../schema`).
 //! - `run_query`: a free query through the normal query path (read-only rules, limits), only on a
-//!   source open to AI and with `datasources:query`; the result goes through `ai::redact`.
+//!   source open to AI and with `datasources:query`; the result goes through `ai::redact`. Not on
+//!   outward-facing sources (`outward_facing`): there the model would choose where a request goes.
 //! - `find_panels`: dashboards the person may read whose title matches, with their panels.
 //! - `run_panel`: a panel's stored queries, with `dashboards:read` on its dashboard, so viewers
 //!   (who have no free queries) can ask about what they see; every source of the panel must be
-//!   open to AI.
+//!   open to AI, and neither its queries nor its steps may name a field excluded from AI.
 //! - `propose_query`: a query offered to the person to open in Explore; never run.
 //!
 //! Sources the person chose in the composer narrow all of them (`ToolScope::selection`). What a
@@ -34,6 +35,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{AccessIndex, OrgCtx, Permission, Resource, check_resource};
 use crate::datasources::cache::CacheUse;
+use crate::datasources::registry::Origin;
 use crate::datasources::{Datasource, find_in_org, run_queries_cached};
 use crate::error::{ApiError, ApiResult};
 use crate::shapes::{ErrorBody, QueryItem, QueryOutcome, QueryResponse, TimeRange};
@@ -105,7 +107,8 @@ pub fn definitions() -> Vec<ToolDef> {
                           Prometheus, {\"cypher\": \"...\"} for Neo4j and Memgraph, {\"gsql\": \"...\"} for \
                           TigerGraph, {\"lucene\": \"...\"} for Elasticsearch, {\"collection\": \"...\", \
                           \"pipeline\": \"[...]\"} for MongoDB (the pipeline as JSON text). Writing queries \
-                          are refused."
+                          are refused, and so are queries on sources that send requests outward (HTTP JSON \
+                          and plugin sources); use run_panel for those."
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -533,6 +536,28 @@ fn time_point(value: Option<&Value>, now: i64, default: i64) -> ApiResult<i64> {
     Ok(now.saturating_sub(n.saturating_mul(unit_ms)))
 }
 
+/// The starts a time range of a panel on an outward-facing source may have: a fixed list, so the
+/// model cannot put data into the digits of a range that travels with the request.
+const PRESET_FROM: &[&str] = &[
+    "now-5m", "now-15m", "now-30m", "now-1h", "now-3h", "now-6h", "now-12h", "now-24h", "now-2d", "now-7d", "now-30d",
+    "now-90d", "now-1y",
+];
+
+/// Whether `timeRange` in `args` is absent, the dashboard's saved range (`saved_from`,
+/// `saved_to`), or a preset start (`PRESET_FROM`) up to `now`; each end absent keeps its default.
+fn preset_range(args: &Value, saved_from: &str, saved_to: &str) -> bool {
+    let Some(range) = args.get("timeRange").filter(|v| !v.is_null()) else { return true };
+    let end = |key: &str| match range.get(key) {
+        None | Some(Value::Null) => Some(None),
+        Some(Value::String(s)) => Some(Some(s.trim().to_string())),
+        Some(_) => None,
+    };
+    let (Some(from), Some(to)) = (end("from"), end("to")) else { return false };
+    let saved = from.as_deref() == Some(saved_from) && to.as_deref().is_none_or(|t| t == saved_to);
+    let preset = from.as_deref().is_none_or(|f| PRESET_FROM.contains(&f)) && to.as_deref().is_none_or(|t| t == "now");
+    saved || preset
+}
+
 fn time_range(args: &Value, now: i64) -> ApiResult<TimeRange> {
     let range = args.get("timeRange").filter(|v| !v.is_null());
     let range = TimeRange {
@@ -635,6 +660,19 @@ fn searchable_text(query: &Value) -> String {
     out
 }
 
+/// Whether a source of `kind` sends requests outward on the query's say: HTTP JSON (the query
+/// picks the path and parameters) and every plugin kind (the server cannot tell what a plugin
+/// does with a query), also one whose plugin is not loaded now. The chat runs no query written by
+/// the model on them, since it could carry data from the chat to wherever the source reaches;
+/// stored panel queries, which a person wrote, still run.
+pub fn outward_facing(state: &AppState, kind: &str) -> bool {
+    outward_kind(state.datasources.registry().origin(kind), kind)
+}
+
+fn outward_kind(origin: Option<Origin>, kind: &str) -> bool {
+    kind == "http_json" || origin != Some(Origin::BuiltIn)
+}
+
 /// The excluded field a query names, read both as written and without its literals and comments:
 /// stripping cannot always tell a literal or a comment apart (`'a\''`, MySQL's `0--email`), so
 /// either one naming the field refuses the query, a literal naming it included.
@@ -654,6 +692,17 @@ async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let query = query_arg(args)?;
     let range = time_range(args, scope.state.clock.now_ms())?;
     let (ds, policy) = queryable(scope, id, true).await?;
+    // The model would choose the path and parameters of a request, or anything a plugin passes
+    // on: such a query could carry data out to wherever the source reaches.
+    if outward_facing(scope.state, &ds.kind) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            format!("{} sends requests outward; the chat runs only the stored queries of its panels", ds.name),
+        )
+        .because("ai.outward_source_free_query")
+        .param("name", &ds.name));
+    }
     // Excluded fields are matched by name in results; a query that names one could pass its
     // values under another name (`email AS kontakt`), so such a query is not run at all.
     if let Some(field) = names_excluded(&policy, &query) {
@@ -792,8 +841,10 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let datasource_ids: Vec<String> =
         items.iter().map(|i| i.datasource_id.clone()).collect::<BTreeSet<_>>().into_iter().collect();
     let mut policies = BTreeMap::new();
+    let mut outward = false;
     for id in &datasource_ids {
         let ds = find_in_org(&scope.state.db, &scope.ctx.org_id, id, false).await?;
+        outward |= outward_facing(scope.state, &ds.kind);
         // A viewer of the panel learns that one of its sources is closed, not which.
         let may_read =
             check_resource(&scope.state.db, scope.ctx, Permission::DatasourcesRead, Resource::Datasource(&ds.id))
@@ -812,6 +863,42 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
             return Err(if may_read { e.param("name", &ds.name).param("datasourceId", &ds.id) } else { e });
         }
         policies.insert(ds.id, policy);
+    }
+    // The range reaches the source with the query; on a source that sends requests outward, a
+    // range the model chose freely could carry data in its digits. Only presets and the
+    // dashboard's own range.
+    if outward && !preset_range(args, &model.time_range.from, &model.time_range.to) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            "this panel reads a source that sends requests outward; its time range takes only a preset (now-5m to now-1y) or the dashboard's own",
+        )
+        .because("ai.outward_source_time_range"));
+    }
+    // As for a free query: a stored query that names an excluded field could pass its values
+    // under another name, and so could a step that reads one into a new field or a new name.
+    for item in &items {
+        if let Some(field) = names_excluded(&policies[&item.datasource_id], &item.query) {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "ai_unavailable",
+                format!("a query of this panel names {field}, a field excluded from AI"),
+            )
+            .because("ai.query_names_excluded_field")
+            .param("field", field));
+        }
+    }
+    // One set of rules for every result of the panel, as its steps may combine the sources; a
+    // stored chat checks the panel's results again with the same.
+    let all = redact::DataPolicy::merged(policies.values());
+    if let Some(field) = step_reads_excluded(&all, &steps) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            format!("a step of this panel reads {field}, a field excluded from AI"),
+        )
+        .because("ai.panel_step_reads_excluded_field")
+        .param("field", field));
     }
     let queries: BTreeMap<String, (String, Value)> =
         items.iter().map(|i| (i.ref_id.clone(), (i.datasource_id.clone(), i.query.clone()))).collect();
@@ -833,11 +920,11 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
             .iter()
             .map(|ref_id| {
                 let (ds, query) = &queries[ref_id];
-                result_record(ref_id, Some(ds), Some(query), results.remove(ref_id), &policies[ds])
+                result_record(ref_id, Some(ds), Some(query), results.remove(ref_id), &all)
             })
             .collect()
     } else {
-        stepped_records(scope, &steps, &order, &mut results, &queries, &policies, &hidden).await?
+        stepped_records(scope, &steps, &order, &mut results, &queries, &all, &hidden).await?
     };
     let status = if records.iter().all(|r| r.error.is_some()) { "error" } else { "ok" };
     Ok(ToolRecord {
@@ -856,17 +943,90 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     })
 }
 
+/// The excluded field a panel's enabled steps read, if any. Excluding works by name on results,
+/// and a step can carry a field's values on under another name: a projection or an aggregation
+/// that renames it, a calculation over it, a pivot that makes its values column names, statistics
+/// of it. So a step that reads an excluded field at all keeps the panel from AI.
+fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::Step]) -> Option<String> {
+    use crate::analysis::{JoinOn, StepKind};
+    for step in steps {
+        let mut read: Vec<&str> = Vec::new();
+        match &step.kind {
+            StepKind::Calculate { expression, .. } => {
+                if let Some(field) = policy.excluded_named_in(expression) {
+                    return Some(field);
+                }
+            }
+            StepKind::Join { on: JoinOn::Key { left_field, right_field }, .. } => {
+                read.extend([left_field.as_str(), right_field.as_str()]);
+            }
+            StepKind::Join { .. } => {}
+            StepKind::Reduce { fields, .. } => read.extend(fields.iter().map(String::as_str)),
+            StepKind::Trend { field, x, .. } => read.extend([Some(field.as_str()), x.as_deref()].into_iter().flatten()),
+            StepKind::MovingAverage { field, .. } => read.push(field),
+            StepKind::Correlate { x, y, .. } => read.extend([x.as_str(), y.as_str()]),
+            StepKind::Compare { field, time, .. } => {
+                read.extend([Some(field.as_str()), time.as_deref()].into_iter().flatten());
+            }
+            StepKind::Group { by, aggregations, .. } => {
+                read.extend(by.iter().map(String::as_str));
+                read.extend(aggregations.iter().map(|a| a.field.as_str()));
+            }
+            StepKind::Pivot { row, column, value, .. } => read.extend([row.as_str(), column.as_str(), value.as_str()]),
+            StepKind::ToFrame { columns, .. } => read.extend(columns.iter().map(|c| c.path.as_str())),
+            StepKind::SharedNeighbours { name, .. } => read.extend(name.as_deref()),
+            StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),
+            StepKind::CountLabels { .. }
+            | StepKind::CountEdgeTypes { .. }
+            | StepKind::DegreeDistribution { .. }
+            | StepKind::TopDegree { .. }
+            | StepKind::Degree { .. } => {}
+        }
+        if let Some(field) = read.into_iter().find(|f| policy.excludes(f)) {
+            return Some(field.to_string());
+        }
+    }
+    None
+}
+
+/// The excluded field a join of the panel's enabled steps takes in with one of its frames: the
+/// field names of the queries' frames, before any step ran.
+fn joined_excluded(
+    policy: &redact::DataPolicy,
+    steps: &[crate::analysis::Step],
+    inputs: &[(String, crate::analysis::steps::Input)],
+) -> Option<String> {
+    use crate::analysis::StepKind;
+    use crate::analysis::steps::Input;
+    for step in steps {
+        let StepKind::Join { left, right, .. } = &step.kind else { continue };
+        for (name, input) in inputs {
+            if name != left && name != right {
+                continue;
+            }
+            if let Input::Frame(frame) = input
+                && let Some(f) = frame.fields().iter().find(|f| policy.excludes(&f.name))
+            {
+                return Some(f.name.clone());
+            }
+        }
+    }
+    None
+}
+
 /// The results of a panel after its steps, as the panel shows them: the steps read every query
 /// (one that failed fails the call, as for a summary), run off the request threads within the
-/// query timeout, and each frame or graph they leave goes through `ai::redact` with the rules of
-/// all the panel's sources (a step may combine them). Hidden queries stay out.
+/// query timeout, and each frame or graph they leave goes through `ai::redact` with `all`, the
+/// rules of all the panel's sources (a step may combine them). Hidden queries stay out. Error
+/// messages of the queries and the steps go through the same rules, as a database error or a
+/// step's message may quote a value.
 async fn stepped_records(
     scope: &ToolScope<'_>,
     steps: &[crate::analysis::Step],
     order: &[String],
     results: &mut BTreeMap<String, QueryOutcome>,
     queries: &BTreeMap<String, (String, Value)>,
-    policies: &BTreeMap<String, redact::DataPolicy>,
+    all: &redact::DataPolicy,
     hidden: &BTreeSet<String>,
 ) -> ApiResult<Vec<ResultRecord>> {
     use crate::analysis::steps::{Control, Input, run_shapes};
@@ -886,9 +1046,23 @@ async fn stepped_records(
                     },
                 ));
             }
-            Some(QueryOutcome::Err { error }) => return Err(crate::routes::query::api_error(error)),
+            Some(QueryOutcome::Err { error }) => {
+                let message = all.error_text(&error.message);
+                return Err(crate::routes::query::api_error(ErrorBody { message, ..error }));
+            }
             None => return Err(ApiError::internal("ai", format!("no outcome for {ref_id}"))),
         }
+    }
+    // A join renames the fields of both frames (`A.email`); rather than rely on matching those
+    // names, a join of a frame that holds an excluded field keeps the panel from AI.
+    if let Some(field) = joined_excluded(all, steps, &inputs) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "ai_unavailable",
+            format!("a step of this panel joins {field}, a field excluded from AI"),
+        )
+        .because("ai.panel_step_reads_excluded_field")
+        .param("field", field));
     }
     let timeout = crate::settings::get(scope.state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
     let steps = steps.to_vec();
@@ -904,10 +1078,9 @@ async fn stepped_records(
     }
     let _stop = StopOnDrop(flag);
     let (frames, graphs) = ran.await.map_err(|e| ApiError::internal("ai", e))?.map_err(|f| {
-        ApiError::validation(format!("step {}: {}", f.index + 1, f.detail.message))
+        ApiError::validation(format!("step {}: {}", f.index + 1, all.error_text(&f.detail.message)))
             .with_reason(f.detail.reason, f.detail.params)
     })?;
-    let all = redact::DataPolicy::merged(policies.values());
     let shown = frames
         .into_iter()
         .map(|f| (f.name, QueryResult::Frame { frame: f.frame }))
@@ -921,7 +1094,7 @@ async fn stepped_records(
                 source.map(|(ds, _)| ds.as_str()),
                 source.map(|(_, q)| q),
                 Some(QueryOutcome::Ok { result, steps: None, cache: None }),
-                &all,
+                all,
             )
         })
         .collect())
@@ -1013,8 +1186,10 @@ pub fn model_content(name: &str, record: &ToolRecord) -> (String, bool) {
 /// - lists: only the sources the person may still read, the dashboards they may still read.
 ///
 /// What is withheld loses its data, and error messages too (a database error may quote values).
+/// What is still shown is checked against the sources' rules as they are now (`restrict`).
 #[derive(Default)]
 pub struct Visibility {
+    policies: BTreeMap<String, Option<redact::DataPolicy>>,
     queryable: BTreeMap<String, bool>,
     open: BTreeMap<String, bool>,
     dashboards: BTreeMap<String, bool>,
@@ -1066,10 +1241,18 @@ impl Visibility {
         self.visible.get_or_insert_with(BTreeSet::new)
     }
 
-    /// `record` of a call of `name` as the person may see it now.
-    pub async fn check(&mut self, state: &AppState, ctx: &OrgCtx, name: &str, mut record: ToolRecord) -> ToolRecord {
+    /// `record` of a call of `name` as the person may see it now, and whether it shows less than
+    /// when it was made (withheld, values excluded or rows cut since): then the model's words
+    /// around it may quote what is no longer shown (`chats::checked_turn`).
+    pub async fn check(
+        &mut self,
+        state: &AppState,
+        ctx: &OrgCtx,
+        name: &str,
+        mut record: ToolRecord,
+    ) -> (ToolRecord, bool) {
         if record.withheld {
-            return record;
+            return (record, true);
         }
         // Lists keep what the person may still see.
         if let Some(Value::Array(items)) = record.items.take() {
@@ -1104,6 +1287,23 @@ impl Visibility {
                 allowed &= self.queryable(state, ctx, &ds.id).await;
             }
         }
+        // What is still shown follows the rules as they are now: the sources' policies, merged
+        // for a panel as when it ran.
+        let mut changed = false;
+        if allowed && name != "propose_query" {
+            let ids: Vec<String> = match (&record.dashboard, &record.datasource) {
+                (Some(d), _) => d.datasource_ids.clone(),
+                (None, Some(ds)) => vec![ds.id.clone()],
+                (None, None) => Vec::new(),
+            };
+            if !ids.is_empty() {
+                match self.policy(state, &ids).await {
+                    Some(policy) => changed = restrict(&policy, &mut record),
+                    // The rules cannot be read: nothing is shown rather than too much.
+                    None => allowed = false,
+                }
+            }
+        }
         if !allowed {
             record.schema = None;
             for result in &mut record.results {
@@ -1117,8 +1317,58 @@ impl Visibility {
             }
             record.withheld = true;
         }
-        record
+        let hides = record.withheld || changed;
+        (record, hides)
     }
+
+    /// The rules of the sources `ids` as they are now, merged; `None` when one cannot be read.
+    async fn policy(&mut self, state: &AppState, ids: &[String]) -> Option<redact::DataPolicy> {
+        let mut found = Vec::new();
+        for id in ids {
+            if !self.policies.contains_key(id) {
+                let policy = redact::policy(state, id).await.ok();
+                self.policies.insert(id.clone(), policy);
+            }
+            found.push(self.policies[id].clone()?);
+        }
+        Some(if found.len() == 1 { found.remove(0) } else { redact::DataPolicy::merged(&found) })
+    }
+}
+
+/// Applies `policy` to a stored record in place: its results' data (`redact::restrict_stored`)
+/// and its error messages (`DataPolicy::error_text`). Answers whether it now shows less.
+fn restrict(policy: &redact::DataPolicy, record: &mut ToolRecord) -> bool {
+    let mut changed = false;
+    let mut restrict_error = |error: &mut ErrorBody| {
+        let text = policy.error_text(&error.message);
+        if text != error.message {
+            error.message = text;
+            changed = true;
+        }
+    };
+    if let Some(error) = &mut record.error {
+        restrict_error(error);
+    }
+    for result in &mut record.results {
+        if let Some(error) = &mut result.error {
+            restrict_error(error);
+        }
+    }
+    for result in &mut record.results {
+        let Some(data) = &result.data else { continue };
+        let now = redact::restrict_stored(policy, data);
+        if !now.changed() {
+            continue;
+        }
+        changed = true;
+        result.excluded_values += now.replaced;
+        if now.cut {
+            result.rows = result.rows.min(policy.max_rows);
+            result.truncated = true;
+        }
+        result.data = now.value;
+    }
+    changed
 }
 
 #[cfg(test)]
@@ -1164,6 +1414,59 @@ mod tests {
         assert_eq!(names_excluded(&policy, &json!({ "sql": "SELECT name FROM kunden" })), None);
         let mongo = json!({ "collection": "kunden", "pipeline": "[{\"$project\": {\"email\": 1}}]" });
         assert_eq!(names_excluded(&policy, &mongo).as_deref(), Some("kunden.email"));
+    }
+
+    #[test]
+    fn outward_panels_take_only_preset_ranges() {
+        let ok = |args: Value| preset_range(&args, "now-6h", "now");
+        assert!(ok(json!({})));
+        assert!(ok(json!({ "timeRange": null })));
+        assert!(ok(json!({ "timeRange": { "from": "now-7d", "to": "now" } })));
+        assert!(ok(json!({ "timeRange": { "from": "now-1y" } })));
+        assert!(ok(json!({ "timeRange": { "from": "now-6h", "to": "now" } })), "the dashboard's own");
+        assert!(preset_range(&json!({ "timeRange": { "from": "now-2w", "to": "now-1w" } }), "now-2w", "now-1w"));
+        for bad in [
+            json!({ "timeRange": { "from": 1_700_000_123_456_i64, "to": "now" } }),
+            json!({ "timeRange": { "from": "now-1d", "to": 42 } }),
+            json!({ "timeRange": { "from": "now-1234567m", "to": "now" } }),
+            json!({ "timeRange": { "from": "now-2h" } }),
+            json!({ "timeRange": { "from": "now-7d", "to": "now-1d" } }),
+        ] {
+            assert!(!ok(bad.clone()), "{bad}");
+        }
+    }
+
+    #[test]
+    fn http_json_and_every_plugin_kind_face_outward() {
+        let registry = crate::datasources::registry::KindRegistry::built_in();
+        for kind in ["postgres", "sqlite", "mongodb", "neo4j", "prometheus", "elasticsearch", "file"] {
+            assert!(!outward_kind(registry.origin(kind), kind), "{kind}");
+        }
+        assert!(outward_kind(registry.origin("http_json"), "http_json"));
+        assert!(outward_kind(Some(Origin::Plugin { version: "1.0.0".into() }), "dev.example.rest"));
+        assert!(outward_kind(None, "dev.example.rest"), "a plugin kind not loaded now too");
+    }
+
+    #[test]
+    fn steps_that_read_an_excluded_field_are_found() {
+        let access =
+            super::super::store::DatasourceAccess { readable: true, excluded_fields: vec!["kunden.email".into()] };
+        let policy = redact::DataPolicy::new(&access, 10);
+        let refs: BTreeSet<&str> = ["A"].into();
+        let steps = |raw: Value| crate::analysis::check_steps(raw.as_array().unwrap(), &refs, "t").unwrap();
+        for raw in [
+            json!([{ "id": "1", "type": "toFrame", "frame": "A", "columns": [{ "path": "email", "name": "kontakt" }] }]),
+            json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "k", "expression": "email" }]),
+            json!([{ "id": "1", "type": "group", "frame": "A", "by": ["name"],
+                     "aggregations": [{ "field": "email", "op": "first", "name": "k" }] }]),
+            json!([{ "id": "1", "type": "pivot", "frame": "A", "row": "name", "column": "email", "value": "umsatz",
+                     "op": "sum" }]),
+        ] {
+            let field = step_reads_excluded(&policy, &steps(raw.clone()));
+            assert!(field.as_deref().is_some_and(|f| f.ends_with("email")), "{raw}: {field:?}");
+        }
+        let fine = json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]);
+        assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
     }
 
     #[test]

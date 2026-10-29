@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { FormAlert } from "../../components/FormAlert";
+import { QueryPreview } from "../../components/QueryPreview";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import type { Folder } from "../dashboards/api";
@@ -45,6 +46,8 @@ interface SaveAnalysisDialogProps {
   busy?: boolean;
   /** From a failed attempt. */
   error?: string | undefined;
+  /** The query being saved, shown in full and read-only (a query handed over from Fragen). */
+  query?: unknown;
   onSubmit: (values: SaveValues) => void;
   onClose: () => void;
 }
@@ -68,6 +71,7 @@ export function SaveAnalysisDialog({
   rangeLabel,
   busy = false,
   error,
+  query,
   onSubmit,
   onClose,
 }: SaveAnalysisDialogProps) {
@@ -199,6 +203,9 @@ export function SaveAnalysisDialog({
               onChange={(event) => set({ description: event.currentTarget.value })}
             />
           </div>
+        ) : null}
+        {full && query !== undefined && query !== null ? (
+          <QueryPreview label={t("analyses.save.query")} query={query} />
         ) : null}
         {full && summary !== undefined ? (
           <div className="analysis-save__summary">

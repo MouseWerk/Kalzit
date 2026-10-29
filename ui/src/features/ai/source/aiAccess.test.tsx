@@ -84,6 +84,35 @@ describe("AI access of a data source", () => {
     expect(server.areas.aiAdmin.access[PG_ID]).toEqual({ readable: true, excludedFields: [] });
   });
 
+  it("warns that the chat runs only panel queries on a source that sends requests outward", async () => {
+    await openAdmin(`/data-sources/${PG_ID}`, {
+      setupServer: (s) => {
+        s.areas.aiAdmin.status = USABLE;
+        s.areas.aiAdmin.access[PG_ID] = { readable: true, excludedFields: [], outwardFacing: true };
+      },
+    });
+    const part = await aiPart();
+    expect(within(part).getByText("This source sends requests outward.")).toBeTruthy();
+    expect(
+      within(part).getByText(/Ask therefore runs only the stored queries of panels/),
+    ).toBeTruthy();
+  });
+
+  it("gives no such warning for other sources", async () => {
+    await openAdmin(`/data-sources/${PG_ID}`, {
+      setupServer: (s) => {
+        s.areas.aiAdmin.status = USABLE;
+        s.areas.aiAdmin.access[PG_ID] = {
+          readable: true,
+          excludedFields: [],
+          outwardFacing: false,
+        };
+      },
+    });
+    const part = await aiPart();
+    expect(within(part).queryByText("This source sends requests outward.")).toBeNull();
+  });
+
   it("shows the server's reason at the field when it refuses the list", async () => {
     const { user } = await openAdmin(`/data-sources/${PG_ID}`, {
       setupServer: (s) => {

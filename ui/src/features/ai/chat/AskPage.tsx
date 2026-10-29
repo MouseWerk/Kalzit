@@ -454,6 +454,7 @@ function AskChat({
                 outcome={message.content.outcome}
                 error={message.content.error}
                 when={when(message.createdAt)}
+                withheld={message.content.withheld === true}
                 running={false}
                 waiting={false}
                 rights={rights}

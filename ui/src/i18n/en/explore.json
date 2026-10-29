@@ -19,6 +19,7 @@
   "explore.addToDashboard": "Add to dashboard…",
   "explore.add.title": "Add to dashboard",
   "explore.add.where": "Where",
+  "explore.add.query": "Query (read-only)",
   "explore.add.existing": "An existing dashboard",
   "explore.add.new": "A new dashboard",
   "explore.add.dashboard": "Dashboard",

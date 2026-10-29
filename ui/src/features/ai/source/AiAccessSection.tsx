@@ -188,6 +188,14 @@ export function AiAccessSection({
               : ` ${t("ai.source.rowLimit", { rows: new Intl.NumberFormat(language).format(maxRows) })}`}
           </span>
         </p>
+        {current.outwardFacing === true ? (
+          <p className="ai-note">
+            <Icon name="alert" />
+            <span>
+              <strong>{t("ai.source.outwardTitle")}</strong> {t("ai.source.outwardText")}
+            </span>
+          </p>
+        ) : null}
         <div className="field">
           <label className="field__label" htmlFor={`${ids}-field`} id={`${ids}-fields`}>
             {t("ai.source.excluded")}

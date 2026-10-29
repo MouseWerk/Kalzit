@@ -810,7 +810,7 @@ async fn only_admins_configure_and_only_source_admins_open_a_source_to_ai() {
         assert_eq!(r.status, status, "{}", r.body);
     }
     let r = t.get(&access, &editor).await;
-    assert_eq!(r.body, json!({ "datasourceId": ds, "readable": false, "excludedFields": [] }));
+    assert_eq!(r.body, json!({ "datasourceId": ds, "readable": false, "excludedFields": [], "outwardFacing": false }));
     let bad = json!({ "readable": true, "excludedFields": ["kunden..email"] });
     let r = t.send(Method::PUT, &access, Some(bad), Some(&admin)).await;
     assert_eq!(r.reason(), "ai.excluded_fields_invalid", "{}", r.body);
@@ -818,7 +818,8 @@ async fn only_admins_configure_and_only_source_admins_open_a_source_to_ai() {
     let r = t.send(Method::PUT, &access, Some(body), Some(&admin)).await;
     assert_eq!(
         r.body,
-        json!({ "datasourceId": ds, "readable": true, "excludedFields": ["kunden.email", "kunden.iban"] })
+        json!({ "datasourceId": ds, "readable": true, "excludedFields": ["kunden.email", "kunden.iban"],
+                "outwardFacing": false })
     );
     assert!(kalzit::ai::store::datasource_readable(&t.state.db, &ds).await.unwrap());
     let r = t.get(&format!("/api/orgs/{org}/ai/datasources"), &editor).await;
