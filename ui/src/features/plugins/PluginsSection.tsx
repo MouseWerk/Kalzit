@@ -163,6 +163,8 @@ function InstalledTab({ list }: { list: PluginList }) {
   );
   const running = runnable.filter((plugin) => plugin.process?.state === "running");
   const shown = filter === "problems" ? problems : filter === "updates" ? updates : items;
+  const sources = items.filter((plugin) => plugin.kind === "datasource").length;
+  const panels = items.filter((plugin) => plugin.kind === "panel").length;
 
   return (
     <div className="plugins">
@@ -171,8 +173,16 @@ function InstalledTab({ list }: { list: PluginList }) {
           <span className="plugins-strip__label">{t("plugins.strip.installed")}</span>
           <span className="plugins-strip__value">{items.length}</span>
           <span className="plugins-strip__sub">
-            {t("plugins.strip.datasources", {
-              count: items.filter((plugin) => plugin.kind === "datasource").length,
+            {t("plugins.strip.kinds", {
+              datasources: t(
+                sources === 1 ? "plugins.strip.datasourcesOne" : "plugins.strip.datasources",
+                {
+                  count: sources,
+                },
+              ),
+              panels: t(panels === 1 ? "plugins.strip.panelsOne" : "plugins.strip.panels", {
+                count: panels,
+              }),
             })}
           </span>
         </div>
