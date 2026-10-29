@@ -327,14 +327,14 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
                         )
                         .with("name", name));
                     };
-                    quoted.push(quote_identifier(engine, n));
+                    quoted.push(quote_identifier(engine, n)?);
                 }
                 out.push_str(&quoted.join(", "));
             }
         }
     }
-    let sent = render(&out, |n| engine_placeholder(engine, n, &binds[n - 1], false));
-    let checked = render(&out, |n| engine_placeholder(engine, n, &binds[n - 1], true));
+    let sent = render(&out, &binds, |n, b| engine_placeholder(engine, n, b, false))?;
+    let checked = render(&out, &binds, |n, b| engine_placeholder(engine, n, b, true))?;
     check_statement(&checked, engine)?;
     if engine == Engine::ClickHouse {
         same_structure(&sent, &checked)?;
@@ -346,15 +346,19 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
 const MARK: char = '\0';
 
 /// The statement with each marker replaced by `placeholder(n)`.
-fn render(marked: &str, placeholder: impl Fn(usize) -> String) -> String {
+fn render(marked: &str, binds: &[Bind], placeholder: impl Fn(usize, &Bind) -> String) -> Result<String, Rejected> {
+    let broken = || Rejected::new("sql.check_mismatch", "the query could not be checked as it would run");
     let mut out = String::with_capacity(marked.len() + 16);
     let mut parts = marked.split(MARK);
     out.push_str(parts.next().unwrap_or_default());
-    while let (Some(n), Some(rest)) = (parts.next(), parts.next()) {
-        out.push_str(&placeholder(n.parse().expect("a marker holds the bind's number")));
+    while let Some(n) = parts.next() {
+        let rest = parts.next().ok_or_else(broken)?;
+        let n: usize = n.parse().map_err(|_| broken())?;
+        let bind = n.checked_sub(1).and_then(|i| binds.get(i)).ok_or_else(broken)?;
+        out.push_str(&placeholder(n, bind));
         out.push_str(rest);
     }
-    out
+    Ok(out)
 }
 
 /// The text sent and the text checked must tokenize alike, except that each `?` of the checked
@@ -458,18 +462,30 @@ fn scalar(name: &str, value: &Value) -> Result<Bind, Rejected> {
     })
 }
 
-fn quote_identifier(engine: Engine, name: &str) -> String {
-    name.split('.')
+/// A schema name as a quoted identifier. A name with a NUL is refused everywhere (NUL marks
+/// bound values in `prepare`); in ClickHouse also one with a backtick, double quote or backslash,
+/// as ClickHouse reads escapes inside quoted names that the checker's parser does not.
+fn quote_identifier(engine: Engine, name: &str) -> Result<String, Rejected> {
+    let refused = |c: &[char]| name.contains(c);
+    if refused(&[MARK]) || (engine == Engine::ClickHouse && refused(&['`', '"', '\\'])) {
+        return Err(Rejected::new(
+            "sql.identifier_characters",
+            "this name contains characters Kalzit does not put into a quoted name",
+        )
+        .with("name", name));
+    }
+    Ok(name
+        .split('.')
         .map(|part| match engine {
             Engine::MySql => format!("`{}`", part.replace('`', "``")),
             Engine::MsSql => format!("[{}]", part.replace(']', "]]")),
-            Engine::ClickHouse => format!("`{}`", part.replace('\\', "\\\\").replace('`', "\\`")),
+            Engine::ClickHouse => format!("`{part}`"),
             Engine::Postgres | Engine::Sqlite | Engine::DataFusion => {
                 format!("\"{}\"", part.replace('"', "\"\""))
             }
         })
         .collect::<Vec<_>>()
-        .join(".")
+        .join("."))
 }
 
 fn is_ident_start(c: char) -> bool {
@@ -497,9 +513,11 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
         // Everything the engine treats as opaque is skipped as a whole.
         let skip_to = match c {
             b'\'' => Some(skip_string(bytes, i, b'\'', backslash_escapes(engine, bytes, i))?),
-            b'"' => Some(skip_string(bytes, i, b'"', matches!(engine, Engine::MySql | Engine::ClickHouse))?),
+            // ClickHouse reads backslash escapes inside quoted names, the checker's parser does not,
+            // so the two could end a name at different places: no backslash in them at all.
+            b'"' | b'`' if engine == Engine::ClickHouse => Some(skip_clickhouse_name(bytes, i)?),
+            b'"' => Some(skip_string(bytes, i, b'"', engine == Engine::MySql)?),
             b'`' if matches!(engine, Engine::MySql | Engine::Sqlite) => Some(skip_string(bytes, i, b'`', false)?),
-            b'`' if engine == Engine::ClickHouse => Some(skip_string(bytes, i, b'`', true)?),
             b'[' if matches!(engine, Engine::MsSql | Engine::Sqlite) => Some(skip_bracket(bytes, i)?),
             b'-' if bytes.get(i + 1) == Some(&b'-') => match line_comment_after_dashes(sql, i + 2, engine)? {
                 true => Some(skip_line(bytes, i)),
@@ -508,6 +526,13 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             // ClickHouse's `#` comments are not read as comments by the checker's parser, so they are
             // left to it, which refuses them; `--` works in both.
             b'#' if engine == Engine::MySql => Some(skip_line(bytes, i)),
+            b'#' if engine == Engine::ClickHouse => {
+                return reject("sql.hash_comment", "write comments with --; # is not allowed outside strings");
+            }
+            // `a$b` is one name in ClickHouse, but Kalzit would read `$b` as a variable.
+            b'$' if engine == Engine::ClickHouse && i > 0 && is_ident_char(bytes[i - 1] as char) => {
+                return reject("sql.dollar_in_name", "a $ directly after a name is not allowed; leave a space");
+            }
             b'/' if bytes.get(i + 1) == Some(&b'*') => Some(skip_block_comment(
                 bytes,
                 i,
@@ -684,6 +709,16 @@ fn is_column_reference(s: &str) -> bool {
                 || quoted('`', '`')
                 || quoted('[', ']')
         })
+}
+
+/// The index after a ClickHouse name in backticks or double quotes at `start`; a backslash in it
+/// is refused. A doubled quote is an escaped quote, as in the other engines.
+fn skip_clickhouse_name(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
+    let end = skip_string(bytes, start, bytes[start], false)?;
+    if bytes[start..end].contains(&b'\\') {
+        return reject("sql.identifier_backslash", "quoted names may not contain a backslash");
+    }
+    Ok(end)
 }
 
 /// `{name:` at `i`: a ClickHouse query parameter.

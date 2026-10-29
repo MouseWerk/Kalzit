@@ -23,6 +23,7 @@ import {
 import { MacroHelp } from "./MacroHelp";
 import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
+import "../../dashboards/ui/shared.css";
 
 /**
  * InfluxDB: one language per query. Flux answers on 1.8 and 2.x, InfluxQL everywhere, SQL on 3.x;

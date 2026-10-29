@@ -590,6 +590,20 @@ mod tests {
             assert!(prepare(hidden).is_err(), "{hidden}");
         }
         assert_eq!(reason("SELECT 1 AS a\0, 2"), "sql.nul_character");
+        // ClickHouse reads `\`` and `\"` inside quoted names as escapes; the checker would end the
+        // name there and see a column where ClickHouse sees url().
+        for escaped in [
+            "SELECT `a\\` FROM url('http://169.254.169.254/', CSV) AS `b` FROM t",
+            "SELECT `a\\`, url('http://x/', CSV) AS `` FROM t",
+            "SELECT \"a\\\", file('/etc/passwd') AS \"b\" FROM t",
+            "SELECT \"x\\\\\" FROM t",
+        ] {
+            assert_eq!(reason(escaped), "sql.identifier_backslash", "{escaped}");
+        }
+        prepare("SELECT `Zeit punkt`, \"Land\" FROM t").unwrap();
+        assert_eq!(reason("SELECT 1 # Kommentar"), "sql.hash_comment");
+        assert_eq!(reason("SELECT a$land FROM t"), "sql.dollar_in_name");
+        prepare("SELECT a FROM t WHERE land = $land").unwrap();
         for statement in
             ["KILL QUERY WHERE 1", "SHOW CREATE USER default", "SHOW GRANTS", "SHOW ACCESS", "SYSTEM RELOAD CONFIG"]
         {
@@ -609,8 +623,29 @@ mod tests {
         // Reads pass, including ClickHouse's own syntax.
         prepare("SELECT count() FROM t FINAL WHERE x > 1 LIMIT 10").unwrap();
         prepare("SELECT 1 -- Kommentar").unwrap();
-        assert_eq!(reason("SELECT 1 # Kommentar"), "sql.parse_error");
+        prepare("SELECT '# kein Kommentar' AS a").unwrap();
         prepare("SELECT '{name:String}' AS text").unwrap();
+    }
+
+    #[test]
+    fn identifier_variables_never_carry_quotes_backslashes_or_nul() {
+        let names: std::collections::BTreeSet<String> =
+            ["events", "a`b", "a\\b", "a\"b", "a\0b"].iter().map(|s| s.to_string()).collect();
+        for (value, ok) in [("events", true), ("a`b", false), ("a\\b", false), ("a\"b", false), ("a\0b", false)] {
+            let vars = BTreeMap::from([("t".to_string(), json!(value))]);
+            let ctx = sql::Context {
+                range: req().range,
+                interval_ms: 1000,
+                variables: &vars,
+                identifiers: Some(&names),
+                identifier_variables: None,
+            };
+            let p = sql::prepare("SELECT * FROM ${t:identifier}", Engine::ClickHouse, &ctx);
+            match ok {
+                true => assert_eq!(p.unwrap().sql, "SELECT * FROM `events`"),
+                false => assert_eq!(p.unwrap_err().reason, "sql.identifier_characters", "{value:?}"),
+            }
+        }
     }
 
     #[test]
