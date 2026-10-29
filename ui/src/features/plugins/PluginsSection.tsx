@@ -157,7 +157,10 @@ function InstalledTab({ list }: { list: PluginList }) {
   const items = list.items;
   const problems = items.filter((plugin) => pluginStatus(t, plugin, now).problem);
   const updates = items.filter((plugin) => plugin.pending !== undefined);
-  const runnable = items.filter((plugin) => plugin.approved && plugin.enabled);
+  // Panel plugins have no process to run; they are not counted here.
+  const runnable = items.filter(
+    (plugin) => plugin.approved && plugin.enabled && plugin.kind !== "panel",
+  );
   const running = runnable.filter((plugin) => plugin.process?.state === "running");
   const shown = filter === "problems" ? problems : filter === "updates" ? updates : items;
 

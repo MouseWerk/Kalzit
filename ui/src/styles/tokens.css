@@ -270,6 +270,10 @@
     --size-ai-tile: 12rem;
     --size-ai-label: 10rem;
     --size-ai-chip-input: 8rem;
+    /* The on/off switch of a settings row: a pill with a round knob. */
+    --size-switch-width: 2.125rem;
+    --size-switch-height: 1.25rem;
+    --size-switch-knob: 0.375rem;
   }
 }
 

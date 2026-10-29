@@ -210,6 +210,26 @@ describe("Plugins, installed", () => {
     expect(within(row).getByText(/offers no Landlock/)).toBeTruthy();
   });
 
+  it("shows an enabled panel plugin as active, not as a process that is not loaded", async () => {
+    await openPlugins(
+      "/settings/plugins",
+      withPlugins(
+        fakePlugin({
+          id: "x.panel",
+          name: "KPI tile",
+          kind: "panel",
+          running: false,
+          process: undefined,
+        }),
+      ),
+    );
+    const table = await screen.findByRole("table");
+    const row = within(table).getByRole("link", { name: "KPI tile" }).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Active, draws in the browser")).toBeTruthy();
+    expect(within(row).queryByText("Not loaded")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Problems/ }).textContent).toContain("0");
+  });
+
   it("shows a band while unsigned plugins are allowed, which turns them off", async () => {
     const { user, server } = await openPlugins("/settings/plugins", (s) => {
       s.areas.plugins.allowUnsigned = true;

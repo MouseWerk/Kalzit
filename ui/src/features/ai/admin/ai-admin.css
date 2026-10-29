@@ -199,6 +199,15 @@
     text-align: end;
   }
 
+  /*
+   * An address, a host or a model name stays on one line in the table (a break in the middle
+   * of "11434" or "70b" reads as two values); the table scrolls sideways when it is too narrow.
+   */
+  .ai-table .ai-mono {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+
   .ai-table th.ai-table__label {
     width: var(--size-ai-label);
     color: var(--text);

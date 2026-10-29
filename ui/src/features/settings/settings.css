@@ -360,9 +360,51 @@
     resize: vertical;
   }
 
+  /*
+   * On or off as a pill with a knob (board AI.dc.html, "KI verwenden"), not the system's
+   * checkbox: off a hover tint with a muted knob on the left, on the strong border color as fill with
+   * the knob in the text color on the right. Never the accent. The knob is a radial gradient,
+   * so the control stays one native checkbox for the keyboard and screen readers.
+   */
   .settings-switch {
-    width: var(--icon-size);
-    height: var(--icon-size);
+    flex: none;
+    appearance: none;
+    width: var(--size-switch-width);
+    height: var(--size-switch-height);
+    margin: 0;
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    background-color: var(--bg-hover);
+    background-image: radial-gradient(
+      circle,
+      var(--text-muted) var(--size-switch-knob),
+      transparent calc(var(--size-switch-knob) + 0.5px)
+    );
+    background-position: left center;
+    background-size: calc(var(--size-switch-height) - 2 * var(--border-width))
+      calc(var(--size-switch-height) - 2 * var(--border-width));
+    background-repeat: no-repeat;
+    cursor: pointer;
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      background-position var(--duration-fast) var(--easing);
+  }
+
+  .settings-switch:checked {
+    border-color: var(--border-strong);
+    background-color: var(--border-strong);
+    background-image: radial-gradient(
+      circle,
+      var(--text) var(--size-switch-knob),
+      transparent calc(var(--size-switch-knob) + 0.5px)
+    );
+    background-position: right center;
+  }
+
+  .settings-switch:disabled {
+    border-color: var(--border);
+    background-color: var(--bg-surface);
+    cursor: not-allowed;
   }
 
   /* Segmented choice (the theme): the chosen part carries a quiet fill and weight. */
