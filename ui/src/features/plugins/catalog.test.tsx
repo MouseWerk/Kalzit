@@ -195,6 +195,33 @@ describe("Plugins, catalog", () => {
     ).toHaveLength(0);
   });
 
+  it("offers a signed version of an unsigned plugin only as a confirmed publisher change", async () => {
+    const { user, server } = await openCatalog((s) => {
+      ready(s, [catalogItem({ installedVersion: "1.3.0", action: "publisher_change" })]);
+      s.areas.pluginCatalog.installAnswer = {
+        status: 409,
+        code: "conflict",
+        reason: "plugin.publisher_changed",
+        params: { datasources: "2", unsigned: "true", installedVersion: "1.3.0" },
+      };
+    });
+    expect(await screen.findByText("Installed 1.3.0, unsigned")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Update to/ })).toBeNull();
+    // Kind and targets that only the catalog states are marked as such.
+    expect(screen.getAllByText("from the catalog").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Details of BigQuery" }));
+    const details = await screen.findByRole("dialog", { name: "BigQuery 1.4.0" });
+    expect(within(details).getByText(/installing it is a change of publisher/)).toBeTruthy();
+    await user.click(within(details).getByRole("button", { name: "Review signed 1.4.0" }));
+    const dialog = await screen.findByRole("dialog", { name: "Install from another publisher?" });
+    expect(within(dialog).getByText(/The installed plugin with this id is unsigned/)).toBeTruthy();
+    expect(within(dialog).getByText("Installed unsigned version: 1.3.0")).toBeTruthy();
+    expect(calls(server, "POST", "/api/admin/plugin-catalog/install")[0]?.body).toEqual({
+      id: "dev.kalzit.bigquery",
+      version: "1.4.0",
+    });
+  });
+
   it("names the failed check when the download is not the listed package", async () => {
     const { user } = await openCatalog((s) => {
       ready(s);

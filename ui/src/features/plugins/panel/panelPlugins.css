@@ -25,8 +25,31 @@
     flex-wrap: wrap;
   }
 
+  /* Where the link goes (the parsed origin, bold), the full address, and the plugin's own text,
+     each under its label, so the plugin's words never read as Kalzit's. */
+  .plugin-link {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+  }
+
+  .plugin-link dt {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .plugin-link dd {
+    margin: 0 0 var(--space-2);
+  }
+
+  .plugin-link__origin {
+    font-weight: var(--font-weight-bold);
+    overflow-wrap: anywhere;
+  }
+
   .plugin-link__title {
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-regular);
+    overflow-wrap: anywhere;
   }
 
   .plugin-link__url {

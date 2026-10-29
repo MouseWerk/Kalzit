@@ -91,6 +91,41 @@ fn package(id: &str, version: &str, signer: Option<&SigningKey>, tamper: bool, e
     zip.finish().unwrap().into_inner()
 }
 
+/// The manifest a package carries (not checked against its signature).
+fn declared(package: &[u8]) -> kalzit_plugin_api::manifest::Manifest {
+    let mut zip = zip::ZipArchive::new(Cursor::new(package)).unwrap();
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("kalzit-plugin.toml").unwrap(), &mut text).unwrap();
+    kalzit_plugin_api::manifest::parse(&text).unwrap()
+}
+
+/// A panel package of `id` in `version`, signed by `signer`.
+fn panel_package(id: &str, version: &str, signer: &SigningKey) -> Vec<u8> {
+    let bundle = "export {};\n";
+    let manifest = format!(
+        "manifest = 1\nid = \"{id}\"\nname = \"Kachel\"\nversion = \"{version}\"\nkind = \"panel\"\nmin_kalzit = \"0.1.0\"\n\
+         shapes = [\"frame\"]\npublisher = \"Example GmbH\"\n\n[panel]\npath = \"dist/panel.js\"\napi = 1\n\n\
+         [files]\n\"dist/panel.js\" = \"{}\"\n",
+        sha(bundle.as_bytes())
+    );
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let sig = kalzit_release::DetachedSignature {
+        key_id: key_id(signer),
+        signature: base64::engine::general_purpose::STANDARD
+            .encode(signer.sign(&signing::manifest_message(manifest.as_bytes())).to_bytes()),
+    };
+    for (name, bytes) in [
+        ("kalzit-plugin.toml", manifest.into_bytes()),
+        ("kalzit-plugin.sig", serde_json::to_vec(&sig).unwrap()),
+        ("dist/panel.js", bundle.as_bytes().to_vec()),
+    ] {
+        zip.start_file(name, stored).unwrap();
+        zip.write_all(&bytes).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
 /// The files the fake catalog serves, by path, and how many requests it answered.
 #[derive(Default)]
 struct Files {
@@ -283,13 +318,15 @@ impl TestApp {
         self.files.put("index.json.sig", serde_json::to_vec(&sig).unwrap());
     }
 
-    /// Serves `package` and answers its catalog entry.
+    /// Serves `package` and answers its catalog entry, with the kind and network targets its
+    /// manifest declares.
     fn offer(&self, id: &str, version: &str, signer: &SigningKey, package: Vec<u8>) -> CatalogEntry {
         let path = format!("pkg/{id}-{version}.kalzit-plugin");
+        let declared = declared(&package);
         let entry = CatalogEntry {
             id: id.into(),
             version: version.into(),
-            kind: "datasource".into(),
+            kind: declared.kind.clone(),
             name: "Catalog test".into(),
             key_id: key_id(signer),
             url: format!("{}/{path}", self.base),
@@ -297,7 +334,7 @@ impl TestApp {
             size: package.len() as u64,
             description: Some("Rows from a test.".into()),
             publisher: Some("Example GmbH".into()),
-            network: vec!["db.example.dev:5432".into()],
+            network: declared.permissions.network.iter().map(kalzit_plugin_api::catalog::target_words).collect(),
         };
         self.files.put(&path, package);
         entry
@@ -315,6 +352,63 @@ impl TestApp {
 
     async fn install(&self, id: &str, version: &str) -> Reply {
         self.send(Method::POST, "/admin/plugin-catalog/install", Some(json!({ "id": id, "version": version }))).await
+    }
+
+    /// Installs `package` as an uploaded file.
+    async fn upload(&self, package: Vec<u8>, confirm_publisher_change: bool) -> Reply {
+        let path = if confirm_publisher_change {
+            "/api/admin/plugins?confirmPublisherChange=true"
+        } else {
+            "/api/admin/plugins"
+        };
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header(header::HOST, "kalzit.test")
+            .header(header::COOKIE, &self.cookie)
+            .header(header::CONTENT_TYPE, "application/zip")
+            .body(Body::from(package))
+            .unwrap();
+        let res = self.app.clone().oneshot(req).await.unwrap();
+        let status = res.status();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        Reply { status, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null) }
+    }
+
+    /// A data source of the kind `id` in the organization, with one stored secret.
+    async fn source_of_kind(&self, id: &str) {
+        let db = &self.state.db;
+        let ds = format!("ds-{id}");
+        sqlx::query(
+            "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+             VALUES ($1, $2, $1, $3, '{}', 0, 0)",
+        )
+        .bind(&ds)
+        .bind(&self.org)
+        .bind(id)
+        .execute(db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO datasource_secrets (datasource_id, field, key_id, nonce, ciphertext) \
+             VALUES ($1, 'password', 'k', 'n', 'c')",
+        )
+        .bind(&ds)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    /// The stored secrets of the data sources of kind `id`.
+    async fn secrets_of_kind(&self, id: &str) -> i64 {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM datasource_secrets s JOIN datasources d ON d.id = s.datasource_id WHERE d.kind = $1",
+        )
+        .bind(id)
+        .fetch_one(&self.state.db)
+        .await
+        .unwrap();
+        n
     }
 
     async fn audit(&self, action: &str) -> Vec<Value> {
@@ -440,7 +534,8 @@ async fn the_index_signature_is_checked() {
     assert_eq!(t.catalog("").await["state"], "unreachable");
 
     // Properly signed: taken, and the refresh is in the audit log.
-    let pkg = package(ID, "1.0.0", Some(&catalog_key), false, "");
+    let target = "[[permissions.network]]\nhost = \"db.example.dev\"\nport = 5432\n";
+    let pkg = package(ID, "1.0.0", Some(&catalog_key), false, target);
     let entry = t.offer(ID, "1.0.0", &catalog_key, pkg);
     t.publish(&index(1, vec![entry]), &catalog_key);
     let r = t.refresh().await;
@@ -452,6 +547,7 @@ async fn the_index_signature_is_checked() {
     let item = &r.body["items"][0];
     assert_eq!((item["id"].as_str(), item["action"].as_str()), (Some(ID), Some("install")), "{item}");
     assert_eq!(item["network"], json!(["db.example.dev:5432"]));
+    assert_eq!(item["detailsFrom"], "catalog", "no package of it is here yet");
     assert_eq!(item["keyName"], "Katalog GmbH");
     let refreshed = t.audit("plugins.catalog_refreshed").await;
     assert_eq!(refreshed.len(), 4, "{refreshed:?}");
@@ -841,5 +937,171 @@ async fn panel_entries_install_like_files() {
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     assert_eq!(r.body["kind"], "panel");
     assert_eq!(t.audit("plugins.catalog_installed").await.len(), 1);
+    t.finish().await;
+}
+
+/// An update never changes a plugin's kind, uploaded or from the catalog: a panel cannot become
+/// a data source (or the other way round) without being removed and installed anew.
+#[tokio::test]
+async fn an_update_cannot_change_the_kind() {
+    let t = test_app().await;
+    let catalog_key = key(1);
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
+    t.turn_on().await;
+    let r = t.upload(panel_package(ID, "1.0.0", &catalog_key), false).await;
+    assert_eq!((r.status, r.body["kind"].as_str()), (StatusCode::CREATED, Some("panel")), "{}", r.body);
+    let approve =
+        t.send(Method::POST, &format!("/admin/plugins/{ID}/approve"), Some(json!({ "version": "1.0.0" }))).await;
+    assert_eq!(approve.status, StatusCode::OK, "{}", approve.body);
+
+    // Uploaded: refused with its own reason, the panel stays as it was.
+    let r = t.upload(package(ID, "1.1.0", Some(&catalog_key), false, ""), false).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.kind_changed"), "{}", r.body);
+    // From the catalog, with an entry that states its kind truly: refused the same way.
+    let entry = t.offer(ID, "1.2.0", &catalog_key, package(ID, "1.2.0", Some(&catalog_key), false, ""));
+    assert_eq!(entry.kind, "datasource");
+    t.publish(&index(1, vec![entry]), &catalog_key);
+    assert_eq!(t.refresh().await.status, StatusCode::OK);
+    let r = t.install(ID, "1.2.0").await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.kind_changed"), "{}", r.body);
+    let p = t.send(Method::GET, &format!("/admin/plugins/{ID}"), None).await;
+    assert_eq!((p.body["kind"].as_str(), p.body["version"].as_str()), (Some("panel"), Some("1.0.0")), "{}", p.body);
+    let refused = t.audit("plugins.install_refused").await;
+    assert_eq!(refused.iter().filter(|s| s["reason"] == "plugin.kind_changed").count(), 2, "{refused:?}");
+    t.finish().await;
+}
+
+/// A downloaded package must have the kind and the network targets its entry lists: the catalog
+/// cannot understate what a plugin does. Once the package is here, the catalog shows its own.
+#[tokio::test]
+async fn catalog_entries_must_state_kind_and_targets_truly() {
+    let t = test_app().await;
+    let catalog_key = key(1);
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
+    t.turn_on().await;
+    let target = "[[permissions.network]]\nhost = \"license.example.dev\"\nport = 443\nprotocol = \"tls\"\n";
+    let lying_kind = CatalogEntry {
+        kind: "panel".into(),
+        ..t.offer(
+            "dev.example.kind",
+            "1.0.0",
+            &catalog_key,
+            package("dev.example.kind", "1.0.0", Some(&catalog_key), false, ""),
+        )
+    };
+    let hidden_target = CatalogEntry {
+        network: vec![],
+        ..t.offer(
+            "dev.example.net",
+            "1.0.0",
+            &catalog_key,
+            package("dev.example.net", "1.0.0", Some(&catalog_key), false, target),
+        )
+    };
+    let other_target = CatalogEntry {
+        network: vec!["db.example.dev:5432".into()],
+        ..t.offer(
+            "dev.example.other",
+            "1.0.0",
+            &catalog_key,
+            package("dev.example.other", "1.0.0", Some(&catalog_key), false, target),
+        )
+    };
+    let true_entry = t.offer(ID, "1.0.0", &catalog_key, package(ID, "1.0.0", Some(&catalog_key), false, target));
+    assert_eq!(true_entry.network, vec!["license.example.dev:443".to_string()]);
+    t.publish(&index(1, vec![lying_kind, hidden_target, other_target, true_entry]), &catalog_key);
+    assert_eq!(t.refresh().await.status, StatusCode::OK);
+
+    for (id, field) in [("dev.example.kind", "kind"), ("dev.example.net", "network"), ("dev.example.other", "network")]
+    {
+        let r = t.install(id, "1.0.0").await;
+        assert_eq!(
+            (r.reason(), r.body["error"]["params"]["field"].as_str()),
+            ("catalog.package_mismatch", Some(field)),
+            "{id}: {}",
+            r.body
+        );
+        assert_eq!(t.send(Method::GET, &format!("/admin/plugins/{id}"), None).await.status, StatusCode::NOT_FOUND);
+    }
+    let item = t.catalog(&format!("?q={ID}")).await["items"][0].clone();
+    assert_eq!(item["detailsFrom"], "catalog", "{item}");
+    let r = t.install(ID, "1.0.0").await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let item = t.catalog(&format!("?q={ID}")).await["items"][0].clone();
+    assert_eq!(
+        (item["detailsFrom"].as_str(), item["kind"].as_str(), item["network"].clone()),
+        (Some("package"), Some("datasource"), json!(["license.example.dev:443"])),
+        "{item}"
+    );
+    t.finish().await;
+}
+
+/// A signed update of an unsigned installed plugin is a change of publisher, uploaded or from the
+/// catalog: refused until the administrator confirms it, then the stored secrets of its data
+/// sources are cleared and the change is in the audit log. The catalog does not offer it as a
+/// routine update.
+#[tokio::test]
+async fn a_signed_update_of_an_unsigned_plugin_is_a_publisher_change() {
+    let t = test_app().await;
+    let (catalog_key, publisher) = (key(1), key(3));
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
+    t.trust(&publisher, "Example GmbH").await;
+    let r = t.send(Method::PATCH, "/admin/plugin-host", Some(json!({ "allowUnsigned": true }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.turn_on().await;
+
+    // Uploaded: refused without the confirmation, whether data sources exist or not.
+    let unsigned_id = "dev.example.unsignedfirst";
+    let r = t.upload(package(unsigned_id, "1.0.0", None, false, ""), false).await;
+    assert_eq!((r.status, r.body["signer"].as_str()), (StatusCode::CREATED, Some("unsigned")), "{}", r.body);
+    let r = t.upload(package(unsigned_id, "1.1.0", Some(&publisher), false, ""), false).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.publisher_changed"), "{}", r.body);
+    let params = &r.body["error"]["params"];
+    assert_eq!((params["unsigned"].as_str(), params["installedVersion"].as_str()), (Some("true"), Some("1.0.0")));
+    assert_eq!(params["datasources"], "0", "{}", r.body);
+    let r = t.upload(package(unsigned_id, "1.1.0", Some(&publisher), false, ""), true).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["keyId"], key_id(&publisher));
+    // From now on it is bound to that key like any signed plugin.
+    let r = t.upload(package(unsigned_id, "1.2.0", None, false, ""), false).await;
+    assert_eq!(r.reason(), "plugin.key_changed", "{}", r.body);
+
+    // From the catalog, with a data source of the kind and its secret.
+    let r = t.upload(package(ID, "1.0.0", None, false, ""), false).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    t.source_of_kind(ID).await;
+    let entry = t.offer(ID, "1.1.0", &publisher, package(ID, "1.1.0", Some(&publisher), false, ""));
+    t.publish(&index(1, vec![entry]), &catalog_key);
+    assert_eq!(t.refresh().await.status, StatusCode::OK);
+    let item = t.catalog(&format!("?q={ID}")).await["items"][0].clone();
+    assert_eq!(
+        (item["action"].as_str(), item["installedVersion"].as_str()),
+        (Some("publisher_change"), Some("1.0.0")),
+        "{item}"
+    );
+    let r = t.install(ID, "1.1.0").await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.publisher_changed"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["datasources"], "1", "{}", r.body);
+    assert_eq!(t.secrets_of_kind(ID).await, 1, "nothing is cleared before the confirmation");
+    let r = t
+        .send(
+            Method::POST,
+            "/admin/plugin-catalog/install",
+            Some(json!({ "id": ID, "version": "1.1.0", "confirmPublisherChange": true })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!((r.body["version"].as_str(), r.body["signer"].as_str()), (Some("1.1.0"), Some("publisher")));
+    assert_eq!(t.secrets_of_kind(ID).await, 0);
+    let changed = t.audit("plugins.publisher_changed").await;
+    assert_eq!(changed.len(), 2, "{changed:?}");
+    let last = changed.last().unwrap();
+    assert_eq!(
+        (last["installedVersion"].as_str(), last["toKeyId"].clone(), last["secretsCleared"].as_i64()),
+        (Some("1.0.0"), json!(key_id(&publisher)), Some(1)),
+        "{last}"
+    );
+    let item = t.catalog(&format!("?q={ID}")).await["items"][0].clone();
+    assert_eq!(item["action"], "installed", "{item}");
     t.finish().await;
 }

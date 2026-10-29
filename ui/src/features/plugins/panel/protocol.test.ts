@@ -80,6 +80,14 @@ describe("panel events", () => {
       "https://:443/x",
       "ftp://example.com",
       "",
+      // Format characters anywhere, as Rust's `panel::is_format` refuses them.
+      "https://example.com‮moc.lapyap",
+      "https://exa​mple.com/",
+      "https://example.com/a‍b",
+      "/d/abc⁦x",
+      "https://﻿example.com",
+      "https://exam­ple.com",
+      "https://example.com/\u{e0041}",
     ]) {
       expect(linkAllowed(bad), bad).toBe(false);
     }

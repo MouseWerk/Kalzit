@@ -90,10 +90,11 @@ function variableName(name: string): boolean {
 /**
  * Whether a panel may ask to open `url`: an `http` or `https` address with a host and without a
  * user name, or a path in Kalzit (`/...`, not `//host` or `/\host`, and not Kalzit's API under
- * `/api`). Never another scheme.
+ * `/api`). Never another scheme. No format characters (`\p{Cf}`: bidirectional overrides,
+ * zero-width characters) anywhere, which could make the address shown read as another one.
  */
 export function linkAllowed(url: string): boolean {
-  if (url === "" || /[\s\p{Cc}\\]/u.test(url)) {
+  if (url === "" || /[\s\p{Cc}\p{Cf}\\]/u.test(url)) {
     return false;
   }
   if (url.startsWith("/")) {
