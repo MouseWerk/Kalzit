@@ -14,7 +14,10 @@
 //!   their kinds in the registry and the administrator's actions on them.
 //! - `panels`: the panel plugins that may be shown and the sandboxed frame document that carries
 //!   a panel's bundle (the message exchange itself runs in the browser).
+//! - `catalog`: the signed catalog index (off by default), its checks and installing from it
+//!   through the same path as a file.
 
+pub mod catalog;
 pub mod connector;
 pub mod host;
 pub mod in_process;

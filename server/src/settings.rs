@@ -331,6 +331,27 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "How long a new version has to report healthy before Kalzit returns to the previous one.",
     },
     SettingDef {
+        key: "plugins.catalog_enabled",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Load the signed plugin catalog. Off, Kalzit makes no connection for it; installing from a file always works.",
+    },
+    SettingDef {
+        key: "plugins.catalog_url",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "HTTPS address of the catalog index; its signature is read from the same address with .sig appended.",
+    },
+    SettingDef {
+        key: "plugins.catalog_refresh_hours",
+        scope: Scope::Server,
+        default: || json!(24),
+        ui_editable: true,
+        description: "How often the catalog is loaded again while it is on.",
+    },
+    SettingDef {
         key: "dashboards.default_time_range",
         scope: Scope::Org,
         default: || json!({ "from": "now-6h", "to": "now" }),
@@ -609,6 +630,8 @@ enum Rule {
     Accent,
     /// An IANA time zone name, or `browser`.
     TimeZone,
+    /// Empty, or an `https://` URL with a host and without credentials.
+    HttpsUrl,
     /// Read from the configuration and never written here; the configuration checks it at start.
     Configuration,
     /// An organization's appearance: `inherit` (the server's value) or what the server accepts.
@@ -622,6 +645,18 @@ fn time_of_day(text: &str) -> Option<u32> {
     }
     let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
     (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+/// An `https://` URL with a host, without credentials, whitespace or control characters.
+fn is_https_url(text: &str) -> bool {
+    text.len() <= 2048
+        && !text.chars().any(|c| c.is_whitespace() || c.is_control())
+        && url::Url::parse(text).is_ok_and(|u| {
+            u.scheme() == "https"
+                && u.host_str().is_some_and(|h| !h.is_empty())
+                && u.username().is_empty()
+                && u.password().is_none()
+        })
 }
 
 /// The value of an organization's appearance setting that follows the server.
@@ -689,6 +724,10 @@ fn rule(key: &str) -> Option<Rule> {
         "updates.keep_versions" => Rule::Int { min: 1, max: 20 },
         // Long enough for migrations of a large database, short enough that a hang is noticed.
         "updates.health_timeout_secs" => Rule::Int { min: 15, max: 1800 },
+        "plugins.catalog_enabled" => Rule::Bool,
+        "plugins.catalog_url" => Rule::HttpsUrl,
+        // At least hourly, at most weekly; an index is valid for at most 31 days.
+        "plugins.catalog_refresh_hours" => Rule::Int { min: 1, max: 168 },
         _ => return None,
     })
 }
@@ -729,6 +768,11 @@ fn check_rule(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
         Rule::TimeZone => match value.as_str() {
             Some(s) if s == "browser" || crate::routes::preferences::is_time_zone_name(s) => Ok(()),
             _ => Err(format!("{key} must be an IANA time zone name such as Europe/Berlin, or browser")),
+        },
+        Rule::HttpsUrl => match value.as_str() {
+            Some("") => Ok(()),
+            Some(s) if is_https_url(s) => Ok(()),
+            _ => Err(format!("{key} must be empty or an https:// address without user name or password")),
         },
         Rule::Int { .. } | Rule::OneOf(_) | Rule::Strings { .. } | Rule::TimeRange | Rule::TimeWindow | Rule::Bool => {
             check_basic(key, rule, value)

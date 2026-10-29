@@ -168,6 +168,7 @@ pub async fn run(config: Config, trial: Option<Trial>) -> Result<Outcome> {
     });
     updates.record_outcome(&state).await;
     crate::updates::spawn_background(state.clone());
+    crate::plugins::catalog::spawn_background(state.clone());
     if let Some(trial) = trial {
         // PostgreSQL: once the migrations of the new version ran, the previous binary cannot
         // start on the schema; the plan says so before anything else can fail.

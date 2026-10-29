@@ -9,6 +9,7 @@ import { LoadState } from "../admin/components/Section";
 import { errorMessage } from "../dashboards/ui/errors";
 import { errorReason } from "../datasources/reasons";
 import { addKey, listKeys, type PluginList, pluginKeys, removeKey, type TrustedKey } from "./api";
+import { CatalogKeyCell } from "./CatalogKey";
 import { keyBase64, keyIdOf, parsePublicKey } from "./fingerprint";
 import { useHostSwitch } from "./hooks";
 import { groupedKeyId } from "./status";
@@ -82,6 +83,7 @@ export function TrustTab({
                   <th scope="col">{t("plugins.trust.column.fingerprint")}</th>
                   <th scope="col">{t("plugins.trust.column.added")}</th>
                   <th scope="col">{t("plugins.trust.column.plugins")}</th>
+                  <th scope="col">{t("plugins.trust.column.catalog")}</th>
                   <th scope="col" className="plugins-table__actions">
                     <span className="visually-hidden">{t("plugins.column.actions")}</span>
                   </th>
@@ -93,6 +95,7 @@ export function TrustTab({
                   <td className="plugins-muted">{t("plugins.trust.builtIn")}</td>
                   <td className="plugins-muted">{t("plugins.trust.builtInAdded")}</td>
                   <td>{kalzitPlugins}</td>
+                  <td className="plugins-muted">{t("plugins.trust.catalog.always")}</td>
                   <td className="plugins-table__actions plugins-muted plugins-small">
                     {t("plugins.trust.notRemovable")}
                   </td>
@@ -112,6 +115,9 @@ export function TrustTab({
                       ) : (
                         <span title={key.plugins.join(", ")}>{key.plugins.length}</span>
                       )}
+                    </td>
+                    <td>
+                      <CatalogKeyCell trustedKey={key} />
                     </td>
                     <td className="plugins-table__actions">
                       <button

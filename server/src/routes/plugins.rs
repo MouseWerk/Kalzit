@@ -1,7 +1,7 @@
 //! Plugins: what server administrators do with them (install from a file, approve permissions,
 //! enable, disable, restart, remove, status and logs, trusted publisher keys, hand-overs, the
-//! switch for unsigned plugins) and the block list of an organization. Documented in
-//! docs/api/plugins.md.
+//! switch for unsigned plugins), the catalog (its index and installs from it) and the block list
+//! of an organization. Documented in docs/api/plugins.md.
 
 use std::collections::BTreeMap;
 
@@ -43,8 +43,12 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/admin/plugin-keys", Access::ServerAdmin, list_keys),
         route(Method::POST, "/admin/plugin-keys", Access::ServerAdmin, add_key),
         route(Method::DELETE, "/admin/plugin-keys/{keyId}", Access::ServerAdmin, remove_key),
+        route(Method::PUT, "/admin/plugin-keys/{keyId}/catalog", Access::ServerAdmin, set_key_catalog),
         route(Method::GET, "/admin/plugin-host", Access::ServerAdmin, host_settings),
         route(Method::PATCH, "/admin/plugin-host", Access::ServerAdmin, patch_host_settings),
+        route(Method::GET, "/admin/plugin-catalog", Access::ServerAdmin, catalog_view),
+        route(Method::POST, "/admin/plugin-catalog/refresh", Access::ServerAdmin, catalog_refresh),
+        route(Method::POST, "/admin/plugin-catalog/install", Access::ServerAdmin, catalog_install),
         route(Method::GET, "/orgs/{orgId}/plugins", Access::Org(Permission::PluginsConfigure), org_list),
         route(Method::PUT, "/orgs/{orgId}/plugins/{pluginId}/block", Access::Org(Permission::PluginsConfigure), block),
         route(
@@ -428,6 +432,8 @@ struct KeyView {
     added_at: i64,
     /// The installed plugins signed with it.
     plugins: Vec<String>,
+    /// The administrator allowed it to sign the catalog index too.
+    may_sign_catalog: bool,
 }
 
 async fn key_view(state: &AppState, k: KeyRow) -> ApiResult<KeyView> {
@@ -435,7 +441,8 @@ async fn key_view(state: &AppState, k: KeyRow) -> ApiResult<KeyView> {
     let public_key = hex::decode(&k.public_key)
         .map(|b| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b))
         .unwrap_or_default();
-    Ok(KeyView { key_id: k.key_id, public_key, name: k.name, added_at: k.added_at, plugins })
+    let may_sign_catalog = crate::plugins::catalog::may_sign_catalog(&state.db, &k.key_id).await?;
+    Ok(KeyView { key_id: k.key_id, public_key, name: k.name, added_at: k.added_at, plugins, may_sign_catalog })
 }
 
 #[derive(Serialize)]
@@ -501,6 +508,33 @@ async fn remove_key(
     Ok(Json(Stopped { stopped }))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KeyCatalogBody {
+    may_sign_catalog: bool,
+}
+
+/// `PUT /admin/plugin-keys/{keyId}/catalog`: allows a trusted publisher key to sign the catalog
+/// index, or takes that back.
+async fn set_key_catalog(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    Path(path): Path<KeyPath>,
+    JsonBody(body): JsonBody<KeyCatalogBody>,
+) -> ApiResult<Json<KeyView>> {
+    crate::plugins::catalog::set_may_sign_catalog(
+        &state,
+        &path.key_id,
+        body.may_sign_catalog,
+        &actor(&user, &info, None),
+    )
+    .await?;
+    let k =
+        store::keys(&state.db).await?.into_iter().find(|k| k.key_id == path.key_id).ok_or_else(ApiError::not_found)?;
+    Ok(Json(key_view(&state, k).await?))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HostSettings {
@@ -541,6 +575,75 @@ async fn patch_host_settings(
     };
     state.plugins.set_switches(&state, new, &actor(&user, &info, None)).await?;
     host_settings(State(state)).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogQuery {
+    /// Searches name, id, description and publisher.
+    q: Option<String>,
+    /// `datasource` or `panel`.
+    kind: Option<String>,
+}
+
+/// `GET /admin/plugin-catalog`: the settings, the state of the index and its entries.
+async fn catalog_view(
+    State(state): State<AppState>,
+    Query(query): Query<CatalogQuery>,
+) -> ApiResult<Json<crate::plugins::catalog::CatalogView>> {
+    let kind = query.kind.as_deref().filter(|k| !k.is_empty());
+    if kind.is_some_and(|k| !matches!(k, "datasource" | "panel")) {
+        return Err(ApiError::validation("kind is datasource or panel").with_field("kind"));
+    }
+    let q = query.q.unwrap_or_default();
+    if q.chars().count() > 200 {
+        return Err(ApiError::validation("the search is at most 200 characters").with_field("q"));
+    }
+    Ok(Json(state.catalog.view(&state, &q, kind).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RefreshQuery {
+    /// `true`: take a list signed by another key than the one pinned for this address.
+    accept_key_change: Option<bool>,
+}
+
+/// `POST /admin/plugin-catalog/refresh`: loads and checks the index now.
+async fn catalog_refresh(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    Query(query): Query<RefreshQuery>,
+) -> ApiResult<Json<crate::plugins::catalog::CatalogView>> {
+    let accept = query.accept_key_change.unwrap_or(false);
+    state.catalog.refresh(&state, Some(&actor(&user, &info, None)), accept).await?;
+    Ok(Json(state.catalog.view(&state, "", None).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogInstallBody {
+    id: String,
+    version: String,
+    /// As `confirmPublisherChange` of `POST /admin/plugins`.
+    #[serde(default)]
+    confirm_publisher_change: bool,
+}
+
+/// `POST /admin/plugin-catalog/install`: downloads the entry's package and installs it like an
+/// uploaded file; answers `201` with the plugin.
+async fn catalog_install(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(body): JsonBody<CatalogInstallBody>,
+) -> ApiResult<impl IntoResponse> {
+    let row = state
+        .catalog
+        .install(&state, &body.id, &body.version, body.confirm_publisher_change, &actor(&user, &info, None))
+        .await?;
+    Ok((StatusCode::CREATED, one(&state, &row.id).await?))
 }
 
 #[derive(Serialize)]
