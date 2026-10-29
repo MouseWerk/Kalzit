@@ -36,7 +36,7 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   field of a `validation` error. The list lives in `error::ERROR_CODES`; the UI's `ErrorCode`
   type is generated from it and every code has a translation (tested). Codes: `validation`, `unauthenticated`, `forbidden`,
   `not_found`, `method_not_allowed`, `payload_too_large`, `conflict`, `version_conflict`,
-  `rate_limited`, `cross_origin`, `invalid_credentials`, `setup_done`, `invalid_setup_token`,
+  `rate_limited`, `cross_origin`, `invalid_credentials`, `invalid_code`, `confirmation_required`, `setup_done`, `invalid_setup_token`,
   `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `busy`, `internal`.
   `busy` (503, with `Retry-After`) means the database could not give the request its lock in time
   (SQLite `SQLITE_BUSY`; PostgreSQL serialization failure, lock timeout or deadlock, the last also
@@ -82,6 +82,23 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   (estimated; every entry in a network of its own, maps at their largest): about 350 bytes per
   entry, so about 105 MB per large table and 420 MB for the four together, about 10 MB per small
   table, and about 350 bytes per user with failures in the account table.
+- Second factor (`auth::second_factor`, docs/api/access.md "Second factor"): TOTP (RFC 6238,
+  SHA-1, 30 s, 6 digits, ±1 step, each step once per account; the key AES-GCM encrypted with the
+  secrets key and re-encrypted by `secrets rotate`), passkeys through webauthn-rs (pinned
+  `=0.6.1-dev`, the pure-Rust line without OpenSSL; relying party from `server.public_url` or the
+  request's host, no attestation, user verification preferred, sign counters checked) and 10
+  recovery codes of 80 bits stored as SHA-256. After the password, `routes::second_factor`
+  either opens the session or starts the half-signed-in state: a `sign_in_challenges` row named
+  by the token in the `kalzit_pending` cookie, 5 minutes, deleted in the transaction that creates
+  the session; it is not a session, so every other route answers 401. A started passkey dialog or
+  app setup lives as a "ceremony" on that row or on the session. Code attempts are counted per
+  account before the check, under the row lock of `second_factor_lockouts` (5 in 15 minutes, then
+  15 minutes locked) and against the address's sign-in budget. Weakening changes need
+  `sessions.second_factor_at` within 5 minutes. Policy: `security.two_factor_required` on the
+  server (`off`/`admins`/`everyone`) and per organization (`inherit`/`admins`/`everyone`, only
+  stricter), `security.two_factor_methods`; required means the server's rule or any membership's
+  rule applies, without grace period. `FirstStep` is the hook for identity providers (Kalzit asks
+  unless the provider's switch trusts its MFA claim) and LDAP (always asks).
 - **Every query on an organization table filters by `ctx.org_id`.** Ids in the path or body
   (`datasourceId`, folder or dashboard ids) are resolved within the organization first; an id of
   another organization is `not_found`.
@@ -1660,6 +1677,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0013 | Explore query history (per user, 30 days) | explore history (#76) |
 | 0014 | team ownership of folders and dashboards (team spaces), team contexts | feat/team-spaces |
 | 0015 | audit log indexes by organization, time and id, and by resource | fix/m1-wave-3-perf |
+| 0026 | second factor: app keys, passkeys, recovery codes, lockouts, half-signed-in states; sessions' confirmation and ceremonies | m5/two-factor |
 
 ## M1 work streams
 
