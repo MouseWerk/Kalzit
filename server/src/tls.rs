@@ -1,5 +1,6 @@
 //! TLS with rustls (no OpenSSL, same code on Windows and Linux). Certificates are PEM files and
-//! are reloaded when they change, so a renewed certificate needs no restart.
+//! are reloaded when they change, so a renewed certificate needs no restart. Without files, the
+//! certificates come from ACME (`acme::resolver`), which swaps them itself.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use axum_server::tls_rustls::RustlsConfig;
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::ResolvesServerCert;
 
 use crate::config::TlsConfig;
 
@@ -26,19 +28,30 @@ pub fn server_config(cfg: &TlsConfig) -> Result<Arc<ServerConfig>> {
     let key = PrivateKeyDer::from_pem_file(key_file)
         .with_context(|| format!("reading the private key from {}", key_file.display()))?;
 
+    let mut config =
+        builder(cfg)?.with_single_cert(certs, key).context("certificate and key do not match or are not supported")?;
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(Arc::new(config))
+}
+
+/// HTTPS with the certificates ACME provides; also answers TLS-ALPN-01 validations, whose
+/// clients offer only `acme-tls/1` (browsers never do, so they get h2 or HTTP/1.1).
+pub fn acme_server_config(cfg: &TlsConfig, resolver: Arc<dyn ResolvesServerCert>) -> Result<Arc<ServerConfig>> {
+    let mut config = builder(cfg)?.with_cert_resolver(resolver);
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), crate::acme::resolver::ACME_TLS_ALPN.to_vec()];
+    Ok(Arc::new(config))
+}
+
+fn builder(cfg: &TlsConfig) -> Result<rustls::ConfigBuilder<ServerConfig, rustls::server::WantsServerCert>> {
     let versions: &[&rustls::SupportedProtocolVersion] = match cfg.min_version.as_str() {
         "1.3" => &[&rustls::version::TLS13],
         _ => &[&rustls::version::TLS12, &rustls::version::TLS13],
     };
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut config = ServerConfig::builder_with_provider(provider)
+    Ok(ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(versions)
         .context("TLS protocol versions")?
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .context("certificate and key do not match or are not supported")?;
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    Ok(Arc::new(config))
+        .with_no_client_auth())
 }
 
 /// Checks the certificate files every `reload_interval_secs` and swaps the configuration when

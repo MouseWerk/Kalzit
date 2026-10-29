@@ -1,0 +1,17 @@
+# AppArmor profile for Kalzit (installed by the deb as /etc/apparmor.d/kalzit).
+#
+# Ubuntu 23.10 and later refuse unprivileged user namespaces to programs without a profile that
+# allows them (kernel.apparmor_restrict_unprivileged_userns). Kalzit's plugin sandbox puts each
+# plugin into its own user, IPC and network namespace (docs/ARCHITECTURE.md, "Sandbox"), so this
+# profile allows exactly that and confines nothing else: Kalzit runs as it would without it.
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile kalzit /usr/bin/kalzit flags=(unconfined) {
+  userns,
+
+  # Local additions.
+  include if exists <local/kalzit>
+}

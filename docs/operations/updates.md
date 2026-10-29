@@ -67,8 +67,22 @@ Automatic installation needs a restart Kalzit can do safely by itself:
   section). Kalzit started in a console on Windows also installs from the
   command line.
 - **Containers**: never; update the image.
+- **deb and rpm packages**: never, and `kalzit update apply` and `kalzit update rollback` refuse
+  as well: the package manager owns `/usr/bin/kalzit` (marker `/usr/lib/kalzit/package`), and a
+  binary replaced behind its back would leave the package database at the old version and be
+  overwritten by the next package. The Updates page shows the release with its notes and the
+  command (`sudo apt install ./kalzit-<version>-linux-x64.deb`, `sudo dnf install
+  ./kalzit-<version>-linux-x64.rpm`); the package restarts the service. Back up
+  `/var/lib/kalzit` first. To go back, install the older package (`apt install
+  ./kalzit-<older>.deb --allow-downgrades`, `dnf downgrade ./kalzit-<older>.rpm`) with the backup
+  taken before the update, since an older version cannot open a database a newer one migrated
+  (docs/guide/installation.md, "Debian, Ubuntu, Fedora, RHEL").
 
 The Updates page says why a server does not install on its own (`mode`).
+
+The deb and rpm of a release are listed in its signed manifest under `installers`, each with
+size, SHA-256 and its own signature like a package; servers do not install them, and older
+servers ignore the field. `kalzit-sign verify ... --installer <file>` checks a downloaded one.
 
 ## Installing from the command line
 

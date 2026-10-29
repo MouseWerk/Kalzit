@@ -1,6 +1,6 @@
 [package]
 name = "kalzit"
-version = "0.3.2"
+version = "0.4.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -19,6 +19,12 @@ clap = { version = "4.6.7", features = ["derive", "env"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
 futures-util = "0.3.34"
 hex = "0.4.3"
+# ACME (RFC 8555) for automatic certificates: the protocol client, with its requests going through
+# Kalzit's own HTTP client (`acme::transport`). rcgen makes the certificate requests and the
+# TLS-ALPN-01 answers, x509-parser reads the validity of issued certificates.
+instant-acme = { version = "0.8.5", default-features = false, features = ["ring", "rcgen"] }
+rcgen = "0.14.10"
+x509-parser = "0.18.1"
 kalzit-plugin-api = { path = "../plugin-api" }
 kalzit-release = { path = "../release" }
 ipnet = { version = "2.12.2", features = ["serde"] }
@@ -89,7 +95,6 @@ rcgen = "0.14.10"
 http-body-util = "0.1.5"
 # Packages the example plugin in the plugin contract tests.
 kalzit-plugin-tool = { path = "../plugin-tool" }
-rcgen = "0.14.10"
 # A WebSocket client for the live update tests; the version axum's server side uses.
 tokio-tungstenite = "0.29.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "json"] }

@@ -2,7 +2,8 @@
 //! the associated data is `ai-provider:<id>`, so it never matches a data source). Each value is encrypted with
 //! AES-256-GCM under a random 96-bit nonce, with the data source id and field name as associated
 //! data, so a blob copied to another source or field fails to decrypt. Each blob records the id
-//! of the key that encrypted it.
+//! of the key that encrypted it. The ACME account and certificates are encrypted the same way, as
+//! files in the data directory's `acme` folder (`acme::store`), with `acme` as their owner.
 //!
 //! The key (32 random bytes) comes from, in this order: `KALZIT_SECRETS_KEY` (base64), the systemd
 //! credential `kalzit-secrets-key` (Linux), a key file protected with DPAPI in machine scope
@@ -279,6 +280,11 @@ impl Keyring {
         &self.current.id
     }
 
+    /// The key new values are encrypted with.
+    pub(crate) fn current_key(&self) -> &SecretKey {
+        &self.current
+    }
+
     pub fn source(&self) -> KeySource {
         self.source
     }
@@ -325,7 +331,7 @@ fn aad(datasource_id: &str, field: &str) -> Vec<u8> {
     [AAD_PREFIX, datasource_id.as_bytes(), b"\0", field.as_bytes()].concat()
 }
 
-fn encrypt_with(key: &SecretKey, datasource_id: &str, field: &str, plaintext: &str) -> Blob {
+pub(crate) fn encrypt_with(key: &SecretKey, datasource_id: &str, field: &str, plaintext: &str) -> Blob {
     let nonce_bytes: [u8; 12] = rand::random();
     let nonce = Nonce::from(nonce_bytes);
     let aad = aad(datasource_id, field);
@@ -686,7 +692,8 @@ async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_
                  bytes), or set {KEY_ENV} to the new key and {OLD_KEY_ENV} to the old one"
             );
         }
-        let reencrypted = reencrypt_all(db, &keyring, &keyring.current).await?;
+        let reencrypted = reencrypt_all(db, &keyring, &keyring.current).await?
+            + crate::acme::store::reencrypt(data_dir, &keyring, &keyring.current)?;
         let next_step = format!("{OLD_KEY_ENV} is no longer needed; remove it");
         return Ok(Rotation { reencrypted, key_id: keyring.current.id.clone(), source, next_step });
     }
@@ -709,7 +716,10 @@ async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_
     if new.id == keyring.current.id {
         bail!("the new key is the current key");
     }
-    let reencrypted = reencrypt_all(db, &keyring, &new).await?;
+    // The ACME account and certificate files follow the database; an interrupted run leaves
+    // both keys loadable, so files already moved stay readable.
+    let reencrypted =
+        reencrypt_all(db, &keyring, &new).await? + crate::acme::store::reencrypt(data_dir, &keyring, &new)?;
     let next_step = match &store {
         Some(store) => {
             store.promote_pending()?;

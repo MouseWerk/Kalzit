@@ -1607,6 +1607,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
+ "rustls-native-certs",
+ "rustls-platform-verifier",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -1803,6 +1805,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "instant-acme"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f05ad37c421b962354c358d347d4a6130151df9407978372d3ad7f0c8f71a64"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "http",
+ "http-body",
+ "http-body-util",
+ "httpdate",
+ "hyper-rustls",
+ "rcgen",
+ "ring",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1917,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "kalzit"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1935,6 +1960,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "hyper-util",
+ "instant-acme",
  "ipnet",
  "kalzit-plugin-api",
  "kalzit-plugin-tool",
@@ -1979,6 +2005,7 @@ dependencies = [
  "uuid",
  "windows",
  "windows-service",
+ "x509-parser",
  "zeroize",
  "zip",
 ]

@@ -19,7 +19,7 @@ sources: a MongoDB result stays a set of documents, a Cypher result stays a grap
 edges, and nothing is turned into a table unless you add that step yourself. The server is one
 binary with the web interface built in, and runs on Windows and Linux.
 
-> **Status: early development.** The current version is 0.3.2;
+> **Status: early development.** The current version is 0.4.0;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
@@ -376,7 +376,8 @@ To run Kalzit as a systemd service, see "Running as a service" in
 `kalzit service install` (elevated) sets up the Windows service without the MSI package
 ([installation guide](docs/guide/installation.md#windows)).
 Backups are described under [Backups](docs/ARCHITECTURE.md#backups). The container image is
-described under [Docker](#docker); deb and rpm packages are planned for M5.
+described under [Docker](#docker); the deb and rpm packages with their systemd service under
+[Installation](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm).
 
 ## Configuration
 
@@ -416,7 +417,9 @@ Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, 
 
 - **Own database:** SQLite (default, one server) or PostgreSQL (`database.url`).
 - **HTTPS:** your own certificate and key in PEM (`tls.cert_file`, `tls.key_file`), reloaded
-  without a restart; trusted reverse proxies in `security.trusted_proxies`.
+  without a restart, or without them automatic certificates from Let's Encrypt or another ACME
+  authority, set up in Settings, Network ([HTTPS and certificates](docs/guide/https.md));
+  trusted reverse proxies in `security.trusted_proxies`.
 - **Secrets key** for data source passwords and tokens, first match wins: `KALZIT_SECRETS_KEY`,
   systemd credentials (`kalzit-secrets-key`) on Linux, a DPAPI-protected key file on Windows,
   and as a last resort a `secrets.key` file with mode 0600 in the data directory (with a warning in

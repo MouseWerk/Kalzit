@@ -331,7 +331,7 @@ TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich
 | Bereich | Einstellungen |
 |---|---|
 | Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`/kalzit`), HTTP → HTTPS-Umleitung |
-| TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt, minimale TLS-Version 1.2, HTTP/2 |
+| TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt (HTTP-01, TLS-ALPN-01; in der UI mit einem Speichern nach Prüfung, weil ein falscher Wert nicht aussperrt: HTTPS behält das bisherige Zertifikat), minimale TLS-Version 1.2, HTTP/2 |
 | Reverse Proxy | vertrauenswürdige Proxys (IP-Bereiche), `X-Forwarded-*` nur von diesen (`Forwarded` nach RFC 7239 folgt in M5), Beispielkonfigurationen für nginx, Caddy, IIS, Traefik |
 | Sicherheit | HSTS (an, Dauer), CSP, Cookie-Flags, CORS (aus), erlaubte Einbettung (`frame-ancestors`), Login-Ratenlimit |
 | Sitzungen | Dauer, Leerlauf-Timeout, gleichzeitige Sitzungen, "Angemeldet bleiben" |

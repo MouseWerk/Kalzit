@@ -6,14 +6,16 @@
 //!                     [--minimum-version <v>] --package <platform>:<arch>:<path>...
 //!                     [--installer <platform>:<arch>:<path>]... [--out-dir <dir>]
 //! kalzit-sign verify --public-key <base64> --manifest <file> --signature <file> [--package <path>]...
+//!                    [--installer <path>]...
 //! kalzit-sign sign-plugin-manifest (--manifest <kalzit-plugin.toml>)...
 //! ```
 //!
 //! `keygen` writes the private key into a new file readable only by its owner and prints the
 //! public key; the private key is never printed. `release` signs with the key in the environment
 //! variable `KALZIT_RELEASE_SIGNING_KEY` and writes the manifest, its signature and one offline
-//! package per binary; installers (the Windows MSI) are listed and signed in the manifest, but get
-//! no offline package, since the updater never installs them. `verify` checks a release the way a server does. `sign-plugin-manifest`
+//! package per binary; the system packages (`--installer`: the `.deb`, `.rpm` and `.msi`) are listed and
+//! signed in the manifest too, without an offline package. `verify` checks a release the way a
+//! server does. `sign-plugin-manifest`
 //! signs plugin manifests with the plugin key in `KALZIT_PLUGIN_SIGNING_KEY` and writes
 //! `<manifest>.sig` next to each (the package's `kalzit-plugin.sig`, which
 //! `kalzit-plugin attach-signature` adds), so the job holding the plugin key builds only this crate.
@@ -94,7 +96,7 @@ fn run(args: &[String]) -> Result<String, String> {
             release(&o)
         }
         "verify" => {
-            let o = Options::parse(rest, &["public-key", "manifest", "signature", "package"])?;
+            let o = Options::parse(rest, &["public-key", "manifest", "signature", "package", "installer"])?;
             verify(&o)
         }
         "sign-plugin-manifest" => {
@@ -166,23 +168,11 @@ fn release(o: &Options) -> Result<String, String> {
     if notes_url.as_deref().is_some_and(|u| !u.starts_with("https://")) {
         return Err("--notes-url must be an https URL".into());
     }
-    let mut packages = Vec::new();
-    let mut files: Vec<(PathBuf, Vec<u8>)> = Vec::new();
-    for spec in o.all("package") {
-        let (package, path, data) = signed_file(&key, &version, spec)?;
-        packages.push(package);
-        files.push((path, data));
-    }
-    let mut installers = Vec::new();
-    let mut installer_files: Vec<(PathBuf, Vec<u8>)> = Vec::new();
-    for spec in o.all("installer") {
-        let (package, path, data) = signed_file(&key, &version, spec)?;
-        installers.push(package);
-        installer_files.push((path, data));
-    }
+    let (packages, files) = signed_files(o, "package", &key, &version)?;
     if packages.is_empty() {
         return Err("at least one --package is required".into());
     }
+    let (installers, installer_files) = signed_files(o, "installer", &key, &version)?;
     let manifest = Manifest {
         format: 1,
         product: "kalzit".into(),
@@ -199,7 +189,7 @@ fn release(o: &Options) -> Result<String, String> {
     let bytes = serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
     let signature = serde_json::to_vec(&sign_manifest(&key, &bytes)).map_err(|e| e.to_string())?;
     // The tool checks its own output the way a server will.
-    let all: Vec<(PathBuf, Vec<u8>)> = files.iter().chain(&installer_files).cloned().collect();
+    let all: Vec<_> = files.iter().chain(&installer_files).cloned().collect();
     check(&public_key_base64(&key), &bytes, &signature, &all)?;
     let out_dir = PathBuf::from(o.one("out-dir").unwrap_or("."));
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
@@ -218,24 +208,33 @@ fn release(o: &Options) -> Result<String, String> {
     Ok(format!("wrote {name}, {name}.sig and {}, signed with key {}", bundles.join(", "), key_id(&key.verifying_key())))
 }
 
-/// Reads `platform:arch:path` and signs the file as a package entry.
-fn signed_file(
+/// The files named by `--<option> platform:arch:path`, each read and signed.
+type SignedFiles = (Vec<kalzit_release::Package>, Vec<(PathBuf, Vec<u8>)>);
+
+fn signed_files(
+    o: &Options,
+    option: &str,
     key: &ed25519_dalek::SigningKey,
     version: &str,
-    spec: &str,
-) -> Result<(kalzit_release::Package, PathBuf, Vec<u8>), String> {
-    let mut parts = spec.splitn(3, ':');
-    let (Some(platform), Some(arch), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
-        return Err(format!("{spec}: expected platform:arch:path"));
-    };
-    let path = PathBuf::from(path);
-    let data = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let file = path.file_name().ok_or("a package path has no file name")?.to_string_lossy().into_owned();
-    Ok((sign_package(key, version, platform, arch, &file, &data), path, data))
+) -> Result<SignedFiles, String> {
+    let mut packages = Vec::new();
+    let mut files = Vec::new();
+    for spec in o.all(option) {
+        let mut parts = spec.splitn(3, ':');
+        let (Some(platform), Some(arch), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
+            return Err(format!("{spec}: expected platform:arch:path"));
+        };
+        let path = PathBuf::from(path);
+        let data = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let file = path.file_name().ok_or("a package path has no file name")?.to_string_lossy().into_owned();
+        packages.push(sign_package(key, version, platform, arch, &file, &data));
+        files.push((path, data));
+    }
+    Ok((packages, files))
 }
 
-/// Verifies a manifest, every package and installer entry and the given files against
-/// `public_key`.
+/// Verifies a manifest, every package and installer entry and the given files (packages or
+/// installers) against `public_key`.
 fn check(public_key: &str, manifest: &[u8], signature: &[u8], files: &[(PathBuf, Vec<u8>)]) -> Result<String, String> {
     let key = parse_public_key(public_key)?;
     let sig: DetachedSignature = serde_json::from_slice(signature).map_err(|e| format!("the signature file: {e}"))?;
@@ -259,7 +258,7 @@ fn check(public_key: &str, manifest: &[u8], signature: &[u8], files: &[(PathBuf,
         }
     }
     Ok(format!(
-        "{} verified ({} packages and {} installers listed, {} files checked)",
+        "{} verified ({} packages and {} installers listed, {} checked)",
         m.version,
         m.packages.len(),
         m.installers.len(),
@@ -289,7 +288,7 @@ fn verify(o: &Options) -> Result<String, String> {
     let manifest = std::fs::read(o.required("manifest")?).map_err(|e| e.to_string())?;
     let signature = std::fs::read(o.required("signature")?).map_err(|e| e.to_string())?;
     let mut files = Vec::new();
-    for path in o.all("package") {
+    for path in o.all("package").into_iter().chain(o.all("installer")) {
         let data = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
         files.push((PathBuf::from(path), data));
     }
@@ -348,7 +347,6 @@ mod tests {
     fn a_signed_release_checks_and_a_changed_file_does_not() {
         let key = ed25519_dalek::SigningKey::from_bytes(&[3; 32]);
         let package = sign_package(&key, "1.0.0", "linux", "x64", "kalzit-1.0.0-linux-x64", b"binary");
-        let installer = sign_package(&key, "1.0.0", "windows", "x64", "kalzit-1.0.0-windows-x64.msi", b"msi");
         let manifest = Manifest {
             format: 1,
             product: "kalzit".into(),
@@ -360,17 +358,25 @@ mod tests {
             notes_url: None,
             highlights: vec![],
             packages: vec![package],
-            installers: vec![installer],
+            installers: vec![sign_package(&key, "1.0.0", "linux", "x64", "kalzit-1.0.0-linux-x64.deb", b"deb")],
         };
         let bytes = serde_json::to_vec(&manifest).unwrap();
         let sig = serde_json::to_vec(&sign_manifest(&key, &bytes)).unwrap();
         let public = public_key_base64(&key);
-        let ok = vec![(PathBuf::from("p"), b"binary".to_vec()), (PathBuf::from("i"), b"msi".to_vec())];
+        let ok = vec![(PathBuf::from("p"), b"binary".to_vec()), (PathBuf::from("d"), b"deb".to_vec())];
         assert!(check(&public, &bytes, &sig, &ok).is_ok());
-        // An installer is listed apart from the packages the updater takes.
-        let parsed: Manifest = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.packages.len(), 1);
-        assert_eq!(parsed.installers[0].file, "kalzit-1.0.0-windows-x64.msi");
+        let changed = vec![(PathBuf::from("d"), b"deB".to_vec())];
+        assert!(check(&public, &bytes, &sig, &changed).is_err());
+        // An installer whose own signature does not match fails, though the manifest is signed.
+        let mut forged = manifest.clone();
+        forged.installers[0].sha256 = sha256_hex(b"other");
+        let forged_bytes = serde_json::to_vec(&forged).unwrap();
+        let forged_sig = serde_json::to_vec(&sign_manifest(&key, &forged_bytes)).unwrap();
+        assert!(check(&public, &forged_bytes, &forged_sig, &[]).is_err());
+        // Without installers the field is left out, so older manifests read the same.
+        let mut plain = manifest.clone();
+        plain.installers.clear();
+        assert!(!String::from_utf8(serde_json::to_vec(&plain).unwrap()).unwrap().contains("installers"));
         let changed = vec![(PathBuf::from("p"), b"binarY".to_vec())];
         assert!(check(&public, &bytes, &sig, &changed).is_err());
         let other = public_key_base64(&ed25519_dalek::SigningKey::from_bytes(&[4; 32]));

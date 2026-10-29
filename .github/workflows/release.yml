@@ -1,7 +1,8 @@
 name: Release
 
-# Builds the Windows and Linux binaries and the Windows installer (MSI) for a version tag (v0.2.0,
-# v0.3.0-rc.1), writes the signed update manifest and publishes everything as a GitHub Release, which running servers find through
+# Builds the Windows and Linux binaries, the Windows installer (MSI) and the Linux deb and rpm
+# (deploy/linux) for a version tag (v0.2.0, v0.3.0-rc.1), writes the signed
+# update manifest and publishes everything as a GitHub Release, which running servers find through
 # their update check (docs/operations/updates.md). A tag with a pre-release part (-rc.1) becomes
 # a pre-release, offered only on the preview channel. After that, the container image is pushed
 # to ghcr.io (job `image`).
@@ -50,6 +51,9 @@ jobs:
     outputs:
       sha256-linux-x64: ${{ steps.package.outputs.sha256-linux-x64 }}
       sha256-windows-x64: ${{ steps.package.outputs.sha256-windows-x64 }}
+      # The deb and rpm, Linux leg only.
+      sha256-deb: ${{ steps.system-packages.outputs.sha256-deb }}
+      sha256-rpm: ${{ steps.system-packages.outputs.sha256-rpm }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -105,6 +109,31 @@ jobs:
           # The same check a server makes before it installs: the binary runs and names its version.
           "dist/$name" --version | grep -qw "${{ steps.version.outputs.version }}"
           echo "sha256-${{ matrix.platform }}-${{ matrix.arch }}=$(sha256sum "dist/$name" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # The deb and rpm (deploy/linux) around exactly this binary; nfpm is checked against its
+      # published SHA-256 before it runs.
+      - name: Install nfpm
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          NFPM_VERSION: 2.47.0
+          NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+        run: |
+          set -euo pipefail
+          archive="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/$archive"
+          echo "$NFPM_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" nfpm
+          sudo install -m 0755 "$RUNNER_TEMP/nfpm" /usr/local/bin/nfpm
+      - name: Linux packages
+        if: matrix.platform == 'linux'
+        id: system-packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          deploy/linux/package.sh "$version" "dist/kalzit-$version-linux-x64" dist
+          echo "sha256-deb=$(sha256sum "dist/kalzit-$version-linux-x64.deb" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha256-rpm=$(sha256sum "dist/kalzit-$version-linux-x64.rpm" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kalzit-${{ matrix.platform }}-${{ matrix.arch }}
@@ -597,17 +626,21 @@ jobs:
           LINUX: ${{ needs.build.outputs.sha256-linux-x64 }}
           WINDOWS: ${{ needs.windows-sign-exe.outputs.sha256 }}
           MSI: ${{ needs.windows-sign-msi.outputs.sha256 }}
+          DEB: ${{ needs.build.outputs.sha256-deb }}
+          RPM: ${{ needs.build.outputs.sha256-rpm }}
           PLUGINS: ${{ needs.plugin-finish.outputs.sums }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          test -n "$LINUX" && test -n "$WINDOWS" && test -n "$MSI" && test -n "$PLUGINS"
+          test -n "$LINUX" && test -n "$WINDOWS" && test -n "$MSI" && test -n "$DEB" && test -n "$RPM" && test -n "$PLUGINS"
           cd dist
           printf '%s  %s\n' "$LINUX" "kalzit-$version-linux-x64" \
             "$WINDOWS" "kalzit-$version-windows-x64.exe" \
-            "$MSI" "kalzit-$version-windows-x64.msi" | sha256sum -c -
+            "$MSI" "kalzit-$version-windows-x64.msi" \
+            "$DEB" "kalzit-$version-linux-x64.deb" \
+            "$RPM" "kalzit-$version-linux-x64.rpm" | sha256sum -c -
           printf '%s\n' "$PLUGINS" | sha256sum -c -
-          test "$(ls | wc -l)" -eq "$((3 + $(printf '%s\n' "$PLUGINS" | grep -c .)))"
+          test "$(ls | wc -l)" -eq "$((5 + $(printf '%s\n' "$PLUGINS" | grep -c .)))"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -634,9 +667,12 @@ jobs:
             --package "linux:x64:dist/kalzit-$version-linux-x64" \
             --package "windows:x64:dist/kalzit-$version-windows-x64.exe" \
             --installer "windows:x64:dist/kalzit-$version-windows-x64.msi" \
+            --installer "linux:x64:dist/kalzit-$version-linux-x64.deb" \
+            --installer "linux:x64:dist/kalzit-$version-linux-x64.rpm" \
             --out-dir dist
-      # The release with the server binaries, the Windows installer, their signed manifest and
-      # offline packages, and the signed plugin packages. Unsigned Windows files get a note.
+      # The release with the server binaries, the Windows installer, the deb and rpm, their signed
+      # manifest and offline packages, and the signed plugin packages. Unsigned Windows files get
+      # a note.
       - name: Publish
         shell: bash
         env:
