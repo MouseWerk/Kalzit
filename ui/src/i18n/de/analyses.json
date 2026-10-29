@@ -31,6 +31,7 @@
   "analyses.save.optional": "(optional)",
   "analyses.save.descriptionPlaceholder": "Wofür ist diese Auswertung gedacht?",
   "analyses.save.summary": "Wird gespeichert",
+  "analyses.save.query": "Abfrage (schreibgeschützt)",
   "analyses.save.visualization": "Darstellung {name}",
   "analyses.save.keepRange": "Zeitraum mitspeichern",
   "analyses.save.keepRangeValue": "({range}); ohne Haken gilt beim Öffnen der Zeitraum, der gerade eingestellt ist",

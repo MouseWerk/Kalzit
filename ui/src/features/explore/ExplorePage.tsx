@@ -502,6 +502,13 @@ function Explore({
   // A query handed over to be saved ("Als Panel speichern" in Fragen) opens the save dialog once
   // it is in the editor, for someone who may save analyses.
   const saveOnArrival = useRef(handoff?.save === true);
+  // That dialog shows the query in full before it is saved: it was written in the chat.
+  const [savingHandoff, setSavingHandoff] = useState(false);
+  useEffect(() => {
+    if (saveDialog === null) {
+      setSavingHandoff(false);
+    }
+  }, [saveDialog]);
   const mayCreateAny =
     permissions.has("analyses:write") ||
     (folders.data ?? []).some((folder) => folder.access?.write === true);
@@ -509,6 +516,7 @@ function Explore({
     if (saveOnArrival.current && mayCreateAny && datasource !== undefined && query !== null) {
       saveOnArrival.current = false;
       setSaveDialog("save");
+      setSavingHandoff(true);
     }
   }, [mayCreateAny, datasource, query]);
 
@@ -1366,6 +1374,7 @@ function Explore({
           rangeLabel={rangeLabel(t, language, range, timeZone)}
           busy={persist.isPending}
           error={persist.isError ? errorMessage(t, persist.error) : undefined}
+          query={savingHandoff && saveDialog === "save" ? query : undefined}
           onSubmit={(values) => submitDialog(saveDialog, values)}
           onClose={() => setSaveDialog(null)}
         />

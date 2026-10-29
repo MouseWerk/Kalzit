@@ -19,6 +19,11 @@
 //! Excluding works by name and is best effort, not a security boundary: a query that renames a
 //! column (`email AS kontakt`) or computes from it (`lower(email)`) passes its values under
 //! another name. The boundary is the opt-in of the source and the rights of the person asking.
+//! Values that serve as a graph node's or edge's id, or as a document's `_id`, are not replaced:
+//! a node whose id is an e-mail address shows it although the property `email` is excluded.
+//!
+//! Stored chats are checked again with the rules as they are when read (`restrict_stored`), so
+//! a field excluded or a row limit lowered later reaches the results already kept.
 
 use std::collections::BTreeSet;
 
@@ -190,10 +195,16 @@ impl DataPolicy {
         out
     }
 
-    /// Whether the value at `path` (a field name or dotted path) is excluded.
+    /// Whether the value at `path` (a field name or dotted path) is excluded. Besides the path
+    /// itself and dotted suffixes, the last segments are compared: a step that joins frames names
+    /// their fields `A.email` and `B.email`, which `kunden.email` must cover too.
     pub fn excludes(&self, path: &str) -> bool {
         let path = fold(path);
-        self.excluded.iter().any(|e| *e == path || ends_with_segment(e, &path) || ends_with_segment(&path, e))
+        let last = |s: &str| s.rsplit('.').next().unwrap_or(s).to_string();
+        let path_last = last(&path);
+        self.excluded
+            .iter()
+            .any(|e| *e == path || ends_with_segment(e, &path) || ends_with_segment(&path, e) || last(e) == path_last)
     }
 }
 
@@ -292,7 +303,7 @@ pub fn result_for_model(policy: &DataPolicy, result: &QueryResult) -> ApiResult<
                         .take(rows)
                         .map(|v| {
                             if excluded && !v.is_null() {
-                                hits += 1;
+                                count_replaced(v, &mut hits);
                                 json!(EXCLUDED)
                             } else {
                                 // A JSON column holds objects whose paths can be excluded too.
@@ -361,7 +372,7 @@ fn redact_properties(
         .map(|(k, v)| {
             let excluded = policy.excludes(k) || labels.iter().any(|l| policy.excludes(&format!("{l}.{k}")));
             if excluded {
-                *hits += 1;
+                count_replaced(v, hits);
                 (k.clone(), json!(EXCLUDED))
             } else {
                 let mut v = v.clone();
@@ -372,6 +383,110 @@ fn redact_properties(
         .collect()
 }
 
+/// Counts a value about to be replaced, unless it holds nothing (null) or was replaced before.
+fn count_replaced(value: &Value, hits: &mut usize) {
+    if !value.is_null() && value.as_str() != Some(EXCLUDED) {
+        *hits += 1;
+    }
+}
+
+/// A result as a chat stored it (`{shape, ...}` as `result_for_model` made it), checked again
+/// with the rules as they are now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Restricted {
+    /// `None` when the stored value has no shape this knows: nothing of it is shown.
+    pub value: Option<Value>,
+    /// Values replaced now that were not before.
+    pub replaced: usize,
+    /// Rows, documents or nodes left out now for a lower row limit.
+    pub cut: bool,
+}
+
+impl Restricted {
+    /// Whether the result shows less than when it was stored.
+    pub fn changed(&self) -> bool {
+        self.value.is_none() || self.replaced > 0 || self.cut
+    }
+}
+
+/// A stored result under the rules as they are now: fields excluded since lose their values and
+/// a row limit lowered since cuts it again, so tightening the rules reaches stored chats too.
+/// Values replaced before stay replaced; nothing comes back that was not stored.
+pub fn restrict_stored(policy: &DataPolicy, stored: &Value) -> Restricted {
+    let mut value = stored.clone();
+    let mut hits = 0;
+    let mut cut = false;
+    let max = policy.max_rows;
+    let mut truncate = |items: &mut Vec<Value>| {
+        if items.len() > max {
+            items.truncate(max);
+            cut = true;
+        }
+    };
+    match stored.get("shape").and_then(Value::as_str) {
+        Some("frame") => {
+            for field in value.get_mut("fields").and_then(Value::as_array_mut).into_iter().flatten() {
+                let name = field.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
+                let excluded = policy.excludes(&name);
+                let Some(values) = field.get_mut("values").and_then(Value::as_array_mut) else { continue };
+                truncate(values);
+                for v in values.iter_mut() {
+                    if excluded {
+                        if !v.is_null() {
+                            count_replaced(v, &mut hits);
+                            *v = json!(EXCLUDED);
+                        }
+                    } else {
+                        redact_value(policy, &name, v, &mut hits);
+                    }
+                }
+            }
+        }
+        Some("documents") => {
+            if let Some(documents) = value.get_mut("documents").and_then(Value::as_array_mut) {
+                truncate(documents);
+                for d in documents.iter_mut() {
+                    redact_value(policy, "", d, &mut hits);
+                }
+            }
+        }
+        Some("graph") => {
+            let mut kept = BTreeSet::new();
+            if let Some(nodes) = value.get_mut("nodes").and_then(Value::as_array_mut) {
+                truncate(nodes);
+                for node in nodes.iter_mut() {
+                    kept.insert(node.get("id").map(Value::to_string).unwrap_or_default());
+                    let labels = string_list(node.get("labels"));
+                    restrict_properties(policy, &labels, node.get_mut("properties"), &mut hits);
+                }
+            }
+            if let Some(edges) = value.get_mut("edges").and_then(Value::as_array_mut) {
+                edges.retain(|e| {
+                    let end = |key: &str| e.get(key).map(Value::to_string).unwrap_or_default();
+                    kept.contains(&end("from")) && kept.contains(&end("to"))
+                });
+                for edge in edges.iter_mut() {
+                    let labels = string_list(edge.get("type").map(|t| json!([t])).as_ref());
+                    restrict_properties(policy, &labels, edge.get_mut("properties"), &mut hits);
+                }
+            }
+        }
+        _ => return Restricted { value: None, replaced: 0, cut: false },
+    }
+    Restricted { value: Some(value), replaced: hits, cut }
+}
+
+fn string_list(value: Option<&Value>) -> Vec<String> {
+    value.and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
+}
+
+/// `redact_properties` on stored properties, in place.
+fn restrict_properties(policy: &DataPolicy, labels: &[String], properties: Option<&mut Value>, hits: &mut usize) {
+    let Some(Value::Object(map)) = properties else { return };
+    let current: std::collections::BTreeMap<String, Value> = std::mem::take(map).into_iter().collect();
+    *map = redact_properties(policy, labels, &current, hits);
+}
+
 /// Replaces excluded paths below `path` in place; array elements share their array's path.
 fn redact_value(policy: &DataPolicy, path: &str, value: &mut Value, hits: &mut usize) {
     match value {
@@ -379,7 +494,7 @@ fn redact_value(policy: &DataPolicy, path: &str, value: &mut Value, hits: &mut u
             for (key, child) in map.iter_mut() {
                 let child_path = if path.is_empty() { key.clone() } else { format!("{path}.{key}") };
                 if policy.excludes(&child_path) {
-                    *hits += 1;
+                    count_replaced(child, hits);
                     *child = json!(EXCLUDED);
                 } else {
                     redact_value(policy, &child_path, child, hits);
@@ -414,6 +529,8 @@ mod tests {
         assert!(p.excludes("iban") && p.excludes("konto.iban"), "a bare entry excludes nested paths");
         assert!(p.excludes("adresse"));
         assert!(!p.excludes("emails") && !p.excludes("xemail") && !p.excludes("name"));
+        assert!(p.excludes("A.email") && p.excludes("B.Email"), "a joined frame's fields are covered");
+        assert!(!p.excludes("A.emails"));
     }
 
     #[test]
@@ -558,6 +675,54 @@ mod tests {
             json!([{ "iban": EXCLUDED, "name": "Ada" }, [{ "iban": EXCLUDED }]])
         );
         assert_eq!(out.excluded_values, 2);
+    }
+
+    #[test]
+    fn stored_results_follow_rules_tightened_since() {
+        let field = |name: &str, values: Vec<Value>| Field {
+            name: name.into(),
+            field_type: FieldType::String,
+            unit: None,
+            values,
+            labels: None,
+        };
+        let frame = Frame::new(vec![
+            field("name", vec![json!("Ada"), json!("Bob"), json!("Cem")]),
+            field("email", vec![json!("ada@example.de"), Value::Null, json!("cem@example.de")]),
+        ])
+        .unwrap();
+        let stored = result_for_model(&policy(&[], 10), &QueryResult::Frame { frame }).unwrap().value;
+        // The same rules: nothing changes.
+        let same = restrict_stored(&policy(&[], 10), &stored);
+        assert!(!same.changed() && same.value.as_ref() == Some(&stored), "{same:?}");
+        // A field excluded since, and a lower row limit.
+        let now = restrict_stored(&policy(&["kunden.email"], 2), &stored);
+        assert!(now.changed() && now.cut);
+        assert_eq!(now.replaced, 1);
+        let value = now.value.unwrap();
+        assert_eq!(value["fields"][1]["values"], json!([EXCLUDED, null]));
+        assert_eq!(value["fields"][0]["values"], json!(["Ada", "Bob"]));
+        // Stored after excluding: checking it again under the same rules changes nothing.
+        assert!(!restrict_stored(&policy(&["kunden.email"], 2), &value).changed());
+
+        let doc = json!({ "name": "Ada", "konto": { "iban": "DE89" } });
+        let documents = DocumentSet { documents: vec![OrderedJson::new(&doc).unwrap()], ..Default::default() };
+        let stored = result_for_model(&policy(&[], 10), &QueryResult::Documents { documents }).unwrap().value;
+        let now = restrict_stored(&policy(&["iban"], 10), &stored);
+        assert_eq!((now.replaced, now.cut), (1, false));
+        assert_eq!(now.value.unwrap()["documents"][0]["konto"]["iban"], EXCLUDED);
+
+        let graph = json!({ "shape": "graph",
+            "nodes": [{ "id": "a", "labels": ["Person"], "properties": { "email": "a@x.de" } },
+                      { "id": "b", "labels": ["Person"], "properties": { "email": "b@x.de" } }],
+            "edges": [{ "id": "e", "type": "KNOWS", "from": "a", "to": "b", "properties": { "seit": 2020 } }] });
+        let now = restrict_stored(&policy(&["Person.email", "KNOWS.seit"], 1), &graph);
+        let value = now.value.clone().unwrap();
+        assert_eq!(value["nodes"].as_array().unwrap().len(), 1);
+        assert_eq!(value["nodes"][0]["properties"]["email"], EXCLUDED);
+        assert_eq!(value["edges"], json!([]), "an edge to a node cut away goes too");
+        assert!(now.cut && now.replaced == 1);
+        assert!(restrict_stored(&policy(&[], 10), &json!({ "shape": "other" })).changed(), "unknown shapes go");
     }
 
     #[test]

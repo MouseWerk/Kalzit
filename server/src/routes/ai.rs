@@ -845,6 +845,9 @@ pub struct AccessAnswer {
     datasource_id: String,
     readable: bool,
     excluded_fields: Vec<String>,
+    /// The source sends requests outward on a query's say (HTTP JSON, plugin kinds): the chat
+    /// runs only stored panel queries on it (`ai::tools::outward_facing`).
+    outward_facing: bool,
 }
 
 /// What AI may read of a data source, for everyone who may read the source.
@@ -856,7 +859,12 @@ async fn get_datasource(
     let ds = crate::datasources::find_in_org(&state.db, &ctx.org_id, &datasource_id, false).await?;
     check_resource(&state.db, &ctx, Permission::DatasourcesRead, Resource::Datasource(&ds.id)).await?;
     let access = store::datasource_access(&state.db, &ds.id).await?;
-    Ok(Json(AccessAnswer { datasource_id: ds.id, readable: access.readable, excluded_fields: access.excluded_fields }))
+    Ok(Json(AccessAnswer {
+        outward_facing: crate::ai::tools::outward_facing(&state, &ds.kind),
+        datasource_id: ds.id,
+        readable: access.readable,
+        excluded_fields: access.excluded_fields,
+    }))
 }
 
 /// Opens or closes a data source to AI and sets the fields AI never receives. Whoever may edit
@@ -899,7 +907,12 @@ async fn set_datasource(
         .await?;
         crate::db::commit(tx).await?;
     }
-    Ok(Json(AccessAnswer { datasource_id: ds.id, readable: after.readable, excluded_fields: after.excluded_fields }))
+    Ok(Json(AccessAnswer {
+        outward_facing: crate::ai::tools::outward_facing(&state, &ds.kind),
+        datasource_id: ds.id,
+        readable: after.readable,
+        excluded_fields: after.excluded_fields,
+    }))
 }
 
 #[derive(Deserialize)]

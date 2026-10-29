@@ -273,6 +273,41 @@ describe("Fragen", () => {
     ];
     expect(await screen.findByText(/No longer available/)).toBeTruthy();
     expect(screen.getByText("Stopped. What arrived until then is kept.")).toBeTruthy();
+    expect(screen.queryByText(/Answer withheld/)).toBeNull();
+  });
+
+  it("says why the words of an answer are withheld and offers none of its queries", async () => {
+    const withheld: Turn = {
+      rounds: [
+        {
+          text: "",
+          calls: [
+            {
+              id: "c1",
+              name: "run_query",
+              arguments: {},
+              record: { ...QUERY_RECORD, query: undefined },
+            },
+          ],
+        },
+        { text: "", calls: [] },
+      ],
+      outcome: "ok",
+      withheld: true,
+    };
+    const { server } = open("/ask?chat=c-h", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-h", title: "Alt", messages: chatMessages("Alt?", withheld) }),
+    ];
+    const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
+    expect(
+      within(answer).getByText(
+        "Answer withheld because access to its data changed. The remaining results are shown as the rules apply now.",
+      ),
+    ).toBeTruthy();
+    // The result as the rules allow now stays; nothing of the model's is offered to save.
+    expect(within(answer).getByText("Süd")).toBeTruthy();
+    expect(within(answer).queryByRole("button", { name: "Save as panel" })).toBeNull();
   });
 });
 
@@ -285,10 +320,20 @@ describe("Fragen: from the board", () => {
     const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
     await user.click(within(answer).getByRole("button", { name: "Add to dashboard" }));
     const dialog = await screen.findByRole("dialog", { name: "Add to dashboard" });
+    // The query is shown again in full, read-only, before anything is saved.
+    const shown = within(dialog).getByLabelText("Query (read-only)");
+    expect(shown.textContent).toBe(
+      "SELECT region, sum(betrag) AS umsatz FROM bestellungen GROUP BY region",
+    );
+    expect(shown.querySelector("pre")).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     const before = server.areas.datasources.queries.length;
     await user.click(within(answer).getByRole("button", { name: "Save as panel" }));
     await waitFor(() => expect(location().pathname).toBe("/explore"));
+    const save = await screen.findByRole("dialog", { name: "Save analysis" });
+    expect(within(save).getByLabelText("Query (read-only)").textContent).toBe(
+      "SELECT region, sum(betrag) AS umsatz FROM bestellungen GROUP BY region",
+    );
     expect(server.areas.datasources.queries.length).toBe(before);
   });
 

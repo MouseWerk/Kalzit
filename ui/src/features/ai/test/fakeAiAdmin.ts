@@ -45,7 +45,7 @@ export interface FakeAiState {
   serverUsage: WireAiUsage[];
   orgUsage: WireAiUsage[];
   /** What AI may read of each data source, by data source id; closed by default. */
-  access: Record<string, { readable: boolean; excludedFields: string[] }>;
+  access: Record<string, { readable: boolean; excludedFields: string[]; outwardFacing?: boolean }>;
   /** The AI calls asked for (explain, draft, summarize), with their path and body. */
   calls: { path: string; body: Record<string, unknown> }[];
   /**
@@ -452,7 +452,11 @@ export function aiAdminFake(_areas: FakeAreaStates): FakeArea<FakeAiState> {
               params: { max: "200" },
             });
           }
-          state.access[id] = { readable: body.readable === true, excludedFields: fields };
+          state.access[id] = {
+            ...current,
+            readable: body.readable === true,
+            excludedFields: fields,
+          };
           return json(200, { datasourceId: id, ...state.access[id] });
         }
       }

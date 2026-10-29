@@ -95,6 +95,11 @@ pub struct Turn {
     pub outcome: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorBody>,
+    /// Set when the answer is read or continued and one of its tool results shows less than when
+    /// the model saw it (withheld, or rules tightened since): the model's words and the arguments
+    /// of its calls may quote that data, so they are neither shown nor sent again. Never stored.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub withheld: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -284,13 +289,21 @@ async fn delete_chat(conn: &mut sqlx::AnyConnection, id: &str) -> Result<(), sql
 pub async fn visible_messages(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiResult<Vec<StoredMessage>> {
     let mut visibility = Visibility::default();
     let mut out = Vec::new();
+    let mut tainted = false;
     for (seq, role, created_at, content) in messages(state, chat_id).await? {
         let content = if role == "assistant" {
             match serde_json::from_value::<Turn>(content.clone()) {
                 Ok(turn) => {
-                    serde_json::to_value(checked_turn(state, ctx, &mut visibility, turn).await).unwrap_or(Value::Null)
+                    let turn = checked_turn(state, ctx, &mut visibility, turn, tainted).await;
+                    tainted |= turn.withheld;
+                    serde_json::to_value(turn).unwrap_or(Value::Null)
                 }
-                Err(_) => content,
+                // An answer that cannot be read cannot be checked: shown as stored, but the
+                // answers after it are treated as if it were withheld.
+                Err(_) => {
+                    tainted = true;
+                    content
+                }
             }
         } else {
             match serde_json::from_value::<Question>(content.clone()) {
@@ -311,20 +324,60 @@ pub async fn visible_messages(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> 
     Ok(out)
 }
 
-async fn checked_turn(state: &AppState, ctx: &OrgCtx, visibility: &mut Visibility, mut turn: Turn) -> Turn {
+/// An answer as the person may see it now: each record checked again (`Visibility::check`), and
+/// the model's words withheld where a record shows less than the model saw, or where an earlier
+/// answer of the chat was withheld (`tainted`): the model had that answer's data in front of it
+/// and may quote it later on.
+async fn checked_turn(
+    state: &AppState,
+    ctx: &OrgCtx,
+    visibility: &mut Visibility,
+    mut turn: Turn,
+    tainted: bool,
+) -> Turn {
+    let mut hides = false;
     for round in &mut turn.rounds {
         for call in &mut round.calls {
             if let Some(record) = call.record.take() {
-                call.record = Some(visibility.check(state, ctx, &call.name, record).await);
+                let (record, less) = visibility.check(state, ctx, &call.name, record).await;
+                hides |= less;
+                call.record = Some(record);
             }
         }
+    }
+    if hides || tainted {
+        withhold_words(&mut turn);
     }
     turn
 }
 
+/// Takes out of an answer what the model wrote: its text, the arguments of its calls, the
+/// queries it wrote (a panel's stored queries stay) and its proposals. What is left are the
+/// records, each as `Visibility::check` left it.
+fn withhold_words(turn: &mut Turn) {
+    turn.withheld = true;
+    for round in &mut turn.rounds {
+        round.text.clear();
+        for call in &mut round.calls {
+            call.arguments = Value::Object(serde_json::Map::new());
+            let Some(record) = &mut call.record else { continue };
+            if call.name != "run_panel" {
+                record.query = None;
+                for result in &mut record.results {
+                    result.query = None;
+                }
+            }
+            if record.proposal.take().is_some() {
+                record.withheld = true;
+            }
+        }
+    }
+}
+
 /// The conversation the provider gets: the newest `MAX_PAST_QUESTIONS` questions with their
 /// answers, each answer as its rounds of text and tool calls followed by their results, with
-/// results the person may no longer see withheld. Messages of the same role in a row are joined,
+/// results the person may no longer see withheld, and with them the model's words around them
+/// (`checked_turn`): withheld text is never sent again. Messages of the same role in a row are joined,
 /// as the Messages API wants them alternating.
 pub async fn conversation(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiResult<Vec<Message>> {
     let stored = messages(state, chat_id).await?;
@@ -353,6 +406,17 @@ pub async fn conversation(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiR
             _ => out.push(message),
         }
     };
+    // Answers before the newest twelve questions are not sent, but one of them withheld still
+    // withholds the words of every answer after it.
+    let mut tainted = false;
+    for (_, role, _, content) in &stored[..first_kept] {
+        if role == "assistant" && !tainted {
+            tainted = match serde_json::from_value::<Turn>(content.clone()) {
+                Ok(turn) => checked_turn(state, ctx, &mut visibility, turn, false).await.withheld,
+                Err(_) => true,
+            };
+        }
+    }
     for (_, role, _, content) in stored.into_iter().skip(first_kept) {
         match role.as_str() {
             "user" => {
@@ -365,8 +429,12 @@ pub async fn conversation(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> ApiR
                 push(Message::user(text), &mut out);
             }
             "assistant" => {
-                let Ok(turn) = serde_json::from_value::<Turn>(content) else { continue };
-                let turn = checked_turn(state, ctx, &mut visibility, turn).await;
+                let Ok(turn) = serde_json::from_value::<Turn>(content) else {
+                    tainted = true;
+                    continue;
+                };
+                let turn = checked_turn(state, ctx, &mut visibility, turn, tainted).await;
+                tainted |= turn.withheld;
                 for round in turn.rounds {
                     let mut parts = Vec::new();
                     if !round.text.trim().is_empty() {
@@ -542,6 +610,51 @@ mod tests {
     }
 
     #[test]
+    fn withheld_answers_lose_the_models_words_but_keep_panel_queries() {
+        let record = |query: Option<Value>| ToolRecord { status: "ok".into(), query, ..Default::default() };
+        let call = |name: &str, record: ToolRecord| Call {
+            id: name.into(),
+            name: name.into(),
+            arguments: serde_json::json!({ "query": { "sql": "SELECT email FROM kunden WHERE email = 'ana@x.de'" } }),
+            record: Some(record),
+        };
+        let mut panel = record(None);
+        panel.results = vec![tools::ResultRecord {
+            ref_id: "A".into(),
+            datasource_id: None,
+            query: Some(serde_json::json!({ "sql": "SELECT name FROM kunden" })),
+            data: None,
+            rows: 0,
+            truncated: false,
+            excluded_values: 0,
+            error: None,
+        }];
+        let mut proposal = record(Some(serde_json::json!({ "sql": "SELECT 1" })));
+        proposal.proposal = Some(tools::Proposal { title: "Ana".into(), explanation: "ana@x.de".into() });
+        let mut turn = Turn {
+            rounds: vec![Round {
+                text: "Ana hat die Adresse ana@x.de.".into(),
+                calls: vec![
+                    call("run_query", record(Some(serde_json::json!({ "sql": "SELECT 'ana@x.de'" })))),
+                    call("run_panel", panel),
+                    call("propose_query", proposal),
+                ],
+            }],
+            outcome: "ok".into(),
+            ..Default::default()
+        };
+        withhold_words(&mut turn);
+        assert!(turn.withheld);
+        let text = serde_json::to_string(&turn).unwrap();
+        assert!(!text.contains("ana@x.de"), "{text}");
+        let calls = &turn.rounds[0].calls;
+        assert!(calls.iter().all(|c| c.arguments == serde_json::json!({})));
+        assert!(calls[0].record.as_ref().unwrap().query.is_none());
+        assert!(calls[1].record.as_ref().unwrap().results[0].query.is_some(), "a stored panel query stays");
+        assert!(calls[2].record.as_ref().unwrap().withheld, "a proposal is the model's own");
+    }
+
+    #[test]
     fn turns_read_back_what_they_stored() {
         let turn = Turn {
             rounds: vec![Round {
@@ -557,8 +670,10 @@ mod tests {
             provider: None,
             outcome: "ok".into(),
             error: None,
+            withheld: false,
         };
         let value = serde_json::to_value(&turn).unwrap();
+        assert!(value.get("withheld").is_none(), "only set when read");
         assert_eq!(value["usage"]["inputTokens"], 3);
         assert_eq!(serde_json::from_value::<Turn>(value).unwrap(), turn);
     }

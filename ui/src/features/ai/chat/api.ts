@@ -111,6 +111,11 @@ export interface Turn {
   provider?: ChatProvider;
   outcome: Outcome;
   error?: ChatError;
+  /**
+   * The model's words and call arguments are withheld: a result of the answer shows less than
+   * the model saw (access changed, or the rules were tightened since).
+   */
+  withheld?: boolean;
 }
 
 export interface Question {

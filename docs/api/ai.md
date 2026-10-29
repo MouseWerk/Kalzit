@@ -258,7 +258,7 @@ today included; newest day first.
 may edit it: `datasources:write`, org-wide or by a grant on the source):
 
 ```json
-{ "datasourceId": "...", "readable": true, "excludedFields": ["kunden.email", "kunden.iban"] }
+{ "datasourceId": "...", "readable": true, "excludedFields": ["kunden.email", "kunden.iban"], "outwardFacing": false }
 ```
 
 - `readable` opens the source to AI (default closed): its schema for explain and draft, its
@@ -268,13 +268,23 @@ may edit it: `datasources:write`, org-wide or by a grant on the source):
   values with `[excluded]`; the model sees only the name. Matching is broad on purpose, since
   results do not always name their table: an entry matches a field whose name or path equals it,
   or where one is a dotted suffix of the other (`kunden.email` covers the column `email` in every
-  result of the source; `iban` covers `konto.iban` in a document or a JSON column), after Unicode
+  result of the source; `iban` covers `konto.iban` in a document or a JSON column; fields with the same last segment match too, so `kunden.email` covers `A.email` of a joined frame), after Unicode
   NFKC and case folding (`Straße` matches `STRASSE`). Graph properties match by name or
   `Label.property`. The list is kept while the source is closed.
 - Excluding is best effort by name, not a security boundary: a query that renames a field
   (`email AS kontakt`) or computes from it (`lower(email)`) returns its values under another
-  name. Whatever must never reach a provider belongs in a source that stays closed to AI, or
-  behind the database's own rights.
+  name. Values that serve as a graph node's or edge's id, or as a document's `_id`, are not
+  replaced either: a node whose id is an e-mail address shows it although `email` is excluded.
+  Whatever must never reach a provider belongs in a source that stays closed to AI, or behind the
+  database's own rights.
+- `outwardFacing` (answer only) is `true` for sources that send requests outward on a query's
+  say: HTTP JSON (the query picks path and parameters) and every plugin kind (the server cannot
+  tell what a plugin does with a query). The chat runs no query the model writes on them, only
+  the stored queries of panels (see "Tools"); the UI says so next to the switch.
+- Open a database to AI only where it has no network-capable extensions or functions that the
+  login may call. The read-only check refuses the known ones (`dblink`, the `http_*` functions of
+  pgsql-http, `COPY ... PROGRAM`, file functions), but a query the model writes runs with the
+  source's login, and anything that login can reach from the database is within its reach.
 - Every change is audited (`datasource.ai_access_changed`, with `readable` and the number of
   excluded fields).
 
@@ -460,9 +470,9 @@ person had made the request: nothing is decided by the model. Results keep their
 |---|---|---|
 | `list_datasources` | none | lists the chosen sources the caller may read or query: `id`, `name`, `kind`, `queryLanguage`, `openToAi`, `mayQuery` |
 | `get_schema` | `datasourceId` | `datasources:query` on the source (as `GET .../schema`), the source open to AI and chosen |
-| `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts). A query that names an excluded field is refused (`ai.query_names_excluded_field`), since an alias or an expression would pass its values under another name. The check is best effort: it looks for the field as a whole word in any case, in the query as written and once more without its single-quoted literals and comments (a MongoDB pipeline as written, quoted names included), so a literal naming the field refuses the query too; for an entry with a table (`kunden.email`), a query that names that table anywhere (as a whole word, any case) is refused for any mention of the field, qualified or not, so no alias, subquery or CTE leads around it; a query that does not name the table lets the field through under another qualifier (`users.email`) and refuses it bare, except for generic names (`id`, `name`, `title`, `label`, `type`, `kind`, `key`, `value`, `status`, `date`, `time`, `count`, `created_at`, `updated_at`), which then pass; a bare generic entry without a table never refuses a query. A query can still reach a value without naming its field (a whole-row cast, `FOR JSON`, `$$ROOT`, `keys(n)`, escaped identifiers): data that must never reach a provider belongs in a source closed to AI |
+| `run_query` | `datasourceId`, `query` (the source's form), `timeRange` | `datasources:query`, the source open to AI and chosen; runs through the normal query path (read-only checks, limits, timeouts). Refused on outward-facing sources, HTTP JSON and every plugin kind (`ai.outward_source_free_query`): there the model would choose where a request goes and what it carries, so a query could carry data from the chat outward; stored panel queries (`run_panel`) still run on them. A query that names an excluded field is refused (`ai.query_names_excluded_field`), since an alias or an expression would pass its values under another name. The check is best effort: it looks for the field as a whole word in any case, in the query as written and once more without its single-quoted literals and comments (a MongoDB pipeline as written, quoted names included), so a literal naming the field refuses the query too; for an entry with a table (`kunden.email`), a query that names that table anywhere (as a whole word, any case) is refused for any mention of the field, qualified or not, so no alias, subquery or CTE leads around it; a query that does not name the table lets the field through under another qualifier (`users.email`) and refuses it bare, except for generic names (`id`, `name`, `title`, `label`, `type`, `kind`, `key`, `value`, `status`, `date`, `time`, `count`, `created_at`, `updated_at`), which then pass; a bare generic entry without a table never refuses a query. A query can still reach a value without naming its field (a whole-row cast, `FOR JSON`, `$$ROOT`, `keys(n)`, escaped identifiers): data that must never reach a provider belongs in a source closed to AI |
 | `find_panels` | `search` | lists dashboards the caller may read whose title contains `search` (at most 20), with their panels |
-| `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run, with the saved current value of each variable (the dashboard's defaults when one is no longer valid); every source of the panel open to AI (and chosen, when sources are chosen). The panel's enabled steps run on the server as for its summary and export (a frame they make is redacted with the rules of all the panel's sources); hidden queries are left out, unless a step reads them |
+| `run_panel` | `dashboardId`, `panelId`, `timeRange` | `dashboards:read` on the dashboard, as its stored queries run, with the saved current value of each variable (the dashboard's defaults when one is no longer valid); every source of the panel open to AI (and chosen, when sources are chosen). The panel's enabled steps run on the server as for its summary and export; every result of the panel is redacted with the rules of all its sources merged (excluded fields of all of them, the smallest row limit); hidden queries are left out, unless a step reads them. A stored query that names an excluded field is refused as for `run_query` (`ai.query_names_excluded_field`), and so is a panel whose enabled steps read an excluded field (a projection or aggregation that renames it, a calculation, grouping, pivot, statistics or join over it: `ai.panel_step_reads_excluded_field`), since the step could pass its values on under another name. The one way to query HTTP JSON and plugin sources in the chat; for a panel that reads one, `timeRange` takes only the dashboard's saved range or a preset start (`now-5m`, `now-15m`, `now-30m`, `now-1h`, `now-3h`, `now-6h`, `now-12h`, `now-24h`, `now-2d`, `now-7d`, `now-30d`, `now-90d`, `now-1y`) up to `now`, since the range travels with the request and the model could otherwise put data into its digits; anything else is refused (`ai.outward_source_time_range`) |
 | `propose_query` | `datasourceId`, `query`, `title`, `explanation` | `datasources:query` on the source, chosen; never runs, the UI offers "Open in Explore" |
 
 Viewers have no free queries (`datasources:query`), so for them `get_schema`, `run_query` and
@@ -473,7 +483,7 @@ error of the answer: its record has `status` `error` and `error` (the error enve
 its `reason`), and the model reads it. A source of a panel that is closed to AI is named only to a
 caller who may read the source. For a source with excluded fields, quoted parts of its error
 messages (`'...'`, `"..."`) are replaced by `[excluded]`, since a database error may quote a
-value.
+value; for a panel with steps, the errors of its queries and of its steps too.
 
 The record of a call (`toolResult`, and in the stored answer) holds only what went to the
 provider: `status`, `datasource` or `dashboard` (`id`, `title`, `panelId`, `panelTitle`,
@@ -485,8 +495,21 @@ again. When a chat is read or continued, every record is checked again: a query'
 schema needs the source to exist (not in the trash), to be open to AI and `datasources:query` for
 the caller; a panel's results need `dashboards:read` and its sources existing and open to AI.
 Otherwise the record is withheld: it says `"withheld": true` and keeps no data and no error
-message, and the model gets a note instead. Lists keep only the sources the caller may still read
-and the dashboards they may still read.
+message, and the model gets a note instead. What is still shown follows the source's AI rules as
+they are now (for a panel, the rules of all its sources merged): a field excluded since loses its
+stored values (`excludedValues` counts them), a lower `ai.max_rows_to_model` cuts the stored rows
+(`truncated`), and error messages are redacted again. Lists keep only the sources the caller may
+still read and the dashboards they may still read.
+
+When one record of an answer is withheld or shows less than the model saw, the model's own words
+may quote what is gone: the answer then says `"withheld": true`, and its rounds' `text`, the
+`arguments` of its calls, the queries the model wrote (`query` of `run_query` records and their
+results; a panel's stored queries stay) and its proposals (withheld as a whole) are left out, both
+from what the chat shows and from what is sent to the provider again. Every later answer of the
+chat is treated the same way, since the model had the withheld data in front of it when it wrote
+them. Nothing in the stored chat is changed: if the rules are loosened again, the answers show as
+before. The `ai.tool_called` audit entries keep the query text as it was run; withholding does not
+change them (the audit log is for administrators only).
 
 Each tool call is audited as `ai.tool_called`: the tool, the chat, the source or the dashboard
 and panel, the query (at most 4000 characters), the number of rows, the outcome and its reason;
@@ -547,7 +570,10 @@ sources' own.
 | `ai.chat_tool_unknown` | `name` | the model called a tool that does not exist |
 | `ai.chat_tool_arguments` | | the model called a tool with missing or malformed arguments |
 | `ai.chat_tool_limit` | `max` | the answer used its `max` tool calls (`ai.max_tool_calls`) |
-| `ai.query_names_excluded_field` | `field` | a chat query names a field excluded from AI |
+| `ai.query_names_excluded_field` | `field` | a chat query, or a stored query of a panel the chat runs, names a field excluded from AI |
+| `ai.panel_step_reads_excluded_field` | `field` | an enabled step of a panel the chat runs reads a field excluded from AI, or joins a frame that holds one |
+| `ai.outward_source_time_range` | | the chat ran a panel that reads an outward-facing source with a time range that is neither a preset nor the dashboard's own |
+| `ai.outward_source_free_query` | `name` | the model wrote a query for an outward-facing source (HTTP JSON, plugin kinds); only stored panel queries run there |
 | `ai.query_empty` | | there is no query to explain, summarize or run (a panel without queries) |
 | `ai.query_too_large` | `bytes` | the query is larger than `bytes` as JSON |
 | `ai.request_invalid` | `max` | the request of a draft or a chat question is empty, longer than `max` characters or has control characters |
