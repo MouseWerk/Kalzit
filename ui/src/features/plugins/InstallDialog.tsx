@@ -60,6 +60,7 @@ export function failedStep(reason: string | undefined): StepId {
     case "plugin.update_other_id":
     case "plugin.downgrade":
     case "plugin.key_changed":
+    case "plugin.kind_changed":
     case "plugin.publisher_changed":
     case "plugin.kind_taken":
       return "update";
@@ -784,9 +785,11 @@ function isPublisherChange(error: unknown): boolean {
 }
 
 /**
- * A removed plugin's id comes back without its signing key (`plugin.publisher_changed`): what is
- * left of it (its data sources, the key and version that were removed), that installing clears
- * the secrets of those data sources, and the server's name typed out before it is sent again.
+ * A removed plugin's id comes back without its signing key, or a signed update replaces an
+ * unsigned installed plugin (`plugin.publisher_changed`): what is left of it (its data sources,
+ * the key and version that were removed or the unsigned version installed), that installing
+ * clears the secrets of those data sources, and the server's name typed out before it is sent
+ * again.
  */
 function PublisherChange({
   error,
@@ -804,21 +807,29 @@ function PublisherChange({
   const { t } = useI18n();
   const inputId = useId();
   const params = errorReason(error)?.params ?? {};
+  // A signed update of the unsigned installed plugin, not a reinstall after a removal.
+  const unsigned = params.unsigned === "true";
   const name = serverName();
   const mismatch = wrong && typed.trim() !== name;
   return (
     <div className="plugin-dialog">
       <p className="plugins-note plugins-note--danger" role="alert">
         <Icon name="alert" />
-        <span>{t("plugins.publisher.text")}</span>
+        <span>{t(unsigned ? "plugins.publisher.unsignedText" : "plugins.publisher.text")}</span>
       </p>
       <ul className="plugin-grants">
         <li>{t("plugins.publisher.sources", { count: params.datasources ?? "0" })}</li>
-        <li>
-          {params.previousKeyId === undefined
-            ? t("plugins.publisher.previousUnknown")
-            : t("plugins.publisher.previousKey", { key: groupedKeyId(params.previousKeyId) })}
-        </li>
+        {unsigned ? (
+          <li>
+            {t("plugins.publisher.installedVersion", { version: params.installedVersion ?? "" })}
+          </li>
+        ) : (
+          <li>
+            {params.previousKeyId === undefined
+              ? t("plugins.publisher.previousUnknown")
+              : t("plugins.publisher.previousKey", { key: groupedKeyId(params.previousKeyId) })}
+          </li>
+        )}
         {params.removedVersion === undefined ? null : (
           <li>{t("plugins.publisher.removedVersion", { version: params.removedVersion })}</li>
         )}

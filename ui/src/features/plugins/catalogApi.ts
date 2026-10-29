@@ -59,6 +59,8 @@ export interface CatalogFailure {
 export type CatalogAction =
   | "install"
   | "update"
+  /** A signed version for an unsigned installed plugin: a change of publisher, confirmed first. */
+  | "publisher_change"
   | "installed"
   | "pending"
   | "untrusted"
@@ -75,6 +77,11 @@ export interface CatalogItem {
   /** `Kalzit` or the trusted key's name; absent when nobody here trusts the key. */
   keyName?: string;
   network: string[];
+  /**
+   * Where `kind` and `network` come from: the verified package of this version, installed or
+   * waiting here, or what the catalog says (checked against the package at the download).
+   */
+  detailsFrom: "package" | "catalog";
   size: number;
   sha256: string;
   urlHost: string;
@@ -122,6 +129,7 @@ const STATES: readonly CatalogState[] = [
 const ACTIONS: readonly CatalogAction[] = [
   "install",
   "update",
+  "publisher_change",
   "installed",
   "pending",
   "untrusted",
@@ -160,6 +168,7 @@ function item(value: unknown): CatalogItem[] {
     kind: text(value.kind) ?? "datasource",
     keyId: text(value.keyId) ?? "",
     network: strings(value.network),
+    detailsFrom: value.detailsFrom === "package" ? "package" : "catalog",
     size: num(value.size),
     sha256: text(value.sha256) ?? "",
     urlHost: text(value.urlHost) ?? "",

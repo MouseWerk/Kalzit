@@ -27,5 +27,6 @@ titles and heights.
 | `Graph.dc.html` | Graph native (M3): network panel, explorer, hierarchy and paths, the graph panel editor, and Explore with graph steps (frames 5A and 5B) |
 | `Plugins.dc.html` | Plugins (M4): installed plugins, install from a file or the catalog, signatures and trusted keys, permissions and their re-approval, per-organization blocking |
 | `AI.dc.html` | KI (M4): AI settings and providers, limits and usage, per data source opt-in and excluded fields, the first-use notice, and the AI functions in the UI |
+| `Identity.dc.html` | Identity and sign-in (M5): SSO-first sign-in, second factor with passkeys and authenticator app, invitations and password links, Verwaltung > Anmeldung (OIDC, SAML, LDAP, group mapping, local sign-in, 2FA policy), mail server, members with invitations and 2FA status, service accounts with tokens and SCIM, LDAP sync |
 
 The boards contain sample data only.
