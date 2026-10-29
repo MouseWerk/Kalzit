@@ -65,7 +65,7 @@ pub use acl::check_admin_only;
 
 /// Files in the data directory that hold the server's state; each must be private on its own.
 #[cfg(windows)]
-const STATE_FILES: &[&str] = &[
+pub const STATE_FILES: &[&str] = &[
     "kalzit.db",
     "kalzit.db-wal",
     "kalzit.db-shm",
@@ -232,9 +232,9 @@ pub mod acl {
     };
     use windows::Win32::Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-        GetAce, GetAclInformation, GetSecurityDescriptorDacl, GetTokenInformation, OBJECT_SECURITY_INFORMATION,
-        OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-        SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        GetAce, GetAclInformation, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation,
+        OBJECT_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
     };
     use windows::Win32::Storage::FileSystem::{
         CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE,
@@ -412,6 +412,28 @@ pub mod acl {
     /// key file before it is written; tests build exposed folders with it).
     pub fn restrict(path: &Path, sddl: &str) -> std::io::Result<()> {
         Descriptor::from_sddl(sddl)?.apply(path)
+    }
+
+    /// Makes the Administrators group the owner of `path` (the service setup, run elevated).
+    pub fn set_owner_administrators(path: &Path) -> std::io::Result<()> {
+        let sd = Descriptor::from_sddl("O:BA")?;
+        let mut owner = PSID::default();
+        let mut defaulted = windows::core::BOOL::default();
+        // SAFETY: `sd.0` is a valid descriptor; `owner` receives a pointer into it.
+        unsafe { GetSecurityDescriptorOwner(sd.0, &mut owner, &mut defaulted) }.map_err(io_error)?;
+        // SAFETY: `owner` points into `sd`, which outlives the call.
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                &HSTRING::from(path.as_os_str()),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                Some(owner),
+                None,
+                None,
+                None,
+            )
+        };
+        if status.0 == 0 { Ok(()) } else { Err(std::io::Error::from_raw_os_error(status.0 as i32)) }
     }
 
     /// The string form (`S-1-5-...`) of a SID.

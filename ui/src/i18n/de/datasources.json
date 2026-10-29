@@ -889,7 +889,7 @@
   "datasources.reason.updates.schedule_missed": "Das geplante Update lief nicht: Der Server lief während seines Wartungsfensters nicht.",
   "datasources.reason.updates.upload_incomplete": "Dem Upload fehlt der Teil {part}.",
   "datasources.reason.updates.upload_unknown_part": "Der Upload hat einen unerwarteten Teil {part}. Lade eine .kalzit-update-Datei hoch.",
-  "datasources.reason.updates.mode_windows_service": "Unter Windows kann sich Kalzit noch nicht selbst neu starten.",
+  "datasources.reason.updates.mode_windows_service": "Kalzit läuft nicht als Windows-Dienst, darum kann es sich nicht selbst neu starten.",
   "datasources.reason.updates.mode_not_systemd": "Dieser Server wurde nicht von systemd gestartet.",
   "datasources.reason.updates.mode_binary_not_writable": "Das Dienstkonto darf das Kalzit-Programm nicht ersetzen.",
   "datasources.reason.updates.mode_container": "Kalzit läuft in einem Container: aktualisiere stattdessen das Image.",

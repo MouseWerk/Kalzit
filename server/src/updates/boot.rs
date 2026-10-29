@@ -330,8 +330,9 @@ fn mark_failed(layout: &Layout, reason: &str) {
 
 /// Ends this process at once and starts `exe` again. On Unix the image is replaced, which stops
 /// every thread (and with them every database write) in one step. Windows only ends the
-/// process: the return then happens at the next start (by an administrator, or a service
-/// wrapper that restarts Kalzit).
+/// process: the return then happens at the next start. The Windows service's recovery actions
+/// (`crate::service`) start it again within seconds; a console server waits for an
+/// administrator.
 fn restart_now(exe: &std::path::Path) -> ! {
     #[cfg(unix)]
     {

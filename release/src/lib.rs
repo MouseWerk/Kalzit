@@ -68,6 +68,11 @@ pub struct Manifest {
     #[serde(default)]
     pub highlights: Vec<Highlight>,
     pub packages: Vec<Package>,
+    /// Installer packages for a new installation (the Windows MSI), signed like `packages` but
+    /// never installed by the updater, which takes only `packages`. Older servers ignore the
+    /// field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub installers: Vec<Package>,
 }
 
 /// One line of the release notes.

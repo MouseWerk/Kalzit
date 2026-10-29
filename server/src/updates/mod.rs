@@ -1377,6 +1377,7 @@ mod tests {
             notes_url: None,
             highlights: vec![],
             packages: vec![],
+            installers: vec![],
         }
     }
 

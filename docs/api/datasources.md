@@ -1927,7 +1927,7 @@ history `reasonCode`). `updates.mode_*` explain `mode.reason`, why a server only
 | `updates.channel_mismatch` | | a preview release on the stable channel (`409`) |
 | `updates.disk_full` | `needed` | the data directory's disk has less than `needed` bytes free for the upload (`409`) |
 | `updates.rollback_unsigned` | `version` | the command line returns only to versions whose signed manifest was kept (`409`) |
-| `updates.mode_windows_service` | | Windows: installing needs the service integration; use `kalzit update apply` |
+| `updates.mode_windows_service` | | Windows, not running as the Windows service (`kalzit service install` or the MSI package); use `kalzit update apply` |
 | `updates.mode_not_systemd` | | Linux, not started by systemd |
 | `updates.mode_binary_not_writable` | | the service account cannot replace the binary |
 | `updates.mode_container` | | a container: update the image instead |

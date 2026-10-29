@@ -593,7 +593,7 @@
   "admin.updates.fullNotes": "Full release notes",
   "admin.updates.discard": "Remove download",
   "admin.updates.skip": "Skip this version",
-  "admin.updates.mode.windowsService": "On Windows, Kalzit cannot restart itself yet.",
+  "admin.updates.mode.windowsService": "Kalzit does not run as its Windows service, so it cannot restart itself.",
   "admin.updates.mode.notSystemd": "This server was not started by systemd, so Kalzit cannot restart itself.",
   "admin.updates.mode.binaryNotWritable": "The service account may not replace the Kalzit binary.",
   "admin.updates.mode.container": "Kalzit runs in a container: update the image instead.",

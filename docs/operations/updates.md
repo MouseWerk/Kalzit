@@ -56,9 +56,15 @@ Automatic installation needs a restart Kalzit can do safely by itself:
   `Restart=on-failure` makes systemd start Kalzit again if a new version crashes during its
   trial; that start returns to the previous version. A binary owned by root (`/usr/local/bin`)
   stays manual, which some administrators prefer.
-- **Windows**: not yet. Kalzit has no Windows service integration so far (it comes with the
-  service installer, docs/PLAN.md, M5), so Windows downloads and verifies, and you install from the
-  command line (next section).
+- **Windows as the Kalzit service** (the MSI package or `kalzit service install`, see
+  docs/guide/installation.md, "Windows"), with self-update on (the default): the service account
+  may replace `kalzit.exe` in the program folder. Kalzit stops gracefully, puts the new binary in
+  place and ends the service with a restart request; the service's recovery actions start it
+  again two seconds later, now with the new version, for the same trial as on Linux. A failed
+  trial returns the same way. Installed with `SELFUPDATE=0` (or `--self-update 0`), the program
+  folder stays for Administrators only and you install from the command line (next section) or
+  with the next MSI package. Kalzit started in a console on Windows also installs from the
+  command line.
 - **Containers**: never; update the image.
 
 The Updates page says why a server does not install on its own (`mode`).
@@ -68,10 +74,10 @@ The Updates page says why a server does not install on its own (`mode`).
 With the release downloaded or uploaded (it shows as "ready to install"):
 
 ```
-# Linux: systemctl stop kalzit        Windows: stop Kalzit (or its service wrapper)
+# Linux: systemctl stop kalzit        Windows: Stop-Service Kalzit (elevated PowerShell)
 kalzit update status
 kalzit update apply                    # PostgreSQL: add --acknowledge-no-backup after pg_dump
-# Linux: systemctl start kalzit       Windows: start Kalzit again
+# Linux: systemctl start kalzit       Windows: Start-Service Kalzit
 ```
 
 Use the same `--config` or `KALZIT_CONFIG` as the service. `kalzit update apply` refuses while a
@@ -91,9 +97,9 @@ it reads from the data directory, which the service account can write, is truste
 - Files from the data directory are opened only as regular files, never through a link.
 - On Windows the folders below `updates/` are checked not to be links or junctions before they are
   used. The copy into the binary's folder and its hash check protect the binary itself. The service
-  account could still swap such a folder for a junction between that check and its use; until
-  Kalzit's own Windows service integration runs these steps as the service account, keep the
-  service account a virtual account (`NT SERVICE\Kalzit`) that nothing else uses.
+  account could still swap such a folder for a junction between that check and its use, so keep
+  the service account a virtual account (`NT SERVICE\Kalzit`, as the installer sets up) that
+  nothing else uses; a service with self-update on installs as that account itself.
 
 ## Offline installations
 
@@ -135,8 +141,9 @@ its recorded SHA-256) and starts the previous version.
 
 - Linux replaces the process with the previous binary at once.
 - Windows: when the health check fails or the start fails, the server stops and starts the
-  previous binary. When the time runs out while the server hangs, it only ends; the return happens
-  at the next start (by you, or by a service wrapper that restarts Kalzit).
+  previous binary (the service: through a restart by the service manager). When the time runs out
+  while the server hangs, it only ends; the return happens at the next start, which for the
+  service its recovery actions make a few seconds later, and in a console you make.
 - A `plan.json` that this version cannot read (damaged, or written by a newer format) is moved
   aside as `plan-<time>.unreadable.json` with an error in the log: check which binary is in place
   and restore a backup from `updates/backups` if needed.

@@ -73,6 +73,7 @@ fn the_command_line_works_in_the_data_directory_with_its_owners_rights() {
         notes_url: None,
         highlights: vec![],
         packages: vec![package],
+        installers: vec![],
     };
     let manifest = serde_json::to_vec(&manifest).unwrap();
     let signature = serde_json::to_vec(&signing::sign_manifest(&key, &manifest)).unwrap();

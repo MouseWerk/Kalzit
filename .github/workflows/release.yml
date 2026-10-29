@@ -1,7 +1,7 @@
 name: Release
 
-# Builds the Windows and Linux binaries for a version tag (v0.2.0, v0.3.0-rc.1), writes the signed
-# update manifest and publishes everything as a GitHub Release, which running servers find through
+# Builds the Windows and Linux binaries and the Windows installer (MSI) for a version tag (v0.2.0,
+# v0.3.0-rc.1), writes the signed update manifest and publishes everything as a GitHub Release, which running servers find through
 # their update check (docs/operations/updates.md). A tag with a pre-release part (-rc.1) becomes
 # a pre-release, offered only on the preview channel. After that, the container image is pushed
 # to ghcr.io (job `image`).
@@ -108,6 +108,105 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kalzit-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+
+  # The Windows program and its MSI package (packaging/windows). With the owner's code-signing
+  # certificate in the `release` environment (KALZIT_WINDOWS_CERT: the PFX file in base64,
+  # KALZIT_WINDOWS_CERT_PASSWORD: its password) both are signed with Authenticode and a time
+  # stamp; without it they stay unsigned and the release notes say so. Signing changes the
+  # program file, so the hashes that go into the manifest come from this job. The certificate is
+  # written to disk only for each signing step and removed right after; the program is signed
+  # before WiX is installed.
+  windows-package:
+    name: windows package
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    environment: release
+    outputs:
+      sha256-exe: ${{ steps.hashes.outputs.sha256-exe }}
+      sha256-msi: ${{ steps.hashes.outputs.sha256-msi }}
+      signed: ${{ steps.certificate.outputs.signed }}
+    env:
+      TIMESTAMP_URL: ${{ vars.KALZIT_WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag on main
+        id: version
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME does not point at a commit of main"
+            exit 1
+          fi
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kalzit-windows-x64
+          path: dist
+      - name: Check the download
+        shell: bash
+        env:
+          WINDOWS: ${{ needs.build.outputs.sha256-windows-x64 }}
+        run: |
+          set -euo pipefail
+          test -n "$WINDOWS"
+          printf '%s  %s\n' "$WINDOWS" "dist/kalzit-${{ steps.version.outputs.version }}-windows-x64.exe" | sha256sum -c -
+      - name: Certificate
+        id: certificate
+        shell: bash
+        env:
+          CERT: ${{ secrets.KALZIT_WINDOWS_CERT }}
+        run: |
+          if [ -n "$CERT" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::KALZIT_WINDOWS_CERT is not set in the release environment: the Windows program and installer stay unsigned"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Sign the program
+        if: steps.certificate.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          CERT: ${{ secrets.KALZIT_WINDOWS_CERT }}
+          CERT_PASSWORD: ${{ secrets.KALZIT_WINDOWS_CERT_PASSWORD }}
+        run: ./packaging/windows/sign.ps1 -Files "dist/kalzit-${{ steps.version.outputs.version }}-windows-x64.exe" -TimestampUrl $env:TIMESTAMP_URL
+      - name: The program runs and names its version
+        shell: bash
+        run: |
+          "dist/kalzit-${{ steps.version.outputs.version }}-windows-x64.exe" --version | grep -qw "${{ steps.version.outputs.version }}"
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+      - name: Build the MSI package
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          ./packaging/windows/build.ps1 -Exe "dist/kalzit-$version-windows-x64.exe" -Version $version -Out "dist/kalzit-$version-windows-x64.msi"
+      - name: Sign the MSI package
+        if: steps.certificate.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          CERT: ${{ secrets.KALZIT_WINDOWS_CERT }}
+          CERT_PASSWORD: ${{ secrets.KALZIT_WINDOWS_CERT_PASSWORD }}
+        run: ./packaging/windows/sign.ps1 -Files "dist/kalzit-${{ steps.version.outputs.version }}-windows-x64.msi" -TimestampUrl $env:TIMESTAMP_URL
+      - name: Hashes
+        id: hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          echo "sha256-exe=$(sha256sum "dist/kalzit-$version-windows-x64.exe" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha256-msi=$(sha256sum "dist/kalzit-$version-windows-x64.msi" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kalzit-windows-x64-release
           path: dist/
           if-no-files-found: error
 
@@ -359,10 +458,11 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # Waits for the plugin packages, so a release is never published without them.
+  # Waits for the Windows package and the plugin packages, so a release is never published
+  # without them.
   publish:
     name: sign and publish
-    needs: [build, plugin-finish]
+    needs: [build, windows-package, plugin-finish]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Holds KALZIT_RELEASE_SIGNING_KEY; required reviewers approve every run
@@ -390,7 +490,7 @@ jobs:
           path: dist
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: kalzit-windows-x64
+          name: kalzit-windows-x64-release
           path: dist
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -400,17 +500,19 @@ jobs:
         shell: bash
         env:
           LINUX: ${{ needs.build.outputs.sha256-linux-x64 }}
-          WINDOWS: ${{ needs.build.outputs.sha256-windows-x64 }}
+          WINDOWS: ${{ needs.windows-package.outputs.sha256-exe }}
+          MSI: ${{ needs.windows-package.outputs.sha256-msi }}
           PLUGINS: ${{ needs.plugin-finish.outputs.sums }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          test -n "$LINUX" && test -n "$WINDOWS" && test -n "$PLUGINS"
+          test -n "$LINUX" && test -n "$WINDOWS" && test -n "$MSI" && test -n "$PLUGINS"
           cd dist
           printf '%s  %s\n' "$LINUX" "kalzit-$version-linux-x64" \
-            "$WINDOWS" "kalzit-$version-windows-x64.exe" | sha256sum -c -
+            "$WINDOWS" "kalzit-$version-windows-x64.exe" \
+            "$MSI" "kalzit-$version-windows-x64.msi" | sha256sum -c -
           printf '%s\n' "$PLUGINS" | sha256sum -c -
-          test "$(ls | wc -l)" -eq "$((2 + $(printf '%s\n' "$PLUGINS" | grep -c .)))"
+          test "$(ls | wc -l)" -eq "$((3 + $(printf '%s\n' "$PLUGINS" | grep -c .)))"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -436,21 +538,28 @@ jobs:
             --notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
             --package "linux:x64:dist/kalzit-$version-linux-x64" \
             --package "windows:x64:dist/kalzit-$version-windows-x64.exe" \
+            --installer "windows:x64:dist/kalzit-$version-windows-x64.msi" \
             --out-dir dist
-      # The release with the server binaries, their signed manifest and offline packages, and
-      # the signed plugin packages.
+      # The release with the server binaries, the Windows installer, their signed manifest and
+      # offline packages, and the signed plugin packages. Unsigned Windows files get a note.
       - name: Publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          WINDOWS_SIGNED: ${{ needs.windows-package.outputs.signed }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           prerelease=""
           case "$version" in *-*) prerelease="--prerelease" ;; esac
+          notes="$RUNNER_TEMP/notes.md"
+          cp "docs/releases/v$version.md" "$notes"
+          if [ "$WINDOWS_SIGNED" != "true" ]; then
+            printf '\n%s\n' "> The Windows program and installer of this release are not code-signed, so Windows SmartScreen may warn before it runs them. Compare their SHA-256 with \`kalzit-$version-manifest.json\`, which is signed with Kalzit's release key." >> "$notes"
+          fi
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Kalzit $version" \
-            --notes-file "docs/releases/v$version.md" \
+            --notes-file "$notes" \
             --verify-tag $prerelease
 
   # The container image for linux/amd64 and linux/arm64, pushed to ghcr.io/mousewerk/kalzit once

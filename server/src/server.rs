@@ -37,6 +37,31 @@ const WINDOWS_CLOSE_GRACE: Duration = Duration::from_secs(3);
 /// longer runs it out.
 pub const CLOSE_WAIT: Duration = Duration::from_secs(5);
 
+/// A stop asked for from outside the server (the Windows service's control handler), with the
+/// grace open requests get and whether the process ends when it is over.
+static STOP: tokio::sync::Notify = tokio::sync::Notify::const_new();
+static STOP_GRACE: std::sync::Mutex<Option<(Duration, bool)>> = std::sync::Mutex::new(None);
+
+/// Stops the running server the way a stop signal does. A system shutdown leaves little time, so
+/// `shutdown` gives open requests the short grace and keeps the database close within it.
+/// Called before the server listens, the stop waits and applies as soon as it does.
+pub fn request_stop(shutdown: bool) {
+    #[cfg(windows)]
+    let grace = if shutdown { (WINDOWS_CLOSE_GRACE, true) } else { (SHUTDOWN_GRACE, false) };
+    #[cfg(not(windows))]
+    let grace = (SHUTDOWN_GRACE, shutdown);
+    *STOP_GRACE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(grace);
+    STOP.notify_one();
+}
+
+/// Called once the listeners are bound (the Windows service reports itself running then).
+static ON_STARTED: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+/// Sets what runs once the server listens; only the first call counts.
+pub fn on_started(f: impl Fn() + Send + Sync + 'static) {
+    let _ = ON_STARTED.set(Box::new(f));
+}
+
 /// How a stop went.
 #[derive(Debug)]
 pub struct Stopped {
@@ -139,6 +164,9 @@ pub async fn run(config: Config, trial: Option<Trial>) -> Result<Outcome> {
             return Err(e);
         }
     };
+    if let Some(started) = ON_STARTED.get() {
+        started();
+    }
     let handles = running.handles.clone();
     let hard_deadline = running.hard_deadline.clone();
     let live = running.state.live.clone();
@@ -406,9 +434,8 @@ async fn wait_for_stop_signal() -> (Duration, bool) {
     // Closing the console window and shutting Windows down also stop the server gracefully, so the
     // database is closed and its WAL checkpointed. Windows ends the process a few seconds after
     // these events, so open requests get a short grace and the database is closed in time. Not
-    // signing off: behind a service wrapper, any user signing off would stop the server. Running
-    // as a Windows service needs a service control handler instead; that comes with the service
-    // installer.
+    // signing off: behind a service wrapper, any user signing off would stop the server. As the
+    // Windows service, the service control handler stops it through `request_stop`.
     #[cfg(windows)]
     let terminate = async {
         use tokio::signal::windows::{ctrl_close, ctrl_shutdown};
@@ -429,9 +456,14 @@ async fn wait_for_stop_signal() -> (Duration, bool) {
     };
     #[cfg(not(any(unix, windows)))]
     let terminate = std::future::pending::<(Duration, bool)>();
+    let requested = async {
+        STOP.notified().await;
+        STOP_GRACE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().unwrap_or((SHUTDOWN_GRACE, false))
+    };
     tokio::select! {
         () = ctrl_c => (SHUTDOWN_GRACE, false),
         stop = terminate => stop,
+        stop = requested => stop,
     }
 }
 

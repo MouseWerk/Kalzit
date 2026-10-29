@@ -1211,13 +1211,63 @@ query, summarize a result, the agent chat) come after it and must go through it.
   `StateDirectory=kalzit` creates `/var/lib/kalzit` owned by `User`. Without systemd, create it
   with `sudo install -d -o kalzit -m 0700 /var/lib/kalzit`. `/etc/kalzit/kalzit.toml` should be
   owned by root and not writable by the service user.
-- Windows: run the service as a virtual account (`NT SERVICE\Kalzit`) or as LocalSystem. Kalzit
-  creates `%ProgramData%\Kalzit\data` on the first start with access for SYSTEM, Administrators
-  and the service account only. If an installer or an admin creates the folder beforehand, it
-  must have the same rights (owner SYSTEM, Administrators or the service account, no access for
-  others), or the start is refused. Changing the service account later means granting the new
-  account access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`) and
-  making it or Administrators the owner.
+- Windows: Kalzit is its own Windows service (`server/src/service.rs`), set up by the MSI package
+  (`packaging/windows`, WiX v5) or by `kalzit service install`; installation guide in
+  docs/guide/installation.md, "Windows".
+  - The service `Kalzit` runs `kalzit.exe service run --config
+    %ProgramData%\Kalzit\kalzit.toml` as the virtual account `NT SERVICE\Kalzit` and starts
+    automatically. `service run` hands the main thread to the service control dispatcher; the
+    server runs as `kalzit serve` would, reports `START_PENDING` with progress until its listeners
+    are bound (`server::on_started`), then `RUNNING`. Stop ends it through `server::request_stop`
+    with the normal grace (10 s, then the database closes); a system shutdown gets the short
+    grace (3 s) of a console close. It ends with exit code 0, `RESTART_EXIT` (3, service-specific)
+    when an update or a return asked for a restart, and 1 on a failure.
+  - The log goes to `<data dir>\logs\kalzit.log` (rotated at 10 MiB, three older files kept, no
+    terminal colors), after the data directory was prepared and checked, so the folder is private
+    before anything is written into it. What fails before that file is open (the configuration,
+    the data directory) goes to the Windows event log, Application, source `Kalzit`; the MSI
+    registers the source with the general message file of .NET Framework so the text shows as
+    written. `kalzit service configure` and `cleanup` report their errors there as well, since
+    the installer runs them without a console.
+  - `kalzit service configure` (run by the MSI after `InstallServices` and before
+    `StartServices`, as LocalSystem, and by `kalzit service install`) creates
+    `%ProgramData%\Kalzit` for Administrators to write and everyone to read, writes
+    `kalzit.toml` unless one exists (an upgrade keeps it, with its ports and data directory),
+    owned by Administrators, and gives the data directory a protected access list: Administrators
+    and the service account only, owner Administrators, created that way from its first moment;
+    Kalzit's state files there get the same. The service account's SID is
+    `S-1-5-80-` plus the SHA-1 of the upper-case service name (`service::service_sid`), so it is
+    known before the MSI creates the service and stays the same when the service is created again.
+    With HTTPS `self-signed` it makes a certificate (rcgen) for the computer name, `localhost`,
+    `127.0.0.1` and `::1` in `<data dir>\tls`; with `certificate` it grants the service account
+    read access to the given PEM files where they are, so a renewal needs no reinstallation. It
+    sets the recovery actions (restart after 2 s, 5 s, then every 30 s; the count resets after a
+    day) and turns them on for stops with an error code, too, and opens the firewall when asked
+    (inbound rule `Kalzit`, TCP, the configuration's ports).
+  - With self-update on (`SELFUPDATE`, `--self-update`, default 1) the service account may modify
+    the program folder (`icacls ... /grant *<SID>:(OI)(CI)M`), so the updater can swap the
+    binary, as on Linux with a binary owned by the service account; with 0 the grant is removed
+    and updates are installed with `kalzit update apply` or a new MSI. `kalzit service install`
+    refuses a program folder others may change (`C:\Program Files\...` is fine): the service
+    runs what is in it.
+  - `kalzit service cleanup` (before the MSI removes the program, not during an upgrade, and in
+    `kalzit service uninstall`) removes the firewall rule and, with `REMOVEDATA=1` /
+    `--remove-data`, the data directory and `kalzit.toml`. A data directory is removed only when
+    it is not a drive root and is empty or holds Kalzit's files (`kalzit.db`, `updates`,
+    `secrets.key.dpapi`, ...); anything else is left with a note.
+  - The MSI package: per machine, x64, program folder `C:\Program Files\Kalzit` (remembered in
+    `HKLM\Software\MouseWerk\Kalzit`), added to the system `PATH`. A major upgrade removes the
+    previous version completely first (`afterInstallValidate`), so a `kalzit.exe` the updater
+    replaced in the meantime does not confuse file versioning; the configuration and data are not
+    part of the package and stay. The wizard (WixUI dialogs plus a settings page) asks for the
+    program folder, port, data folder, HTTPS mode, HTTPS port, certificate and key, and the
+    firewall, and skips the settings when `kalzit.toml` exists; removing asks whether the data
+    goes too. Every setting is also an MSI property for silent installations.
+  - Running Kalzit as LocalSystem or another account works as before: the data directory must
+    then belong to that account or Administrators, without access for others (Kalzit creates
+    `%ProgramData%\Kalzit\data` that way on its first start). Changing the account later means
+    granting the new one access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`)
+    and making it or Administrators the owner.
 
 ## Storage (SQLite)
 
@@ -1302,7 +1352,12 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   `KALZIT_RELEASE_SIGNING_KEY` of the GitHub environment `release` (required reviewers). The
   release workflow (`.github/workflows/release.yml`, actions pinned to commits, checkouts without
   credentials) releases only tags on `main`, builds the binaries, and builds only `kalzit-release`
-  in the job that holds the key.
+  in the job that holds the key. The job `windows-package` signs `kalzit.exe` with Authenticode
+  when the `release` environment holds the owner's code-signing certificate
+  (`KALZIT_WINDOWS_CERT`, `KALZIT_WINDOWS_CERT_PASSWORD`), builds the MSI package from it and
+  signs that too; without a certificate both stay unsigned and the release notes say so. The MSI
+  is listed in the manifest under `installers` (signed like a package, with no offline package):
+  the updater never installs it, and older servers ignore the field.
 - **Source.** Checks list the releases of the channel (stable: not pre-release and no pre-release
   version; preview: all) through the one HTTP client factory, with a target policy that allows only
   `api.github.com`, `github.com`, `objects.githubusercontent.com` and
@@ -1335,15 +1390,18 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   manifest, writes `updates/plan.json` (format 2) and then renames the checked copy into place (on
   Windows the running binary moves aside first). The server stops gracefully, closes the database,
   drops its runtime and hands over: on Unix it replaces its process image with the new binary
-  (`exec`), so systemd keeps the same main process and no privilege is needed; on Windows it
-  starts the binary as a child.
+  (`exec`), so systemd keeps the same main process and no privilege is needed. The Windows
+  service reports `STOPPED` with `RESTART_EXIT`, and its recovery actions (on for stops with an
+  error code) make the service manager start the service again two seconds later, which runs the
+  binary now at the service's path; a console server on Windows starts the binary as a child.
 - **Trial and return.** `updates::boot::guard` runs first at `kalzit serve`, before the database
   opens. The new version's first start marks the plan `trial` and starts a watchdog thread; once
   `/readyz` answers through the router and every listener accepts a connection, the plan is
   removed and the installation recorded. A failed start (migrations), a failed health check or
   the deadline (`updates.health_timeout_secs`, clamped to 15 to 1800 s) mark the plan
   `rollbackRequested` and start the binary again (on Windows a hang only ends the process; the
-  return happens at the next start). That start, or any start that finds a `trial` plan (a
+  return happens at the next start, which for the service the recovery actions make seconds
+  later). That start, or any start that finds a `trial` plan (a
   crash), restores the backup (WAL and shared memory files first, so the newer WAL is never
   replayed) and the previous binary after its copy matched the recorded hash, marks the plan
   `rolledBack` and starts the previous version, which records the return once (the plan's
@@ -1360,8 +1418,9 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   format too (`plan-<time>.unreadable.json`), loudly.
 - **Where it installs on its own** (`platform::detect_mode`): Linux under systemd
   (`INVOCATION_ID`), outside containers, with the binary's folder writable by the service account.
-  Windows has no service integration yet (planned with the installer, M5), so there and
-  everywhere else the server downloads and verifies, and `kalzit update apply` / `kalzit update
+  Windows when Kalzit runs as its Windows service (`platform::mark_windows_service`) and the
+  service account may write the program folder. Everywhere else (a console on Windows, a
+  container, a binary owned by root) the server downloads and verifies, and `kalzit update apply` / `kalzit update
   rollback <version>` install with the server stopped (they hold the data directory lock
   exclusively); the next start runs the same trial. These commands usually run as root or an
   Administrator: on Unix, as root on a data directory another account owns, they touch the data
@@ -1371,7 +1430,9 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   than the data directory is refused); files from the data directory are opened as regular files
   only (`O_NOFOLLOW`, `O_NONBLOCK`, checked with `fstat`). On Windows they refuse links and
   junctions below `updates/`; the service account could still swap such a folder between that
-  check and its use, which Kalzit's own Windows service integration (M5) is meant to close. The
+  check and its use. A Windows service with self-update on installs as the service account
+  itself, so nothing runs with more rights there; for the command line, keep the service account
+  a virtual account that nothing else uses. The
   command line returns only to versions installed through an update (in the history) whose
   signed manifest was kept. The CI job `update-rights` runs the switch as root against a real
   service account.
@@ -1539,6 +1600,7 @@ through `settings::get`; new registry entries are requested from the orchestrato
   | `audit` | `server`, `ui/package.json`, `ui/package-lock.json` |
   | `workflows` | `.github/`; turns every flag on (shown in the log only) |
   | `docs_only` | only `docs/`, Markdown files and `LICENSE` changed (shown in the log only) |
+  | `installer` | `server` or `packaging/` |
 
   `docs/api/` and `docs/glossary.md` count as code because server and UI tests read them;
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
@@ -1549,7 +1611,8 @@ through `settings::get`; new registry entries are requested from the orchestrato
 
   `server`, `postgres`, `datasources` and `update-rights` (the privilege switch of the update command
   line, run with sudo against a `kalzit` account) need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
-  `audit` needs `audit`. The required checks keep reporting when their area did not change:
+  `audit` needs `audit`, and `msi` (the Windows installer built and installed on the runner,
+  `.github/scripts/msi-test.ps1`) needs `installer`. The required checks keep reporting when their area did not change:
   `postgres`, `datasources`, `update-rights` and `audit` are skipped as a whole (GitHub counts a skipped job as
   passed), while the matrix jobs `server (<os>)`, `ui (<os>)` and `e2e (<os>)` start and skip
   every step, because a matrix job skipped as a whole reports one check without the matrix
