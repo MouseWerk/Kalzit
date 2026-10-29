@@ -133,6 +133,8 @@ describe("catalogs", () => {
       "Details",
       "Median {ms} ms",
       "Lucene",
+      "InfluxQL",
+      "SQL (3.x)",
       "CSV",
       "NDJSON",
       "orders/open",
@@ -333,6 +335,9 @@ describe("glossary", () => {
   });
 
   it("words to avoid appear in no catalog", () => {
+    // One assertion over all findings: an `expect` per word and message (tens of thousands)
+    // made this test slower than its time limit on Windows runners as the catalogs grew.
+    const found: string[] = [];
     for (const { word, languages } of avoid) {
       // Whole words only; a hyphen joins words, so "Mail-Adresse" does not match "E-Mail-Adresse".
       const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -340,12 +345,13 @@ describe("glossary", () => {
       const pattern = new RegExp(`(^|${edge})${escaped}($|${edge})`, "u");
       for (const language of languages) {
         for (const [key, message] of entries(language)) {
-          expect(pattern.test(message), `${language}:${key} uses "${word}": ${message}`).toBe(
-            false,
-          );
+          if (pattern.test(message)) {
+            found.push(`${language}:${key} uses "${word}": ${message}`);
+          }
         }
       }
     }
+    expect(found).toEqual([]);
   });
 
   it("names the setup code as the glossary does", () => {

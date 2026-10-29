@@ -24,8 +24,10 @@ import { withEditorStyles } from "./editorStyles";
 import {
   type Token,
   tokenizeCypher,
+  tokenizeFlux,
   tokenizeGsql,
   tokenizeJson,
+  tokenizeLogql,
   tokenizeLucene,
   tokenizePromql,
   tokenizeSql,
@@ -35,6 +37,8 @@ import "./editors.css";
 const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   sql: tokenizeSql,
   promql: tokenizePromql,
+  logql: tokenizeLogql,
+  flux: tokenizeFlux,
   json: tokenizeJson,
   cypher: tokenizeCypher,
   gsql: tokenizeGsql,

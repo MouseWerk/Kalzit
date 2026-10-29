@@ -128,6 +128,20 @@ export const FAKE_KINDS: WireKind[] = [
     setting("trustServerCertificate", "bool", { default: false }),
   ]),
   {
+    kind: "clickhouse",
+    name: "ClickHouse",
+    shapes: ["frame"],
+    hintKey: "datasources.kinds.clickhouse.hint",
+    settings: [
+      setting("url", "string", { required: true }),
+      setting("database", "string", { default: "default" }),
+      setting("user", "string", { default: "default" }),
+      setting("password", "string", { secret: true }),
+      setting("caCert", "text"),
+      ...COMMON,
+    ],
+  },
+  {
     kind: "prometheus",
     name: "Prometheus",
     shapes: ["frame"],
@@ -137,6 +151,45 @@ export const FAKE_KINDS: WireKind[] = [
       setting("basicAuthUser", "string"),
       setting("basicAuthPassword", "string", { secret: true }),
       setting("bearerToken", "string", { secret: true }),
+      setting("caCert", "text"),
+      ...COMMON,
+    ],
+  },
+  {
+    kind: "influxdb",
+    name: "InfluxDB",
+    shapes: ["frame"],
+    hintKey: "datasources.kinds.influxdb.hint",
+    settings: [
+      setting("url", "string", { required: true }),
+      setting("version", "select", {
+        labelKey: "datasources.settings.influxVersion",
+        options: ["v1", "v2", "v3"],
+        default: "v2",
+      }),
+      setting("organization", "string"),
+      setting("database", "string", {
+        labelKey: "datasources.settings.influxDatabase",
+        target: false,
+      }),
+      setting("user", "string"),
+      setting("password", "string", { secret: true }),
+      setting("token", "string", { secret: true }),
+      setting("caCert", "text"),
+      ...COMMON,
+    ],
+  },
+  {
+    kind: "loki",
+    name: "Loki",
+    shapes: ["documents", "frame"],
+    hintKey: "datasources.kinds.loki.hint",
+    settings: [
+      setting("url", "string", { required: true }),
+      setting("basicAuthUser", "string"),
+      setting("basicAuthPassword", "string", { secret: true }),
+      setting("bearerToken", "string", { secret: true }),
+      setting("tenantId", "string", { target: true }),
       setting("caCert", "text"),
       ...COMMON,
     ],
@@ -472,6 +525,21 @@ function queryFormProblem(kind: string, query: unknown): string | null {
     if (extra !== undefined) return `unknown query field ${extra}`;
     const forms = [typeof q.gsql === "string", typeof q.installed === "string"].filter(Boolean);
     return forms.length === 1 ? null : "gsql or installed is required";
+  }
+  if (kind === "influxdb") {
+    const forms = ["flux", "influxql", "sql"].filter((key) => typeof q[key] === "string");
+    const extra = unknownKey(q, ["flux", "influxql", "sql"]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    return forms.length === 1 ? null : "exactly one of flux, influxql or sql";
+  }
+  if (kind === "loki") {
+    const extra = unknownKey(q, ["logql", "limit", "direction", "instant", "minStepMs"]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    if (typeof q.logql !== "string") return "logql is required";
+    if (q.direction !== undefined && q.direction !== "backward" && q.direction !== "forward") {
+      return "direction";
+    }
+    return null;
   }
   if (kind === "prometheus") {
     const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);

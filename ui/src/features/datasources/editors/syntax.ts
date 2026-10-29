@@ -145,6 +145,118 @@ export const PROMQL_KEYWORDS = [
   "unless",
 ] as const;
 
+/** LogQL (Loki): range and aggregation functions and the parsers and formatters of pipelines. */
+export const LOGQL_FUNCTIONS = [
+  "rate",
+  "count_over_time",
+  "bytes_over_time",
+  "bytes_rate",
+  "sum_over_time",
+  "avg_over_time",
+  "max_over_time",
+  "min_over_time",
+  "first_over_time",
+  "last_over_time",
+  "quantile_over_time",
+  "stddev_over_time",
+  "absent_over_time",
+  "sum",
+  "avg",
+  "min",
+  "max",
+  "count",
+  "topk",
+  "bottomk",
+  "sort",
+  "sort_desc",
+  "json",
+  "logfmt",
+  "regexp",
+  "pattern",
+  "unpack",
+  "line_format",
+  "label_format",
+  "unwrap",
+  "drop",
+  "keep",
+  "decolorize",
+] as const;
+
+export const LOGQL_KEYWORDS = [
+  "by",
+  "without",
+  "on",
+  "ignoring",
+  "offset",
+  "bool",
+  "and",
+  "or",
+  "unless",
+] as const;
+
+/** Flux (InfluxDB 2.x): the functions most queries are built from, and the language's words. */
+export const FLUX_FUNCTIONS = [
+  "from",
+  "range",
+  "filter",
+  "map",
+  "aggregateWindow",
+  "window",
+  "group",
+  "keep",
+  "drop",
+  "rename",
+  "pivot",
+  "sort",
+  "limit",
+  "tail",
+  "first",
+  "last",
+  "mean",
+  "median",
+  "sum",
+  "count",
+  "min",
+  "max",
+  "spread",
+  "stddev",
+  "quantile",
+  "derivative",
+  "difference",
+  "increase",
+  "movingAverage",
+  "cumulativeSum",
+  "fill",
+  "distinct",
+  "unique",
+  "join",
+  "union",
+  "yield",
+  "buckets",
+  "duplicate",
+  "elapsed",
+  "histogram",
+  "toFloat",
+  "toInt",
+  "toString",
+] as const;
+
+export const FLUX_KEYWORDS = [
+  "import",
+  "option",
+  "return",
+  "and",
+  "or",
+  "not",
+  "if",
+  "then",
+  "else",
+  "exists",
+  "with",
+  "true",
+  "false",
+] as const;
+
 /** Cypher clauses and operators (Neo4j, Memgraph); compared without case, as Cypher does. */
 export const CYPHER_KEYWORDS = [
   "match",
@@ -232,6 +344,10 @@ const SQL_FUNCTION_SET = new Set<string>(SQL_FUNCTIONS);
 const PROMQL_FUNCTION_SET = new Set<string>(PROMQL_FUNCTIONS);
 const PROMQL_KEYWORD_SET = new Set<string>(PROMQL_KEYWORDS);
 const CYPHER_KEYWORD_SET = new Set<string>(CYPHER_KEYWORDS);
+const LOGQL_FUNCTION_SET = new Set<string>(LOGQL_FUNCTIONS);
+const LOGQL_KEYWORD_SET = new Set<string>(LOGQL_KEYWORDS);
+const FLUX_FUNCTION_SET = new Set<string>(FLUX_FUNCTIONS);
+const FLUX_KEYWORD_SET = new Set<string>(FLUX_KEYWORDS);
 const CYPHER_FUNCTION_SET = new Set<string>(CYPHER_FUNCTIONS.map((f) => f.toLowerCase()));
 
 interface Rule {
@@ -261,6 +377,28 @@ const PROMQL_RULES: Rule[] = [
   { kind: "macro", pattern: /\$__\w+|\$\{?\w+\}?/y },
   { kind: "plain", pattern: /[A-Za-z_:][\w:]*/y },
   { kind: "operator", pattern: /=~|!~|[<>=!]=?|[-+*/%^,(){}[\]]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+const LOGQL_RULES: Rule[] = [
+  { kind: "comment", pattern: /#[^\n]*/y },
+  { kind: "string", pattern: /"(?:[^"\\]|\\.)*"?|`[^`]*`?/y },
+  { kind: "duration", pattern: /\d+(ms|[smhdwy])(\d+(ms|[smhdwy]))*\b/y },
+  { kind: "number", pattern: /\d+(\.\d+)?([eE][+-]?\d+)?\b/y },
+  { kind: "macro", pattern: /\$__\w+|\$\{?\w+\}?/y },
+  { kind: "plain", pattern: /[A-Za-z_][\w]*/y },
+  { kind: "operator", pattern: /\|=|\|~|!=|!~|=~|[<>=!]=?|[-+*/%^,(){}[\]|]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+const FLUX_RULES: Rule[] = [
+  { kind: "comment", pattern: /\/\/[^\n]*/y },
+  { kind: "string", pattern: /"(?:[^"\\]|\\.)*"?/y },
+  { kind: "macro", pattern: /\$__\w+|v\.(?:timeRangeStart|timeRangeStop|windowPeriod|bucket)\b/y },
+  { kind: "duration", pattern: /-?\d+(ns|us|ms|mo|[smhdwy])(\d+(ns|us|ms|mo|[smhdwy]))*\b/y },
+  { kind: "number", pattern: /\d+(\.\d+)?([eE][+-]?\d+)?\b/y },
+  { kind: "plain", pattern: /[A-Za-z_][\w]*/y },
+  { kind: "operator", pattern: /\|>|=>|=~|!~|[<>=!]=?|[-+*/%^,.:(){}[\]]/y },
   { kind: "plain", pattern: /\s+/y },
 ];
 
@@ -335,6 +473,27 @@ export function tokenizePromql(text: string): Token[] {
     }
     // A label name inside a matcher: followed by an operator such as = or =~.
     return /^\s*(=~|!~|!=|=)/.test(rest) ? "label" : "plain";
+  });
+}
+
+export function tokenizeLogql(text: string): Token[] {
+  return tokenize(text, LOGQL_RULES, (word, rest) => {
+    if (LOGQL_KEYWORD_SET.has(word)) {
+      return "keyword";
+    }
+    if (LOGQL_FUNCTION_SET.has(word)) {
+      return "function";
+    }
+    return /^\s*(=~|!~|!=|=)/.test(rest) ? "label" : "plain";
+  });
+}
+
+export function tokenizeFlux(text: string): Token[] {
+  return tokenize(text, FLUX_RULES, (word, rest) => {
+    if (FLUX_KEYWORD_SET.has(word)) {
+      return "keyword";
+    }
+    return FLUX_FUNCTION_SET.has(word) && /^\s*\(/.test(rest) ? "function" : "plain";
   });
 }
 

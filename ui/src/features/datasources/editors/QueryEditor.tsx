@@ -25,6 +25,7 @@ import { JsonField } from "./JsonField";
 import { MacroHelp } from "./MacroHelp";
 import { MongoQueryEditor, type PreviewRun } from "./MongoQueryEditor";
 import { SearchQueryEditor } from "./SearchQueryEditor";
+import { InfluxQueryEditor, LokiQueryEditor } from "./TimeSeriesQueryEditors";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
@@ -56,6 +57,10 @@ export function QueryEditor(props: QueryEditorProps) {
       return <SqlQueryEditor {...props} />;
     case "promql":
       return <PromqlQueryEditor {...props} />;
+    case "influx":
+      return <InfluxQueryEditor {...props} />;
+    case "logql":
+      return <LokiQueryEditor {...props} />;
     case "mongo":
       return <MongoQueryEditor {...props} />;
     case "cypher":
