@@ -474,15 +474,33 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Inhalt von Frage oder Antwort.
 6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
    Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse; ELK (elkjs) als
-   optionales Hierarchie-Layout, nur bei Auswahl nachgeladen.
+   optionales Hierarchie-Layout, nur bei Auswahl nachgeladen; SAML und SCIM; Abfrage-Cache auf dem
+   Server (pro Abfrage, Variablen und Zeitbereich, mit Rechten im Schlüssel); Nutzungsstatistiken
+   (welche Dashboards, Abfragen und Quellen wie oft und wie langsam).
 7. **M6 Feinschliff**: Ein Meilenstein nur zum Beheben und Polieren, ohne neue Funktionen: alle
    offenen Fehler und Review-Punkte, UI-Mängel aus den Durchgängen (z. B. überlappende Beschriftungen
    in Graphen, eigene Auswahllisten statt Browser-Standard), instabile Tests, Performance,
    Barrierefreiheit, Doku und Screenshots, ein vollständiger Durchgang nach
-   `quality/perfection-pass.md` über alle Bereiche.
+   `quality/perfection-pass.md` über alle Bereiche. Dazu gehört auch, was schon versprochen, aber nie
+   gebaut wurde: Graph-Export (GraphML, JSON, Bild), Graph-Algorithmen der Datenbank (Neo4j GDS,
+   Memgraph MAGE) nur lesend im Stream-Modus freischalten, Form je Label laut Graph-Board.
 8. **M7 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
-   (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase).
+   (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase); Data-Warehouses (BigQuery, Snowflake,
+   Databricks). Außerdem, aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026):
+   - Analyse und Explore: zweite Runde des Schritt-Katalogs, tieferes Explore (Verlauf, Vergleich,
+     geteilte Ansichten), tiefere Variablen (Ad-hoc-Filter, verkettete Variablen), Dashboard-Tabs und
+     Regeln zum Ein- und Ausblenden, Teilen-Links und Snapshots, XY- und Karten-Panel (GeoJSON),
+     Prognose- und Ausreißer-Schritte, Drill-down ohne Abfrage je Ergebnisform.
+   - Berichte und als Code: geplante PDF- und CSV-Berichte per Mail, Provisioning über Git mit
+     Kommandozeile (Dashboards, Quellen, Rollen als Dateien).
+   - Graph-Analyse (nur lesend): Algorithmen als Schritte (Zentralität, Communities, Pfade) mit Größe
+     oder Farbe nach Wert, Filterleiste mit Histogrammen, Schema-Panel einer Graph-Quelle, Karten- und
+     Koordinaten-Layout, radiales Layout, Icons und bedingte Darstellung, Suchen-als-Graph und
+     kürzester Pfad zwischen zwei Knoten, gespeicherte Erkundungen, Explorer für TigerGraph,
+     Abfrageplan (EXPLAIN/PROFILE). Das Graph-Board wird vorher erweitert.
+   - KI: ein MCP-Server, über den andere KI-Werkzeuge Kalzit mit den Rechten einer Person nur lesend
+     nutzen.
 9. **M8 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
    (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
    Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
