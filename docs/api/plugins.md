@@ -144,6 +144,15 @@ payload_too_large` above). Answers `201` with the plugin.
 
 - A new plugin is installed **disabled and not approved**. Its permissions are shown
   (`permissions`); it runs after `approve` and `enable`.
+- An update never changes the kind: a panel package for an installed data source plugin (or the
+  other way round) is refused with `409 plugin.kind_changed`; remove the plugin and install the
+  package as a new one.
+- A signed update of an unsigned installed plugin is a change of publisher: nothing ties its key
+  to whoever made the unsigned one. It is refused with `409 plugin.publisher_changed`
+  (`unsigned: true`, `installedVersion`, `datasources`), with or without data sources of its kind,
+  until the administrator repeats it with `?confirmPublisherChange=true`; then it goes on as a
+  confirmed change of publisher after a removal does (below), and `plugins.publisher_changed`
+  names the `installedVersion`.
 - An update of a plugin that is not approved yet replaces it.
 - An update of an approved plugin that adds no network targets replaces it at once; its process
   restarts with the next call.
@@ -248,7 +257,8 @@ takes either switch, each change is recorded on its own.
   the switch was on keep running when it is turned off.
 - `allowWithoutLandlock`, off by default: on a Linux host without Landlock, plugins start anyway;
   so they do where neither the seccomp network filter nor a network namespace took (otherwise
-  `plugin.network_missing`). Both show as warnings on the plugin.
+  `plugin.network_missing`: the process checks its layers before the plugin's program runs and
+  stops there). Both show as warnings on the plugin.
   Without the switch they are refused there (`plugin.landlock_missing`): nothing would keep them
   from reading Kalzit's files. `landlockAvailable` says whether this host has Landlock.
 
@@ -313,15 +323,19 @@ index is taken only when
     "sha256": "<64 hex digits>", "size": 1840000,
     "description": "Keys and streams as frames.",  // optional, at most 280 characters
     "publisher": "Example GmbH",                   // optional, a label, not a verified identity
-    "network": ["*.example.dev:6379"]              // optional, for browsing only
+    "network": ["*:6379", "license.example.dev:443"]  // the package's targets in words, exactly
   }],
   "revoked": [{ "id": "dev.example.redis", "versions": "<1.2.0", "reason": "CVE-2026-0001" }]  // optional
 }
 ```
 
 A failed load keeps the index taken before (and says why); an index past its expiry offers
-nothing to install. `description`, `publisher` and `network` are what the catalog says: before
-anything runs, the review shows the package's own manifest and its network targets for approval.
+nothing to install. `description` and `publisher` are what the catalog says. `network` lists the
+package's network targets in words, in any order: `host:port` for a fixed host, `*:port` for a
+host from the settings with a default port and no port field, `*` for any other target from the
+settings (a URL, or a port from a field). A downloaded package whose kind or targets differ from
+its entry is refused, so a catalog cannot understate what a plugin reaches; before anything runs,
+the review shows the package's own manifest and its network targets for approval.
 
 ### State and entries: `GET /admin/plugin-catalog?q=&kind=`
 
@@ -346,11 +360,12 @@ anything runs, the review shows the package's own manifest and its network targe
     "id": "dev.example.redis", "name": "Redis", "version": "1.2.0", "kind": "datasource",
     "description": "...", "publisher": "Example GmbH",
     "keyId": "17e204d64429eae4", "keyName": "Example GmbH",   // keyName absent: nobody here trusts the key
-    "network": ["*.example.dev:6379"], "size": 1840000, "sha256": "...", "urlHost": "plugins.example.dev",
+    "network": ["*:6379"], "size": 1840000, "sha256": "...", "urlHost": "plugins.example.dev",
+    "detailsFrom": "package",      // kind and network from the verified package of this version (installed or waiting here), or "catalog": what the entry says
     "installedVersion": "1.1.0", "pendingVersion": "1.2.0",
     "revoked": "...",              // the offered version is withdrawn: why
     "installedRevoked": "...",     // the installed version is withdrawn: why
-    "action": "update"             // install | update | installed | pending | untrusted | revoked
+    "action": "update"             // install | update | publisher_change (a signed version for an unsigned installed plugin, confirmed first) | installed | pending | untrusted | revoked
   }],
   "counts": { "all": 48, "datasource": 31, "panel": 17 },   // after q, before kind
   "revoked": [{ "id": "dev.example.redis", "versions": "<1.2.0", "reason": "...", "installedVersion": "1.1.0" }]
@@ -377,13 +392,15 @@ with the plugin, exactly as `POST /admin/plugins`. Before that:
    with `field: entry` when the entry changed meanwhile).
 2. The package is downloaded into the host's private upload directory, at most its listed size;
    size and SHA-256 must match the entry (`catalog.package_mismatch`, `field`: `size`, `sha256`).
-3. Its manifest must have the entry's id and version (`field`: `id`, `version`), and it must be
-   signed by a trusted key with the entry's key id (`field`: `keyId`): a package from the catalog
+3. Its manifest must have the entry's id, version and kind (`field`: `id`, `version`, `kind`),
+   it must be signed by a trusted key with the entry's key id (`field`: `keyId`), and its network
+   targets must be exactly the entry's `network` (`field`: `network`): a package from the catalog
    is never installed unsigned, whatever `allowUnsigned` says (`plugin.unsigned_refused`), and an
    invalid signature is refused as always (`plugin.signature_invalid`).
 4. Then it goes through `POST /admin/plugins`'s path unchanged: every check of "Packages", the
-   update rules, a change of publisher (`confirmPublisherChange`), the approval of its
-   permissions and network targets before it runs, and the sandbox.
+   update rules (no change of kind), a change of publisher (`confirmPublisherChange`; also for
+   the signed catalog package of an unsigned installed plugin), the approval of its permissions
+   and network targets before it runs, and the sandbox.
 
 Only one package is downloaded at a time.
 
@@ -747,7 +764,7 @@ Results keep the query's limits; a panel cannot run queries of its own.
 | `setVariable` | `name`, `value` (a text, or a list for a multi-value variable) | a variable name of at most 64 characters; at most 100 values of at most 1024 characters, no control characters |
 | `resize` | `height` | 16 to 4000 CSS pixels; Kalzit may give less |
 | `setOptions` | `options` (the whole object) | in `edit` mode only; only options the manifest declares, each fitting (`panel.option_unknown`, `panel.option_invalid`) |
-| `link` | `url`, `title` (optional) | `url` at most 2048 characters: `http`/`https` with a host and no user name, or a path in Kalzit starting with `/` (not `//`, no `.` or `..` segments, no `%2e`, `%2f` or `%5c`, not the API under `/api`); `title` at most 200 |
+| `link` | `url`, `title` (optional) | `url` at most 2048 characters: `http`/`https` with a host and no user name, or a path in Kalzit starting with `/` (not `//`, no `.` or `..` segments, no `%2e`, `%2f` or `%5c`, not the API under `/api`), without white space, control characters or format characters (Unicode `Cf`: bidirectional overrides, zero-width characters) anywhere; `title` at most 200 |
 | `log` | `level` (`debug`, `info`, `warn`, `error`), `text` | at most 1024 characters, no control characters; at most 5 lines per second |
 
 What the host does with them:
@@ -758,7 +775,9 @@ What the host does with them:
 - `resize`: the frame takes that height (the panel scrolls when it is taller than its place).
 - `setOptions`: in the panel editor, the options replace the panel's options (as if typed in its
   options editor); outside it the event is dropped.
-- `link`: a dialog shows the address and the plugin's name, with Cancel focused; only "Open"
+- `link`: a dialog shows the plugin's name, the origin the address leads to as the browser parses
+  it (scheme, host in its ASCII form, port; Kalzit's own for a path) on its own and in bold, the
+  full address, and the `title` labelled as text from the plugin, with Cancel focused; only "Open"
   opens it: an address in a new tab with `noopener,noreferrer`, a path in Kalzit in place.
 - `log`: into the browser console as `[panel <id>] <text>` at its level.
 - `click`, `select`, `range`, `setVariable`: checked, then not acted on (a `debug` line says so).
@@ -811,7 +830,8 @@ Rules:
 | `plugin.update_other_id` | | the package is for another plugin (`422`) |
 | `plugin.downgrade` | | the package is older than the installed version (`409`) |
 | `plugin.key_changed` | | the update is not signed by the installed version's key or a key it was handed over to, or it is unsigned (`409`) |
-| `plugin.publisher_changed` | `datasources`, `previousKeyId`, `removedVersion` | a removed plugin's id is installed without its signing key (or it was unsigned or removed before 0.3.2) while data sources of its kind exist; repeat with `confirmPublisherChange=true` to clear their secrets (`409`) |
+| `plugin.kind_changed` | | the update is of another kind than the installed plugin (panel or data source); remove the plugin and install the package as a new one (`409`). Also a plugin whose stored kind differs from its manifest (an update of 0.4.0 changed it): it does not run or show, and the plugin carries `problem: "plugin.kind_changed"` until it is removed and installed anew |
+| `plugin.publisher_changed` | `datasources`, `previousKeyId`, `removedVersion`; `unsigned`, `installedVersion` | a removed plugin's id is installed without its signing key (or it was unsigned or removed before 0.3.2) while data sources of its kind exist, or a signed update replaces an unsigned installed plugin (`unsigned: true`, with or without data sources); repeat with `confirmPublisherChange=true` to clear their secrets (`409`) |
 | `plugin.kind_taken` | | another kind has this id (`422`) |
 | `plugin.bundle_invalid` | `maxBytes` (when too large) | a panel's bundle is not UTF-8, holds a NUL character, `</script` or `<!--`, or is larger than 8 MiB (`422`) |
 | `plugin.bundle_changed` | | the installed bundle's SHA-256 differs from its manifest; it is not served (`409`) |
@@ -833,7 +853,7 @@ Rules:
 | `plugin.start_failed` | `detail` | the process could not be started (`datasource_error`) |
 | `plugin.root_refused` | | Kalzit runs as root on Linux; plugins do not start (`datasource_error`) |
 | `plugin.binary_changed` | `path` | the plugin's program no longer matches the SHA-256 of its signed package; it does not start until installed again (`datasource_error`) |
-| `plugin.network_missing` | | Linux: neither the seccomp network filter nor a network namespace took, and plugins without Landlock are not allowed (`datasource_error`) |
+| `plugin.network_missing` | | Linux: neither the seccomp network filter nor a network namespace took, and plugins without Landlock are not allowed; the process stops before the plugin's program runs (`datasource_error`) |
 | `plugin.without_network_limit` | | Linux: the plugin's network is not limited, allowed with `allowWithoutLandlock` (`process.warnings`) |
 | `plugin.secrets_exposed` | `path` | a file of Kalzit's with secrets is readable by plugins (Windows); plugins do not start (`datasource_error`) |
 | `plugin.secrets_readable` | `path`, `accounts` | a file of Kalzit's with secrets is readable by other local accounts, not by plugins (`process.warnings`) |
@@ -878,7 +898,7 @@ Rules:
 | `catalog.entry_unknown` | | the index does not list this id and version (`404`) |
 | `catalog.entry_revoked` | `reason` | the index withdraws this version (`409`) |
 | `catalog.download_failed` | `detail` | the package could not be downloaded or written (`502 datasource_error`) |
-| `catalog.package_mismatch` | `field` | the downloaded package is not the entry's: `size`, `sha256`, `id`, `version` or `keyId` (`422`) |
+| `catalog.package_mismatch` | `field` | the downloaded package is not the entry's: `size`, `sha256`, `id`, `version`, `kind`, `keyId` or `network` (`422`) |
 
 Reasons of the network connector, answered to the plugin (`ConnectResponse.error`) and in
 `plugins.connect_refused`, besides the data source target reasons (`target.metadata_address`,

@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use kalzit_plugin_api::catalog::{self, Accepted, CatalogEntry, CatalogIndex};
+use kalzit_plugin_api::manifest;
 use kalzit_plugin_api::signing::{self, Signer};
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use reqwest::{Method, Url};
@@ -796,9 +797,10 @@ async fn download(client: &Clients, entry: &CatalogEntry, target: &Path) -> Resu
     Ok(())
 }
 
-/// The package must be the one the entry names: its id and version, signed (never unsigned
-/// from the catalog) by a trusted key with the entry's key id. The full checks follow in
-/// `PluginHost::install`.
+/// The package must be the one the entry names: its id, version and kind, signed (never unsigned
+/// from the catalog) by a trusted key with the entry's key id, and with exactly the network
+/// targets the entry lists, so the catalog cannot understate what the package does. The full
+/// checks follow in `PluginHost::install`.
 async fn compare(archive: &Path, entry: &CatalogEntry, trusted: Vec<TrustedKey>) -> Result<(), Failure> {
     let path = archive.to_path_buf();
     let signed = tokio::task::spawn_blocking(move || package::read_from_zip(&path))
@@ -818,9 +820,15 @@ async fn compare(archive: &Path, entry: &CatalogEntry, trusted: Vec<TrustedKey>)
     if signed.manifest.version != entry.version {
         return Err(mismatch("version"));
     }
+    if signed.manifest.kind != entry.kind {
+        return Err(mismatch("kind"));
+    }
     let verified = package::verify(&signed, &trusted, false).map_err(host_failure)?;
     if verified.key.as_ref().map(signing::key_id).as_deref() != Some(entry.key_id.as_str()) {
         return Err(mismatch("keyId"));
+    }
+    if !catalog::same_network(&entry.network, &signed.manifest) {
+        return Err(mismatch("network"));
     }
     Ok(())
 }
@@ -982,6 +990,20 @@ fn items(
             continue;
         }
         let here = installed.iter().find(|p| p.id == id);
+        // The kind and targets of the offered version as its verified package states them, when
+        // that package is installed or waits here; otherwise what the catalog says.
+        let checked = here.and_then(|p| {
+            let text = if p.version == offer.version {
+                Some(p.manifest.as_str())
+            } else {
+                p.pending.as_ref().filter(|w| w.version == offer.version).map(|w| w.manifest.as_str())
+            };
+            text.and_then(|t| manifest::parse(t).ok())
+        });
+        let (offered_kind, network, details_from) = match &checked {
+            Some(m) => (m.kind.clone(), m.permissions.network.iter().map(catalog::target_words).collect(), "package"),
+            None => (offer.kind.clone(), offer.network.clone(), "catalog"),
+        };
         let revoked = index.revocation(id, &offer.version).map(|r| r.reason.clone());
         let installed_version = here.map(|p| p.version.clone());
         let pending_version = here.and_then(|p| p.pending.as_ref().map(|p| p.version.clone()));
@@ -995,6 +1017,11 @@ fn items(
         } else {
             match (&newest_here, parse(&offer.version)) {
                 (None, _) => "install",
+                // The catalog signs every package: an unsigned installed plugin changes its
+                // publisher with it, which needs the administrator's confirmation.
+                (Some(have), Some(offered)) if offered > *have && here.is_some_and(|p| p.public_key.is_none()) => {
+                    "publisher_change"
+                }
                 (Some(have), Some(offered)) if offered > *have => "update",
                 _ if pending_version.as_deref() == Some(offer.version.as_str()) => "pending",
                 _ => "installed",
@@ -1004,12 +1031,13 @@ fn items(
             id: offer.id.clone(),
             name: offer.name.clone(),
             version: offer.version.clone(),
-            kind: offer.kind.clone(),
+            kind: offered_kind,
             description: offer.description.clone(),
             publisher: offer.publisher.clone(),
             key_id: offer.key_id.clone(),
             key_name,
-            network: offer.network.clone(),
+            network,
+            details_from,
             size: offer.size,
             sha256: offer.sha256.clone(),
             url_host: Url::parse(&offer.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default(),
@@ -1111,7 +1139,11 @@ pub struct ItemView {
     /// `Kalzit` or the trusted publisher key's name; absent when nobody here trusts the key.
     #[serde(skip_serializing_if = "Option::is_none")]
     key_name: Option<String>,
+    /// The network targets in words (`catalog::target_words`).
     network: Vec<String>,
+    /// Where `kind` and `network` come from: `package` (the verified package of this version is
+    /// installed or waits here) or `catalog` (what the catalog says, checked at the download).
+    details_from: &'static str,
     size: u64,
     sha256: String,
     url_host: String,
@@ -1125,8 +1157,9 @@ pub struct ItemView {
     /// The installed version is withdrawn: why.
     #[serde(skip_serializing_if = "Option::is_none")]
     installed_revoked: Option<String>,
-    /// `install`, `update`, `installed`, `pending` (the version waits for approval), `untrusted`
-    /// (its key is not trusted here) or `revoked`.
+    /// `install`, `update`, `publisher_change` (a signed version for an unsigned installed plugin,
+    /// installed only with the administrator's confirmation), `installed`, `pending` (the version
+    /// waits for approval), `untrusted` (its key is not trusted here) or `revoked`.
     action: &'static str,
 }
 
@@ -1223,7 +1256,7 @@ mod tests {
             kind: "datasource".into(),
             manifest: String::new(),
             signer: "publisher".into(),
-            public_key: None,
+            public_key: Some("00".repeat(32)),
             dir: String::new(),
             approved: true,
             enabled: true,
@@ -1270,6 +1303,11 @@ mod tests {
         let by_id: BTreeMap<&str, (&str, &str)> =
             offered.iter().map(|i| (i.id.as_str(), (i.version.as_str(), i.action))).collect();
         assert_eq!(by_id["dev.example.a"], ("1.10.0", "update"), "semver order, not text order");
+        // An unsigned installed plugin: the signed version from the catalog is no routine update.
+        let unsigned = [PluginRow { public_key: None, ..installed("dev.example.a", "1.9.0") }];
+        let (offered, _) = items(&index, &unsigned, &names, "", None);
+        let a = offered.iter().find(|i| i.id == "dev.example.a").unwrap();
+        assert_eq!((a.action, a.details_from), ("publisher_change", "catalog"));
         assert_eq!(by_id["dev.example.b"], ("2.0.0", "revoked"));
         assert_eq!(by_id["dev.example.c"], ("1.0.0", "untrusted"));
         assert_eq!(by_id["dev.example.d"], ("1.0.0", "installed"), "the withdrawn 1.1.0 is not offered");
@@ -1278,5 +1316,48 @@ mod tests {
         assert_eq!(found.len(), 1);
         let (panels, _) = items(&index, &here, &names, "", Some("panel"));
         assert!(panels.is_empty());
+    }
+
+    /// Kind and targets come from the verified package once it is here, else from the catalog.
+    #[test]
+    fn items_show_the_package_details_when_known() {
+        let key = "0011223344556677";
+        let manifest = r#"
+manifest = 1
+id = "dev.example.a"
+name = "A"
+version = "1.0.0"
+kind = "datasource"
+min_kalzit = "0.1.0"
+shapes = ["frame"]
+protocol = 1
+
+[[permissions.network]]
+host = "db.example.dev"
+port = 5432
+
+[binaries]
+linux-x64 = "bin/a"
+
+[files]
+"bin/a" = "{h}"
+"#
+        .replace("{h}", &"0".repeat(64));
+        let index = CatalogIndex {
+            format: 1,
+            sequence: 1,
+            published_at: 0,
+            expires_at: 1,
+            plugins: vec![CatalogEntry { network: vec!["*".into()], ..entry("dev.example.a", "1.0.0", key) }],
+            revoked: vec![],
+        };
+        let names = BTreeMap::from([(key.to_string(), "Example".to_string())]);
+        let (offered, _) = items(&index, &[], &names, "", None);
+        assert_eq!((offered[0].details_from, offered[0].network.clone()), ("catalog", vec!["*".to_string()]));
+        let here = [PluginRow { manifest, ..installed("dev.example.a", "1.0.0") }];
+        let (offered, _) = items(&index, &here, &names, "", None);
+        assert_eq!(offered[0].details_from, "package");
+        assert_eq!(offered[0].network, vec!["db.example.dev:5432".to_string()]);
+        assert_eq!(offered[0].kind, "datasource");
     }
 }

@@ -53,7 +53,7 @@ const PASSED_ON: &[&str] = &[
 ];
 
 /// The schema forms of docs/api/datasources.md a plugin may answer.
-const SCHEMA_FORMS: &[&str] = &["tables", "metrics", "indices", "fields", "collections", "graph"];
+const SCHEMA_FORMS: &[&str] = &["tables", "metrics", "labels", "indices", "fields", "collections", "graph"];
 
 /// Parameters of one plugin detail kept at most, and their longest key and value.
 const MAX_PARAMS: usize = 20;

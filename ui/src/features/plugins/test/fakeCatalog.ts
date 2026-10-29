@@ -18,6 +18,8 @@ export interface WireCatalogItem {
   keyId: string;
   keyName?: string;
   network: string[];
+  /** `package` or `catalog`. */
+  detailsFrom?: string;
   size: number;
   sha256: string;
   urlHost: string;
@@ -67,6 +69,7 @@ export function catalogItem(fields: CatalogItemFields = {}): WireCatalogItem {
     keyId: "581c30a0d8384cfd",
     keyName: "Kalzit",
     network: ["*.googleapis.com:443"],
+    detailsFrom: "catalog",
     size: 2_400_000,
     sha256: "3f1a2b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708",
     urlHost: "plugins.kalzit.dev",

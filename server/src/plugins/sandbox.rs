@@ -24,7 +24,7 @@
 #[cfg(target_os = "linux")]
 pub use linux::spawn;
 #[cfg(target_os = "linux")]
-pub use linux::{LANDLOCK_REFUSED, landlock_available};
+pub use linux::{LANDLOCK_REFUSED, NETWORK_REFUSED, landlock_available};
 #[cfg(windows)]
 pub use windows::{app_container, label_low, remove_app_container, spawn};
 
@@ -247,6 +247,8 @@ mod linux {
 
     /// The error `spawn` answers when Landlock is required but did not take (`ENOTSUP`).
     pub const LANDLOCK_REFUSED: i32 = libc::ENOTSUP;
+    /// The error `spawn` answers when the network could not be limited (`ENONET`).
+    pub const NETWORK_REFUSED: i32 = libc::ENONET;
 
     // `prctl` reads its arguments as `unsigned long`.
     const ZERO: libc::c_ulong = 0;
@@ -685,13 +687,30 @@ mod linux {
                     }
                 }
                 libc::write(self.status, (&raw const layers).cast(), 2);
-                if self.require_landlock && layers & LANDLOCK == 0 {
+                if let Some(error) = refusal(layers, self.require_landlock) {
                     // `spawn` fails with this error; nothing of the plugin runs.
-                    return Err(std::io::Error::from_raw_os_error(LANDLOCK_REFUSED));
+                    return Err(std::io::Error::from_raw_os_error(error));
                 }
             }
             Ok(())
         }
+    }
+
+    /// Why the child must not exec with these layers, unless plugins are allowed without
+    /// Landlock: Landlock missing (`LANDLOCK_REFUSED`), or neither the seccomp network filter
+    /// nor a network namespace (`NETWORK_REFUSED`), so the plugin would reach the network past
+    /// the connector.
+    fn refusal(layers: u16, require_landlock: bool) -> Option<i32> {
+        if !require_landlock {
+            return None;
+        }
+        if layers & LANDLOCK == 0 {
+            return Some(LANDLOCK_REFUSED);
+        }
+        if layers & (NETWORK | NETWORK_NAMESPACE) == 0 {
+            return Some(NETWORK_REFUSED);
+        }
+        None
     }
 
     struct Group {
@@ -798,6 +817,20 @@ mod linux {
             assert_eq!(f[pair + 5].k, libc::SECCOMP_RET_ERRNO | EACCES);
             let send = at(libc::SYS_sendto);
             assert_eq!((f[send + 1].k, f[send + 2].k), (ARG0 + 24, libc::MSG_FASTOPEN as u32));
+        }
+
+        /// Without Landlock, or without both network layers, the child refuses to exec unless
+        /// plugins are allowed without Landlock; one network layer is enough.
+        #[test]
+        fn the_child_refuses_to_run_without_its_required_layers() {
+            let all = NO_NEW_PRIVS | LANDLOCK | SECCOMP | NETWORK | NETWORK_NAMESPACE;
+            assert_eq!(refusal(all, true), None);
+            assert_eq!(refusal(all & !NETWORK, true), None, "the namespace alone limits the network");
+            assert_eq!(refusal(all & !NETWORK_NAMESPACE, true), None, "the filter alone limits the network");
+            assert_eq!(refusal(all & !(NETWORK | NETWORK_NAMESPACE | SECCOMP), true), Some(NETWORK_REFUSED));
+            assert_eq!(refusal(all & !LANDLOCK, true), Some(LANDLOCK_REFUSED));
+            assert_eq!(refusal(NO_NEW_PRIVS, false), None, "allowed without Landlock: the warning stays");
+            assert_ne!(NETWORK_REFUSED, LANDLOCK_REFUSED);
         }
 
         #[test]

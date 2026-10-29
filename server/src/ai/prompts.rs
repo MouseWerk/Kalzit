@@ -203,7 +203,10 @@ pub fn language_of(kind: &str) -> &'static str {
         "mysql" => "MySQL/MariaDB SQL",
         "mssql" => "SQL Server T-SQL",
         "sqlite" => "SQLite SQL",
+        "clickhouse" => "ClickHouse SQL",
         "prometheus" => "PromQL",
+        "influxdb" => "InfluxQL",
+        "loki" => "LogQL",
         "neo4j" | "memgraph" => "Cypher",
         "tigergraph" => "TigerGraph GSQL",
         "mongodb" => "a MongoDB aggregation pipeline",
@@ -214,7 +217,7 @@ pub fn language_of(kind: &str) -> &'static str {
 
 /// The query as the prompt shows it: the text of a text query, else its JSON.
 pub fn query_text(query: &Value) -> String {
-    for key in ["sql", "expr", "cypher", "gsql", "lucene"] {
+    for key in ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "lucene"] {
         if let Some(Value::String(text)) = query.get(key) {
             return text.clone();
         }
@@ -313,8 +316,11 @@ pub fn draft_query(kind: &str, text: &str) -> Option<Value> {
         return None;
     }
     Some(match kind {
-        "postgres" | "mysql" | "mssql" | "sqlite" => json!({ "sql": text }),
+        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" => json!({ "sql": text }),
         "prometheus" => json!({ "expr": text }),
+        // InfluxQL answers on every InfluxDB version.
+        "influxdb" => json!({ "influxql": text }),
+        "loki" => json!({ "logql": text }),
         "neo4j" | "memgraph" => json!({ "cypher": text }),
         "tigergraph" => json!({ "gsql": text }),
         "elasticsearch" => json!({ "lucene": text }),
@@ -402,6 +408,8 @@ mod tests {
         assert_eq!(draft_text("```\nup\n```"), "up");
         assert_eq!(draft_query("postgres", "SELECT 1"), Some(json!({ "sql": "SELECT 1" })));
         assert_eq!(draft_query("prometheus", "up"), Some(json!({ "expr": "up" })));
+        assert_eq!(draft_query("loki", "{app=\"api\"}"), Some(json!({ "logql": "{app=\"api\"}" })));
+        assert_eq!(draft_query("influxdb", "SHOW DATABASES"), Some(json!({ "influxql": "SHOW DATABASES" })));
         let mongo = draft_query("mongodb", r#"{"collection":"orders","pipeline":[{"$match":{}}]}"#).unwrap();
         assert_eq!(mongo["collection"], "orders");
         assert!(mongo["pipeline"].as_str().unwrap().contains("$match"));

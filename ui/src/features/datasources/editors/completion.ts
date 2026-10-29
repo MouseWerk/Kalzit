@@ -1,8 +1,12 @@
 import type { MessageKey } from "../../../i18n/i18n";
-import type { GraphSourceSchema, PromSchema, SqlSchema } from "../api";
+import type { GraphSourceSchema, LabelsSchema, PromSchema, SqlSchema } from "../api";
 import {
   CYPHER_FUNCTIONS,
   CYPHER_KEYWORDS,
+  FLUX_FUNCTIONS,
+  FLUX_KEYWORDS,
+  LOGQL_FUNCTIONS,
+  LOGQL_KEYWORDS,
   PROMQL_FUNCTIONS,
   PROMQL_KEYWORDS,
   SQL_FUNCTIONS,
@@ -288,4 +292,126 @@ export function cypherCompletions(
   }
   const found = matching(options, word);
   return found.length === 0 ? null : { from, to: cursor, options: found };
+}
+
+/** LogQL (Loki): the PromQL macros; the server expands them the same way. */
+export const LOGQL_MACROS = PROMQL_MACROS;
+
+/**
+ * Completions for LogQL: label names inside a stream selector, the label's values inside its
+ * quoted value (`{app="`), durations inside `[]`, else functions, parsers and keywords.
+ */
+export function logqlCompletions(
+  text: string,
+  cursor: number,
+  schema: LabelsSchema | undefined,
+  explicit = false,
+): CompletionResult | null {
+  const before = text.slice(0, cursor);
+  const openBrace = before.lastIndexOf("{");
+  const insideBraces = openBrace > before.lastIndexOf("}");
+  const openBracket = before.lastIndexOf("[");
+  const insideBrackets = openBracket > before.lastIndexOf("]");
+  if (insideBraces) {
+    const inMatcher = before.slice(openBrace + 1);
+    if ((inMatcher.match(/"/g) ?? []).length % 2 === 1) {
+      // A label's value: `app="ap` offers the values of app.
+      const value = /(\w+)\s*(?:=~|!~|!=|=)\s*"([^"]*)$/.exec(inMatcher);
+      if (value === null) {
+        return null;
+      }
+      const prefix = value[2] ?? "";
+      const options = (schema?.values[value[1] ?? ""] ?? []).map((v) => ({
+        label: v,
+        kind: "property" as const,
+      }));
+      const found = matching(options, prefix);
+      return found.length === 0
+        ? null
+        : { from: cursor - prefix.length, to: cursor, options: found };
+    }
+  }
+  const word = /[\w$]*$/.exec(before)?.[0] ?? "";
+  const from = cursor - word.length;
+  let options: Completion[];
+  if (insideBrackets) {
+    options = DURATIONS.map((d) => ({ label: d, kind: "duration" as const }));
+  } else if (insideBraces) {
+    options = (schema?.labels ?? []).map((label) => ({ label, kind: "label" as const }));
+  } else {
+    if (word === "" && !explicit) {
+      return null;
+    }
+    options = [
+      ...(word.startsWith("$")
+        ? LOGQL_MACROS.map((m) => ({ label: m.name, kind: "macro" as const }))
+        : []),
+      ...LOGQL_FUNCTIONS.map((f) => ({ label: f, kind: "function" as const })),
+      ...LOGQL_KEYWORDS.map((k) => ({ label: k, kind: "keyword" as const })),
+      // Labels a parser extracted, filtered after a pipe (`| level="error"`).
+      ...(schema?.labels ?? []).map((label) => ({ label, kind: "label" as const })),
+    ];
+  }
+  const found = matching(options, word);
+  return found.length === 0 ? null : { from, to: cursor, options: found };
+}
+
+/** The Flux macros of docs/api/datasources.md, and the `v` record of InfluxDB's own tools. */
+export const FLUX_MACROS: { name: string; help: MessageKey }[] = [
+  { name: "v.timeRangeStart", help: "datasources.editor.macro.timeRangeStart" },
+  { name: "v.timeRangeStop", help: "datasources.editor.macro.timeRangeStop" },
+  { name: "v.windowPeriod", help: "datasources.editor.macro.windowPeriod" },
+  { name: "v.bucket", help: "datasources.editor.macro.bucket" },
+  { name: "$__interval", help: "datasources.editor.macro.interval" },
+];
+
+/** The InfluxQL macros of docs/api/datasources.md. */
+export const INFLUXQL_MACROS: { name: string; help: MessageKey }[] = [
+  { name: "$__timeFilter", help: "datasources.editor.macro.influxTimeFilter" },
+  { name: "$__interval", help: "datasources.editor.macro.interval" },
+  { name: "$__interval_ms", help: "datasources.editor.macro.intervalMs" },
+  { name: "$__timeFrom", help: "datasources.editor.macro.timeFrom" },
+  { name: "$__timeTo", help: "datasources.editor.macro.timeTo" },
+];
+
+/**
+ * Completions for Flux: inside a string the measurements and their fields and tags (for
+ * `r._measurement == "cpu"`), after `v.` or `$` the macros, else functions, keywords, macros,
+ * measurements and keys.
+ */
+export function fluxCompletions(
+  text: string,
+  cursor: number,
+  schema: SqlSchema | undefined,
+  explicit = false,
+): CompletionResult | null {
+  const before = text.slice(0, cursor);
+  const quotes = (before.match(/(?<!\\)"/g) ?? []).length;
+  const tables = schema?.tables ?? [];
+  const names: Completion[] = [
+    ...tables.map((t) => ({ label: t.name, kind: "table" as const })),
+    ...tables.flatMap((t) =>
+      t.columns.map((c) => ({ label: c.name, kind: "column" as const, detail: c.type })),
+    ),
+  ];
+  if (quotes % 2 === 1) {
+    const prefix = /[^"]*$/.exec(before)?.[0] ?? "";
+    const found = matching(names, prefix);
+    return found.length === 0 ? null : { from: cursor - prefix.length, to: cursor, options: found };
+  }
+  const word = /[\w$.]*$/.exec(before)?.[0] ?? "";
+  if (word === "" && !explicit) {
+    return null;
+  }
+  const options: Completion[] =
+    word.startsWith("v.") || word.startsWith("$")
+      ? FLUX_MACROS.map((m) => ({ label: m.name, kind: "macro" as const }))
+      : [
+          ...FLUX_FUNCTIONS.map((f) => ({ label: f, kind: "function" as const })),
+          ...FLUX_KEYWORDS.map((k) => ({ label: k, kind: "keyword" as const })),
+          ...FLUX_MACROS.map((m) => ({ label: m.name, kind: "macro" as const })),
+          ...names,
+        ];
+  const found = matching(options, word);
+  return found.length === 0 ? null : { from: cursor - word.length, to: cursor, options: found };
 }

@@ -47,17 +47,35 @@ fn signer_name(s: Signer) -> &'static str {
     }
 }
 
+/// The stored kind must be the manifest's. Kalzit 0.4.0 let an update change the kind without
+/// recording it; such a plugin neither runs nor is shown until it is removed and installed anew.
+pub fn check_kind(row: &PluginRow, manifest: &Manifest) -> Result<(), HostError> {
+    if row.kind == manifest.kind {
+        return Ok(());
+    }
+    Err(HostError::new(
+        "plugin.kind_changed",
+        format!(
+            "the plugin is stored as a {} plugin but its package is a {} plugin; remove it and install it anew",
+            row.kind, manifest.kind
+        ),
+    ))
+}
+
 fn key_from_hex(text: &str) -> Option<VerifyingKey> {
     let bytes = <[u8; 32]>::try_from(hex::decode(text).ok()?).ok()?;
     VerifyingKey::from_bytes(&bytes).ok()
 }
 
 /// A reinstall whose key differs from the one that signed the removed plugin of the same id
-/// (or whose former key is unknown), confirmed by the administrator where it matters.
+/// (or whose former key is unknown), or a signed update of an unsigned installed plugin,
+/// confirmed by the administrator where it matters.
 struct Takeover {
     /// The key that signed the removed plugin, if it was signed and is known.
     from_key: Option<String>,
     removed_version: Option<String>,
+    /// The unsigned installed version a signed update replaces.
+    installed_version: Option<String>,
     /// The data sources of the kind, whose stored secrets are cleared.
     datasources: Vec<String>,
 }
@@ -456,6 +474,7 @@ impl PluginHost {
         }
         let manifest =
             manifest::parse(&row.manifest).map_err(|e| HostError::new("plugin.manifest_invalid", e.to_string()))?;
+        check_kind(row, &manifest)?;
         manifest.runs_on(env!("CARGO_PKG_VERSION")).map_err(|i| HostError::new("plugin.kalzit_too_old", i.message))?;
         let package_dir = self.dir("packages").join(&row.dir);
         if manifest.plugin_kind() == manifest::PluginKind::Panel {
@@ -625,6 +644,8 @@ impl PluginHost {
                 } else {
                     old_dirs.push(old.dir.clone());
                     row.name = m.name.clone();
+                    // Always the applied manifest's (an update of another kind is refused).
+                    row.kind = m.kind.clone();
                     row.version = m.version.clone();
                     row.manifest = unpacked.manifest_text.clone();
                     row.signer = signer;
@@ -653,6 +674,7 @@ impl PluginHost {
                 "fromKeyId": t.from_key.as_deref().and_then(key_from_hex).map(|k| signing::key_id(&k)),
                 "toKeyId": verified.key.as_ref().map(signing::key_id),
                 "removedVersion": t.removed_version,
+                "installedVersion": t.installed_version,
                 "version": m.version,
                 "datasources": t.datasources,
                 "secretsCleared": secrets,
@@ -731,6 +753,9 @@ impl PluginHost {
             let handovers = self.handovers(state, &old.id).await?;
             let installed = Installed { manifest: &old_manifest, key: old_key.as_ref(), handovers: &handovers };
             signing::check_update(&installed, m, verified.key.as_ref()).map_err(|r| package::refusal(&r).api())?;
+            if signing::becomes_signed(&installed, verified.key.as_ref()) {
+                takeover = Some(self.check_signed_now(state, old, m, confirm_publisher_change).await?);
+            }
         } else if datasources_has_kind(&state.datasources, &m.id) {
             return Err(HostError::new("plugin.kind_taken", format!("the data source kind {} is taken", m.id)).api());
         } else {
@@ -827,7 +852,48 @@ impl PluginHost {
             }
             return Err(e.api());
         }
-        Ok(Some(Takeover { from_key, removed_version: tombstone.map(|t| t.version), datasources }))
+        Ok(Some(Takeover {
+            from_key,
+            removed_version: tombstone.map(|t| t.version),
+            installed_version: None,
+            datasources,
+        }))
+    }
+
+    /// A signed update of an unsigned installed plugin: nothing ties its key to whoever made the
+    /// unsigned one, so it is a change of publisher like a reinstall with another key. It always
+    /// needs the administrator's confirmation (the plugin is live, with or without data sources)
+    /// and then clears the stored secrets of the kind's data sources.
+    async fn check_signed_now(
+        &self,
+        state: &AppState,
+        old: &PluginRow,
+        m: &Manifest,
+        confirm: bool,
+    ) -> ApiResult<Takeover> {
+        let datasources = store::datasources_of_kind(&state.db, &m.id).await?;
+        if !confirm {
+            return Err(HostError::new(
+                "plugin.publisher_changed",
+                format!(
+                    "the installed plugin {} is unsigned and this update is signed; nothing ties the key to whoever \
+                     made the installed one, and updating clears the stored secrets of its {} data sources \
+                     (repeat with confirmPublisherChange=true)",
+                    m.id,
+                    datasources.len()
+                ),
+            )
+            .with("datasources", datasources.len())
+            .with("installedVersion", &old.version)
+            .with("unsigned", true)
+            .api());
+        }
+        Ok(Takeover {
+            from_key: None,
+            removed_version: None,
+            installed_version: Some(old.version.clone()),
+            datasources,
+        })
     }
 
     /// The verified hand-overs kept for `id`.
@@ -870,7 +936,12 @@ impl PluginHost {
             Some(p) if p.version == version => {
                 old_dir = Some(old.dir.clone());
                 let m = manifest::parse(&p.manifest).map_err(|e| ApiError::internal("plugin manifest", e))?;
+                if m.kind != old.kind {
+                    // Refused at upload already; a stored update of another kind never runs.
+                    return Err(package::refusal(&signing::Refusal::KindChanged).api());
+                }
                 row.name = m.name;
+                row.kind = m.kind;
                 row.version = p.version.clone();
                 row.manifest = p.manifest.clone();
                 row.signer = p.signer.clone();
@@ -1358,6 +1429,50 @@ fn clear_dir(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A row whose stored kind differs from its manifest (an update of 0.4.0 that changed the
+    /// kind) is refused with its own reason; a matching one passes.
+    #[test]
+    fn a_stored_kind_that_differs_from_the_manifest_is_refused() {
+        let manifest = manifest::parse(
+            r#"
+manifest = 1
+id = "dev.example.tile"
+name = "Kachel"
+version = "1.1.0"
+kind = "panel"
+min_kalzit = "0.1.0"
+shapes = ["frame"]
+
+[panel]
+path = "dist/panel.js"
+api = 1
+
+[files]
+"dist/panel.js" = "0000000000000000000000000000000000000000000000000000000000000000"
+"#,
+        )
+        .unwrap();
+        let row = PluginRow {
+            id: "dev.example.tile".into(),
+            name: "Kachel".into(),
+            version: "1.1.0".into(),
+            kind: "datasource".into(),
+            manifest: String::new(),
+            signer: "publisher".into(),
+            public_key: None,
+            dir: String::new(),
+            approved: true,
+            enabled: true,
+            pending: None,
+            installed_at: 0,
+            updated_at: 0,
+        };
+        let e = check_kind(&row, &manifest).unwrap_err();
+        assert_eq!(e.reason, "plugin.kind_changed");
+        let fixed = PluginRow { kind: "panel".into(), ..row };
+        assert!(check_kind(&fixed, &manifest).is_ok());
+    }
 
     #[test]
     fn secrets_in_a_configuration_are_recognized() {

@@ -34,7 +34,7 @@ const SETTINGS: &[SettingField] = &[
 /// The client's own limit; the query timeout around each call is usually shorter.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(3600);
 /// Prometheus refuses range queries with more than 11,000 points per series.
-const MAX_POINTS_PER_SERIES: i64 = 11_000;
+pub(crate) const MAX_POINTS_PER_SERIES: i64 = 11_000;
 const MAX_SCHEMA_NAMES: usize = 10_000;
 /// Schema and health answers are small; this keeps a misbehaving server from filling memory.
 const MAX_SMALL_RESPONSE: usize = 16 * 1024 * 1024;
@@ -76,7 +76,7 @@ struct Client {
     basic_token: Option<String>,
 }
 
-fn parse_url(raw: &str) -> Result<Url, Detail> {
+pub(crate) fn parse_url(raw: &str) -> Result<Url, Detail> {
     let url = Url::parse(raw.trim())
         .map_err(|e| Detail::new("settings.url_invalid", format!("the URL is not valid: {e}")).with("detail", e))?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -299,14 +299,14 @@ fn step_ms(q: &PromQuery, req: &SourceQuery) -> i64 {
 /// The start of a range query on a multiple of the step, so the points fall on the same times
 /// from one refresh to the next instead of moving with the clock. One step later when aligning
 /// would ask for more points than Prometheus answers.
-fn aligned_start(from: i64, to: i64, step: i64) -> i64 {
+pub(crate) fn aligned_start(from: i64, to: i64, step: i64) -> i64 {
     let step = step.max(1);
     let start = from.div_euclid(step) * step;
     if (to - start) / step > MAX_POINTS_PER_SERIES { start + step } else { start }
 }
 
 /// Unix seconds with millisecond precision, as Prometheus takes them.
-fn seconds(ms: i64) -> String {
+pub(crate) fn seconds(ms: i64) -> String {
     let sign = if ms < 0 { "-" } else { "" };
     format!("{sign}{}.{:03}", ms.unsigned_abs() / 1000, ms.unsigned_abs() % 1000)
 }
@@ -389,7 +389,7 @@ fn read_name(expr: &str, i: usize) -> Option<(&str, usize)> {
 }
 
 /// Expands macros everywhere and variables inside quoted strings.
-fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
+pub(crate) fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
     let interval = req.interval_ms as i64;
     let mut out = String::with_capacity(expr.len());
     let mut quote: Option<char> = None;
@@ -409,7 +409,7 @@ fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
             None if matches!(c, '"' | '\'' | '`') => {
                 quote = Some(c);
                 let before = out.trim_end();
-                in_regex = before.ends_with("=~") || before.ends_with("!~");
+                in_regex = before.ends_with("=~") || before.ends_with("!~") || before.ends_with("|~");
             }
             None if c == '#' => {
                 // A comment runs to the end of the line; nothing in it is expanded.
@@ -491,7 +491,7 @@ fn series_name(labels: &BTreeMap<String, String>) -> String {
 
 /// A matrix or vector as one wide frame: a time field and one value field per series, carrying
 /// the series' labels. A range query's series share the step grid, so rows line up.
-fn to_frame(data: &Value, req: &SourceQuery) -> Result<FrameBuilder, SourceError> {
+pub(crate) fn to_frame(data: &Value, req: &SourceQuery) -> Result<FrameBuilder, SourceError> {
     let kind = data["resultType"].as_str().unwrap_or("");
     let budget = req.limits.budget.clone();
     match kind {

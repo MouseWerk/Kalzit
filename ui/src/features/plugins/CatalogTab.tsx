@@ -621,13 +621,26 @@ function KeyChip({ item }: { item: CatalogItem }) {
   );
 }
 
+/** Marks kind and targets that only the catalog states (no verified package of it is here). */
+function FromCatalog({ item }: { item: CatalogItem }) {
+  const { t } = useI18n();
+  return item.detailsFrom === "catalog" ? (
+    <span className="plugins-muted plugins-small">{t("plugins.catalog.fromCatalog")}</span>
+  ) : null;
+}
+
 function Targets({ item }: { item: CatalogItem }) {
   const { t } = useI18n();
   if (item.network.length === 0) {
     return (
-      <span className="plugins-chip">
-        {item.kind === "panel" ? t("plugins.catalog.displayOnly") : t("plugins.catalog.noNetwork")}
-      </span>
+      <>
+        <span className="plugins-chip">
+          {item.kind === "panel"
+            ? t("plugins.catalog.displayOnly")
+            : t("plugins.catalog.noNetwork")}
+        </span>
+        <FromCatalog item={item} />
+      </>
     );
   }
   return (
@@ -638,6 +651,7 @@ function Targets({ item }: { item: CatalogItem }) {
           {target}
         </span>
       ))}
+      <FromCatalog item={item} />
     </>
   );
 }
@@ -701,6 +715,24 @@ function Action({
             onClick={onInstall}
           >
             {t("plugins.catalog.update", { version: item.version })}
+          </button>
+        </>
+      );
+    case "publisher_change":
+      // Not a routine update: a secondary action that leads to the confirmation.
+      return (
+        <>
+          <span className="plugins-muted plugins-small">
+            {t("plugins.catalog.installedUnsigned", { version: item.installedVersion ?? "" })}
+          </span>
+          <button
+            type="button"
+            className="button button--secondary button--small"
+            disabled={expired}
+            onClick={onInstall}
+          >
+            <Icon name="alert" />
+            {t("plugins.catalog.publisherChange", { version: item.version })}
           </button>
         </>
       );
@@ -815,6 +847,16 @@ function DetailsDialog({
                 : t("plugins.catalog.install")}
             </button>
           ) : null}
+          {item.action === "publisher_change" ? (
+            <button
+              type="button"
+              className="button button--secondary"
+              disabled={expired}
+              onClick={onInstall}
+            >
+              {t("plugins.catalog.publisherChange", { version: item.version })}
+            </button>
+          ) : null}
           {item.action === "untrusted" ? (
             <button type="button" className="button button--primary" onClick={onCheckKey}>
               {t("plugins.catalog.checkKey")}
@@ -825,6 +867,12 @@ function DetailsDialog({
     >
       <div className="plugin-dialog">
         {item.description === undefined ? null : <p className="plugins-hint">{item.description}</p>}
+        {item.action === "publisher_change" ? (
+          <p className="plugins-note plugins-note--danger">
+            <Icon name="alert" />
+            <span>{t("plugins.catalog.publisherChangeNote")}</span>
+          </p>
+        ) : null}
         {item.revoked === undefined ? null : (
           <p className="plugins-note plugins-note--danger" role="alert">
             <Icon name="alert" />
@@ -858,7 +906,9 @@ function DetailsDialog({
             )}
           </dd>
           <dt>{t("plugins.catalog.field.kind")}</dt>
-          <dd>{kindText(t, item)}</dd>
+          <dd>
+            {kindText(t, item)} <FromCatalog item={item} />
+          </dd>
           <dt>{t("plugins.catalog.field.network")}</dt>
           <dd>
             <span className="plugins-chips">
