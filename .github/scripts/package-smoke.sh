@@ -51,7 +51,7 @@ sudo test -e /etc/credstore.encrypted/kalzit-secrets-key -o -e /etc/credstore/ka
   || fail "no secrets key in the credential store"
 sudo test ! -e /var/lib/kalzit/secrets.key || fail "the service fell back to a key file in the data directory"
 [ "$(sudo stat -c '%U %a' /var/lib/kalzit)" = "kalzit 700" ] || fail "the data directory is not private to kalzit"
-[ "$(stat -c '%U:%G %a' /etc/kalzit/kalzit.toml)" = "root:kalzit 640" ] || fail "kalzit.toml has the wrong owner or mode"
+[ "$(sudo stat -c "%U:%G %a" /etc/kalzit/kalzit.toml)" = "root:kalzit 640" ] || fail "kalzit.toml has the wrong owner or mode"
 code=$(sudo kalzit setup-code)
 [ -n "$code" ] || fail "no setup code"
 systemctl show -p NoNewPrivileges -p ProtectSystem kalzit
@@ -89,10 +89,10 @@ sudo test -e /var/lib/kalzit/kalzit.db || fail "the reinstall lost the database"
 sudo apt-get remove -y kalzit
 ! systemctl is-active --quiet kalzit || fail "the service still runs after apt remove"
 sudo test -e /var/lib/kalzit/kalzit.db || fail "apt remove deleted the data"
-test -e /etc/kalzit/kalzit.toml || fail "apt remove deleted the configuration"
+sudo test -e /etc/kalzit/kalzit.toml || fail "apt remove deleted the configuration"
 sudo apt-get purge -y kalzit
 sudo test ! -e /var/lib/kalzit || fail "apt purge kept the data"
-test ! -e /etc/kalzit || fail "apt purge kept the configuration"
+sudo test ! -e /etc/kalzit || fail "apt purge kept the configuration"
 sudo test ! -e /etc/credstore.encrypted/kalzit-secrets-key -a ! -e /etc/credstore/kalzit-secrets-key \
   || fail "apt purge kept the secrets key"
 echo "::endgroup::"

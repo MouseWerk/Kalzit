@@ -702,12 +702,14 @@ jobs:
           echo "127.0.0.1 http.kalzit.test alpn.kalzit.test" | sudo tee -a /etc/hosts
           # DNS only: the challenge servers of challtestsrv would take Kalzit's ports.
           nohup "$RUNNER_TEMP/pebble-bin/pebble-challtestsrv" -defaultIPv4 127.0.0.1 -defaultIPv6 "" \
-            -http01 "" -https01 "" -tlsalpn01 "" -dns01 ":8053" -management ":8055" \
+            -http01 "" -https01 "" -tlsalpn01 "" -doh "" -dnsserver ":8053" -management ":8055" \
             > "$RUNNER_TEMP/challtestsrv.log" 2>&1 &
+          challtestsrv=$!
           nohup "$RUNNER_TEMP/pebble-bin/pebble" -config test/config/pebble-config.json -dnsserver 127.0.0.1:8053 \
             > "$RUNNER_TEMP/pebble.log" 2>&1 &
           for _ in $(seq 1 60); do
             if curl -fsS --cacert test/certs/pebble.minica.pem https://localhost:14000/dir > /dev/null; then
+              kill -0 "$challtestsrv" || { cat "$RUNNER_TEMP/challtestsrv.log"; exit 1; }
               echo "pebble is up"
               exit 0
             fi
