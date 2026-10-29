@@ -1,9 +1,9 @@
 import type { NavItem } from "../../../shell/navItem";
-import { useAiStatus } from "../useAiStatus";
+import { useAiFeature } from "../useAiStatus";
 
 /** Shown only while AI is usable for the person; otherwise there is no entry, not even greyed. */
 function useAiUsable(): boolean {
-  return useAiStatus().usable;
+  return useAiFeature("chat");
 }
 
 /**

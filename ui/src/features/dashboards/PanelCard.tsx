@@ -1,3 +1,4 @@
+import { useNavigate } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
   type PointerEvent,
@@ -40,7 +41,7 @@ import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { PanelAiSummary } from "../ai/PanelAiSummary";
-import { useAiStatusFor } from "../ai/useAiStatus";
+import { featureUsable, useAiStatusFor } from "../ai/useAiStatus";
 import { reasonText } from "../datasources/reasons";
 import { linkHref } from "./links";
 import {
@@ -149,6 +150,7 @@ export function PanelCard({
   alone = false,
 }: PanelCardProps) {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const calendar = useAnalysisCalendar();
   const ref = useRef<HTMLElement>(null);
   const titleId = useId();
@@ -392,12 +394,27 @@ export function PanelCard({
       disabled: noData,
     });
   }
-  if (ai.usable && query.source === "stored" && edit === undefined) {
+  // Each AI function shows while its own provider can be used.
+  const storedView = query.source === "stored" && edit === undefined;
+  if (storedView && featureUsable(ai.status, "summarize")) {
     menuItems.push({
       key: "summarize",
       label: t("ai.call.summarize"),
       name: t("ai.call.summarizeNamed", { title }),
       onSelect: () => setSummarizing(true),
+    });
+  }
+  if (storedView && featureUsable(ai.status, "chat")) {
+    // "In Fragen öffnen": a chat about this dashboard, the question about the panel ready.
+    menuItems.push({
+      key: "ask",
+      label: t("ai.chat.openInAsk"),
+      name: t("ai.chat.openInAskNamed", { title }),
+      onSelect: () =>
+        void navigate({
+          to: "/ask",
+          search: { dashboard: query.dashboardId, q: t("ai.chat.askAboutPanel", { title }) },
+        }),
     });
   }
   if (edit !== undefined) {

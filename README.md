@@ -22,7 +22,7 @@ binary with the web interface built in, and runs on Windows and Linux.
 > **Status: early development.** The current version is 0.3.2;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
-![A dashboard in the dark theme with a region variable, a time series, a stat, a bar chart and a table](docs/screenshots/dashboard-dark.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
 
 ## Contents
 
@@ -169,56 +169,53 @@ never returned by the API.
 
 ## Screenshots
 
-The images come from the real application with demo data (`npm run screenshots` in `ui/`).
+The same pictures as the gallery on the website: the current development version with the fictional
+example data of a data center, "Site Basalt" (every name and figure is invented). They follow your
+GitHub theme, dark or light. More screens are in the [user guide](docs/guide/README.md); how the
+pictures are made is in [docs/screenshots/README.md](docs/screenshots/README.md).
+
+### Dashboards
+
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
+
+Site overview: key figures, power and temperature per hall and row, the racks with the highest power draw.
 
 | | |
 |---|---|
-| ![Start page with the organization in numbers and dashboards as cards](docs/screenshots/start.png) | ![A dashboard in the light theme](docs/screenshots/dashboard-light.png) |
-| Start page | Dashboard, light theme |
-| ![The full-page panel editor with the preview, the query and the options](docs/screenshots/panel-editor-dark.png) | ![The panel editor's steps tab with a moving average and a trend line](docs/screenshots/panel-editor-steps-dark.png) |
-| Panel editor | Analysis steps |
-| ![Explore with a SQL query and a time series](docs/screenshots/explore.png) | ![A dashboard on a JSON file of orders: the documents as a tree, their field schema and the distribution of the order status](docs/screenshots/dashboard-documents-dark.png) |
-| Explore | Documents: tree, schema and field distribution |
-| ![Adding a panel: the visualization picker and a first empty query](docs/screenshots/panel-new-dark.png) | ![Data source kinds as cards with their logos](docs/screenshots/data-source-kinds-dark.png) |
-| New panel and visualization picker | Adding a data source |
-| ![Form for a new PostgreSQL data source](docs/screenshots/data-source.png) | ![Members of an organization with their roles](docs/screenshots/admin-members.png) |
-| Data source form | Members and roles |
-| ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
-| Dashboards | Profile and sessions |
-| ![Time series graph styles: a monochrome hatched series, a dashed comparison, bars, points, steps and stacked series](docs/screenshots/graph-styles-light.png) | ![Time series graph styles in the dark theme](docs/screenshots/graph-styles-dark.png) |
-| Time series graph styles | Graph styles, dark theme |
-| ![Text, grouped bar chart, bar gauge and pie panels in the light theme](docs/screenshots/dashboard-panels-light.png) | ![The same panels in the dark theme](docs/screenshots/dashboard-panels-dark.png) |
-| Text, bar chart, bar gauge and pie | The same panels, dark theme |
-| ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page: one card on the calm backdrop, language, theme and help on top](docs/screenshots/sign-in.png) |
-| Panel editor on a phone | Sign in |
-| ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
-| Time picker, dark theme | Dashboard in edit mode, dark theme |
-| ![A dashboard on a phone with the top bar and the toolbar in two rows](docs/screenshots/dashboard-phone.png) | ![A dashboard with live updates on: each panel says how it stays current](docs/screenshots/dashboard-live-dark.png) |
-| Dashboard on a phone | Live updates, dark theme |
-| ![Explore with a saved analysis open, its name above the toolbar](docs/screenshots/explore-saved.png) | ![The list of saved analyses with data source, creator and use in dashboards](docs/screenshots/analyses.png) |
-| Explore with a saved analysis | Saved analyses |
-| ![A saved analysis opened by a viewer to view and run](docs/screenshots/analysis-view.png) | ![Explore on a MongoDB collection with the field distribution counted over all documents of the result](docs/screenshots/explore-distribution-dark.png) |
-| A saved analysis for a viewer | Field distribution on MongoDB, dark theme |
-| ![Network, hierarchy, path and explorer panels on a Neo4j shop graph, dark theme](docs/screenshots/graph-panels-dark.png) | ![The same graph panels in the light theme](docs/screenshots/graph-panels-light.png) |
-| Graph panels on Neo4j, dark theme | Graph panels, light theme |
-| ![A network panel with a customer selected and the node details beside the drawing](docs/screenshots/graph-inspector-dark.png) | ![Explorer mode: a customer's orders loaded as a step in the Steps line](docs/screenshots/graph-explorer-dark.png) |
-| Node details | Explorer mode |
-| ![A category tree as a hierarchy in layers](docs/screenshots/graph-hierarchy-dark.png) | ![A shortest path from a customer to a product, node, relationship, node](docs/screenshots/graph-path-dark.png) |
-| Hierarchy | Paths |
-| ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
-| Settings, dark theme | Settings, light theme |
-| ![Settings on a phone](docs/screenshots/settings-phone.png) | ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) |
-| Settings on a phone | Updates |
-| ![First setup, step one: the setup code and where to find it](docs/screenshots/setup.png) | ![First setup, step two: the owner account with the password rules, dark theme](docs/screenshots/setup-account-dark.png) |
-| First setup: the setup code | First setup: your account, dark theme |
-| ![Sign-in page in the dark theme](docs/screenshots/sign-in-dark.png) | |
-| Sign in, dark theme | |
-| ![About Kalzit: the calcite crystal with a beam of light split in two, the build and the license, dark theme](docs/screenshots/about-dark.png) | ![About Kalzit in the light theme](docs/screenshots/about-light.png) |
-| About Kalzit, dark theme | About Kalzit, light theme |
-| ![Settings > Plugins: the installed plugins with publisher, signature, version, network targets and status](docs/screenshots/plugins.png) | ![A plugin's page: granted permissions, the process and its sandbox layers](docs/screenshots/plugin-details.png) |
-| Plugins: installed plugins | A plugin's page with its sandbox |
-| ![Signature and trust: the trusted keys and the switch for unsigned plugins](docs/screenshots/plugins-trust.png) | ![Add data source with a plugin kind: its own group, the publisher and the plugin's advice](docs/screenshots/data-source-plugin.png) |
-| Plugins: signature and trust | A data source of a plugin kind |
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-all-sources-light.webp"><img src="docs/screenshots/gallery/dashboard-all-sources-dark.webp" alt="A dashboard that combines a time series from SQLite, bars from OpenSearch, the incident severity across MongoDB documents and the power chain as a graph from Neo4j"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-live-light.webp"><img src="docs/screenshots/gallery/dashboard-live-dark.webp" alt="A live dashboard of rack temperatures in hall B, each panel marked as live every 30 seconds"></picture> |
+| One dashboard, four sources: SQLite, OpenSearch, MongoDB and Neo4j. | Rack temperatures in hall B, live every 30 seconds. |
+
+### Graphs
+
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/graph-network-light.webp"><img src="docs/screenshots/gallery/graph-network-dark.webp" alt="A graph panel with the network and power topology of the example data center, nodes colored by label"></picture>
+
+Network and power topology: 88 nodes, colored by label.
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/graph-inspector-light.webp"><img src="docs/screenshots/gallery/graph-inspector-dark.webp" alt="The same topology with one server selected and the node inspector open on the right"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/graph-hierarchy-paths-light.webp"><img src="docs/screenshots/gallery/graph-hierarchy-paths-dark.webp" alt="A graph laid out as a hierarchy from the site down to servers, and two path panels below it"></picture> |
+| One node selected: the rest fades back, the inspector lists its properties. | A hierarchy from site to servers, and the paths between two nodes. |
+
+### Documents
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/documents-dashboard-light.webp"><img src="docs/screenshots/gallery/documents-dashboard-dark.webp" alt="A dashboard of MongoDB documents: incidents as a tree, the field schema of the asset records and two value distributions"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/documents-pipeline-light.webp"><img src="docs/screenshots/gallery/documents-pipeline-dark.webp" alt="Explore with a MongoDB aggregation pipeline and a preview of the documents after the first stage"></picture> |
+| Incidents as nested documents, field coverage and value distributions. | An aggregation pipeline, stage by stage, with a preview of the documents. |
+
+### Explore
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/explore-steps-light.webp"><img src="docs/screenshots/gallery/explore-steps-dark.webp" alt="Explore with a SQL query on SQLite and two steps that add a moving average and a trend line"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/graph-explorer-light.webp"><img src="docs/screenshots/gallery/graph-explorer-dark.webp" alt="A graph panel in explorer mode, expanded in two steps from a spine switch, with the inspector open"></picture> |
+| A SQL query with two steps: a moving average and a trend line. | A graph explored step by step: load the neighbours of a node. |
+
+### First steps
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/setup-light.webp"><img src="docs/screenshots/gallery/setup-dark.webp" alt="The first-run setup of Kalzit at the owner account step"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/sign-in-light.webp"><img src="docs/screenshots/gallery/sign-in-dark.webp" alt="The sign-in page of Kalzit"></picture> |
+| The first start: setup code, owner account and organization. | Signing in with email address and password. |
 
 ## Quick start
 
@@ -435,6 +432,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, InfluxDB, Loki, ClickHouse | Planned |
 | M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs | Planned |
 | M7 Expansion | Alerting, public links, provisioning as code, further sources (Graphite, Redis, Oracle, traces) | Planned |
+| M8 Plugin store | Community store for plugins: a site with every plugin, submissions by community authors, review and signing, revocations; the source of the catalog in Kalzit | Planned |
 
 ## Documentation
 

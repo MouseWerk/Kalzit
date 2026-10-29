@@ -22,6 +22,11 @@ const USABLE = {
     model: "modell-1",
     host: "llm.intern",
     scope: "server",
+    endpoint: "llm.intern:11434",
+    leavesNetwork: false,
+    leavesNetworkEstimated: true,
+    usable: true,
+    noticeAcknowledged: true,
   },
   usage: {
     requests: 3,
@@ -318,5 +323,35 @@ describe("AI on dashboards", () => {
     expect(call?.path).toBe("/api/orgs/o1/dashboards/d-sales/panels/p-orders/ai/summarize");
     expect(call?.body).toMatchObject({ variables: {}, language: "en" });
     expect(call?.body.timeRange).toBeTruthy();
+    // "In Fragen weiterfragen" opens a chat about the dashboard, the question ready.
+    await user.click(await within(dialog).findByRole("link", { name: "Continue in Ask" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Summary: Orders" })).toBeNull(),
+    );
+    const question = await screen.findByRole("textbox", { name: "Question about your data" });
+    expect((question as HTMLTextAreaElement).value).toBe("Tell me more about the panel “Orders”.");
+    expect(await screen.findByText("Context: Sales")).toBeTruthy();
+  });
+
+  it("shows each AI function only while its own provider can be used", async () => {
+    const unreadable = { ...USABLE.provider, usable: false, reason: "ai.key_unreadable" };
+    const { user } = dashboard({
+      ...USABLE,
+      functions: { explain: USABLE.provider, summarize: unreadable, chat: USABLE.provider },
+    });
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    await user.click(within(panel).getByRole("button", { name: "Panel menu of “Orders”" }));
+    expect(await screen.findByRole("menuitem", { name: "Open Orders in Ask" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Summarize “Orders”" })).toBeNull();
+  });
+
+  it("opens a panel in Ask from its menu, with the dashboard as context", async () => {
+    const { user } = dashboard(USABLE);
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    await user.click(within(panel).getByRole("button", { name: "Panel menu of “Orders”" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Open Orders in Ask" }));
+    const question = await screen.findByRole("textbox", { name: "Question about your data" });
+    expect((question as HTMLTextAreaElement).value).toBe("What does the panel “Orders” show?");
+    expect(await screen.findByText("Context: Sales")).toBeTruthy();
   });
 });

@@ -25,6 +25,7 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 
 use super::HostError;
+use super::connector::{self, Grants, OwnEndpoints};
 use super::package::{PluginAccess, private_dir};
 use super::process::{self, Control, Limits};
 
@@ -56,6 +57,12 @@ pub struct Options {
     pub probe_interval: Duration,
     pub probe_timeout: Duration,
     pub limits: Limits,
+    /// Network connections through the connector a plugin may hold at once.
+    pub max_connections: usize,
+    /// A connection without traffic for this long is closed.
+    pub connection_idle: Duration,
+    /// How long the connector tries to reach a target.
+    pub connect_timeout: Duration,
 }
 
 impl Default for Options {
@@ -67,12 +74,15 @@ impl Default for Options {
             probe_interval: Duration::from_secs(30),
             probe_timeout: Duration::from_secs(5),
             limits: Limits::default(),
+            max_connections: 64,
+            connection_idle: Duration::from_secs(15 * 60),
+            connect_timeout: Duration::from_secs(10),
         }
     }
 }
 
 /// What to run.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Launch {
     pub manifest: Arc<Manifest>,
     pub program: PathBuf,
@@ -81,6 +91,15 @@ pub struct Launch {
     pub run_root: PathBuf,
     /// The administrator allows plugins on a Linux host without Landlock.
     pub allow_without_landlock: Arc<std::sync::atomic::AtomicBool>,
+    /// Kalzit's own addresses, which the connector never reaches.
+    pub own: Arc<OwnEndpoints>,
+    /// Where refused connects are recorded (`None` in some tests).
+    pub audit: Option<sqlx::AnyPool>,
+    /// Kalzit's own files with secrets that others may read: shown in the status, and while a
+    /// plugin could read one, plugins do not start.
+    pub exposure: Arc<super::host::Exposure>,
+    /// The data sources and settings as they are at each connect.
+    pub lookup: Arc<dyn connector::Lookup>,
 }
 
 /// What the plugin page shows about the process.
@@ -106,6 +125,18 @@ pub struct Status {
     /// The sandbox layers of the current or last process, and those this host lacks.
     pub sandbox: Vec<&'static str>,
     pub sandbox_missing: Vec<&'static str>,
+    /// Kalzit's own files with secrets that every local account may read (Windows).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<StatusWarning>,
+}
+
+/// Something about a plugin's process an administrator should know: a reason the UI translates,
+/// its parameters and an English text.
+#[derive(Clone, Debug, Serialize)]
+pub struct StatusWarning {
+    pub reason: &'static str,
+    pub params: std::collections::BTreeMap<String, String>,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -294,6 +325,8 @@ pub struct Supervisor {
     status: Mutex<Status>,
     logs: Arc<Logs>,
     generation: AtomicU64,
+    /// The data sources handed to the plugin, for its connects; kept across restarts.
+    grants: Arc<Grants>,
 }
 
 /// The first stdout line of a plugin that listens: `kalzit-plugin <protocol> ready`.
@@ -379,16 +412,23 @@ fn random_hex(bytes: usize) -> String {
 
 impl Supervisor {
     pub fn new(launch: Launch, options: Options) -> Arc<Self> {
+        let warnings = launch.exposure.warnings.clone();
         Arc::new(Self {
             id: launch.manifest.id.clone(),
             launch,
             options,
             host_version: env!("CARGO_PKG_VERSION").to_string(),
             state: tokio::sync::Mutex::new(State::Idle),
-            status: Mutex::new(Status { state: "idle", ..Default::default() }),
+            status: Mutex::new(Status { state: "idle", warnings, ..Default::default() }),
             logs: Arc::default(),
             generation: AtomicU64::new(0),
+            grants: Arc::default(),
         })
+    }
+
+    /// The data sources the plugin was handed, with their settings (`connector`).
+    pub fn grants(&self) -> &Arc<Grants> {
+        &self.grants
     }
 
     pub fn id(&self) -> &str {
@@ -516,6 +556,15 @@ impl Supervisor {
                 "plugins do not run while Kalzit runs as root; run Kalzit as its own account",
             ));
         }
+        if let Some(path) = self.launch.exposure.readable_by_plugins.first() {
+            return Err(HostError::new(
+                "plugin.secrets_exposed",
+                format!(
+                    "{path} holds secrets that a plugin could read; limit it to SYSTEM, Administrators and the account Kalzit runs as"
+                ),
+            )
+            .with("path", path));
+        }
         let require_landlock = cfg!(target_os = "linux") && !self.launch.allow_without_landlock.load(Ordering::SeqCst);
         let landlock_missing = || {
             HostError::new(
@@ -526,6 +575,10 @@ impl Supervisor {
         if require_landlock && !super::sandbox::landlock_available() {
             return Err(landlock_missing());
         }
+        let app_container_sid = super::sandbox::app_container(&self.launch.run_root, &self.id).map_err(|e| {
+            HostError::new("plugin.start_failed", format!("the plugin's AppContainer cannot be prepared: {e}"))
+                .with("detail", e)
+        })?;
         let random = random_hex(16);
         let run_dir = self.launch.run_root.join(&random[..12]);
         let start_sid = super::package::start_sid();
@@ -533,21 +586,54 @@ impl Supervisor {
         private_dir(&run_dir, &access)?;
         let tmp = run_dir.join("tmp");
         private_dir(&tmp, &access)?;
-        let address = process::address(&run_dir, &random);
         let token = random_hex(32);
+        // The plugin's connection and Kalzit's network connector, both Kalzit's before it starts.
+        let opened = process::Endpoint::new(&run_dir, &random, &start_sid, &app_container_sid).and_then(|endpoint| {
+            connector::listen(&run_dir, &random, &start_sid, &app_container_sid).map(|c| (endpoint, c))
+        });
+        #[allow(unused_mut)]
+        let (mut endpoint, (mut listener, connector_address)) = match opened {
+            Ok(opened) => opened,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&run_dir);
+                return Err(HostError::new(
+                    "plugin.start_failed",
+                    format!("the plugin's connection or network connector cannot be opened: {e}"),
+                )
+                .with("detail", e));
+            }
+        };
+        let plugin_address = endpoint.address.clone();
+        // Linux: the plugin gets both connections as descriptors, connected already; it may
+        // open no socket of its own. Kalzit's copies of the plugin's ends close after the start.
+        #[cfg(unix)]
+        let handed = [endpoint.take_plugin_end(), listener.take_plugin_end()];
+        #[cfg(unix)]
+        let inherit: Vec<i32> = {
+            use std::os::fd::AsRawFd;
+            handed.iter().flatten().map(AsRawFd::as_raw_fd).collect()
+        };
+        #[cfg(not(unix))]
+        let inherit = Vec::new();
+        let mut endpoint = Some(endpoint);
         let spec = process::Spec {
             program: self.launch.program.clone(),
             args: Vec::new(),
             package_dir: self.launch.package_dir.clone(),
             run_dir: run_dir.clone(),
             tmp_dir: tmp.clone(),
-            env: process::environment(&address, &token, &tmp),
+            env: process::environment(&plugin_address, &token, &tmp, &connector_address),
             limits: self.options.limits.clone(),
             plugin_sid: super::package::plugin_sid(&self.id),
             start_sid,
+            app_container_sid,
             require_landlock,
+            inherit,
         };
-        let mut child = match process::spawn(&spec) {
+        let spawned = process::spawn(&spec);
+        #[cfg(unix)]
+        drop(handed);
+        let mut child = match spawned {
             Ok(child) => child,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&run_dir);
@@ -563,6 +649,27 @@ impl Supervisor {
             s.starts += 1;
             s.sandbox = child.layers.clone();
             s.sandbox_missing = child.missing.clone();
+            s.warnings = self.launch.exposure.warnings.clone();
+            // Allowed by the administrator, but said with every start.
+            if cfg!(target_os = "linux") && !child.layers.contains(&"landlock") {
+                s.warnings.push(StatusWarning {
+                    reason: "plugin.without_landlock",
+                    params: Default::default(),
+                    message:
+                        "the plugin runs without Landlock (allowed without it): its file system access is not limited"
+                            .to_string(),
+                });
+            }
+            if cfg!(target_os = "linux")
+                && !child.layers.contains(&"network")
+                && !child.layers.contains(&"network_namespace")
+            {
+                s.warnings.push(StatusWarning {
+                    reason: "plugin.without_network_limit",
+                    params: Default::default(),
+                    message: "the plugin's network is not limited on this host (allowed without Landlock)".to_string(),
+                });
+            }
         });
         // The child refuses to run without it already; this holds should it report otherwise.
         if require_landlock && !child.layers.contains(&"landlock") {
@@ -570,7 +677,30 @@ impl Supervisor {
             cleanup(child.exited.clone(), &run_dir).await;
             return Err(landlock_missing());
         }
+        // Linux: without the socket filter or a network namespace the plugin would reach the
+        // network past the connector. Required like Landlock, with the same switch.
+        let unlimited = !child.layers.contains(&"network") && !child.layers.contains(&"network_namespace");
+        if cfg!(target_os = "linux") && require_landlock && unlimited {
+            child.control.kill();
+            cleanup(child.exited.clone(), &run_dir).await;
+            return Err(HostError::new(
+                "plugin.network_missing",
+                "the plugin's network could not be limited on this host (no seccomp filter, no network namespace); an administrator can allow plugins without it",
+            ));
+        }
         tracing::info!(plugin = %self.id, pid = child.pid, sandbox = ?child.layers, missing = ?child.missing, "plugin process started");
+        let context = connector::Context::new(
+            self.id.clone(),
+            self.launch.manifest.clone(),
+            self.grants.clone(),
+            self.launch.lookup.clone(),
+            self.launch.own.clone(),
+            token.clone(),
+            self.logs.clone(),
+            self.launch.audit.clone(),
+            (self.options.max_connections, self.options.connection_idle, self.options.connect_timeout),
+        );
+        connector::serve(listener, Arc::new(context), child.pid, child.exited.clone());
 
         // Output: the handshake on stdout, everything else into the plugin's log.
         let (handshake_tx, handshake_rx) = oneshot::channel::<String>();
@@ -607,7 +737,8 @@ impl Supervisor {
                 }
             };
             parse_handshake(&line)?;
-            let channel = process::channel(address.clone(), child.pid).await.map_err(|e| {
+            let endpoint = endpoint.take().ok_or_else(|| HostError::new("plugin.start_failed", "no endpoint"))?;
+            let channel = process::channel(endpoint, child.pid).await.map_err(|e| {
                 let detail = error_chain(&e);
                 HostError::new(
                     "plugin.connect_failed",

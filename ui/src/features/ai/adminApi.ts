@@ -30,12 +30,17 @@ export interface AiProvider {
   model: string;
   isDefault: boolean;
   tokenLimitField: string;
+  /** Whether data leaves the own network, as the administrators say; `auto` judges the address. */
+  leavesNetwork?: LeavesNetwork;
   /** Whether a key is stored; the key itself never leaves the server. */
   apiKeySet: boolean;
   createdAt: number;
   updatedAt: number;
   lastTest?: AiProviderLastTest;
 }
+
+/** Whether data leaves the own network: as the administrators say, or judged from the address. */
+export type LeavesNetwork = "auto" | "yes" | "no";
 
 export interface AiProviderInput {
   name: string;
@@ -45,6 +50,7 @@ export interface AiProviderInput {
   apiKey?: string;
   isDefault: boolean;
   tokenLimitField?: TokenLimitField;
+  leavesNetwork?: LeavesNetwork;
 }
 
 /** A change: absent fields stay; `apiKey: null` removes the stored key. */
@@ -55,6 +61,7 @@ export interface AiProviderPatch {
   apiKey?: string | null;
   isDefault?: boolean;
   tokenLimitField?: TokenLimitField;
+  leavesNetwork?: LeavesNetwork;
   expectedUpdatedAt: number;
 }
 

@@ -215,14 +215,6 @@ test("dashboard in edit mode, dark", async ({ browser }) => {
   await page.context().close();
 });
 
-test("dashboard, phone", async ({ browser }) => {
-  const page = await openPage(browser, "light", { width: 360, height: 780 });
-  await signIn(page);
-  await page.goto(`/dashboards/${demo.dashboardId}`);
-  await dashboardReady(page);
-  await shoot(page, "dashboard-phone");
-  await page.context().close();
-});
 for (const colorScheme of ["light", "dark"] as const) {
   test(`panel types, ${colorScheme}`, async ({ browser }) => {
     const page = await openPage(browser, colorScheme);
@@ -275,22 +267,6 @@ test("new panel, dark", async ({ browser }) => {
   await signIn(page);
   await newPanel(page);
   await shoot(page, "panel-new-dark");
-  await page.context().close();
-});
-
-test("new panel, phone", async ({ browser }) => {
-  const page = await openPage(browser, "light", { width: 360, height: 780 });
-  await signIn(page);
-  await newPanel(page);
-  await shoot(page, "panel-new-phone");
-  await page.context().close();
-});
-
-test("panel editor, phone", async ({ browser }) => {
-  const page = await openPage(browser, "light", { width: 360, height: 780 });
-  await signIn(page);
-  await panelEditor(page);
-  await shoot(page, "panel-editor-phone");
   await page.context().close();
 });
 
@@ -411,15 +387,6 @@ for (const colorScheme of ["dark", "light"] as const) {
     await page.context().close();
   });
 }
-
-test("settings, phone", async ({ browser }) => {
-  const page = await openPage(browser, "dark", { width: 360, height: 780 });
-  await signIn(page);
-  await page.goto("/settings/appearance");
-  await expect(page.locator(".settings-row").first()).toBeVisible();
-  await shoot(page, "settings-phone");
-  await page.context().close();
-});
 
 /** Orders as a shop's document store keeps them: a nested customer and an array of items. */
 const ORDERS = [

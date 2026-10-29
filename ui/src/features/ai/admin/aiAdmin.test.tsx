@@ -47,6 +47,15 @@ describe("AI, server section", () => {
     expect(within(cloud).getByText("api.anthropic.com")).toBeTruthy();
     expect(within(cloud).getByText("Key refused")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Edit Cloud" })).toBeTruthy();
+    // With several providers, one can be chosen per function; empty is the default.
+    const functions = screen.getByRole("region", { name: "Which provider for what" });
+    const chat = within(functions).getByRole("combobox", {
+      name: "Provider for Ask (chat with tools)",
+    });
+    const options = within(chat)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(options).toEqual(["Default (Local)", "Local · llama3.3:70b", "Cloud · claude-x"]);
     // The limits, the usage and the notice of what leaves the server are on the same page.
     expect(screen.getByRole("region", { name: "Limits" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Usage" })).toBeTruthy();
@@ -65,7 +74,7 @@ describe("AI, server section", () => {
     await user.click(screen.getByRole("switch", { name: "AI functions" }));
     expect(
       await screen.findByText(
-        "AI can be turned on once a provider in effect has passed its connection test since its last change.",
+        "The provider must first pass its connection test since its last change; only then can AI be turned on or the provider be chosen for a function.",
       ),
     ).toBeTruthy();
     expect(calls(server, "/api/admin/settings/ai.enabled").at(-1)?.body).toEqual({
@@ -111,6 +120,8 @@ describe("AI, server section", () => {
     };
     await user.clear(url);
     await user.type(url, "https://api.anthropic.com");
+    // A cloud model: the administrators say so, instead of the estimate from the address.
+    await user.selectOptions(within(dialog).getByLabelText("Data leaves the own network"), "yes");
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     const keyError = await within(dialog).findByText(
       "The AI provider refused the key (401). Check the key and its rights.",
@@ -129,6 +140,7 @@ describe("AI, server section", () => {
       model: "claude-x",
       isDefault: false,
       apiKey: "sk-wrong",
+      leavesNetwork: "yes",
     });
 
     // A new key passes; Save sends nothing more and closes.

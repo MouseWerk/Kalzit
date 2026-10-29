@@ -21,6 +21,26 @@ export function useAiStatusFor(orgId: string | undefined): AiAvailability {
   return { usable: status?.enabled === true && status.usable, status };
 }
 
+/** The AI functions a provider can be chosen for (docs/api/ai.md, "Status"). */
+export type AiFunction = "explain" | "summarize" | "chat";
+
+/**
+ * Whether one function can be used: AI is usable and the function's provider is there and
+ * usable (its key readable). A server that names no functions answers for all of them at once.
+ */
+export function featureUsable(status: AiStatus | undefined, fn: AiFunction): boolean {
+  if (status?.enabled !== true || !status.usable) {
+    return false;
+  }
+  const functions = status.functions;
+  return functions === undefined ? true : functions[fn]?.usable === true;
+}
+
+/** `featureUsable` for the organization the person works in. */
+export function useAiFeature(fn: AiFunction): boolean {
+  return featureUsable(useAiStatus().status, fn);
+}
+
 /** Whether AI may be shown to the signed-in user in the organization they work in. */
 export function useAiStatus(): AiAvailability {
   return useAiStatusFor(useCurrentOrg()?.id);

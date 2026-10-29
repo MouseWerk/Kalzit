@@ -3,11 +3,12 @@ name: Gallery renders and README screenshots
 # Pictures of Kalzit taken by Playwright against the real binary with the e2e services, in one of
 # two sets (input `set`):
 #
-#   gallery  curated renders for the gallery of the website, on the fictional data center of
-#            ui/e2e/gallery/datacenter.ts and the gallery fixtures in ui/e2e/fixtures (MongoDB,
-#            Neo4j) plus log events in OpenSearch: 1600 x 1000 at twice the device scale, dark and
-#            light, as PNG and WebP; uploaded as the artifact `kalzit-gallery`, never committed.
-#   readme   the README and guide screenshots of ui/e2e/screenshots (`npm run screenshots`) on the
+#   gallery  curated renders for the README and the gallery of the website, on the fictional data
+#            center of ui/e2e/gallery/datacenter.ts and the gallery fixtures in ui/e2e/fixtures
+#            (MongoDB, Neo4j) plus log events in OpenSearch: 1600 x 1000 at twice the device scale,
+#            dark and light, as PNG and WebP; uploaded as the artifact `kalzit-gallery`, the WebP
+#            files to be committed to docs/screenshots/gallery by hand.
+#   readme   the guide screenshots of ui/e2e/screenshots (`npm run screenshots`) on the
 #            e2e fixtures, the graph and MongoDB pictures included; uploaded as the artifact
 #            `kalzit-screenshots`, to be committed to docs/screenshots by hand.
 #

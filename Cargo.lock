@@ -1985,11 +1985,17 @@ dependencies = [
 name = "kalzit-csv-http"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "kalzit-plugin-sdk",
- "reqwest",
  "rustls",
+ "rustls-platform-verifier",
  "serde_json",
  "tokio",
+ "tokio-rustls",
+ "url",
 ]
 
 [[package]]
@@ -2000,16 +2006,19 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "kalzit-release",
+ "libc",
  "prost",
  "protox",
  "semver",
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "tokio",
  "toml",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+ "windows",
 ]
 
 [[package]]

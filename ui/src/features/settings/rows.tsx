@@ -28,7 +28,7 @@ import "./settings.css";
 
 export type Changes = ReturnType<typeof useSettingChanges>;
 
-interface Choice {
+export interface Choice {
   value: string | number;
   label: string;
 }
@@ -201,6 +201,7 @@ export function SettingRow({
   found,
   description,
   note,
+  choices,
 }: {
   setting: Setting;
   rowId: string;
@@ -212,6 +213,8 @@ export function SettingRow({
   /** Overrides the catalog's description. */
   description?: string;
   note?: ReactNode;
+  /** Choices the page knows, for a setting chosen from data (a provider). */
+  choices?: Choice[] | undefined;
 }) {
   const { t, language, timeZone } = useI18n();
   const titleId = useId();
@@ -249,6 +252,7 @@ export function SettingRow({
         labelled={labelled}
         invalid={error !== undefined}
         onCommit={commit}
+        choices={choices}
       />
     );
   }
@@ -276,6 +280,8 @@ interface ControlProps {
   labelled: { "aria-labelledby": string; "aria-describedby": string };
   invalid: boolean;
   onCommit: (value: unknown) => void;
+  /** Choices the page knows (the providers for a function), in place of a fixed list. */
+  choices?: Choice[] | undefined;
 }
 
 function Control(props: ControlProps) {
@@ -332,7 +338,7 @@ function Control(props: ControlProps) {
       </select>
     );
   }
-  const choices = choicesOf(t, key);
+  const choices = props.choices ?? choicesOf(t, key);
   if (choices !== undefined) {
     const numeric = typeof choices[0]?.value === "number";
     return (

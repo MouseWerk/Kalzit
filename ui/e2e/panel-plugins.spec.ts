@@ -127,6 +127,9 @@ test("a panel plugin draws in its sandboxed frame and is edited with options fro
 }) => {
   // The example logs once that the field it was given is not a number field of the result.
   consoleGuard.allow(/no number field named missing/);
+  // The frame's policy blocks WebRTC with `webrtc 'block'` (CSP Level 3), which Chromium does
+  // not know yet and reports once per frame; browsers that know it apply it (docs/api/plugins.md).
+  consoleGuard.allow(/Unrecognized Content-Security-Policy directive 'webrtc'/);
   await signInOwner(page);
 
   await test.step("the dashboard draws the panel in a sandboxed frame with its own policy", async () => {

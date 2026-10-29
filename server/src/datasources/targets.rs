@@ -488,7 +488,7 @@ fn embedded_v4(v6: Ipv6Addr) -> Vec<Ipv4Addr> {
 }
 
 /// IPv6 forms that carry an IPv4 address are compared as that address.
-fn canonical_ip(ip: IpAddr) -> IpAddr {
+pub fn canonical_ip(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => {
             let s = v6.segments();

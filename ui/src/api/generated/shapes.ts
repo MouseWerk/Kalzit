@@ -4,7 +4,7 @@ export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_fo
 
 export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
 
-export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "audit.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.welcome" | "signin.notice" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format";
+export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "audit.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.welcome" | "signin.notice" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format";
 
 export type Shape = "frame" | "documents" | "graph";
 
@@ -382,7 +382,11 @@ noticeAcknowledged?: boolean,
 /**
  * Why it cannot be used when it is on (`ai.no_provider`).
  */
-reason?: string, provider?: AiStatusProvider, usage?: AiStatusUsage, 
+reason?: string, provider?: AiStatusProvider, 
+/**
+ * The provider of each function (explain and draft, summarize, the chat).
+ */
+functions?: AiStatusFunctions, usage?: AiStatusUsage, 
 /**
  * The paragraph the administrators added to the first-use notice (`ai.notice_text`), when set.
  */
@@ -412,6 +416,38 @@ host: string,
 /**
  * `org` when the organization's own provider is in effect, else `server`.
  */
-scope: string, };
+scope: string, 
+/**
+ * Host and port of the base URL (`llm.intern:11434`), never the path or credentials.
+ */
+endpoint: string, 
+/**
+ * Whether data leaves the installation's own network: as the administrators say, or, when
+ * they left it open, judged from the address (`stays_in_network`; `leavesNetworkEstimated`).
+ */
+leavesNetwork: boolean, 
+/**
+ * The answer comes from the address, not from the administrators: an estimate (a gateway
+ * in the own network may forward to a cloud model).
+ */
+leavesNetworkEstimated: boolean, 
+/**
+ * Whether calls through this provider can run: false when its key cannot be read.
+ */
+usable: boolean, 
+/**
+ * Why it cannot (`ai.key_unreadable`).
+ */
+reason?: string, 
+/**
+ * The last connection test: passed, failed, or (absent) not tested since the last change.
+ */
+reachable?: boolean, 
+/**
+ * Whether the caller acknowledged the first-use notice for this provider.
+ */
+noticeAcknowledged: boolean, };
+
+export type AiStatusFunctions = { explain?: AiStatusProvider, summarize?: AiStatusProvider, chat?: AiStatusProvider, };
 
 export type AiStatusUsage = { requests: number, tokens: number, requestsLimit: number, tokensLimit: number, orgTokensMonth: number, orgTokensMonthLimit: number, };

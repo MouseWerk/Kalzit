@@ -17,6 +17,7 @@ export interface WireAiProvider {
   model: string;
   isDefault: boolean;
   tokenLimitField: string;
+  leavesNetwork?: string;
   apiKeySet: boolean;
   createdAt: number;
   updatedAt: number;
@@ -167,6 +168,9 @@ export function addAiSettings(admin: FakeAdminState): void {
     ["ai.org_tokens_per_month", 20_000_000],
     ["ai.max_rows_to_model", 200],
     ["ai.max_tool_calls", 10],
+    ["ai.provider_explain", ""],
+    ["ai.provider_summarize", ""],
+    ["ai.provider_chat", ""],
     ["ai.max_concurrent", 8],
     ["ai.max_concurrent_per_org", 4],
     ["ai.max_concurrent_per_user", 2],
@@ -252,6 +256,7 @@ function providerRoutes(
       model: String(body.model),
       isDefault: body.isDefault === true || list.length === 0,
       tokenLimitField: typeof body.tokenLimitField === "string" ? body.tokenLimitField : "auto",
+      leavesNetwork: typeof body.leavesNetwork === "string" ? body.leavesNetwork : "auto",
       apiKeySet: typeof body.apiKey === "string",
       createdAt: T0 + list.length + 1,
       updatedAt: T0 + list.length + 1,
@@ -301,6 +306,7 @@ function providerRoutes(
     if (typeof body.baseUrl === "string") provider.baseUrl = body.baseUrl;
     if (typeof body.model === "string") provider.model = body.model;
     if (typeof body.tokenLimitField === "string") provider.tokenLimitField = body.tokenLimitField;
+    if (typeof body.leavesNetwork === "string") provider.leavesNetwork = body.leavesNetwork;
     if ("apiKey" in body) provider.apiKeySet = typeof body.apiKey === "string";
     if (body.isDefault === true) {
       for (const other of list) other.isDefault = other === provider;

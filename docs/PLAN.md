@@ -294,10 +294,12 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   Datenquellen-Typen und In-Process-Adapter für die eingebauten Quellen sind fertig, ebenso der
   Host für Datenquellen-Plugins (Installation aus einer Datei mit allen Prüfungen, Vertrauen,
   Freigabe der Rechte, Prozesse mit Überwachung, Neustart und Sandbox, Admin-API in
-  `docs/api/plugins.md`). Panel-Nachrichten-API und Panel-Host sind fertig: Panel-Plugins
-  erscheinen in der Visualisierungsauswahl, laufen im abgeschotteten iframe ohne Netz und ohne
-  Zugriff auf Kalzit, ihr Optionseditor entsteht aus dem Manifest. Katalog und Kalzits
-  Netzwerk-Connector (bis dahin ist das Netzwerk der Plugins nicht eingeschränkt) folgen. Die Oberfläche folgt dem
+  `docs/api/plugins.md`) und Kalzits Netzwerk-Connector: Plugins haben kein eigenes Netzwerk
+  (Linux: seccomp-Filter und eigener Netzwerk-Namespace, Windows: AppContainer ohne
+  Capabilities) und erreichen nur die im Manifest erklärten Ziele über Kalzit.
+  Panel-Nachrichten-API und Panel-Host sind fertig: Panel-Plugins erscheinen in der
+  Visualisierungsauswahl, laufen im abgeschotteten iframe ohne Netz und ohne Zugriff auf Kalzit,
+  ihr Optionseditor entsteht aus dem Manifest. Der Katalog folgt. Die Oberfläche folgt dem
   Board `docs/design/blueprint/Plugins.dc.html`.
 
 ## 8. Windows- und Linux-Server
@@ -483,6 +485,10 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 8. **M7 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
    (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase).
+9. **M8 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
+   (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
+   Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
+   Rücknahmen; der signierte Katalog dort ist die Quelle für den Katalog in Kalzit (M4).
 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
 und einem Durchgang nach `quality/perfection-pass.md`.

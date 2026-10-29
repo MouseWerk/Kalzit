@@ -65,7 +65,12 @@ export function PanelAiSummary({
       {notice.dialog}
       {shown ? (
         <Dialog open title={t("ai.call.summaryTitle", { title })} onClose={close} wide>
-          <SummaryCard call={call} title={title} onClose={close} />
+          <SummaryCard
+            call={call}
+            title={title}
+            onClose={close}
+            followUp={{ dashboard: dashboardId, q: t("ai.chat.followUpPanel", { title }) }}
+          />
         </Dialog>
       ) : null}
     </>

@@ -8,11 +8,17 @@
 mod table;
 
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
+use http_body_util::{BodyExt, Empty};
+use hyper::body::Incoming;
+use hyper::{Request, Response, header};
+use hyper_util::rt::TokioIo;
 use kalzit_plugin_sdk::{
     Connection, Context, DataSource, Description, Error, Field, FieldError, Finished, Health, Notice, Query, Results,
-    Shape, Value,
+    Shape, Value, net,
 };
 use serde_json::json;
 
@@ -25,14 +31,15 @@ const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct CsvHttp {
-    client: reqwest::Client,
+    /// TLS for `https` URLs, with the operating system's certificate store.
+    tls: Arc<rustls::ClientConfig>,
 }
 
 /// The URL setting, checked: http or https with a host.
-fn url(settings: &Value) -> Result<reqwest::Url, FieldError> {
+fn url(settings: &Value) -> Result<url::Url, FieldError> {
     let text = settings.get("url").and_then(Value::as_str).unwrap_or_default().trim();
-    let url = reqwest::Url::parse(text)
-        .map_err(|_| FieldError::new("url", "settings.url_invalid", "the URL is not valid"))?;
+    let url =
+        url::Url::parse(text).map_err(|_| FieldError::new("url", "settings.url_invalid", "the URL is not valid"))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err(FieldError::new("url", "settings.url_invalid", "the URL must start with http:// or https://"));
     }
@@ -52,30 +59,77 @@ struct Fetched {
     cut: bool,
 }
 
+/// One GET over an open connection (HTTP/1.1); the connection is driven on its own task until
+/// the answer is read.
+async fn send<T>(io: T, request: Request<Empty<Bytes>>) -> Result<Response<Incoming>, hyper::Error>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(io)).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    sender.send_request(request).await
+}
+
 /// The file at the connection's URL, read up to `max_bytes` (0: up to `MAX_FILE_BYTES`); a
-/// longer file is cut after its last whole line within the limit. Redirects are not followed,
-/// so the plugin reaches only the URL the administrator configured.
-async fn fetch(client: &reqwest::Client, ctx: &Context, conn: &Connection, max_bytes: u64) -> Result<Fetched, Error> {
+/// longer file is cut after its last whole line within the limit. The connection comes from
+/// Kalzit's network connector (the plugin has no network of its own), so only the URL the
+/// administrator configured is reachable; redirects are not followed.
+async fn fetch(
+    tls: &Arc<rustls::ClientConfig>,
+    ctx: &Context,
+    conn: &Connection,
+    max_bytes: u64,
+) -> Result<Fetched, Error> {
+    let timeout = ctx.remaining().unwrap_or(DEFAULT_TIMEOUT);
+    tokio::time::timeout(timeout, get(tls, conn, max_bytes))
+        .await
+        .unwrap_or_else(|_| Err(Error::timeout("the server did not answer in time")))
+}
+
+async fn get(tls: &Arc<rustls::ClientConfig>, conn: &Connection, max_bytes: u64) -> Result<Fetched, Error> {
     let url = url(&conn.settings).map_err(|f| f.error)?;
-    let mut request = client.get(url.clone()).timeout(ctx.remaining().unwrap_or(DEFAULT_TIMEOUT));
+    let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']).to_string();
+    let https = url.scheme() == "https";
+    let port = url.port_or_known_default().unwrap_or(443);
+    let protocol = if https { net::Protocol::Tls } else { net::Protocol::Tcp };
+    let (stream, _) = net::connect(conn, &host, port, protocol).await?;
+    let path = match url.query() {
+        Some(q) => format!("{}?{q}", url.path()),
+        None => url.path().to_string(),
+    };
+    let authority = match url.port() {
+        Some(p) => format!("{}:{p}", url.host_str().unwrap_or_default()),
+        None => url.host_str().unwrap_or_default().to_string(),
+    };
+    let mut request = Request::get(path)
+        .header(header::HOST, authority)
+        .header(header::USER_AGENT, concat!("kalzit-csv-http/", env!("CARGO_PKG_VERSION")));
     if let Some(token) = conn.secret("token") {
-        request = request.bearer_auth(token);
+        request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
     }
-    let mut response = request.send().await.map_err(|e| {
-        if e.is_timeout() {
-            Error::timeout("the server did not answer in time")
-        } else {
-            // Without the URL: it may carry a query string the administrator considers private.
-            Error::failed("source.no_answer", format!("the server could not be reached: {}", without_url(&e)))
-        }
-    })?;
+    let request = request.body(Empty::<Bytes>::new()).map_err(|e| Error::source(format!("the request: {e}")))?;
+    // Without the URL in errors: it may carry a query string the administrator considers private.
+    let unreachable =
+        |e: &dyn std::fmt::Display| Error::failed("source.no_answer", format!("the server could not be reached: {e}"));
+    let response = if https {
+        let name = rustls::pki_types::ServerName::try_from(host.clone())
+            .map_err(|_| Error::failed("settings.url_invalid", "the URL's host is not a valid name"))?;
+        let stream =
+            tokio_rustls::TlsConnector::from(tls.clone()).connect(name, stream).await.map_err(|e| unreachable(&e))?;
+        send(stream, request).await
+    } else {
+        send(stream, request).await
+    }
+    .map_err(|e| unreachable(&e))?;
     let status = response.status();
     if !status.is_success() {
         return Err(Error::source(format!("the server answered {status}")).with("status", status.as_u16()));
     }
     let content_type = response
         .headers()
-        .get(reqwest::header::CONTENT_TYPE)
+        .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -83,9 +137,10 @@ async fn fetch(client: &reqwest::Client, ctx: &Context, conn: &Connection, max_b
     let limit = usize::try_from(limit).unwrap_or(usize::MAX);
     let mut body = Vec::new();
     let mut cut = false;
-    while let Some(part) =
-        response.chunk().await.map_err(|e| Error::source(format!("reading the file failed: {}", without_url(&e))))?
-    {
+    let mut incoming = response.into_body();
+    while let Some(frame) = incoming.frame().await {
+        let frame = frame.map_err(|e| Error::source(format!("reading the file failed: {e}")))?;
+        let Ok(part) = frame.into_data() else { continue };
         body.extend_from_slice(&part);
         if body.len() > limit {
             // Read no further; keep the whole lines within the limit.
@@ -97,14 +152,6 @@ async fn fetch(client: &reqwest::Client, ctx: &Context, conn: &Connection, max_b
     }
     let text = String::from_utf8(body).map_err(|_| Error::source("the file is not UTF-8 text"))?;
     Ok(Fetched { content_type, text, cut })
-}
-
-fn without_url(e: &reqwest::Error) -> String {
-    let mut text = e.to_string();
-    if let Some(url) = e.url() {
-        text = text.replace(url.as_str(), "the URL");
-    }
-    text
 }
 
 /// The file as a table, by the format setting and the query's options, reading at most one row
@@ -154,7 +201,7 @@ impl DataSource for CsvHttp {
     }
 
     async fn health(&self, ctx: &Context, conn: &Connection) -> Result<Health, Error> {
-        let file = fetch(&self.client, ctx, conn, 0).await?;
+        let file = fetch(&self.tls, ctx, conn, 0).await?;
         let (t, format) = parse(conn, &Value::Null, file, SAMPLE_ROWS).await?;
         let engine = match format {
             table::Format::Csv => "CSV",
@@ -166,7 +213,7 @@ impl DataSource for CsvHttp {
     }
 
     async fn schema(&self, ctx: &Context, conn: &Connection) -> Result<Value, Error> {
-        let file = fetch(&self.client, ctx, conn, 0).await?;
+        let file = fetch(&self.tls, ctx, conn, 0).await?;
         let (t, _) = parse(conn, &Value::Null, file, SAMPLE_ROWS).await?;
         let columns: Vec<Value> = t
             .names
@@ -182,7 +229,7 @@ impl DataSource for CsvHttp {
             return Err(Error::invalid_query("the query is a JSON object"));
         }
         let limits = query.limits;
-        let file = fetch(&self.client, &ctx, &query.connection, limits.max_response_bytes).await?;
+        let file = fetch(&self.tls, &ctx, &query.connection, limits.max_response_bytes).await?;
         let cut = file.cut;
         let (t, _) = parse(&query.connection, &query.query, file, limits.max_rows).await?;
         let fields = t.names.iter().zip(&t.types).map(|(n, ty)| Field::new(n.clone(), *ty)).collect();
@@ -208,20 +255,18 @@ impl DataSource for CsvHttp {
 fn main() -> ExitCode {
     // rustls needs one process-wide crypto provider; this plugin uses ring.
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = match reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(10))
-        .user_agent(concat!("kalzit-csv-http/", env!("CARGO_PKG_VERSION")))
-        .build()
-    {
-        Ok(client) => client,
+    use rustls_platform_verifier::ConfigVerifierExt;
+    let tls = match rustls::ClientConfig::with_platform_verifier() {
+        Ok(mut config) => {
+            config.alpn_protocols = vec![b"http/1.1".to_vec()];
+            Arc::new(config)
+        }
         Err(e) => {
-            kalzit_plugin_sdk::log::error(&format!("the HTTP client could not be built: {e}"));
+            kalzit_plugin_sdk::log::error(&format!("TLS could not be set up: {e}"));
             return ExitCode::FAILURE;
         }
     };
-    kalzit_plugin_sdk::run(CsvHttp { client })
+    kalzit_plugin_sdk::run(CsvHttp { tls })
 }
 
 #[cfg(test)]

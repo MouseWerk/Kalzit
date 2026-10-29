@@ -152,6 +152,28 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Most tool calls the assistant makes for one answer in a chat; then it answers with what it has.",
     },
     SettingDef {
+        key: "ai.provider_explain",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "The server provider for explaining and drafting queries; empty for the default provider. An \
+                      organization's own provider still comes first.",
+    },
+    SettingDef {
+        key: "ai.provider_summarize",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "The server provider for summaries; empty for the default provider.",
+    },
+    SettingDef {
+        key: "ai.provider_chat",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "The server provider for the chat \"Fragen\" with tools; empty for the default provider.",
+    },
+    SettingDef {
         key: "ai.allow_org_providers",
         scope: Scope::Server,
         default: || json!(true),
@@ -636,6 +658,9 @@ fn rule(key: &str) -> Option<Rule> {
         "ai.max_concurrent_per_org" => Rule::Int { min: 1, max: 1_000 },
         "ai.max_rows_to_model" => Rule::Int { min: 1, max: 10_000 },
         "ai.max_tool_calls" => Rule::Int { min: 1, max: 100 },
+        "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" => {
+            Rule::Text { max_chars: 64, multiline: false, required: false }
+        }
         // 0 keeps no chats at all.
         "ai.chat_retention_days" => Rule::Int { min: 0, max: 3_650 },
         "ai.notice_text" => Rule::Text { max_chars: 2000, multiline: true, required: false },

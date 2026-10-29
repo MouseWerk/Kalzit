@@ -692,5 +692,11 @@
   "admin.settings.updates.keep_versions.label": "Behaltene Versionen",
   "admin.settings.updates.keep_versions.description": "Frühere Versionen mit ihren Datenbank-Sicherungen, für eine Rückkehr.",
   "admin.settings.updates.health_timeout_secs.label": "Zustandsprüfung nach einem Update (Sekunden)",
-  "admin.settings.updates.health_timeout_secs.description": "So lange hat eine neue Version Zeit, sich bereit zu melden, bevor Kalzit zur vorherigen zurückkehrt."
+  "admin.settings.updates.health_timeout_secs.description": "So lange hat eine neue Version Zeit, sich bereit zu melden, bevor Kalzit zur vorherigen zurückkehrt.",
+  "admin.settings.ai.provider_explain.label": "Anbieter für Erklären und Entwerfen",
+  "admin.settings.ai.provider_explain.description": "Der Anbieter des Servers für „Erklären“ und „Entwerfen“; leer gilt der Standardanbieter. Ein eigener Anbieter einer Organisation geht vor.",
+  "admin.settings.ai.provider_summarize.label": "Anbieter für Zusammenfassen",
+  "admin.settings.ai.provider_summarize.description": "Der Anbieter des Servers für „Zusammenfassen“; leer gilt der Standardanbieter.",
+  "admin.settings.ai.provider_chat.label": "Anbieter für Fragen (Chat mit Werkzeugen)",
+  "admin.settings.ai.provider_chat.description": "Der Anbieter des Servers für „Fragen“; leer gilt der Standardanbieter."
 }

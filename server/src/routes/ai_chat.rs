@@ -244,8 +244,28 @@ struct AskBody {
     /// Replaces the chat's sources; absent keeps them.
     #[serde(default)]
     datasource_ids: Option<Vec<String>>,
+    /// A dashboard the question is about ("Dashboard als Kontext"); needs `dashboards:read`.
+    #[serde(default)]
+    dashboard_id: Option<String>,
     #[serde(default)]
     language: Language,
+}
+
+/// The most panels of a context dashboard the model is told about.
+const MAX_CONTEXT_PANELS: usize = 100;
+
+/// A dashboard as the context of a question: readable for the caller (else not found), with its
+/// panels' ids, titles and types.
+async fn dashboard_context(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<chats::DashboardContext> {
+    let model = super::query::readable_model(state, ctx, id).await?;
+    let panels = model
+        .panels
+        .iter()
+        .filter(|p| !p.targets.is_empty() || p.library_panel_id.is_some())
+        .take(MAX_CONTEXT_PANELS)
+        .map(|p| json!({ "panelId": p.id, "title": p.title, "type": p.kind }))
+        .collect();
+    Ok(chats::DashboardContext { id: id.to_string(), title: model.title, panels })
 }
 
 /// A question to a chat: stored, then answered by the model with its tools, streamed.
@@ -279,7 +299,11 @@ async fn ask(
     // The switch, provider, notice and limits before anything is stored or sent.
     let row = service::precheck(&state, &caller).await?;
     let running = RunningChat::take(&chat.id)?;
-    let question = Question { text, datasource_ids: selection.clone() };
+    let dashboard = match body.dashboard_id.as_deref() {
+        Some(id) => Some(dashboard_context(&state, &ctx, id).await?),
+        None => None,
+    };
+    let question = Question { text, datasource_ids: selection.clone(), dashboard };
     chats::append(&state, &chat, "user", &json!(question), Some(&selection)).await?;
     let history = chats::conversation(&state, &ctx, &chat.id).await?;
     let max_calls = service::max_tool_calls(&state).await?;

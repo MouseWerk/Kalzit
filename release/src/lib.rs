@@ -186,10 +186,12 @@ pub fn sign_package(key: &SigningKey, version: &str, platform: &str, arch: &str,
 
 /// The highlights of release notes in the format of `docs/releases/v<version>.md`: the lines of
 /// the sections "## New", "## Improved", "## Fixed" and "## Security"; other sections (the
-/// manual checklist) are left out.
+/// manual checklist) are left out. A point wrapped over several lines becomes one highlight.
 pub fn highlights_from_notes(markdown: &str) -> Vec<Highlight> {
     let mut kind: Option<&str> = None;
-    let mut out = Vec::new();
+    let mut points: Vec<(&str, String)> = Vec::new();
+    // Whether the last point may still take continuation lines (no blank line since).
+    let mut open = false;
     for line in markdown.lines() {
         let trimmed = line.trim();
         if let Some(heading) = trimmed.strip_prefix("## ") {
@@ -200,16 +202,26 @@ pub fn highlights_from_notes(markdown: &str) -> Vec<Highlight> {
                 "security" => Some("security"),
                 _ => None,
             };
+            open = false;
             continue;
         }
-        if let (Some(k), Some(text)) = (kind, trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* "))) {
-            let text: String = text.trim().chars().take(300).collect();
-            if !text.is_empty() && out.len() < MAX_HIGHLIGHTS {
-                out.push(Highlight { kind: k.to_string(), text });
-            }
+        let Some(k) = kind else { continue };
+        if let Some(text) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+            points.push((k, text.trim().to_string()));
+            open = true;
+        } else if trimmed.is_empty() {
+            open = false;
+        } else if open && let Some((_, text)) = points.last_mut() {
+            text.push(' ');
+            text.push_str(trimmed);
         }
     }
-    out
+    points
+        .into_iter()
+        .filter(|(_, text)| !text.is_empty())
+        .take(MAX_HIGHLIGHTS)
+        .map(|(k, text)| Highlight { kind: k.to_string(), text: text.chars().take(300).collect() })
+        .collect()
 }
 
 /// Writes an offline package of one release package.
@@ -238,6 +250,22 @@ mod tests {
         let h = highlights_from_notes(notes);
         let lines: Vec<(&str, &str)> = h.iter().map(|h| (h.kind.as_str(), h.text.as_str())).collect();
         assert_eq!(lines, [("improved", "Faster typing"), ("improved", "Axes"), ("fixed", "Phone tables")]);
+    }
+
+    #[test]
+    fn a_wrapped_point_becomes_one_highlight() {
+        let notes = "# Kalzit 0.3.2\n\n## Improved\n\n- Signing in on a browser that is not yours: tick\n  \
+                     \"This is not my browser\".\n- Short\n\nNot a point.\n\n## Fixed\n\n- One\n";
+        let h = highlights_from_notes(notes);
+        let lines: Vec<(&str, &str)> = h.iter().map(|h| (h.kind.as_str(), h.text.as_str())).collect();
+        assert_eq!(
+            lines,
+            [
+                ("improved", "Signing in on a browser that is not yours: tick \"This is not my browser\"."),
+                ("improved", "Short"),
+                ("fixed", "One"),
+            ]
+        );
     }
 
     #[test]
