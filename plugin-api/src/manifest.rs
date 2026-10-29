@@ -39,6 +39,13 @@ pub const PANEL_API_VERSIONS: &[u32] = &[1];
 /// The settings field types of a data source form.
 pub const SETTING_TYPES: &[&str] = &["string", "text", "number", "bool", "select"];
 
+/// The option types of a panel (`[[panel.options]]`): a line of text, a longer text, a number,
+/// a whole number, a switch and a choice.
+pub const PANEL_OPTION_TYPES: &[&str] = &["string", "text", "number", "integer", "bool", "select"];
+
+/// Options one panel may declare.
+pub const MAX_PANEL_OPTIONS: usize = 64;
+
 /// Fields every data source has; a plugin cannot declare them again.
 pub const COMMON_SETTINGS: &[&str] = &["queryTimeoutSecs", "maxRows"];
 
@@ -180,13 +187,44 @@ pub struct NetworkTarget {
 
 /// A panel's web bundle: one ES module with everything it needs inlined, run in a sandboxed
 /// iframe that talks to Kalzit only through the versioned panel message API.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebBundle {
     /// The bundle's `.js` or `.mjs` file, a path listed in `files`.
     pub path: String,
     /// The panel message API version the bundle speaks.
     pub api: u32,
+    /// The panel's options (`[[panel.options]]`): Kalzit builds the options editor from them and
+    /// checks every value a dashboard stores or the panel asks for (`panel::check_options`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<PanelOption>,
+}
+
+/// One option of a panel: a field of its options editor and a key of its JSON options.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PanelOption {
+    /// The key in the panel's options: a letter, then letters, digits or `_` (at most 64).
+    pub name: String,
+    /// The label by language; `en` is required.
+    pub label: BTreeMap<String, String>,
+    /// One of `PANEL_OPTION_TYPES`.
+    #[serde(rename = "type")]
+    pub option_type: String,
+    /// The value when the panel's options have none; it must fit the type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<toml::Value>,
+    /// The choices of a `select`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
+    /// The range of a `number` or `integer`, inclusive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Help text by language.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -455,6 +493,7 @@ impl Validator {
                         format!("panel API {} is not supported", bundle.api),
                     );
                 }
+                self.panel_options(&bundle.options);
             }
             None => self.push("panel", "manifest.panel_missing", "a panel names its web bundle"),
         }
@@ -595,6 +634,88 @@ impl Validator {
                     _ => false,
                 };
                 if !fits {
+                    self.push(format!("{path}.default"), "manifest.default_type", "the default does not fit the type");
+                }
+            }
+        }
+    }
+
+    fn panel_options(&mut self, options: &[PanelOption]) {
+        if options.len() > MAX_PANEL_OPTIONS {
+            self.push("panel.options", "manifest.too_many", format!("at most {MAX_PANEL_OPTIONS} options"));
+        }
+        let mut names = BTreeSet::new();
+        for (i, o) in options.iter().enumerate() {
+            let path = format!("panel.options[{i}]");
+            if !valid_setting_name(&o.name) {
+                self.push(
+                    format!("{path}.name"),
+                    "manifest.setting_name_invalid",
+                    "a letter, then letters, digits or _ (at most 64)",
+                );
+            } else if !names.insert(o.name.as_str()) {
+                self.push(format!("{path}.name"), "manifest.setting_repeated", format!("{} is declared twice", o.name));
+            }
+            self.labels(&format!("{path}.label"), &o.label, MAX_NAME_CHARS);
+            if let Some(help) = &o.help {
+                self.labels(&format!("{path}.help"), help, MAX_TEXT_CHARS);
+            }
+            let ty = o.option_type.as_str();
+            if !PANEL_OPTION_TYPES.contains(&ty) {
+                self.push(
+                    format!("{path}.type"),
+                    "manifest.name_unknown",
+                    format!("use one of {}", PANEL_OPTION_TYPES.join(", ")),
+                );
+                continue;
+            }
+            if ty == "select" {
+                let unique: BTreeSet<&String> = o.choices.iter().collect();
+                let fine = |c: &String| {
+                    !c.is_empty() && c.chars().count() <= MAX_NAME_CHARS && !c.chars().any(char::is_control)
+                };
+                if o.choices.is_empty()
+                    || o.choices.len() > MAX_OPTIONS
+                    || unique.len() != o.choices.len()
+                    || !o.choices.iter().all(fine)
+                {
+                    self.push(
+                        format!("{path}.choices"),
+                        "manifest.options_invalid",
+                        format!("a select has 1 to {MAX_OPTIONS} distinct choices of 1 to {MAX_NAME_CHARS} characters"),
+                    );
+                }
+            } else if !o.choices.is_empty() {
+                self.push(format!("{path}.choices"), "manifest.not_for_type", "only a select has choices");
+            }
+            let numeric = matches!(ty, "number" | "integer");
+            for (key, bound) in [("min", o.min), ("max", o.max)] {
+                match bound {
+                    Some(_) if !numeric => {
+                        self.push(format!("{path}.{key}"), "manifest.not_for_type", "only numbers have a range")
+                    }
+                    Some(b) if !b.is_finite() || (ty == "integer" && b.fract() != 0.0) => {
+                        self.push(format!("{path}.{key}"), "manifest.default_type", "the bound does not fit the type")
+                    }
+                    _ => {}
+                }
+            }
+            if let (Some(min), Some(max)) = (o.min, o.max)
+                && min > max
+            {
+                self.push(format!("{path}.min"), "manifest.range_invalid", "min is not above max");
+            }
+            if let Some(default) = &o.default {
+                let value = match default {
+                    toml::Value::String(s) => serde_json::Value::String(s.clone()),
+                    toml::Value::Integer(n) => serde_json::Value::from(*n),
+                    toml::Value::Float(f) => {
+                        serde_json::Number::from_f64(*f).map_or(serde_json::Value::Null, serde_json::Value::Number)
+                    }
+                    toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
+                    _ => serde_json::Value::Null,
+                };
+                if crate::panel::check_option(o, &value).is_err() {
                     self.push(format!("{path}.default"), "manifest.default_type", "the default does not fit the type");
                 }
             }
@@ -909,6 +1030,50 @@ api = 1
         );
         let binary = text.replacen("[files]", "[binaries]\nlinux-x64 = \"dist/panel.js\"\n\n[files]", 1);
         assert_eq!(codes(&binary), ["manifest.not_for_kind"]);
+    }
+
+    #[test]
+    fn panel_options_are_checked() {
+        let options = r#"
+[[panel.options]]
+name = "field"
+label = { en = "Field", de = "Feld" }
+type = "string"
+
+[[panel.options]]
+name = "decimals"
+label = { en = "Decimals" }
+type = "integer"
+min = 0
+max = 10
+default = 2
+
+[[panel.options]]
+name = "mode"
+label = { en = "Mode" }
+type = "select"
+choices = ["last", "mean"]
+default = "last"
+
+[files]"#;
+        let text = panel().replacen("\n[files]", options, 1);
+        let m = parse(&text).expect("valid");
+        let bundle = m.panel.as_ref().unwrap();
+        assert_eq!(bundle.options.len(), 3);
+        assert_eq!(bundle.options[1].max, Some(10.0));
+        let bad = text
+            .replacen("type = \"string\"", "type = \"colour\"", 1)
+            .replacen("default = 2", "default = 11", 1)
+            .replacen("choices = [\"last\", \"mean\"]", "choices = [\"last\", \"last\"]", 1)
+            .replacen("name = \"mode\"", "name = \"field\"", 1);
+        assert_eq!(
+            codes(&bad),
+            ["manifest.name_unknown", "manifest.default_type", "manifest.setting_repeated", "manifest.options_invalid"]
+        );
+        let range = text.replacen("min = 0", "min = 0.5", 1).replacen("max = 10", "max = -1", 1);
+        assert_eq!(codes(&range), ["manifest.default_type", "manifest.range_invalid", "manifest.default_type"]);
+        let misplaced = text.replacen("type = \"string\"", "type = \"string\"\nmin = 1\nchoices = [\"a\"]", 1);
+        assert_eq!(codes(&misplaced), ["manifest.not_for_type", "manifest.not_for_type"]);
     }
 
     #[test]

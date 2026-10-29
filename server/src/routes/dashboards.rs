@@ -262,14 +262,22 @@ fn parse_model(raw: Value) -> ApiResult<model::DashboardModel> {
 }
 
 /// The panel option checks of a write, against the stored model it replaces (none for a new one).
-fn check_panels(model: &model::DashboardModel, previous: Option<&model::DashboardModel>) -> ApiResult<()> {
-    model::check_panel_options(model, previous).map_err(|(panel, detail)| {
-        ApiError::validation(detail.clone())
-            .with_field("model")
-            .because("dashboards.panel_options")
-            .param("panel", panel)
-            .param("detail", detail)
-    })
+/// The panels of plugins are checked against the options their manifest declares, as long as the
+/// plugin may be shown (`plugins::panels::check_dashboard_options`).
+fn check_panels(
+    state: &AppState,
+    model: &model::DashboardModel,
+    previous: Option<&model::DashboardModel>,
+) -> ApiResult<()> {
+    model::check_panel_options(model, previous)
+        .and_then(|()| crate::plugins::panels::check_dashboard_options(state.plugins.panels(), model, previous))
+        .map_err(|(panel, detail)| {
+            ApiError::validation(detail.clone())
+                .with_field("model")
+                .because("dashboards.panel_options")
+                .param("panel", panel)
+                .param("detail", detail)
+        })
 }
 
 fn clean_message(raw: Option<&str>) -> ApiResult<String> {
@@ -536,7 +544,7 @@ async fn create(
         fields.insert("timeRange".into(), default);
     }
     let model = parse_model(raw)?;
-    check_panels(&model, None)?;
+    check_panels(&state, &model, None)?;
     let message = clean_message(body.message.as_deref())?;
     authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
     check_dashboard_sources(&state.db, &ctx, &model, None).await?;
@@ -751,7 +759,7 @@ async fn save(
         return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
     let stored = current_model(&state, &row).await?;
-    check_panels(&model, Some(&stored))?;
+    check_panels(&state, &model, Some(&stored))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     library::check_references(&state.db, &ctx, &model, Some(&stored)).await?;
     saved_analyses::check_references(&state.db, &ctx, &model, Some(&stored)).await?;
@@ -1117,7 +1125,7 @@ async fn restore_version(
     // Rules may have tightened since that version was saved; it must pass today's.
     let model = parse_model(stored)?;
     let current = current_model(&state, &row).await?;
-    check_panels(&model, Some(&current))?;
+    check_panels(&state, &model, Some(&current))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&current)).await?;
     library::check_references(&state.db, &ctx, &model, Some(&current)).await?;
     saved_analyses::check_references(&state.db, &ctx, &model, Some(&current)).await?;

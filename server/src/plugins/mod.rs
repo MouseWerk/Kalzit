@@ -14,14 +14,15 @@
 //!   their kinds in the registry and the administrator's actions on them.
 //! - `catalog`: the signed catalog index (off by default), its checks and installing from it
 //!   through the same path as a file.
-//!
-//! The panel message API follows in M4.
+//! - `panels`: the panel plugins that may be shown and the sandboxed frame document that carries
+//!   a panel's bundle (the message exchange itself runs in the browser).
 
 pub mod catalog;
 pub mod connector;
 pub mod host;
 pub mod in_process;
 pub mod package;
+pub mod panels;
 pub mod process;
 pub mod remote;
 pub mod sandbox;
@@ -71,7 +72,8 @@ impl HostError {
             | "plugin.nothing_to_approve"
             | "plugin.version_mismatch"
             | "plugin.key_exists"
-            | "plugin.untrusted" => (StatusCode::CONFLICT, "conflict"),
+            | "plugin.untrusted"
+            | "plugin.bundle_changed" => (StatusCode::CONFLICT, "conflict"),
             _ => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
         };
         ApiError::new(status, code, self.message).with_reason(self.reason, self.params)

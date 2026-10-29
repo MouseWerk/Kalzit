@@ -19,7 +19,7 @@ function platform(): string {
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 /** A zip archive with stored (uncompressed) entries, which is all a package needs. */
-function zip(entries: { name: string; data: Uint8Array }[]): Buffer {
+export function zip(entries: { name: string; data: Uint8Array }[]): Buffer {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
