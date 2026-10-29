@@ -297,7 +297,9 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   `docs/api/plugins.md`) und Kalzits Netzwerk-Connector: Plugins haben kein eigenes Netzwerk
   (Linux: seccomp-Filter und eigener Netzwerk-Namespace, Windows: AppContainer ohne
   Capabilities) und erreichen nur die im Manifest erklärten Ziele über Kalzit.
-  Panel-Nachrichten-API, Katalog und die Oberfläche folgen. Die Oberfläche folgt dem
+  Panel-Nachrichten-API und Panel-Host sind fertig: Panel-Plugins erscheinen in der
+  Visualisierungsauswahl, laufen im abgeschotteten iframe ohne Netz und ohne Zugriff auf Kalzit,
+  ihr Optionseditor entsteht aus dem Manifest. Der Katalog folgt. Die Oberfläche folgt dem
   Board `docs/design/blueprint/Plugins.dc.html`.
 
 ## 8. Windows- und Linux-Server

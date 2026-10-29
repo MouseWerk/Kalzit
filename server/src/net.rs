@@ -196,10 +196,18 @@ pub async fn security_headers(State(state): State<AppState>, req: Request, next:
     let https = req.extensions().get::<RequestInfo>().is_some_and(|i| i.https);
     let mut res = next.run(req).await;
     let h = res.headers_mut();
-    h.insert("content-security-policy", HeaderValue::from_static(CSP));
+    // A response with a stricter policy of its own keeps it: the frame of a panel plugin
+    // (`plugins::panels`) is sandboxed and may run only its bundle.
+    for (name, value) in [
+        ("content-security-policy", CSP),
+        ("referrer-policy", "strict-origin-when-cross-origin"),
+        ("permissions-policy", "camera=(), microphone=(), geolocation=()"),
+    ] {
+        if !h.contains_key(name) {
+            h.insert(name, HeaderValue::from_static(value));
+        }
+    }
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
-    h.insert("referrer-policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
-    h.insert("permissions-policy", HeaderValue::from_static("camera=(), microphone=(), geolocation=()"));
     h.insert("cross-origin-opener-policy", HeaderValue::from_static("same-origin"));
     let sec = &state.config.security;
     if https

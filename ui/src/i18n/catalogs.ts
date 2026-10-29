@@ -17,6 +17,7 @@ import deExplore from "./de/explore.json";
 import deGraph from "./de/graph.json";
 import deLibraryPanels from "./de/libraryPanels.json";
 import deLive from "./de/live.json";
+import dePanelPlugins from "./de/panelPlugins.json";
 import dePanels from "./de/panels.json";
 import dePlaylists from "./de/playlists.json";
 import dePlugins from "./de/plugins.json";
@@ -38,6 +39,7 @@ import enExplore from "./en/explore.json";
 import enGraph from "./en/graph.json";
 import enLibraryPanels from "./en/libraryPanels.json";
 import enLive from "./en/live.json";
+import enPanelPlugins from "./en/panelPlugins.json";
 import enPanels from "./en/panels.json";
 import enPlaylists from "./en/playlists.json";
 import enPlugins from "./en/plugins.json";
@@ -77,6 +79,7 @@ export const en = {
   ...enAccess,
   ...enAi,
   ...enPlugins,
+  ...enPanelPlugins,
 };
 export const de = {
   ...deCore,
@@ -97,4 +100,5 @@ export const de = {
   ...deAccess,
   ...deAi,
   ...dePlugins,
+  ...dePanelPlugins,
 };

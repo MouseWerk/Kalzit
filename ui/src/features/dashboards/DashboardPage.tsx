@@ -47,6 +47,7 @@ import { AccessDialog } from "../admin/access";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { handOffToExplore } from "../explore/handoff";
+import { usePanelPluginTypes } from "../plugins/panel/types";
 import { AnnotationDialog } from "./AnnotationDialog";
 import { mayManageAccess } from "./accessIntegration";
 import { annotationRanges, type DashboardMark, useDashboardAnnotations } from "./annotations";
@@ -265,6 +266,8 @@ export function DashboardScreen({ orgId, dashboardId, display, onDisplay, contro
   const { t } = useI18n();
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
   useRecordView(orgId, dashboardId);
+  // The panel types of the organization's panel plugins, for the grid and the panel editor.
+  usePanelPluginTypes(orgId);
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
   const picked = useRef(new Map<string, VariableValues>());
@@ -1171,6 +1174,7 @@ function DashboardView({
   // Panels may set a variable the dashboard defines (a node click setting $customerId).
   const host = {
     orgId,
+    dashboardId: dashboard.id,
     openInExplore: (datasourceId: string, query: unknown) => {
       handOffToExplore({ datasourceId, query });
       void navigate({ to: "/explore", search: {} });

@@ -19,8 +19,8 @@ const state = {
   locale: "en",
   title: "",
   series: [],
-  /** The row index of the shown value, for clicks. */
-  shown: null,
+  /** The last problem logged, so a run with the same problem logs nothing new. */
+  logged: "",
 };
 
 /** @param {Omit<PanelEvent, "kalzit" | "api">} event */
@@ -32,8 +32,7 @@ const style = document.createElement("style");
 style.textContent = `
   :root { color-scheme: light dark; }
   html, body { margin: 0; height: 100%; background: var(--bg-raised); color: var(--text); font-family: var(--font-sans); }
-  .tile { box-sizing: border-box; height: 100%; display: grid; grid-template-rows: auto 1fr auto; padding: var(--space-3); gap: var(--space-1); cursor: default; }
-  .tile[data-clickable] { cursor: pointer; }
+  .tile { box-sizing: border-box; height: 100%; display: grid; grid-template-rows: auto 1fr auto; padding: var(--space-3); gap: var(--space-1); }
   .label { font-size: var(--font-size-sm); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .value { font-size: var(--font-size-display); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; align-self: center; line-height: 1.1; }
   .unit { font-size: var(--font-size-md); font-weight: var(--font-weight-regular); color: var(--text-muted); margin-inline-start: var(--space-1); }
@@ -99,11 +98,14 @@ function render() {
   delta.textContent = "";
   delta.removeAttribute("data-sign");
   line.setAttribute("points", "");
-  state.shown = null;
-  tile.removeAttribute("data-clickable");
   if (!picked) {
     value.className = "empty";
     value.textContent = state.series.length ? text("noField") : text("noData");
+    if (state.series.length && state.options.field && state.logged !== state.options.field) {
+      // Into the panel's log (the panel inspector), once per field.
+      state.logged = state.options.field;
+      send({ type: "log", level: "warn", text: `no number field named ${state.options.field}` });
+    }
     return;
   }
   value.className = "value";
@@ -118,8 +120,6 @@ function render() {
     return;
   }
   const last = numbers[numbers.length - 1];
-  state.shown = { refId: picked.refId, index: last.i };
-  tile.setAttribute("data-clickable", "");
   value.append(format(last.n));
   if (picked.field.unit) {
     const unit = document.createElement("span");
@@ -151,10 +151,6 @@ function applyTheme(theme) {
     if (name.startsWith("--") && typeof val === "string") document.documentElement.style.setProperty(name, val);
   }
 }
-
-tile.addEventListener("click", () => {
-  if (state.shown) send({ type: "click", refId: state.shown.refId, target: "row", index: state.shown.index });
-});
 
 window.addEventListener("message", (event) => {
   // Only Kalzit, the parent window, speaks to the panel.

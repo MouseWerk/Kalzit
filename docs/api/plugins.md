@@ -4,8 +4,9 @@ The plugin routes, exactly as the server implements them (`server/src/routes/plu
 paths are below `/api`. Every `/admin/...` route is `Access::ServerAdmin` (installing and trusting
 plugins is a server action); the organization routes need `plugins:configure` in that
 organization. General rules (docs/ARCHITECTURE.md, "API conventions") apply. How plugins work:
-docs/ARCHITECTURE.md, "Plugins". This version hosts **data source** plugins; panel plugins and the
-catalog follow.
+docs/ARCHITECTURE.md, "Plugins". This version hosts **data source** and **panel** plugins; the
+catalog follows. The panel types of an organization and a panel's frame are routes for its
+members ("Panel plugins" below).
 
 Refusals carry a reason from the table at the end: `422 validation` for packages and requests that
 fail a check, `409 conflict` for a state that refuses the step (a downgrade, a changed key, a key
@@ -57,8 +58,10 @@ What the host checks, in this order, before anything runs:
    unlisted files, missing files, other hashes, links, junctions, reparse points and files with
    more than one hard link are refused, and so is a manifest other than the one checked first.
    The binary is made executable only after that. The plugin later runs from this directory.
-3. The manifest: valid, `kind = "datasource"`, `min_kalzit` not newer than this Kalzit, a binary
-   for this server's platform.
+3. The manifest: valid, `min_kalzit` not newer than this Kalzit; a data source has a binary for
+   this server's platform. A panel's bundle is checked once it is unpacked (step 2): UTF-8
+   without NUL characters, at most 8 MiB, and without `</script` or `<!--`, since Kalzit serves it
+   inside an HTML document (`plugin.bundle_invalid`).
 4. The signature, against the trusted keys: Kalzit's own plugin key and the publisher keys an
    administrator added (below). A signature that names a trusted key but does not verify is
    always refused, also when unsigned plugins are allowed; a signature by a key nobody trusts is
@@ -87,7 +90,8 @@ What the host checks, in this order, before anything runs:
     "trusted": true,                // the key is still trusted (always true when unsigned)
     "approved": true,               // the permissions of this version are approved
     "enabled": true,                // the administrator's switch
-    "running": true,                // its kind is registered (approved, enabled, trusted, runnable here)
+    "running": true,                // its kind is registered (approved, enabled, trusted, runnable here);
+                                    // a panel: it may be shown
     "sandboxWarning": "landlock_missing",  // Linux without Landlock: the plugin is refused there
                                     // (landlock_missing_allowed: it runs anyway); absent otherwise
     "permissions": [                // the network targets, as approved
@@ -246,6 +250,83 @@ takes either switch, each change is recorded on its own.
 plugin for the organization: its kind is not offered there (`GET /orgs/{orgId}/datasource-kinds`
 leaves it out, creating a source of it answers `datasource.kind_unknown`) and the organization's
 sources of the kind answer `datasource.kind_unavailable`.
+
+## Panel plugins
+
+A panel plugin runs in the browser, never on the server: no process, no network target. Once it
+is approved, enabled and its key is trusted, its panel type (the plugin id) may be used in every
+organization that has not blocked it. Its panels are drawn in a sandboxed frame and spoken to
+through the panel message API (below).
+
+### Panel types: `GET /orgs/{orgId}/panel-plugins`
+
+`Access::OrgMember`. The panel plugins that may be shown in the organization, for the
+visualization picker and the options editor:
+
+```json
+{ "items": [{
+  "id": "dev.kalzit.panel-kpi", "name": "KPI tile", "version": "0.1.0",
+  "description": "...", "publisher": "Kalzit",       // when the manifest has them
+  "signer": "kalzit",                                 // kalzit | publisher | unsigned
+  "shapes": ["frame"], "api": 1,
+  "options": [{ "name": "decimals", "label": { "en": "Decimals", "de": "Nachkommastellen" },
+                "type": "integer", "min": 0.0, "max": 10.0 }]
+}] }
+```
+
+`options` are the manifest's `[[panel.options]]` (docs/ARCHITECTURE.md, "Manifest"). The UI
+builds the options editor from them, and gives a panel only declared options whose values fit,
+with the defaults for the rest. Creating, saving and restoring a dashboard check the options of
+the plugin panels they add or change against the manifest (`422 validation`,
+`dashboards.panel_options`, naming the panel and the option), while the plugin may be shown;
+library panels and saved analyses keep their options unchecked for now.
+
+### Frame: `GET /orgs/{orgId}/panel-plugins/{pluginId}/frame?dashboard={dashboardId}`
+
+`Access::OrgMember`, then per request:
+
+- With `dashboard`: the dashboard must exist in the organization and not be in the trash. If its
+  current version shows a panel of this type (its own, or through a linked library panel or
+  saved analysis), `dashboards:read` on the dashboard is enough (viewers); otherwise the caller adds the panel and needs `dashboards:write` on it. A dashboard
+  the caller cannot see answers `404`, one they may only read `403`.
+- Without `dashboard` (a dashboard not saved yet): `dashboards:write` in the organization.
+- The plugin must be approved, enabled, trusted and not blocked for the organization; else
+  `404` with `plugin.panel_unavailable`.
+- The bundle is read from the installed package and its SHA-256 compared with the manifest's
+  `[files]` on every request; a file that differs is never served (`409` with
+  `plugin.bundle_changed`, and an error in Kalzit's log). An optional `v` (the plugin's version)
+  only makes a new version load afresh.
+
+The answer is an HTML document (`text/html; charset=utf-8`) with the bundle inline as its only
+script (`<script type="module">`, line breaks as `\n`), and these headers of its own (Kalzit's
+page policy does not replace them):
+
+```
+Content-Security-Policy: sandbox allow-scripts; default-src 'none'; script-src 'sha256-<bundle>';
+  style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:;
+  connect-src 'none'; webrtc 'block'; frame-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none';
+  form-action 'none'; base-uri 'none'; frame-ancestors 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+X-DNS-Prefetch-Control: off
+Cross-Origin-Resource-Policy: same-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), display-capture=(), fullscreen=()
+```
+
+- `sandbox allow-scripts` without `allow-same-origin`, as the UI's `<iframe sandbox="allow-scripts">`
+  has it, so the document runs in an opaque origin also when it is opened on its own: no cookies,
+  no storage, no access to Kalzit's page, its session or its API (a request from the frame carries
+  no session, and `connect-src 'none'` stops it anyway).
+- The hash of the bundle is the only script source: nothing else runs, inline or loaded.
+- No `Set-Cookie`; the response is never cached.
+- Left to the browser: `connect-src` does not cover WebRTC, so `webrtc 'block'` stops it only
+  where the browser knows that directive (Chromium does not yet, and reports it in the console as
+  an unrecognized directive once per frame); a panel could otherwise reach a STUN or TURN server. DNS prefetching is turned off, but a browser may still resolve
+  names it is given. Both rest on the bundle's signature and the administrator's trust.
+- Inline, because a separate request for the bundle from the opaque origin would carry no session
+  and could not be authorized.
 
 ## Data sources of plugin kinds
 
@@ -488,10 +569,11 @@ an undeclared target, an undeclared port or protocol and Kalzit's own port, and 
 
 Version 1, what a panel plugin's bundle and Kalzit say to each other through `postMessage` across
 the sandboxed iframe (docs/ARCHITECTURE.md, "Panel plugins"). The TypeScript types are
-`plugin-api/panel/v1/kalzit-panel.d.ts`; Kalzit checks every event with
-`kalzit_plugin_api::panel::parse_event`, whose constants are the limits below. The host side
-(serving the bundle, the iframe, sending the messages) is not built yet; the API and an example
-panel (`examples/plugins/panel-kpi`) are.
+`plugin-api/panel/v1/kalzit-panel.d.ts`. The host runs in the browser
+(`ui/src/features/plugins/panel`): it checks every event exactly as
+`kalzit_plugin_api::panel::parse_event` does, whose constants are the limits below; both run the
+cases of `plugin-api/panel/v1/events.fixture.json` and `options.fixture.json`. The example panel
+is `examples/plugins/panel-kpi`.
 
 Every message is a JSON object with `kalzit: "panel"`, `api: 1` and `type`.
 
@@ -499,8 +581,8 @@ Every message is a JSON object with `kalzit: "panel"`, `api: 1` and `type`.
 
 | `type` | Fields | When |
 |---|---|---|
-| `init` | `options` (the panel's JSON options), `size` (`width`, `height` in CSS pixels), `theme` (`scheme`: `light` or `dark`; `tokens`: Kalzit's design tokens by custom property name, resolved), `locale` (`en`, `de`), `timeZone` (IANA), `title` | the answer to `ready` |
-| `data` | `series` (per query: `refId` and `result` in its native shape as in docs/api/datasources.md, or `error`), `timeRange` (`from`, `to`), `revision` (grows with every run) | after `init`, and whenever the panel's queries ran |
+| `init` | `options` (the panel's JSON options: the declared ones that fit, with defaults), `size` (`width`, `height` in CSS pixels), `theme` (`scheme`: `light` or `dark`; `tokens`: Kalzit's design tokens by custom property name, colors resolved), `locale` (`en`, `de`), `timeZone` (IANA), `title`, `mode` (`view`, or `edit` in the panel editor) | the answer to `ready` |
+| `data` | `series` (per query: `refId` and `result` in its native shape as in docs/api/datasources.md, after the panel's steps, or `error`), `timeRange` (`from`, `to`), `revision` (grows with every new result) | after `init`, and whenever the panel's results change |
 | `options` | `options` | the options changed |
 | `size` | `width`, `height` | the frame was resized |
 | `theme` | `scheme`, `tokens` | the theme changed |
@@ -518,38 +600,48 @@ Results keep the query's limits; a panel cannot run queries of its own.
 | `range` | `from`, `to` (Unix milliseconds) | `from` before `to` |
 | `setVariable` | `name`, `value` (a text, or a list for a multi-value variable) | a variable name of at most 64 characters; at most 100 values of at most 1024 characters, no control characters |
 | `resize` | `height` | 16 to 4000 CSS pixels; Kalzit may give less |
+| `setOptions` | `options` (the whole object) | in `edit` mode only; only options the manifest declares, each fitting (`panel.option_unknown`, `panel.option_invalid`) |
+| `link` | `url`, `title` (optional) | `url` at most 2048 characters: `http`/`https` with a host and no user name, or a path in Kalzit starting with `/` (not `//`, no `.` or `..` segments, no `%2e`, `%2f` or `%5c`, not the API under `/api`); `title` at most 200 |
+| `log` | `level` (`debug`, `info`, `warn`, `error`), `text` | at most 1024 characters, no control characters; at most 5 lines per second |
+
+What the host does with them:
+
+- `ready`: `init`, then `data`; after that `options`, `size`, `theme` and `data` whenever they
+  change. A frame that does not send `ready` within 10 seconds is shown as failed, with "Try
+  again".
+- `resize`: the frame takes that height (the panel scrolls when it is taller than its place).
+- `setOptions`: in the panel editor, the options replace the panel's options (as if typed in its
+  options editor); outside it the event is dropped.
+- `link`: a dialog shows the address and the plugin's name, with Cancel focused; only "Open"
+  opens it: an address in a new tab with `noopener,noreferrer`, a path in Kalzit in place.
+- `log`: into the browser console as `[panel <id>] <text>` at its level.
+- `click`, `select`, `range`, `setVariable`: checked, then not acted on (a `debug` line says so).
+  Kalzit acts on what a panel may ask for: a size, its options while edited, a link the viewer
+  confirms, and its log.
 
 Rules:
 
-- Enforcement lies with the panel host, which is not built yet: it runs `parse_event` on every
-  event and keeps the rate limit per panel. Until it exists, nothing receives panel events; the
-  rules below are what the host will hold a bundle to.
-- An event is at most 16 KiB of JSON; Kalzit takes at most 20 events per second per panel and
+- The host checks every event and keeps the rate limits per panel. An event is at most 16 KiB of JSON; Kalzit takes at most 20 events per second per panel and
   drops the rest. An event of another `api`, an unknown `type` or a field out of its range is
   dropped (`panel.not_json`, `panel.not_envelope`, `panel.api_unsupported`, `panel.type_unknown`,
-  `panel.field_invalid`, `panel.too_large`, shown in the browser console). Unknown fields are
-  ignored and never passed on.
-- `setVariable` sets a variable only when the dashboard has it; `click`, `select` and `range` act
-  like the same gestures on built-in panels.
-- Both sides accept messages only from the other window (`event.source`): the frame's origin is
-  opaque (`null`), so origins say nothing.
-- For the host's design: `connect-src 'none'` stops requests, but a frame can still carry data
-  out by navigating, itself (`location = "https://elsewhere/?data"`), a new window or the top
-  page. The host therefore loads the bundle with `sandbox="allow-scripts"` only (no
-  `allow-top-navigation`, `allow-popups` or `allow-forms`), serves the frame document and the
-  bundle with a strict Content Security Policy of their own (`default-src 'none'`, the bundle as
-  the only script, no `form-action`, `base-uri 'none'`), and blocks the frame's own navigation
-  away from the bundle's document (CSP `navigate-to` where browsers support it; otherwise the
-  host treats a navigation of the frame, seen as a new `load` event, as a breach and removes the
-  panel).
+  `panel.field_invalid`, `panel.too_large`, shown in the browser console with the plugin id).
+  Unknown fields are ignored and never passed on.
+- Both sides accept messages only from the other window (`event.source`). Kalzit also requires
+  the opaque origin `"null"` of the sandboxed frame and drops anything else; it sends with the
+  target origin `"*"`, since an opaque origin cannot be named. What it sends is only the panel's
+  own options and results, which the viewer may see anyway.
+- `connect-src 'none'` stops requests, but a frame can still carry data out by navigating,
+  itself (`location = "https://elsewhere/?data"`), a new window or the top page. Kalzit therefore
+  loads the bundle with `sandbox="allow-scripts"` only (no `allow-top-navigation`,
+  `allow-popups` or `allow-forms`), serves the frame with the policy of "Frame" above, and
+  treats a second `load` of the frame (a navigation away from the bundle's document) as a
+  breach: the panel is removed and shows an error with "Try again".
 - Evolution: version 1 grows only by new optional fields and new message types. A panel ignores
   types and fields it does not know; Kalzit speaks to a bundle in the version its manifest names
   (`[panel] api`) and refuses versions it does not know at install.
 
 ## Not here yet
 
-- The panel host: serving installed panel bundles, the sandboxed iframe and the message
-  exchange above. Panel packages are refused at install meanwhile (`plugin.kind_unsupported`).
 - The catalog (signed index, downloads).
 - `Release` calls when a data source changes or is deleted (plugins key their pools by
   `Connection.revision` meanwhile).
@@ -563,7 +655,6 @@ Rules:
 | `plugin.package_invalid` | `issues` | a bad entry path, a link, a device, an encrypted entry, two paths differing only in case, or files that do not match the manifest (`package.*` codes in the message) (`422`) |
 | `plugin.manifest_missing` | | the package has no readable `kalzit-plugin.toml` (`422`) |
 | `plugin.manifest_invalid` | `issues` | the manifest is not valid (`manifest.*` codes) (`422`) |
-| `plugin.kind_unsupported` | | a panel plugin; only data source plugins can be installed yet (`422`) |
 | `plugin.kalzit_too_old` | `minKalzit` | the plugin needs a newer Kalzit (`422`) |
 | `plugin.platform_missing` | `platform` | the package has no binary for this server's platform (`422`) |
 | `plugin.platform_unsupported` | | plugins cannot run on this server's platform (`422`) |
@@ -576,6 +667,9 @@ Rules:
 | `plugin.key_changed` | | the update is not signed by the installed version's key or a key it was handed over to, or it is unsigned (`409`) |
 | `plugin.publisher_changed` | `datasources`, `previousKeyId`, `removedVersion` | a removed plugin's id is installed without its signing key (or it was unsigned or removed before 0.3.2) while data sources of its kind exist; repeat with `confirmPublisherChange=true` to clear their secrets (`409`) |
 | `plugin.kind_taken` | | another kind has this id (`422`) |
+| `plugin.bundle_invalid` | `maxBytes` (when too large) | a panel's bundle is not UTF-8, holds a NUL character, `</script` or `<!--`, or is larger than 8 MiB (`422`) |
+| `plugin.bundle_changed` | | the installed bundle's SHA-256 differs from its manifest; it is not served (`409`) |
+| `plugin.panel_unavailable` | | the panel plugin is not installed, approved, enabled or trusted, or blocked for the organization (`404`) |
 | `plugin.target_refused` | `host` | a fixed network target of the manifest is refused by the data source target rules (`422`) |
 | `plugin.io` | `detail` | a file of the host could not be written or read (`422`) |
 | `plugin.upload_incomplete` | | the upload broke off (`422`) |

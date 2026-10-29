@@ -1,4 +1,6 @@
+import { useSyncExternalStore } from "react";
 import type { QueryResult, Shape } from "../api/generated/shapes";
+import type { Translate } from "../i18n/i18n";
 import { barPanel } from "./bar";
 import { barGaugePanel } from "./bargauge";
 import { distributionPanel } from "./distribution";
@@ -46,18 +48,73 @@ export const PANELS: readonly AnyPanelPlugin[] = [
   textPanel,
 ];
 
-export function getPanel(type: string): AnyPanelPlugin | undefined {
-  return PANELS.find((panel) => panel.type === type);
+/**
+ * The panel types of installed panel plugins (`features/plugins/panel`), after the built-in ones.
+ * Set when an organization's list arrives; components that look panels up subscribe with
+ * `useExternalPanels`, so a dashboard drawn before the list arrived draws them once it is there.
+ */
+let external: readonly AnyPanelPlugin[] = [];
+const listeners = new Set<() => void>();
+
+export function setExternalPanels(panels: readonly AnyPanelPlugin[]): void {
+  if (panels === external) {
+    return;
+  }
+  external = panels.filter((p) => !PANELS.some((built) => built.type === p.type));
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function externalPanels(): readonly AnyPanelPlugin[] {
+  return external;
+}
+
+/** The panel types of plugins; renders again when they change. */
+export function useExternalPanels(): readonly AnyPanelPlugin[] {
+  return useSyncExternalStore(subscribe, externalPanels, externalPanels);
 }
 
 /**
- * Panels that accept any of the shapes first, then the rest, each group in registry order. A
- * panel that draws without a query (text) fits every result.
+ * The panel type `type`: a built-in one, else one of `plugins` (the plugins' panel types known
+ * now). A component passes what `useExternalPanels` gave it, so its drawing depends on the list
+ * and is redone when the list changes.
+ */
+export function getPanel(
+  type: string,
+  plugins: readonly AnyPanelPlugin[] = external,
+): AnyPanelPlugin | undefined {
+  return PANELS.find((panel) => panel.type === type) ?? plugins.find((p) => p.type === type);
+}
+
+/** The name of a panel type as the picker shows it: a plugin's own, else the catalog's. */
+export function panelName(t: Translate, panel: AnyPanelPlugin): string {
+  return panel.label ?? t(panel.name);
+}
+
+/** The one-line description of a panel type, if it has one. */
+export function panelDescription(t: Translate, panel: AnyPanelPlugin): string | undefined {
+  return panel.hint ?? (panel.description === undefined ? undefined : t(panel.description));
+}
+
+/**
+ * Panels that accept any of the shapes first, then the rest, each group in registry order and
+ * the plugins' panels (`plugins`, from `useExternalPanels`) after the built-in ones. A panel that
+ * draws without a query (text) fits every result. Explore passes none: it has no dashboard to
+ * show them on.
  */
 export function panelsForShapes(
   shapes: readonly Shape[],
+  plugins: readonly AnyPanelPlugin[] = [],
 ): { panel: AnyPanelPlugin; accepts: boolean }[] {
-  const entries = PANELS.map((panel) => ({
+  const entries = [...PANELS, ...plugins].map((panel) => ({
     panel,
     accepts: panel.standalone === true || panel.shapes.some((shape) => shapes.includes(shape)),
   }));

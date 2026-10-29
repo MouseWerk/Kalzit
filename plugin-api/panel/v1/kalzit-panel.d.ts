@@ -14,7 +14,11 @@
 // - Send events with `window.parent.postMessage(event, "*")`. Kalzit checks each one and drops
 //   what does not fit: at most 16 KiB of JSON, at most 20 events per second, the limits below.
 //
-// Kalzit checks the events with `kalzit_plugin_api::panel::parse_event`; the Rust constants
+// - Kalzit acts on `ready`, `resize`, `setOptions` (in edit mode), `link` (after the viewer
+//   confirms) and `log`; `click`, `select`, `range` and `setVariable` are checked but not acted
+//   on yet.
+//
+// Kalzit checks the events as `kalzit_plugin_api::panel::parse_event` does; the Rust constants
 // there are the limits.
 
 export type ApiVersion = 1;
@@ -101,6 +105,11 @@ export interface InitMessage extends Envelope {
   timeZone: string;
   /** The panel's title, empty when it has none. */
   title: string;
+  /**
+   * "edit" in the panel editor, where the panel may send `setOptions`; "view" on a dashboard.
+   * Absent from hosts before Kalzit 0.4.0: treat as "view".
+   */
+  mode?: "view" | "edit";
 }
 
 /** New results: after `init`, and whenever the panel's queries ran again. */
@@ -176,4 +185,63 @@ export interface ResizeEvent extends Envelope {
   height: number;
 }
 
-export type PanelEvent = ReadyEvent | ClickEvent | SelectEvent | RangeEvent | SetVariableEvent | ResizeEvent;
+/**
+ * In edit mode only: the panel's options as the panel wants them, the whole object. Kalzit checks
+ * them against the options the manifest declares (`[[panel.options]]`: only declared keys, each
+ * value of its type and range) and drops them otherwise; then it answers with `options`.
+ */
+export interface SetOptionsEvent extends Envelope {
+  type: "setOptions";
+  options: Record<string, unknown>;
+}
+
+/**
+ * Asks Kalzit to open a link: an `http` or `https` address (without a user name) or a path in
+ * Kalzit starting with `/` (not `//`, not the API under `/api`); at most 2048 characters. Kalzit shows the address and opens it only
+ * when the viewer confirms; an address opens in a new tab without a referrer.
+ */
+export interface LinkEvent extends Envelope {
+  type: "link";
+  url: string;
+  /** At most 200 characters, shown with the address. */
+  title?: string;
+}
+
+/**
+ * A line for the panel's log, shown in the browser console with the plugin id: at most 1024
+ * characters without control characters, at most 5 lines per second.
+ */
+export interface LogEvent extends Envelope {
+  type: "log";
+  level: "debug" | "info" | "warn" | "error";
+  text: string;
+}
+
+export type PanelEvent =
+  | ReadyEvent
+  | ClickEvent
+  | SelectEvent
+  | RangeEvent
+  | SetVariableEvent
+  | ResizeEvent
+  | SetOptionsEvent
+  | LinkEvent
+  | LogEvent;
+
+// ---- The options a manifest declares (`[[panel.options]]`) ----
+
+export type PanelOptionType = "string" | "text" | "number" | "integer" | "bool" | "select";
+
+export interface PanelOption {
+  name: string;
+  /** By language: "en", optionally "de". */
+  label: Record<string, string>;
+  type: PanelOptionType;
+  default?: string | number | boolean;
+  /** The choices of a "select". */
+  choices?: string[];
+  /** The range of a "number" or "integer", inclusive. */
+  min?: number;
+  max?: number;
+  help?: Record<string, string>;
+}

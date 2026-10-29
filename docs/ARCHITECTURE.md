@@ -332,9 +332,10 @@ the admin API in docs/api/plugins.md), its pages in the UI after the board
 `docs/design/blueprint/Plugins.dc.html` (`ui/src/features/plugins`: Settings > Plugins with the
 installed plugins, install from a file, signature and trust, a page per plugin, and the
 organization's block list; plugin kinds in "Add data source" with a JSON query editor), the Rust
-SDK with the packaging tool and example plugins, the panel message API, and Kalzit's network
-connector, the only network a plugin has. The panel host and the catalog follow in M4 (marked
-(M4) below).
+SDK with the packaging tool and example plugins, the panel message API and the panel host
+(panel types in the visualization picker, the sandboxed frame, the options editor from the
+manifest), and Kalzit's network connector, the only network a plugin has. The catalog follows in
+M4 (marked (M4) below).
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
 serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a
@@ -460,23 +461,44 @@ process, a network target or the gRPC protocol.
   is left out with `frame.type_unsupported` naming it. Kalzit refuses plugins whose major
   version it does not speak (`SUPPORTED_PROTOCOL_VERSIONS`). Tested in both crates.
 
-### Panel plugins (M4)
+### Panel plugins
 
+- A panel plugin never runs on the server. Installed, approved, enabled and trusted, it is in
+  `plugins::panels::PanelRegistry` (no process, nothing in the kind registry); its panel type is
+  its id. `GET /orgs/{orgId}/panel-plugins` lists those not blocked for the organization with
+  their declared options; the UI adds them to the panel registry after the built-in types
+  (`setExternalPanels`), so the picker offers them with a neutral "Plugin" badge and the
+  publisher, and Explore (no dashboard) does not.
 - The bundle (`[panel]` in the manifest: one `.js`/`.mjs` file with its SHA-256 and the message
-  API version `api`) is served by Kalzit from the installed package and loaded into an
-  `<iframe sandbox="allow-scripts">` without `allow-same-origin`: the panel gets an opaque
-  origin, so it cannot read Kalzit's cookies, storage or DOM, and a Content Security Policy on
-  the frame allows no network requests (`connect-src 'none'`) and no other scripts.
-- Messages (`postMessage`, each with `api` and `type`): into the frame the panel's options, its
-  size, the theme tokens and the query results in their native shapes, as the panel API of
-  built-in panels receives them; out of the frame only events (a clicked row, document or node,
-  a selection, a variable to set, a size request). Kalzit checks every message against the
-  schema of its version and drops anything else; a panel cannot run queries of its own.
-- Version 1 grows only by new optional fields and message types; the manifest's `api` names the
-  version a bundle speaks, and Kalzit refuses versions it does not know.
-- Done: the message API, version 1 (docs/api/plugins.md, "Panel message API";
-  `kalzit_plugin_api::panel` checks events, `plugin-api/panel/v1/kalzit-panel.d.ts` has the
-  types) and the example `examples/plugins/panel-kpi`. The host side follows (M4).
+  API version `api`) is served by `GET /orgs/{orgId}/panel-plugins/{id}/frame` from the installed
+  package, its hash checked against the manifest on every request, as one HTML document with the
+  bundle inline. Inline because the frame's requests carry no session (opaque origin), so a
+  separate bundle request could not be authorized. The response carries its own policy:
+  `sandbox allow-scripts`, `default-src 'none'`, the bundle's hash as the only script source,
+  `connect-src 'none'`, `webrtc 'block'`, no forms, no base, `frame-ancestors 'self'`
+  (`net::security_headers` keeps it), and `X-DNS-Prefetch-Control: off`. Remaining risk: WebRTC is
+  outside `connect-src`, and `webrtc 'block'` holds only in browsers that implement it; there a
+  panel could still reach a STUN/TURN server. That rests on the signature and the admin's trust. Authorization per request: the dashboard (readable when it shows the panel, editable
+  otherwise), the plugin enabled, trusted and not blocked for the organization.
+- The UI loads it into `<iframe sandbox="allow-scripts">` without `allow-same-origin`: the panel
+  gets an opaque origin, so it cannot read Kalzit's cookies, storage or DOM, call its API or
+  reach other panels.
+- Messages (`postMessage`, each with `api` and `type`): into the frame the panel's options (the
+  declared ones that fit, with defaults), its size, the theme tokens (colors resolved), the mode
+  (`view`/`edit`) and the query results in their native shapes after the panel's steps, as
+  built-in panels receive them; out of the frame only events. The host
+  (`ui/src/features/plugins/panel`) accepts them only from its frame's window with the origin
+  `"null"`, checks each against the schema of its version (the same cases as
+  `kalzit_plugin_api::panel`, shared as fixtures), keeps 20 events and 5 log lines per second,
+  and acts only on a size request, options in the panel editor (checked against
+  `[[panel.options]]`), a link the viewer confirms and log lines. A frame that does not say
+  `ready` within 10 seconds or loads a second document (a navigation) is stopped and shows an
+  error with "Try again". A panel cannot run queries of its own.
+- The options editor is built from `[[panel.options]]`: a field per option with its label and
+  help in the user's language, numbers within their range, selects from their choices.
+- Version 1 grows only by new optional fields and message types (`setOptions`, `link`, `log` and
+  `init.mode` came this way); the manifest's `api` names the version a bundle speaks, and Kalzit
+  refuses versions it does not know.
 
 ### SDK, packaging tool and examples
 
@@ -567,7 +589,10 @@ linux-x64 = "bin/linux-x64/redis-plugin"
 ```
 
 A panel has `[panel]` with `path` (the `.js`/`.mjs` bundle, listed in `files`) and `api` (the
-panel message API version) instead of binaries, settings and permissions.
+panel message API version) instead of binaries, settings and permissions, and optionally
+`[[panel.options]]`: `name`, `label` (`en`, optionally `de`), `type` (`string`, `text`,
+`number`, `integer`, `bool`, `select`), `default`, `choices` (a select's), `min` and `max`
+(numbers), `help`; at most 64, defaults checked against their type and range.
 
 `manifest::parse` reports every problem at once with its path and a stable code
 (`manifest.*`): unknown keys, ids that are not reverse domain names (so a plugin can never take

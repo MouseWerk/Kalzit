@@ -4,14 +4,16 @@ import { showToast } from "../../lib/toasts";
 import { errorMessage } from "../dashboards/ui/errors";
 import { KINDS_KEY } from "../datasources/api";
 import { type HostSwitches, type PluginList, patchHostSwitches, pluginKeys } from "./api";
+import { PANEL_PLUGINS_KEY } from "./panel/api";
 
 /**
- * Reads the plugins again after a change, and the data source kinds, which gain or lose a plugin
- * kind when it is approved, turned on or off, or removed.
+ * Reads the plugins again after a change, and the data source kinds and panel types, which gain
+ * or lose a plugin's when it is approved, turned on or off, blocked or removed.
  */
 export function refreshPlugins(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: pluginKeys.all });
   void queryClient.invalidateQueries({ queryKey: [KINDS_KEY] });
+  void queryClient.invalidateQueries({ queryKey: [PANEL_PLUGINS_KEY] });
 }
 
 /** Changes a host switch; the page shows the server's answer, never the click alone. */

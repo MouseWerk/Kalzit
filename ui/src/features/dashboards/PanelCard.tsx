@@ -16,7 +16,7 @@ import { exportPanel, exportQuery } from "../../analysis/api";
 import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
 import { runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis/steps";
-import type { TimeRange } from "../../api/generated/shapes";
+import type { DocumentSet, GraphSet, TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
@@ -25,7 +25,7 @@ import { useInView } from "../../live/useInView";
 import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
-import { getPanel } from "../../panels/registry";
+import { getPanel, useExternalPanels } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
@@ -34,7 +34,7 @@ import { PanelHostContext, usePanelHost } from "../../panels/host";
 import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
-import type { DocumentFilter } from "../../panels/types";
+import type { DocumentFilter, PanelSeries } from "../../panels/types";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { useSourceKinds } from "../datasources/useSourceKinds";
 import type { DashboardMark } from "./annotations";
@@ -743,14 +743,23 @@ export function PanelBody({
     [given, transformations, outcomes, calendar],
   );
   const frames = useMemo(() => stepsRun.frames.map((f) => f.frame), [stepsRun]);
-  const plugin = getPanel(panel.type);
+  // Drawn again when the plugins' panel types arrive.
+  const plugins = useExternalPanels();
+  const plugin = getPanel(panel.type, plugins);
   // Parsed once per change of the stored options, for the same reason.
   const stored = panel.options;
   const options = useMemo(() => plugin?.options(stored), [plugin, stored]);
   const storedConfig = panel.fieldConfig;
   const fieldConfig = useMemo(() => parseFieldConfig(storedConfig), [storedConfig]);
   if (plugin === undefined) {
-    return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;
+    // A plugin's panel type is a reverse domain name: its plugin is not there, off or blocked.
+    return (
+      <p className="panel-empty">
+        {panel.type.includes(".")
+          ? t("panelPlugins.error.unavailable", { type: panel.type })
+          : t("dashboards.panel.unknownType", { type: panel.type })}
+      </p>
+    );
   }
   // A panel that needs no query (text) draws right away, whatever the queries do.
   if (plugin.standalone === true) {
@@ -913,6 +922,9 @@ export function PanelBody({
               title={title}
               revision={revision}
               {...(variables === undefined ? {} : { variables })}
+              {...(plugin.external === true
+                ? { series: pluginSeries(stepsRun, documents, graphs, errors) }
+                : {})}
             />
           </PanelErrorBoundary>
         </div>
@@ -926,6 +938,38 @@ export function PanelBody({
       ) : null}
     </div>
   );
+}
+
+/**
+ * What a plugin's panel receives: every query's result in its native shape after the panel's
+ * steps (frames, the document sets no projection turned into a frame, graphs), and the queries
+ * that failed with their error, by `refId`.
+ */
+function pluginSeries(
+  stepsRun: StepsRun,
+  documents: readonly { refId: string; documents: DocumentSet }[],
+  graphs: readonly { refId: string; graph: GraphSet }[],
+  errors: readonly { refId: string; code: string; message: string; reason?: unknown }[],
+): PanelSeries[] {
+  return [
+    ...stepsRun.frames.map((f) => ({
+      refId: f.name,
+      result: { shape: "frame" as const, frame: f.frame },
+    })),
+    ...documents.map((d) => ({
+      refId: d.refId,
+      result: { shape: "documents" as const, documents: d.documents },
+    })),
+    ...graphs.map((g) => ({ refId: g.refId, result: { shape: "graph" as const, graph: g.graph } })),
+    ...errors.map((e) => ({
+      refId: e.refId,
+      error: {
+        code: e.code,
+        message: e.message,
+        ...(typeof e.reason === "string" ? { reason: e.reason } : {}),
+      },
+    })),
+  ];
 }
 
 /**

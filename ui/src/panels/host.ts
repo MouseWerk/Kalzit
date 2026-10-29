@@ -28,6 +28,16 @@ export interface PanelHost {
   view?: { dashboardId: string; panelId: string };
   /** Opens a query in Explore's editor, unrun (a graph exploration as Cypher). */
   openInExplore?: (datasourceId: string, query: unknown) => void;
+  /**
+   * The dashboard the panel is drawn on, also in its panel editor: a plugin's panel frame is
+   * served for it (docs/api/plugins.md, "Panel plugins"). Absent for a dashboard not saved yet.
+   */
+  dashboardId?: string;
+  /**
+   * In the panel editor: takes options a panel asks for itself (a plugin's `setOptions`, after
+   * its checks). Absent while viewing, where a panel cannot change its options.
+   */
+  editOptions?: (options: Record<string, unknown>) => void;
 }
 
 export const PanelHostContext = createContext<PanelHost>({});
