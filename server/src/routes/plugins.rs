@@ -113,6 +113,10 @@ struct PluginView {
     /// `landlock_missing_allowed` when it runs without anyway.
     #[serde(skip_serializing_if = "Option::is_none")]
     sandbox_warning: Option<&'static str>,
+    /// Why the plugin cannot run until it is removed and installed anew: `plugin.kind_changed`
+    /// when its stored kind is not its manifest's (an update of Kalzit 0.4.0 changed it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    problem: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pending: Option<PendingView>,
     /// The process, while the plugin runs.
@@ -159,6 +163,7 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
     } else {
         None
     };
+    let problem = crate::plugins::host::check_kind(&row, &m).err().map(|e| e.reason);
     let process = state.plugins.status(&row.id);
     // A panel has no process: it runs when it may be shown.
     let running = process.is_some() || state.plugins.panels().get(&row.id).is_some();
@@ -181,6 +186,7 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
         running,
         permissions: package::permission_lines(&m),
         sandbox_warning,
+        problem,
         pending,
         process,
         installed_at: row.installed_at,

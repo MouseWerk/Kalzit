@@ -829,7 +829,7 @@ Rules:
 | `plugin.update_other_id` | | the package is for another plugin (`422`) |
 | `plugin.downgrade` | | the package is older than the installed version (`409`) |
 | `plugin.key_changed` | | the update is not signed by the installed version's key or a key it was handed over to, or it is unsigned (`409`) |
-| `plugin.kind_changed` | | the update is of another kind than the installed plugin (panel or data source); remove the plugin and install the package as a new one (`409`) |
+| `plugin.kind_changed` | | the update is of another kind than the installed plugin (panel or data source); remove the plugin and install the package as a new one (`409`). Also a plugin whose stored kind differs from its manifest (an update of 0.4.0 changed it): it does not run or show, and the plugin carries `problem: "plugin.kind_changed"` until it is removed and installed anew |
 | `plugin.publisher_changed` | `datasources`, `previousKeyId`, `removedVersion`; `unsigned`, `installedVersion` | a removed plugin's id is installed without its signing key (or it was unsigned or removed before 0.3.2) while data sources of its kind exist, or a signed update replaces an unsigned installed plugin (`unsigned: true`, with or without data sources); repeat with `confirmPublisherChange=true` to clear their secrets (`409`) |
 | `plugin.kind_taken` | | another kind has this id (`422`) |
 | `plugin.bundle_invalid` | `maxBytes` (when too large) | a panel's bundle is not UTF-8, holds a NUL character, `</script` or `<!--`, or is larger than 8 MiB (`422`) |

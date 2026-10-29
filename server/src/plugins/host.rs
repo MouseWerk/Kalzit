@@ -47,6 +47,21 @@ fn signer_name(s: Signer) -> &'static str {
     }
 }
 
+/// The stored kind must be the manifest's. Kalzit 0.4.0 let an update change the kind without
+/// recording it; such a plugin neither runs nor is shown until it is removed and installed anew.
+pub fn check_kind(row: &PluginRow, manifest: &Manifest) -> Result<(), HostError> {
+    if row.kind == manifest.kind {
+        return Ok(());
+    }
+    Err(HostError::new(
+        "plugin.kind_changed",
+        format!(
+            "the plugin is stored as a {} plugin but its package is a {} plugin; remove it and install it anew",
+            row.kind, manifest.kind
+        ),
+    ))
+}
+
 fn key_from_hex(text: &str) -> Option<VerifyingKey> {
     let bytes = <[u8; 32]>::try_from(hex::decode(text).ok()?).ok()?;
     VerifyingKey::from_bytes(&bytes).ok()
@@ -456,6 +471,7 @@ impl PluginHost {
         }
         let manifest =
             manifest::parse(&row.manifest).map_err(|e| HostError::new("plugin.manifest_invalid", e.to_string()))?;
+        check_kind(row, &manifest)?;
         manifest.runs_on(env!("CARGO_PKG_VERSION")).map_err(|i| HostError::new("plugin.kalzit_too_old", i.message))?;
         let package_dir = self.dir("packages").join(&row.dir);
         if manifest.plugin_kind() == manifest::PluginKind::Panel {
@@ -1284,6 +1300,50 @@ fn clear_dir(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A row whose stored kind differs from its manifest (an update of 0.4.0 that changed the
+    /// kind) is refused with its own reason; a matching one passes.
+    #[test]
+    fn a_stored_kind_that_differs_from_the_manifest_is_refused() {
+        let manifest = manifest::parse(
+            r#"
+manifest = 1
+id = "dev.example.tile"
+name = "Kachel"
+version = "1.1.0"
+kind = "panel"
+min_kalzit = "0.1.0"
+shapes = ["frame"]
+
+[panel]
+path = "dist/panel.js"
+api = 1
+
+[files]
+"dist/panel.js" = "0000000000000000000000000000000000000000000000000000000000000000"
+"#,
+        )
+        .unwrap();
+        let row = PluginRow {
+            id: "dev.example.tile".into(),
+            name: "Kachel".into(),
+            version: "1.1.0".into(),
+            kind: "datasource".into(),
+            manifest: String::new(),
+            signer: "publisher".into(),
+            public_key: None,
+            dir: String::new(),
+            approved: true,
+            enabled: true,
+            pending: None,
+            installed_at: 0,
+            updated_at: 0,
+        };
+        let e = check_kind(&row, &manifest).unwrap_err();
+        assert_eq!(e.reason, "plugin.kind_changed");
+        let fixed = PluginRow { kind: "panel".into(), ..row };
+        assert!(check_kind(&fixed, &manifest).is_ok());
+    }
 
     #[test]
     fn secrets_in_a_configuration_are_recognized() {
