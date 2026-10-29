@@ -350,8 +350,8 @@ contract:
   all organizations) and handlers that move a folder, restrict it or move a dashboard or analysis
   to another folder bump one. Routes and handlers hold a drop guard
   (`QueryCache::bump_on_drop`, taken before the commit), so a client that goes away mid-change
-  cannot skip the bump; a failed change bumps too, which costs only kept answers. An entry under an older
-  stamp is never served and goes when asked for; an answer read under an older stamp is not
+  cannot skip the bump; a route answering with an error disarms it, so refused changes keep the
+  answers. An entry under an older stamp is never served and goes when asked for; an answer read under an older stamp is not
   kept. No scan under the lock. A folder's new name changes nothing. Turning the cache off or
   emptying it drops everything.
 - **Hits cost like answers.** A hit takes a query slot of the user and the server and is charged

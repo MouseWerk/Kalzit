@@ -89,9 +89,13 @@ async fn enforce(
         Ok(req) if changes_rights => {
             let org_id = req.extensions().get::<OrgCtx>().map(|c| c.org_id.clone());
             // Bumped when the handler ends, also when the client goes away and the request is
-            // dropped mid-change, after a commit it can no longer see.
-            let _bump = state.datasources.query_cache().bump_on_drop(org_id);
-            next.run(req).await
+            // dropped mid-change, after a commit it can no longer see; not for a refused change.
+            let mut bump = state.datasources.query_cache().bump_on_drop(org_id);
+            let res = next.run(req).await;
+            if !res.status().is_success() {
+                bump.disarm();
+            }
+            res
         }
         Ok(req) => next.run(req).await,
         Err(e) => e.into_response(),

@@ -3146,6 +3146,20 @@ async fn the_query_cache_never_crosses_rights() {
         .await;
     assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.text);
     assert_eq!(t.panel(&t.owner, &dashboard, "p1", body.clone()).await.cache, "hit");
+    // A refused change of rights changes nothing: a viewer cannot empty the cache with them.
+    for _ in 0..3 {
+        let refused = t
+            .send(
+                Method::POST,
+                &t.path("/grants"),
+                Some(json!({ "subjectType": "user", "subjectId": "nobody", "resourceType": "folder",
+                             "resourceId": folder, "level": "view" })),
+                Some(&viewer),
+            )
+            .await;
+        assert!(refused.status.is_client_error(), "{}", refused.text);
+    }
+    assert_eq!(t.panel(&t.owner, &dashboard, "p1", body.clone()).await.cache, "hit");
 
     // A grant lets the viewer read it: their first run is theirs, not the owner's answer.
     t.add_row(&file, 3).await;

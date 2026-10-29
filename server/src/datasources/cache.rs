@@ -320,6 +320,8 @@ struct Inner {
     users: Shares,
     tick: u64,
     bytes: usize,
+    /// The limit the shares were last applied for (`QueryCache::limit`).
+    limit: Option<usize>,
 }
 
 impl Inner {
@@ -441,11 +443,22 @@ impl Drop for CappedWriter<'_> {
 pub struct RightsBump<'a> {
     cache: &'a QueryCache,
     org_id: Option<String>,
+    armed: bool,
+}
+
+impl RightsBump<'_> {
+    /// No bump: the change was refused, so no right changed (and nobody can empty an
+    /// organization's cache by sending refused changes).
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
 }
 
 impl Drop for RightsBump<'_> {
     fn drop(&mut self) {
-        self.cache.rights_changed(self.org_id.as_deref());
+        if self.armed {
+            self.cache.rights_changed(self.org_id.as_deref());
+        }
     }
 }
 
@@ -491,9 +504,9 @@ impl QueryCache {
 
     /// Bumps the rights generation of `org_id` (`None`: server-wide) when dropped: a route that
     /// changes rights holds it while it runs, so a client that goes away mid-change cannot skip
-    /// it. A failed change bumps too, which costs only kept answers.
+    /// it. A route that answers with an error disarms it (`RightsBump::disarm`).
     pub fn bump_on_drop(&self, org_id: Option<String>) -> RightsBump<'_> {
-        RightsBump { cache: self, org_id }
+        RightsBump { cache: self, org_id, armed: true }
     }
 
     /// The target rules changed: no answer read under the old ones is served.
@@ -604,6 +617,11 @@ impl QueryCache {
     /// lowered limit takes effect at once).
     pub fn limit(&self, limit: usize) {
         let mut inner = self.lock();
+        // The same limit as before: `put` kept every share within it already.
+        if inner.limit == Some(limit) {
+            return;
+        }
+        inner.limit = Some(limit);
         if inner.bytes > limit {
             inner.fit(limit);
         }
@@ -882,6 +900,35 @@ mod tests {
         assert!(cache.put([2; 32], ("o", "u"), "ds", (&small, None), stamp, 0, 60_000, 64 << 20, &budget));
         let found = cache.get(&[2; 32], stamp, 1).unwrap();
         assert!(found.charge() >= found.stored_bytes() * 2);
+    }
+
+    /// The guard bumps when dropped, unless the change was refused.
+    #[test]
+    fn a_disarmed_bump_changes_nothing() {
+        let cache = QueryCache::default();
+        let before = cache.stamp("o", "ds");
+        let mut bump = cache.bump_on_drop(Some("o".into()));
+        bump.disarm();
+        drop(bump);
+        assert_eq!(cache.stamp("o", "ds"), before);
+        drop(cache.bump_on_drop(Some("o".into())));
+        assert_ne!(cache.stamp("o", "ds"), before);
+        let all = cache.stamp("p", "ds");
+        drop(cache.bump_on_drop(None));
+        assert_ne!(cache.stamp("p", "ds"), all);
+    }
+
+    /// The same limit again is the fast path; only a changed one applies the shares.
+    #[test]
+    fn an_unchanged_limit_applies_nothing() {
+        let cache = QueryCache::default();
+        put(&cache, [0; 32], "o", 0, 0, 60_000, 1 << 20);
+        cache.limit(1 << 20);
+        assert_eq!(cache.lock().limit, Some(1 << 20));
+        cache.limit(1 << 20);
+        assert_eq!(cache.stats().entries, 1);
+        cache.limit(1);
+        assert_eq!((cache.stats().entries, cache.lock().limit), (0, Some(1)));
     }
 
     /// One person holds at most an eighth of the limit (a quarter of the organization's half),
