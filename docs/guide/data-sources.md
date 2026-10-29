@@ -62,6 +62,13 @@ stored secret to a new target unasked.
 **Query time limit in seconds** (1 to 3600) and **Row limit** for this source; the server-wide
 limits (default 30 s and 100,000 rows) are the maximum. A result cut off at the row limit says so.
 
+### Cache
+
+**Cache answers on the server** and **Keep answers for (seconds)** (60 by default): answers are
+kept per person and shown again instead of asking the database; **Refresh** always asks it. On by
+default for SQL databases, Elasticsearch and the graph databases, off for Prometheus, MongoDB,
+files, HTTP APIs and plugins. See [Performance and caching](performance.md).
+
 ## Supported kinds
 
 | Kind | Connection settings | Shape |

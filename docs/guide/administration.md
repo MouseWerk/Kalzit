@@ -141,7 +141,8 @@ applied, applies all of them together and can be undone.
 ### Data and retention settings
 
 Under **Data sources and targets**: the allowed folders for SQLite and file sources, an optional
-list of allowed targets, the query time limit (30 s) and the row limit (100,000). Under **Storage
+list of allowed targets, the query time limit (30 s), the row limit (100,000) and the query cache
+with its memory limit and **Empty cache** ([Performance and caching](performance.md)). Under **Storage
 and retention**: the audit log retention and how many dashboard versions are kept (100; 0 keeps
 every version). Settings can also come from `KALZIT_SETTING_<KEY>` variables; every key is listed
 in [settings and dashboards](../api/settings-dashboards.md#settings).

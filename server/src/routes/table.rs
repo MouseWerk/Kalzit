@@ -22,6 +22,10 @@ pub struct RouteDef {
     /// Relative to `/api`, with axum path parameters (`/orgs/{orgId}/teams`).
     pub path: &'static str,
     pub access: Access,
+    /// The route changes who may see what (grants, roles, members, teams, restricted folders,
+    /// AI data rules): once it succeeds, the query cache forgets the organization's answers
+    /// (all of them for a server route).
+    pub changes_rights: bool,
     handler: MethodRouter<AppState>,
 }
 
@@ -33,7 +37,7 @@ where
     T: 'static,
 {
     let filter = MethodFilter::try_from(method.clone()).expect("route tables use standard HTTP methods");
-    RouteDef { method, path, access, handler: on(filter, handler) }
+    RouteDef { method, path, access, changes_rights: false, handler: on(filter, handler) }
 }
 
 impl RouteDef {
@@ -41,6 +45,12 @@ impl RouteDef {
     /// `413 payload_too_large` before the handler reads it.
     pub fn body_limit(mut self, bytes: usize) -> Self {
         self.handler = self.handler.layer(axum::extract::DefaultBodyLimit::max(bytes));
+        self
+    }
+
+    /// Marks a route that changes rights (`changes_rights`).
+    pub fn changes_rights(mut self) -> Self {
+        self.changes_rights = true;
         self
     }
 }
@@ -51,7 +61,8 @@ impl RouteDef {
 pub fn build(defs: Vec<RouteDef>, state: &AppState) -> Router<AppState> {
     let mut by_path: BTreeMap<&'static str, MethodRouter<AppState>> = BTreeMap::new();
     for def in defs {
-        let layered = def.handler.route_layer(from_fn_with_state((state.clone(), def.access), enforce));
+        let layered =
+            def.handler.route_layer(from_fn_with_state((state.clone(), def.access, def.changes_rights), enforce));
         let merged = match by_path.remove(def.path) {
             Some(existing) => existing.merge(layered),
             None => layered,
@@ -68,8 +79,24 @@ async fn method_not_allowed() -> ApiError {
     ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "this method is not supported here")
 }
 
-async fn enforce(State((state, access)): State<(AppState, Access)>, req: Request, next: Next) -> Response {
+async fn enforce(
+    State((state, access, changes_rights)): State<(AppState, Access, bool)>,
+    req: Request,
+    next: Next,
+) -> Response {
     match authorize(&state, access, req).await {
+        Ok(req) if changes_rights => {
+            let org_id = req.extensions().get::<OrgCtx>().map(|c| c.org_id.clone());
+            let res = next.run(req).await;
+            if res.status().is_success() {
+                let cache = state.datasources.query_cache();
+                match org_id {
+                    Some(org_id) => cache.forget_org(&org_id),
+                    None => cache.clear(),
+                }
+            }
+            res
+        }
         Ok(req) => next.run(req).await,
         Err(e) => e.into_response(),
     }

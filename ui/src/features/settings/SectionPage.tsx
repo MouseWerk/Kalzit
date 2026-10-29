@@ -26,6 +26,7 @@ import { PluginsSection } from "../plugins/PluginsSection";
 import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
+import { QueryCacheCard } from "./QueryCacheCard";
 import { type Changes, SettingRow } from "./rows";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
 import { findSection, rowId, SECTIONS, type SectionDef } from "./sections";
@@ -106,6 +107,11 @@ function SectionBody({ section }: { section: SectionDef }) {
     case "settings":
       return section.group === "org" ? (
         <OrgSettings section={section} />
+      ) : section.id === "datasources" ? (
+        <>
+          <ServerSettings section={section} />
+          <QueryCacheCard />
+        </>
       ) : (
         <ServerSettings section={section} />
       );

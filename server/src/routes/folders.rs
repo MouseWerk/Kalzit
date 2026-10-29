@@ -38,11 +38,11 @@ pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/orgs/{orgId}/folders", Access::Org(FoldersRead), list),
         route(Method::POST, "/orgs/{orgId}/folders", Access::OrgMember, create),
-        route(Method::PATCH, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, update),
-        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, trash),
-        route(Method::POST, "/orgs/{orgId}/folders/{folderId}/restore", Access::OrgMember, restore),
-        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}/purge", Access::OrgMember, purge),
-        route(Method::PUT, "/orgs/{orgId}/folders/{folderId}/owner", Access::OrgMember, set_owner),
+        route(Method::PATCH, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, update).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, trash).changes_rights(),
+        route(Method::POST, "/orgs/{orgId}/folders/{folderId}/restore", Access::OrgMember, restore).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}/purge", Access::OrgMember, purge).changes_rights(),
+        route(Method::PUT, "/orgs/{orgId}/folders/{folderId}/owner", Access::OrgMember, set_owner).changes_rights(),
     ]
 }
 

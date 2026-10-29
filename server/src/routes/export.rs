@@ -443,7 +443,7 @@ async fn produce(
     let mut done = BTreeSet::new();
     for ref_id in order {
         match response.results.remove(ref_id) {
-            Some(QueryOutcome::Ok { result, steps: ran }) => {
+            Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                 done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
                 match result {
                     QueryResult::Frame { frame } => inputs.push((ref_id.clone(), Input::Frame(frame))),

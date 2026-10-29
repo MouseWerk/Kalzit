@@ -51,7 +51,7 @@ pub fn routes() -> Vec<RouteDef> {
             OrgMember,
             restore_version,
         ),
-        route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}/owner", OrgMember, set_owner),
+        route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}/owner", OrgMember, set_owner).changes_rights(),
     ]
 }
 

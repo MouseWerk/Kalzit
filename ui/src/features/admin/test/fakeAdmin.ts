@@ -129,6 +129,15 @@ export interface FakeAdminState {
   password: string;
   /** Items per list page when the request names no limit; tests lower it to exercise paging. */
   pageSize: number;
+  /** The server's query cache (`/api/admin/query-cache`). */
+  queryCache: {
+    enabled: boolean;
+    maxBytes: number;
+    entries: number;
+    bytes: number;
+    hits: number;
+    misses: number;
+  };
 }
 
 const DAY = 86_400_000;
@@ -392,6 +401,14 @@ function initialState(server: FakeServer): FakeAdminState {
     ],
     password: TEST_PASSWORD,
     pageSize: 50,
+    queryCache: {
+      enabled: true,
+      maxBytes: 268_435_456,
+      entries: 12,
+      bytes: 3_400_000,
+      hits: 30,
+      misses: 10,
+    },
   };
 }
 
@@ -1284,6 +1301,15 @@ function handleServerAdmin(
   search: URLSearchParams,
 ): Response {
   const [, , , area = "", id] = path.split("/").map(decodeURIComponent);
+  if (area === "query-cache" && id === undefined) {
+    if (method === "GET") {
+      return json(200, state.queryCache);
+    }
+    if (method === "DELETE") {
+      state.queryCache = { ...state.queryCache, entries: 0, bytes: 0 };
+      return noContent();
+    }
+  }
   if (area === "users") {
     if (id === undefined && method === "GET") {
       return page(state.users, params(search, PAGING), state.pageSize);

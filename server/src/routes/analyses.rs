@@ -20,7 +20,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::{Path, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ use crate::folders::{self, Tree};
 use crate::net::RequestInfo;
 use crate::saved_analyses::{self, AnalysisModel};
 use crate::settings;
-use crate::shapes::{FieldDistribution, Page, PanelDistributionRequest, PanelQueryRequest, QueryResponse};
+use crate::shapes::{FieldDistribution, Page, PanelDistributionRequest, PanelQueryRequest};
 
 pub fn routes() -> Vec<RouteDef> {
     use Access::OrgMember;
@@ -54,7 +54,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, trash),
         route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/restore", OrgMember, restore),
         route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}/purge", OrgMember, purge),
-        route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}/owner", OrgMember, set_owner),
+        route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}/owner", OrgMember, set_owner).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/uses", OrgMember, uses),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/versions", OrgMember, versions),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/versions/{version}", OrgMember, version),
@@ -1174,8 +1174,9 @@ async fn run(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path((_, id)): Path<(String, String)>,
-    JsonBody(req): JsonBody<PanelQueryRequest>,
-) -> ApiResult<Json<QueryResponse>> {
+    headers: HeaderMap,
+    JsonBody(mut req): JsonBody<PanelQueryRequest>,
+) -> ApiResult<super::query::Answer> {
     let row = load(&state, &ctx, &id, Permission::AnalysesRead).await?;
     // A trashed analysis runs nothing; it is restored first, like a trashed dashboard.
     if row.deleted_at.is_some() {
@@ -1183,7 +1184,8 @@ async fn run(
     }
     let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
-    Ok(Json(super::query::run_stored_panel(&state, &ctx, &model, panel, req).await?))
+    req.refresh = Some(super::query::wants_refresh(&headers, req.refresh));
+    Ok(super::query::answer(super::query::run_stored_panel(&state, &ctx, &model, panel, req).await?))
 }
 
 /// The field distribution of one of the analysis's stored queries (`refId`) over its whole
