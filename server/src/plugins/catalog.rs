@@ -397,8 +397,14 @@ impl Catalog {
         let trusted = catalog_keys(state).await?;
         let outcome = self.fetch(state, &cfg.url, &trusted, &saved, now, accept_key_change).await;
         saved.attempted_at = Some(now);
+        // The key pinned for this address before this try, to record a change of it.
+        let pinned = saved.key_hex.clone().filter(|_| saved.source_url.as_deref() == Some(cfg.url.as_str()));
         let summary = match outcome {
             Ok(Fetched { bytes, key, index, changed }) => {
+                let key_change = pinned.as_deref().filter(|p| *p != signing::key_hex(&key)).map(|p| {
+                    let previous = key_from_hex(p).map(|k| signing::key_id(&k)).unwrap_or_default();
+                    (signing::key_id(&key), previous)
+                });
                 if changed {
                     saved.accepted.keys.record(&key, &index);
                     let url_seq = saved.accepted.urls.entry(cfg.url.clone()).or_insert(index.sequence);
@@ -411,7 +417,14 @@ impl Catalog {
                 saved.checked_at = Some(now);
                 saved.error = None;
                 save(&state.db, &saved).await?;
-                Ok(json!({ "sequence": index.sequence, "plugins": index.plugins.len(), "changed": changed }))
+                let mut body =
+                    json!({ "sequence": index.sequence, "plugins": index.plugins.len(), "changed": changed });
+                if let Some((key_id, previous)) = key_change {
+                    body["keyId"] = json!(key_id);
+                    body["previousKeyId"] = json!(previous);
+                    body["keyChangeAccepted"] = json!(true);
+                }
+                Ok(body)
             }
             Err(f) => {
                 tracing::warn!(reason = %f.reason, "the plugin catalog was not taken: {}", f.message);
@@ -425,6 +438,12 @@ impl Catalog {
             let host = Url::parse(&cfg.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
             let mut body = match &summary {
                 Ok(s) => s.clone(),
+                Err(f) if f.reason == "catalog.key_changed" => json!({
+                    "reason": f.reason,
+                    "keyId": f.params.get("keyId"),
+                    "previousKeyId": f.params.get("previousKeyId"),
+                    "keyChangeAccepted": false,
+                }),
                 Err(f) => json!({ "reason": f.reason }),
             };
             body["host"] = json!(host);

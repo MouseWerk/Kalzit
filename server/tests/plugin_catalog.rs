@@ -710,6 +710,18 @@ async fn the_catalog_key_is_pinned_to_its_address() {
     let r = t.send(Method::POST, "/admin/plugin-catalog/refresh?acceptKeyChange=true", None).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.body["index"]["keyId"], key_id(&second));
+    // The audit log names both keys, refused and accepted.
+    let refreshed = t.audit("plugins.catalog_refreshed").await;
+    let refused = refreshed.iter().find(|s| s["reason"] == "catalog.key_changed").expect("the refused change");
+    assert_eq!(
+        (&refused["keyId"], &refused["previousKeyId"], &refused["keyChangeAccepted"]),
+        (&json!(key_id(&second)), &json!(key_id(&first)), &json!(false))
+    );
+    let accepted = refreshed.last().unwrap();
+    assert_eq!(
+        (&accepted["keyId"], &accepted["previousKeyId"], &accepted["keyChangeAccepted"]),
+        (&json!(key_id(&second)), &json!(key_id(&first)), &json!(true))
+    );
 
     // A list whose key is trusted no more offers nothing to install.
     let pkg = package(ID, "1.0.0", Some(&second), false, "");

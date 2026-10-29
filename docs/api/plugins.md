@@ -22,8 +22,7 @@ dropped), `plugins.handover_added`, `plugins.unsigned_allowed`, `plugins.unsigne
 `plugins.landlock_optional`, `plugins.landlock_required`, `plugins.connect_refused` (a network
 connection the connector refused, with `datasourceId`, `host`, `port` and `reason`; bounded as
 "Network connector" says, no actor), `plugins.connect_refusals_suppressed` (refusals not logged
-one by one, with `total` and `byReason`), `plugins.key_catalog_allowed`, `plugins.key_catalog_disallowed`, `plugins.catalog_refreshed` (a refresh an administrator
-asked for: the sequence and number of entries, or the reason it failed, and the catalog's host;
+one by one, with `total` and `byReason`), `plugins.key_catalog_allowed`, `plugins.key_catalog_disallowed`, `plugins.catalog_refreshed` (a refresh an administrator asked for: the sequence and number of entries, or the reason it failed, and the catalog's host; when the key of the address changed, `keyId`, `previousKeyId` and `keyChangeAccepted`;
 `resourceId` `catalog`), `plugins.catalog_installed` (version, SHA-256, key id and host of a
 package installed from the catalog, next to its `plugins.installed` or `plugins.updated`), and in
 the organization's log `plugins.blocked` and `plugins.unblocked`. A package the catalog's own
