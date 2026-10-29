@@ -6,8 +6,14 @@
   The package installs kalzit.exe into the program folder and the Windows service "Kalzit" (virtual
   account NT SERVICE\Kalzit). Everything else is Kalzit's own step `kalzit service configure`,
   which also backs `kalzit service install`: the configuration file, the data folder and its access
-  list, the certificate, the recovery actions and the firewall rule. Before the program goes,
-  `kalzit service cleanup` removes the firewall rule and, on request, the data.
+  list, the certificate, the program folder's access list, the service's privileges, the recovery
+  actions and the firewall rule; it refuses folders someone else could have prepared. Before the
+  program goes, `kalzit service cleanup` removes the firewall rule and, on request, the data.
+
+  Both steps run through WixQuietExec64 (no console window; their output goes to the MSI log),
+  only at the first installation and at upgrades, never at a repair: the settings are read once.
+  Values are quoted with a space before the closing quote ("[DATADIR] "), so a folder ending in a
+  backslash cannot escape the quote; Kalzit trims the space and refuses any quote in a value.
 
   Settings (wizard or msiexec properties, see the guide): PORT, DATADIR, HTTPS (off, self-signed,
   certificate), HTTPSPORT, CERTFILE, KEYFILE, FIREWALL, SELFUPDATE; REMOVEDATA when uninstalling.
@@ -96,8 +102,6 @@
             Name="EventMessageFile"
             Type="expandable"
             Value="%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll" />
-        <!-- `kalzit` works in any prompt (setup-code, update, service). -->
-        <Environment Id="KalzitPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" Permanent="no" />
       </Component>
     </ComponentGroup>
 
@@ -107,23 +111,23 @@
 
     <!-- Kalzit's own steps run as LocalSystem from the installed program: configure once the
          service exists and before it starts, clean up before the program is removed (not when
-         an upgrade removes the previous version). Errors go to the event log. -->
-    <CustomAction
+         an upgrade removes the previous version). Errors go to the MSI log and the event log. -->
+    <SetProperty
         Id="KalzitConfigure"
-        FileRef="KalzitExe"
-        ExeCommand="service configure --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --data-dir &quot;[DATADIR]&quot; --port &quot;[PORT]&quot; --https &quot;[HTTPS]&quot; --https-port &quot;[HTTPSPORT]&quot; --cert-file &quot;[CERTFILE]&quot; --key-file &quot;[KEYFILE]&quot; --open-firewall &quot;[FIREWALL]&quot; --self-update &quot;[SELFUPDATE]&quot;"
-        Execute="deferred"
-        Impersonate="no"
-        Return="check" />
-    <CustomAction
+        Value="&quot;[#KalzitExe]&quot; service configure --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --data-dir &quot;[DATADIR] &quot; --port &quot;[PORT]&quot; --https &quot;[HTTPS]&quot; --https-port &quot;[HTTPSPORT]&quot; --cert-file &quot;[CERTFILE] &quot; --key-file &quot;[KEYFILE] &quot; --open-firewall &quot;[FIREWALL]&quot; --self-update &quot;[SELFUPDATE]&quot;"
+        Before="KalzitConfigure"
+        Sequence="execute"
+        Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
+    <CustomAction Id="KalzitConfigure" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="check" />
+    <SetProperty
         Id="KalzitCleanup"
-        FileRef="KalzitExe"
-        ExeCommand="service cleanup --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --remove-data &quot;[REMOVEDATA]&quot;"
-        Execute="deferred"
-        Impersonate="no"
-        Return="ignore" />
+        Value="&quot;[#KalzitExe]&quot; service cleanup --config &quot;[CommonAppDataFolder]Kalzit\kalzit.toml&quot; --remove-data &quot;[REMOVEDATA]&quot;"
+        Before="KalzitCleanup"
+        Sequence="execute"
+        Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="KalzitCleanup" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="ignore" />
     <InstallExecuteSequence>
-      <Custom Action="KalzitConfigure" After="InstallServices" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="KalzitConfigure" After="InstallServices" Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="KalzitCleanup" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 

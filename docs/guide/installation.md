@@ -244,21 +244,28 @@ without it.
    | | open the port(s) in Windows Defender Firewall | not ticked |
 
 3. When it is done, open `http://localhost:3000` (or the port you chose). The setup code for the
-   first sign-in: open PowerShell or a command prompt with **Run as administrator** and run
-   `kalzit setup-code`. Continue with [Getting started](getting-started.md#first-setup).
+   first sign-in: open PowerShell with **Run as administrator** and run
+   `& "C:\Program Files\Kalzit\kalzit.exe" setup-code`. Continue with
+   [Getting started](getting-started.md#first-setup).
 
 What the package sets up:
 
-- `kalzit.exe` in the program folder, which is added to the system `PATH`.
-- The service `Kalzit` (automatic start, account `NT SERVICE\Kalzit`). After a failure the service
-  manager starts it again (after 2 s, 5 s, then every 30 s).
+- `kalzit.exe` in the program folder. Only Administrators and SYSTEM may change the folder (and,
+  for updates, the service account); everyone may run the program. The folder is not added to
+  `PATH`: call `kalzit.exe` with its full path.
+- The service `Kalzit` (automatic start, account `NT SERVICE\Kalzit`) with a single privilege,
+  `SeChangeNotifyPrivilege`: no impersonation, so a compromised service cannot turn itself into
+  SYSTEM. After a failure the service manager starts it again (after 2 s, 5 s, then every 30 s).
 - `%ProgramData%\Kalzit\kalzit.toml` with your settings. Everyone may read it, only
   Administrators may change it.
 - The data folder, with access for Administrators and the service account only. It holds the
   database, the setup code, the key for stored passwords (`secrets.key.dpapi`, protected with
   DPAPI for this computer), the log and, with a self-signed certificate, `tls\`.
 - With "Existing certificate", the service account may read the two files where they are. A
-  renewed certificate saved over them takes effect within a minute, without a restart.
+  renewed certificate saved over them takes effect within a minute, without a restart. Both must
+  be files only Administrators may change, the key also one only they may read, in folders others
+  cannot rename (a key under `C:\` or one Users may read is refused); otherwise restrict them, or
+  copy them into a folder only Administrators can open.
 - With the firewall ticked, an inbound rule named `Kalzit` for the port(s).
 
 A self-signed certificate (`<data folder>\tls\self-signed.crt.pem`) makes browsers warn until
@@ -267,6 +274,23 @@ own certificate authority or a public one.
 
 If `%ProgramData%\Kalzit\kalzit.toml` exists already (an earlier installation), the package keeps
 it and skips the settings page.
+
+The installer does not take over what someone else could have prepared, since the service would
+run, restore or serve it. The installation stops, and the message in the installer's log and the
+event log says what, when:
+
+- `%ProgramData%\Kalzit` exists, but others than Administrators may change it, or `kalzit.toml`
+  was not written by an administrator;
+- the data folder exists, but someone else owns or may open a file or folder in it, or it holds a
+  link or junction;
+- the data folder is a drive root, a system folder (Windows, Program Files, `%ProgramData%`
+  itself, `C:\Users`) or lies in the program folder;
+- a folder above the data folder, the program folder or the certificate lets others rename or
+  remove what is in it (folders created directly under `C:\` are like that, `C:\Program Files`
+  and `%ProgramData%` are not);
+- the program folder holds anything else than Kalzit's files, or others may change it.
+
+Move such a folder aside (or fix its access list) and install again.
 
 ### Silent installation
 
@@ -290,15 +314,17 @@ msiexec /i kalzit-0.5.0-windows-x64.msi /qn HTTPS=certificate HTTPSPORT=443 `
 | `SELFUPDATE` | `1`: the service account may replace `kalzit.exe`, so updates install on their own; `0`: the program folder stays for Administrators only | `1` |
 | `REMOVEDATA` | when uninstalling: `1` also removes the data folder and `kalzit.toml` | not set |
 
-With an existing `kalzit.toml`, `PORT`, `DATADIR` and the HTTPS properties are not used. When
-something goes wrong, the log (`/l*v`) and the Windows event log (Event Viewer, Windows Logs,
-Application, source `Kalzit`) say what.
+With an existing `kalzit.toml`, `PORT`, `DATADIR` and the HTTPS properties are not used. Values
+must not contain a quote (`"`). The settings are read at the first installation and at upgrades,
+never at a repair. When something goes wrong, the log (`/l*v`) and the Windows event log (Event
+Viewer, Windows Logs, Application, source `Kalzit`) say what.
 
 ### Without the MSI package
 
-`kalzit service` sets up the same service for a `kalzit.exe` you copied yourself. Copy it to a
-folder only Administrators can change, such as `C:\Program Files\Kalzit` (Kalzit refuses a folder
-others may change, since the service runs what is in it), then in an elevated prompt:
+`kalzit service` sets up the same service for a `kalzit.exe` you copied yourself. Copy it alone
+into a folder of its own that only Administrators can change, such as `C:\Program Files\Kalzit`
+(Kalzit refuses a folder others may change or one with other files in it, since the service runs
+what is in it), then in an elevated prompt:
 
 ```powershell
 & "C:\Program Files\Kalzit\kalzit.exe" service install --port 3000 --open-firewall
@@ -322,7 +348,11 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
   Errors before that file can be written, such as a broken `kalzit.toml`, are in the Windows event
   log (Application, source `Kalzit`).
 - To change a setting, edit `%ProgramData%\Kalzit\kalzit.toml` as an administrator and restart
-  the service. All settings are listed in the [README](../../README.md#configuration).
+  the service. All settings are listed in the [README](../../README.md#configuration). Everyone on
+  the computer may read the file, so put no secrets into it: give a PostgreSQL URL with a password
+  in a file named by `KALZIT_DATABASE_URL_FILE` that only Administrators and the service may read.
+  Kalzit warns in its log and in Settings, About (for server administrators) when `database.url`
+  in the file holds a password.
 - The key for stored passwords is `secrets.key.dpapi` in the data folder, which only this
   computer can decrypt: back the data folder up as a whole ([Backups](../ARCHITECTURE.md#backups)),
   and after restoring it on another computer, enter the data source passwords again.
@@ -351,11 +381,13 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
 - To remove the data too, run the MSI package again, choose **Remove** and tick "Also remove the
   data folder and the configuration", or run
   `msiexec /x kalzit-<version>-windows-x64.msi REMOVEDATA=1`. This cannot be undone. A data folder
-  that holds other files than Kalzit's (or a drive root) is left in place.
+  that holds other files than Kalzit's (or a drive root), lies behind a link or junction, or sits
+  in a folder others may change is left in place.
 
 ### Signed packages
 
-Release packages are signed with the project's code-signing certificate when one is set up for
-the release; Windows then names the publisher before it installs. Unsigned packages say so in the
+Release packages are signed with the project's code signing (Microsoft Artifact Signing or a
+code-signing certificate) when it is set up for the release; Windows then names the publisher
+before it installs. Unsigned packages say so in the
 release notes, and Windows SmartScreen may warn ("Windows protected your PC"): compare the SHA-256
 with the signed manifest as above, then choose "More info" and "Run anyway".

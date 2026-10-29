@@ -48,6 +48,25 @@ fn prepare_with(dir: &Path, config_folder: Option<&Path>) -> Result<()> {
                 acl::check_file(&path)?;
             }
         }
+        // The folders of updates (backups, kept binaries), plugins, certificates and logs: each
+        // must be a real folder (no link or junction to somewhere else) and as private as the
+        // data directory, whoever created it.
+        for name in STATE_DIRS {
+            let path = dir.join(name);
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) => {
+                    if acl::is_reparse_point(&meta) || !meta.is_dir() {
+                        bail!(
+                            "{} is a link, a junction or a file, not a folder of Kalzit's; remove it and start again",
+                            path.display()
+                        );
+                    }
+                    acl::check(&path, acl::Others::NoAccess)?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => bail!("reading {}: {e}", path.display()),
+            }
+        }
     }
     let probe = write_probe(dir)?;
     #[cfg(unix)]
@@ -73,6 +92,11 @@ pub const STATE_FILES: &[&str] = &[
     "secrets.key.dpapi",
     crate::routes::setup::TOKEN_FILE,
 ];
+
+/// Folders in the data directory whose content Kalzit runs, restores or serves: checked at start
+/// like the data directory itself.
+#[cfg(windows)]
+pub const STATE_DIRS: &[&str] = &["updates", "plugins", "tls", "logs"];
 
 /// The path in canonical, lower-case form: Windows paths compare without regard to case and
 /// to how they were spelled (`C:\ProgramData` versus `c:\programdata\.\`). `None` when it does
@@ -252,13 +276,13 @@ pub mod acl {
     /// but it can neither write files there nor change the folder's entries.
     pub const CONFIG_DIR_SDDL: &str = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;;0x1200ad;;;OW)";
 
-    const SYSTEM: &str = "S-1-5-18";
-    const ADMINISTRATORS: &str = "S-1-5-32-544";
+    pub const SYSTEM: &str = "S-1-5-18";
+    pub const ADMINISTRATORS: &str = "S-1-5-32-544";
     const USERS: &str = "S-1-5-32-545";
-    const OWNER_RIGHTS: &str = "S-1-3-4";
+    pub const OWNER_RIGHTS: &str = "S-1-3-4";
     /// Only creators get it, and only those who may create files here, which the check limits
     /// to the trusted accounts.
-    const CREATOR_OWNER: &str = "S-1-3-0";
+    pub const CREATOR_OWNER: &str = "S-1-3-0";
 
     const ACCESS_ALLOWED: u8 = 0;
     const ACCESS_DENIED: u8 = 1;
@@ -267,17 +291,17 @@ pub mod acl {
     const ACCESS_DENIED_CALLBACK: u8 = 10;
     const ACCESS_DENIED_CALLBACK_OBJECT: u8 = 12;
     const READ_ATTRIBUTES: u32 = 0x80;
-    const DELETE: u32 = 0x1_0000;
+    pub const DELETE: u32 = 0x1_0000;
     const READ_CONTROL: u32 = 0x2_0000;
-    const WRITE_DAC: u32 = 0x4_0000;
-    const WRITE_OWNER: u32 = 0x8_0000;
+    pub const WRITE_DAC: u32 = 0x4_0000;
+    pub const WRITE_OWNER: u32 = 0x8_0000;
     const SYNCHRONIZE: u32 = 0x10_0000;
-    const GENERIC_ALL: u32 = 0x1000_0000;
+    pub const GENERIC_ALL: u32 = 0x1000_0000;
     /// Read data or list, read extended attributes, generic read.
-    const READ_MASK: u32 = 0x1 | 0x8 | 0x8000_0000;
+    pub const READ_MASK: u32 = 0x1 | 0x8 | 0x8000_0000;
     /// Write or append data (create files or folders), write extended attributes, delete
     /// children, write attributes, delete, change the DACL or owner, generic write or all.
-    const WRITE_MASK: u32 =
+    pub const WRITE_MASK: u32 =
         0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x1_0000 | 0x4_0000 | 0x8_0000 | 0x4000_0000 | 0x1000_0000;
 
     /// What accounts other than SYSTEM, Administrators and Kalzit's own may do.
@@ -479,6 +503,23 @@ pub mod acl {
     /// The owner and the allow entries of the DACL (`None`: no DACL, which allows everyone
     /// everything). Deny entries only take rights away and are left out.
     pub fn read(path: &Path) -> std::io::Result<(String, Option<Vec<Entry>>)> {
+        read_entries(path, false)
+    }
+
+    /// `read` without the inherit-only entries, which say what objects created inside get, not
+    /// what the object itself allows.
+    pub fn read_effective(path: &Path) -> std::io::Result<(String, Option<Vec<Entry>>)> {
+        read_entries(path, true)
+    }
+
+    /// Whether `meta` (from `symlink_metadata`) is a link, a junction or another reparse point.
+    pub fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT
+        meta.file_attributes() & 0x400 != 0
+    }
+
+    fn read_entries(path: &Path, skip_inherit_only: bool) -> std::io::Result<(String, Option<Vec<Entry>>)> {
         let mut owner = PSID::default();
         let mut dacl: *mut ACL = std::ptr::null_mut();
         let mut sd = PSECURITY_DESCRIPTOR::default();
@@ -524,6 +565,10 @@ pub mod acl {
             unsafe { GetAce(dacl, index, &mut ace) }.map_err(io_error)?;
             // SAFETY: every ACE starts with an ACE_HEADER.
             let header = unsafe { *ace.cast::<ACE_HEADER>() };
+            // INHERIT_ONLY_ACE
+            if skip_inherit_only && header.AceFlags & 0x08 != 0 {
+                continue;
+            }
             match header.AceType {
                 ACCESS_ALLOWED | ACCESS_ALLOWED_CALLBACK => {
                     // SAFETY: both types share the ACCESS_ALLOWED_ACE layout, the SID starts at
@@ -952,6 +997,30 @@ mod tests {
             assert!(text.contains(name) && text.contains("/reset"), "{name}: {text}");
             std::fs::remove_file(&file).unwrap();
         }
+    }
+
+    /// The folders of updates, plugins, certificates and logs are checked at start like the data
+    /// directory: one open to Users, or a junction in place of one, stops the start.
+    #[cfg(windows)]
+    #[test]
+    fn state_folders_open_to_others_or_linked_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("data");
+        prepare_with(&dir, None).unwrap();
+        for name in STATE_DIRS {
+            let sub = dir.join(name);
+            std::fs::create_dir(&sub).unwrap();
+            prepare_with(&dir, None).unwrap();
+            acl::restrict(&sub, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)(A;OICI;FR;;;BU)").unwrap();
+            let text = format!("{:#}", prepare_with(&dir, None).unwrap_err());
+            assert!(text.contains(name), "{name}: {text}");
+            std::fs::remove_dir(&sub).unwrap();
+        }
+        let elsewhere = root.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        junction(&dir.join("plugins"), &elsewhere);
+        let text = format!("{:#}", prepare_with(&dir, None).unwrap_err());
+        assert!(text.contains("junction"), "{text}");
     }
 
     #[cfg(windows)]

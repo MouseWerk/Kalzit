@@ -122,7 +122,7 @@
     <SetProperty
         Id="WIXUI_EXITDIALOGOPTIONALTEXT"
         Action="KalzitExitTextNew"
-        Value="Kalzit runs as the Windows service &quot;Kalzit&quot;. Open http://localhost:[PORT] in a browser. The setup code for the first sign-in: run &quot;kalzit setup-code&quot; in a prompt opened with Run as administrator."
+        Value="Kalzit runs as the Windows service &quot;Kalzit&quot;. Open http://localhost:[PORT] in a browser. The setup code for the first sign-in: run &quot;[INSTALLFOLDER]kalzit.exe&quot; setup-code in a prompt opened with Run as administrator."
         After="CostFinalize"
         Sequence="ui"
         Condition="NOT Installed AND NOT CONFIGEXISTS" />

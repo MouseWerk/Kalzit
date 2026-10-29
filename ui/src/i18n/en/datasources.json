@@ -674,6 +674,7 @@
   "datasources.reason.plugin.key_in_use": "Removing this key stops these plugins: {plugins}",
   "datasources.reason.plugin.handover_invalid": "The hand-over to the new key does not verify.",
   "datasources.reason.plugin.start_failed": "The plugin process could not be started: {detail}",
+  "datasources.reason.plugin.binary_changed": "The plugin’s program has changed since it was installed, so it does not start. Install the plugin again.",
   "datasources.reason.plugin.root_refused": "Kalzit runs as root on this server, so plugins do not start. Run Kalzit under its own account.",
   "datasources.reason.plugin.landlock_missing": "This Linux server offers no Landlock, and plugins without it are not allowed: nothing would keep them from reading Kalzit’s files.",
   "datasources.reason.plugin.exited": "The plugin process ended before it was ready ({exit}).",

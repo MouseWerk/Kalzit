@@ -168,6 +168,31 @@ source secrets, but not the key that decrypts them (docs/ARCHITECTURE.md, "Backu
 now" adds a manual backup; the newest `updates.keep_versions` manual backups are kept. Downloads
 are recorded in the audit log.
 
+## Code signing for Windows (project owner, once)
+
+The release workflow signs `kalzit.exe` and the MSI package with Authenticode in two small jobs
+that use the GitHub environment `windows-signing` and nothing else (`.github/workflows/release.yml`,
+`packaging/windows/sign.ps1`); the MSI is built in between in a job without secrets. Create the
+environment `windows-signing` (Settings, Environments) with yourself as required reviewer and tags
+`v*` only, then choose one way:
+
+1. **Microsoft Artifact Signing** (formerly Azure Trusted Signing; recommended: public CAs no
+   longer issue code-signing certificates with an exportable key, and here the key stays in
+   Microsoft's HSM). Create an Artifact Signing account and a certificate profile in Azure, and an
+   Entra ID app registration with the role "Artifact Signing Certificate Profile Signer" on the
+   profile. In `windows-signing`, set the variables `KALZIT_ARTIFACT_SIGNING_ENDPOINT` (such as
+   `https://weu.codesigning.azure.net`), `KALZIT_ARTIFACT_SIGNING_ACCOUNT` and
+   `KALZIT_ARTIFACT_SIGNING_PROFILE`, and the secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and
+   `AZURE_CLIENT_SECRET`. The signing client is downloaded from NuGet, pinned by version and SHA-256.
+2. **A PFX file** with an exportable key: the secrets `KALZIT_WINDOWS_CERT` (the PFX in base64,
+   `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`) and
+   `KALZIT_WINDOWS_CERT_PASSWORD`. The certificate is imported into the runner's user store for
+   the signing and removed with its key afterwards; the password is never on a command line.
+
+The time stamp server is DigiCert's for a PFX and Microsoft's for Artifact Signing; the variable
+`KALZIT_WINDOWS_TIMESTAMP_URL` overrides it. Without either way the files stay unsigned, and the
+release notes say so.
+
 ## Release key (project owner, once)
 
 The signing key never leaves the owner's machine and the release environment's secret store;

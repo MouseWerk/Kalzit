@@ -180,6 +180,7 @@
   "settings.about.platform": "Plattform",
   "settings.about.database": "Datenbank",
   "settings.about.database.sqlite": "SQLite",
+  "settings.about.warning.databasePasswordInFile": "kalzit.toml enthält das Datenbank-Passwort, das jeder sieht, der die Datei lesen darf. Gib die Datenbank-URL stattdessen in KALZIT_DATABASE_URL_FILE oder einem Credential an.",
   "settings.about.database.postgres": "PostgreSQL",
   "settings.about.unknown": "unbekannt",
   "settings.about.loadError": "Die Build-Informationen konnten nicht geladen werden.",

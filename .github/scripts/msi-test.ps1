@@ -1,9 +1,11 @@
 <#
 .SYNOPSIS
-  Installs the Kalzit MSI package on a CI runner and checks the result: service running as
-  NT SERVICE\Kalzit, HTTP health, data folder access list, firewall rule, recovery actions, a
-  graceful stop, an uninstallation that keeps the data, a reinstallation on the kept data, an
-  uninstallation that removes it, and the same through `kalzit service install|uninstall`.
+  Installs the Kalzit MSI package on a CI runner and checks the result: folders someone else
+  prepared are refused (a configuration folder open to Users, a program folder under C:\, a kept
+  data folder with a file others may read), then service running as NT SERVICE\Kalzit with only
+  SeChangeNotifyPrivilege, HTTP health, data and program folder access lists, firewall rule,
+  recovery actions, a graceful stop, an uninstallation that keeps the data, a reinstallation on the
+  kept data, an uninstallation that removes it, and the same through `kalzit service install|uninstall`.
 
   Only for a disposable machine (the CI job `msi`): it installs and removes a Windows service.
 #>
@@ -33,6 +35,20 @@ function Invoke-Msi([string[]] $Arguments, [string] $Log) {
     $all = $Arguments + @('/qn', '/norestart', '/l*v', (Join-Path $Logs $Log))
     $p = Start-Process msiexec.exe -ArgumentList $all -Wait -PassThru
     if ($p.ExitCode -ne 0) { Fail "msiexec $($Arguments -join ' ') ended with $($p.ExitCode) (log: $Log)" }
+}
+
+# An installation Kalzit's setup step refuses: it fails, rolls back, and the log says why.
+function Invoke-MsiRefused([string[]] $Arguments, [string] $Log, [string] $Why) {
+    $path = Join-Path $Logs $Log
+    $all = $Arguments + @('/qn', '/norestart', '/l*v', $path)
+    $p = Start-Process msiexec.exe -ArgumentList $all -Wait -PassThru
+    if ($p.ExitCode -eq 0) { Fail "msiexec $($Arguments -join ' ') succeeded, but should be refused ($Why)" }
+    if (Get-KalzitService) { Fail "the service is left after the refused installation ($Why)" }
+    # The setup step's output is in the MSI log (WixQuietExec64); its encoding varies.
+    if (-not ((Get-Content $path -Raw) -match [regex]::Escape($Why))) {
+        Fail "the log $Log does not say '$Why'"
+    }
+    Write-Host "refused as expected: $Why"
 }
 
 function Get-KalzitService { Get-CimInstance Win32_Service -Filter "Name='Kalzit'" }
@@ -81,6 +97,19 @@ function Assert-PrivateDataDir([string] $Dir) {
 
 # --- MSI ------------------------------------------------------------------------------------
 
+Step 'Refuse folders someone else prepared'
+# A configuration folder Users may write, as a user could create it in %ProgramData%.
+$configFolder = Split-Path -Parent $configFile
+New-Item -ItemType Directory -Force $configFolder | Out-Null
+icacls $configFolder /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
+Invoke-MsiRefused @('/i', $Msi, "PORT=$Port") 'refused-config-folder.log' 'not as Kalzit''s installer makes it'
+Remove-Item -Recurse -Force $configFolder
+# A program folder directly under C:\, where Authenticated Users may change what is created.
+Invoke-MsiRefused @('/i', $Msi, "PORT=$Port", 'INSTALLFOLDER=C:\KalzitOpen\') 'refused-program-folder.log' 'not a safe program folder'
+if (Test-Path $configFolder) { Fail 'a refused program folder still let the setup touch the configuration folder' }
+Remove-Item -Recurse -Force 'C:\KalzitOpen' -ErrorAction SilentlyContinue
+EndStep
+
 Step 'Install silently with properties'
 Invoke-Msi @('/i', $Msi, "PORT=$Port", 'FIREWALL=1') 'install.log'
 $svc = Assert-Running
@@ -103,7 +132,22 @@ $flag = sc.exe qfailureflag Kalzit | Out-String
 if ($flag -notmatch 'TRUE') { Fail "recovery on non-crash failures is off: $flag" }
 sc.exe qfailure Kalzit
 $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-if ($path -notmatch [regex]::Escape('Program Files\Kalzit')) { Fail 'the program folder is not on the system PATH' }
+if ($path -match [regex]::Escape('Program Files\Kalzit')) { Fail 'the program folder is on the system PATH' }
+$privs = sc.exe qprivs Kalzit | Out-String
+Write-Host $privs
+if ($privs -notmatch 'SeChangeNotifyPrivilege' -or $privs -match 'SeImpersonatePrivilege|SeAssignPrimaryTokenPrivilege') {
+    Fail "the service may hold more than SeChangeNotifyPrivilege: $privs"
+}
+$programFolder = Join-Path ${env:ProgramFiles} 'Kalzit'
+$programAcl = Get-Acl $programFolder
+if (-not $programAcl.AreAccessRulesProtected) { Fail 'the program folder inherits access rules' }
+$writers = $programAcl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) |
+    Where-Object { ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0 } |
+    ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique
+$expectedWriters = @('S-1-5-18', 'S-1-5-32-544', (Get-ServiceSid)) | Sort-Object
+if (($writers -join ',') -ne ($expectedWriters -join ',')) {
+    Fail "the program folder may be changed by $($writers -join ', '), expected SYSTEM, Administrators and the service"
+}
 $exeInstalled = Join-Path ${env:ProgramFiles} 'Kalzit\kalzit.exe'
 $code = & $exeInstalled setup-code --config $configFile
 if ($LASTEXITCODE -ne 0 -or -not $code) { Fail 'kalzit setup-code printed no code' }
@@ -140,6 +184,13 @@ if (Get-NetFirewallRule -DisplayName 'Kalzit' -ErrorAction SilentlyContinue) { F
 if (-not (Test-Path (Join-Path $dataDir 'kalzit.db'))) { Fail 'the database is gone' }
 if (-not (Test-Path $configFile)) { Fail 'the configuration is gone' }
 if (Test-Path (Join-Path ${env:ProgramFiles} 'Kalzit\kalzit.exe')) { Fail 'the program is still there' }
+EndStep
+
+Step 'A kept data folder with a file others may read is refused'
+$logsFolder = Join-Path $dataDir 'logs'
+icacls $logsFolder /grant '*S-1-5-32-545:(OI)(CI)R' | Out-Null
+Invoke-MsiRefused @('/i', $Msi) 'refused-data-folder.log' 'was not private to Kalzit'
+icacls $logsFolder /remove:g '*S-1-5-32-545' | Out-Null
 EndStep
 
 Step 'Reinstall on the kept data, then uninstall with REMOVEDATA=1'

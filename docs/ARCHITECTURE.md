@@ -359,7 +359,9 @@ process, a network target or the gRPC protocol.
 - A data source plugin is a process of its own next to the server, one per installed plugin,
   serving all data sources of its kind. Kalzit starts it with a time limit for the handshake,
   watches it and restarts it with backoff; a crashed or hanging plugin fails only the queries
-  of its kind, never the server.
+  of its kind, never the server. Before every start the program file is hashed again (opened as
+  a regular file, no link) and compared with the SHA-256 its signed manifest lists
+  (`package::verify_binary`); a changed file does not start (`plugin.binary_changed`).
 - Kalzit is the gRPC client (tonic, HTTP/2), the plugin the server. The connection is local:
   - Windows: a named pipe with a random name (`\\.\pipe\kalzit-plugin-<random>`). Kalzit creates
     it (its first instance before the plugin starts, for Kalzit's account, the start's SID and
@@ -1234,39 +1236,70 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
     written. `kalzit service configure` and `cleanup` report their errors there as well, since
     the installer runs them without a console.
   - `kalzit service configure` (run by the MSI after `InstallServices` and before
-    `StartServices`, as LocalSystem, and by `kalzit service install`) creates
-    `%ProgramData%\Kalzit` for Administrators to write and everyone to read, writes
-    `kalzit.toml` unless one exists (an upgrade keeps it, with its ports and data directory),
-    owned by Administrators, and gives the data directory a protected access list: Administrators
-    and the service account only, owner Administrators, created that way from its first moment;
-    Kalzit's state files there get the same. The service account's SID is
-    `S-1-5-80-` plus the SHA-1 of the upper-case service name (`service::service_sid`), so it is
-    known before the MSI creates the service and stays the same when the service is created again.
-    With HTTPS `self-signed` it makes a certificate (rcgen) for the computer name, `localhost`,
-    `127.0.0.1` and `::1` in `<data dir>\tls`; with `certificate` it grants the service account
-    read access to the given PEM files where they are, so a renewal needs no reinstallation. It
-    sets the recovery actions (restart after 2 s, 5 s, then every 30 s; the count resets after a
-    day) and turns them on for stops with an error code, too, and opens the firewall when asked
-    (inbound rule `Kalzit`, TCP, the configuration's ports).
+    `StartServices`, as LocalSystem, only at the first installation and at upgrades, never at a
+    repair; and by `kalzit service install`) runs as SYSTEM over folders a user may have prepared
+    beforehand, so it takes over nothing it did not make or Kalzit made, and refuses instead,
+    with the reason in the MSI log (WixQuietExec64 captures the output) and the event log:
+    - The program folder first, before anything else is touched: not a drive root, Program
+      Files or the Windows folder itself, nothing in it but Kalzit's files (`kalzit.exe`,
+      `LICENSE.txt` and what the updater leaves), nobody else may change it (installer service
+      entries aside), no link or junction on its path, and no folder above it lets others
+      rename or remove what is inside (`TAKEOVER_MASK`: delete, delete child, write DAC or
+      owner, full control; inherit-only entries do not count). Then it gets a protected list:
+      SYSTEM and Administrators full, Users read and execute, the service account modify with
+      self-update; owner Administrators; and its content is checked again. It is not added to
+      `PATH`.
+    - `%ProgramData%\Kalzit`: created for Administrators to write and everyone to read; an
+      existing one is accepted only as Kalzit makes it (owner SYSTEM, Administrators, or the
+      service account with a limited owner entry; nobody else may write). An existing
+      `kalzit.toml` is kept (an upgrade, with its ports and data directory) only when it is a
+      regular file only Administrators may change; else the installation stops.
+    - The data directory may not be a drive root, a system folder (`%ProgramData%`, `C:\Users`,
+      profiles) or lie in Windows, Program Files or the program folder; the folders above it must
+      pass the same check as the program folder's. A new one is created with its protected list
+      (Administrators and the service account, owner Administrators) from its first moment. An
+      existing one is walked first: any link or junction in it, any object owned by someone else
+      or open to anyone else (below `plugins`, the sandbox's plugin and start SIDs and
+      AppContainers aside) stops the installation. Then every object gets the protected list and
+      Administrators as owner, except below `plugins`, whose grants the sandbox needs.
+    - The service account's SID is `S-1-5-80-` plus the SHA-1 of the upper-case service name
+      (`service::service_sid`), so it is known before the MSI creates the service and stays the
+      same when the service is created again.
+    - With HTTPS `self-signed` it makes a certificate (rcgen) for the computer name, `localhost`,
+      `127.0.0.1` and `::1` in `<data dir>\tls` (reused only after the data directory passed the
+      walk above). With `certificate` the files must be regular files only Administrators may
+      change, the key also one only they may read, below folders nobody else may rename; then
+      the service account gets read access where they are, so a renewal needs no reinstallation.
+    - It limits the service to `SeChangeNotifyPrivilege` (`sc privs`): no `SeImpersonate` or
+      `SeAssignPrimaryToken`, through which a compromised service could become SYSTEM. The plugin
+      sandbox needs none of them (a restricted copy of the own token needs no privilege). It sets
+      the recovery actions (restart after 2 s, 5 s, then every 30 s; the count resets after a day)
+      and turns them on for stops with an error code, too, and opens the firewall when asked
+      (inbound rule `Kalzit`, TCP, the configuration's ports).
+    - Values come in with a space before the closing quote (`"[DATADIR] "`), so a folder ending
+      in a backslash does not escape the quote; a value with a quote is refused.
   - With self-update on (`SELFUPDATE`, `--self-update`, default 1) the service account may modify
-    the program folder (`icacls ... /grant *<SID>:(OI)(CI)M`), so the updater can swap the
-    binary, as on Linux with a binary owned by the service account; with 0 the grant is removed
-    and updates are installed with `kalzit update apply` or a new MSI. `kalzit service install`
-    refuses a program folder others may change (`C:\Program Files\...` is fine): the service
-    runs what is in it.
+    the program folder, so the updater can swap the binary, as on Linux with a binary owned by the
+    service account; with 0 it may not, and updates are installed with `kalzit update apply` or a
+    new MSI.
   - `kalzit service cleanup` (before the MSI removes the program, not during an upgrade, and in
     `kalzit service uninstall`) removes the firewall rule and, with `REMOVEDATA=1` /
     `--remove-data`, the data directory and `kalzit.toml`. A data directory is removed only when
-    it is not a drive root and is empty or holds Kalzit's files (`kalzit.db`, `updates`,
-    `secrets.key.dpapi`, ...); anything else is left with a note.
+    no link or junction lies on its path, the folders above it are safe, the folder opened
+    without following links is the one the path names (`GetFinalPathNameByHandleW`), it is not a
+    drive root and it is empty or holds Kalzit's files (`kalzit.db`, `updates`,
+    `secrets.key.dpapi`, ...); anything else is left with a note. `remove_dir_all` removes links
+    inside as links.
+  - At every start, `data_dir::prepare` also checks `updates`, `plugins`, `tls` and `logs` in the
+    data directory: real folders (no link or junction), as private as the data directory.
   - The MSI package: per machine, x64, program folder `C:\Program Files\Kalzit` (remembered in
-    `HKLM\Software\MouseWerk\Kalzit`), added to the system `PATH`. A major upgrade removes the
-    previous version completely first (`afterInstallValidate`), so a `kalzit.exe` the updater
-    replaced in the meantime does not confuse file versioning; the configuration and data are not
-    part of the package and stay. The wizard (WixUI dialogs plus a settings page) asks for the
-    program folder, port, data folder, HTTPS mode, HTTPS port, certificate and key, and the
-    firewall, and skips the settings when `kalzit.toml` exists; removing asks whether the data
-    goes too. Every setting is also an MSI property for silent installations.
+    `HKLM\Software\MouseWerk\Kalzit`). A major upgrade removes the previous version completely
+    first (`afterInstallValidate`), so a `kalzit.exe` the updater replaced in the meantime does not
+    confuse file versioning; the configuration and data are not part of the package and stay. The
+    wizard (WixUI dialogs plus a settings page) asks for the program folder, port, data folder,
+    HTTPS mode, HTTPS port, certificate and key, and the firewall, and skips the settings when
+    `kalzit.toml` exists; removing asks whether the data goes too. Every setting is also an MSI
+    property for silent installations.
   - Running Kalzit as LocalSystem or another account works as before: the data directory must
     then belong to that account or Administrators, without access for others (Kalzit creates
     `%ProgramData%\Kalzit\data` that way on its first start). Changing the account later means
@@ -1356,10 +1389,14 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   `KALZIT_RELEASE_SIGNING_KEY` of the GitHub environment `release` (required reviewers). The
   release workflow (`.github/workflows/release.yml`, actions pinned to commits, checkouts without
   credentials) releases only tags on `main`, builds the binaries, and builds only `kalzit-release`
-  in the job that holds the key. The job `windows-package` signs `kalzit.exe` with Authenticode
-  when the `release` environment holds the owner's code-signing certificate
-  (`KALZIT_WINDOWS_CERT`, `KALZIT_WINDOWS_CERT_PASSWORD`), builds the MSI package from it and
-  signs that too; without a certificate both stay unsigned and the release notes say so. The MSI
+  in the job that holds the key. Windows files are signed with Authenticode in two small jobs
+  (`windows-sign-exe`, `windows-sign-msi`) that alone use the environment `windows-signing`,
+  which holds only the code-signing secrets; the MSI is built from the signed program in between,
+  in a job without any secret (`windows-msi`). Signing uses Microsoft Artifact Signing (the key
+  stays in Microsoft's HSM; recommended) or a PFX imported into the runner's user store for the
+  signing only; nothing but signtool runs while key material is present
+  (`packaging/windows/sign.ps1`, docs/operations/updates.md). Without either both stay unsigned
+  and the release notes say so. The MSI
   is listed in the manifest under `installers` (signed like a package, with no offline package):
   the updater never installs it, and older servers ignore the field.
 - **Source.** Checks list the releases of the channel (stable: not pre-release and no pre-release

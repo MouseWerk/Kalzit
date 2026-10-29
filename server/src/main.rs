@@ -272,6 +272,9 @@ fn serve(config_path: Option<&Path>, logging: Logging) -> ExitCode {
         }
     };
     logging.init(&config.log, &config.paths.data_dir);
+    for warning in &config.warnings {
+        tracing::warn!("{warning}");
+    }
     // An update in progress decides first, before anything opens the database: the first start
     // of a new version runs as a trial, a failed one returns.
     let trial = match boot::guard(&config) {

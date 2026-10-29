@@ -301,6 +301,17 @@ impl Config {
     }
 
     /// Where the value of `section.key` came from.
+    /// Reason codes of what in the configuration an administrator should change (Settings,
+    /// About, for server administrators; the log at start): `config.database_password_in_file`
+    /// when `database.url` in the file carries a password.
+    pub fn warning_codes(&self) -> Vec<&'static str> {
+        let mut codes = Vec::new();
+        if self.source("database.url") == Source::File && self.database.url.as_deref().is_some_and(url_has_password) {
+            codes.push(DATABASE_PASSWORD_IN_FILE);
+        }
+        codes
+    }
+
     pub fn source(&self, key: &str) -> Source {
         if self.env_keys.contains(key) {
             Source::Environment
@@ -343,6 +354,13 @@ impl Config {
         }
         if let Some(base) = from_file(&config, "tls.key_file") {
             config.tls.key_file = config.tls.key_file.as_ref().map(|p| base.join(p));
+        }
+        if config.warning_codes().contains(&DATABASE_PASSWORD_IN_FILE) {
+            config.warnings.push(
+                "database.url in the configuration file holds the database password, which everyone who may read the \
+                 file sees; give it in KALZIT_DATABASE_URL_FILE or a credential instead (docs/guide/installation.md)"
+                    .into(),
+            );
         }
         if let Some(base) = from_file(&config, "database.url")
             && let Some(url) = config.database.url.as_deref().and_then(|u| resolve_sqlite_url(u, base))
@@ -595,6 +613,17 @@ fn database_url_from_file(env: &mut Vec<(String, String)>, credentials_dir: Opti
     env.retain(|(n, _)| n != "KALZIT_DATABASE_URL");
     env.push(("KALZIT_DATABASE_URL".into(), url.to_string()));
     Ok(Some(path))
+}
+
+pub const DATABASE_PASSWORD_IN_FILE: &str = "config.database_password_in_file";
+
+/// Whether a database URL carries a password (`postgres://user:secret@host`, or `password=` in
+/// its query).
+fn url_has_password(text: &str) -> bool {
+    url::Url::parse(text).is_ok_and(|u| {
+        u.password().is_some_and(|p| !p.is_empty())
+            || u.query_pairs().any(|(k, v)| k.eq_ignore_ascii_case("password") && !v.is_empty())
+    })
 }
 
 fn default_config_paths() -> Vec<PathBuf> {
@@ -869,6 +898,27 @@ mod tests {
         let toml = format!("[paths]\ndata_dir = '{}'\n", absolute.display());
         std::fs::write(&file, toml).unwrap();
         assert_eq!(Config::from_file(Some(&file), env(&[])).unwrap().paths.data_dir, absolute);
+    }
+
+    #[test]
+    fn a_database_password_in_the_file_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("kalzit.toml");
+        for (url, flagged) in [
+            ("postgres://kalzit:secret@db:5432/kalzit", true),
+            ("postgres://kalzit@db/kalzit?password=secret", true),
+            ("postgres://kalzit@db/kalzit", false),
+            ("sqlite:kalzit.db", false),
+        ] {
+            std::fs::write(&file, format!("[database]\nurl = \"{url}\"\n")).unwrap();
+            let c = Config::from_file(Some(&file), env(&[])).unwrap();
+            assert_eq!(c.warning_codes().contains(&DATABASE_PASSWORD_IN_FILE), flagged, "{url}");
+            assert_eq!(c.warnings.iter().any(|w| w.contains("database password")), flagged, "{url}");
+        }
+        // From the environment it is not in the file.
+        std::fs::write(&file, "").unwrap();
+        let c = Config::from_file(Some(&file), env(&[("KALZIT_DATABASE_URL", "postgres://k:s@db/k")])).unwrap();
+        assert!(c.warning_codes().is_empty());
     }
 
     #[test]

@@ -34,6 +34,10 @@ struct About {
     /// `sqlite` or `postgres`. Server administrators only.
     #[serde(skip_serializing_if = "Option::is_none")]
     database: Option<&'static str>,
+    /// Reason codes of configuration an administrator should change (`Config::warning_codes`).
+    /// Server administrators only, and only when there is one.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    config_warnings: Vec<&'static str>,
 }
 
 fn arch_name() -> &'static str {
@@ -52,6 +56,7 @@ async fn about(State(state): State<AppState>, Extension(user): Extension<Session
         platform: None,
         arch: None,
         database: None,
+        config_warnings: Vec::new(),
     };
     if user.is_server_admin != 0 {
         let url = state.config.database_url();
@@ -60,6 +65,7 @@ async fn about(State(state): State<AppState>, Extension(user): Extension<Session
         about.arch = Some(arch_name());
         about.database =
             Some(if url.starts_with("postgres:") || url.starts_with("postgresql:") { "postgres" } else { "sqlite" });
+        about.config_warnings = state.config.warning_codes();
     }
     Json(about)
 }

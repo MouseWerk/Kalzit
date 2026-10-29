@@ -422,7 +422,14 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       return json(
         200,
         state.user.isServerAdmin
-          ? { ...everyone, commit: "a1b2c3d4e", platform: "linux", arch: "x64", database: "sqlite" }
+          ? {
+              ...everyone,
+              commit: "a1b2c3d4e",
+              platform: "linux",
+              arch: "x64",
+              database: "sqlite",
+              configWarnings: ["config.database_password_in_file", "config.unknown_to_this_ui"],
+            }
           : everyone,
       );
     }

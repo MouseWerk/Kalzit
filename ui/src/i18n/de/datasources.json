@@ -674,6 +674,7 @@
   "datasources.reason.plugin.key_in_use": "Entfernen dieses Schlüssels hält diese Plugins an: {plugins}",
   "datasources.reason.plugin.handover_invalid": "Die Übergabe an den neuen Schlüssel lässt sich nicht bestätigen.",
   "datasources.reason.plugin.start_failed": "Der Prozess des Plugins ließ sich nicht starten: {detail}",
+  "datasources.reason.plugin.binary_changed": "Das Programm des Plugins hat sich seit der Installation geändert, deshalb startet es nicht. Installiere das Plugin erneut.",
   "datasources.reason.plugin.root_refused": "Kalzit läuft auf diesem Server als root, deshalb starten keine Plugins. Lass Kalzit unter einem eigenen Konto laufen.",
   "datasources.reason.plugin.landlock_missing": "Dieser Linux-Server bietet kein Landlock, und Plugins ohne Landlock sind nicht erlaubt: Nichts hielte sie davon ab, Kalzits Dateien zu lesen.",
   "datasources.reason.plugin.exited": "Der Prozess des Plugins endete, bevor er bereit war ({exit}).",
