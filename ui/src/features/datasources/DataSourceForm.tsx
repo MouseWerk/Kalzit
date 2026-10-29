@@ -916,6 +916,9 @@ export function SettingsForm({
             specs={specs}
             locked={readOnly || (targetLocked && specs.some((spec) => spec.target))}
           >
+            {section === "cache" ? (
+              <p className="field__hint">{t("datasources.cache.hint")}</p>
+            ) : null}
             {section === "connection" && supportsConnectionString(kind.kind) && !readOnly ? (
               <ConnectionStringBlock
                 kind={kind}

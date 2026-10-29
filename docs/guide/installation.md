@@ -1,7 +1,8 @@
 # Installation
 
 Kalzit is one program, `kalzit`, with the web interface built in. On Linux, install the deb or
-rpm package, which runs it as a systemd service; or run it as a container image; or build the
+rpm package, which runs it as a systemd service; on Windows, install it as a service with the MSI
+package ([Windows](#windows)); or run it as a container image ([Docker](#docker)); or build the
 binary from source and run it directly or as a service (see the
 [README](../../README.md#quick-start) and "Running as a service" in
 [ARCHITECTURE](../ARCHITECTURE.md#running-as-a-service)). After the installation, continue with
@@ -325,3 +326,186 @@ The build compiles the web interface and the server; the server is cross-compile
 architecture, so a multi-architecture build needs no emulation. Build arguments:
 `CARGO_BUILD_JOBS` limits the parallel compile jobs, `KALZIT_BUILD_COMMIT` and
 `KALZIT_BUILD_DATE` set what **Settings** > **About Kalzit** (Über Kalzit) shows (the build has no Git history).
+
+## Windows
+
+On Windows, Kalzit runs as the Windows service **Kalzit** under its own virtual account,
+`NT SERVICE\Kalzit`. The MSI package sets everything up; `kalzit service install` does the same
+without it.
+
+### Installing with the MSI package
+
+1. Download `kalzit-<version>-windows-x64.msi` from the
+   [releases](https://github.com/MouseWerk/Kalzit/releases). Its SHA-256 is in
+   `kalzit-<version>-manifest.json` of the same release, which is signed with Kalzit's release
+   key: `Get-FileHash kalzit-<version>-windows-x64.msi` must show the same value.
+2. Run it (it asks for administrator rights). The wizard asks for:
+
+   | Page | Setting | Default |
+   |---|---|---|
+   | Destination folder | where `kalzit.exe` goes | `C:\Program Files\Kalzit` |
+   | Server settings | HTTP port | `3000` |
+   | | data folder | `%ProgramData%\Kalzit\data` |
+   | | HTTPS: off, a self-signed certificate for this computer, or an existing certificate (PEM files) | off |
+   | | HTTPS port, certificate file and key file | `3443` |
+   | | open the port(s) in Windows Defender Firewall | not ticked |
+
+3. When it is done, open `http://localhost:3000` (or the port you chose). The setup code for the
+   first sign-in is in `setup-token.txt` in the data folder, which only administrators can open:
+   in PowerShell opened with **Run as administrator**,
+   `Get-Content C:\ProgramData\Kalzit\data\setup-token.txt`. Continue with
+   [Getting started](getting-started.md#first-setup).
+
+What the package sets up:
+
+- `kalzit.exe` in the program folder. Only Administrators and SYSTEM may change the folder (with
+  `SELFUPDATE=1` also the service account); everyone may run the program. The folder is not added
+  to `PATH`: call `kalzit.exe` with its full path. The installer's own steps run from a copy of
+  the program inside the package, never from the installed file.
+- The service `Kalzit` (automatic start, account `NT SERVICE\Kalzit`) with a single privilege,
+  `SeChangeNotifyPrivilege`: no impersonation, so a compromised service cannot turn itself into
+  SYSTEM. After a failure the service manager starts it again (after 2 s, 5 s, then every 30 s).
+- `%ProgramData%\Kalzit\kalzit.toml` with your settings. Everyone may read it, only
+  Administrators may change it.
+- The data folder, with access for Administrators and the service account only. It holds the
+  database, the setup code, the key for stored passwords (`secrets.key.dpapi`, protected with
+  DPAPI for this computer), the log and, with a self-signed certificate, `tls\`.
+- With "Existing certificate", the service account may read the two files where they are. A
+  renewed certificate saved over them takes effect within a minute, without a restart. Both must
+  be files only Administrators may change, the key also one only they may read, in folders others
+  cannot rename (a key under `C:\` or one Users may read is refused); otherwise restrict them, or
+  copy them into a folder only Administrators can open.
+- With the firewall ticked, an inbound rule named `Kalzit` for the port(s).
+
+A self-signed certificate (`<data folder>\tls\self-signed.crt.pem`) makes browsers warn until
+you trust it on each computer that opens Kalzit; for more than a test, use a certificate from your
+own certificate authority or a public one.
+
+If `%ProgramData%\Kalzit\kalzit.toml` exists already (an earlier installation), the package keeps
+it and skips the settings page.
+
+The installer does not take over what someone else could have prepared, since the service would
+run, restore or serve it. The installation stops, and the message in the installer's log and the
+event log says what, when:
+
+- `%ProgramData%\Kalzit` exists, but others than Administrators may change it, or `kalzit.toml`
+  was not written by an administrator;
+- the data folder exists, but someone else owns or may open a file or folder in it, or it holds a
+  link or junction;
+- the data folder is a drive root, a system folder (Windows, Program Files, `%ProgramData%`
+  itself, `C:\Users`) or lies in the program folder;
+- a folder above the data folder, the program folder or the certificate lets others rename or
+  remove what is in it (folders created directly under `C:\` are like that, `C:\Program Files`
+  and `%ProgramData%` are not);
+- the program folder holds anything else than Kalzit's files, or others may change it.
+
+Move such a folder aside (or fix its access list) and install again.
+
+### Silent installation
+
+Every setting is an MSI property:
+
+```powershell
+msiexec /i kalzit-0.5.0-windows-x64.msi /qn /l*v kalzit-install.log PORT=8080 FIREWALL=1
+msiexec /i kalzit-0.5.0-windows-x64.msi /qn HTTPS=certificate HTTPSPORT=443 `
+  CERTFILE="C:\certs\kalzit.pem" KEYFILE="C:\certs\kalzit.key" DATADIR="D:\Kalzit"
+```
+
+| Property | Meaning | Default |
+|---|---|---|
+| `INSTALLFOLDER` | program folder | `C:\Program Files\Kalzit` |
+| `PORT` | HTTP port | `3000` |
+| `DATADIR` | data folder (absolute path) | `%ProgramData%\Kalzit\data` |
+| `HTTPS` | `off`, `self-signed` or `certificate` | `off` |
+| `HTTPSPORT` | HTTPS port | `3443` |
+| `CERTFILE`, `KEYFILE` | certificate chain and private key (PEM) for `HTTPS=certificate` | |
+| `FIREWALL` | `1` opens the port(s) in Windows Defender Firewall | not set |
+| `SELFUPDATE` | `0`: the program folder stays for Administrators only, and updates come with a new MSI package; `1`: the service account may replace `kalzit.exe`, so the built-in updater installs on its own (see the note below) | `0` |
+| `REMOVEDATA` | when uninstalling: `1` also removes the data folder and `kalzit.toml` | not set |
+
+**`SELFUPDATE=1` and its risk.** With it, the service account may change `kalzit.exe` and what lies
+next to it. Should the service ever be taken over, the attacker could change code that an
+administrator later runs with full rights, and so become an administrator. Kalzit loads DLLs only
+from System32 and the installer never runs the installed file, but an administrator who starts
+that `kalzit.exe` elevated (for `kalzit update`, `kalzit setup-code`, `kalzit service`) runs what
+the service account left there. With `SELFUPDATE=1`, do not run the installed program elevated:
+read the setup code from `setup-token.txt`, and use a `kalzit.exe` downloaded from the release for
+command-line work. With `SELFUPDATE=0` (the default) running it elevated is safe.
+
+With an existing `kalzit.toml`, `PORT`, `DATADIR` and the HTTPS properties are not used. Values
+must not contain a quote (`"`). The settings are read at the first installation and at upgrades,
+never at a repair. When something goes wrong, the log (`/l*v`) and the Windows event log (Event
+Viewer, Windows Logs, Application, source `Kalzit`) say what.
+
+### Without the MSI package
+
+`kalzit service` sets up the same service for a `kalzit.exe` you copied yourself. Copy it alone
+into a folder of its own that only Administrators can change, such as `C:\Program Files\Kalzit`
+(Kalzit refuses a folder others may change or one with other files in it, since the service runs
+what is in it), then in an elevated prompt:
+
+```powershell
+& "C:\Program Files\Kalzit\kalzit.exe" service install --port 3000 --open-firewall
+```
+
+| Command | What it does |
+|---|---|
+| `kalzit service install` | creates the service for this `kalzit.exe`, writes `kalzit.toml` (unless it exists), secures the data folder and starts the service. Options as the properties above: `--port`, `--data-dir`, `--https` (`off`, `self-signed` or `certificate`), `--https-port`, `--cert-file`, `--key-file`, `--open-firewall`, `--self-update 1` (off by default, see the note on `SELFUPDATE`); `--no-start` sets up without starting; `--config` uses another configuration file than `%ProgramData%\Kalzit\kalzit.toml` |
+| `kalzit service uninstall` | stops and removes the service and the firewall rule; the data and `kalzit.toml` stay. `--remove-data` removes them too |
+| `kalzit service run` | what the service manager starts; in a console, use `kalzit serve` |
+
+Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
+`kalzit service install` with `kalzit service uninstall`.
+
+### Running the service
+
+- Start, stop and restart it in the Services app, or in an elevated PowerShell with
+  `Start-Service Kalzit`, `Stop-Service Kalzit` and `Restart-Service Kalzit`. Stopping finishes
+  open requests (up to 10 seconds) and closes the database cleanly.
+- The log is `<data folder>\logs\kalzit.log` (a new file every 10 MB, three older ones kept).
+  Errors before that file can be written, such as a broken `kalzit.toml`, are in the Windows event
+  log (Application, source `Kalzit`).
+- To change a setting, edit `%ProgramData%\Kalzit\kalzit.toml` as an administrator and restart
+  the service. All settings are listed in the [README](../../README.md#configuration). Everyone on
+  the computer may read the file, so put no secrets into it: give a PostgreSQL URL with a password
+  in a file named by `KALZIT_DATABASE_URL_FILE` that only Administrators and the service may read.
+  Kalzit warns in its log and in Settings, About (for server administrators) when `database.url`
+  in the file holds a password.
+- The key for stored passwords is `secrets.key.dpapi` in the data folder, which only this
+  computer can decrypt: back the data folder up as a whole ([Backups](../ARCHITECTURE.md#backups)),
+  and after restoring it on another computer, enter the data source passwords again.
+
+### Updates
+
+- **A newer MSI package** (the default way) installs over the previous one: the service stops, the
+  program is replaced, the service starts again; `kalzit.toml` and the data stay. The new version
+  migrates the database on its first start, without the updater's backup and automatic return,
+  so back up the data folder first ([Backups](../ARCHITECTURE.md#backups)). An older package than
+  the one installed is refused. The Updates page (Administration (Verwaltung) > Updates) tells you
+  when a release is out; it can also download and verify it for `kalzit update apply` from an
+  elevated prompt (`Stop-Service Kalzit`, `& "C:\Program Files\Kalzit\kalzit.exe" update apply`,
+  `Start-Service Kalzit`).
+- **The built-in updater installs on its own** only with `SELFUPDATE=1` (see the note on its
+  risk above): it stops the service gracefully, backs up the database, puts the new `kalzit.exe`
+  in place and the service manager starts it again. If the new version does not report healthy,
+  Kalzit returns to the previous one with the backup ([Updates guide](../operations/updates.md)).
+  Settings, Apps keeps showing the version the MSI package installed; the Updates page shows the
+  one that runs.
+
+### Uninstalling
+
+- Settings, Apps, Kalzit, **Uninstall** removes the program, the service and the firewall rule.
+  The data folder and `kalzit.toml` stay, so a later installation finds everything again.
+- To remove the data too, run the MSI package again, choose **Remove** and tick "Also remove the
+  data folder and the configuration", or run
+  `msiexec /x kalzit-<version>-windows-x64.msi REMOVEDATA=1`. This cannot be undone. A data folder
+  that holds other files than Kalzit's (or a drive root), lies behind a link or junction, or sits
+  in a folder others may change is left in place.
+
+### Signed packages
+
+Release packages are signed with the project's code signing (Microsoft Artifact Signing or a
+code-signing certificate) when it is set up for the release; Windows then names the publisher
+before it installs. Unsigned packages say so in the
+release notes, and Windows SmartScreen may warn ("Windows protected your PC"): compare the SHA-256
+with the signed manifest as above, then choose "More info" and "Run anyway".

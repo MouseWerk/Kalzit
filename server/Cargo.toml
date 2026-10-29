@@ -81,8 +81,15 @@ libc = "0.2.191"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes",
-    "Win32_System_IO", "Win32_Security_Isolation", "Win32_System_Com",
+    "Win32_System_IO", "Win32_Security_Isolation", "Win32_System_Com", "Win32_System_EventLog",
+    "Win32_System_LibraryLoader", "Win32_System_SystemInformation",
 ] }
+# The Windows service: the control dispatcher, the service's status and its configuration.
+windows-service = "0.8.1"
+# The SID of the virtual service account (`NT SERVICE\Kalzit`) is the SHA-1 of the service name.
+sha1 = "0.11.0"
+# The self-signed certificate `kalzit service install --https self-signed` makes.
+rcgen = "0.14.10"
 
 [dev-dependencies]
 http-body-util = "0.1.5"

@@ -438,6 +438,7 @@ export const PANEL_QUERY_REQUEST_FIELDS = [
   "intervalMs",
   "maxDataPoints",
   "variables",
+  "refresh",
 ];
 const QUERY_REQUEST_FIELDS = [
   "queries",
@@ -446,6 +447,7 @@ const QUERY_REQUEST_FIELDS = [
   "maxDataPoints",
   "variables",
   "explore",
+  "refresh",
 ];
 const QUERY_ITEM_FIELDS = ["refId", "datasourceId", "query", "cursor", "limit"];
 

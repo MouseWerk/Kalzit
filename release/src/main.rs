@@ -13,7 +13,7 @@
 //! `keygen` writes the private key into a new file readable only by its owner and prints the
 //! public key; the private key is never printed. `release` signs with the key in the environment
 //! variable `KALZIT_RELEASE_SIGNING_KEY` and writes the manifest, its signature and one offline
-//! package per binary; the system packages (`--installer`, the `.deb` and `.rpm`) are listed and
+//! package per binary; the system packages (`--installer`: the `.deb`, `.rpm` and `.msi`) are listed and
 //! signed in the manifest too, without an offline package. `verify` checks a release the way a
 //! server does. `sign-plugin-manifest`
 //! signs plugin manifests with the plugin key in `KALZIT_PLUGIN_SIGNING_KEY` and writes

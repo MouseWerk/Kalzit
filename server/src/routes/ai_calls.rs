@@ -385,7 +385,7 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
         let mut done = BTreeSet::new();
         for ref_id in &order {
             match results.remove(ref_id) {
-                Some(QueryOutcome::Ok { result, steps: ran }) => {
+                Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                     done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
                     inputs.push((
                         ref_id.clone(),

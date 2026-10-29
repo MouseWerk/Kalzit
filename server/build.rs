@@ -62,6 +62,14 @@ fn date() -> String {
 }
 
 fn main() {
+    // Windows: the loader looks for the DLLs `kalzit.exe` imports in System32 only, never in the
+    // program folder (LOAD_LIBRARY_SEARCH_SYSTEM32), so a DLL placed next to the program is not
+    // loaded, also not while an administrator or the installer runs it.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo:rustc-link-arg-bin=kalzit=/DEPENDENTLOADFLAG:0x800");
+    }
     for name in ["KALZIT_BUILD_COMMIT", "KALZIT_BUILD_DATE", "SOURCE_DATE_EPOCH"] {
         println!("cargo:rerun-if-env-changed={name}");
     }

@@ -174,6 +174,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "datasources.max_response_bytes",
       "datasources.max_parallel_queries",
       "datasources.max_inflight_bytes",
+      "datasources.cache_enabled",
+      "datasources.cache_max_bytes",
     ],
     visible: serverAdmin,
   },

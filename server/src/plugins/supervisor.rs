@@ -565,6 +565,9 @@ impl Supervisor {
             )
             .with("path", path));
         }
+        // The program must still be the signed one (defence in depth: the package folder belongs
+        // to Kalzit's account, but whatever changed it must not get its file run).
+        super::package::verify_binary(&self.launch.manifest, &self.launch.package_dir)?;
         let require_landlock = cfg!(target_os = "linux") && !self.launch.allow_without_landlock.load(Ordering::SeqCst);
         let landlock_missing = || {
             HostError::new(

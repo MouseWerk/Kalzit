@@ -28,13 +28,14 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/teams", Org(TeamsWrite), create),
         route(Method::GET, "/orgs/{orgId}/teams/{teamId}", Org(TeamsRead), get_one),
         route(Method::PATCH, "/orgs/{orgId}/teams/{teamId}", Org(TeamsWrite), rename),
-        route(Method::DELETE, "/orgs/{orgId}/teams/{teamId}", Org(TeamsWrite), delete),
+        route(Method::DELETE, "/orgs/{orgId}/teams/{teamId}", Org(TeamsWrite), delete).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/teams/{teamId}/members", Org(TeamsRead), list_members),
         // Maintainers manage their own team's members without `teams:members`; the handlers
         // check either.
-        route(Method::PUT, "/orgs/{orgId}/teams/{teamId}/members/{userId}", OrgMember, put_member),
-        route(Method::DELETE, "/orgs/{orgId}/teams/{teamId}/members/{userId}", OrgMember, remove_member),
-        route(Method::PUT, "/orgs/{orgId}/teams/{teamId}/roles", Org(TeamsWrite), set_roles),
+        route(Method::PUT, "/orgs/{orgId}/teams/{teamId}/members/{userId}", OrgMember, put_member).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/teams/{teamId}/members/{userId}", OrgMember, remove_member)
+            .changes_rights(),
+        route(Method::PUT, "/orgs/{orgId}/teams/{teamId}/roles", Org(TeamsWrite), set_roles).changes_rights(),
     ]
 }
 

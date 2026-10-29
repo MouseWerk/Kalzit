@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use axum::extract::{Path, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::{Extension, Json};
 use serde_json::Value;
 
@@ -20,15 +20,62 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::dashboards::model::{self, DashboardModel, ValuesFrom, ValuesSource, VariableType};
+use crate::datasources::cache::CacheUse;
 use crate::datasources::distribution::DistributionSpec;
-use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
+use crate::datasources::{check_interval, check_items, check_range, run_queries_cached};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::shapes::{
-    DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest, PanelQueryRequest,
-    QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption, VariableOptionsRequest,
-    VariableOptionsResponse,
+    CacheStatus, DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest,
+    PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption,
+    VariableOptionsRequest, VariableOptionsResponse,
 };
+
+/// What the query cache did for a whole answer (docs/api/datasources.md, "Query cache").
+pub(crate) const CACHE_HEADER: HeaderName = HeaderName::from_static("x-kalzit-cache");
+
+/// Whether the caller asks for answers straight from the source: `refresh` in the body, or
+/// `Cache-Control: no-cache` (or `no-store`) or `Pragma: no-cache`.
+pub(crate) fn wants_refresh(headers: &HeaderMap, refresh: Option<bool>) -> bool {
+    let says =
+        |name: header::HeaderName| {
+            headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).any(|v| {
+                v.split(',').map(|d| d.trim().to_ascii_lowercase()).any(|d| d == "no-cache" || d == "no-store")
+            })
+        };
+    refresh == Some(true) || says(header::CACHE_CONTROL) || says(header::PRAGMA)
+}
+
+/// The `X-Kalzit-Cache` header of an answer: `hit` when every answer came from the cache,
+/// `refresh` when the caller asked to refresh, `miss` when at least one ran in its source and is
+/// kept now, `off` when the cache had no part in it (off, not used by a source, or only errors).
+pub(crate) fn cache_header(response: &QueryResponse) -> [(HeaderName, HeaderValue); 1] {
+    let statuses: Vec<CacheStatus> = response
+        .results
+        .values()
+        .filter_map(|o| match o {
+            QueryOutcome::Ok { cache: Some(info), .. } => Some(info.status),
+            _ => None,
+        })
+        .collect();
+    let value = if statuses.is_empty() {
+        "off"
+    } else if statuses.contains(&CacheStatus::Refresh) {
+        "refresh"
+    } else if statuses.iter().all(|s| *s == CacheStatus::Hit) {
+        "hit"
+    } else {
+        "miss"
+    };
+    [(CACHE_HEADER, HeaderValue::from_static(value))]
+}
+
+/// A query answer with its cache header.
+pub(crate) type Answer = ([(HeaderName, HeaderValue); 1], Json<QueryResponse>);
+
+pub(crate) fn answer(response: QueryResponse) -> Answer {
+    (cache_header(&response), Json(response))
+}
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
@@ -169,8 +216,9 @@ pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<
 async fn query(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
+    headers: HeaderMap,
     JsonBody(req): JsonBody<QueryRequest>,
-) -> ApiResult<Json<QueryResponse>> {
+) -> ApiResult<Answer> {
     check_items(&req.queries)?;
     crate::datasources::check_item_steps(&req.queries)?;
     check_range(req.time_range)?;
@@ -200,10 +248,22 @@ async fn query(
     }
     let kept = if req.explore == Some(true) { allowed.clone() } else { Vec::new() };
     let started = std::time::Instant::now();
+    let cache = CacheUse::read(wants_refresh(&headers, req.refresh));
     let mut response = if allowed.is_empty() {
         QueryResponse { results: Default::default() }
     } else {
-        run_queries(&state, &ctx, allowed, req.time_range, req.interval_ms, req.max_data_points, &req.variables).await
+        run_queries_cached(
+            &state,
+            &ctx,
+            allowed,
+            req.time_range,
+            req.interval_ms,
+            req.max_data_points,
+            &req.variables,
+            None,
+            &cache,
+        )
+        .await
     };
     // Explore keeps what the user ran; the history of the caller alone, never a result.
     if !kept.is_empty() {
@@ -215,7 +275,7 @@ async fn query(
         let error = crate::datasources::api_error_body(e);
         response.results.insert(ref_id, QueryOutcome::Err { error });
     }
-    Ok(Json(response))
+    Ok(answer(response))
 }
 
 /// The current stored model of a dashboard the caller may read. Unknown, trashed and invisible
@@ -361,15 +421,17 @@ async fn panel_query(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
-    JsonBody(req): JsonBody<PanelQueryRequest>,
-) -> ApiResult<Json<QueryResponse>> {
+    headers: HeaderMap,
+    JsonBody(mut req): JsonBody<PanelQueryRequest>,
+) -> ApiResult<Answer> {
     let model = readable_model(&state, &ctx, &dashboard_id).await?;
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
     // A library panel's queries are its own; the dashboard showing it authorizes them as it does
     // its own stored queries (dashboards::library).
     let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
     let panel = linked.as_ref().unwrap_or(panel);
-    Ok(Json(run_stored_panel(&state, &ctx, &model, panel, req).await?))
+    req.refresh = Some(wants_refresh(&headers, req.refresh));
+    Ok(answer(run_stored_panel(&state, &ctx, &model, panel, req).await?))
 }
 
 /// The stored queries of a panel, ready to run, with the variable values checked against what
@@ -442,8 +504,9 @@ pub(crate) async fn panel_run(
 }
 
 /// Runs the stored queries of `panel` in `model` (a dashboard's, or a saved analysis as a
-/// dashboard of one panel) with the request's time range, limits and variable values. The caller
-/// has decided that the caller may read what holds them.
+/// dashboard of one panel) with the request's time range, limits and variable values, through
+/// the query cache (`refresh` bypasses it). The caller has decided that the caller may read what
+/// holds them.
 pub(crate) async fn run_stored_panel(
     state: &AppState,
     ctx: &OrgCtx,
@@ -459,7 +522,7 @@ pub(crate) async fn run_stored_panel(
         return Ok(QueryResponse { results: BTreeMap::new() });
     }
     check_items(&items)?;
-    Ok(run_queries_with(
+    Ok(run_queries_cached(
         state,
         ctx,
         items,
@@ -468,6 +531,7 @@ pub(crate) async fn run_stored_panel(
         req.max_data_points,
         &variables,
         Some(&identifiers),
+        &CacheUse::read(req.refresh == Some(true)),
     )
     .await)
 }
@@ -476,6 +540,7 @@ async fn variable_options(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path((_, dashboard_id, name)): Path<(String, String, String)>,
+    headers: HeaderMap,
     JsonBody(req): JsonBody<VariableOptionsRequest>,
 ) -> ApiResult<Json<VariableOptionsResponse>> {
     let model = readable_model(&state, &ctx, &dashboard_id).await?;
@@ -505,8 +570,19 @@ async fn variable_options(
         limit: Some(MAX_OPTIONS as u32),
         steps: Vec::new(),
     };
-    let mut response =
-        run_queries_with(&state, &ctx, vec![item], req.time_range, None, None, &variables, Some(&identifiers)).await;
+    let cache = CacheUse::read(wants_refresh(&headers, None));
+    let mut response = run_queries_cached(
+        &state,
+        &ctx,
+        vec![item],
+        req.time_range,
+        None,
+        None,
+        &variables,
+        Some(&identifiers),
+        &cache,
+    )
+    .await;
     match response.results.remove(OPTIONS_REF_ID) {
         Some(QueryOutcome::Ok { result, .. }) => Ok(Json(options_from(result, variable.values_from.as_ref())?)),
         Some(QueryOutcome::Err { error }) => Err(api_error(error)),

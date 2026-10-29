@@ -1,4 +1,5 @@
 import type {
+  CacheInfo,
   DocumentSet,
   Frame,
   QueryResponse,
@@ -15,6 +16,8 @@ export type TargetOutcome =
       result: QueryResult;
       /** The query's graph steps the server ran, and where (the result is after them). */
       steps?: StepPlace[];
+      /** What the server's query cache did for this answer, when the run used it. */
+      cache?: CacheInfo;
     }
   | {
       refId: string;
@@ -29,9 +32,12 @@ export function outcomesOf(response: QueryResponse, refIds: readonly string[]): 
   return refIds.map((refId) => {
     const outcome = response.results[refId];
     if (outcome !== undefined && "result" in outcome) {
-      return outcome.steps === undefined
-        ? { refId, result: outcome.result }
-        : { refId, result: outcome.result, steps: outcome.steps };
+      return {
+        refId,
+        result: outcome.result,
+        ...(outcome.steps === undefined ? {} : { steps: outcome.steps }),
+        ...(outcome.cache === undefined ? {} : { cache: outcome.cache }),
+      };
     }
     if (outcome !== undefined && "error" in outcome) {
       return { refId, error: outcome.error };

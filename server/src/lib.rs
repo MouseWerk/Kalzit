@@ -30,6 +30,7 @@ pub mod routes;
 pub mod saved_analyses;
 pub mod secrets;
 pub mod server;
+pub mod service;
 pub mod settings;
 pub mod shapes;
 pub mod text;

@@ -40,9 +40,9 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/dashboards/validate", OrgMember, validate),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, save),
-        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash),
-        route(Method::POST, "/orgs/{orgId}/dashboards/{dashboardId}/restore", OrgMember, restore),
-        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}/purge", OrgMember, purge),
+        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash).changes_rights(),
+        route(Method::POST, "/orgs/{orgId}/dashboards/{dashboardId}/restore", OrgMember, restore).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}/purge", OrgMember, purge).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/versions", OrgMember, versions),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/versions/{version}", OrgMember, version),
         route(
@@ -51,7 +51,7 @@ pub fn routes() -> Vec<RouteDef> {
             OrgMember,
             restore_version,
         ),
-        route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}/owner", OrgMember, set_owner),
+        route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}/owner", OrgMember, set_owner).changes_rights(),
     ]
 }
 
@@ -770,6 +770,10 @@ async fn save(
         added_library: added_library(&model, Some(&stored)),
         added_analyses: added_analyses(&model, Some(&stored)),
     };
+    // Another folder can mean other readers: no answer kept under the old place may stay. Taken
+    // before the write, so a client that goes away cannot skip it.
+    let _bump =
+        (folder_id != row.folder_id).then(|| state.datasources.query_cache().bump_on_drop(Some(ctx.org_id.clone())));
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
 }
 

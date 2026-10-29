@@ -25,8 +25,8 @@ pub fn routes() -> Vec<RouteDef> {
     // resource, so the handlers check it per resource.
     vec![
         route(Method::GET, "/orgs/{orgId}/grants", Access::OrgMember, list),
-        route(Method::POST, "/orgs/{orgId}/grants", Access::OrgMember, create),
-        route(Method::DELETE, "/orgs/{orgId}/grants/{grantId}", Access::OrgMember, delete),
+        route(Method::POST, "/orgs/{orgId}/grants", Access::OrgMember, create).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/grants/{grantId}", Access::OrgMember, delete).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/explain", Access::OrgMember, explain_permission),
     ]
 }
