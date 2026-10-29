@@ -627,10 +627,15 @@ jobs:
           New-Item -ItemType Directory -Force $logs | Out-Null
           $data = Join-Path $env:ProgramData 'Kalzit\data\logs'
           if (Test-Path $data) { Copy-Item -Recurse $data (Join-Path $logs 'kalzit') }
-          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Kalzit' } -ErrorAction SilentlyContinue |
-            Format-List TimeCreated, Message | Out-File (Join-Path $logs 'events-kalzit.txt')
-          Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 50 -ErrorAction SilentlyContinue |
-            Format-List TimeCreated, Message | Out-File (Join-Path $logs 'events-scm.txt')
+          # No event of a source is an error for Get-WinEvent.
+          try {
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Kalzit' } -ErrorAction Stop |
+              Format-List TimeCreated, Message | Out-File (Join-Path $logs 'events-kalzit.txt')
+          } catch { "no events: $_" | Out-File (Join-Path $logs 'events-kalzit.txt') }
+          try {
+            Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 50 -ErrorAction Stop |
+              Format-List TimeCreated, Message | Out-File (Join-Path $logs 'events-scm.txt')
+          } catch { "no events: $_" | Out-File (Join-Path $logs 'events-scm.txt') }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

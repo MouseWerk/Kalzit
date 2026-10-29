@@ -16,7 +16,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# msiexec does not resolve paths against PowerShell's location.
+$Msi = (Resolve-Path $Msi).Path
+$Exe = (Resolve-Path $Exe).Path
 New-Item -ItemType Directory -Force $Logs | Out-Null
+$Logs = (Resolve-Path $Logs).Path
 $programData = [Environment]::GetFolderPath('CommonApplicationData')
 $configFile = Join-Path $programData 'Kalzit\kalzit.toml'
 $dataDir = Join-Path $programData 'Kalzit\data'
