@@ -76,7 +76,11 @@ attempt. **Renew now** (Jetzt erneuern) orders at once, for example after the ce
 revoked. It is refused during the pause after a failed attempt (change the settings to try again
 sooner) and while the certificate in use is younger than a third of its lifetime and matches the
 settings, because every certificate counts against the CA's limits. A certificate that was issued
-but could not be stored stays in use and is stored again after a pause, without a new order.
+but could not be stored stays in use, the card shows why, and storing is tried again after a pause;
+renewal goes on when it is due.
+
+ACME cannot be turned off while HTTPS has no certificate files: Kalzit would not start HTTPS
+again. Set `tls.cert_file` and `tls.key_file`, or remove `server.https_addr`, first.
 
 Every save of the settings (`tls.acme_changed`), every certificate issued
 (`tls.certificate_issued`) and every failed attempt (`tls.certificate_failed`, with the reason)

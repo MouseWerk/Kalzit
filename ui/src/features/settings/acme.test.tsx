@@ -133,6 +133,12 @@ describe("ACME certificates", () => {
               at: ACME_AT + day,
             },
             failures: 2,
+            storeError: {
+              reason: "acme.store_failed",
+              params: { detail: "disk full" },
+              message: "disk full",
+              at: ACME_AT,
+            },
           },
         };
       },
@@ -141,6 +147,9 @@ describe("ACME certificates", () => {
     expect(within(status).getByText("The last attempt failed")).toBeTruthy();
     expect(within(status).getByText("R11")).toBeTruthy();
     expect(within(status).getByText(/rate limit was reached: too many certificates/)).toBeTruthy();
+    expect(
+      within(status).getByText(/Not stored yet, Kalzit tries again: .*disk full/),
+    ).toBeTruthy();
     await user.click(within(status).getByRole("button", { name: "Renew now" }));
     expect(await within(status).findByText("Ordering the certificate…")).toBeTruthy();
     expect(sent(server, "POST")).toContain("/api/admin/acme/renew");

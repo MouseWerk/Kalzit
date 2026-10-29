@@ -1970,7 +1970,8 @@ reasons appear in the status (`status.lastError`) and the audit log.
 | `acme.validation_failed` | `detail`, `domain` (when known) | the CA could not validate a name |
 | `acme.rate_limited` | `detail` | the CA's rate limit; the next attempt follows the backoff |
 | `acme.certificate_failed` | `detail` | finalizing, downloading, reading or serving the certificate failed |
-| `acme.store_failed` | `detail` | the issued certificate is served but could not be stored; storing is retried after the pause, without a new order |
+| `acme.store_failed` | `detail` | in `status.storeError`: the issued certificate is served but could not be stored; storing is retried after a pause, renewal goes on as usual |
+| `acme.needed_for_https` | | `enabled`: turning ACME off while `server.https_addr` is set without certificate files; the next start would refuse HTTPS |
 
 ## Not here yet
 

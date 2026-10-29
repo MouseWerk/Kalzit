@@ -49,12 +49,12 @@ impl Reply {
 }
 
 impl T {
-    async fn new() -> T {
+    async fn new(https: bool) -> T {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().join("data");
         config.server.http_addr = "127.0.0.1:8080".into();
-        config.server.https_addr = "127.0.0.1:8443".into();
+        config.server.https_addr = if https { "127.0.0.1:8443".into() } else { String::new() };
         std::fs::create_dir_all(&config.paths.data_dir).unwrap();
         let pool = crate::db::connect(&config.database_url(), 4).await.unwrap();
         let clock = Arc::new(ManualClock::new(NOW));
@@ -168,7 +168,7 @@ fn settings(base: &str, ca: &str) -> Value {
 #[tokio::test]
 async fn each_field_is_checked_and_the_settings_are_saved_in_one_step() {
     test_hosts::pin(DOMAIN, &[IpAddr::from([127, 0, 0, 1])]);
-    let t = T::new().await;
+    let t = T::new(true).await;
     let (base, ca) = directory().await;
 
     let r = t.send(Method::GET, "/api/admin/acme", None, Some(&t.admin)).await;
@@ -241,12 +241,31 @@ async fn each_field_is_checked_and_the_settings_are_saved_in_one_step() {
     assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text);
     assert_eq!(r.body["current"]["version"], 1);
 
+    // Off while HTTPS has no certificate files: refused, the next start would not listen.
+    let mut off = settings("https://localhost:9", &ca);
+    off["enabled"] = json!(false);
+    let r = t.save(off, 1).await;
+    assert_eq!(
+        (r.status, r.field(), r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "enabled", "acme.needed_for_https")
+    );
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn without_https_acme_can_be_turned_off_and_keeps_its_fields() {
+    test_hosts::pin(DOMAIN, &[IpAddr::from([127, 0, 0, 1])]);
+    let t = T::new(false).await;
+    let (base, ca) = directory().await;
+    let r = t.save(settings(&base, &ca), 0).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     // Off, the fields stay for later and nothing is fetched.
     let mut off = settings("https://localhost:9", &ca);
     off["enabled"] = json!(false);
     let r = t.save(off, 1).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     assert_eq!(r.body["status"]["phase"], "off");
+    assert_eq!(r.body["settings"]["directoryUrl"], "https://localhost:9/dir");
     let r = t.send(Method::POST, "/api/admin/acme/renew", None, Some(&t.admin)).await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "acme.off"), "{}", r.text);
     t.finish().await;
@@ -266,7 +285,7 @@ async fn acme_needs_https_without_certificate_files() {
 
 #[tokio::test]
 async fn http_01_answers_come_from_the_running_order() {
-    let t = T::new().await;
+    let t = T::new(true).await;
     t.state.acme.add_http_challenge("token-1", "token-1.thumbprint");
     let r = t.send(Method::GET, "/.well-known/acme-challenge/token-1", None, None).await;
     assert_eq!((r.status, r.text.as_str()), (StatusCode::OK, "token-1.thumbprint"));

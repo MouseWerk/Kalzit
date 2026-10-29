@@ -72,8 +72,10 @@ async fn save(
     if settings.enabled {
         checked(&state, &settings).await.map_err(FieldError::into_api)?;
     } else {
-        // Off, the fields are kept as they are for later; only their form is checked.
+        // Off, the fields are kept as they are for later; their form is checked, and that HTTPS
+        // does not depend on ACME.
         acme::settings::check(&settings).map_err(FieldError::into_api)?;
+        acme::settings::check_against(&settings, &state.config).map_err(FieldError::into_api)?;
     }
     let (before, _) = state.acme.settings();
     let value = serde_json::to_value(&settings).map_err(|e| ApiError::internal("acme settings", e))?;

@@ -177,10 +177,21 @@ pub fn check(settings: &AcmeSettings) -> Result<(), FieldError> {
 /// What the server's own configuration demands: an HTTPS listener without certificate files,
 /// and a listener for the chosen challenge.
 pub fn check_against(settings: &AcmeSettings, config: &Config) -> Result<(), FieldError> {
+    let certificate_files = config.tls.cert_file.is_some() || config.tls.key_file.is_some();
     if !settings.enabled {
+        // HTTPS without certificate files starts only with ACME on (`server::listen`): turning it
+        // off would keep the next start from listening at all.
+        if config.https_addr().is_some() && !certificate_files {
+            return Err(FieldError::new(
+                "enabled",
+                "acme.needed_for_https",
+                "HTTPS has no certificate files, so it needs ACME: set tls.cert_file and tls.key_file or remove \
+                 server.https_addr before turning ACME off, or Kalzit will not start again",
+            ));
+        }
         return Ok(());
     }
-    if config.tls.cert_file.is_some() || config.tls.key_file.is_some() {
+    if certificate_files {
         return Err(FieldError::new(
             "enabled",
             "acme.certificate_file_set",
@@ -370,6 +381,12 @@ mod tests {
         assert_eq!(check_against(&s, &config).unwrap_err().reason, "acme.certificate_file_set");
         let mut off = s;
         off.enabled = false;
+        assert_eq!(check_against(&off, &config), Ok(()));
+        // Off while HTTPS has no files: the next start would refuse, so the save is refused.
+        config.tls.cert_file = None;
+        let e = check_against(&off, &config).unwrap_err();
+        assert_eq!((e.field, e.reason), ("enabled", "acme.needed_for_https"));
+        config.server.https_addr = String::new();
         assert_eq!(check_against(&off, &config), Ok(()));
     }
 

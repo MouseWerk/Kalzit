@@ -49,6 +49,8 @@ export interface AcmeView {
     nextAttemptAt: number | null;
     lastError: (AcmeProblem & { at: number }) | null;
     failures: number;
+    /** The certificate in use could not be stored; storing is retried. */
+    storeError: (AcmeProblem & { at: number }) | null;
   };
   server: { httpAddr: string | null; httpsAddr: string | null; certificateFiles: boolean };
 }

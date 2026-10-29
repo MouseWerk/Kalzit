@@ -504,6 +504,11 @@ function StatusCard({
               <dd>{when(certificate.renewAt)}</dd>
             </dl>
           )}
+          {status.storeError === null ? null : (
+            <p className="field__error">
+              {t("settings.acme.status.storeError", { reason: warningText(t, status.storeError) })}
+            </p>
+          )}
           {error === null ? null : (
             <p className="field__error">
               {t("settings.acme.status.lastError", {

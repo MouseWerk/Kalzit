@@ -260,5 +260,6 @@
   "settings.acme.phase.waiting": "Waiting for the order",
   "settings.acme.phase.working": "Ordering the certificate…",
   "settings.acme.phase.valid": "Valid",
-  "settings.acme.phase.failed": "The last attempt failed"
+  "settings.acme.phase.failed": "The last attempt failed",
+  "settings.acme.status.storeError": "Not stored yet, Kalzit tries again: {reason}"
 }

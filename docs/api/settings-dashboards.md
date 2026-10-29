@@ -277,7 +277,8 @@ below) and a reason from docs/api/datasources.md, "HTTPS certificates (ACME)".
 `https://` address, and optionally `directoryCa`, PEM certificates trusted for it); `challenge`
 is `http-01` or `tls-alpn-01`. `status.phase` is `off`, `waiting` (no matching certificate yet,
 or due), `working` (an order runs), `valid` or `failed` (`lastError` with `reason`, `params`,
-`message` and `at`; `nextAttemptAt` is the next try). `server` repeats what the configuration
+`message` and `at`; `nextAttemptAt` is the next try). `storeError` (same form, `acme.store_failed`)
+says the certificate in use could not be stored; storing is retried, and renewal is not held back. `server` repeats what the configuration
 says about the listeners; `certificateFiles` is true when `tls.cert_file` is set, which rules
 ACME out.
 
@@ -290,7 +291,8 @@ The view above.
 Body `{ "settings": {...}, "version": <the version edited> }`. Names are trimmed, lower-cased and
 deduplicated. On, every field is checked, then the server's listeners (`acme.https_off`,
 `acme.http_off`, `acme.certificate_file_set`), then the directory (fetched over HTTPS) and every
-name (resolved); off, only the form of the fields. An older `version` answers
+name (resolved); off, only the form of the fields, and that HTTPS does not need ACME
+(`acme.needed_for_https` while `server.https_addr` is set without certificate files). An older `version` answers
 `409 version_conflict` with the stored view as `current`. Saved, the answer is the new view, the
 audit log records `tls.acme_changed` (names, directory, challenge, whether a contact is set; never
 the contact itself) and a certificate is ordered in the background when none matches.

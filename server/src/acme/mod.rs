@@ -119,6 +119,8 @@ pub struct StatusView {
     pub last_error: Option<LastError>,
     /// Failed attempts in a row.
     pub failures: u32,
+    /// The certificate in use could not be stored (`acme.store_failed`); storing is retried.
+    pub store_error: Option<LastError>,
 }
 
 /// What the server's configuration says about the listeners ACME needs.
@@ -161,8 +163,11 @@ struct Runtime {
     failures: u32,
     next_attempt_ms: Option<i64>,
     last_error: Option<LastError>,
-    /// The certificate in use is not stored yet (`retry_store`).
-    unsaved: bool,
+    /// The certificate in use is not stored yet: the failed tries so far and when to try again
+    /// (`retry_store`). Ordering goes on as usual meanwhile.
+    store_retry: Option<(u32, i64)>,
+    /// Why storing failed, shown next to the certificate.
+    store_error: Option<LastError>,
 }
 
 pub struct Acme {
@@ -198,6 +203,13 @@ fn is_token(token: &str) -> bool {
     !token.is_empty()
         && token.len() <= 256
         && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn store_error(e: &anyhow::Error, at: i64) -> LastError {
+    let message = format!("{e:#}");
+    let mut params = BTreeMap::new();
+    params.insert("detail".to_string(), message.clone());
+    LastError { reason: "acme.store_failed", params, message, at }
 }
 
 fn backoff_ms(failures: u32) -> i64 {
@@ -239,7 +251,8 @@ impl Acme {
             failures: 0,
             next_attempt_ms: None,
             last_error: None,
-            unsaved: false,
+            store_retry: None,
+            store_error: None,
         };
         Ok(Self {
             certificates,
@@ -278,7 +291,8 @@ impl Acme {
             rt.next_attempt_ms = None;
             rt.last_error = None;
             // A certificate for the old settings is not worth storing any more.
-            rt.unsaved = false;
+            rt.store_retry = None;
+            rt.store_error = None;
         }
         rt.settings = settings;
         rt.version = version;
@@ -352,7 +366,8 @@ impl Acme {
             return Duration::ZERO;
         }
         let renewal = rt.certificate.as_ref().map(renew_at);
-        let next = [rt.next_attempt_ms, renewal].into_iter().flatten().min();
+        let store = rt.store_retry.map(|(_, at)| at);
+        let next = [rt.next_attempt_ms, renewal, store].into_iter().flatten().min();
         match next {
             Some(at) => Duration::from_millis((at - now_ms).max(1000) as u64).min(MAX_SLEEP),
             None => MAX_SLEEP,
@@ -390,46 +405,42 @@ impl Acme {
                 next_attempt_at: rt.next_attempt_ms,
                 last_error: rt.last_error.clone(),
                 failures: rt.failures,
+                store_error: rt.store_error.clone(),
             },
             server: server_view(config),
         }
     }
 
     /// Stores a certificate that is served but could not be stored, once its pause is over; an
-    /// order is not repeated for it. True when there was one to store.
-    fn retry_store(&self, state: &AppState, now: i64) -> bool {
-        let certificate = {
+    /// order is not repeated for it, and renewing it when due goes on regardless.
+    fn retry_store(&self, state: &AppState, now: i64) {
+        let (tries, certificate) = {
             let rt = self.lock();
-            if !rt.unsaved || rt.working || rt.next_attempt_ms.is_some_and(|at| now < at) {
-                return rt.unsaved;
+            match rt.store_retry {
+                Some((tries, at)) if !rt.working && now >= at => (tries, rt.certificate.clone()),
+                _ => return,
             }
-            rt.certificate.clone()
         };
-        let Some(certificate) = certificate else { return false };
+        let Some(certificate) = certificate else { return };
         let stored = store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate);
         let mut rt = self.lock();
         match stored {
             Ok(()) => {
-                rt.unsaved = false;
-                rt.failures = 0;
-                rt.next_attempt_ms = None;
-                rt.last_error = None;
+                rt.store_retry = None;
+                rt.store_error = None;
             }
             Err(e) => {
                 tracing::error!("the HTTPS certificate in use still cannot be stored: {e:#}");
-                rt.failures += 1;
-                rt.next_attempt_ms = Some(now + backoff_ms(rt.failures));
+                rt.store_retry = Some((tries + 1, now + backoff_ms(tries + 1)));
+                rt.store_error = Some(store_error(&e, now));
             }
         }
-        true
     }
 
     /// Orders a certificate when one is due. Runs in the background task only.
     async fn tick(&self, state: &AppState) {
         let now = state.clock.now_ms();
-        if self.retry_store(state, now) {
-            return;
-        }
+        self.retry_store(state, now);
         let settings = {
             let mut rt = self.lock();
             if !Self::due(&rt, now) {
@@ -460,7 +471,7 @@ impl Acme {
         match outcome {
             Ok(certificate) => {
                 // Not stored, it stays in use from memory and storing is retried after a pause;
-                // the CA is not asked again for it while the server runs.
+                // the CA is not asked again for it until it is due for renewal.
                 let stored = store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate);
                 if let Err(e) = &stored {
                     tracing::error!("the new HTTPS certificate is served but could not be stored: {e:#}");
@@ -480,21 +491,17 @@ impl Acme {
                 {
                     let mut rt = self.lock();
                     rt.certificate = Some(certificate);
+                    rt.failures = 0;
+                    rt.next_attempt_ms = None;
+                    rt.last_error = None;
                     match stored {
                         Ok(()) => {
-                            rt.unsaved = false;
-                            rt.failures = 0;
-                            rt.next_attempt_ms = None;
-                            rt.last_error = None;
+                            rt.store_retry = None;
+                            rt.store_error = None;
                         }
                         Err(e) => {
-                            rt.unsaved = true;
-                            rt.failures = 1;
-                            rt.next_attempt_ms = Some(done + backoff_ms(1));
-                            let message = format!("{e:#}");
-                            let mut params = BTreeMap::new();
-                            params.insert("detail".to_string(), message.clone());
-                            rt.last_error = Some(LastError { reason: "acme.store_failed", params, message, at: done });
+                            rt.store_retry = Some((1, done + backoff_ms(1)));
+                            rt.store_error = Some(store_error(&e, done));
                         }
                     }
                 }
@@ -721,7 +728,8 @@ mod tests {
             failures: 0,
             next_attempt_ms: None,
             last_error: None,
-            unsaved: false,
+            store_retry: None,
+            store_error: None,
         }
     }
 
@@ -795,6 +803,20 @@ mod tests {
         let mut rt = runtime(None);
         rt.working = true;
         assert_eq!(acme_with(rt).request_renewal(DAY), Ok(false));
+    }
+
+    #[test]
+    fn a_certificate_waiting_to_be_stored_is_still_renewed_when_due() {
+        let mut rt = runtime(Some(certificate(&["a.example.com", "b.example.com"], 0, 90 * DAY)));
+        rt.store_retry = Some((3, 100 * DAY));
+        rt.store_error = Some(store_error(&anyhow::anyhow!("disk full"), DAY));
+        assert!(!Acme::due(&rt, DAY), "not due yet, and not ordered again for the store");
+        assert!(Acme::due(&rt, 61 * DAY), "the pending store does not hold the renewal back");
+        let acme = acme_with(rt);
+        let view = acme.view(&Config::default(), DAY);
+        assert_eq!(view.status.phase, Phase::Valid);
+        assert_eq!(view.status.store_error.unwrap().reason, "acme.store_failed");
+        assert_eq!(acme.sleep_for(DAY), MAX_SLEEP);
     }
 
     #[test]

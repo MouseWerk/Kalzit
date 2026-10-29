@@ -946,5 +946,6 @@
   "datasources.reason.acme.renew_backoff": "The last attempt failed. Kalzit tries again after the pause shown above; fix the cause and change the settings to try sooner.",
   "datasources.reason.acme.renew_too_soon": "The certificate in use is still new. Kalzit renews it by itself when it is due; renewing earlier only uses up the certificate authority’s limits.",
   "datasources.reason.acme.https_later": "HTTPS is off: Kalzit orders and stores the certificate now, and serves it once server.https_addr is set and Kalzit restarted.",
-  "datasources.reason.acme.store_failed": "The certificate is in use but could not be stored; Kalzit tries again after a pause: {detail}"
+  "datasources.reason.acme.store_failed": "The certificate is in use but could not be stored; Kalzit tries again after a pause: {detail}",
+  "datasources.reason.acme.needed_for_https": "HTTPS has no certificate files and depends on ACME. Set tls.cert_file and tls.key_file in kalzit.toml, or remove server.https_addr, before turning ACME off; otherwise Kalzit will not start again."
 }

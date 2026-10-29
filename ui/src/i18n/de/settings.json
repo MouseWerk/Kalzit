@@ -260,5 +260,6 @@
   "settings.acme.phase.waiting": "Wartet auf die Bestellung",
   "settings.acme.phase.working": "Zertifikat wird bestellt…",
   "settings.acme.phase.valid": "Gültig",
-  "settings.acme.phase.failed": "Der letzte Versuch ist fehlgeschlagen"
+  "settings.acme.phase.failed": "Der letzte Versuch ist fehlgeschlagen",
+  "settings.acme.status.storeError": "Noch nicht gespeichert, Kalzit versucht es erneut: {reason}"
 }

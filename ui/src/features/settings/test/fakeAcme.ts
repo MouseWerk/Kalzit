@@ -51,6 +51,7 @@ export function acmeFake(): FakeArea<FakeAcmeState> {
         nextAttemptAt: null,
         lastError: null,
         failures: 0,
+        storeError: null,
       },
       server: { httpAddr: "0.0.0.0:80", httpsAddr: "0.0.0.0:443", certificateFiles: false },
     },
