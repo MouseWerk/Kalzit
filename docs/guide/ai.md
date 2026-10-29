@@ -18,7 +18,10 @@ without the question, the answer or any result.
    **Anthropic**, a name, the **Base URL** (with the version path for OpenAI-compatible servers,
    such as `http://localhost:11434/v1` for Ollama), the **API key** (required for Anthropic,
    optional for local servers) and the **Model** exactly as the provider names it. Kalzit has no
-   built-in model list.
+   built-in model list. **Data leaves the own network** (Daten verlassen das eigene Netz) says
+   whether the model runs outside your network: **Yes**, **No**, or **Automatic by address**
+   (the default), which judges it from the base URL. Choose **Yes** for a gateway in your network
+   that forwards to a cloud model; the notice and the Ask side pane show what you set here.
 2. **Test connection** (Verbindung testen) sends a tiny prompt and shows the answer and how long it
    took, or the error at the field it belongs to (a refused key at the key, an unreachable address
    at the base URL). The server can only test a stored provider, so the test stores what you
@@ -30,6 +33,17 @@ The page also shows the providers with where their data goes, the usage per day 
 (calls and tokens, never money), the limits, how long chats are kept, and the text
 "Which data leaves the server" (Welche Daten den Server verlassen) with a paragraph of your own
 (**Edit own addition**, Eigenen Zusatz bearbeiten).
+
+<!-- shot: ai-settings -->
+
+### A provider per function
+
+With several providers, **Which provider for what** (Welcher Anbieter wofür) chooses one for
+**Explain and Draft**, one for **Summarize** and one for **Ask**; empty uses the default provider.
+This applies to every organization without a provider of its own (an organization's own provider
+serves all functions). Each provider asks for the notice once, at its first call.
+
+<!-- shot: ai-functions -->
 
 Keys are stored encrypted and never shown again. Provider addresses follow the same target rules
 as data sources (private networks and localhost are allowed); Kalzit itself is never a target.
@@ -102,6 +116,8 @@ Above the query editor:
 While the provider is thinking the card says so, and after two seconds that it takes longer. A
 failed call says why and offers **Try again**; your query stays unchanged.
 
+<!-- shot: explore-explain -->
+
 ## Summarize
 
 - In Explore, **Summarize** (Zusammenfassen) next to the visualization runs the query again on the
@@ -113,6 +129,8 @@ Both need every data source involved to be opened to AI; otherwise the button is
 or the summary says which source AI may not read. The note under a summary says what was sent: the
 queries, how many rows, whether the result was cut to the row limit and how many excluded values
 were left out.
+
+<!-- shot: explore-summarize -->
 
 ## Ask (Fragen)
 
@@ -134,6 +152,8 @@ without running it; **Copy** copies it. **Stop** (Abbrechen, or Escape) ends an 
 arrived is kept. The answer ends with the tokens it used. At most 10 tool calls run per answer
 (Settings > AI); after that the assistant answers with what it has.
 
+<!-- shot: ask-answer -->
+
 **Sources** in the composer and **Allowed sources** (Erlaubte Quellen) in the side pane choose
 which sources the assistant may use; none chosen means all sources open to AI. Sources AI may not
 read appear greyed out with "AI may not read". The side pane also shows the provider and where data
@@ -145,12 +165,10 @@ assistant can run its panels, steps included. After a summary, **Continue in Ask
 weiterfragen) starts a chat about it. Under an answer, **Save as panel** (Als Panel speichern)
 opens its query in Explore with the save dialog, **Add to dashboard** (Zum Dashboard hinzufügen)
 puts it on a dashboard, and **Adjust query** (Abfrage anpassen) opens it in Explore; a result over
-time switches between **Table** and **Time series**. The side pane names the provider's endpoint,
-whether it passed its last test, and whether data leaves your network (judged from its address).
-
-With several providers, **Which provider for what** (Welcher Anbieter wofür) under Settings > AI
-chooses one for explain and draft, one for summaries and one for Ask; each asks for the notice
-once.
+time switches between **Table** and **Time series**. The side pane names the provider that
+answers in Ask ([a provider per function](#a-provider-per-function)), its endpoint, whether it
+passed its last test, and whether data leaves your network (as set on the provider, or judged
+from its address).
 
 Chats are yours alone; nobody else can read them, administrators included. **Ask > History**
 (Verlauf) lists them with the days until they are deleted: 30 days after their last message by

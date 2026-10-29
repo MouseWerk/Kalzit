@@ -122,7 +122,40 @@ again at an interval.
 | Graphite, Redis, Oracle, Tempo, Jaeger | various | Planned (M7) |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and
-never returned by the API.
+never returned by the API. Plugins add further kinds (see below).
+
+### Plugins
+
+- Data source plugins run as processes of their own next to the server, speaking a versioned gRPC
+  protocol and answering in the same three shapes as the built-in sources; panel plugins are
+  visualizations that run in your browser in a sealed-off frame.
+- Install from a file or from a signed catalog (off by default, your own mirror or the project's
+  list): every package is checked before anything in it runs (signature from a trusted key,
+  checksums of every file, platform, Kalzit version), and its network targets are granted
+  explicitly. Updates stay bound to the publisher's key and never go back to an older version.
+- Each plugin has its own page with its manifest, permissions, process, sandbox layers, log and
+  the data sources that use it; organizations can block a plugin for themselves.
+- Plugins run in a sandbox: on Windows a restricted token in a job object and an AppContainer
+  without network, on Linux Landlock, seccomp and namespaces. A plugin has no network of its own
+  and reaches only the targets its manifest declares, through Kalzit, which checks every
+  connection.
+- A Rust SDK and the `kalzit-plugin` tool to package and sign, with two examples: "CSV and JSON
+  over HTTP" and the panel "KPI tile" ([writing plugins](docs/plugins/authoring.md)).
+
+### AI
+
+- Off until a server administrator connects a provider and turns it on; without one, no AI button
+  or hint appears. Any OpenAI-compatible server (Ollama, LiteLLM, vLLM, OpenAI) or Anthropic,
+  configured per server or per organization, with a provider per function if you like.
+- **Explain** and **Draft** a query in Explore (a draft is never run by itself), **Summarize** a
+  result in Explore or a panel.
+- **Ask** (beta): questions about your data in plain words; the assistant reads schemas, runs
+  read-only queries and dashboard panels with your rights and shows every step with its query and
+  result.
+- AI reads a data source only after it was opened to AI, values of excluded fields never leave the
+  server, everyone sees once which data goes where, and limits per person and organization apply.
+  Every call is in the audit log, without the question, the answer or any result; chats are
+  private and deleted after 30 days by default.
 
 ### Organizations, roles and administration
 
@@ -166,6 +199,10 @@ never returned by the API.
   credentials or DPAPI (see [Configuration](#configuration)).
 - **Private data directory.** Kalzit creates its data directory closed to other accounts and
   refuses to start when an existing one is open to them.
+- **Signed, sandboxed plugins.** Only packages signed by a trusted key run (unsigned ones only
+  behind an explicit switch), in an operating system sandbox without a network of their own.
+- **AI only reads.** AI acts with the asking person's rights through the normal read-only query
+  path, sees only sources opened to it, and never sees secrets or connection settings.
 
 ## Screenshots
 
@@ -364,7 +401,7 @@ flowchart LR
     server --- ui
   end
   server --> own[("Own database<br/>SQLite or PostgreSQL")]
-  server --> plugins["Data source plugins<br/>(compiled in)"]
+  server --> plugins["Data source kinds<br/>(compiled in or plugin processes)"]
   plugins --> sql[("SQL and metrics<br/>frame")]
   plugins --> docs[("MongoDB, search, files<br/>documents")]
   plugins --> graphs[("Neo4j, Memgraph, TigerGraph<br/>graph")]
@@ -373,7 +410,7 @@ flowchart LR
 - The Rust server (axum, tokio, sqlx, rustls) serves the API and the embedded UI from one
   origin. Queries always run on the server, never from the browser to a database.
 - Every data source implements one plugin trait; the built-in sources are compiled in, and
-  external plugins over the same contract are planned for M4.
+  external plugins serve the same contract over gRPC from a sandboxed process.
 - The UI is React 19 with the React Compiler, TypeScript, Vite, TanStack Router and Query, and
   modern CSS without a framework. Its API types are generated from the server.
 
@@ -381,6 +418,7 @@ flowchart LR
 |---|---|
 | [`server/`](server) | Rust crate `kalzit`: HTTP server, auth, authorization, data sources, query engine, storage |
 | [`server/migrations/`](server/migrations) | SQL migrations for SQLite and PostgreSQL |
+| [`plugin-api/`](plugin-api), [`plugin-sdk/`](plugin-sdk), [`plugin-tool/`](plugin-tool) | Plugin protocol and manifest, the Rust SDK, the `kalzit-plugin` packaging and signing tool; examples in [`examples/plugins/`](examples/plugins) |
 | [`ui/`](ui) | React web interface; [`ui/e2e/`](ui/e2e) holds the Playwright tests and the screenshot script |
 | [`docs/`](docs) | Plan, architecture, HTTP API, design notes, glossary, release notes |
 | [`.github/`](.github) | CI workflows, Dependabot, issue and pull request templates |
@@ -428,7 +466,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M1 Core | Organizations, teams, roles and permissions, administration, audit log, dashboards, SQL and Prometheus sources, Explore, analysis steps, export | Done |
 | M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, saved analyses, live updates with change streams, Docker image | Done |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels with node details, explorer mode, graph steps, variables across result shapes, new sign-in and setup with sample data | Done |
-| M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | In progress |
+| M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | Done |
 | M5 Operations | OIDC, LDAP and Active Directory, SAML and SCIM, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, query cache, usage insights, InfluxDB, Loki, ClickHouse | Planned |
 | M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label) | Planned |
 | M7 Expansion | Alerting, public links and snapshots, scheduled reports, provisioning as code with Git and a CLI, deeper analysis and Explore, dashboard tabs, XY and map panels, forecast and outlier steps, graph analysis (algorithms, filters, schema, map layout), an MCP server, further sources (Graphite, Redis, Oracle, traces, BigQuery, Snowflake, Databricks) | Planned |
@@ -437,8 +475,8 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 ## Documentation
 
 - [docs/guide/](docs/guide/README.md): the user guide, one page per area: installation, getting
-  started, dashboards, panels, Explore, calculated fields and statistics, export, data sources and
-  the administration.
+  started, dashboards, panels, Explore, calculated fields and statistics, export, data sources,
+  plugins, AI and the administration.
 - [docs/PLAN.md](docs/PLAN.md): what Kalzit becomes (German).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): code layout, contracts, configuration, data
   directory, services, storage, backups and tests.
@@ -446,7 +484,8 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
   [data sources and queries](docs/api/datasources.md),
   [settings and dashboards](docs/api/settings-dashboards.md),
   [dashboard features](docs/api/dashboard-features.md), [shell](docs/api/shell.md),
-  [updates](docs/api/updates.md).
+  [updates](docs/api/updates.md), [plugins](docs/api/plugins.md), [AI](docs/api/ai.md).
+- [docs/plugins/authoring.md](docs/plugins/authoring.md): writing, packaging and signing plugins.
 - [docs/operations/updates.md](docs/operations/updates.md): installing updates online and offline,
   returning to an earlier version, the release key and its rotation.
 - [docs/glossary.md](docs/glossary.md): the terms used in the interface, in German and English.
