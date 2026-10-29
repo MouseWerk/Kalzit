@@ -431,7 +431,16 @@ async fn panel_query(
     let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
     let panel = linked.as_ref().unwrap_or(panel);
     req.refresh = Some(wants_refresh(&headers, req.refresh));
-    Ok(answer(run_stored_panel(&state, &ctx, &model, panel, req).await?))
+    let started = std::time::Instant::now();
+    let ran = run_stored_panel(&state, &ctx, &model, panel, req).await;
+    // Usage insights count the run per dashboard and panel, never per person.
+    let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let run = match &ran {
+        Ok(response) => crate::usage::PanelRun::of(response, ms),
+        Err(_) => crate::usage::PanelRun { duration_ms: ms, rows: 0, error: true, cache: crate::usage::Cache::NotUsed },
+    };
+    crate::usage::record_panel(&state, &ctx.org_id, &dashboard_id, &panel_id, run).await;
+    Ok(answer(ran?))
 }
 
 /// The stored queries of a panel, ready to run, with the variable values checked against what

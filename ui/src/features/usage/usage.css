@@ -1,0 +1,185 @@
+@layer components {
+  /*
+   * Verwaltung > Nutzung: tiles of the totals, then cards of tables, as the start page's tiles and
+   * the AI usage card (docs/design/blueprint/Start.dc.html, AI.dc.html). Tokens only; nothing is
+   * framed in an accent or status color.
+   */
+  .usage {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  .usage-privacy {
+    margin: 0;
+  }
+
+  .usage-muted {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .usage-org {
+    min-width: var(--size-field);
+  }
+
+  .usage-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .usage-toolbar__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .usage-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-card-min), 100%), 1fr));
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .usage-tile {
+    display: grid;
+    align-content: space-between;
+    gap: var(--space-2);
+    min-height: var(--size-stat-height);
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .usage-tile__label {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .usage-tile__value {
+    font-size: var(--font-size-display);
+    font-weight: var(--font-weight-regular);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--line-height-tight);
+  }
+
+  .usage-card {
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .usage-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .usage-card__title {
+    display: grid;
+    flex: 1 1 var(--size-column);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .usage-card__title h2 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .usage-card__body {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .usage-chart {
+    display: flex;
+    height: var(--size-preview);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .usage-chart > * {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .usage-table-wrap {
+    overflow-x: auto;
+  }
+
+  .usage-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .usage-table th,
+  .usage-table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .usage-table thead th {
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+  }
+
+  .usage-table tbody tr:last-child th,
+  .usage-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .usage-table__name {
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .usage-table__name a {
+    color: var(--text);
+  }
+
+  .usage-table__name a:hover {
+    text-decoration: underline;
+  }
+
+  .usage-table__number {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+    white-space: nowrap;
+  }
+
+  .usage-table th.usage-table__number {
+    text-align: end;
+  }
+
+  .usage-table__detail {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: normal;
+  }
+
+  .usage-table__caption {
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    text-align: start;
+    caption-side: bottom;
+  }
+}

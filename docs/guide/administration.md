@@ -95,6 +95,32 @@ folders you cannot see are left out. Events are deleted after the retention time
 default, setting `audit.retention_days`). Server admins also have a server-wide audit log under
 **Server**.
 
+## Usage
+
+**Administration** > **Usage** (**Verwaltung** > **Nutzung**) shows how your organization uses
+Kalzit, for the last 24 hours, 7, 30 or 90 days:
+
+- **Totals**: dashboard views, panel runs, data source queries, the share of failed queries and
+  of answers from the query cache, and a **Trend** per hour or day.
+- **Most viewed dashboards**, **Slowest panels** (median and 95th percentile of their run time),
+  **Panels with errors** (by the share of failed runs) and **Data sources** with their queries,
+  errors (timeouts, refused, source errors), run times and cache hit rate. Each dashboard, panel
+  and data source links to itself.
+- **Unused dashboards**: dashboards nobody opened in the last 30 or 90 days, never opened ones
+  first.
+
+Organization admins and owners (anyone with the audit log permission) find it in the
+organization's sections and see their organization. Server admins find it under **Server** and
+choose one organization or **All organizations**; rows of another organization than the current
+one name it and do not link. Viewers and editors do not see the page.
+
+**Privacy**: Kalzit counts per dashboard, panel and data source and per hour only, never per
+person. It stores no user, session or address for these counts, so nobody, server admins
+included, can tell from them who opened or queried what. Counts are kept for 90 days by default.
+Under **Settings** > **Storage and retention** server admins turn **Record usage** off (at once,
+with undo) and set **Usage retention (days)** (1 to 365). Details:
+[usage insights API](../api/usage.md).
+
 ## Users (server admins)
 
 **Administration** > **Users** lists every account on the server: create users, rename, set a
@@ -144,8 +170,8 @@ applied, applies all of them together and can be undone.
 Under **Data sources and targets**: the allowed folders for SQLite and file sources, an optional
 list of allowed targets, the query time limit (30 s), the row limit (100,000) and the query cache
 with its memory limit and **Empty cache** ([Performance and caching](performance.md)). Under **Storage
-and retention**: the audit log retention and how many dashboard versions are kept (100; 0 keeps
-every version). Settings can also come from `KALZIT_SETTING_<KEY>` variables; every key is listed
+and retention**: the audit log retention, how many dashboard versions are kept (100; 0 keeps
+every version), and whether usage is recorded and for how long ([Usage](#usage)). Settings can also come from `KALZIT_SETTING_<KEY>` variables; every key is listed
 in [settings and dashboards](../api/settings-dashboards.md#settings).
 
 ## Updates

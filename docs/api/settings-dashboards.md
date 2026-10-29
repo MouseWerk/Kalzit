@@ -127,6 +127,8 @@ Server settings:
 | `datasources.cache_enabled` | `true` | `true`, `false`; the query cache (docs/api/datasources.md, "Query cache"); off lets go of every kept answer |
 | `datasources.cache_max_bytes` | `268435456` (256 MiB) | whole number 1 MiB to 64 GiB; the memory of all kept answers, counted as their serialized size |
 | `audit.retention_days` | `365` | whole number 1 to 36500 |
+| `usage.enabled` | `true` | `true`, `false`; counts dashboard views and panel and data source queries for the usage insights (docs/api/usage.md), never per person; off counts nothing new and keeps what was counted |
+| `usage.retention_days` | `90` | whole number 1 to 365; usage buckets older than this are deleted every hour |
 | `appearance.default_language` | `"de"` | `"de"`, `"en"` |
 | `appearance.default_theme` | `"system"` | `"system"`, `"light"`, `"dark"`, `"contrast"` |
 | `sessions.lifetime_hours` | `720` | read-only (configuration) |

@@ -1731,7 +1731,17 @@ pub async fn run_queries_cached(
         let budget = budget.clone();
         async move {
             let ref_id = item.ref_id.clone();
+            let datasource_id = item.datasource_id.clone();
+            let started = Instant::now();
             let outcome = run_one(state, ctx, item, run, budget, cache).await;
+            // A source that is not found in the organization is not counted: its id is the
+            // caller's, not a source's.
+            let unknown = matches!(&outcome, QueryOutcome::Err { error } if error.code == "not_found");
+            if !unknown {
+                let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+                let query = crate::usage::SourceQuery::of(&outcome, ms);
+                crate::usage::record_query(state, &ctx.org_id, &datasource_id, query).await;
+            }
             (ref_id, outcome)
         }
     });

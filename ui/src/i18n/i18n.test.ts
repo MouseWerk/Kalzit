@@ -84,6 +84,8 @@ describe("catalogs", () => {
       "Admin",
       "Teams",
       "Name",
+      "Dashboard",
+      "Panel",
       "Team",
       "Person",
       "Kalzit",

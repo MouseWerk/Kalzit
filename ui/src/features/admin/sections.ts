@@ -84,7 +84,22 @@ export const ORG_SECTIONS: readonly AdminSectionLink[] = [
     description: "admin.audit.lead",
     visible: (access) => access.has("audit:read"),
   },
+  {
+    to: "/admin/usage",
+    label: "usage.title",
+    description: "usage.lead",
+    // Server administrators find the same page under Server, where it covers every organization.
+    visible: (access) => access.has("audit:read") && !access.isServerAdmin,
+  },
 ];
+
+/** The usage page in the server group: every organization, or one chosen there. */
+const SERVER_USAGE: AdminSectionLink = {
+  to: "/admin/usage",
+  label: "usage.title",
+  description: "usage.lead",
+  visible: (access) => access.isServerAdmin,
+};
 
 export const SERVER_SECTIONS: readonly AdminSectionLink[] = [
   {
@@ -117,4 +132,5 @@ export const SERVER_SECTIONS: readonly AdminSectionLink[] = [
     description: "admin.serverAudit.lead",
     visible: (access) => access.isServerAdmin,
   },
+  SERVER_USAGE,
 ];
