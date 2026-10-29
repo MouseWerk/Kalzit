@@ -1,6 +1,6 @@
 # AI API
 
-Configuration and status of the built-in AI functions (M4; design in docs/ARCHITECTURE.md,
+Configuration and status of the built-in AI functions (design in docs/ARCHITECTURE.md,
 "AI", screens on the board `docs/design/blueprint/AI.dc.html`). This part holds the switches, the
 providers, the limits, the first-use notice and what AI may read of each data source; the AI
 functions (explain or draft a query, summarize a result, the chat "Fragen") build on it.

@@ -54,6 +54,10 @@ export function pluginStatus(t: Translate, plugin: Plugin, now: number): PluginS
   if (!plugin.enabled) {
     return { tone: "untested", label: "plugins.status.off", problem: false };
   }
+  // A panel plugin has no process on the server: its frames run in the browser.
+  if (plugin.kind === "panel") {
+    return { tone: "connected", label: "plugins.status.panel", problem: false };
+  }
   const process = plugin.process;
   if (!plugin.running || process === undefined) {
     const reason =

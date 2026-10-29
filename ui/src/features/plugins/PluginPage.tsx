@@ -421,7 +421,13 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
           </dl>
           <p className="plugins-note">
             <Icon name="help" />
-            <span>{t("plugins.details.networkNote")}</span>
+            <span>
+              {t(
+                plugin.kind === "panel"
+                  ? "plugins.details.networkNotePanel"
+                  : "plugins.details.networkNote",
+              )}
+            </span>
           </p>
           {plugin.approved ? null : (
             <p className="plugins-hint">{t("plugins.details.notApproved")}</p>

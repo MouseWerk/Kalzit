@@ -225,8 +225,30 @@ pub fn highlights_from_notes(markdown: &str) -> Vec<Highlight> {
         .into_iter()
         .filter(|(_, text)| !text.is_empty())
         .take(MAX_HIGHLIGHTS)
-        .map(|(k, text)| Highlight { kind: k.to_string(), text: text.chars().take(300).collect() })
+        .map(|(k, text)| Highlight { kind: k.to_string(), text: shortened(&text, MAX_HIGHLIGHT_CHARS) })
         .collect()
+}
+
+/// The longest highlight in characters; a longer point is cut.
+pub const MAX_HIGHLIGHT_CHARS: usize = 300;
+
+/// `text` when it has at most `max` characters, else cut at the last word boundary that leaves
+/// room for "…" (mid-word only when one word fills the room), ending in "…" and at most `max`
+/// characters long.
+fn shortened(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let room: String = text.chars().take(max.saturating_sub(1)).collect();
+    // A cut right before a space ends a word as well.
+    let next_is_space = text.chars().nth(room.chars().count()).is_some_and(char::is_whitespace);
+    let kept = if next_is_space {
+        room.as_str()
+    } else {
+        room.rfind(char::is_whitespace).map_or(room.as_str(), |at| &room[..at])
+    };
+    let kept = kept.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '.'));
+    format!("{}…", if kept.is_empty() { room.trim_end() } else { kept })
 }
 
 /// Writes an offline package of one release package.
@@ -271,6 +293,19 @@ mod tests {
                 ("fixed", "One"),
             ]
         );
+    }
+
+    #[test]
+    fn a_long_point_is_cut_at_a_word_with_an_ellipsis() {
+        let long = format!("- {}\n", "word ".repeat(80).trim_end());
+        let h = highlights_from_notes(&format!("## Improved\n\n{long}"));
+        let text = &h[0].text;
+        assert!(text.chars().count() <= MAX_HIGHLIGHT_CHARS, "{} characters", text.chars().count());
+        assert!(text.ends_with("word…"), "{text}");
+        assert_eq!(shortened("short", 10), "short");
+        assert_eq!(shortened("one two three", 9), "one two…");
+        assert_eq!(shortened("one two, three", 10), "one two…");
+        assert_eq!(shortened("abcdefghijkl", 6), "abcde…");
     }
 
     #[test]

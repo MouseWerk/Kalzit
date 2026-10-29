@@ -48,6 +48,27 @@ WebP (quality 90), mostly in dark and light:
 | `explore-steps-*` | Explore with a saved analysis and its steps (moving average, trend) |
 | `dashboard-all-sources-*` | one dashboard on SQLite, OpenSearch, MongoDB and Neo4j |
 | `dashboard-live-*` | a live dashboard of rack temperatures |
+| `explore-explain-*` | Explore with a saved query on PUE per hall and its explanation |
+| `explore-summarize-*` | the same with the result summarized |
+| `ask-answer-*` | Ask: a question, the assistant's steps with the query and its result, the answer, the model pane |
+| `ai-settings-*` | Settings > AI: switch, status and two providers |
+| `ai-functions-*` | Settings > AI: the provider per function and the limits |
+| `plugins-installed-*` | Settings > Plugins: a data source plugin and a panel plugin, signed |
+| `plugin-page-*` | the page of the data source plugin with its permissions and sandbox layers |
+| `plugin-install-*` | "Install from file" at the review: the checks passed, the targets to grant |
+| `plugins-trust-*` | "Signature and trust" with the publisher key |
+| `plugins-catalog-*` | the catalog tab, from a stubbed catalog answer (see below) |
+| `dashboard-plugin-panel-*` | four panels of the example panel plugin "KPI tile" and a time series |
+
+The AI scenes talk to a stand-in for a local model server (`ui/e2e/gallery/assistant.ts`, an
+OpenAI-compatible endpoint on Ollama's port when it is free) that answers the connection test,
+explanations, summaries and the tool calls of Ask; every figure in its answers is computed from
+the gallery's SQLite file. The plugin scenes install the test plugin (`KALZIT_E2E_PLUGIN_BINARY`)
+as two fictional data source plugins and the example panel plugin `examples/plugins/panel-kpi`,
+all signed with a publisher key the run makes and trusts (publisher `basalt.example`). The catalog
+scene is stubbed: Kalzit loads a catalog only over HTTPS with a certificate the system trusts,
+which the run cannot give its own server, so the browser gets a made-up answer of
+`GET /api/admin/plugin-catalog` for a list signed by that key; the server never loads a list.
 
 The README and the gallery page of the website show the same files: the WebP renders live in
 `gallery/` here, and the website keeps copies of them in `src/assets/gallery/`. After a rerun, copy
