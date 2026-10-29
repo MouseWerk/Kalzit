@@ -386,7 +386,7 @@ async fn unused_dashboards_are_those_without_views(t: TestApp) {
     assert!(thirty["items"][1]["lastViewedAt"].is_i64());
     assert!(thirty["recordedSince"].is_i64());
     let ninety = t.get("~/usage/unused?days=90", &t.owner).await.ok();
-    assert_eq!(ids(&ninety), [forgotten.clone()]);
+    assert_eq!(ids(&ninety), std::slice::from_ref(&forgotten));
     // The default is 30 days.
     assert_eq!(ids(&t.get("~/usage/unused", &t.owner).await.ok()), ids(&thirty));
     // A dashboard in the trash is not listed.

@@ -4,10 +4,16 @@
    * the AI usage card (docs/design/blueprint/Start.dc.html, AI.dc.html). Tokens only; nothing is
    * framed in an accent or status color.
    */
+  /* Never wider than the page: wide tables scroll inside their card instead. */
   .usage {
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
+    min-width: 0;
+  }
+
+  .usage > * {
+    min-width: 0;
   }
 
   .usage-privacy {
