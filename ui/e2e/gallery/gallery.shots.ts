@@ -1487,6 +1487,146 @@ for (const scheme of SCHEMES) {
   });
 }
 
+/**
+ * The catalog as the server answers it once a signed index has loaded: Kalzit loads catalogs
+ * only over HTTPS with a certificate the system trusts, which the run cannot give its own
+ * server, so the picture shows the answer of `GET /api/admin/plugin-catalog` for a list signed
+ * by the run's trusted publisher key, with the plugins installed above marked as installed.
+ */
+function catalogView(): Record<string, unknown> {
+  const host = "plugins.basalt.example";
+  const keyId = key().keyId;
+  const entry = (
+    id: string,
+    name: string,
+    kind: string,
+    version: string,
+    description: string,
+    network: string[],
+    action: string,
+    publisher = PUBLISHER,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id,
+    name,
+    kind,
+    version,
+    description,
+    publisher,
+    keyId: publisher === PUBLISHER ? keyId : "9d44c1e07a52f6b2",
+    ...(publisher === PUBLISHER ? { keyName: PUBLISHER } : {}),
+    network,
+    size: 2_400_000 + name.length * 37_000,
+    sha256: "4be1c0ffee09fa".padEnd(64, "0"),
+    urlHost: host,
+    action,
+    ...extra,
+  });
+  const items = [
+    entry(
+      BACNET.id,
+      BACNET.name,
+      "datasource",
+      "1.0.0",
+      "Reads chillers, air handlers and meters from a BACnet/IP building management system.",
+      ["<host>:47808"],
+      "installed",
+      PUBLISHER,
+      { installedVersion: "1.0.0" },
+    ),
+    entry(
+      "dev.basalt.modbus",
+      "Modbus meters",
+      "datasource",
+      "1.0.0",
+      "Reads energy meters and PDUs over Modbus TCP.",
+      ["<host>:502"],
+      "install",
+    ),
+    entry(
+      "dev.basalt.redfish",
+      "Redfish BMC",
+      "datasource",
+      "0.9.2",
+      "Server health, fans and power supplies from the BMCs over the Redfish API.",
+      ["<endpoint>:443"],
+      "install",
+    ),
+    entry(
+      KPI,
+      "KPI tile",
+      "panel",
+      "0.2.0",
+      "The latest value of a number field, its change and a sparkline.",
+      [],
+      "update",
+      PUBLISHER,
+      { installedVersion: "0.1.0" },
+    ),
+    entry(
+      "dev.basalt.floorplan",
+      "Floor plan",
+      "panel",
+      "1.1.0",
+      "Racks on the floor plan of a hall, colored by a value of the query.",
+      [],
+      "install",
+    ),
+    entry(
+      "de.nordlicht.heatmap",
+      "Calendar heatmap",
+      "panel",
+      "1.0.3",
+      "One cell per day, colored by the sum of a field.",
+      [],
+      "untrusted",
+      "Nordlicht Data GmbH",
+    ),
+  ];
+  const setting = (value: unknown, version: number) => ({ value, version, editable: true });
+  return {
+    state: "ready",
+    settings: {
+      enabled: setting(true, 2),
+      url: setting(`https://${host}/index.json`, 2),
+      refreshHours: setting(24, 1),
+    },
+    index: {
+      sequence: 42,
+      publishedAt: GALLERY_NOW - 2 * DAY,
+      expiresAt: GALLERY_NOW + 28 * DAY,
+      fetchedAt: GALLERY_NOW - HOUR,
+      keyId,
+      signer: PUBLISHER,
+      host,
+    },
+    checkedAt: GALLERY_NOW - HOUR,
+    items,
+    counts: {
+      all: items.length,
+      datasource: items.filter((item) => item.kind === "datasource").length,
+      panel: items.filter((item) => item.kind === "panel").length,
+    },
+    revoked: [],
+  };
+}
+
+for (const scheme of SCHEMES) {
+  test(`administration, plugin catalog, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await page.route(/\/api\/admin\/plugin-catalog(\?|$)/, (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: catalogView() })
+        : route.continue(),
+    );
+    await signIn(page);
+    await page.goto("/settings/plugins#catalog");
+    await expect(page.getByText("Redfish BMC").first()).toBeVisible();
+    await shoot(page, `plugins-catalog-${scheme}`);
+    await page.context().close();
+  });
+}
+
 for (const scheme of SCHEMES) {
   test(`dashboard with plugin panels, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);

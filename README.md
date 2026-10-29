@@ -210,6 +210,32 @@ Network and power topology: 88 nodes, colored by label.
 | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/explore-steps-light.webp"><img src="docs/screenshots/gallery/explore-steps-dark.webp" alt="Explore with a SQL query on SQLite and two steps that add a moving average and a trend line"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/graph-explorer-light.webp"><img src="docs/screenshots/gallery/graph-explorer-dark.webp" alt="A graph panel in explorer mode, expanded in two steps from a spine switch, with the inspector open"></picture> |
 | A SQL query with two steps: a moving average and a trend line. | A graph explored step by step: load the neighbours of a node. |
 
+### AI
+
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/ask-answer-light.webp"><img src="docs/screenshots/gallery/ask-answer-dark.webp" alt="Ask: a question about the hottest racks, the assistant's steps (sources, schema, a read-only SQL query with its result) and the answer; on the right the model, its endpoint and whether data leaves the network"></picture>
+
+Ask: a question in plain words, every step the assistant took with its query and result, then the answer.
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/explore-explain-light.webp"><img src="docs/screenshots/gallery/explore-explain-dark.webp" alt="Explore with a saved SQL query on PUE per hall and its explanation above the editor"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/explore-summarize-light.webp"><img src="docs/screenshots/gallery/explore-summarize-dark.webp" alt="Explore with the result table of PUE and IT load per hall and a summary of it"></picture> |
+| Explain a query in the editor. | Summarize a result, with what was sent. |
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/ai-settings-light.webp"><img src="docs/screenshots/gallery/ai-settings-dark.webp" alt="Settings, AI: the switch, the status, and two providers with base URL, model, where data goes and their last test"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/ai-functions-light.webp"><img src="docs/screenshots/gallery/ai-functions-dark.webp" alt="Settings, AI: which provider explains and drafts, which summarizes and which answers in Ask, and the limits below"></picture> |
+| AI is off until an administrator connects a provider and turns it on. | A provider per function, and the limits per person and organization. |
+
+### Plugins
+
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-plugin-panel-light.webp"><img src="docs/screenshots/gallery/dashboard-plugin-panel-dark.webp" alt="A dashboard with four KPI tile panels from a panel plugin, each with a value, its change and a sparkline, above a time series of IT power per hall"></picture>
+
+Panels of a plugin (the example "KPI tile"), each in a sealed-off frame, next to a built-in time series.
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/plugins-installed-light.webp"><img src="docs/screenshots/gallery/plugins-installed-dark.webp" alt="Settings, Plugins: a data source plugin and a panel plugin with publisher, signature key, version, network targets and status"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/plugin-page-light.webp"><img src="docs/screenshots/gallery/plugin-page-dark.webp" alt="The page of a data source plugin: granted permissions and its process with the sandbox layers"></picture> |
+| Installed plugins with publisher, signature and status. | A plugin's page: what it may reach and the layers of its sandbox. |
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/plugin-install-light.webp"><img src="docs/screenshots/gallery/plugin-install-dark.webp" alt="Install from file: the checks of a signed package passed, and the network targets to grant"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/plugins-catalog-light.webp"><img src="docs/screenshots/gallery/plugins-catalog-dark.webp" alt="The plugin catalog: a signed list of plugins with publisher key, version and network targets, to install or update"></picture> |
+| Every package is checked before anything in it runs. | The catalog: a signed list, off until an administrator turns it on. |
+
 ### First steps
 
 | | |
