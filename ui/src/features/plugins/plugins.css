@@ -54,7 +54,7 @@
 
   .plugins-strip {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-ai-tile), 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-plugins-tile), 100%), 1fr));
     overflow: hidden;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
@@ -287,6 +287,8 @@
   .plugins-chip {
     display: inline-flex;
     flex: none;
+    /* As wide as its text, also as an item of a grid cell. */
+    justify-self: start;
     align-items: center;
     gap: var(--space-1);
     max-width: 100%;

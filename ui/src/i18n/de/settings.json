@@ -38,7 +38,7 @@
   "settings.section.orgAi.lead": "Ob Mitglieder KI sehen, ein eigener Anbieter, niedrigere Grenzen und welche Datenquellen die KI lesen darf.",
   "settings.section.orgAi.keywords": "ki anbieter grenzen nutzung datenquellen freigabe felder ausnehmen",
   "settings.section.plugins.label": "Plugins",
-  "settings.section.plugins.lead": "Weitere Arten von Datenquellen. Jedes Plugin läuft als eigener Prozess in einer Sandbox und nur mit gültiger, vertrauenswürdiger Signatur.",
+  "settings.section.plugins.lead": "Zusätzliche Datenquellen und Panels. Jedes Plugin läuft abgeschottet, eine Datenquelle als eigener Prozess in einer Sandbox, ein Panel in einem eigenen Rahmen, und nur mit gültiger, vertrauenswürdiger Signatur.",
   "settings.section.plugins.keywords": "plugins erweiterungen installieren paket signatur schlüssel vertrauen unsigniert sandbox landlock katalog",
   "settings.section.orgPlugins.label": "Plugins der Organisation",
   "settings.section.orgPlugins.lead": "Welche Plugins des Servers diese Organisation anbietet.",

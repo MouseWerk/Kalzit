@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, type KeyObject, sign } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { crc32 } from "node:zlib";
 
@@ -65,27 +65,112 @@ export function zip(entries: { name: string; data: Uint8Array }[]): Buffer {
   return Buffer.concat([...locals, directory, end]);
 }
 
+/** A publisher's signing key as a test makes one: trusted through the API, then used to sign. */
+export interface PublisherKey {
+  /** The key id packages name: the first 16 hex digits of the public key's SHA-256. */
+  keyId: string;
+  /** The raw Ed25519 public key in base64, as `POST /api/admin/plugin-keys` takes it. */
+  publicKey: string;
+  privateKey: KeyObject;
+}
+
+export function publisherKey(): PublisherKey {
+  const keys = generateKeyPairSync("ed25519");
+  const raw = Buffer.from(keys.publicKey.export({ format: "jwk" }).x ?? "", "base64url");
+  return {
+    keyId: sha256(raw).slice(0, 16),
+    publicKey: raw.toString("base64"),
+    privateKey: keys.privateKey,
+  };
+}
+
+/**
+ * A package of `manifest` and `files`, signed with `key` when given: the signature covers the
+ * manifest (with the files' checksums in it) under Kalzit's domain prefix (docs/api/plugins.md).
+ */
+export function packageOf(
+  manifest: string,
+  files: { name: string; data: Uint8Array }[],
+  key?: PublisherKey,
+): Buffer {
+  const text = new TextEncoder().encode(manifest);
+  const signature =
+    key === undefined
+      ? []
+      : [
+          {
+            name: "kalzit-plugin.sig",
+            data: new TextEncoder().encode(
+              JSON.stringify({
+                keyId: key.keyId,
+                signature: sign(
+                  null,
+                  Buffer.concat([Buffer.from("kalzit-plugin-manifest-v1\n"), text]),
+                  key.privateKey,
+                ).toString("base64"),
+              }),
+            ),
+          },
+        ];
+  return zip([{ name: "kalzit-plugin.toml", data: text }, ...signature, ...files]);
+}
+
+/** The `[files]` table of a manifest: each file with its SHA-256. */
+export function filesTable(files: { name: string; data: Uint8Array }[]): string {
+  return ["[files]", ...files.map(({ name, data }) => `"${name}" = "${sha256(data)}"`), ""].join(
+    "\n",
+  );
+}
+
 /** An unsigned package of the test plugin in its normal mode, written to `path`. */
 export function writePackage(
   path: string,
+  options: { id?: string; name?: string; publisher?: string; version?: string } = {},
+): void {
+  writeFileSync(path, testPluginPackage(options));
+}
+
+/**
+ * A package of the test plugin in its normal mode: a data source kind with one setting, `host`,
+ * that is a network target. Signed with `key` when given.
+ */
+export function testPluginPackage(
   {
     id = ID,
     name = NAME,
     publisher = "Kalzit E2E",
-  }: { id?: string; name?: string; publisher?: string } = {},
-): void {
+    version = "1.0.0",
+    description,
+    network = [],
+  }: {
+    id?: string;
+    name?: string;
+    publisher?: string;
+    version?: string;
+    description?: string;
+    /** `[[permissions.network]]` tables, each as its lines of TOML. */
+    network?: string[][];
+  } = {},
+  key?: PublisherKey,
+): Buffer {
   const binary = new Uint8Array(readFileSync(BINARY));
   const exe = process.platform === "win32" ? ".exe" : "";
   const bin = `bin/${platform()}/kalzit-test-plugin${exe}`;
   const kind = new TextEncoder().encode(id);
   const mode = new TextEncoder().encode("normal");
+  const files = [
+    { name: bin, data: binary },
+    { name: "kind.txt", data: kind },
+    { name: "mode.txt", data: mode },
+  ];
   const manifest = [
     "manifest = 1",
     `id = "${id}"`,
     `name = "${name}"`,
-    'version = "1.0.0"',
+    `version = "${version}"`,
     'kind = "datasource"',
     `publisher = "${publisher}"`,
+    ...(description === undefined ? [] : [`description = "${description}"`]),
     'min_kalzit = "0.1.0"',
     'shapes = ["frame", "documents", "graph"]',
     "protocol = 1",
@@ -97,22 +182,11 @@ export function writePackage(
     "required = true",
     "target = true",
     "",
+    ...network.flatMap((lines) => ["[[permissions.network]]", ...lines, ""]),
     "[binaries]",
     `${platform()} = "${bin}"`,
     "",
-    "[files]",
-    `"${bin}" = "${sha256(binary)}"`,
-    `"kind.txt" = "${sha256(kind)}"`,
-    `"mode.txt" = "${sha256(mode)}"`,
-    "",
+    filesTable(files),
   ].join("\n");
-  writeFileSync(
-    path,
-    zip([
-      { name: "kalzit-plugin.toml", data: new TextEncoder().encode(manifest) },
-      { name: bin, data: binary },
-      { name: "kind.txt", data: kind },
-      { name: "mode.txt", data: mode },
-    ]),
-  );
+  return packageOf(manifest, files, key);
 }

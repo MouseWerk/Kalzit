@@ -17,8 +17,8 @@ written as the English interface shows them, with the German label in parenthese
 | [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, graph steps, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
-| [Plugins](plugins.md) | Installing data source plugins from a file, the checks and permissions, a plugin's status, log and sandbox, trusted keys, unsigned plugins, blocking per organization, panels of plugins |
-| [AI](ai.md) | Turning AI on with a provider, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize |
+| [Plugins](plugins.md) | Installing data source and panel plugins from a file or the signed catalog, the checks and permissions, a plugin's status, log, sandbox and network, trusted keys, unsigned plugins, blocking per organization, panels of plugins |
+| [AI](ai.md) | Turning AI on with a provider, a provider per function, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize, Ask (chat about your data) with its history and retention |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 
 The HTTP API behind every function is described in [docs/api](../api): [access](../api/access.md),
@@ -38,6 +38,8 @@ The **sidebar** on the left is the main navigation:
 - **Home** (Start): the start page with your organization in numbers, favorites and recently
   opened dashboards.
 - **Dashboards**, **Explore** and **Data sources**: working with data.
+- **Ask** (Fragen, Beta): questions about your data in plain words, while AI is on
+  ([AI](ai.md#ask-fragen)).
 - **Organization** group: **Members**, **Settings** and **Administration** (Verwaltung). Each
   entry appears only if your role may open it.
 - Your **pinned dashboards** sit under the navigation, in your own order.
