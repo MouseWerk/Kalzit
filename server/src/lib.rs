@@ -24,6 +24,7 @@ pub mod extract;
 pub mod folders;
 pub mod http;
 pub mod live;
+pub mod mail;
 pub mod net;
 pub mod plugins;
 pub mod routes;

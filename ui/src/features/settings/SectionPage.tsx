@@ -27,6 +27,7 @@ import { AboutSection } from "./AboutSection";
 import { AcmeSection } from "./AcmeSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
+import { MailSection } from "./MailSection";
 import { QueryCacheCard } from "./QueryCacheCard";
 import { type Changes, SettingRow } from "./rows";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
@@ -147,6 +148,8 @@ function SectionBody({ section }: { section: SectionDef }) {
           </div>
         </div>
       );
+    case "mail":
+      return <MailSection />;
     case "ai":
       return <AiServerSection section={section} />;
     case "aiOrg":

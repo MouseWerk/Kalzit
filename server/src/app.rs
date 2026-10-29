@@ -90,6 +90,9 @@ pub struct AppState {
     /// Automatic HTTPS certificates (`acme`): their settings, the served certificate and the
     /// challenge answers.
     pub acme: Arc<crate::acme::Acme>,
+    /// Mail: the rate limits of password resets and links, and connections to the mail server
+    /// (`mail`).
+    pub mail: Arc<crate::mail::Mail>,
 }
 
 impl AppState {
@@ -171,6 +174,7 @@ impl AppState {
             ai: Arc::default(),
             plugins,
             acme,
+            mail: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.

@@ -9,7 +9,15 @@ import { settingsRoutes } from "../features/settings/routes";
 import { HomePage } from "../pages/HomePage";
 import { PendingPage } from "../pages/StatusPages";
 import { redirectToStartDashboard } from "../preferences/startDashboard";
-import { appRoute, helpRoute, loginRoute, rootRoute, setupRoute } from "./baseRoutes";
+import {
+  appRoute,
+  helpRoute,
+  inviteRoute,
+  loginRoute,
+  resetPasswordRoute,
+  rootRoute,
+  setupRoute,
+} from "./baseRoutes";
 
 export { type LoginSearch, parseLoginSearch, type RouterContext } from "./baseRoutes";
 
@@ -25,6 +33,8 @@ const routeTree = rootRoute.addChildren([
   setupRoute,
   loginRoute,
   helpRoute,
+  inviteRoute,
+  resetPasswordRoute,
   appRoute.addChildren([
     homeRoute,
     ...dashboardsRoutes,

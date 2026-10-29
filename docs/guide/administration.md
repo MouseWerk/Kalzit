@@ -37,12 +37,35 @@ sidebar switches between the organizations you belong to (server admins see all)
 
 ![Members of an organization with their roles](../screenshots/admin-members.png)
 
+- **Invite** invites people by email address, with a role and, if you may change teams, a team
+  (see "Invitations" below). Needs the `users:invite` permission (admins and owners).
 - **Add member...** adds an existing account by email address and role. The person needs an
   account on this server; a server admin creates accounts under **Users**.
 - Change a role in the list; **Remove...** takes a member out of the organization (their account
   stays and they lose access at once).
 - An organization always keeps at least one owner. You can only give a role, change or remove a
   member whose permissions you hold yourself.
+- The menu of a member (**More for ...**) has **Send password link**: the member gets the same
+  mail as with **Forgot password?**. It needs a mail server.
+
+### Invitations
+
+**Invite** takes one or several email addresses (separated by comma, space or Enter), a role and
+an optional team. Each invitation link works for seven days and once.
+
+- With a mail server (Settings > Email), Kalzit sends each person a mail in their language (or the
+  server's default language) with the link; nothing in it tracks the reader.
+- Without a mail server, **Invitation created** shows each link to pass on yourself, for example
+  in a chat.
+- **Open invitations** above the members shows every invitation that is not accepted yet: role
+  and team, who invited, until when it is valid and how its mail went (**Delivered**, or
+  **Refused** with the mail server's answer). **Copy link** copies a pending link again; **Send
+  again** makes a new link (the old one stops working) and starts the seven days again;
+  **Revoke** withdraws it. Expired invitations can be invited again or removed.
+- Links point to the server's public address (`server.public_url` in `kalzit.toml` or
+  `KALZIT_SERVER_PUBLIC_URL`); without it Kalzit makes no links and says so.
+- Every invitation, resend, revoke, copied link, refused mail and acceptance is in the audit log;
+  links themselves never are.
 
 ## Teams
 
@@ -112,12 +135,40 @@ name, description or key and jumps to it; every section and setting has its own 
   proxy, session, security and log settings are read-only here: they are set in `kalzit.toml` or
   the environment only, so a wrong value can never lock you out.
 - Sections: Appearance and brand, General, Network HTTPS and proxy, Sessions and security,
-  Sign-in (OIDC, LDAP) and Email (both planned for M5), Data sources and targets, Plugins
+  Sign-in (OIDC, LDAP, planned for M5), Email, Data sources and targets, Plugins
   ([Plugins](plugins.md)), AI ([AI](ai.md)), Storage and retention, Updates, This organization,
   AI of the organization, Plugins of the organization, Profile and language, Keyboard shortcuts,
   and Export / import settings.
 
 ![Settings: appearance and brand](../screenshots/settings-dark.png)
+
+### Email (mail server)
+
+**Settings** > **Email** (Verwaltung > E-Mail) sets the mail server Kalzit sends invitations and
+password links with. Without one, invitations appear as links to copy and admins set passwords
+under **Users**.
+
+- **Set up mail server**, then enter **Server** (host and port), **Encryption** (STARTTLS, usually
+  port 587, or TLS, usually port 465), **User** and **Password** if the server wants a sign-in,
+  **Sender name**, **Sender address** and optionally **Reply to**.
+- The fields depend on each other, so they are saved together: **Send test mail** sends one mail
+  with the values in the form and shows what the server answered, how long it took, the TLS
+  version and until when its certificate is valid. **Save** waits for a successful test mail with
+  these values, then checks the connection and sign-in once more; a problem is shown at its field
+  (for example "535: sign-in refused" at Password, or "port 465 speaks TLS directly" at Port).
+  Until then the previous settings apply.
+- The password is stored encrypted with the secrets key and never shown again; leave the field
+  empty to keep it. Changing the server or user needs the password again.
+- The mail server is a target like a data source: the allowed targets apply, and metadata
+  addresses and Kalzit's own address and database are refused. Credentials only go over TLS, and
+  the server's certificate must be trusted by the computer Kalzit runs on.
+- `[smtp]` in `kalzit.toml` or `KALZIT_SMTP_HOST`, `KALZIT_SMTP_PORT`, `KALZIT_SMTP_SECURITY`,
+  `KALZIT_SMTP_USERNAME`, `KALZIT_SMTP_PASSWORD`, `KALZIT_SMTP_FROM_NAME`,
+  `KALZIT_SMTP_FROM_ADDRESS` and `KALZIT_SMTP_REPLY_TO` set the mail server instead; then the page
+  shows it read-only with its source, and the test mail still works. Give the password in the
+  environment rather than the file. `security = "none"` (no encryption) is possible only there,
+  and only for a relay on the same computer (`localhost`).
+- **Remove mail server** goes back to links to copy. Every change is in the audit log.
 
 ### Appearance and brand
 

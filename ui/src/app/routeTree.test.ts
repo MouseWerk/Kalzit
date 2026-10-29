@@ -1,7 +1,14 @@
 import { QueryClient } from "@tanstack/react-query";
 import { type AnyRoute, createMemoryHistory, rootRouteId } from "@tanstack/react-router";
 import { describe, expect, it } from "vitest";
-import { appRoute, helpRoute, loginRoute, setupRoute } from "./baseRoutes";
+import {
+  appRoute,
+  helpRoute,
+  inviteRoute,
+  loginRoute,
+  resetPasswordRoute,
+  setupRoute,
+} from "./baseRoutes";
 import { createAppRouter } from "./router";
 
 function ancestors(route: AnyRoute): string[] {
@@ -18,9 +25,16 @@ describe("route tree", () => {
   const router = createAppRouter(new QueryClient(), createMemoryHistory({ initialEntries: ["/"] }));
   const routes = Object.values(router.routesById as Record<string, AnyRoute>);
 
-  it("puts every page except setup, sign-in and help under the sign-in guard", () => {
-    // Route ids exist only once the router has built the tree, so this is read here.
-    const publicRoutes = new Set([setupRoute.id, loginRoute.id, helpRoute.id]);
+  it("puts every page except setup, sign-in, help and the mailed links under the guard", () => {
+    // Route ids exist only once the router has built the tree, so this is read here. The pages
+    // of invitation and password links open without a session: the link's token counts.
+    const publicRoutes = new Set([
+      setupRoute.id,
+      loginRoute.id,
+      helpRoute.id,
+      inviteRoute.id,
+      resetPasswordRoute.id,
+    ]);
     const unguarded = routes
       .filter((route) => route.id !== rootRouteId && route.id !== appRoute.id)
       .filter((route) => !publicRoutes.has(route.id))
@@ -37,7 +51,7 @@ describe("route tree", () => {
   });
 
   it("keeps setup, sign-in and help directly under the root", () => {
-    for (const route of [setupRoute, loginRoute, helpRoute]) {
+    for (const route of [setupRoute, loginRoute, helpRoute, inviteRoute, resetPasswordRoute]) {
       expect(route.parentRoute?.id).toBe(rootRouteId);
     }
   });

@@ -1,0 +1,69 @@
+/*
+ * The pages behind the links Kalzit mails: accepting an invitation and setting a new password
+ * (docs/design/blueprint/Identity.dc.html, frames 3A to 3E). They live in the frame of the
+ * sign-in page (auth.css); here only the organization chip, the end states and button rows.
+ */
+@layer components {
+  /* The organization of an invitation: a neutral tile with its initials, its name, the host. */
+  .link-org {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .link-org__tile {
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--space-6);
+    block-size: var(--space-6);
+    border-radius: var(--radius-sm);
+    background: var(--bg-active);
+    color: var(--text);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .link-org__name {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .link-org__host {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+
+  .link-org__host::before {
+    content: "·";
+    margin-inline-end: var(--space-2);
+  }
+
+  /* An end state (expired, used, unknown, saved): a title, what to do, one button. */
+  .link-state {
+    align-items: flex-start;
+  }
+
+  .link-state__title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
+  }
+
+  .link-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .link-actions--split {
+    justify-content: space-between;
+  }
+}

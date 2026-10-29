@@ -1,0 +1,107 @@
+@layer components {
+  /*
+   * Verwaltung > E-Mail: the mail server's form card in the rows of the settings board, one
+   * explicit Save at the bottom after a test mail. States are text and quiet tints only.
+   */
+  .mail-field {
+    width: 20rem;
+    max-width: 100%;
+  }
+
+  .mail-port {
+    width: 6rem;
+  }
+
+  .mail-pair {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .mail-fixed {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .mail-notice {
+    margin: var(--space-3) var(--space-4) 0;
+  }
+
+  .mail-source {
+    padding: var(--space-half) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .mail-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .mail-footer__result {
+    flex: 1 1 18rem;
+    min-width: 0;
+  }
+
+  .mail-footer__result > p {
+    margin: 0;
+  }
+
+  .mail-footer__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .mail-tested__line {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-2);
+    font-size: var(--font-size-sm);
+    overflow-wrap: anywhere;
+  }
+
+  .mail-tested__line > .icon {
+    flex: none;
+    margin-block-start: var(--space-half);
+    color: var(--success-text);
+  }
+
+  .mail-sends {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+    padding: var(--space-4);
+  }
+
+  .mail-sends__item {
+    display: grid;
+    grid-template-columns: minmax(10rem, max-content) minmax(0, 1fr);
+    gap: var(--space-1) var(--space-4);
+    font-size: var(--font-size-sm);
+  }
+
+  .mail-sends__item dt {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .mail-sends__item dd {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 40rem) {
+    .mail-sends__item {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}

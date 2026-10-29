@@ -16,6 +16,7 @@ everything else is M1.
 | `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
 | `server/src/saved_analyses.rs` | Saved analyses: the versioned model, its checks and dashboard links (routes in `routes/analyses.rs`, docs/api/analyses.md). |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
+| `server/src/mail/` | Mail: the mail server's settings, the SMTP client, messages and their texts, one-time link tokens (see "Mail, invitations and password reset"; routes in `routes/{mail,invitations,password_reset}.rs`, docs/api/mail.md). |
 | `server/src/ai/` | AI: the provider interface with the OpenAI-compatible and Anthropic clients, stored providers and keys, limits, usage and audit (see "AI"; routes in `routes/ai.rs`, docs/api/ai.md). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `plugin-api/` | Crate `kalzit-plugin-api`: the data source plugin protocol (`proto/`), the plugin manifest and its validator, the plugin signing context (see "Plugins"). |
@@ -1013,6 +1014,59 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   `(created_at, id)`, so it runs on the indexes `audit_events_org_time_id` and
   `audit_events_org_resource` (migration 0015) without a sort; a test checks the plan with
   `EXPLAIN QUERY PLAN` on SQLite.
+
+## Mail, invitations and password reset
+
+- **Mail server** (`mail::settings`): one versioned server setting `mail.smtp` (host, port,
+  STARTTLS or TLS, user, sender, reply-to) saved in one explicit step, like ACME: the fields are
+  checked, then `mail::smtp::deliver` connects and signs in without sending, and the first problem
+  is answered with its `field` and a `mail.*` reason. The password lives in `server_secrets`
+  (owner `mail`, field `smtp_password`), AES-256-GCM with the secrets key like data source
+  secrets; `kalzit secrets rotate` re-encrypts it. A stored password is only used again while
+  host, port and user stay the same. `[smtp]` in `kalzit.toml` / `KALZIT_SMTP_*` wins over the
+  stored setting and makes the page read-only; `security = "none"` exists only there, for a relay
+  on loopback, and is checked at start.
+- **SMTP client** (`mail::smtp`): one connection per mail, written for Kalzit rather than taken
+  from a library, so the connection goes through the target rules: the host is resolved and
+  checked once (`TargetPolicy::resolve_all`: allowed targets, metadata addresses) and each address
+  against Kalzit's own listeners and database (`OwnEndpoints`), then that address is connected to.
+  TLS (rustls, platform roots) from the first byte or after `STARTTLS`; data the server sent
+  before the TLS handshake is refused (STARTTLS command injection). `AUTH PLAIN` or `LOGIN` only
+  over TLS or to loopback. Step timeout 20 s, whole mail 60 s. Nothing of the dialogue is logged.
+- **Messages** (`mail::message`, `mail::templates`): `multipart/alternative` with plain text and a
+  simple HTML part (every value escaped, no remote images, no tracking), base64 bodies, RFC 2047
+  headers with control characters removed (no header injection), `Auto-Submitted:
+  auto-generated`. German ("du") or English by the recipient's language preference, else the
+  server's default language; times in the organization's or server's time zone, else UTC.
+- **Links** (`mail::links`): a random 256-bit token (base64url) in the fragment of
+  `<server.public_url>/invite#…` or `/reset-password#…`, so it never reaches a server log, proxy or
+  `Referer`; the page posts it. Only its SHA-256 is stored. Without `server.public_url` no link is
+  made (`mail.public_url_missing`).
+- **Invitations** (`invitations`, `routes/invitations.rs`, `users:invite`): bound to the
+  organization and email, with a role the inviter holds entirely (`ensure_holds`) and an optional
+  team (`teams:members`); seven days, once. While pending, the token is also sealed with the
+  secrets key (associated data `invitation:<id>`), so "Copy link" works again; accepting clears it.
+  Resend writes a new token and restarts the days; revoke deletes the row, so a revoked link looks
+  like an unknown one. Mails go out after the commit; each invitation records `delivery`
+  (`none`, `pending`, `sent`, `failed` with the server's answer), and a failure of the server
+  itself marks the rest of the batch without waiting again. Accepting (`invitations::redeem`)
+  locks the organization, marks the row accepted first (`accepted_at IS NULL AND expires_at > now`,
+  so two accepts cannot both pass), then adds membership and team. A new person sets name and
+  password and gets a session; an existing account must be signed in as the invited address.
+  Single sign-on, when it comes, calls `redeem` after the provider confirmed the address
+  (`invitations::sso_options` lists the providers the page offers).
+- **Password reset** (`routes/password_reset.rs`): 60 minutes, once, bound to the account, its
+  email and a fingerprint of its password hash, so a link dies when the password changed in
+  another way; a newer link replaces older ones. A request answers `202` at once and the lookup,
+  the link and the mail run as background work (`Mail::spawn`), so neither the answer nor its time
+  tells whether an account exists. Requests are limited per client address (10 / 15 min), per
+  network (/24, /48; 30 / 15 min) and per email asked for (3 / hour, in a bounded table that
+  answers alike for every email). Unknown, used or expired tokens of both link kinds count per
+  client address (20 / 15 min). Completing ends every session unless the person keeps them and
+  clears the account's failed sign-ins; a second factor is never touched.
+- **Audit**: `mail.settings_changed`, `invitation.created|resent|revoked|link_copied|
+  delivery_failed|accepted`, `auth.password_reset_requested|completed`; ids, roles and the mail
+  server's answer with addresses removed, never a token or an email.
 
 ## AI
 

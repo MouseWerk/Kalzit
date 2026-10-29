@@ -19,15 +19,18 @@ pub mod folders;
 pub mod grants;
 pub mod health;
 pub mod home;
+pub mod invitations;
 pub mod library_panels;
 pub mod live;
 #[cfg(test)]
 mod live_tests;
+pub mod mail;
 pub mod me;
 pub mod members;
 pub mod orgs;
 pub mod panel_plugins;
 pub mod panel_state;
+pub mod password_reset;
 pub mod playlists;
 pub mod plugins;
 pub mod preferences;
@@ -86,6 +89,10 @@ pub fn all() -> Vec<table::RouteDef> {
         ai_calls::routes(),
         ai_chat::routes(),
         plugins::routes(),
+        // Mail, invitations and password reset (docs/api/mail.md).
+        mail::routes(),
+        invitations::routes(),
+        password_reset::routes(),
     ]
     .into_iter()
     .flatten()
@@ -197,6 +204,15 @@ mod access_guard {
         // What the sign-in page shows anyway: product name, logo, sign-in texts and default look.
         "GET /branding",
         "GET /branding/logo",
+        // Invitation and password links (docs/api/mail.md): the token is the credential; unknown
+        // tokens count against the client address, requests for a link are limited per address,
+        // network and account and answer alike for every address.
+        "POST /auth/invitation",
+        "POST /auth/invitation/accept",
+        "GET /auth/password-reset",
+        "POST /auth/password-reset",
+        "POST /auth/password-reset/inspect",
+        "POST /auth/password-reset/complete",
     ];
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[

@@ -3,7 +3,9 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
+import { ToolbarMenu } from "../../../components/ToolbarMenu";
 import { useI18n } from "../../../i18n/i18n";
+import { errorReason, reasonText } from "../../datasources/reasons";
 import {
   addMember,
   adminKeys,
@@ -20,7 +22,9 @@ import { Notice, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
 import { ADD_MEMBER_ERRORS, errorText, MEMBER_ERRORS } from "../errors";
+import { type IssuedInvitation, invitationKeys, sendPasswordLink } from "../invitationsApi";
 import { allowedWhen, useAdminAccess } from "../sections";
+import { InviteDialog, LinksDialog, PendingInvitations } from "./Invitations";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
 
 export function MembersPage() {
@@ -31,6 +35,8 @@ export function MembersPage() {
   const canRead = access.has("users:read");
   // Adding, changing and removing members all need users:write (docs/api/access.md, Members).
   const canWrite = access.has("users:write");
+  // Invitations by mail or link (docs/api/mail.md, "Invitations").
+  const canInvite = access.has("users:invite");
   const roles = useRoles(access.orgId, access.has("roles:read"));
   const list = usePagedList(
     adminKeys.members(orgId),
@@ -40,6 +46,8 @@ export function MembersPage() {
   const notice = useNotice();
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const [links, setLinks] = useState<IssuedInvitation[] | null>(null);
   const members = list.items ?? [];
   const keys = useRowKeys(members.length);
 
@@ -65,6 +73,13 @@ export function MembersPage() {
     onError: (error) => notice.showError(errorText(t, error, MEMBER_ERRORS)),
   });
 
+  const passwordLink = useMutation({
+    mutationFn: (member: Member) => sendPasswordLink(orgId, member.userId),
+    onSuccess: (_, member) =>
+      notice.show({ message: t("admin.members.passwordLinkSent", { email: member.email }) }),
+    onError: (error) => notice.showError(passwordLinkErrorText(t, error)),
+  });
+
   const remove = useMutation({
     mutationFn: (member: Member) => removeMember(orgId, member.userId),
     onSuccess: async (_, member) => {
@@ -80,14 +95,32 @@ export function MembersPage() {
       lead="admin.members.lead"
       allowed={allowedWhen(access, canRead)}
       actions={
-        canWrite ? (
-          <button type="button" className="button button--primary" onClick={() => setAdding(true)}>
-            {t("admin.members.add")}
-          </button>
+        canWrite || canInvite ? (
+          <>
+            {canWrite ? (
+              <button
+                type="button"
+                className={canInvite ? "button button--secondary" : "button button--primary"}
+                onClick={() => setAdding(true)}
+              >
+                {t("admin.members.add")}
+              </button>
+            ) : null}
+            {canInvite ? (
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => setInviting(true)}
+              >
+                {t("admin.invitations.invite")}
+              </button>
+            ) : null}
+          </>
         ) : undefined
       }
     >
       <Notice notice={notice.notice} onDismiss={notice.clear} />
+      {canInvite ? <PendingInvitations orgId={orgId} onLinks={setLinks} /> : null}
       {list.items === undefined ? (
         <LoadState error={list.query.error} onRetry={() => void list.query.refetch()} />
       ) : (
@@ -128,6 +161,18 @@ export function MembersPage() {
                       >
                         {t("admin.common.removeAsk")}
                       </button>
+                      <ToolbarMenu
+                        label={t("admin.members.moreFor", { name: member.name })}
+                        icon="more"
+                        entries={[
+                          {
+                            key: "password-link",
+                            label: t("admin.members.passwordLink"),
+                            disabled: passwordLink.isPending,
+                            onSelect: () => passwordLink.mutate(member),
+                          },
+                        ]}
+                      />
                     </>
                   ) : (
                     <span
@@ -164,6 +209,36 @@ export function MembersPage() {
           }}
         />
       ) : null}
+      {inviting ? (
+        <InviteDialog
+          orgId={orgId}
+          onClose={() => setInviting(false)}
+          onCreated={async ({ items, mailed }) => {
+            setInviting(false);
+            await queryClient.invalidateQueries({ queryKey: invitationKeys.list(orgId) });
+            if (!mailed) {
+              setLinks(items);
+              return;
+            }
+            const failed = items.filter((item) => item.invitation.delivery === "failed");
+            if (failed.length === 0) {
+              notice.show({ message: t("admin.invitations.sent", { count: items.length }) });
+            } else {
+              notice.showError(
+                failed
+                  .map((item) =>
+                    t("admin.invitations.refused", {
+                      email: item.invitation.email,
+                      reply: item.invitation.deliveryDetail ?? "",
+                    }),
+                  )
+                  .join(" "),
+              );
+            }
+          }}
+        />
+      ) : null}
+      {links === null ? null : <LinksDialog items={links} onClose={() => setLinks(null)} />}
       <ConfirmDialog
         open={removing !== null}
         title={t("admin.members.removeTitle")}
@@ -181,6 +256,20 @@ export function MembersPage() {
       </ConfirmDialog>
     </Section>
   );
+}
+
+/** Why a member's password link did not go out. */
+function passwordLinkErrorText(t: ReturnType<typeof useI18n>["t"], error: unknown): string {
+  const reason = errorReason(error);
+  if (reason?.reason === "mail.reset_unavailable") {
+    return t("admin.members.passwordLinkNoMail");
+  }
+  if (reason?.reason === "mail.reset_password_elsewhere") {
+    return t("admin.members.passwordLinkElsewhere");
+  }
+  // The mail server's own answer (refused recipient, sign-in, ...).
+  const said = reason === undefined ? undefined : reasonText(t, reason);
+  return said ?? errorText(t, error, MEMBER_ERRORS);
 }
 
 function AddMemberDialog({
