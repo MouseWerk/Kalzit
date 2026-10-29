@@ -35,6 +35,8 @@ struct Reply {
     status: StatusCode,
     body: Value,
     text: String,
+    /// `X-Kalzit-Cache`, empty when absent.
+    cache: String,
 }
 
 impl Reply {
@@ -131,6 +133,17 @@ impl T {
     }
 
     async fn send(&self, method: Method, path: &str, body: Option<Value>, cookie: Option<&str>) -> Reply {
+        self.send_with(method, path, body, cookie, &[]).await
+    }
+
+    async fn send_with(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        cookie: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> Reply {
         // A data source PATCH names the version it changes, as the edit page does; these tests
         // change the stored one unless they name a version themselves.
         let body = match body {
@@ -154,6 +167,9 @@ impl T {
         if let Some(c) = cookie {
             req = req.header(header::COOKIE, c);
         }
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
         let req = match body {
             Some(b) => req.header(header::CONTENT_TYPE, "application/json").body(Body::from(b.to_string())),
             None => req.body(Body::empty()),
@@ -161,10 +177,11 @@ impl T {
         .unwrap();
         let res = self.app.clone().oneshot(req).await.unwrap();
         let status = res.status();
+        let cache = res.headers().get("x-kalzit-cache").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8_lossy(&bytes).to_string();
         let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        Reply { status, body, text }
+        Reply { status, body, text, cache }
     }
 
     fn path(&self, rest: &str) -> String {
@@ -939,6 +956,8 @@ async fn sqlite_values_keep_to_their_column_type() {
 #[tokio::test]
 async fn a_recreated_sqlite_table_answers_with_its_new_types() {
     let t = T::new().await;
+    // The table changes behind the source's back; the query cache would answer with the old one.
+    t.set("datasources.cache_enabled", json!(false));
     let file = t.sqlite_file("wandel.db", "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('a');").await;
     let id = t.create_sqlite("Wandel", &file).await;
     let q = json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT v FROM t" } }]);
@@ -2981,5 +3000,292 @@ async fn the_sample_keeps_to_the_rules_of_its_directory() {
             .await;
         assert_eq!(r.body["error"]["reason"], "target.file_path_refused", "{}", r.text);
     }
+    t.finish().await;
+}
+
+// ---- the query cache ----
+
+/// The values of the first field of `refId` `A`.
+fn values_of(r: &Reply) -> Value {
+    r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"].clone()
+}
+
+impl T {
+    /// Adds a row to the counting table, behind the data source's back.
+    async fn add_row(&self, path: &std::path::Path, n: i64) {
+        let pool = sqlx::SqlitePool::connect(&crate::config::sqlite_url(path)).await.unwrap();
+        sqlx::query("INSERT INTO zahl VALUES ($1)").bind(n).execute(&pool).await.unwrap();
+        pool.close().await;
+    }
+
+    async fn patch_settings(&self, ds: &str, settings: Value) -> Reply {
+        let path = self.path(&format!("/datasources/{ds}"));
+        self.send(Method::PATCH, &path, Some(json!({ "settings": settings })), Some(&self.owner)).await
+    }
+
+    async fn count_query(&self, cookie: &str, ds: &str, extra: Value) -> Reply {
+        let mut body = json!({
+            "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT n FROM zahl ORDER BY n" } }],
+            "timeRange": range(),
+        });
+        if let (Value::Object(b), Value::Object(e)) = (&mut body, extra) {
+            b.extend(e);
+        }
+        self.send(Method::POST, &self.path("/query"), Some(body), Some(cookie)).await
+    }
+}
+
+/// A second run within the TTL answers from the cache, also when the data changed meanwhile;
+/// "Refresh" (`refresh` or `Cache-Control: no-cache`) asks the source and keeps the new answer;
+/// the TTL ends an entry.
+#[tokio::test]
+async fn the_query_cache_answers_again_until_refresh_or_ttl() {
+    let t = T::new().await;
+    let file = t.sqlite_file("zahl.db", "CREATE TABLE zahl (n INTEGER); INSERT INTO zahl VALUES (1);").await;
+    let ds = t.create_sqlite("Zahlen", &file).await;
+
+    let r = t.count_query(&t.owner, &ds, json!({})).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1"]), "miss"));
+    assert_eq!(r.body["results"]["A"]["cache"], json!({ "status": "miss", "ageMs": 0, "ttlMs": 60_000 }));
+
+    t.add_row(&file, 2).await;
+    t.clock.advance_ms(5_000);
+    let r = t.count_query(&t.owner, &ds, json!({})).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1"]), "hit"), "{}", r.text);
+    assert_eq!(r.body["results"]["A"]["cache"]["status"], "hit");
+    assert_eq!(r.body["results"]["A"]["cache"]["ageMs"], 5_000);
+
+    // Refresh asks the source and keeps what it answers.
+    let r = t.count_query(&t.owner, &ds, json!({ "refresh": true })).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2"]), "refresh"), "{}", r.text);
+    t.add_row(&file, 3).await;
+    let r = t.count_query(&t.owner, &ds, json!({})).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2"]), "hit"), "the refreshed answer is kept");
+    let body = json!({
+        "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT n FROM zahl ORDER BY n" } }],
+        "timeRange": range(),
+    });
+    let r = t
+        .send_with(Method::POST, &t.path("/query"), Some(body), Some(&t.owner), &[("cache-control", "no-cache")])
+        .await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2", "3"]), "refresh"), "{}", r.text);
+
+    // After the TTL the source answers again.
+    t.add_row(&file, 4).await;
+    t.clock.advance_ms(61_000);
+    let r = t.count_query(&t.owner, &ds, json!({})).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2", "3", "4"]), "miss"));
+
+    // Errors are never kept.
+    let bad = json!({
+        "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT nix FROM zahl" } }],
+        "timeRange": range(),
+    });
+    let r = t.query(&t.owner, bad["queries"].clone()).await;
+    assert!(r.body["results"]["A"]["error"].is_object(), "{}", r.text);
+    assert_eq!(r.cache, "off");
+    let stats = t.send(Method::GET, "/api/admin/query-cache", None, Some(&t.owner)).await;
+    assert_eq!(stats.status, StatusCode::OK, "{}", stats.text);
+    assert!(stats.body["entries"].as_u64().unwrap() >= 1, "{}", stats.text);
+    assert_eq!(stats.body["enabled"], true);
+    assert!(stats.body["hits"].as_u64().unwrap() >= 2);
+    t.finish().await;
+}
+
+/// Two people never share an entry, whatever their rights; someone who may not run a query gets
+/// no answer although the cache holds one.
+#[tokio::test]
+async fn the_query_cache_never_crosses_rights() {
+    let t = T::new().await;
+    let file = t.sqlite_file("zahl.db", "CREATE TABLE zahl (n INTEGER); INSERT INTO zahl VALUES (1);").await;
+    let ds = t.create_sqlite("Zahlen", &file).await;
+    let editor = t.session_for_role("editor", Some("editor")).await;
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let stranger = t.session_for_role("fremd", Some("stranger")).await;
+
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "miss");
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "hit");
+    // The editor may run it too, but gets an answer of their own.
+    t.add_row(&file, 2).await;
+    let r = t.count_query(&editor, &ds, json!({})).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2"]), "miss"), "{}", r.text);
+    // A viewer may not run free queries (the source does not exist for them), and a member of no
+    // organization sees nothing.
+    let r = t.count_query(&viewer, &ds, json!({})).await;
+    assert_eq!(r.body["results"]["A"]["error"]["code"], "not_found", "{}", r.text);
+    assert_eq!(t.count_query(&stranger, &ds, json!({})).await.status, StatusCode::NOT_FOUND);
+
+    // A dashboard's stored queries: each reader has entries of their own, and someone who cannot
+    // read the dashboard gets nothing from the cache.
+    let model = json!({
+        "schemaVersion": 1, "title": "Zahlen", "variables": [],
+        "panels": [{ "id": "p1", "type": "table", "title": "Zahlen", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT n FROM zahl ORDER BY n" } }],
+            "transformations": [], "options": {}, "fieldConfig": {} }]
+    });
+    let created_folder = t.post("/folders", json!({ "name": "Geheim", "restricted": true })).await;
+    let folder = created_folder.body["id"].as_str().unwrap().to_string();
+    let folder_version = created_folder.body["version"].clone();
+    let created = t.post("/dashboards", json!({ "model": model, "folderId": folder })).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+    let dashboard = created.body["id"].as_str().unwrap().to_string();
+    let body = json!({ "timeRange": range() });
+    let r = t.panel(&t.owner, &dashboard, "p1", body.clone()).await;
+    assert_eq!((r.status, r.cache.as_str()), (StatusCode::OK, "miss"), "{}", r.text);
+    assert_eq!(t.panel(&t.owner, &dashboard, "p1", body.clone()).await.cache, "hit");
+    assert_eq!(t.panel(&viewer, &dashboard, "p1", body.clone()).await.status, StatusCode::NOT_FOUND);
+    // A new name of the folder changes no rights: the answer stays.
+    let renamed = t
+        .send(
+            Method::PATCH,
+            &t.path(&format!("/folders/{folder}")),
+            Some(json!({ "name": "Ganz geheim", "version": folder_version })),
+            Some(&t.owner),
+        )
+        .await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.text);
+    assert_eq!(t.panel(&t.owner, &dashboard, "p1", body.clone()).await.cache, "hit");
+    // A refused change of rights changes nothing: a viewer cannot empty the cache with them.
+    for _ in 0..3 {
+        let refused = t
+            .send(
+                Method::POST,
+                &t.path("/grants"),
+                Some(json!({ "subjectType": "user", "subjectId": "nobody", "resourceType": "folder",
+                             "resourceId": folder, "level": "view" })),
+                Some(&viewer),
+            )
+            .await;
+        assert!(refused.status.is_client_error(), "{}", refused.text);
+    }
+    assert_eq!(t.panel(&t.owner, &dashboard, "p1", body.clone()).await.cache, "hit");
+
+    // A grant lets the viewer read it: their first run is theirs, not the owner's answer.
+    t.add_row(&file, 3).await;
+    let (viewer_id,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'viewer@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let grant = t
+        .post(
+            "/grants",
+            json!({ "subjectType": "user", "subjectId": viewer_id, "resourceType": "folder",
+                    "resourceId": folder, "level": "view" }),
+        )
+        .await;
+    assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.text);
+    let r = t.panel(&viewer, &dashboard, "p1", body.clone()).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2", "3"]), "miss"), "{}", r.text);
+    // The grant emptied the organization's entries: the owner's next run asks the source.
+    let r = t.panel(&t.owner, &dashboard, "p1", body.clone()).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2", "3"]), "miss"), "{}", r.text);
+    t.finish().await;
+}
+
+/// Changing a data source forgets its answers; a source or the server with the cache off keeps
+/// nothing; an administrator can empty the cache.
+#[tokio::test]
+async fn the_query_cache_follows_settings_and_changes() {
+    let t = T::new().await;
+    let file = t.sqlite_file("zahl.db", "CREATE TABLE zahl (n INTEGER); INSERT INTO zahl VALUES (1);").await;
+    let ds = t.create_sqlite("Zahlen", &file).await;
+    let settings = |extra: Value| {
+        let mut s = json!({ "path": file.to_string_lossy() });
+        if let (Value::Object(a), Value::Object(b)) = (&mut s, extra) {
+            a.extend(b);
+        }
+        s
+    };
+
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "miss");
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "hit");
+    // A change of the source is a new version: its answers are gone.
+    t.add_row(&file, 2).await;
+    let r = t.patch_settings(&ds, settings(json!({ "cacheTtlSecs": 5 }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let r = t.count_query(&t.owner, &ds, json!({})).await;
+    assert_eq!((values_of(&r), r.cache.as_str()), (json!(["1", "2"]), "miss"));
+    assert_eq!(r.body["results"]["A"]["cache"]["ttlMs"], 5_000);
+    let r = t.patch_settings(&ds, settings(json!({ "cacheTtlSecs": 0 }))).await;
+    assert_eq!((r.status, r.body["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("cacheTtlSecs")));
+
+    // Off for the source: nothing is kept or read.
+    let r = t.patch_settings(&ds, settings(json!({ "cacheEnabled": false }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let r = t.count_query(&t.owner, &ds, json!({})).await;
+    assert_eq!(r.cache, "off");
+    assert!(r.body["results"]["A"].get("cache").is_none(), "{}", r.text);
+
+    // Off for the server: the same, and what was kept is let go.
+    t.patch_settings(&ds, settings(json!({}))).await;
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "miss");
+    t.set("datasources.cache_enabled", json!(false));
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "off");
+    assert!(t.state.datasources.query_cache().is_empty());
+    t.set("datasources.cache_enabled", json!(true));
+
+    // Emptied by an administrator (audited); others may not.
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "miss");
+    let editor = t.session_for_role("editor", Some("editor")).await;
+    let r = t.send(Method::DELETE, "/api/admin/query-cache", None, Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = t.send(Method::DELETE, "/api/admin/query-cache", None, Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.text);
+    assert_eq!(t.count_query(&t.owner, &ds, json!({})).await.cache, "miss");
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'query_cache.cleared'")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+
+    // Trashing the source ends its answers (a new generation; they go when next asked for).
+    let before = t.state.datasources.query_cache().stamp(&t.org, &ds);
+    t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&t.owner)).await;
+    assert_ne!(t.state.datasources.query_cache().stamp(&t.org, &ds), before);
+
+    // Kinds say whether they cache by default.
+    let kinds = t.get("/datasource-kinds").await;
+    let default_of = |kind: &str| {
+        let k = kinds.body["items"].as_array().unwrap().iter().find(|k| k["kind"] == kind).unwrap();
+        k["settings"].as_array().unwrap().iter().find(|f| f["name"] == "cacheEnabled").unwrap()["default"].clone()
+    };
+    assert_eq!(default_of("postgres"), true);
+    assert_eq!(default_of("prometheus"), false);
+    assert_eq!(default_of("mongodb"), false);
+    t.finish().await;
+}
+
+/// Hits cost the request what an answer read from the source costs: many references to one kept
+/// answer are charged against the response budget, and those that no longer fit run in the
+/// source (and are cut there) instead of multiplying the copy. Everything is given back after.
+#[tokio::test]
+async fn query_cache_hits_are_charged_to_the_response_budget() {
+    let t = T::new().await;
+    let rows: Vec<String> = (0..200).map(|i| format!("({i}, 'Eine Zeile mit etwas Text, Nummer {i:05}')")).collect();
+    let sql = format!("CREATE TABLE zeilen (n INTEGER, t TEXT); INSERT INTO zeilen VALUES {};", rows.join(", "));
+    let file = t.sqlite_file("zeilen.db", &sql).await;
+    let ds = t.create_sqlite("Zeilen", &file).await;
+    let one =
+        |ref_id: String| json!({ "refId": ref_id, "datasourceId": ds, "query": { "sql": "SELECT n, t FROM zeilen" } });
+    let r = t.query(&t.owner, json!([one("A".into())])).await;
+    assert_eq!(r.body["results"]["A"]["cache"]["status"], "miss", "{}", r.text);
+    let stored = t.state.datasources.query_cache().stats().bytes;
+
+    // Room for about two charged hits (twice the stored size each) in one request.
+    t.set("datasources.max_response_bytes", json!(stored * 5));
+    let many: Vec<Value> = (0..20).map(|i| one(format!("R{i}"))).collect();
+    let r = t.query(&t.owner, Value::Array(many)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let results = r.body["results"].as_object().unwrap();
+    let hits = results.values().filter(|o| o["cache"]["status"] == "hit").count();
+    assert!((1..=3).contains(&hits), "hits within the budget: {hits}");
+    assert!(
+        results
+            .values()
+            .filter(|o| o["cache"]["status"] != "hit")
+            .all(|o| o["error"].is_object() || o["result"]["frame"]["meta"]["rowsTruncated"] == true),
+        "the others ran in the source and were cut there: {}",
+        r.text
+    );
+    assert_eq!(t.state.datasources.inflight_available(), 1_073_741_824);
     t.finish().await;
 }

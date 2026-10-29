@@ -75,6 +75,14 @@ impl DataPolicy {
         Self { readable: access.readable, excluded, max_rows }
     }
 
+    /// The rules as text, for the query cache's key of an AI call (`datasources::cache`): an
+    /// answer kept under one set of rules is never served under another.
+    pub fn fingerprint(&self) -> String {
+        let mut excluded = self.excluded.clone();
+        excluded.sort();
+        serde_json::to_string(&(self.readable, excluded, self.max_rows)).unwrap_or_default()
+    }
+
     /// The rules for a result made from several sources (a panel's steps join or combine their
     /// queries): readable only when every source is, with the excluded fields of all of them and
     /// the smallest row limit.

@@ -32,6 +32,7 @@ pub mod playlists;
 pub mod plugins;
 pub mod preferences;
 pub mod query;
+pub mod query_cache;
 pub mod roles;
 pub mod setup;
 pub mod support;
@@ -64,6 +65,7 @@ pub fn all() -> Vec<table::RouteDef> {
         playlists::routes(),
         datasources::routes(),
         query::routes(),
+        query_cache::routes(),
         explore_history::routes(),
         live::routes(),
         export::routes(),

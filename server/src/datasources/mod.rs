@@ -8,6 +8,7 @@
 #[cfg(test)]
 mod api_tests;
 pub mod bolt;
+pub mod cache;
 pub mod csv;
 pub mod cypher;
 pub mod detail;
@@ -53,7 +54,9 @@ use crate::authz::OrgCtx;
 use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
 use crate::secrets::Keyring;
-use crate::shapes::{ErrorBody, QueryItem, QueryOutcome, QueryResponse, QueryResult, Shape, TimeRange};
+use crate::shapes::{
+    CacheInfo, CacheStatus, ErrorBody, QueryItem, QueryOutcome, QueryResponse, QueryResult, Shape, TimeRange,
+};
 pub use detail::Detail;
 use frame::ResponseBudget;
 use targets::TargetPolicy;
@@ -726,10 +729,14 @@ impl SettingField {
     }
 }
 
-/// Fields every kind has: limits for this source within the server-wide maxima.
+/// Fields every kind has: limits for this source within the server-wide maxima, and the query
+/// cache (`cacheEnabled` defaults per kind, `cache::enabled_by_default`; the kind list shows it).
 pub const COMMON_SETTINGS: &[SettingField] = &[
     SettingField::new("queryTimeoutSecs", "datasources.settings.queryTimeoutSecs", SettingType::Number),
     SettingField::new("maxRows", "datasources.settings.maxRows", SettingType::Number),
+    SettingField::new("cacheEnabled", "datasources.settings.cacheEnabled", SettingType::Bool),
+    SettingField::new("cacheTtlSecs", "datasources.settings.cacheTtlSecs", SettingType::Number)
+        .default(DefaultValue::Number(cache::DEFAULT_TTL_SECS)),
 ];
 
 /// Longest secret accepted (a client key in PEM fits easily).
@@ -845,6 +852,17 @@ impl Kind {
             )
             .with("min", 1)
             .with("max", 3600));
+        }
+        if let Some(t) = clean.get("cacheTtlSecs").and_then(Value::as_u64)
+            && !(1..=cache::MAX_TTL_SECS).contains(&t)
+        {
+            return Err(FieldError::new(
+                "cacheTtlSecs",
+                "settings.out_of_range",
+                format!("cacheTtlSecs must be 1 to {}", cache::MAX_TTL_SECS),
+            )
+            .with("min", 1)
+            .with("max", cache::MAX_TTL_SECS));
         }
         if clean.get("maxRows").and_then(Value::as_u64) == Some(0) {
             return Err(
@@ -1059,6 +1077,8 @@ pub struct DataSources {
     /// Called with a data source's id whenever it changes or goes to the trash (`forget`): the
     /// plugin host revokes what plugins were given for it.
     forget_hooks: std::sync::RwLock<Vec<ForgetHook>>,
+    /// Answers of read-only queries (`cache`).
+    cache: cache::QueryCache,
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
     pub(crate) test_settings: Mutex<BTreeMap<String, Value>>,
@@ -1085,6 +1105,7 @@ impl DataSources {
             closed: std::sync::atomic::AtomicBool::new(false),
             blocked: std::sync::RwLock::default(),
             forget_hooks: std::sync::RwLock::default(),
+            cache: cache::QueryCache::default(),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
@@ -1160,8 +1181,31 @@ impl DataSources {
         self.forget_hooks.write().unwrap_or_else(|e| e.into_inner()).push(hook);
     }
 
-    /// Drops the cached connection after the source changed or went to the trash.
+    /// The query cache.
+    pub fn query_cache(&self) -> &cache::QueryCache {
+        &self.cache
+    }
+
+    /// The server-wide cache settings: `Some(limit in bytes)` while the cache is on. Turned off,
+    /// it lets go of everything it kept.
+    pub async fn cache_limit(&self, state: &AppState) -> ApiResult<Option<usize>> {
+        let on = self.setting(state, "datasources.cache_enabled").await?.as_bool().unwrap_or(false);
+        if !on {
+            if !self.cache.is_empty() {
+                self.cache.clear();
+            }
+            return Ok(None);
+        }
+        let limit =
+            usize::try_from(self.setting_u64(state, "datasources.cache_max_bytes").await?).unwrap_or(usize::MAX);
+        self.cache.limit(limit);
+        Ok(Some(limit))
+    }
+
+    /// Drops the cached connection and the kept answers after the source changed or went to the
+    /// trash.
     pub fn forget(&self, datasource_id: &str) {
+        self.cache.forget_datasource(datasource_id);
         for hook in self.forget_hooks.read().unwrap_or_else(|e| e.into_inner()).iter() {
             hook(datasource_id);
         }
@@ -1215,6 +1259,11 @@ impl DataSources {
                 .with_file_dirs(&file_dirs)
                 .with_protected(&self.protected.0, &self.protected.1),
         );
+        // Changed target rules may block sources that answered before: no kept answer may be
+        // served under other rules than it was read under (a new generation, `cache::Stamp`).
+        if cache.as_ref().is_some_and(|c| *c.policy != *policy) {
+            self.cache.policy_changed();
+        }
         *cache = Some(CachedPolicy { dirs, allowed, file_dirs, built: Instant::now(), policy: policy.clone() });
         Ok(policy)
     }
@@ -1631,6 +1680,25 @@ pub async fn run_queries_with(
     variables: &BTreeMap<String, Value>,
     identifier_variables: Option<&std::collections::BTreeSet<String>>,
 ) -> QueryResponse {
+    let off = cache::CacheUse::off();
+    run_queries_cached(state, ctx, items, range, interval_ms, max_data_points, variables, identifier_variables, &off)
+        .await
+}
+
+/// `run_queries_with`, reading and keeping answers in the query cache as `cache` says (`cache`
+/// module; the server setting and each source's own decide whether it applies at all).
+#[expect(clippy::too_many_arguments, reason = "the parts of one query request, passed through")]
+pub async fn run_queries_cached(
+    state: &AppState,
+    ctx: &OrgCtx,
+    items: Vec<QueryItem>,
+    range: TimeRange,
+    interval_ms: Option<u64>,
+    max_data_points: Option<u32>,
+    variables: &BTreeMap<String, Value>,
+    identifier_variables: Option<&std::collections::BTreeSet<String>>,
+    cache: &cache::CacheUse,
+) -> QueryResponse {
     let interval = sql::interval_ms(range, interval_ms, max_data_points);
     let budget = match state.datasources.response_budget(state).await {
         Ok(b) => b,
@@ -1640,30 +1708,45 @@ pub async fn run_queries_with(
             return QueryResponse { results };
         }
     };
+    // The server-wide switch and limit, read once per request; when they cannot be read, the
+    // queries run without the cache.
+    let cache_limit = match cache.mode {
+        cache::CacheMode::Off => None,
+        _ => state.datasources.cache_limit(state).await.unwrap_or_else(|e| {
+            tracing::warn!("query cache settings: {}", e.message);
+            None
+        }),
+    };
+    let cache = cache_limit.map(|limit| (cache, limit));
+    let run = Run { range, interval_ms: interval, max_data_points, variables, identifier_variables };
     let runs = items.into_iter().map(|item| {
         let budget = budget.clone();
         async move {
             let ref_id = item.ref_id.clone();
-            let outcome =
-                run_one(state, ctx, item, range, interval, max_data_points, variables, identifier_variables, budget)
-                    .await;
+            let outcome = run_one(state, ctx, item, run, budget, cache).await;
             (ref_id, outcome)
         }
     });
     QueryResponse { results: futures_util::future::join_all(runs).await.into_iter().collect() }
 }
 
-#[expect(clippy::too_many_arguments, reason = "the parts of one query request, passed through")]
+/// The parts of a request every one of its queries runs with.
+#[derive(Clone, Copy)]
+struct Run<'a> {
+    range: TimeRange,
+    interval_ms: u64,
+    max_data_points: Option<u32>,
+    variables: &'a BTreeMap<String, Value>,
+    identifier_variables: Option<&'a std::collections::BTreeSet<String>>,
+}
+
 async fn run_one(
     state: &AppState,
     ctx: &OrgCtx,
     item: QueryItem,
-    range: TimeRange,
-    interval_ms: u64,
-    max_data_points: Option<u32>,
-    variables: &BTreeMap<String, Value>,
-    identifier_variables: Option<&std::collections::BTreeSet<String>>,
+    run: Run<'_>,
     budget: ResponseBudget,
+    cache: Option<(&cache::CacheUse, usize)>,
 ) -> QueryOutcome {
     let registry = &state.datasources;
     let ds = match resolve_in_org(&state.db, &ctx.org_id, &item.datasource_id).await {
@@ -1680,6 +1763,110 @@ async fn run_one(
     if let Some(limit) = item.limit {
         limits.max_rows = limits.max_rows.min(limit.max(1) as usize);
     }
+    // The cache, when the request, the server and the source all use it: the answer kept for
+    // this caller, or the key to keep the new one under, with the range it runs with.
+    let ttl_ms = cache.and_then(|_| cache::source_ttl_ms(&ds.kind, &ds.settings));
+    let (Some((use_, limit)), Some(ttl_ms)) = (cache, ttl_ms) else {
+        return execute(state, ctx, &ds, &kind, item, run, limits).await;
+    };
+    // The current target rules first: a change of them starts a new generation
+    // (`DataSources::policy`), so an answer read under the old ones is neither served nor kept.
+    if let Err(e) = registry.policy(state).await {
+        return QueryOutcome::Err { error: api_error_body(e) };
+    }
+    let stamp = registry.cache.stamp(&ctx.org_id, &ds.id);
+    let now = state.clock.now_ms();
+    let range = cache::round_range(run.range, run.interval_ms, ttl_ms, now);
+    let caller = cache::Caller {
+        org_id: &ctx.org_id,
+        user_id: &ctx.user.id,
+        role: &ctx.role,
+        permissions: ctx.permissions.iter().map(|p| p.as_str()).collect(),
+        scope: &use_.scope,
+    };
+    let key = cache::key(
+        &caller,
+        &cache::Query {
+            datasource_id: &ds.id,
+            version: ds.updated_at,
+            kind: &ds.kind,
+            shapes: kind.plugin.shapes(),
+            query: cache::canonical(&item.query),
+            steps: item.steps.iter().map(cache::canonical).collect(),
+            cursor: item.cursor.as_deref(),
+            range,
+            interval_ms: run.interval_ms,
+            max_data_points: run.max_data_points,
+            variables: run.variables,
+            identifiers: run.identifier_variables,
+            max_rows: limits.max_rows,
+        },
+    );
+    if use_.mode == cache::CacheMode::Use {
+        let found = registry.cache.get(&key, stamp, now);
+        let served = match found {
+            Some(found) => serve_hit(state, ctx, &key, found, &limits).await,
+            None => None,
+        };
+        registry.cache.count(served.is_some());
+        if let Some(outcome) = served {
+            return outcome;
+        }
+    }
+    let budget = limits.budget.clone();
+    let mut outcome = execute(state, ctx, &ds, &kind, item, Run { range, ..run }, limits).await;
+    if let QueryOutcome::Ok { result, steps, cache: info } = &mut outcome {
+        // A graph step that failed may have run out of time: such an answer is not kept.
+        let complete = steps.as_ref().is_none_or(|places| places.iter().all(|p| p.error.is_none()));
+        let stored = (&*result, steps.as_ref());
+        let kept = complete
+            && registry.cache.put(key, (&ctx.org_id, &ctx.user.id), &ds.id, stored, stamp, now, ttl_ms, limit, &budget);
+        let status = if use_.mode == cache::CacheMode::Refresh { CacheStatus::Refresh } else { CacheStatus::Miss };
+        *info = Some(CacheInfo { status, age_ms: 0, ttl_ms: if kept { ttl_ms as u64 } else { 0 } });
+    }
+    outcome
+}
+
+/// What a hit costs the request: the answer is read only after it got a query slot (hits wait
+/// with the other queries of the user and the server) and its bytes were charged against the
+/// request's response budget and the server's in-flight pool (`Found::charge`: what it held
+/// when it was read, at least twice its stored size). `None` when it does not fit in the
+/// query's time or the budget, or no longer reads: then the query runs in its source as a
+/// miss, and is cut there as any answer is.
+async fn serve_hit(
+    state: &AppState,
+    ctx: &OrgCtx,
+    key: &cache::Key,
+    found: cache::Found,
+    limits: &Limits,
+) -> Option<QueryOutcome> {
+    let read = async {
+        let _slots = state.datasources.slots(state, &ctx.user.id).await.ok()?;
+        if !limits.budget.take(found.charge()) {
+            return None;
+        }
+        let stored = found.parse();
+        if stored.is_none() {
+            state.datasources.cache.remove(key);
+        }
+        stored
+    };
+    let cache::Stored { result, steps } = tokio::time::timeout(limits.timeout, read).await.ok()??;
+    Some(QueryOutcome::Ok { result, steps, cache: Some(found.info) })
+}
+
+/// Runs one query in its source (and its graph steps), without the cache.
+async fn execute(
+    state: &AppState,
+    ctx: &OrgCtx,
+    ds: &Datasource,
+    kind: &Kind,
+    item: QueryItem,
+    run: Run<'_>,
+    limits: Limits,
+) -> QueryOutcome {
+    let registry = &state.datasources;
+    let Run { range, interval_ms, max_data_points, variables, identifier_variables } = run;
     let timeout = limits.timeout;
     let started = Instant::now();
     // The valid graph steps; the first may run in the source.
@@ -1690,7 +1877,7 @@ async fn run_one(
     let run = async {
         // Waiting for a free slot counts against the query's own timeout.
         let _slots = registry.slots(state, &ctx.user.id).await?;
-        let conn = registry.connection(state, &ds).await?;
+        let conn = registry.connection(state, ds).await?;
         let request = |query: Value, time: Option<Duration>| SourceQuery {
             ref_id: item.ref_id.clone(),
             query,
@@ -1724,7 +1911,7 @@ async fn run_one(
         Ok(Ok((_, Ok((result, in_source))))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
             if steps.is_empty() && invalid.is_none() {
-                return QueryOutcome::Ok { result, steps: None };
+                return QueryOutcome::Ok { result, steps: None, cache: None };
             }
             let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
             let name = item.ref_id.clone();
@@ -1739,7 +1926,7 @@ async fn run_one(
                     {
                         places.push(place);
                     }
-                    QueryOutcome::Ok { result, steps: Some(places) }
+                    QueryOutcome::Ok { result, steps: Some(places), cache: None }
                 }
                 Err(e) => outcome_error("internal", Detail::new("steps.failed", e.to_string())),
             }

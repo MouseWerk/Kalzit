@@ -38,8 +38,10 @@ pub fn routes() -> Vec<RouteDef> {
             Access::Org(Permission::SettingsWrite),
             preview_org,
         ),
-        route(Method::POST, "/orgs/{orgId}/settings/batch", Access::Org(Permission::SettingsWrite), batch_org),
-        route(Method::PATCH, "/orgs/{orgId}/settings/{key}", Access::Org(Permission::SettingsWrite), patch_org),
+        route(Method::POST, "/orgs/{orgId}/settings/batch", Access::Org(Permission::SettingsWrite), batch_org)
+            .changes_rights(),
+        route(Method::PATCH, "/orgs/{orgId}/settings/{key}", Access::Org(Permission::SettingsWrite), patch_org)
+            .changes_rights(),
     ]
 }
 

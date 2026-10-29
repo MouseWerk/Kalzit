@@ -39,10 +39,10 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/folders", Access::Org(FoldersRead), list),
         route(Method::POST, "/orgs/{orgId}/folders", Access::OrgMember, create),
         route(Method::PATCH, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, update),
-        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, trash),
-        route(Method::POST, "/orgs/{orgId}/folders/{folderId}/restore", Access::OrgMember, restore),
-        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}/purge", Access::OrgMember, purge),
-        route(Method::PUT, "/orgs/{orgId}/folders/{folderId}/owner", Access::OrgMember, set_owner),
+        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, trash).changes_rights(),
+        route(Method::POST, "/orgs/{orgId}/folders/{folderId}/restore", Access::OrgMember, restore).changes_rights(),
+        route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}/purge", Access::OrgMember, purge).changes_rights(),
+        route(Method::PUT, "/orgs/{orgId}/folders/{folderId}/owner", Access::OrgMember, set_owner).changes_rights(),
     ]
 }
 
@@ -924,6 +924,12 @@ async fn update(
         }
     }
     let updated = answer(&mut tx, &ctx, &folder_id).await?;
+    // Restricting or moving changes who sees what is inside; a new name does not. Taken before
+    // the commit, so a client that goes away cannot skip it.
+    let _bump = changed
+        .iter()
+        .any(|c| *c == "parentId" || *c == "restricted")
+        .then(|| state.datasources.query_cache().bump_on_drop(Some(ctx.org_id.clone())));
     crate::db::commit(tx).await?;
     Ok(updated)
 }

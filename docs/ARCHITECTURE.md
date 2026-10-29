@@ -316,12 +316,57 @@ type QueryResult =
 - **Live updates** (docs/api/live.md): a WebSocket per browser tab (`routes::live`) carries
   subscriptions to a panel's stored queries or to free queries, authorized like their REST routes
   on subscribe and again every 30 seconds. Equal subscriptions share one feed (`live`), a task
-  that runs the queries through `run_queries_with` (all query limits apply, with the
-  organization's live slot pool `live:{orgId}`) and makes the result message once for every
+  that runs the queries through `run_queries_with` (all query limits apply, never the query
+  cache, with the organization's live slot pool `live:{orgId}`) and makes the result message once for every
   connection; held results count against a live memory budget. A kind reports changes through
   the optional `DataSourcePlugin::watch` (MongoDB: change streams with resume tokens, on their own
   client and pool, at most 8 per source); without one, or for a moving range, the feed polls. Slow clients are dropped instead of buffered; a stopping server
   closes every connection with a reason.
+
+### Query cache (`datasources/cache.rs`, M5)
+
+Answers of read-only queries are kept in memory (docs/api/datasources.md, "Query cache"). The
+contract:
+
+- **Where.** `run_one` asks the cache after the item is resolved in the caller's organization, the
+  kind is available to it, the target rules are current and the limits are known, and before a
+  query slot or connection is taken. Callers choose with `CacheUse` through `run_queries_cached`:
+  free queries, panels, saved analyses and variable options use it (`refresh` bypasses the read and
+  replaces the entry), AI tools use it scoped by the AI data rules, everything else
+  (`run_queries`, `run_queries_with`: live feeds, exports, annotations) never does. The server
+  setting `datasources.cache_enabled` and the source's `cacheEnabled` (default per kind,
+  `cache::enabled_by_default`) must both be on.
+- **Rights in the key.** The key is a SHA-256 over the caller (organization, user, role, sorted
+  permissions, scope) and the query (source id and `updated_at`, kind and shapes, canonical query
+  and steps, cursor, rounded range, interval, data points, variables and identifier variables, row
+  limit). Authorization always runs before the cache, in the routes, so the cache never decides
+  access; being per user, an entry cannot reach anyone else even where rules would allow it.
+- **Invalidation by generations.** Each entry carries a `Stamp`: the generations of rights
+  server-wide and of its organization, of the target rules and of its data source, taken before
+  the query ran. `DataSources::forget` (source changed, trashed, purged), a change of the target
+  rules (`DataSources::policy`), routes marked `RouteDef::changes_rights` (grants, roles, members,
+  teams, folder trash, restore, purge and owner, dashboard and analysis trash, restore, purge and
+  owner, plugin block, disable and removal, organization settings, AI access; server routes for
+  all organizations) and handlers that move a folder, restrict it or move a dashboard or analysis
+  to another folder bump one. Routes and handlers hold a drop guard
+  (`QueryCache::bump_on_drop`, taken before the commit), so a client that goes away mid-change
+  cannot skip the bump; a route answering with an error disarms it, so refused changes keep the
+  answers. An entry under an older stamp is never served and goes when asked for; an answer read under an older stamp is not
+  kept. No scan under the lock. A folder's new name changes nothing. Turning the cache off or
+  emptying it drops everything.
+- **Hits cost like answers.** A hit takes a query slot of the user and the server and is charged
+  against the request's `ResponseBudget` (and with it the server's in-flight pool) before it is
+  parsed: what the answer held when it was read from its source (`cache::held_size`, counted as
+  the budget counts it, 32 bytes per value), at least twice its stored size. One that does not
+  fit runs in its source as a miss and is cut there. Keeping an answer serializes it through a writer that stops at the entry cap and draws
+  the copy from the same budget, given back once the copy belongs to the cache.
+- **Memory.** Entries are kept serialized and counted by their buffer plus 512 bytes, within
+  `datasources.cache_max_bytes`; least recently used first, one organization at most half, one
+  person at most a quarter of their organization's half and one entry at most a quarter of the
+  limit; a lowered limit applies all of them at once. Expired entries go when they are next asked for or pushed
+  out.
+- **Never kept:** errors, timeouts and answers with a failed graph step. Hits are counted
+  (`GET /admin/query-cache`), not audited.
 
 ## Plugins
 
@@ -359,7 +404,9 @@ process, a network target or the gRPC protocol.
 - A data source plugin is a process of its own next to the server, one per installed plugin,
   serving all data sources of its kind. Kalzit starts it with a time limit for the handshake,
   watches it and restarts it with backoff; a crashed or hanging plugin fails only the queries
-  of its kind, never the server.
+  of its kind, never the server. Before every start the program file is hashed again (opened as
+  a regular file, no link) and compared with the SHA-256 its signed manifest lists
+  (`package::verify_binary`); a changed file does not start (`plugin.binary_changed`).
 - Kalzit is the gRPC client (tonic, HTTP/2), the plugin the server. The connection is local:
   - Windows: a named pipe with a random name (`\\.\pipe\kalzit-plugin-<random>`). Kalzit creates
     it (its first instance before the plugin starts, for Kalzit's account, the start's SID and
@@ -1248,13 +1295,105 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
   `StateDirectory=kalzit` creates `/var/lib/kalzit` owned by `User`. Without systemd, create it
   with `sudo install -d -o kalzit -m 0700 /var/lib/kalzit`. `/etc/kalzit/kalzit.toml` should be
   owned by root and not writable by the service user.
-- Windows: run the service as a virtual account (`NT SERVICE\Kalzit`) or as LocalSystem. Kalzit
-  creates `%ProgramData%\Kalzit\data` on the first start with access for SYSTEM, Administrators
-  and the service account only. If an installer or an admin creates the folder beforehand, it
-  must have the same rights (owner SYSTEM, Administrators or the service account, no access for
-  others), or the start is refused. Changing the service account later means granting the new
-  account access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`) and
-  making it or Administrators the owner.
+- Windows: Kalzit is its own Windows service (`server/src/service.rs`), set up by the MSI package
+  (`packaging/windows`, WiX v5) or by `kalzit service install`; installation guide in
+  docs/guide/installation.md, "Windows".
+  - The service `Kalzit` runs `kalzit.exe service run --config
+    %ProgramData%\Kalzit\kalzit.toml` as the virtual account `NT SERVICE\Kalzit` and starts
+    automatically. `service run` hands the main thread to the service control dispatcher; the
+    server runs as `kalzit serve` would, reports `START_PENDING` with progress until its listeners
+    are bound (`server::on_started`), then `RUNNING`. Stop ends it through `server::request_stop`
+    with the normal grace (10 s, then the database closes); a system shutdown gets the short
+    grace (3 s) of a console close. It ends with exit code 0, `RESTART_EXIT` (3, service-specific)
+    when an update or a return asked for a restart, and 1 on a failure.
+  - The log goes to `<data dir>\logs\kalzit.log` (rotated at 10 MiB, three older files kept, no
+    terminal colors), after the data directory was prepared and checked, so the folder is private
+    before anything is written into it. What fails before that file is open (the configuration,
+    the data directory) goes to the Windows event log, Application, source `Kalzit`; the MSI
+    registers the source with the general message file of .NET Framework so the text shows as
+    written. `kalzit service configure` and `cleanup` report their errors there as well, since
+    the installer runs them without a console.
+  - `kalzit service configure` (run by the MSI after `InstallServices` and before
+    `StartServices`, as LocalSystem, only at the first installation and at upgrades, never at a
+    repair; and by `kalzit service install`) runs as SYSTEM over folders a user may have prepared
+    beforehand, so it takes over nothing it did not make or Kalzit made, and refuses instead,
+    with the reason in the event log. The MSI runs both of its steps (configure, cleanup) from
+    its own copy of `kalzit.exe` in the Binary table, which msiexec unpacks into its protected
+    folder (`--program` names the installed file), never from the installed program, which the
+    service account may change with self-update. `icacls`, `sc` and `netsh` are called by their
+    full path in System32 (`GetSystemDirectoryW`), never by a bare name the program folder could
+    answer. `kalzit.exe` is linked with `/DEPENDENTLOADFLAG:0x800` and calls
+    `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` first thing, so neither its imports
+    nor DLLs loaded later come from the program folder. Paths are normalized before any
+    comparison with system folders (`\\?\`, device and network paths and `.`/`..` refused, the
+    deepest existing folder resolved with `GetFinalPathNameByHandleW`). A quote in any MSI
+    setting stops the installation through a launch condition:
+    - The program folder first, before anything else is touched: not a drive root, Program
+      Files or the Windows folder itself, nothing in it but Kalzit's files (`kalzit.exe`,
+      `LICENSE.txt` and what the updater leaves), nobody else may change it (installer service
+      entries aside), no link or junction on its path, and no folder above it lets others
+      rename or remove what is inside (`TAKEOVER_MASK`: delete, delete child, write DAC or
+      owner, full control; inherit-only entries do not count). Then it gets a protected list:
+      SYSTEM and Administrators full, Users read and execute, the service account modify with
+      self-update; owner Administrators; and its content is checked again. It is not added to
+      `PATH`.
+    - `%ProgramData%\Kalzit`: created for Administrators to write and everyone to read; an
+      existing one is accepted only as Kalzit makes it (owner SYSTEM, Administrators, or the
+      service account with a limited owner entry; nobody else may write). An existing
+      `kalzit.toml` is kept (an upgrade, with its ports and data directory) only when it is a
+      regular file only Administrators may change; else the installation stops.
+    - The data directory may not be a drive root, a system folder (`%ProgramData%`, `C:\Users`,
+      profiles) or lie in Windows, Program Files or the program folder; the folders above it must
+      pass the same check as the program folder's. A new one is created with its protected list
+      (Administrators and the service account, owner Administrators) from its first moment. An
+      existing one is walked first: any link or junction in it, any object owned by someone else
+      or open to anyone else (below `plugins`, the sandbox's plugin and start SIDs and
+      AppContainers aside) stops the installation. Then every object gets the protected list and
+      Administrators as owner, except below `plugins`, whose grants the sandbox needs.
+    - The service account's SID is `S-1-5-80-` plus the SHA-1 of the upper-case service name
+      (`service::service_sid`), so it is known before the MSI creates the service and stays the
+      same when the service is created again.
+    - With HTTPS `self-signed` it makes a certificate (rcgen) for the computer name, `localhost`,
+      `127.0.0.1` and `::1` in `<data dir>\tls` (reused only after the data directory passed the
+      walk above). With `certificate` the files must be regular files only Administrators may
+      change, the key also one only they may read, below folders nobody else may rename; then
+      the service account gets read access where they are, so a renewal needs no reinstallation.
+    - It limits the service to `SeChangeNotifyPrivilege` (`sc privs`): no `SeImpersonate` or
+      `SeAssignPrimaryToken`, through which a compromised service could become SYSTEM. The plugin
+      sandbox needs none of them (a restricted copy of the own token needs no privilege). It sets
+      the recovery actions (restart after 2 s, 5 s, then every 30 s; the count resets after a day)
+      and turns them on for stops with an error code, too, and opens the firewall when asked
+      (inbound rule `Kalzit`, TCP, the configuration's ports).
+    - Values come in with a space before the closing quote (`"[DATADIR] "`), so a folder ending
+      in a backslash does not escape the quote; a value with a quote is refused.
+  - Self-update is off by default (`SELFUPDATE=0`, `--self-update 0`): only SYSTEM and
+    Administrators may change the program folder, and updates come with a new MSI (or
+    `kalzit update apply`). With 1 the service account may modify it, so the updater can swap the
+    binary, as on Linux with a binary owned by the service account; then the service account can
+    change code an administrator might run elevated, which the installation guide warns about.
+  - `kalzit service cleanup` (before the MSI removes the program, not during an upgrade, and in
+    `kalzit service uninstall`) removes the firewall rule and, with `REMOVEDATA=1` /
+    `--remove-data`, the data directory and `kalzit.toml`. A data directory is removed only when
+    no link or junction lies on its path, the folders above it are safe, the folder opened
+    without following links is the one the path names (`GetFinalPathNameByHandleW`), it is not a
+    drive root and it is empty or holds Kalzit's files (`kalzit.db`, `updates`,
+    `secrets.key.dpapi`, ...); anything else is left with a note. `remove_dir_all` removes links
+    inside as links.
+  - At every start, `data_dir::prepare` also checks `updates`, `plugins`, `tls` and `logs` in the
+    data directory: real folders (no link or junction), as private as the data directory.
+  - The MSI package: per machine, x64, program folder `C:\Program Files\Kalzit` (remembered in
+    `HKLM\Software\MouseWerk\Kalzit`). A major upgrade removes the previous version completely
+    first (`afterInstallValidate`), so a `kalzit.exe` the updater replaced in the meantime does not
+    confuse file versioning; the configuration and data are not part of the package and stay. The
+    wizard (WixUI dialogs plus a settings page) asks for the program folder, port, data folder,
+    HTTPS mode, HTTPS port, certificate and key, and the firewall, and skips the settings when
+    `kalzit.toml` exists; removing asks whether the data goes too. Every setting is also an MSI
+    property for silent installations.
+  - Running Kalzit as LocalSystem or another account works as before: the data directory must
+    then belong to that account or Administrators, without access for others (Kalzit creates
+    `%ProgramData%\Kalzit\data` that way on its first start). Changing the account later means
+    granting the new one access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`)
+    and making it or Administrators the owner.
 
 ## HTTPS certificates
 
@@ -1390,7 +1529,16 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   `KALZIT_RELEASE_SIGNING_KEY` of the GitHub environment `release` (required reviewers). The
   release workflow (`.github/workflows/release.yml`, actions pinned to commits, checkouts without
   credentials) releases only tags on `main`, builds the binaries, and builds only `kalzit-release`
-  in the job that holds the key.
+  in the job that holds the key. Windows files are signed with Authenticode in two small jobs
+  (`windows-sign-exe`, `windows-sign-msi`) that alone use the environment `windows-signing`,
+  which holds only the code-signing secrets; the MSI is built from the signed program in between,
+  in a job without any secret (`windows-msi`), which also runs the signed program once and checks that the package carries exactly it, as installed file and as setup copy (`packaging/windows/check-msi.ps1`). Signing uses Microsoft Artifact Signing (the key
+  stays in Microsoft's HSM; recommended) or a PFX imported into the runner's user store for the
+  signing only; nothing but signtool runs while key material is present
+  (`packaging/windows/sign.ps1`, docs/operations/updates.md). Without either both stay unsigned
+  and the release notes say so. The MSI
+  is listed in the manifest under `installers` (signed like a package, with no offline package):
+  the updater never installs it, and older servers ignore the field.
 - **Source.** Checks list the releases of the channel (stable: not pre-release and no pre-release
   version; preview: all) through the one HTTP client factory, with a target policy that allows only
   `api.github.com`, `github.com`, `objects.githubusercontent.com` and
@@ -1423,15 +1571,18 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   manifest, writes `updates/plan.json` (format 2) and then renames the checked copy into place (on
   Windows the running binary moves aside first). The server stops gracefully, closes the database,
   drops its runtime and hands over: on Unix it replaces its process image with the new binary
-  (`exec`), so systemd keeps the same main process and no privilege is needed; on Windows it
-  starts the binary as a child.
+  (`exec`), so systemd keeps the same main process and no privilege is needed. The Windows
+  service reports `STOPPED` with `RESTART_EXIT`, and its recovery actions (on for stops with an
+  error code) make the service manager start the service again two seconds later, which runs the
+  binary now at the service's path; a console server on Windows starts the binary as a child.
 - **Trial and return.** `updates::boot::guard` runs first at `kalzit serve`, before the database
   opens. The new version's first start marks the plan `trial` and starts a watchdog thread; once
   `/readyz` answers through the router and every listener accepts a connection, the plan is
   removed and the installation recorded. A failed start (migrations), a failed health check or
   the deadline (`updates.health_timeout_secs`, clamped to 15 to 1800 s) mark the plan
   `rollbackRequested` and start the binary again (on Windows a hang only ends the process; the
-  return happens at the next start). That start, or any start that finds a `trial` plan (a
+  return happens at the next start, which for the service the recovery actions make seconds
+  later). That start, or any start that finds a `trial` plan (a
   crash), restores the backup (WAL and shared memory files first, so the newer WAL is never
   replayed) and the previous binary after its copy matched the recorded hash, marks the plan
   `rolledBack` and starts the previous version, which records the return once (the plan's
@@ -1448,8 +1599,9 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   format too (`plan-<time>.unreadable.json`), loudly.
 - **Where it installs on its own** (`platform::detect_mode`): Linux under systemd
   (`INVOCATION_ID`), outside containers, with the binary's folder writable by the service account.
-  Windows has no service integration yet (planned with the installer, M5), so there and
-  everywhere else the server downloads and verifies, and `kalzit update apply` / `kalzit update
+  Windows when Kalzit runs as its Windows service (`platform::mark_windows_service`) and the
+  service account may write the program folder. Everywhere else (a console on Windows, a
+  container, a binary owned by root) the server downloads and verifies, and `kalzit update apply` / `kalzit update
   rollback <version>` install with the server stopped (they hold the data directory lock
   exclusively); the next start runs the same trial. These commands usually run as root or an
   Administrator: on Unix, as root on a data directory another account owns, they touch the data
@@ -1459,7 +1611,9 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   than the data directory is refused); files from the data directory are opened as regular files
   only (`O_NOFOLLOW`, `O_NONBLOCK`, checked with `fstat`). On Windows they refuse links and
   junctions below `updates/`; the service account could still swap such a folder between that
-  check and its use, which Kalzit's own Windows service integration (M5) is meant to close. The
+  check and its use. A Windows service with self-update on installs as the service account
+  itself, so nothing runs with more rights there; for the command line, keep the service account
+  a virtual account that nothing else uses. The
   command line returns only to versions installed through an update (in the history) whose
   signed manifest was kept. The CI job `update-rights` runs the switch as root against a real
   service account.
@@ -1627,6 +1781,7 @@ through `settings::get`; new registry entries are requested from the orchestrato
   | `audit` | `server`, `ui/package.json`, `ui/package-lock.json` |
   | `workflows` | `.github/`; turns every flag on (shown in the log only) |
   | `docs_only` | only `docs/`, Markdown files and `LICENSE` changed (shown in the log only) |
+  | `installer` | `server` or `packaging/` |
 
   `docs/api/` and `docs/glossary.md` count as code because server and UI tests read them;
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
@@ -1637,7 +1792,8 @@ through `settings::get`; new registry entries are requested from the orchestrato
 
   `server`, `postgres`, `datasources` and `update-rights` (the privilege switch of the update command
   line, run with sudo against a `kalzit` account) need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
-  `audit` needs `audit`. The required checks keep reporting when their area did not change:
+  `audit` needs `audit`, and `msi` (the Windows installer built and installed on the runner,
+  `.github/scripts/msi-test.ps1`) needs `installer`. The required checks keep reporting when their area did not change:
   `postgres`, `datasources`, `update-rights` and `audit` are skipped as a whole (GitHub counts a skipped job as
   passed), while the matrix jobs `server (<os>)`, `ui (<os>)` and `e2e (<os>)` start and skip
   every step, because a matrix job skipped as a whole reports one check without the matrix

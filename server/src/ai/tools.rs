@@ -34,8 +34,9 @@ use super::redact;
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{AccessIndex, OrgCtx, Permission, Resource, check_resource};
+use crate::datasources::cache::CacheUse;
 use crate::datasources::registry::Origin;
-use crate::datasources::{Datasource, find_in_org, run_queries, run_queries_with};
+use crate::datasources::{Datasource, find_in_org, run_queries_cached};
 use crate::error::{ApiError, ApiResult};
 use crate::shapes::{ErrorBody, QueryItem, QueryOutcome, QueryResponse, TimeRange};
 
@@ -675,6 +676,13 @@ fn outward_kind(origin: Option<Origin>, kind: &str) -> bool {
 /// The excluded field a query names, read both as written and without its literals and comments:
 /// stripping cannot always tell a literal or a comment apart (`'a\''`, MySQL's `0--email`), so
 /// either one naming the field refuses the query, a literal naming it included.
+/// The query cache for an AI call: the AI data rules of its sources are part of the key, so an
+/// answer is never served under other rules (`datasources::cache`).
+fn ai_cache(policies: &[&redact::DataPolicy]) -> CacheUse {
+    let prints: Vec<String> = policies.iter().map(|p| p.fingerprint()).collect();
+    CacheUse::read(false).scoped(format!("ai:{}", prints.join(";")))
+}
+
 fn names_excluded(policy: &redact::DataPolicy, query: &Value) -> Option<String> {
     policy.excluded_named_in(&prompts::query_text(query)).or_else(|| policy.excluded_named_in(&searchable_text(query)))
 }
@@ -716,8 +724,18 @@ async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     };
     let items = vec![item];
     crate::datasources::check_items(&items)?;
-    let QueryResponse { mut results } =
-        run_queries(scope.state, scope.ctx, items, range, None, None, &BTreeMap::new()).await;
+    let QueryResponse { mut results } = run_queries_cached(
+        scope.state,
+        scope.ctx,
+        items,
+        range,
+        None,
+        None,
+        &BTreeMap::new(),
+        None,
+        &ai_cache(&[&policy]),
+    )
+    .await;
     let result = result_record("A", Some(&ds.id), Some(&query), results.remove("A"), &policy);
     let status = if result.error.is_some() { "error" } else { "ok" };
     Ok(ToolRecord {
@@ -885,9 +903,18 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let queries: BTreeMap<String, (String, Value)> =
         items.iter().map(|i| (i.ref_id.clone(), (i.datasource_id.clone(), i.query.clone()))).collect();
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
-    let QueryResponse { mut results } =
-        run_queries_with(scope.state, scope.ctx, items, range, None, None, &run.variables, Some(&run.identifiers))
-            .await;
+    let QueryResponse { mut results } = run_queries_cached(
+        scope.state,
+        scope.ctx,
+        items,
+        range,
+        None,
+        None,
+        &run.variables,
+        Some(&run.identifiers),
+        &ai_cache(&policies.values().collect::<Vec<_>>()),
+    )
+    .await;
     let records: Vec<ResultRecord> = if steps.is_empty() {
         order
             .iter()
@@ -1008,7 +1035,7 @@ async fn stepped_records(
     let mut done = BTreeSet::new();
     for ref_id in order {
         match results.remove(ref_id) {
-            Some(QueryOutcome::Ok { result, steps: ran }) => {
+            Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                 done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
                 inputs.push((
                     ref_id.clone(),
@@ -1066,7 +1093,7 @@ async fn stepped_records(
                 &name,
                 source.map(|(ds, _)| ds.as_str()),
                 source.map(|(_, q)| q),
-                Some(QueryOutcome::Ok { result, steps: None }),
+                Some(QueryOutcome::Ok { result, steps: None, cache: None }),
                 all,
             )
         })

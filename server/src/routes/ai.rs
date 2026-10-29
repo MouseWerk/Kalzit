@@ -60,7 +60,8 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/ai/usage", Access::Org(Permission::SettingsRead), usage_org),
         route(Method::GET, "/orgs/{orgId}/ai/datasources", Access::OrgMember, readable_datasources),
         // Rights on one data source may come from a grant, so the handler checks the source.
-        route(Method::PUT, "/orgs/{orgId}/datasources/{datasourceId}/ai-access", Access::OrgMember, set_datasource),
+        route(Method::PUT, "/orgs/{orgId}/datasources/{datasourceId}/ai-access", Access::OrgMember, set_datasource)
+            .changes_rights(),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/ai-access", Access::OrgMember, get_datasource),
         route(Method::POST, "/orgs/{orgId}/ai/notice", Access::OrgMember, acknowledge_notice),
     ]

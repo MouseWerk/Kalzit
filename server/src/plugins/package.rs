@@ -455,6 +455,40 @@ pub fn binary(manifest: &Manifest, package_dir: &Path) -> Result<PathBuf, HostEr
     Ok(path.split('/').fold(package_dir.to_path_buf(), |p, part| p.join(part)))
 }
 
+/// Checks the platform's binary against the SHA-256 the signed manifest lists, before every
+/// start: a file changed after the installation never runs. The binary is opened as a regular
+/// file only (a link in its place is refused).
+pub fn verify_binary(manifest: &Manifest, package_dir: &Path) -> Result<(), HostError> {
+    let platform = super::platform()
+        .ok_or_else(|| HostError::new("plugin.platform_unsupported", "plugins cannot run on this platform"))?;
+    let changed = |detail: String| {
+        HostError::new(
+            "plugin.binary_changed",
+            format!("the plugin's program no longer matches its signed package ({detail}); install the plugin again"),
+        )
+    };
+    let rel = manifest.binaries.get(platform).ok_or_else(|| {
+        HostError::new("plugin.platform_missing", format!("the plugin has no binary for {platform}"))
+            .with("platform", platform)
+    })?;
+    let expected = manifest.files.get(rel).ok_or_else(|| changed(format!("{rel} is not listed")))?;
+    let path = rel.split('/').fold(package_dir.to_path_buf(), |p, part| p.join(part));
+    let mut file = crate::updates::install::open_regular(&path).map_err(|e| changed(format!("{rel}: {e}")))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buffer).map_err(|e| changed(format!("{rel}: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    if hex::encode(hasher.finalize()) != expected.to_ascii_lowercase() {
+        return Err(changed(format!("{rel} has another SHA-256")).with("path", rel.as_str()));
+    }
+    Ok(())
+}
+
 /// A public key as an administrator pastes it: 32 bytes in base64 (as `kalzit-sign` prints keys)
 /// or in hex. Weak keys are refused.
 pub fn parse_public_key(text: &str) -> Option<VerifyingKey> {
@@ -562,6 +596,20 @@ mod tests {
         } else {
             "bin/plugin"
         }
+    }
+
+    #[test]
+    fn a_binary_changed_after_the_installation_does_not_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = manifest::parse(&manifest_for(&[(binary_path(), BINARY)])).unwrap();
+        let program = binary_path().split('/').fold(dir.path().to_path_buf(), |p, part| p.join(part));
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        // Missing: refused.
+        assert_eq!(verify_binary(&manifest, dir.path()).unwrap_err().reason, "plugin.binary_changed");
+        std::fs::write(&program, BINARY).unwrap();
+        verify_binary(&manifest, dir.path()).unwrap();
+        std::fs::write(&program, b"swapped by someone else").unwrap();
+        assert_eq!(verify_binary(&manifest, dir.path()).unwrap_err().reason, "plugin.binary_changed");
     }
 
     fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {

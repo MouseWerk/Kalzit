@@ -89,7 +89,11 @@ translates those, and the English `message` is only the fallback. See [Reasons](
     Kalzit checks the user's rights and refuses one that may write, and checks every query's
     text."
 - Every kind ends with the common fields `queryTimeoutSecs` (1 to 3600) and `maxRows` (at least 1):
-  limits for this source; the server-wide limits are the maximum.
+  limits for this source; the server-wide limits are the maximum. Then `cacheEnabled` (bool) and
+  `cacheTtlSecs` (1 to 86,400, default 60): the [query cache](#query-cache) of this source. The
+  default of `cacheEnabled` depends on the kind and is in the kind list: on for `postgres`,
+  `mysql`, `sqlite`, `mssql`, `elasticsearch`, `neo4j`, `memgraph` and `tigergraph`; off for
+  `prometheus`, `mongodb`, `file`, `http_json` and plugin kinds, whose values are often live.
 
 Fields per kind (common fields omitted):
 
@@ -122,7 +126,7 @@ any other name needs a format (`settings.file_format_unknown`). `apiKeyHeader` m
 `Transfer-Encoding` (`settings.header_name_invalid`).
 
 i18n keys the UI needs: `datasources.settings.<name>` for every field name above plus
-`queryTimeoutSecs` and `maxRows`, and `datasources.kinds.<kind>.hint` for each kind. For
+`queryTimeoutSecs`, `maxRows`, `cacheEnabled` and `cacheTtlSecs`, and `datasources.kinds.<kind>.hint` for each kind. For
 `mongodb`, `maxRows` limits documents. TigerGraph's `url`, `secret` and `graph` use the labels
 `datasources.settings.gsqlUrl`, `datasources.settings.restppSecret` and
 `datasources.settings.graph`.
@@ -498,6 +502,10 @@ Body `QueryRequest`, answer `QueryResponse` (types generated in `ui/src/api/gene
 
 Explore also sends `"explore": true` (optional, default false): the successful queries of the run are
 then kept in the caller's private Explore history (`docs/api/explore-history.md`).
+
+`"refresh": true` (optional) runs every query in its source even when the
+[query cache](#query-cache) holds its answer, and keeps the new answer; `Cache-Control: no-cache`
+does the same.
 
 - 1 to 50 queries, each with its own `refId` (1 to 64 characters); `timeRange.from` not after
   `timeRange.to`, both within the years 1 to 9999. Otherwise `422 validation` (`field`: `queries`
@@ -1359,6 +1367,80 @@ that is not of type `query` is `422 validation`.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
 
+## Query cache
+
+The server keeps answers of queries in memory for a while, so a dashboard that is opened or
+refreshed again within that time does not ask the database again. It applies to free queries
+(`POST /query`, Explore included), a panel's and a saved analysis's stored queries and the
+options of query variables. Live updates, exports, annotations, field distributions, health and
+schema never use it. AI calls that run queries use it with their AI data rules in the key.
+
+- **Per person.** An answer is kept for the person who ran it: the key holds the organization,
+  the user, the role, the permissions and, for AI calls, the AI data rules of the sources. Two
+  people never share an entry, whatever their rights. Every request is authorized before the cache
+  is asked, so a person who may no longer read a dashboard or query a source gets no answer from
+  it either.
+- **What is in the key**, besides who asks: the data source and its version (any change of it is
+  another key), the kind and its result shapes, the query in a canonical form (key order does not
+  matter), its graph steps and cursor, the time range, interval, `maxDataPoints`, the variable
+  values and which of them may be identifiers, and the row limit.
+- **Ranges that end now are rounded.** A range whose end is at most one TTL ago, or later, moves
+  with every load ("last 6 hours"). Both its ends go down to a step: the query's interval, at
+  least a second and at most the source's TTL. The query runs with that range, so loads within one
+  step share the answer, and the newest data shown is at most one step old. A range further in the
+  past is used as asked.
+- **Only answers.** Errors, timeouts and answers whose graph steps failed are never kept.
+- **No longer served** when the data source is changed, trashed or purged, when the server's
+  target rules change, when rights or visibility in the organization change (grants, roles,
+  members, teams, folders moved, restricted, trashed, restored, purged or given
+  another owner, dashboards and analyses moved to another folder, trashed, restored, purged or
+  given another owner, plugins blocked, organization settings, a source's AI access; a server
+  administrator changing a user, disabling or removing a plugin ends all answers), and when the
+  TTL ends. A folder's new name changes nothing. An answer read while such a change happened is
+  not kept. Least recently used answers go first when memory runs short.
+- **Hits cost like answers.** A hit waits for a query slot like any query and counts against the
+  request's response memory (`datasources.max_response_bytes`) and the server's
+  (`datasources.max_inflight_bytes`) with what it held when it was read from its source, at
+  least twice its stored size. One that does not fit runs in its source instead and is cut there,
+  as any answer is.
+- **Settings.** Per data source `cacheEnabled` and `cacheTtlSecs` (see [Kinds](#kinds-get-orgsorgiddatasource-kinds)).
+  Server-wide `datasources.cache_enabled` (default true; off, nothing is kept and what was kept is
+  let go) and `datasources.cache_max_bytes` (default 256 MiB, 1 MiB to 64 GiB): the memory all
+  answers may take together, counted as their serialized size plus 512 bytes each. One answer
+  larger than a quarter of it is not kept, one organization's answers take at most half of it and
+  one person's at most an eighth. Both apply at the next query.
+
+Every query answer that the cache had a part in carries `cache`:
+
+```json
+{ "result": { "shape": "frame", "frame": { } }, "cache": { "status": "hit", "ageMs": 42000, "ttlMs": 60000 } }
+```
+
+`status` is `hit` (kept from an earlier run, `ageMs` old), `miss` (ran in the source and kept now)
+or `refresh` (ran because the caller asked to refresh, kept now in place of the older one).
+`ttlMs` is how long the answer is kept from when it ran; 0 means it was not kept (too large, or a
+graph step failed). Answers of sources or servers without the cache, and errors, have no `cache`.
+
+The routes that use the cache answer the header `X-Kalzit-Cache` for the whole request: `hit` when
+every answer came from the cache, `refresh` when the caller asked to refresh, `miss` when at least
+one ran in its source and is kept now, `off` when the cache had no part in it.
+
+`refresh: true` in the body (free queries, panels, saved analyses) or `Cache-Control: no-cache`
+(also `no-store`, or `Pragma: no-cache`; on every route that uses the cache) runs the queries in
+their sources and keeps the new answers. The UI sends it for the Refresh button, not for opening a
+dashboard, auto refresh or a new time range.
+
+### Server administrators: `GET /admin/query-cache` and `DELETE /admin/query-cache`
+
+`GET` answers how full the cache is and how often it answered since the server started:
+
+```json
+{ "enabled": true, "maxBytes": 268435456, "entries": 12, "bytes": 3400000, "hits": 30, "misses": 10 }
+```
+
+`DELETE` forgets every answer (`204`); it is audited as `query_cache.cleared` with the number of
+entries. Hits are not audited.
+
 ## Export
 
 A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
@@ -1491,7 +1573,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.expected_option` | `options` (comma-separated) | the value must be one of `options` |
 | `settings.control_characters` | | the value contains control characters |
 | `settings.required` | | a required setting is missing |
-| `settings.out_of_range` | `min`, `max` (when bounded) | `queryTimeoutSecs` 1 to 3600, `maxRows` at least 1 |
+| `settings.out_of_range` | `min`, `max` (when bounded) | `queryTimeoutSecs` 1 to 3600, `maxRows` at least 1, `cacheTtlSecs` 1 to 86,400 |
 | `settings.host_credentials` | | the host contains credentials |
 | `settings.host_invalid` | | the host is not a host name or IP address |
 | `settings.port_invalid` | | the port is outside 1 to 65535 |
@@ -1927,7 +2009,7 @@ history `reasonCode`). `updates.mode_*` explain `mode.reason`, why a server only
 | `updates.channel_mismatch` | | a preview release on the stable channel (`409`) |
 | `updates.disk_full` | `needed` | the data directory's disk has less than `needed` bytes free for the upload (`409`) |
 | `updates.rollback_unsigned` | `version` | the command line returns only to versions whose signed manifest was kept (`409`) |
-| `updates.mode_windows_service` | | Windows: installing needs the service integration; use `kalzit update apply` |
+| `updates.mode_windows_service` | | Windows, not running as the Windows service (`kalzit service install` or the MSI package); use `kalzit update apply` |
 | `updates.mode_not_systemd` | | Linux, not started by systemd |
 | `updates.mode_binary_not_writable` | | the service account cannot replace the binary |
 | `updates.mode_container` | | a container: update the image instead |

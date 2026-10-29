@@ -54,6 +54,9 @@ describe("settings, About", () => {
     expect(within(product).getByText("2026-10-25")).toBeTruthy();
     expect(within(product).getByText("Linux x64")).toBeTruthy();
     expect(within(product).getByText("SQLite")).toBeTruthy();
+    // A configuration warning the server reports; codes this UI does not know are left out.
+    expect(within(product).getAllByRole("note")).toHaveLength(1);
+    expect(within(product).getByRole("note").textContent).toContain("database password");
     expect(
       screen.getByText("Calcite, the sunstone that makes hidden structure visible."),
     ).toBeTruthy();

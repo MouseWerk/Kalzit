@@ -289,8 +289,11 @@ time series.
 
 ## Quick start
 
-Run the container image (below), or build Kalzit from source. The result of a build is one
-binary, `kalzit` (`kalzit.exe` on Windows), with the web interface embedded.
+Run the container image (below), install the Windows service with the MSI package from the
+[releases](https://github.com/MouseWerk/Kalzit/releases) (see
+[the installation guide](docs/guide/installation.md#windows)), or build Kalzit from source. The
+result of a build is one binary, `kalzit` (`kalzit.exe` on Windows), with the web interface
+embedded.
 
 ### Docker
 
@@ -368,8 +371,10 @@ The binary lands in `target/release/kalzit` (`target\release\kalzit.exe`).
 3. Enter the code (it is checked right away), then create your owner account and the first
    organization with its defaults. The last step offers sample data to explore.
 
-To run Kalzit as a systemd service or a Windows service with a virtual account, see
-"Running as a service" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#running-as-a-service).
+To run Kalzit as a systemd service, see "Running as a service" in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#running-as-a-service); on Windows,
+`kalzit service install` (elevated) sets up the Windows service without the MSI package
+([installation guide](docs/guide/installation.md#windows)).
 Backups are described under [Backups](docs/ARCHITECTURE.md#backups). The container image is
 described under [Docker](#docker); the deb and rpm packages with their systemd service under
 [Installation](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm).
