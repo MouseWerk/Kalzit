@@ -239,6 +239,7 @@ pub(crate) mod tests {
             notes_url: None,
             highlights: vec![Highlight { kind: "improved".into(), text: "Faster dashboards".into() }],
             packages,
+            installers: vec![],
         };
         let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
         let sig = serde_json::to_vec(&sign_manifest(key, &bytes)).unwrap();
