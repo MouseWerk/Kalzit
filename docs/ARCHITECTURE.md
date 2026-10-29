@@ -125,7 +125,7 @@ Guards that keep this airtight:
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
   `plugins:configure`, `settings:read|write`, `org:write|delete`. Installing plugins is a server
-  action for server admins (M4), not an organization permission.
+  action for server admins, not an organization permission.
 - **Built-in roles** (pinned by a test, so a new permission is granted only by an explicit edit):
   - `viewer`: `dashboards:read`, `folders:read`, `analyses:read`, `teams:read`. Viewers do not
     run their own queries; the panel query route runs the stored queries of a dashboard they may
@@ -218,7 +218,7 @@ type QueryResult =
 
 ## Data sources
 
-- A data source plugin implements one trait (built-ins are compiled in; external plugins (M4) use
+- A data source plugin implements one trait (built-ins are compiled in; external plugins use
   the same contract over gRPC, see "Plugins"). Kinds are registered in `registry::KindRegistry`:
 
   ```rust
@@ -516,8 +516,8 @@ process, a network target or the gRPC protocol.
   the order of parts, cut batches at `TARGET_PART_BYTES` and say `Full` one row past the row
   limit or one part past the byte budget, so the host cuts with its own notice. Errors map to
   `Error` kinds; logs go to stderr. Its tests serve a plugin on a real pipe or socket.
-- Network: `kalzit_plugin_sdk::net` is the place for the client of Kalzit's connector (M4,
-  being built separately); until it lands it connects directly.
+- Network: `kalzit_plugin_sdk::net::connect` is the client of Kalzit's connector (see "Network
+  connector"); a plugin has no other way out.
 - `plugin-tool/` (binary `kalzit-plugin`): `keygen`, `package` (writes `[files]` with the
   hashes, checks the manifest as the host does, signs with a key file or
   `KALZIT_PLUGIN_SIGNING_KEY`), `sign`, `attach-signature` and `verify`. A tool of its own, so `kalzit-sign` stays
@@ -540,8 +540,8 @@ process, a network target or the gRPC protocol.
   trait. It is the protocol's reference: built-in kinds answer through it exactly what they
   answer directly (tested with SQLite), so what the protocol cannot express shows up there
   first, and plugin SDKs are tested against it. The query path keeps calling built-in kinds
-  directly; the host will wrap a plugin process in a `DataSourcePlugin` (M4), so routes, limits,
-  live updates and the target checks stay the same for every kind.
+  directly; the host wraps a plugin process in a `DataSourcePlugin` (`plugins::remote::Remote`), so
+  routes, limits, live updates and the target checks stay the same for every kind.
 
 ### Manifest (`kalzit-plugin.toml`)
 
@@ -664,18 +664,19 @@ pass the same data source target rules (`TargetPolicy`) as built-in sources.
   in `plugin_handovers`. Installed plugins are the table `plugins` (migration 0020), with the
   exact manifest, the signer and its key, the approval, the switch and an update that waits.
 
-### Catalog (M4)
+### Catalog
 
-A signed index hosted by the project lists plugins with versions, key ids, download URLs and
-package hashes (`catalog::CatalogIndex`). It is off by default; turning it on is a server
-setting. Every index carries a growing `sequence`, its publication time and an `expiresAt` at
-most 31 days later. The host remembers the highest sequence it accepted per catalog key
-(`catalog::Accepted`, by the full public key; `parse_index` takes the key whose signature
-verified) and refuses an older or equal one (rollback) and an index past its expiry (freeze),
-so whoever controls the download cannot keep a known-vulnerable version listed. Every entry is
-checked: a valid plugin id, semantic version and kind, a 16-digit key id, an `https` URL
-without user info, a SHA-256 in lowercase hex, and no id with the same version twice. Installing from a file (the package with its
-manifest and signature) always works, also offline, and runs the same checks.
+A signed index (the project's, or a mirror an administrator names; there is no default address)
+lists plugins with versions, key ids, download URLs and package hashes (`catalog::CatalogIndex`).
+It is off by default; turning it on is a server setting. Every index carries a growing
+`sequence`, its publication time and an `expiresAt` at most 31 days later. The host remembers
+the highest sequence it accepted per catalog key (`catalog::Accepted`, by the full public key;
+`parse_index` takes the key whose signature verified) and refuses an older or equal one
+(rollback) and an index past its expiry (freeze), so whoever controls the download cannot keep
+a known-vulnerable version listed. Every entry is checked: a valid plugin id, semantic version
+and kind, a 16-digit key id, an `https` URL without user info, a SHA-256 in lowercase hex, and no
+id with the same version twice. Installing from a file (the package with its manifest and
+signature) always works, also offline, and runs the same checks.
 
 - An index may withdraw versions (`revoked`: plugin id, a semver requirement, a reason); they are
   never installed from the catalog and installed versions they match are named in the UI.
@@ -860,10 +861,11 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   panels the write adds or changes, so stored dashboards and library panels keep loading,
   querying and saving unchanged when a rule tightens. Reads never run it. The document explorer
   and the schema panel take no options; the distribution's `path` and the card's `titlePath` are
-  field paths of up to 500 characters without control characters. A new panel type (plugins)
-  adds its own check there
-  when it lands, and its default and editor options to the contract fixture
-  (`ui/src/panels/contract.test.ts`); unknown types are left alone.
+  field paths of up to 500 characters without control characters. A new built-in panel type adds
+  its own check there, and its default and editor options to the contract fixture
+  (`ui/src/panels/contract.test.ts`); unknown types, panel plugins among them, are left alone on
+  save: a plugin panel's options are checked against its `[[panel.options]]` in the editor, and
+  only the declared ones that fit reach its frame.
 - Series names (`distinctSeriesNames`, `ui/src/panels/frame.ts`): a series is named by its display
   name, else its name template, else its field name with labels. Without a display name or
   template, series with labels are named by the label values that differ between them in the
@@ -958,9 +960,9 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
 
 ## AI
 
-Built-in AI (M4; owner decisions in docs/PLAN.md, section 12, API in docs/api/ai.md). This
-section is the core every AI function builds on; the functions themselves (explain or draft a
-query, summarize a result, the agent chat) come after it and must go through it.
+Built-in AI (owner decisions in docs/PLAN.md, section 12, API in docs/api/ai.md). This section
+is the core every AI function builds on, then the functions themselves (explain or draft a
+query, summarize a result, the agent chat "Fragen"), which all go through it.
 
 - **Off by default, one switch.** `ai.enabled` (server setting, default `false`) gates every AI
   call (`409 ai_unavailable`, `ai.disabled`). `GET /api/orgs/{orgId}/ai/status` tells the UI
@@ -1097,7 +1099,9 @@ query, summarize a result, the agent chat) come after it and must go through it.
   `ai.provider_chat` choose a server provider per function (`service::in_effect_for`, from the
   call's purpose); an organization's own provider still applies to all functions. The notice is
   per provider, so the status names each function's provider with its acknowledgement, endpoint,
-  last test and whether its address stays in the own network (`service::stays_in_network`).
+  last test and whether data leaves the own network: as the administrators set it on the provider
+  (`leaves_network`, `yes` or `no`), or, left open, judged from its address
+  (`service::stays_in_network`, reported as `leavesNetworkEstimated`).
 - **Prompt injection (tool use in the chat).** Everything that comes back
   from a data source, a document or a web page is untrusted input to the model: it may contain
   text written to steer it. So tools are read-only by construction (they run queries through the

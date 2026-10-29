@@ -177,12 +177,14 @@ texts come in English (`en`) and optionally German (`de`).
 
 ## Network
 
-Connect only to the targets of the manifest. Kalzit checks the configured targets against the
-data source target rules before every call. Kalzit's network connector (a plugin asks Kalzit
-for a connection, and the sandbox cuts every other way out) is not in this version; until it is,
-plugins connect on their own, and `kalzit_plugin_sdk::net::connect` is the function that will
-go through the connector once it lands. Follow no redirects to other hosts, and use no proxies
-from the environment.
+A plugin has no network of its own: the sandbox refuses sockets (Linux) and runs it in an
+AppContainer without network (Windows). Every connection goes through Kalzit's network connector
+with `kalzit_plugin_sdk::net::connect(conn, host, port, protocol)`: Kalzit checks that the target
+is one the manifest declares for the data source's current settings, applies the data source
+target rules, connects, and hands the plugin the connected stream. Over it the plugin speaks its
+database's protocol and, for `Protocol::Tls`, wraps it in TLS itself. A refused connection comes
+back as an error with Kalzit's reason, which reaches the user as it is. Follow no redirects to
+other hosts, and use no proxies from the environment.
 
 ## Logging
 
