@@ -2,7 +2,7 @@
   "sso.tabs": "Bereiche der Anmeldung",
   "sso.tab.providers": "Anbieter",
   "sso.tab.mappings": "Gruppen-Zuordnung",
-  "sso.tab.local": "Lokale Anmeldung",
+  "sso.tab.local": "Lokale Anmeldung und 2FA",
   "sso.strip.providers": "Anbieter",
   "sso.strip.providersActive": "aktiv: {count}",
   "sso.strip.people": "Personen über Anbieter",

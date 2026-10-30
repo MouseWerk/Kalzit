@@ -827,6 +827,30 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
         count += 1;
     }
     sqlx::query("DELETE FROM sso_sign_ins WHERE draft_secret IS NOT NULL").execute(&mut *tx).await?;
+    // The keys of authenticator apps, bound to `user:<id>` / `totp` (`auth::second_factor`).
+    let rows: Vec<(String, String, String, String)> =
+        sqlx::query_as("SELECT user_id, key_id, nonce, ciphertext FROM user_totp").fetch_all(&mut *tx).await?;
+    for (user_id, key_id, nonce, ciphertext) in rows {
+        if key_id == new.id {
+            continue;
+        }
+        let (owner, field) = crate::auth::second_factor::totp_secret_binding(&user_id);
+        let blob = Blob { key_id, nonce, ciphertext };
+        let plain = match keyring.key(&blob.key_id) {
+            Some(key) => decrypt_with(key, &owner, field, &blob),
+            None => Err(SecretError::UnknownKey(blob.key_id.clone())),
+        }
+        .with_context(|| format!("the authenticator app key of user {user_id}; nothing was changed"))?;
+        let fresh = encrypt_with(new, &owner, field, &plain);
+        sqlx::query("UPDATE user_totp SET key_id = $1, nonce = $2, ciphertext = $3 WHERE user_id = $4")
+            .bind(&fresh.key_id)
+            .bind(&fresh.nonce)
+            .bind(&fresh.ciphertext)
+            .bind(&user_id)
+            .execute(&mut *tx)
+            .await?;
+        count += 1;
+    }
     crate::db::commit(tx).await?;
     Ok(count)
 }

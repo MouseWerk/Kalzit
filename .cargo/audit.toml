@@ -1,0 +1,16 @@
+# cargo audit: advisories that do not apply to how Kalzit uses the crate, each with its reason.
+# Decided by the owner for the second factor (PR #163); remove them in M6 once webauthn-rs moves to
+# crates with the fixes (docs/PLAN.md, M6).
+[advisories]
+ignore = [
+    # rsa 0.9 (Marvin attack: timing of RSA decryption and signing with a private key). It comes in
+    # only through webauthn-rs (crypto-glue), which Kalzit uses to verify passkey signatures with
+    # public keys (RS256, as Windows Hello uses); Kalzit never decrypts or signs with an RSA private
+    # key. No fixed rsa release exists.
+    "RUSTSEC-2023-0071",
+    # crypto-bigint 0.5 (timing variability in operations meant to be constant time). It comes in
+    # only through webauthn-rs (crypto-glue, elliptic-curve 0.13), which verifies signatures over
+    # public data with public keys, so no secret passes through it. The fix (0.7.6) is outside the
+    # 0.5 line that elliptic-curve 0.13 requires; no fixed version exists in that line.
+    "RUSTSEC-2026-0387",
+]

@@ -106,7 +106,10 @@ Whether Kalzit asks for its own second factor after a provider sign-in is the pr
 second factor or must have one; on, Kalzit does not ask when the ID token's `amr` says the
 provider checked several factors (`mfa`, `otp`, `hwk` or `sc`).
 
-On success the answer is `303` to `returnTo`. Every failure is `303` to
+When Kalzit asks for its second factor, the answer is `303` to
+`/anmelden?secondFactor=1&redirect=<returnTo>` with the half-signed-in state of
+`docs/api/access.md` ("Second factor"); the session opens after that step. Otherwise the answer
+is `303` to `returnTo`. Every failure is `303` to
 `/anmelden?sso=<outcome>&provider=<slug>&ref=<id>`, records `auth.sso_failed` with the cause
 for admins (`{"provider", "ref", "reason", "detail"}`), and the page shows a message that never
 names configuration details. `ref` is the error id (`7Q2K-91XD`) that leads admins to the entry.
@@ -166,7 +169,7 @@ to every server admin (once the mail server is set up).
 `readOnly` is `true` when the environment or `kalzit.toml` sets one of the three settings.
 `checks` are what turning password sign-in off needs: an enabled OIDC provider that passed a
 connection check (`providerReady`); a break-glass admin who is an enabled server admin with a
-password (`breakGlassReady`); and the caller can sign in through an enabled provider or is the
+password and a second factor (`breakGlassReady`); and the caller can sign in through an enabled provider or is the
 break-glass admin (`selfViaProvider`). `passwordOnlyAccounts` counts enabled accounts with a
 password and no provider identity.
 

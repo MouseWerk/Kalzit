@@ -64,6 +64,18 @@ function choicesOf(t: Translate, key: string): Choice[] | undefined {
         { value: "text", label: "Text" },
         { value: "json", label: "JSON" },
       ];
+    case "security.two_factor_required":
+      return [
+        { value: "off", label: t("security.policy.off") },
+        { value: "admins", label: t("security.policy.admins") },
+        { value: "everyone", label: t("security.policy.everyone") },
+      ];
+    case "security.two_factor_methods":
+      return [
+        { value: "all", label: t("security.policy.methodsAll") },
+        { value: "passkey", label: t("security.policy.methodsPasskey") },
+        { value: "totp", label: t("security.policy.methodsTotp") },
+      ];
     default:
       return undefined;
   }
@@ -306,6 +318,25 @@ function Control(props: ControlProps) {
           value: theme,
           label: t(`theme.${theme}`),
         }))}
+        onChange={guard}
+      />
+    );
+  }
+  // The second factor's rules, as the board shows them: a few words side by side. An
+  // organization cannot turn the server's rule off, only follow it or be stricter.
+  if (key === "security.two_factor_required" || key === "security.two_factor_methods") {
+    const options = (choicesOf(t, key) ?? [])
+      .filter((choice) => !(inheritable && choice.value === "off"))
+      .map((choice) => ({ value: String(choice.value), label: choice.label }));
+    return (
+      <Segmented
+        labelled={labelled}
+        value={String(value)}
+        options={
+          inheritable
+            ? [{ value: INHERIT, label: t("security.policy.inherit") }, ...options]
+            : options
+        }
         onChange={guard}
       />
     );

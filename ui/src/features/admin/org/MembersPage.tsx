@@ -1,10 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { getRouteApi } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
 import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
 import { type Translate, useI18n } from "../../../i18n/i18n";
+import { resetMemberSecondFactor } from "../../security/api";
+import { ResetSecondFactorDialog, SecondFactorBadge } from "../../security/ResetDialog";
 import {
   addMember,
   adminKeys,
@@ -36,8 +39,11 @@ function memberErrorText(t: Translate, error: unknown): string {
   return errorText(t, error, MEMBER_ERRORS);
 }
 
+const appRoute = getRouteApi("/_app");
+
 export function MembersPage() {
   const { t, language, timeZone } = useI18n();
+  const { me } = appRoute.useRouteContext();
   const access = useAdminAccess();
   const orgId = access.orgId ?? "";
   const queryClient = useQueryClient();
@@ -53,6 +59,7 @@ export function MembersPage() {
   const notice = useNotice();
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [resetting, setResetting] = useState<Member | null>(null);
   const members = list.items ?? [];
   const keys = useRowKeys(members.length);
 
@@ -125,6 +132,7 @@ export function MembersPage() {
                     date: formatDateTime(member.joinedAt, language, timeZone),
                   })}
                 </span>
+                <SecondFactorBadge summary={member.secondFactor} />
                 <div className="admin-row__actions">
                   {canChange ? (
                     <>
@@ -147,6 +155,18 @@ export function MembersPage() {
                       >
                         {t("admin.common.removeAsk")}
                       </button>
+                      {member.userId !== me.id &&
+                      ((member.secondFactor?.methods.length ?? 0) > 0 ||
+                        member.secondFactor?.lockedUntil != null) ? (
+                        <button
+                          type="button"
+                          className="button button--secondary"
+                          aria-label={t("security.admin.resetNamed", { name: member.name })}
+                          onClick={() => setResetting(member)}
+                        >
+                          {t("security.admin.reset")}
+                        </button>
+                      ) : null}
                     </>
                   ) : managed ? (
                     <span className="admin-row__locked" title={t("admin.members.idpManagedHint")}>
@@ -191,6 +211,18 @@ export function MembersPage() {
           }}
         />
       ) : null}
+      {resetting === null ? null : (
+        <ResetSecondFactorDialog
+          name={resetting.name}
+          reset={(reason) => resetMemberSecondFactor(orgId, resetting.userId, reason)}
+          onClose={() => setResetting(null)}
+          onDone={() => {
+            notice.show({ message: t("security.admin.resetDone", { name: resetting.name }) });
+            setResetting(null);
+            void refresh();
+          }}
+        />
+      )}
       <ConfirmDialog
         open={removing !== null}
         title={t("admin.members.removeTitle")}

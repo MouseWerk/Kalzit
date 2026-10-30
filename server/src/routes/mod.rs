@@ -35,6 +35,8 @@ pub mod preferences;
 pub mod query;
 pub mod query_cache;
 pub mod roles;
+pub mod second_factor;
+pub mod security;
 pub mod setup;
 pub mod sso;
 pub mod support;
@@ -56,6 +58,8 @@ pub fn all() -> Vec<table::RouteDef> {
         about::routes(),
         auth::routes(),
         sso::routes(),
+        second_factor::routes(),
+        security::routes(),
         orgs::routes(),
         admin_settings::routes(),
         acme::routes(),
@@ -206,6 +210,14 @@ mod access_guard {
         "GET /auth/providers",
         "GET /auth/sso/{slug}/start",
         "POST /auth/login/local",
+        // The second step of a sign-in: each needs the half-signed-in state of its cookie
+        // (`auth::second_factor`), and the codes count against the account's lockout.
+        "GET /auth/second-factor",
+        "POST /auth/second-factor",
+        "POST /auth/second-factor/passkey",
+        "POST /auth/second-factor/setup/totp",
+        "POST /auth/second-factor/setup/passkey",
+        "POST /auth/second-factor/setup",
         // What the sign-in page shows anyway: product name, logo, sign-in texts and default look.
         "GET /branding",
         "GET /branding/logo",
@@ -221,6 +233,17 @@ mod access_guard {
         "POST /me/sessions/revoke-others",
         "GET /me/preferences",
         "PATCH /me/preferences",
+        "GET /me/security",
+        "POST /me/security/confirm",
+        "POST /me/security/confirm/passkey",
+        "POST /me/security/totp/setup",
+        "POST /me/security/totp",
+        "DELETE /me/security/totp",
+        "POST /me/security/passkeys/setup",
+        "POST /me/security/passkeys",
+        "PATCH /me/security/passkeys/{passkeyId}",
+        "DELETE /me/security/passkeys/{passkeyId}",
+        "POST /me/security/recovery-codes",
     ];
 
     /// The path layout decides the access rule, so a route cannot be scoped to an organization

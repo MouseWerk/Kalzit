@@ -35,6 +35,8 @@ export interface LoginSearch {
   provider?: string | undefined;
   /** The error id that leads admins to the audit entry (`7Q2K-91XD`). */
   ref?: string | undefined;
+  /** Set when a sign-in through a provider goes on with Kalzit's second factor. */
+  secondFactor?: true | undefined;
 }
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -57,6 +59,10 @@ export function parseLoginSearch(search: Record<string, unknown>): LoginSearch {
     sso: SSO_OUTCOMES.find((outcome) => outcome === search.sso),
     provider: matching(search.provider, SLUG),
     ref: matching(search.ref, REF),
+    secondFactor:
+      search.secondFactor === 1 || search.secondFactor === "1" || search.secondFactor === true
+        ? true
+        : undefined,
   };
 }
 

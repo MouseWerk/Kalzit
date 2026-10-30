@@ -39,6 +39,7 @@ describe("settings shell", () => {
       "Updates",
       "Organization Analytical Engines",
       "Profile and language",
+      "Sign-in and security",
       "Keyboard shortcuts",
       "Export / import settings",
     ]) {

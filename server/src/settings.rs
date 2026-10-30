@@ -498,6 +498,32 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Password sign-in for the members of this organization: inherit (the server's rule) or off. \
                       Never laxer than the server.",
     },
+    // The second factor (`auth::second_factor`): who must have one, server-wide and per
+    // organization (only ever stricter than the server), and which methods may be set up.
+    SettingDef {
+        key: "security.two_factor_required",
+        scope: Scope::Server,
+        default: || json!("off"),
+        ui_editable: true,
+        description: "Who must sign in with a second factor: off, admins (server admins and organization admins) or \
+                      everyone. Whoever has none sets one up at the next sign-in. The minimum for every organization.",
+    },
+    SettingDef {
+        key: "security.two_factor_methods",
+        scope: Scope::Server,
+        default: || json!("all"),
+        ui_editable: true,
+        description: "Second factors people may set up: all, passkey or totp (authenticator app). Recovery codes \
+                      always come with them.",
+    },
+    SettingDef {
+        key: "security.two_factor_required",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Who in this organization must sign in with a second factor: inherit (the server's rule), admins \
+                      or everyone. Never laxer than the server.",
+    },
     SettingDef {
         key: "signin.welcome",
         scope: Scope::Server,
@@ -755,6 +781,10 @@ fn rule_for(key: &str, scope: Scope) -> Option<Rule> {
     if scope == Scope::Org && key == "signin.local_password" {
         return Some(Rule::Inherit(Box::new(Rule::OneOf(&["off"]))));
     }
+    // An organization's second factor rule adds to the server's; it cannot turn it off.
+    if scope == Scope::Org && key == "security.two_factor_required" {
+        return Some(Rule::Inherit(Box::new(Rule::OneOf(&["admins", "everyone"]))));
+    }
     rule(key)
 }
 
@@ -813,6 +843,8 @@ fn rule(key: &str) -> Option<Rule> {
         }
         "signin.unmapped" => Rule::OneOf(&["default", "refuse"]),
         "signin.default_role" => Rule::OneOf(crate::sso::mapping::DEFAULT_ROLES),
+        "security.two_factor_required" => Rule::OneOf(&["off", "admins", "everyone"]),
+        "security.two_factor_methods" => Rule::OneOf(&["all", "passkey", "totp"]),
         "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
         "signin.notice" => Rule::Text { max_chars: 2000, multiline: true, required: false },
         "updates.channel" => Rule::OneOf(&["stable", "preview"]),
@@ -1437,7 +1469,10 @@ mod tests {
             // A key in both scopes is an organization override of the server's value.
             if d.scope == Scope::Org && find(d.key, Scope::Server).is_some() {
                 assert!(
-                    d.key.starts_with("appearance.") || d.key.starts_with("ai.") || d.key == "signin.local_password",
+                    d.key.starts_with("appearance.")
+                        || d.key.starts_with("ai.")
+                        || d.key == "security.two_factor_required"
+                        || d.key == "signin.local_password",
                     "{} is in both scopes",
                     d.key
                 );

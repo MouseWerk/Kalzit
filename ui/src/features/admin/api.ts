@@ -5,6 +5,7 @@
  * response is checked, so a mismatch fails as `invalid_response` instead of rendering half a page.
  */
 import { expectShape, isRecord, request } from "../../api/client";
+import { isSummary, type SecondFactorSummary } from "../security/api";
 
 // Small shape checks, combined per type below.
 
@@ -100,7 +101,12 @@ export interface Member {
    * changing or removing the member answers `sso.role_managed`.
    */
   idpManaged?: boolean | undefined;
+  /** The member's second factor; `required` by the server or this organization. */
+  secondFactor?: SecondFactorSummary | undefined;
 }
+
+/** Answers before the second factor (and the fakes of tests) leave it out. */
+const optionalSummary: Check = (value) => value === undefined || isSummary(value);
 
 const isMember = shape<Member>({
   userId: isString,
@@ -109,6 +115,7 @@ const isMember = shape<Member>({
   role: isString,
   joinedAt: isNumber,
   idpManaged: (value) => value === undefined || isBoolean(value),
+  secondFactor: optionalSummary,
 });
 
 export function listMembers(orgId: string, cursor?: string, limit?: number, signal?: AbortSignal) {
@@ -518,6 +525,8 @@ export interface AdminUser {
   isServerAdmin: boolean;
   disabled: boolean;
   createdAt: number;
+  /** The account's second factor; `required` by the server or any of its organizations. */
+  secondFactor?: SecondFactorSummary | undefined;
 }
 
 const isAdminUser = shape<AdminUser>({
@@ -527,6 +536,7 @@ const isAdminUser = shape<AdminUser>({
   isServerAdmin: isBoolean,
   disabled: isBoolean,
   createdAt: isNumber,
+  secondFactor: optionalSummary,
 });
 
 export interface NewUserInput {

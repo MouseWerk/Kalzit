@@ -536,6 +536,32 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let (r, _) = sign_in(&app, &idp, &Who { verified: true, ..nora }, |_| {}).await;
     assert_eq!(r.location(), "/dashboards", "a verified email links the account");
 
+    // With a second factor, Kalzit asks for it after the provider ("Kalzit fragt"), unless the
+    // provider's switch takes its word for one and the token says it checked several factors.
+    let nora_id: (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'nora@example.de'").fetch_one(&app.state.db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO user_passkeys (id, user_id, credential_id, name, credential, created_at) \
+         VALUES ('pk-nora', $1, 'cred-nora', 'Schlüssel', '{}', 0)",
+    )
+    .bind(&nora_id.0)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let verified_nora = Who { verified: true, ..nora };
+    let (r, _) = sign_in(&app, &idp, &verified_nora, |c| c["amr"] = json!(["pwd", "mfa"])).await;
+    assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards");
+    assert!(r.cookie("kalzit_session").is_none());
+    let pending =
+        r.headers.get_all(header::SET_COOKIE).iter().any(|c| c.to_str().unwrap().starts_with("kalzit_pending="));
+    assert!(pending, "the half-signed-in state starts: {:?}", r.headers);
+    sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 1").execute(&app.state.db).await.unwrap();
+    let (r, _) = sign_in(&app, &idp, &verified_nora, |_| {}).await;
+    assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards", "no mfa in amr: Kalzit asks");
+    let (r, _) = sign_in(&app, &idp, &verified_nora, |c| c["amr"] = json!(["pwd", "mfa"])).await;
+    assert_eq!(r.location(), "/dashboards");
+    sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 0").execute(&app.state.db).await.unwrap();
+
     // A test sign-in signs nobody in and shows the groups and what the mapping makes of them.
     let mut body = form(&issuer, None);
     body["providerId"] = json!(provider_id);
@@ -575,13 +601,21 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         )
         .await;
     assert_eq!(r.reason(), "sso.break_glass_invalid", "an account without password cannot be the break-glass admin");
-    let r = app
-        .put(
-            "/api/admin/sign-in/local",
-            json!({ "localPassword": "off", "passwordForm": "hidden", "breakGlassUserId": admin_id }),
-            &admin,
-        )
-        .await;
+    let off = json!({ "localPassword": "off", "passwordForm": "hidden", "breakGlassUserId": admin_id });
+    let r = app.put("/api/admin/sign-in/local", off.clone(), &admin).await;
+    assert_eq!(
+        r.body["error"]["params"]["check"],
+        json!("breakGlassReady"),
+        "the break-glass admin needs a second factor"
+    );
+    sqlx::query(
+        "INSERT INTO user_passkeys (id, user_id, credential_id, name, credential, created_at)          VALUES ('pk-1', $1, 'cred-1', 'Schlüssel', '{}', 0)",
+    )
+    .bind(&admin_id)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let r = app.put("/api/admin/sign-in/local", off, &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.body["localPassword"], json!("off"));
     let r = app.send(Method::GET, "/api/auth/providers", None, None).await;
@@ -600,6 +634,7 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(r.reason(), "sso.password_sign_in_off");
     let r = app.send(Method::POST, "/api/auth/login/local", Some(login("joerg@example.de", PASSWORD)), None).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.get("secondFactor").is_some(), "the second factor follows: {}", r.body);
     assert!(app.audit_actions().await.contains(&"auth.break_glass_signed_in".to_string()));
     let r = app
         .send(Method::PATCH, &format!("/api/admin/users/{admin_id}"), Some(json!({ "disabled": true })), Some(&admin))

@@ -14,6 +14,7 @@ import {
   type LoginInput,
   login,
   loginLocal,
+  logout,
   type Me,
   meQuery,
   type SignInProvider,
@@ -27,6 +28,8 @@ import { LimitedMarkdown } from "../appearance/LimitedMarkdown";
 import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { errorReason } from "../features/datasources/reasons";
+import { fetchPrompt, isPrompt, type Prompt } from "../features/security/api";
+import { SecondFactorSetup, SecondFactorStep } from "../features/security/SecondFactorStep";
 import { type Translate, useI18n } from "../i18n/i18n";
 import { leavePage } from "../lib/leavePage";
 import { readPreference, writePreference } from "../lib/storage";
@@ -118,16 +121,55 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const waiting = until !== null && left > 0;
   const waited = until !== null && left === 0;
 
+  // The second step, when the account has a second factor or must set one up.
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const [pendingEnded, setPendingEnded] = useState(false);
+  // Back from a provider with the second step still to take: its prompt comes from the server.
+  const afterProvider = search.secondFactor === true;
+  useEffect(() => {
+    if (!afterProvider) {
+      return;
+    }
+    let current = true;
+    fetchPrompt().then(
+      (next) => {
+        if (current) {
+          setPendingEnded(false);
+          setPrompt(next);
+        }
+      },
+      () => {
+        if (current) {
+          setPendingEnded(true);
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [afterProvider]);
+
+  async function signedIn(me: Me, to?: string) {
+    // Whatever the previous session left (its preferences above all) is not this account's.
+    forgetAccountData(queryClient);
+    queryClient.setQueryData(meQuery.queryKey, me);
+    await router.navigate({ href: to ?? search.redirect ?? "/", replace: true });
+  }
+
   const signIn = useMutation({
-    mutationFn: (input: LoginInput): Promise<Me> =>
+    mutationFn: (input: LoginInput): Promise<Me | { secondFactor: unknown }> =>
       variant === "local" ? loginLocal(input) : login(input),
     // A sign-in is never repeated on its own: each attempt counts against the sign-in limit.
     retry: false,
-    onSuccess: async (me) => {
-      // Whatever the previous session left (its preferences above all) is not this account's.
-      forgetAccountData(queryClient);
-      queryClient.setQueryData(meQuery.queryKey, me);
-      await router.navigate({ href: search.redirect ?? "/", replace: true });
+    onSuccess: async (result) => {
+      if ("secondFactor" in result) {
+        if (isPrompt(result.secondFactor)) {
+          setPendingEnded(false);
+          setPrompt(result.secondFactor);
+        }
+        return;
+      }
+      await signedIn(result);
     },
     onError: (error) => {
       const wait = waitUntil(error);
@@ -312,6 +354,34 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         detail={t("access.login.expiredDetail")}
       />
     );
+  }
+
+  if (prompt !== null) {
+    const back = () => {
+      setPrompt(null);
+      setPassword("");
+      signIn.reset();
+    };
+    const props = {
+      prompt,
+      onSignedIn: (me: Me, to?: string) => void signedIn(me, to),
+      onSignOut: () => {
+        void logout().finally(back);
+      },
+      onExpired: () => {
+        back();
+        setPendingEnded(true);
+      },
+    };
+    return (
+      <AccessLayout>
+        {prompt.setup ? <SecondFactorSetup {...props} /> : <SecondFactorStep {...props} />}
+      </AccessLayout>
+    );
+  }
+
+  if (pendingEnded && signIn.isIdle && status === null) {
+    status = <AccessNotice tone="info" icon="clock" title={t("security.signIn.expired")} />;
   }
 
   const busy = signIn.isPending;

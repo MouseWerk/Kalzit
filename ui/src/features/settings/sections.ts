@@ -23,6 +23,10 @@ export type SectionKind =
   | "pluginsOrg"
   | "updates"
   | "profile"
+  /** The account's sign-in and second factor (features/security). */
+  | "accountSecurity"
+  /** The server's second factor policy, and later the sign-in providers. */
+  | "signin"
   | "shortcuts"
   | "transfer"
   | "about";
@@ -155,14 +159,19 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
-    // The board docs/design/blueprint/Identity.dc.html, frames 5A to 5G.
+    // The board docs/design/blueprint/Identity.dc.html, frames 5A to 5G: providers, group
+    // mapping, the local sign-in and the second factor's policy on the server.
     id: "signin",
     group: "server",
     kind: "signin",
     label: "settings.section.signin.label",
     lead: "settings.section.signin.lead",
     keywords: "settings.section.signin.keywords",
-    keys: SIGN_IN_KEYS as readonly SettingKey[],
+    keys: [
+      ...SIGN_IN_KEYS,
+      "security.two_factor_required",
+      "security.two_factor_methods",
+    ] as readonly SettingKey[],
     visible: serverAdmin,
   },
   {
@@ -287,6 +296,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "dashboards.new_in_team_space",
       // Organizations may only be stricter than the server: inherit, or off for their members.
       "signin.local_password" as string as SettingKey,
+      "security.two_factor_required",
     ],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
   },
@@ -322,6 +332,16 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.profile.label",
     lead: "settings.section.profile.lead",
     keywords: "settings.section.profile.keywords",
+    visible: () => true,
+  },
+  {
+    // Frame 4A of the board docs/design/blueprint/Identity.dc.html.
+    id: "account-security",
+    group: "personal",
+    kind: "accountSecurity",
+    label: "settings.section.accountSecurity.label",
+    lead: "settings.section.accountSecurity.lead",
+    keywords: "settings.section.accountSecurity.keywords",
     visible: () => true,
   },
   {

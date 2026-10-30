@@ -223,6 +223,7 @@ describe("parseLoginSearch", () => {
       sso: undefined,
       provider: undefined,
       ref: undefined,
+      secondFactor: undefined,
     };
     expect(parseLoginSearch({ redirect: "https://evil.example/" })).toStrictEqual(dropped);
     expect(parseLoginSearch({ redirect: "//evil.example/" })).toStrictEqual(dropped);

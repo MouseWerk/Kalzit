@@ -2,7 +2,7 @@
   "sso.tabs": "Parts of sign-in",
   "sso.tab.providers": "Providers",
   "sso.tab.mappings": "Group mapping",
-  "sso.tab.local": "Local sign-in",
+  "sso.tab.local": "Local sign-in and 2FA",
   "sso.strip.providers": "Providers",
   "sso.strip.providersActive": "active: {count}",
   "sso.strip.people": "People via providers",

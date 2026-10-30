@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use super::support::{Actor, audit, conflict, is_unique_violation};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
+use crate::auth::second_factor::FirstStep;
 use crate::auth::{SessionUser, session};
 use crate::authz::Access;
 use crate::error::{ApiError, ApiResult};
@@ -366,22 +367,43 @@ async fn callback_inner(
             return Ok(see_other(&sign_in_page(refusal.outcome, slug, Some(&r)), clear()));
         }
     };
-    let mut cookies = clear();
-    cookies.extend(open_session(&mut tx, state, info, headers, &signed_in.user, &target.provider, &person, now).await?);
     crate::db::commit(tx).await?;
     // The mapping may have changed rights: no kept answer may outlive them (`routes::table`).
     for org in &signed_in.touched {
         state.datasources.query_cache().rights_changed_here(Some(org));
         state.cluster.announce(&state.db, crate::cluster::Change::Rights(Some(org.clone()))).await;
     }
+    // Kalzit's own second factor, unless the provider's switch says to take its word for one
+    // (`trust_provider_mfa` and the token's `amr`).
+    let first = FirstStep::Provider {
+        provider_id: &target.provider.id,
+        mfa_done: person.mfa_done,
+        provider_mfa_trusted: target.provider.trust_provider_mfa != 0,
+    };
+    let plan = super::second_factor::plan(state, info, &signed_in.user, first, now).await?;
+    let mut cookies = clear();
+    let tx = crate::db::begin(&state.db).await?;
+    if plan.is_some() {
+        // The half-signed-in state starts; the sign-in page asks for the second factor and then
+        // goes on to where the person was headed.
+        let answer =
+            super::second_factor::finish_first_step(tx, state, info, headers, signed_in.user, first, false, plan, now)
+                .await?;
+        cookies.extend(answer.headers().get_all(header::SET_COOKIE).iter().cloned());
+        let page = format!(
+            "/anmelden?secondFactor=1&redirect={}",
+            url::form_urlencoded::byte_serialize(row.return_to.as_bytes()).collect::<String>()
+        );
+        return Ok(see_other(&page, cookies));
+    }
+    let mut tx = tx;
+    cookies.extend(open_session(&mut tx, state, info, headers, &signed_in.user, &target.provider, &person, now).await?);
+    crate::db::commit(tx).await?;
     Ok(see_other(&row.return_to, cookies))
 }
 
-/// Opens the session after a sign-in through a provider, inside `tx`. Whether Kalzit asks for
-/// its own second factor first is the provider's switch (`trust_provider_mfa`, with the person's
-/// `amr`); the second step itself comes with the two-factor change (PR #163, its
-/// `finish_first_step` with `FirstStep::Provider`), which this call is to hand over to once it
-/// is merged. Until then the session opens directly, as for a password sign-in.
+/// Opens the session after a sign-in through a provider that needs no second step, inside `tx`
+/// (as `routes::second_factor::open_session`, with the provider in the audit entry).
 #[expect(clippy::too_many_arguments, reason = "the parts of one sign-in, passed on as they are")]
 async fn open_session(
     tx: &mut sqlx::AnyConnection,
@@ -1559,7 +1581,7 @@ async fn preview(State(state): State<AppState>, JsonBody(body): JsonBody<Preview
 // Administration: local sign-in
 
 /// Whether `user_id` is an enabled server admin with a password.
-async fn break_glass_ready(state: &AppState, user_id: &str) -> ApiResult<bool> {
+async fn break_glass_valid(state: &AppState, user_id: &str) -> ApiResult<bool> {
     let row: Option<(i64,)> = sqlx::query_as(
         "SELECT 1 FROM users WHERE id = $1 AND is_server_admin = 1 AND disabled = 0 AND password_hash IS NOT NULL",
     )
@@ -1567,6 +1589,12 @@ async fn break_glass_ready(state: &AppState, user_id: &str) -> ApiResult<bool> {
     .fetch_optional(&state.db)
     .await?;
     Ok(row.is_some())
+}
+
+/// Whether `user_id` may be the break-glass admin while password sign-in is off: valid, and with
+/// a second factor (`auth::second_factor`), so a password alone never opens the server.
+async fn break_glass_ready(state: &AppState, user_id: &str) -> ApiResult<bool> {
+    Ok(break_glass_valid(state, user_id).await? && crate::auth::second_factor::methods(&state.db, user_id).await?.any())
 }
 
 struct Checks {
@@ -1670,7 +1698,7 @@ async fn set_local(
     }
     let break_glass = body.break_glass_user_id.clone().filter(|s| !s.is_empty());
     if let Some(id) = &break_glass
-        && !break_glass_ready(&state, id).await?
+        && !break_glass_valid(&state, id).await?
     {
         return Err(field_error(
             "breakGlassUserId",

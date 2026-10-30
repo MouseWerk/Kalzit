@@ -40,6 +40,18 @@ pub struct Member {
     /// A built-in role name or a custom role id.
     role: String,
     joined_at: i64,
+    /// The member's second factor (`auth::second_factor::Summary`); `required` by the server or
+    /// this organization.
+    #[sqlx(skip)]
+    second_factor: crate::auth::second_factor::Summary,
+    #[serde(skip)]
+    sf_totp: i64,
+    #[serde(skip)]
+    sf_passkeys: i64,
+    #[serde(skip)]
+    sf_locked_until: Option<i64>,
+    #[serde(skip)]
+    sf_server_admin: i64,
     /// An "IdP entscheidet" group mapping decides the role (docs/api/sso.md).
     #[sqlx(try_from = "i64")]
     idp_managed: IdpManaged,
@@ -57,8 +69,35 @@ impl From<i64> for IdpManaged {
 }
 
 const MEMBER_COLUMNS: &str = "SELECT u.id AS user_id, u.email, u.name, m.role, m.created_at AS joined_at, \
+     u.is_server_admin AS sf_server_admin, (SELECT COUNT(*) FROM user_totp t WHERE t.user_id = u.id) AS sf_totp, \
+     (SELECT COUNT(*) FROM user_passkeys p WHERE p.user_id = u.id) AS sf_passkeys, \
+     (SELECT l.locked_until FROM second_factor_lockouts l WHERE l.user_id = u.id) AS sf_locked_until, \
      CASE WHEN EXISTS (SELECT 1 FROM sso_managed s WHERE s.user_id = m.user_id AND s.org_id = m.org_id \
      AND s.team_id = '') THEN 1 ELSE 0 END AS idp_managed FROM org_members m JOIN users u ON u.id = m.user_id";
+
+/// Fills in the members' second factor: whether the server or this organization requires one of
+/// them, what they have and a running lockout.
+async fn with_second_factor(state: &AppState, org_id: &str, members: &mut [Member]) -> ApiResult<()> {
+    use crate::auth::second_factor as sf;
+    let server = sf::server_requirement(state).await?;
+    let own = sf::org_requirement(state, org_id).await?;
+    let now = state.clock.now_ms();
+    let mut admin_roles = std::collections::HashMap::new();
+    for m in members.iter_mut() {
+        let admin = match admin_roles.get(&m.role) {
+            Some(admin) => *admin,
+            None => {
+                let admin = sf::is_admin_role(&state.db, org_id, &m.role).await?;
+                admin_roles.insert(m.role.clone(), admin);
+                admin
+            }
+        };
+        let rule = sf::MembershipRule { org_id: org_id.into(), org_name: String::new(), requirement: own, admin };
+        let required = sf::resolve(server, m.sf_server_admin != 0, std::slice::from_ref(&rule)).is_some();
+        m.second_factor = sf::summary(m.sf_totp, m.sf_passkeys, m.sf_locked_until, required, now);
+    }
+    Ok(())
+}
 
 async fn load<'c, E>(db: E, org_id: &str, user_id: &str) -> ApiResult<Member>
 where
@@ -78,7 +117,7 @@ async fn list(
     QueryParams(q): QueryParams<PageQuery>,
 ) -> ApiResult<Json<Page<Member>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
-    let rows: Vec<Member> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let mut rows: Vec<Member> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{MEMBER_COLUMNS} WHERE m.org_id = $1 AND (m.created_at < $2 OR (m.created_at = $2 AND u.id < $3)) \
          ORDER BY m.created_at DESC, u.id DESC LIMIT $4"
     )))
@@ -88,6 +127,7 @@ async fn list(
     .bind(paging.fetch_limit())
     .fetch_all(&state.db)
     .await?;
+    with_second_factor(&state, &ctx.org_id, &mut rows).await?;
     Ok(Json(paging.page(rows, |m| (m.joined_at, m.user_id.as_str()))))
 }
 

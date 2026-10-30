@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { LoadState } from "../components/Section";
@@ -27,6 +27,8 @@ const ROW_TAB: Record<string, SignInTab> = {
   "signin.local_password": "local",
   "signin.password_form": "local",
   "signin.break_glass_user": "local",
+  "security.two_factor_required": "local",
+  "security.two_factor_methods": "local",
 };
 
 function tabOf(hash: string): SignInTab {
@@ -45,7 +47,7 @@ function tabOf(hash: string): SignInTab {
  * their own address (`#mappings`, `#local`). The provider form has one explicit Save after a
  * connection check; everything else applies at once with undo.
  */
-export function SignInSection() {
+export function SignInSection({ twoFactor }: { twoFactor?: ReactNode }) {
   const { t } = useI18n();
   const { hash } = useLocation();
   const navigate = useNavigate();
@@ -174,7 +176,10 @@ export function SignInSection() {
             onAdded={() => setAdding(null)}
           />
         ) : (
-          <LocalTab local={local} />
+          <>
+            <LocalTab local={local} />
+            {twoFactor}
+          </>
         )}
       </div>
     </div>

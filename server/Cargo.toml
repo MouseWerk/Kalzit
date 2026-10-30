@@ -66,6 +66,19 @@ prost = "0.14.4"
 tonic = { version = "0.14.8", default-features = false, features = ["codegen", "channel"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 toml = "1.1.8"
+# The second factor (`auth::second_factor`): TOTP codes (RFC 6238, HMAC-SHA-1), their keys in
+# Base32, the QR code of the key for authenticator apps, and passkeys (WebAuthn).
+# webauthn-rs is pinned to the pre-release =0.6.1-dev on purpose: the latest stable release, 0.5.5,
+# needs OpenSSL (webauthn-rs-core depends on openssl and openssl-sys), which Kalzit does not build
+# or ship on Windows or Linux (rustls and ring only). The 0.6 line from the same maintainers (kanidm)
+# does the same checks in pure Rust (RustCrypto through crypto-glue). Move to the first stable 0.6
+# release once it is published. Registration and authentication states are kept in the server's
+# database between the two steps, which the feature allows.
+hmac = "0.13.0"
+sha1 = "0.11.0"
+data-encoding = "2.11.1"
+qrcode = { version = "=0.14.1", default-features = false }
+webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = ["danger-allow-state-serialisation"] }
 tower = { version = "0.5.3", features = ["util"] }
 unicode-normalization = "0.1.26"
 tower-http = { version = "0.7.1", features = ["trace", "set-header"] }
@@ -89,13 +102,13 @@ windows = { version = "0.62.2", features = [
 ] }
 # The Windows service: the control dispatcher, the service's status and its configuration.
 windows-service = "0.8.1"
-# The SID of the virtual service account (`NT SERVICE\Kalzit`) is the SHA-1 of the service name.
-sha1 = "0.11.0"
 # The self-signed certificate `kalzit service install --https self-signed` makes.
 rcgen = "0.14.10"
 
 [dev-dependencies]
 http-body-util = "0.1.5"
+# The software authenticator of the passkey tests: P-256 keys and ECDSA signatures (ES256).
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
 # Packages the example plugin in the plugin contract tests.
 kalzit-plugin-tool = { path = "../plugin-tool" }
 # A WebSocket client for the live update tests; the version axum's server side uses.

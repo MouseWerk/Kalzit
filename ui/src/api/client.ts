@@ -22,6 +22,8 @@ const SERVER_ERROR_CODE_SET: Record<ServerErrorCode, true> = {
   rate_limited: true,
   cross_origin: true,
   invalid_credentials: true,
+  invalid_code: true,
+  confirmation_required: true,
   setup_done: true,
   invalid_setup_token: true,
   setup_token_expired: true,
