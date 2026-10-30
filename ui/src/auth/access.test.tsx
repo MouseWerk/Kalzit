@@ -74,14 +74,12 @@ describe("sign-in page", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeTruthy();
   });
 
-  it("explains a forgotten password without sending anything", async () => {
+  it("leads a forgotten password to the password link page without sending anything", async () => {
     const server = installFakeServer();
     const { user } = renderApp("/login");
-    const forgot = await screen.findByRole("button", { name: "Forgot password?" });
-    expect(forgot.getAttribute("aria-expanded")).toBe("false");
+    const forgot = await screen.findByRole("link", { name: "Forgot password?" });
     await user.click(forgot);
-    expect(forgot.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("An admin of your organization can reset your password.")).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Reset password" })).toBeTruthy();
     expect(server.calls.filter((call) => call.method === "POST")).toHaveLength(0);
   });
 

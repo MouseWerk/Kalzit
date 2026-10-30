@@ -47,7 +47,7 @@ async fn update(
     let summary = json!({ "userId": user.id, "fields": ["name"] });
     audit(&mut tx, &actor, None, "user.updated", ("user", &user.id), summary).await?;
     // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
-    let answer = me(&mut *tx, SessionUser { name, ..user }).await?;
+    let answer = me(&mut tx, SessionUser { name, ..user }).await?;
     crate::db::commit(tx).await?;
     Ok(Json(answer))
 }

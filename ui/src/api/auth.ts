@@ -18,6 +18,11 @@ export interface Me {
   email: string;
   name: string;
   isServerAdmin: boolean;
+  /**
+   * False for an account made from an invitation link an admin passed on, until its owner
+   * confirms the address by mail (docs/api/mail.md, "Email confirmation").
+   */
+  emailConfirmed?: boolean;
   orgs: OrgMembership[];
 }
 

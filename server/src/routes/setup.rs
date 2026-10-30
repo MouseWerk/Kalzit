@@ -507,7 +507,7 @@ pub async fn complete(
             let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
             let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
             headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-            serde_json::to_value(me(&mut *tx, user).await?).map_err(|e| ApiError::internal("setup", e))?
+            serde_json::to_value(me(&mut tx, user).await?).map_err(|e| ApiError::internal("setup", e))?
         }
         Some(prompt) => {
             let first = sf::FirstStep::Password { password_hash: Some(&hash) };

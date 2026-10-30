@@ -20,6 +20,7 @@ import {
 import { acmeFake, handleAcmeRoute } from "../features/settings/test/fakeAcme";
 import { handleUsageAdminRoute, usageFake } from "../features/usage/test/fakeUsage";
 import { shellFake } from "../shell/test/fakeShell";
+import { handleMailRoute, mailFake } from "./fakeMail";
 
 /**
  * An in-memory stand-in for the Kalzit server's auth routes, installed as the global fetch.
@@ -124,6 +125,8 @@ const AREA_FAKES = {
   pluginCatalog: catalogFake,
   shell: shellFake,
   acme: acmeFake,
+  // Invitations and password links of an organization; the rest in handleMailRoute.
+  mail: mailFake,
   usage: usageFake,
 };
 
@@ -552,6 +555,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     return (
       handleCatalogRoute(areaStates.pluginCatalog, path, method, input) ??
       handleAcmeRoute(areaStates.acme, path, method, input) ??
+      handleMailRoute(areaStates.mail, server, path, method, input) ??
       handlePluginAdminRoute(areaStates.plugins, path, method, input) ??
       handleAiAdminRoute(areaStates.aiAdmin, server, path, method, input) ??
       handleUsageAdminRoute(areaStates.usage, server, path, method) ??

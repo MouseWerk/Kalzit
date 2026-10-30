@@ -1380,10 +1380,10 @@ pub enum Notice {
 }
 
 /// Tells the person about a change of their second factor by mail, when the server can send
-/// mail. The mail package (SMTP and invitations) delivers these; until a mail server is set up,
-/// nothing is sent and the audit log is the record.
-pub fn notify(_state: &AppState, user_id: &str, notice: Notice) {
-    tracing::debug!(user = %user_id, ?notice, "second factor notice (no mail server set up)");
+/// mail (`mail::notify_second_factor`); without a mail server nothing is sent and the audit log is
+/// the record.
+pub fn notify(state: &AppState, user_id: &str, notice: Notice) {
+    crate::mail::notify_second_factor(state, user_id, notice);
 }
 
 #[cfg(test)]

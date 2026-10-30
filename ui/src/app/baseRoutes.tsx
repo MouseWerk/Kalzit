@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
   createRoute,
+  lazyRouteComponent,
   notFound,
   Outlet,
   redirect,
@@ -95,6 +96,38 @@ export const loginRoute = createRoute({
     }
   },
   component: LoginPage,
+});
+
+/**
+ * The pages behind the links Kalzit mails (docs/api/mail.md): open without a session, since the
+ * link's token is what counts. The token is in the fragment, which never reaches a server.
+ */
+export const inviteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/invite",
+  beforeLoad: async ({ context }) => {
+    if (await isSetupNeeded(context.queryClient)) {
+      throw redirect({ to: "/setup", replace: true });
+    }
+  },
+  component: lazyRouteComponent(() => import("../auth/InvitePage"), "InvitePage"),
+});
+
+export const resetPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/reset-password",
+  beforeLoad: async ({ context }) => {
+    if (await isSetupNeeded(context.queryClient)) {
+      throw redirect({ to: "/setup", replace: true });
+    }
+  },
+  component: lazyRouteComponent(() => import("../auth/ResetPasswordPage"), "ResetPasswordPage"),
+});
+
+export const confirmEmailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/confirm-email",
+  component: lazyRouteComponent(() => import("../auth/ConfirmEmailPage"), "ConfirmEmailPage"),
 });
 
 /**

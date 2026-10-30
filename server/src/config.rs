@@ -11,7 +11,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 const ENV_PREFIX: &str = "KALZIT_";
-const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database", "paths", "log"];
+const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database", "paths", "log", "smtp"];
 /// `KALZIT_*` variables that are not settings. Any other `KALZIT_*` name is a typo and an error.
 const OTHER_VARIABLES: &[&str] = &[
     "CONFIG",
@@ -48,6 +48,9 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub paths: PathsConfig,
     pub log: LogConfig,
+    /// The mail server, when the file or the environment sets it (`mail::settings`); then the
+    /// settings page shows it read-only.
+    pub smtp: SmtpConfig,
     /// The settings `kalzit.toml` sets, as `section.key`, so the settings page can tell a value
     /// from the file from the default even when both are equal.
     #[serde(skip)]
@@ -156,6 +159,24 @@ pub struct LogConfig {
     pub level: String,
     /// "text" or "json".
     pub format: String,
+}
+
+/// The mail server from `kalzit.toml` or `KALZIT_SMTP_*`. Empty `host`: not set here, so the
+/// settings page decides. The password belongs in `KALZIT_SMTP_PASSWORD` (or the settings page,
+/// which stores it encrypted); one in the file is used with a warning.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SmtpConfig {
+    pub host: String,
+    /// 0: the usual port of `security` (587 for STARTTLS, 465 for TLS, 25 without).
+    pub port: u16,
+    /// "starttls", "tls" or "none". "none" only for a relay on this machine (loopback).
+    pub security: String,
+    pub username: String,
+    pub password: String,
+    pub from_name: String,
+    pub from_address: String,
+    pub reply_to: String,
 }
 
 impl Default for ServerConfig {
@@ -356,6 +377,13 @@ impl Config {
         if let Some(base) = from_file(&config, "tls.key_file") {
             config.tls.key_file = config.tls.key_file.as_ref().map(|p| base.join(p));
         }
+        if config.source("smtp.password") == Source::File && !config.smtp.password.is_empty() {
+            config.warnings.push(
+                "smtp.password in the configuration file is readable by everyone who may read the file; give it in \
+                 KALZIT_SMTP_PASSWORD instead (docs/guide/administration.md, \"Mail\")"
+                    .into(),
+            );
+        }
         if config.warning_codes().contains(&DATABASE_PASSWORD_IN_FILE) {
             config.warnings.push(
                 "database.url in the configuration file holds the database password, which everyone who may read the \
@@ -504,6 +532,7 @@ impl Config {
                 _ => bail!("paths.data_dir is empty"),
             }
         }
+        crate::mail::settings::check_config(&self.smtp)?;
         tracing_subscriber::EnvFilter::try_new(&self.log.level)
             .with_context(|| format!("log.level \"{}\" is not a filter like \"info\"", self.log.level))?;
         Ok(())
