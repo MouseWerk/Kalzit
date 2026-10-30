@@ -8,10 +8,11 @@ use std::time::Duration;
 use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::{Column as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
 use super::Detail;
+use super::connect::{self, SqlPool};
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -70,12 +71,13 @@ fn ssl_mode(s: Option<&str>) -> MySqlSslMode {
 
 pub struct MySql;
 
-async fn pool(conn: &Connection) -> Result<Arc<MySqlPool>, SourceError> {
+async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::MySql>>, SourceError> {
     conn.shared(|| async {
         let s: Settings = conn.settings_as()?;
         let port = s.port.unwrap_or(3306) as u16;
         let mode = ssl_mode(s.ssl_mode.as_deref());
         let addr = conn.policy().pick_address(&s.host, port, CONNECT_TIMEOUT).await?;
+        let address = connect::address(&s.host, port);
         // As for PostgreSQL: the checked address, except where the certificate must match the name.
         let host = if matches!(mode, MySqlSslMode::VerifyIdentity) { s.host.clone() } else { addr.ip().to_string() };
         let mut options = MySqlConnectOptions::new()
@@ -97,23 +99,34 @@ async fn pool(conn: &Connection) -> Result<Arc<MySqlPool>, SourceError> {
             options = options.ssl_ca_from_pem(pem.into_bytes());
         }
         let recheck = matches!(mode, MySqlSslMode::VerifyIdentity).then(|| (conn.policy_arc(), s.host.clone(), port));
-        MySqlPoolOptions::new()
+        // As for PostgreSQL: lazy, so connect failures are named by `SqlPool::acquire`, and tested
+        // before use, so a connection that broke while idle is replaced; setup errors are kept.
+        let setup = connect::SetupErrors::default();
+        let kept = setup.clone();
+        let probe_recheck = recheck.clone();
+        let pool = MySqlPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
             .acquire_timeout(CONNECT_TIMEOUT)
+            .test_before_acquire(true)
             .idle_timeout(Duration::from_secs(300))
             .after_connect(move |c, _| {
                 let recheck = recheck.clone();
+                let kept = kept.clone();
                 Box::pin(async move {
-                    if let Some((policy, host, port)) = recheck {
-                        super::recheck_name(&policy, &host, port).await?;
-                    }
-                    pin_sql_mode(c).await
+                    let step = async {
+                        if let Some((policy, host, port)) = recheck {
+                            super::recheck_name(&policy, &host, port).await?;
+                        }
+                        pin_sql_mode(c).await
+                    };
+                    kept.keep(step.await, failed)
                 })
             })
-            .connect_with(options)
-            .await
-            .map_err(failed)
+            .connect_lazy_with(options);
+        let pool = SqlPool::new(pool, addr, address, CONNECT_TIMEOUT, setup, probe_recheck);
+        drop(pool.acquire(failed).await?);
+        Ok(pool)
     })
     .await
 }
@@ -123,12 +136,16 @@ fn failed(e: sqlx::Error) -> SourceError {
         sqlx::Error::Configuration(inner) if inner.is::<super::targets::Blocked>() => {
             SourceError::Blocked(super::blocked_detail(inner.as_ref()))
         }
-        // 1792: cannot execute statement in a READ ONLY transaction.
-        sqlx::Error::Database(db) if db.code().as_deref() == Some("25006") || db.message().contains("READ ONLY") => {
+        // 1792 (SQLSTATE 25006): cannot execute statement in a READ ONLY transaction.
+        sqlx::Error::Database(db)
+            if db.code().as_deref() == Some("25006")
+                || db.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>().is_some_and(|e| e.number() == 1792) =>
+        {
             SourceError::rejected("query.write_refused", format!("the query tried to write: {}", db.message()))
                 .with("detail", db.message())
         }
         sqlx::Error::Database(db) => SourceError::from_source(db.message()),
+        sqlx::Error::Io(io) if connect::is_dead(io.kind()) => connect::lost(io),
         other => SourceError::from_source(other.to_string()),
     }
 }
@@ -154,12 +171,16 @@ async fn pin_sql_mode(c: &mut sqlx::MySqlConnection) -> Result<(), sqlx::Error> 
 /// that takes neither is refused: a query it runs could not be stopped after the client gives up.
 async fn limit_session(c: &mut sqlx::MySqlConnection, timeout: Duration) -> Result<(), SourceError> {
     let ms = timeout.as_millis().max(1);
-    if c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_execution_time = {ms}"))).await.is_ok() {
-        return Ok(());
+    match c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_execution_time = {ms}"))).await {
+        Ok(_) => return Ok(()),
+        // A broken connection is not a server without the variable.
+        Err(e) if connect::sqlx_dead(&e) => return Err(failed(e)),
+        Err(_) => {}
     }
     let secs = timeout.as_secs_f64().max(0.001);
     match c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_statement_time = {secs}"))).await {
         Ok(_) => Ok(()),
+        Err(e) if connect::sqlx_dead(&e) => Err(failed(e)),
         Err(_) => Err(SourceError::failed(
             "mysql.no_time_limit",
             "the server supports neither max_execution_time nor max_statement_time, so query times cannot be limited",
@@ -189,7 +210,8 @@ impl DataSourcePlugin for MySql {
     async fn health(&self, conn: &Connection) -> Health {
         let check = async {
             let pool = pool(conn).await?;
-            let (version,): (String,) = sqlx::query_as("SELECT VERSION()").fetch_one(&*pool).await.map_err(failed)?;
+            let mut c = pool.acquire(failed).await?;
+            let (version,): (String,) = sqlx::query_as("SELECT VERSION()").fetch_one(&mut *c).await.map_err(failed)?;
             Ok::<_, SourceError>(version)
         };
         match check.await {
@@ -203,13 +225,14 @@ impl DataSourcePlugin for MySql {
 
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         let pool = pool(conn).await?;
+        let mut c = pool.acquire(failed).await?;
         let rows: Vec<(String, String, String, String)> = sqlx::query_as(
             "SELECT CAST(TABLE_SCHEMA AS CHAR), CAST(TABLE_NAME AS CHAR), CAST(COLUMN_NAME AS CHAR), \
              CAST(DATA_TYPE AS CHAR) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() \
              ORDER BY TABLE_NAME, ORDINAL_POSITION LIMIT ?",
         )
         .bind(MAX_SCHEMA_COLUMNS)
-        .fetch_all(&*pool)
+        .fetch_all(&mut *c)
         .await
         .map_err(failed)?;
         Ok(SourceSchema::Tables { tables: super::postgres::group_columns(rows) })
@@ -218,8 +241,19 @@ impl DataSourcePlugin for MySql {
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let prepared = sql::prepare_query(self, conn, &req, Engine::MySql).await?;
         let pool = pool(conn).await?;
-        let mut c = pool.acquire().await.map_err(failed)?;
-        limit_session(&mut c, req.limits.timeout).await?;
+        let mut c = pool.acquire(failed).await?;
+        // The first round trip: a connection that broke after its check fails here, before any
+        // result, and the query runs once more on a fresh connection (it only reads).
+        match limit_session(&mut c, req.limits.timeout).await {
+            Err(e) if connect::is_lost(&e) => {
+                // Closed before the next is taken, so dead connections never hold the pool's slots.
+                c.close_on_drop();
+                drop(c);
+                c = pool.acquire(failed).await?;
+                limit_session(&mut c, req.limits.timeout).await?;
+            }
+            other => other?,
+        }
         #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
         let mut tx = sqlx::Connection::begin_with(&mut *c, "START TRANSACTION READ ONLY").await.map_err(failed)?;
         let statement =

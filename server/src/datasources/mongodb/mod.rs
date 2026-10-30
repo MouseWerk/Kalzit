@@ -211,6 +211,8 @@ struct Shared {
     /// Where every operation may go (`selection`); passed to commands explicitly, since the
     /// driver applies the client's default only to reads such as `find` and `aggregate`.
     selection: SelectionCriteria,
+    /// A single server, without replica set discovery.
+    direct: bool,
     /// Set when the topology names a server that is not a TCP host (a Unix socket path a replica
     /// set member announced); the source is then refused.
     socket_member: Arc<AtomicBool>,
@@ -293,16 +295,37 @@ impl Shared {
         failed(e, self.relay.refusal_since(mark), timeout)
     }
 
+    /// Runs the start of an operation that began at `mark`. With a single server, a refused or
+    /// unreachable connection to it ends the operation at once, with its cause, instead of after
+    /// the driver's selection timeout; a replica set may still reach another member.
+    async fn started<T>(
+        &self,
+        mark: u64,
+        timeout: Duration,
+        operation: impl std::future::IntoFuture<Output = mongodb::error::Result<T>>,
+    ) -> Result<T, SourceError> {
+        let refused = async {
+            if !self.direct {
+                return std::future::pending().await;
+            }
+            self.relay.next_refusal(mark).await
+        };
+        tokio::select! {
+            done = operation.into_future() => done.map_err(|e| self.fail(&e, mark, timeout)),
+            refusal = refused => Err(match refusal {
+                Refusal::Blocked(d) => SourceError::Blocked(d),
+                Refusal::Failed(d) => SourceError::Failed(d),
+            }),
+        }
+    }
+
     /// A command on `db`, sent only to a server the selection allows.
     async fn command(&self, db: &str, command: Document, timeout: Duration) -> Result<Document, SourceError> {
         self.guard()?;
         let mark = self.relay.mark();
-        self.client
-            .database(db)
-            .run_command(command)
-            .selection_criteria(self.selection.clone())
-            .await
-            .map_err(|e| self.fail(&e, mark, timeout))
+        let database = self.client.database(db);
+        let run = database.run_command(command).selection_criteria(self.selection.clone());
+        self.started(mark, timeout, run).await
     }
 
     /// A cursor command on the source's database (`listCollections`, `listIndexes`), at most
@@ -315,13 +338,9 @@ impl Shared {
     ) -> Result<Vec<Document>, SourceError> {
         self.guard()?;
         let mark = self.relay.mark();
-        let mut cursor = self
-            .client
-            .database(&self.database)
-            .run_cursor_command(command)
-            .selection_criteria(self.selection.clone())
-            .await
-            .map_err(|e| self.fail(&e, mark, timeout))?;
+        let database = self.client.database(&self.database);
+        let run = database.run_cursor_command(command).selection_criteria(self.selection.clone());
+        let mut cursor = self.started(mark, timeout, run).await?;
         let mut out = Vec::new();
         while out.len() < max
             && let Some(d) = cursor.try_next().await.map_err(|e| self.fail(&e, mark, timeout))?
@@ -385,6 +404,8 @@ fn failed(e: &mongodb::error::Error, refusal: Option<Refusal>, timeout: Duration
             SourceError::failed("mongodb.srv_lookup", format!("the SRV or TXT lookup failed: {message}"))
                 .with("detail", message)
         }
+        ErrorKind::Io(io) if crate::datasources::connect::is_dead(io.kind()) => crate::datasources::connect::lost(io),
+        ErrorKind::ConnectionPoolCleared { message, .. } => crate::datasources::connect::lost(message),
         _ => SourceError::from_source(e.to_string()),
     }
 }
@@ -451,6 +472,9 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
     options.min_pool_size = Some(0);
     options.max_idle_time = Some(Duration::from_secs(300));
     options.retry_writes = Some(false);
+    // A read that fails on a connection the server closed (it restarted) runs once more on a
+    // fresh one; the driver clears its pool for that server first.
+    options.retry_reads = Some(true);
     let selection = selection(direct);
     options.selection_criteria = Some(selection.clone());
     // The selection keeps queries away from a Unix socket a member names, but the driver still
@@ -515,7 +539,8 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
         client: tokio::sync::OnceCell::new(),
         streams: stream_permits(conn.datasource_id()),
     };
-    let shared = Shared { client, relay, database: s.database.clone(), selection, socket_member, has_user, watcher };
+    let shared =
+        Shared { client, relay, database: s.database.clone(), selection, direct, socket_member, has_user, watcher };
     check_read_only(&shared, selection_timeout).await?;
     shared.guard()?;
     Ok(shared)
@@ -585,12 +610,15 @@ async fn check_read_only(shared: &Shared, timeout: Duration) -> Result<(), Sourc
     // check privileges at all.
     shared.guard()?;
     let mark = shared.relay.mark();
-    let host_info = shared
-        .client
-        .database("admin")
-        .run_command(doc! { "hostInfo": 1 })
-        .selection_criteria(shared.selection.clone())
-        .await;
+    let admin = shared.client.database("admin");
+    let run = admin.run_command(doc! { "hostInfo": 1 }).selection_criteria(shared.selection.clone());
+    let host_info = tokio::select! {
+        done = run.into_future() => done,
+        refusal = shared.relay.next_refusal(mark), if shared.direct => return Err(match refusal {
+            Refusal::Blocked(d) => SourceError::Blocked(d),
+            Refusal::Failed(d) => SourceError::Failed(d),
+        }),
+    };
     match host_info {
         Ok(_) => Err(SourceError::failed(
             "mongodb.access_control_off",
@@ -1122,13 +1150,9 @@ impl DataSourcePlugin for MongoDb {
                     q.collection,
                     ext_json(&Bson::Array(stages.iter().cloned().map(Bson::Document).collect()))
                 );
-                let cursor = coll
-                    .aggregate(stages)
-                    .max_time(timeout)
-                    .batch_size(batch)
-                    .with_type::<RawDocumentBuf>()
-                    .await
-                    .map_err(fail)?;
+                let aggregate =
+                    coll.aggregate(stages).max_time(timeout).batch_size(batch).with_type::<RawDocumentBuf>();
+                let cursor = shared.started(mark, timeout, aggregate).await?;
                 (executed, cursor)
             }
             Plan::Find(find_plan) => {
@@ -1161,7 +1185,7 @@ impl DataSourcePlugin for MongoDb {
                     find = find.skip(skip);
                 }
                 executed.push_str(&format!(".limit({fetch})"));
-                (executed, find.await.map_err(fail)?)
+                (executed, shared.started(mark, timeout, find).await?)
             }
         };
         let own_limit = s.max_response_bytes.map(|b| b as usize);

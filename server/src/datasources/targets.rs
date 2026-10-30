@@ -42,6 +42,10 @@ pub enum ResolveError {
     /// `target.unreachable`.
     #[error("cannot reach {host}: {reason}")]
     Dns { code: &'static str, host: String, reason: String },
+    /// The address resolved, but the connection failed: refused, no answer, or another cause
+    /// (`source.connect_refused`, `source.connect_timeout`, `source.connect_failed`).
+    #[error("{0}")]
+    Connect(Detail),
 }
 
 impl ResolveError {
@@ -52,6 +56,7 @@ impl ResolveError {
             ResolveError::Dns { code, host, reason } => {
                 Detail::new(code, self.to_string()).with("host", host).with("detail", reason)
             }
+            ResolveError::Connect(d) => d.clone(),
         }
     }
 }
@@ -378,19 +383,21 @@ impl TargetPolicy {
         port: u16,
         timeout: std::time::Duration,
     ) -> Result<(SocketAddr, tokio::net::TcpStream), ResolveError> {
-        let mut last = String::new();
-        for addr in self.resolve_all(host, port).await? {
+        let addrs = self.resolve_all(host, port).await?;
+        // One address is named itself; several (`localhost`) by the configured name.
+        let name = match addrs.as_slice() {
+            [only] => only.to_string(),
+            _ => super::connect::address(host, port),
+        };
+        let mut last = None;
+        for addr in addrs {
             match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
                 Ok(Ok(stream)) => return Ok((addr, stream)),
-                Ok(Err(e)) => last = format!("{addr}: {e}"),
-                Err(_) => last = format!("{addr}: no answer within {} seconds", timeout.as_secs()),
+                Ok(Err(e)) => last = Some(super::connect::connect_failed(&name, &e, timeout)),
+                Err(_) => last = Some(super::connect::timed_out(&name, timeout)),
             }
         }
-        Err(ResolveError::Dns {
-            code: "target.unreachable",
-            host: host.to_string(),
-            reason: format!("cannot connect ({last})"),
-        })
+        Err(ResolveError::Connect(last.unwrap_or_else(|| super::connect::timed_out(&name, timeout))))
     }
 }
 
