@@ -225,7 +225,7 @@ fn local_files(data_dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
 
 /// Copies the account and certificate files into the database (`acme_shared`) for the other
 /// servers on it (`cluster`). They stay encrypted with the secrets key, which all servers share.
-pub async fn share(db: &sqlx::AnyPool, data_dir: &Path, now_ms: i64) -> Result<()> {
+pub async fn share(conn: &mut sqlx::AnyConnection, data_dir: &Path, now_ms: i64) -> Result<()> {
     let dir = data_dir.to_path_buf();
     let files = tokio::task::spawn_blocking(move || local_files(&dir)).await??;
     for (name, bytes) in files {
@@ -237,7 +237,7 @@ pub async fn share(db: &sqlx::AnyPool, data_dir: &Path, now_ms: i64) -> Result<(
         .bind(&name)
         .bind(&text)
         .bind(now_ms)
-        .execute(db)
+        .execute(&mut *conn)
         .await?;
     }
     Ok(())

@@ -110,11 +110,11 @@ async fn save(
         at_ms: now,
     };
     audit::record(&mut tx, &event).await?;
+    // The other servers on the same database take the settings; the leader orders.
+    crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Acme).await?;
     crate::db::commit(tx).await?;
     crate::settings::cache(&state).invalidate(None);
     state.acme.apply_saved(settings, version);
-    // The other servers on the same database take the settings; the leader orders.
-    state.cluster.publish(crate::cluster::Change::Acme);
     Ok(Json(view(&state)))
 }
 
@@ -130,10 +130,6 @@ async fn renew(
             .with_reason_string(refused.reason.to_string(), refused.params)
     })?;
     if requested {
-        // The leader of several servers on one database orders.
-        if !state.cluster.is_leader() {
-            state.cluster.publish(crate::cluster::Change::AcmeRenew);
-        }
         let mut tx = crate::db::begin(&state.db).await?;
         let event = AuditEvent {
             org_id: None,
@@ -146,6 +142,10 @@ async fn renew(
             at_ms: state.clock.now_ms(),
         };
         audit::record(&mut tx, &event).await?;
+        // The leader of several servers on one database orders.
+        if !state.cluster.is_leader() {
+            crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::AcmeRenew).await?;
+        }
         crate::db::commit(tx).await?;
     }
     Ok(Json(view(&state)))

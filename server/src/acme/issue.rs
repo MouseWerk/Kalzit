@@ -49,20 +49,25 @@ impl Shared<'_> {
         let not_shared = |e: sqlx::Error| {
             Failure::new("acme.challenge_not_shared", format!("sharing the challenge answer: {e}")).with("detail", e)
         };
-        sqlx::query(
-            "INSERT INTO acme_challenges (kind, name, value, order_id, created_at) VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (kind, name) DO UPDATE SET value = excluded.value, order_id = excluded.order_id, \
-             created_at = excluded.created_at",
-        )
-        .bind(kind)
-        .bind(name)
-        .bind(value)
-        .bind(&self.order_id)
-        .bind(now_ms)
-        .execute(db)
-        .await
-        .map_err(not_shared)?;
-        self.state.cluster.announce(db, crate::cluster::Change::AcmeChallenges).await;
+        // The answer and its announcement in one transaction (`cluster::record`).
+        let write = async {
+            let mut tx = crate::db::begin(db).await?;
+            sqlx::query(
+                "INSERT INTO acme_challenges (kind, name, value, order_id, created_at) VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (kind, name) DO UPDATE SET value = excluded.value, order_id = excluded.order_id, \
+                 created_at = excluded.created_at",
+            )
+            .bind(kind)
+            .bind(name)
+            .bind(value)
+            .bind(&self.order_id)
+            .bind(now_ms)
+            .execute(&mut *tx)
+            .await?;
+            crate::cluster::record(&mut tx, self.state.cluster.id(), &crate::cluster::Change::AcmeChallenges).await?;
+            crate::db::commit(tx).await
+        };
+        write.await.map_err(not_shared)?;
         // Every running server confirms that it serves the answers as they are now.
         let rows = super::challenge_rows(db).await.map_err(not_shared)?;
         let fingerprint = super::challenge_fingerprint(&rows);
@@ -76,12 +81,18 @@ impl Shared<'_> {
 
     /// Removes this order's shared answers.
     async fn clear(&self) {
-        let db = &self.state.db;
-        let removed = sqlx::query("DELETE FROM acme_challenges WHERE order_id = $1").bind(&self.order_id).execute(db);
+        let removed = async {
+            let mut tx = crate::db::begin(&self.state.db).await?;
+            sqlx::query("DELETE FROM acme_challenges WHERE order_id = $1")
+                .bind(&self.order_id)
+                .execute(&mut *tx)
+                .await?;
+            crate::cluster::record(&mut tx, self.state.cluster.id(), &crate::cluster::Change::AcmeChallenges).await?;
+            crate::db::commit(tx).await
+        };
         if let Err(e) = removed.await {
             tracing::warn!("removing the shared challenge answers: {e}");
         }
-        self.state.cluster.announce(db, crate::cluster::Change::AcmeChallenges).await;
     }
 }
 

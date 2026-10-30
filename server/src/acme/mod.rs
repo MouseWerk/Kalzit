@@ -51,9 +51,6 @@ const NOT_LEADING_RECHECK: Duration = Duration::from_secs(10);
 /// time, held for longer than an order can take (validation and issuing get 2 minutes each).
 const ORDER_JOB: &str = "acme:order";
 const ORDER_LEASE: Duration = Duration::from_secs(15 * 60);
-/// HTTP-01 lookups in the database a server answers per second while another server's order
-/// runs (`http_challenge`); more are answered `404`.
-const SHARED_LOOKUPS_PER_SEC: u32 = 20;
 
 /// Why an order failed or a check found a problem, with a reason the UI translates.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -188,10 +185,8 @@ pub struct Acme {
     wake: tokio::sync::Notify,
     /// TLS-ALPN-01 answers this server serves for the leader's order (`sync_challenges`).
     shared_alpn: Mutex<HashSet<String>>,
-    /// Another server's order runs: its HTTP-01 answers are looked up in the database.
-    shared_order: std::sync::atomic::AtomicBool,
-    /// The shared lookups of the current second (`take_lookup`).
-    lookups: Mutex<(std::time::Instant, u32)>,
+    /// HTTP-01 tokens this server answers for the leader's order (`sync_challenges`).
+    shared_http: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for Acme {
@@ -297,8 +292,7 @@ impl Acme {
             runtime: Mutex::new(runtime),
             wake: tokio::sync::Notify::new(),
             shared_alpn: Mutex::default(),
-            shared_order: std::sync::atomic::AtomicBool::new(false),
-            lookups: Mutex::new((std::time::Instant::now(), 0)),
+            shared_http: Mutex::default(),
         })
     }
 
@@ -457,8 +451,11 @@ impl Acme {
         if !state.cluster.coordinated() {
             return Ok(());
         }
-        store::share(&state.db, &state.config.paths.data_dir, state.clock.now_ms()).await?;
-        state.cluster.publish(crate::cluster::Change::Acme);
+        // The copies and their announcement in one transaction (`cluster::record`).
+        let mut tx = crate::db::begin(&state.db).await?;
+        store::share(&mut tx, &state.config.paths.data_dir, state.clock.now_ms()).await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Acme).await?;
+        crate::db::commit(tx).await?;
         Ok(())
     }
 
@@ -504,9 +501,9 @@ impl Acme {
     }
 
     /// Serves the challenge answers of the leader's running order (`acme_challenges`), so the
-    /// server the certificate authority reaches answers it: TLS-ALPN-01 answers are loaded into
-    /// the resolver, HTTP-01 answers are looked up when asked for (`http_challenge`, only while
-    /// an order runs). Then confirms to the leader which answers this server serves
+    /// server the certificate authority reaches answers it: HTTP-01 answers go into this server's
+    /// own token map, TLS-ALPN-01 answers into the resolver, both in memory, so a validation never
+    /// waits for the database. Then confirms to the leader which answers this server serves
     /// (`cluster::ack_challenges`), which it waits for before the CA validates.
     pub async fn sync_challenges(&self, state: &AppState) {
         let rows = match challenge_rows(&state.db).await {
@@ -517,7 +514,22 @@ impl Acme {
             }
         };
         let fingerprint = challenge_fingerprint(&rows);
-        self.shared_order.store(!rows.is_empty(), std::sync::atomic::Ordering::SeqCst);
+        {
+            let mut tokens = self.shared_http.lock().unwrap_or_else(|p| p.into_inner());
+            let mut http = self.lock_http();
+            let wanted: HashSet<&str> =
+                rows.iter().filter(|(kind, _, _)| kind == "http").map(|(_, token, _)| token.as_str()).collect();
+            for gone in tokens.iter().filter(|t| !wanted.contains(t.as_str())) {
+                http.remove(gone);
+            }
+            tokens.clear();
+            for (_, token, answer) in rows.iter().filter(|(kind, _, _)| kind == "http") {
+                if is_token(token) {
+                    http.insert(token.clone(), answer.clone());
+                    tokens.insert(token.clone());
+                }
+            }
+        }
         {
             let mut served = self.shared_alpn.lock().unwrap_or_else(|p| p.into_inner());
             let wanted: HashSet<String> =
@@ -537,17 +549,6 @@ impl Acme {
             }
         }
         crate::cluster::ack_challenges(state, &fingerprint).await;
-    }
-
-    /// Takes one of the shared HTTP-01 lookups of this second (`SHARED_LOOKUPS_PER_SEC`).
-    fn take_lookup(&self) -> bool {
-        let mut window = self.lookups.lock().unwrap_or_else(|p| p.into_inner());
-        let now = std::time::Instant::now();
-        if now.duration_since(window.0) >= Duration::from_secs(1) {
-            *window = (now, 0);
-        }
-        window.1 += 1;
-        window.1 <= SHARED_LOOKUPS_PER_SEC
     }
 
     /// Stores a certificate that is served but could not be stored, once its pause is over; an
@@ -835,23 +836,9 @@ pub async fn http_challenge(State(state): State<AppState>, Path(token): Path<Str
     if !is_token(&token) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let mut answer = state.acme.lock_http().get(&token).cloned();
-    // The leader of several servers on one database ordered; the load balancer may have sent the
-    // validation here. Only while that order runs, and a limited number per second, so the
-    // public route cannot be used to load the database.
-    if answer.is_none()
-        && state.cluster.coordinated()
-        && state.acme.shared_order.load(std::sync::atomic::Ordering::SeqCst)
-        && state.acme.take_lookup()
-    {
-        answer = sqlx::query_as::<_, (String,)>("SELECT value FROM acme_challenges WHERE kind = 'http' AND name = $1")
-            .bind(&token)
-            .fetch_optional(&state.read_db)
-            .await
-            .ok()
-            .flatten()
-            .map(|(value,)| value);
-    }
+    // Memory only: with several servers on one database, the leader's answers are loaded here
+    // before it lets the CA validate (`Acme::sync_challenges`).
+    let answer = state.acme.lock_http().get(&token).cloned();
     match answer {
         Some(answer) => ([(header::CONTENT_TYPE, "application/octet-stream")], answer).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
@@ -966,8 +953,7 @@ mod tests {
             runtime: Mutex::new(rt),
             wake: tokio::sync::Notify::new(),
             shared_alpn: Mutex::default(),
-            shared_order: std::sync::atomic::AtomicBool::new(false),
-            lookups: Mutex::new((std::time::Instant::now(), 0)),
+            shared_http: Mutex::default(),
         }
     }
 

@@ -234,10 +234,11 @@ impl Snapshot {
 /// certificate, settings): `AppState::new` calls it first, and `start` replays and compares from
 /// it. Nothing for SQLite.
 pub async fn boot(cluster: &Cluster, db: &AnyPool, url: &str, data_dir: &std::path::Path) -> Result<()> {
-    *cluster.node.lock().unwrap_or_else(|e| e.into_inner()) = node_id(data_dir)?;
+    // SQLite serves one server: no node id, nothing to replay.
     if !is_postgres(url) {
         return Ok(());
     }
+    *cluster.node.lock().unwrap_or_else(|e| e.into_inner()) = node_id(data_dir)?;
     let mut snapshot = Snapshot::read(db).await?;
     snapshot.read_source_rows(db).await?;
     *cluster.boot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot);
@@ -1325,6 +1326,7 @@ pub async fn await_challenges(state: &AppState, fingerprint: &str, within: Durat
 #[derive(sqlx::FromRow)]
 struct InstanceRow {
     id: String,
+    node_id: String,
     host: String,
     version: String,
     address: String,
@@ -1340,7 +1342,7 @@ pub async fn view(state: &AppState) -> Result<ClusterView, sqlx::Error> {
     let options = cluster.options();
     let now = db_now(&state.read_db, postgres).await?;
     let rows: Vec<InstanceRow> = sqlx::query_as(
-        "SELECT id, host, version, address, started_at, heartbeat_at, stopped_at FROM cluster_instances \
+        "SELECT id, node_id, host, version, address, started_at, heartbeat_at, stopped_at FROM cluster_instances \
          ORDER BY started_at DESC, id",
     )
     .fetch_all(&state.read_db)
@@ -1354,6 +1356,9 @@ pub async fn view(state: &AppState) -> Result<ClusterView, sqlx::Error> {
     };
     let leader = holder.filter(|_| expires_at >= now);
     let fresh = if postgres { freshness(&options) } else { millis(SQLITE_HEARTBEAT) * 3 };
+    // Another server runs (`is_peer`): not this one, nor this one's earlier run.
+    let peers = postgres
+        && rows.iter().any(|r| is_peer(cluster, &r.id, &r.node_id, r.heartbeat_at, r.stopped_at.is_some(), now));
     let instances: Vec<InstanceView> = rows
         .into_iter()
         .map(|r| {
@@ -1373,7 +1378,7 @@ pub async fn view(state: &AppState) -> Result<ClusterView, sqlx::Error> {
             }
         })
         .collect();
-    let mode = if postgres && instances.iter().any(|i| !i.current && i.alive) { "cluster" } else { "single" };
+    let mode = if peers { "cluster" } else { "single" };
     let transport = match (postgres, cluster.listening.load(Ordering::SeqCst)) {
         (false, _) => "none",
         (true, true) => "notify",
@@ -1439,6 +1444,32 @@ mod tests {
     }
 
     #[test]
+    fn the_node_id_is_made_once_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = node_id(dir.path()).unwrap();
+        assert!(uuid::Uuid::parse_str(&first).is_ok());
+        assert_eq!(node_id(dir.path()).unwrap(), first, "the same data directory, the same node");
+        std::fs::write(dir.path().join(NODE_ID_FILE), "not an id").unwrap();
+        let replaced = node_id(dir.path()).unwrap();
+        assert!(replaced != first && uuid::Uuid::parse_str(&replaced).is_ok(), "a damaged file gets a new id");
+        assert_ne!(node_id(tempfile::tempdir().unwrap().path()).unwrap(), replaced);
+    }
+
+    #[test]
+    fn peers_are_other_nodes_or_copies_that_still_run() {
+        let cluster = Cluster::new();
+        *cluster.node.lock().unwrap() = "node-a".into();
+        cluster.started_ms.store(10_000, Ordering::SeqCst);
+        let now = 11_000;
+        assert!(is_peer(&cluster, "other", "node-b", now, false, now), "another node with a fresh heartbeat");
+        assert!(!is_peer(&cluster, cluster.id(), "node-a", now, false, now), "not this run itself");
+        assert!(!is_peer(&cluster, "other", "node-b", now, true, now), "not a stopped server");
+        assert!(!is_peer(&cluster, "other", "node-b", now - 60_000, false, now), "not a silent one");
+        assert!(!is_peer(&cluster, "earlier", "node-a", 9_500, false, now), "not this node's earlier run");
+        assert!(is_peer(&cluster, "copy", "node-a", 10_500, false, now), "a copy still writing heartbeats");
+    }
+
+    #[test]
     fn the_queue_keeps_order_and_takes_back_what_failed() {
         let cluster = Cluster::new();
         cluster.coordinated.store(true, Ordering::SeqCst);
@@ -1456,11 +1487,21 @@ mod tests {
     }
 
     #[test]
-    fn a_fingerprint_moves_only_after_a_baseline() {
-        let mut before = None;
-        assert!(!moved(&mut before, "a".into()), "the first look takes the baseline");
-        assert!(!moved(&mut before, "a".into()));
-        assert!(moved(&mut before, "b".into()));
+    fn every_change_raises_a_counter_the_migration_seeds() {
+        let seeded = include_str!("../migrations/0026_cluster.sql");
+        for change in [
+            Change::Settings(None),
+            Change::Rights(None),
+            Change::CacheCleared,
+            Change::Datasource("d".into()),
+            Change::Plugins,
+            Change::Acme,
+            Change::AcmeRenew,
+            Change::AcmeChallenges,
+            Change::SetupDone,
+        ] {
+            assert!(seeded.contains(&format!("('{}', 0)", area(&change))), "{change:?}");
+        }
     }
 
     #[tokio::test]

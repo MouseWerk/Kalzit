@@ -1459,9 +1459,9 @@ orders and renews. It copies the encrypted account and certificate files into `a
 announces the change; every server writes them to its own `acme` folder (`store::pull`, names
 checked against the folder's own) and serves the certificate from the next handshake on, also
 at its start and before a new leader's first order. Challenge answers go to `acme_challenges`:
-an HTTP-01 token missing from the process's map is looked up there, so the server the CA
-reaches answers (only while an order runs, at most 20 lookups a second); TLS-ALPN-01 answers
-are loaded by every server, and the leader waits until every running server confirmed the answers
+every server loads them into memory (HTTP-01 tokens into its token map, TLS-ALPN-01 answers into
+the resolver; nothing is looked up in the database while a validation waits), and the leader
+waits until every running server confirmed the answers
 (`acme_seen`, at most 30 s) before it lets the CA validate. Orders are claimed in `cluster_jobs`.
 "Renew now" on another server is passed to the leader.
 `kalzit secrets rotate` re-encrypts the shared copies as well. CI orders real certificates from pebble, Let's Encrypt's test
@@ -1527,16 +1527,20 @@ Two or more servers behind a load balancer on one PostgreSQL database (`server/s
 migration 0026; operator guide docs/operations/high-availability.md). PostgreSQL's own
 availability is the operator's. SQLite serves one server (`db::InstanceLock`, "Storage").
 
-- **Identity.** Every process gets a new UUID at start and a row in `cluster_instances` (host,
-  data directory, version, listen addresses, started, heartbeat, stopped, challenge answers
-  served). The heartbeat is written every 5 s (`cluster::Options`), a clean stop sets
-  `stopped_at`; the leader deletes rows silent or stopped for a day. One server per host and data
-  directory (`db::InstanceLock` takes `kalzit-server.lock` there on PostgreSQL), so a start marks earlier
-  unstopped rows of the same host and directory stopped: they are its own crashed run. On SQLite
+- **Identity.** Every process gets a new UUID at start and a row in `cluster_instances` (node id,
+  host, version, listen addresses, started, heartbeat, stopped, challenge answers served). The
+  node id is a random id made once in `<data_dir>/kalzit-node-id` (`cluster::node_id`): every
+  run of one server has it, whatever its host name or path. One server per data directory
+  (`db::InstanceLock` takes `kalzit-server.lock` there on PostgreSQL). The heartbeat is written
+  every 5 s (`cluster::Options`), a clean stop sets `stopped_at`; the leader deletes rows silent
+  or stopped for a day. Rows of the same node id whose heartbeat is no longer fresh are this
+  server's crashed runs and are marked stopped; a fresh one is never touched. On SQLite
   the row is written by a background write (a start never waits for the lock), every 30 s, and a
   start marks every other row stopped: it holds the instance lock.
-- **Peers.** Other servers count when their row is not stopped, their heartbeat is fresh (within
-  the lease) and they are not of this host and data directory. Until a count succeeded after the
+- **Peers** (`cluster::is_peer`). Other servers count when their row is not stopped, their
+  heartbeat is fresh (within the lease) and they are of another node, or of this node with a
+  heartbeat written after this run started (a copied data directory that runs elsewhere). Until
+  a count succeeded after the
   start, and while it fails before the first success, the update mode is `updates.mode_cluster`.
 - **Leader: a lease row, not an advisory lock.** `cluster_leader` holds `holder`, `term`,
   `expires_at` and `since`, in the database's clock (`clock_timestamp()`), so host clocks do not
@@ -1565,38 +1569,43 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
   with `pg_notify('kalzit_cluster', '')`:
   - in the change's own transaction where it has one (`cluster::record`, a transactional outbox:
     the NOTIFY goes out at the commit): `settings::store` and `settings::reset` (every settings
-    write, the ACME settings included), every plugin change (install, approve, enable, disable,
-    remove, keys, switches, blocks), the first-run setup;
-  - right after the commit and before the request answers (`Cluster::announce`): rights
-    changes of routes marked `changes_rights` (the query cache's generation), "Empty cache",
-    ACME challenge answers;
+    write), the ACME settings and "Renew now", the shared certificate copies, each challenge
+    answer and its removal, every plugin change (install, approve, enable, disable, remove,
+    keys, switches, blocks), the first-run setup;
+  - right after the commit and before the request answers (`Cluster::announce`, its own
+    transaction through `record`): rights changes of routes marked `changes_rights` (the query
+    cache's generation), "Empty cache";
   - through a queue from synchronous code (`Cluster::publish`, flushed by `cluster::stop` before
     the lease is handed over): `DataSources::forget`, `RightsBump` when a request was dropped
-    mid-change, the certificate after it is shared, "Renew now".
+    mid-change.
   A dedicated `PgListener` connection wakes the reader, which reads the rows newer than the
   newest it saw less 30 s (a transaction that commits late may make its row visible after newer
   ones; ids already applied are skipped) every 5 s anyway, and every second while the listener
   is down. Rows go after an hour; a server that could not read for close to that drops
   everything it keeps (`flush`).
-- **Reconciliation.** At every read the server also asks one query of MD5 fingerprints
-  (`cluster::Reconciler`): settings rows and versions, plugins with keys, blocks and host
-  switches, `acme_shared`, `acme_challenges`, and data sources with `updated_at`/`deleted_at`. A
-  fingerprint that moved since the last read is acted on whatever the announcements said: all
-  cached settings dropped (and the ACME settings taken), a plugin sync, the shared certificate
-  taken, the challenge answers loaded, and every data source whose row changed forgotten (kept
-  answers, pool, plugin grants). An open setup gate closes when `setup_lock` has its row. So
-  settings, plugins, blocks, switches, keys, certificates and data sources reach every server
-  within one poll even when an announcement was lost. Not covered: a rights generation whose
-  announcement was lost; authorization runs on every request before the cache, so that only
-  keeps answers up to their cache time. The policy generation of the query cache is not
-  announced: each server derives its target rules from the settings.
+- **Reconciliation** (`cluster::Reconciler`, its own task every 5 s, independent of
+  notifications). `record` also raises the area's counter in `cluster_versions` (settings,
+  rights, cache, datasources, plugins, acme, challenges, setup) in the same transaction. The
+  reconciler reads these few rows plus `COUNT(*)`, `MAX(updated_at)`, the count in the trash and
+  `MAX(deleted_at)` of `datasources` (their changes are announced after the commit), and acts on
+  every area that moved since the last read, whatever the event rows said: all cached settings
+  dropped (and the ACME settings taken), a new global rights generation (the organization is not
+  known there), the query cache emptied, a plugin sync, the shared certificate taken, the
+  challenge answers loaded, the setup gate closed, and every data source whose row changed
+  forgotten (kept answers, pool, plugin grants). Its first comparison is against the counters
+  read before the server loaded anything (`cluster::boot`, called first in `AppState::new`; the
+  reader also replays the events from that moment), so a change during a start is not missed.
+  Its own changes move the counters too; taking them again is harmless. Three failed
+  comparisons in a row and every further one are logged as warnings. The policy generation of
+  the query cache is not announced: each server derives its target rules from the settings.
 - **Plugin packages.** A package installed with several servers is also stored, base64, in
   `plugin_packages` in the installation's transaction. `PluginHost::sync` (requested by an
-  announcement, a moved fingerprint and the start; one at a time, again when asked during one):
+  announcement, a moved counter and the start; one at a time, again when asked during one):
   revokes the grants of data sources in newly blocked organizations (`set_blocked`'s effect),
   takes the switches, stops plugins whose row no longer allows them, whose key is no longer
   trusted or whose package directory changed, then reads what is registered again and starts
-  the runnable ones. An unsigned plugin starts only while unsigned plugins are allowed. A package
+  the runnable ones. An unsigned plugin starts only while unsigned plugins are allowed, at boot
+  (`PluginHost::load`) as in a sync. A package
   not on disk is unpacked from the shared copy into `.partial-<dir>`, checked like an
   installation (valid package, the stored manifest byte for byte, every file as listed, the
   binary or the panel bundle), renamed into place and marked complete (`<dir>.complete`, also
@@ -1605,12 +1614,13 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
   failed is tried again after 5 s, doubling up to 5 minutes. The leader deletes shared copies no
   plugin refers to.
 - **ACME.** The leader shares account and certificate (`acme_shared`), others take them on the
-  announcement and through the fingerprint. Each order has an id; its challenge answers carry it
-  and only they are removed at its end. After writing an answer the leader waits until every
-  running server's `acme_seen` equals the fingerprint of the answers as they are (written by
-  `Acme::sync_challenges` once it loaded them), at most 30 s, before the CA may validate. A
-  server looks up HTTP-01 tokens in the database only while it knows of a running order, at most
-  20 a second.
+  announcement and through the `acme` counter. Each order has an id; its challenge answers carry
+  it and only they are removed at its end. Every server keeps the leader's answers in memory
+  (`Acme::sync_challenges`: HTTP-01 tokens in its token map, TLS-ALPN-01 answers in the
+  resolver); `GET /.well-known/acme-challenge/{token}` never reads the database. After writing
+  an answer the leader waits until every running server's `acme_seen` equals the fingerprint of
+  the answers as they are (written once it loaded them), at most 30 s, before the CA may
+  validate.
 - **Per server.** Rate limits (sign-ins, password checks, setup codes, connection tests), AI and
   query concurrency limits, the query cache's entries and counters, live feeds, exports, plugin
   processes and logs, update downloads, backups and history, TLS certificate files. The update
@@ -1626,9 +1636,11 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
 - **Tests.** `server/tests/cluster.rs`: two servers in one throwaway PostgreSQL schema (CI job
   `postgres`) for one leader and failover after a clean stop and after a silent one, a settings
   change and a rights and data source generation reaching the other server within seconds, a
-  change without announcement taken through the fingerprints, a session ended on one server
+  change whose event row was removed taken through the counters, a session ended on one server
   refused on the other, a run-once job running once, and a single server restarted after a crash
-  counting no peers; and the refusal of a second server on one SQLite database on every system.
+  counting no peers (its node id); unit tests for `is_peer`, `node_id` and the seeded counters;
+  and the refusal of a second server on one SQLite database on every system.
+
 ## Backups
 
 One place for everything a backup needs:

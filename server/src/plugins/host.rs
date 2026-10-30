@@ -412,7 +412,8 @@ impl PluginHost {
             }
         }));
         datasources.set_blocks(store::blocks(db).await?);
-        self.without_landlock.store(store::switches(db).await?.allow_without_landlock, Ordering::SeqCst);
+        let switches = store::switches(db).await?;
+        self.without_landlock.store(switches.allow_without_landlock, Ordering::SeqCst);
         let rows = store::all(db).await?;
         if rows.is_empty() {
             return Ok(());
@@ -425,6 +426,11 @@ impl PluginHost {
         clear_dir(&self.dir("uploads"));
         let keys = store::keys(db).await?;
         for row in rows {
+            // As on every server of several (`sync`): unsigned plugins run only while allowed.
+            if row.signer == "unsigned" && !switches.allow_unsigned {
+                tracing::warn!(plugin = %row.id, "the plugin is unsigned and unsigned plugins are not allowed; it does not run");
+                continue;
+            }
             if let Err(e) = self.register(&row, &keys, datasources) {
                 tracing::warn!(plugin = %row.id, reason = e.reason, "the plugin does not run: {}", e.message);
             }

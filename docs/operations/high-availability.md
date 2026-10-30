@@ -30,6 +30,9 @@ to several servers, move to PostgreSQL first; Kalzit has no copy tool between th
 - **Its own data directory.** Nothing in it is shared: logs, plugin packages as unpacked, update
   downloads and backups stay per server. Do not put the data directory on shared storage. A
   second server started with a data directory another one uses stops at once (`kalzit-server.lock`).
+  The data directory holds the server's node id (`kalzit-node-id`), made at the first start: a
+  restarted server is known by it, not by its host name or path. Do not copy a data directory to
+  set up another server; start the new one with an empty data directory instead.
 - **The same version**, apart from the minutes of a rolling update (below).
 - Clocks set by NTP. Kalzit decides who leads and when jobs are due by the database's clock, so a
   wrong host clock does not break that; it does shift the times in logs and sign-in limits.
@@ -76,39 +79,36 @@ when it leads.
 
 Settings, rights (and with them the query cache), data sources, plugins, certificates and the
 first-run setup changed on one server are announced through the database: a row in
-`cluster_events` and a PostgreSQL `NOTIFY`. Settings, plugin changes and the setup write the row
-in the same transaction as the change, so the announcement exists exactly when the change does;
-rights changes are written before the request answers. The other servers apply them within a
-second. When the notification connection is down (a reconnect, a pooler that does not pass
-`LISTEN`), every server reads the rows every second instead (every 5 seconds while notifications
-work).
+`cluster_events` and a PostgreSQL `NOTIFY`. Settings, plugin changes, certificate and challenge
+changes and the setup write the row in the same transaction as the change, so the announcement
+exists exactly when the change does; rights changes are written before the request answers. The
+other servers apply them within a second. When the notification connection is down (a reconnect,
+a pooler that does not pass `LISTEN`), every server reads the rows every second instead (every 5
+seconds while notifications work).
 
-At every such read each server also compares fingerprints of what the servers share: the stored
-settings, plugins with their keys, blocks and switches, the shared certificate, the running
-order's challenge answers and the data sources. Whatever differs is taken over, whether or not
-its announcement arrived (a process that ended right after a commit, a queue that could not be
-written). What this guarantees:
+The same transaction also raises a counter per area (`cluster_versions`: settings, rights,
+plugins, certificates, challenge answers, setup). Every server compares these few counters, and a
+count and the newest change time of the data sources, every 5 seconds on a timer of its own,
+whatever the notifications do; an area whose counter moved is taken over even when its row was
+missed. The comparison starts from the moment before the server loaded anything at its start, so
+a change made during a start is not missed either. What this guarantees:
 
 - A change is in effect on the server that made it as soon as it answered.
-- Another server applies it at the latest after its next read: usually under a second, at most
-  about 5 seconds, or a second without notifications. This holds for settings, plugins (which
-  ones run, their keys, the organizations' blocks with the connections they had, the switch for
-  plugins without Landlock), the certificate, challenge answers and data sources, also when the
-  announcement was lost.
+- Another server applies it at the latest after about 5 seconds, usually in under a second. This
+  holds for settings, rights (the query cache), plugins (which ones run, their keys, the
+  organizations' blocks with the connections they had, the switches), the certificate, challenge
+  answers, data sources and the setup, also when the event row was missed.
+- A rights change counted without knowing its organization empties the whole query cache of the
+  other servers once.
 - Sessions, permissions, grants and AI providers are read from the database with every request,
   so a revoked session or permission is refused on every server at once.
-- A rights generation of the query cache whose announcement was lost (the process ended between
-  the commit and writing it) is not caught by a fingerprint; permissions are checked on every
-  request before the cache, so this never serves an answer to someone who may no longer see it,
-  only an answer up to its cache time old.
 - A plugin that cannot be started on a server (its package not unpacked, a refused check) is
   tried again after 5 seconds, then with a growing pause up to 5 minutes.
 - A server that could not read the events for close to an hour drops everything it keeps in
-  memory and reads it again.
+  memory and reads it again. Comparisons that keep failing are logged as warnings.
 - The query cache keeps answers per server. A change of rights or of a data source ends the kept
   answers on every server; permissions are checked on every request before the cache, so an
   answer is never served to someone who may no longer see it.
-
 Connection poolers: PgBouncer in transaction mode does not pass `LISTEN`; Kalzit then polls every
 second, which works but adds a small query per second per server. Session mode, or a direct
 connection for Kalzit, keeps notifications.
@@ -129,8 +129,8 @@ connection for Kalzit, keeps notifications.
   leader orders and renews, every server serves the same certificate, and a server that missed
   the announcement takes it at its next read. While an order runs, the leader waits until every
   running server confirms that it serves the challenge answers (at most 30 seconds) before the
-  certificate authority validates; HTTP-01 validations are then answered by whichever server it
-  reaches (looked up in the database only while an order runs, at most 20 lookups a second). For
+  certificate authority validates; each server keeps the answers in memory, so HTTP-01 validations
+  are answered by whichever server the authority reaches. For
   TLS-ALPN-01 the load balancer must pass port 443 through as TCP (no TLS termination there);
   prefer HTTP-01 behind a balancer.
 - **The binary** is not replaced by Kalzit itself while other servers run on the database, or
