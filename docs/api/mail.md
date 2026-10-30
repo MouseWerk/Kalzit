@@ -103,11 +103,15 @@ provider confirmed the invited address).
 Accepting:
 
 - without a session and without an account for the address: `name` and `password` (the password
-  policy of every account) make the account, the membership with the invitation's role and team,
-  and a session (`Set-Cookie`);
+  policy of every account) make the account and the membership with the invitation's role and
+  team; then the sign-in rules of every session apply: the answer is the user with a session
+  (`Set-Cookie`), or, when the server or the organization requires a second factor, the sign-in's
+  second step (`{secondFactor}` with `setup: true`, docs/api/access.md) and no session until it is
+  set up;
 - with an account for the address: `409 conflict` `mail.invite_account_exists`; sign in, then
   accept with the token alone;
-- signed in as the invited address: joins with the token alone; the session stays;
+- signed in as the invited address: joins with the token alone; the session stays; a link that
+  went by mail also confirms the account's address;
 - an account made from a link that went by mail has its address confirmed; one made from a link
   an admin passed on starts unconfirmed (`emailConfirmed: false` in `GET /me`, see "Email
   confirmation"); `invitation.accepted` records `viaCopiedLink` and pairs with
@@ -130,18 +134,21 @@ Accepting:
   sign in without a password of Kalzit's own get a mail saying where their password lives;
   disabled accounts get nothing. Without a mail server: `409 conflict` `mail.reset_unavailable`
   (an admin sets a new password in Verwaltung > Benutzer).
-- Requests are limited per client address (10 per 15 minutes; IPv4 per address, IPv6 per /64),
-  per network (30 per 15 minutes; /24, /48) and per address asked for (3 per hour, whether or not
-  an account has it): `429 rate_limited` alike for every address.
+- Requests are limited per client address (10 per 15 minutes; IPv4 per address, IPv6 per /64) and
+  per network (30 per 15 minutes; /24, /48): `429 rate_limited` alike for every address. Mails go
+  to one address at most 3 times per hour, whether or not an account has it; beyond, the answer
+  stays `202` and only the mail is left out (nobody can block a person's reset by asking for
+  their address), and the request does not count against the client's budgets.
 - A link works for 60 minutes and once; a newer link replaces an older one, and a link stops
   working when the password changed some other way or the account's address changed. Such links,
   used, expired and unknown ones all answer `404 not_found` with `mail.reset_invalid`. Unknown
   tokens (invitation and password links) count against the client address: 20 per 15 minutes.
 - Completing sets the password (policy of every account), ends every session of the account
-  (always: whoever knew the old password or held a session is out), and clears the account's failed sign-ins. A second factor
-  is never changed.
+  (always: whoever knew the old password or held a session is out), clears the account's failed
+  sign-ins and confirms its address (the link came by mail). A second factor is never changed.
 - The admin's link: only for a member whose role the admin holds entirely, with a password of
-  Kalzit's own (else `mail.reset_password_elsewhere`), within the same per-account limit.
+  Kalzit's own (else `mail.reset_password_elsewhere`), and only by a server admin to a server
+  admin; at most 5 per member per hour, a budget apart from the requests anyone can make.
 - Audit: `auth.password_reset_requested` (account id, or the admin as actor),
   `auth.password_reset_completed` (account id, sessions ended).
 
@@ -166,6 +173,18 @@ identity to an account by email unless the address is confirmed: it looks accoun
 Without a mail server: `mail.reset_unavailable`. Unknown, used or expired links answer
 `404 not_found` `mail.confirm_invalid` and count against the client address. Audit:
 `user.email_confirmation_requested`, `user.email_confirmed`.
+
+## Second factor notices
+
+Changes of a person's second factor (changed, reset by an admin, locked after wrong codes, a
+recovery code used) are mailed to them in their language when a mail server is set up
+(`auth::second_factor::notify`), in the background; without one the audit log is the record.
+
+## Retention
+
+An hourly job (on one server only when several share the database) deletes used or expired
+password and confirmation links a day after they ended, accepted invitations after 30 days and
+expired ones after 90, and clears the sealed copies of expired invitation links at once.
 
 ## Reasons
 

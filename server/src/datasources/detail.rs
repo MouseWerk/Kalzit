@@ -99,6 +99,8 @@ mod tests {
         "acme",
         // The mail server, invitations and password links (docs/api/mail.md).
         "mail",
+        // The second factor of a sign-in (docs/api/access.md).
+        "second_factor",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
@@ -298,7 +300,7 @@ mod tests {
         let mut docs = BTreeSet::new();
         // The AI and plugin routes document their own reasons; they share the target and request
         // reasons.
-        for file in ["datasources.md", "ai.md", "plugins.md", "mail.md"] {
+        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md"] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }
@@ -306,7 +308,7 @@ mod tests {
         let unknown: Vec<_> = docs.difference(&code).collect();
         assert!(
             undocumented.is_empty() && unknown.is_empty(),
-            "in the code but not in docs/api/datasources.md, ai.md or plugins.md: {undocumented:?}; documented but not in the code: {unknown:?}"
+            "in the code but not in docs/api/datasources.md, ai.md, plugins.md or access.md: {undocumented:?}; documented but not in the code: {unknown:?}"
         );
         assert!(code.len() > 100, "the scan found only {} reasons", code.len());
     }

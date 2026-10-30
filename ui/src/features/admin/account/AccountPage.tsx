@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { meQuery } from "../../../api/auth";
@@ -10,6 +10,8 @@ import { useI18n } from "../../../i18n/i18n";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
 import { PreferencesSection } from "../../../preferences/PreferencesSection";
+import { fetchSecurity, securityKeys } from "../../security/api";
+import { ConfirmFactorDialog } from "../../security/ConfirmFactorDialog";
 import { WhyCanI } from "../access/WhyCanI";
 import "../admin.css";
 import {
@@ -159,6 +161,13 @@ function PasswordSection() {
   const empty = { current: "", next: "", confirm: "" };
   const [values, setValues] = useState(empty);
   const [errors, setErrors] = useState<Partial<Record<PasswordField, string>>>({});
+  // With a second factor, a new password needs a fresh confirmation of it first.
+  const [confirming, setConfirming] = useState(false);
+  const security = useQuery({
+    queryKey: securityKeys.status,
+    queryFn: fetchSecurity,
+    enabled: confirming,
+  });
   const refs = {
     current: useRef<HTMLInputElement>(null),
     next: useRef<HTMLInputElement>(null),
@@ -173,6 +182,10 @@ function PasswordSection() {
       await queryClient.invalidateQueries({ queryKey: adminKeys.sessions });
     },
     onError: (failure) => {
+      if (isApiError(failure, "confirmation_required")) {
+        setConfirming(true);
+        return;
+      }
       // A wrong current password is a validation error of the field "current".
       if (isApiError(failure, "validation") && failure.field === "current") {
         setErrors({ current: t("admin.account.currentWrong") });
@@ -258,6 +271,21 @@ function PasswordSection() {
           </button>
         </div>
       </form>
+      {confirming && security.data !== undefined ? (
+        <ConfirmFactorDialog
+          open
+          title={t("security.dialog.confirmTitle")}
+          confirmLabel={t("admin.account.changePassword")}
+          status={security.data}
+          onClose={() => setConfirming(false)}
+          action={async () => {
+            setConfirming(false);
+            change.mutate();
+          }}
+        >
+          {t("security.dialog.passwordText")}
+        </ConfirmFactorDialog>
+      ) : null}
     </AccountSection>
   );
 }

@@ -449,6 +449,14 @@
 
     /* Skeleton loaders breathe slowly; components.css stops them for reduced motion. */
     --duration-pulse: 1.4s;
+
+    /* The QR code of an authenticator app's key: dark modules on a light field in every theme,
+       since phone cameras read inverted codes badly; the quiet zone is part of the field. */
+    --qr-dark: oklch(18% 0 0);
+    --qr-light: oklch(100% 0 0);
+    --size-qr: 10rem;
+    /* The recovery codes of the second factor, two columns of mono text. */
+    --size-recovery-codes: 26rem;
   }
 
   :root[data-theme="contrast"] {

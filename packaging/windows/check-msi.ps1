@@ -40,6 +40,35 @@ try {
         throw 'the copy of kalzit.exe the setup steps run is not the given program'
     }
     Write-Host "$Msi carries $Exe (SHA-256 $expected) as the installed program and as the setup copy"
+
+    # The wizard in German: the package lists the language and its embedded transform turns the
+    # settings page German without touching what gets installed.
+    . (Join-Path $PSScriptRoot 'language.ps1')
+    $languages = @(Get-PackageLanguages $Msi)
+    if ($languages -notcontains '1033' -or $languages -notcontains '1031') {
+        throw "the package lists the languages '$($languages -join ',')', expected 1033 and 1031"
+    }
+    $title = @(Get-TransformedValues $Msi 1031 "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'KalzitSettingsDlg' AND ``Control`` = 'Title'")
+    if ($title.Count -ne 1 -or $title[0] -notlike '*Servereinstellungen') {
+        throw "the German settings page is titled '$($title -join ' | ')', expected 'Servereinstellungen'"
+    }
+    $german = @(Get-TransformedValues $Msi 1031 "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'ProductLanguage'")
+    if ($german.Count -ne 1 -or $german[0] -ne '1031') { throw "the German transform sets ProductLanguage '$german', expected 1031" }
+    $codeQuery = "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'ProductCode'"
+    if ("$(Get-TransformedValues $Msi 0 $codeQuery)" -ne "$(Get-TransformedValues $Msi 1031 $codeQuery)") {
+        throw 'the German transform changes the product code'
+    }
+    # Upgrades and the downgrade guard match every language: no Upgrade row names one.
+    $upgradeQuery = 'SELECT `Language` FROM `Upgrade`'
+    foreach ($id in 0, 1031) {
+        $upgradeLanguages = @(Get-TransformedValues $Msi $id $upgradeQuery)
+        if ($upgradeLanguages.Count -lt 1 -or @($upgradeLanguages | Where-Object { $_ }).Count -ne 0) {
+            throw "the Upgrade table names the languages '$($upgradeLanguages -join ',')' (transform $id); it must name none"
+        }
+    }
+    $files = @(Get-TransformedValues $Msi 1031 "SELECT ``File`` FROM ``File``")
+    if ($files.Count -ne 2) { throw "the German transform leaves $($files.Count) files, expected 2" }
+    Write-Host "$Msi carries the wizard in English and German (languages $($languages -join ', '))"
 } finally {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $work
 }

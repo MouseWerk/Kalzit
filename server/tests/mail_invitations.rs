@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use base64::Engine;
 use http_body_util::BodyExt;
 use kalzit::app::{AppState, router};
-use kalzit::clock::ManualClock;
+use kalzit::clock::{Clock, ManualClock};
 use kalzit::config::Config;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -668,12 +668,20 @@ async fn password_link_requests_are_limited_alike_for_every_address() {
                 .await;
             statuses.push(r.status);
         }
-        assert_eq!(
-            statuses,
-            [StatusCode::ACCEPTED, StatusCode::ACCEPTED, StatusCode::ACCEPTED, StatusCode::TOO_MANY_REQUESTS],
-            "{email}"
-        );
+        // The per-address budget never refuses: nobody can block a person's reset by asking for
+        // it over and over. The answer stays the same; only the mails stop.
+        assert_eq!(statuses, [StatusCode::ACCEPTED; 4], "{email}");
     }
+    app.state.mail.settle().await;
+    assert_eq!(app.mails().iter().filter(|m| m.to == "lea@example.com").count(), 3, "three mails an hour");
+    // An admin's link has its own budget, which the requests above did not touch.
+    let (org,): (String,) = sqlx::query_as("SELECT id FROM orgs").fetch_one(&app.state.db).await.unwrap();
+    app.post(&format!("/api/orgs/{org}/members"), json!({ "email": "lea@example.com", "role": "viewer" }), &owner)
+        .await;
+    let (lea,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'lea@example.com'").fetch_one(&app.state.db).await.unwrap();
+    let r = app.post(&format!("/api/orgs/{org}/members/{lea}/password-link"), json!({}), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     // Per address: ten requests, whatever the address asked for.
     let mut last = StatusCode::OK;
     for n in 0..11 {
@@ -1024,5 +1032,138 @@ async fn a_team_with_a_team_space_takes_invitations_from_maintainers_and_admins_
     let audit = app.audit().await;
     let access = audit.iter().find(|(a, _)| a == "team_space.admin_access").expect("an admin access entry");
     assert!(access.1.contains("invitation.created") && access.1.contains(&id), "{}", access.1);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn a_new_account_from_an_invitation_sets_up_a_required_second_factor_first() {
+    let app = test_app(Setup::NoMail).await;
+    let (owner, org) = app.setup().await;
+    let r = app
+        .send(
+            Method::PATCH,
+            &format!("/api/orgs/{org}/settings/security.two_factor_required"),
+            Some(json!({ "value": "everyone", "version": 0 })),
+            Some(&owner),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.invite(&org, &["nora@example.com"], "viewer", &owner).await;
+    let link = r.body["items"][0]["link"].as_str().unwrap().to_string();
+    let token = link.rsplit('#').next().unwrap();
+    let r = app
+        .public("/api/auth/invitation/accept", json!({ "token": token, "name": "Nora", "password": PASSWORD }))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // No session yet: the second factor is set up first, like at any sign-in.
+    assert_eq!(r.body["secondFactor"]["setup"], true, "{}", r.body);
+    assert_eq!(r.body["secondFactor"]["requiredBy"]["kind"], "org", "{}", r.body);
+    let cookie = r.headers.get(header::SET_COOKIE).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+    assert!(!cookie.contains("kalzit_session="), "no full session: {cookie}");
+    // The account and its membership exist; the invitation is used.
+    let (members,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM org_members m JOIN users u ON u.id = m.user_id WHERE u.email = 'nora@example.com'",
+    )
+    .fetch_one(&app.state.db)
+    .await
+    .unwrap();
+    assert_eq!(members, 1);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn the_cleanup_removes_links_past_their_retention() {
+    let app = test_app(Setup::NoMail).await;
+    let (owner, org) = app.setup().await;
+    let now = app.clock.now_ms();
+    let r = app.invite(&org, &["old@example.com", "fresh@example.com"], "viewer", &owner).await;
+    let items = r.body["items"].as_array().unwrap().clone();
+    let id_of = |email: &str| {
+        items.iter().find(|i| i["invitation"]["email"] == email).unwrap()["invitation"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (old, fresh) = (id_of("old@example.com"), id_of("fresh@example.com"));
+    // One invitation ended long ago, the other just now; a reset link was used two days ago.
+    sqlx::query("UPDATE invitations SET expires_at = $1 WHERE id = $2")
+        .bind(now - 100 * 86_400_000_i64)
+        .bind(&old)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE invitations SET expires_at = $1 WHERE id = $2")
+        .bind(now - 1)
+        .bind(&fresh)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let (user,): (String,) = sqlx::query_as("SELECT id FROM users").fetch_one(&app.state.db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO password_resets (token_hash, user_id, email, password_fingerprint, created_at, expires_at, used_at) \
+         VALUES ('h1', $1, 'jonas@example.com', 'f', $2, $3, $3), ('h2', $1, 'jonas@example.com', 'f', $4, $5, NULL)",
+    )
+    .bind(&user)
+    .bind(now - 3 * 86_400_000_i64)
+    .bind(now - 2 * 86_400_000_i64)
+    .bind(now)
+    .bind(now + 3_600_000)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+
+    let changed = kalzit::mail::cleanup::run(&app.state.db, now).await.unwrap();
+    assert!(changed >= 3, "{changed}");
+    let invitations: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, token_ciphertext FROM invitations").fetch_all(&app.state.db).await.unwrap();
+    assert_eq!(invitations.len(), 1, "the long expired invitation is gone");
+    assert_eq!(invitations[0], (fresh, None), "the just expired one keeps its row but not its sealed link");
+    let resets: Vec<(String,)> =
+        sqlx::query_as("SELECT token_hash FROM password_resets").fetch_all(&app.state.db).await.unwrap();
+    assert_eq!(resets, vec![("h2".to_string(),)], "the used link is gone, the live one stays");
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn links_that_came_by_mail_confirm_the_address() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    let paul = app.user(&owner, "Paul", "paul@example.com").await;
+    let lea = app.user(&owner, "Lea", "lea@example.com").await;
+    sqlx::query("UPDATE users SET email_confirmed = 0 WHERE email IN ('paul@example.com', 'lea@example.com')")
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    // A mailed invitation, accepted with the account's session.
+    app.invite(&org, &["paul@example.com"], "viewer", &owner).await;
+    let token = app.mails().iter().find(|m| m.to == "paul@example.com").unwrap().token("invite");
+    let r = app.send(Method::POST, "/api/auth/invitation/accept", Some(json!({ "token": token })), Some(&paul)).await;
+    assert_eq!(r.body["emailConfirmed"], true, "{}", r.body);
+    // A password reset by mail.
+    app.public("/api/auth/password-reset", json!({ "email": "lea@example.com" })).await;
+    app.state.mail.settle().await;
+    let token = app.mails().iter().find(|m| m.to == "lea@example.com").unwrap().token("reset-password");
+    let r = app.public("/api/auth/password-reset/complete", json!({ "token": token, "password": NEW_PASSWORD })).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let (confirmed,): (i64,) = sqlx::query_as("SELECT email_confirmed FROM users WHERE email = 'lea@example.com'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(confirmed, 1);
+    drop(lea);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn second_factor_notices_go_by_mail() {
+    let app = test_app(Setup::Mail).await;
+    let (_, _) = app.setup().await;
+    let (user,): (String,) = sqlx::query_as("SELECT id FROM users").fetch_one(&app.state.db).await.unwrap();
+    kalzit::auth::second_factor::notify(&app.state, &user, kalzit::auth::second_factor::Notice::Reset);
+    app.state.mail.settle().await;
+    let mails = app.mails();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, "jonas@example.com");
+    assert!(mails[0].text().contains("zurückgesetzt"), "{}", mails[0].text());
     app.finish().await;
 }

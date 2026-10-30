@@ -190,7 +190,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
-      - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test cluster postgres -- --nocapture
+      - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
 
   # The privilege switch of `kalzit update apply|rollback` (server/tests/update_rights.rs): run as
   # root on a data directory a service account owns, which needs sudo, so it is ignored elsewhere.
@@ -654,9 +654,13 @@ jobs:
           $version = (Select-String -Path server/Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           ./packaging/windows/build.ps1 -Exe target/e2e/kalzit.exe -Version $version -Out dist/kalzit-ci-windows-x64.msi
           ./packaging/windows/check-msi.ps1 -Msi dist/kalzit-ci-windows-x64.msi -Exe target/e2e/kalzit.exe
+          # A next version, for the upgrade from the English installation with the German transform.
+          $parts = ($version -replace '[-+].*$', '').Split('.')
+          $next = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+          ./packaging/windows/build.ps1 -Exe target/e2e/kalzit.exe -Version $next -Out dist/kalzit-ci-next-windows-x64.msi
       - name: Install, check and uninstall
         shell: pwsh
-        run: ./.github/scripts/msi-test.ps1 -Msi dist/kalzit-ci-windows-x64.msi -Exe target/e2e/kalzit.exe -Logs "$env:RUNNER_TEMP/msi-logs"
+        run: ./.github/scripts/msi-test.ps1 -Msi dist/kalzit-ci-windows-x64.msi -UpgradeMsi dist/kalzit-ci-next-windows-x64.msi -Exe target/e2e/kalzit.exe -Logs "$env:RUNNER_TEMP/msi-logs"
       - name: Collect the logs
         if: failure()
         shell: pwsh

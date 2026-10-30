@@ -33,6 +33,8 @@ export interface FakeMailState {
   /** The user an accepted invitation signs in. */
   joined?: Me | undefined;
   acceptAnswer?: Refusal | undefined;
+  /** The sign-in's second step a new account must take first (`secondFactor`), if any. */
+  acceptSecondFactor?: unknown;
   resetAvailable: boolean;
   /** Password links by token. */
   resets: Record<string, { email: string; expiresAt: number }>;
@@ -252,6 +254,9 @@ export function handleMailRoute(
       orgs: [{ id: "o1", name: info.orgName, role: info.role }],
     };
     info.state = "accepted";
+    if (state.acceptSecondFactor !== undefined) {
+      return json(200, { secondFactor: state.acceptSecondFactor });
+    }
     server.state.signedIn = true;
     server.state.user = user;
     return json(200, user);

@@ -2,6 +2,7 @@
 //! one-time links invitations and password resets send (docs/ARCHITECTURE.md, "Mail, invitations
 //! and password reset").
 
+pub mod cleanup;
 pub mod links;
 pub mod message;
 pub mod settings;
@@ -30,6 +31,8 @@ pub const RESET_ACCOUNT_WINDOW_SECS: u64 = 60 * 60;
 pub const LINK_FAILURES: u32 = 20;
 /// Invitations (addresses, new or sent again) per organization per hour.
 pub const INVITES_PER_ORG: u32 = 100;
+/// Password links admins send to one member per hour.
+pub const MEMBER_LINKS: u32 = 5;
 /// Mails sent in the background at the same time (password links); beyond, a request's mail is
 /// dropped with a warning in the log. The answer never depends on it.
 const MAX_BACKGROUND_MAILS: usize = 32;
@@ -43,6 +46,9 @@ pub struct Mail {
     pub link_failures: RateLimiter,
     /// Invitations per organization (`INVITES_PER_ORG`).
     pub invites: RateLimiter,
+    /// Password links admins send to a member, per member (`MEMBER_LINKS`): apart from the
+    /// requests anyone can make, so those never use up an admin's sending and the other way round.
+    pub member_links: RateLimiter,
     own: tokio::sync::OnceCell<Arc<OwnEndpoints>>,
     tls: tokio::sync::OnceCell<Arc<rustls::ClientConfig>>,
     background: Arc<tokio::sync::Semaphore>,
@@ -58,6 +64,7 @@ impl Default for Mail {
             reset_account: RateLimiter::new(RESET_PER_ACCOUNT, RESET_ACCOUNT_WINDOW_SECS, Capacity::LARGE),
             link_failures: RateLimiter::new(LINK_FAILURES, RESET_WINDOW_SECS, Capacity::LARGE),
             invites: RateLimiter::new(INVITES_PER_ORG, 3600, Capacity::SMALL),
+            member_links: RateLimiter::new(MEMBER_LINKS, 3600, Capacity::SMALL),
             own: tokio::sync::OnceCell::new(),
             tls: tokio::sync::OnceCell::new(),
             background: Arc::new(tokio::sync::Semaphore::new(MAX_BACKGROUND_MAILS)),
@@ -161,6 +168,34 @@ pub async fn time_zone(state: &AppState, org_id: Option<&str>) -> ApiResult<Opti
     }
     let value = crate::settings::get(state, "appearance.time_zone").await?;
     Ok(value.as_str().filter(|z| *z != "browser").map(str::to_string))
+}
+
+/// Tells a person by mail about a change of their second factor (`auth::second_factor::notify`):
+/// in the background, in their language, when the server can send mail. Nothing is sent
+/// otherwise; the audit log is the record.
+pub fn notify_second_factor(state: &AppState, user_id: &str, notice: crate::auth::second_factor::Notice) {
+    let background = state.clone();
+    let user_id = user_id.to_string();
+    state.mail.spawn(state, async move {
+        let run = async {
+            let effective = settings::effective(&background).await?;
+            if !effective.configured() {
+                return Ok(());
+            }
+            let row: Option<(String,)> = sqlx::query_as("SELECT email FROM users WHERE id = $1 AND disabled = 0")
+                .bind(&user_id)
+                .fetch_optional(&background.db)
+                .await?;
+            let Some((email,)) = row else { return Ok(()) };
+            let lang = language(&background, Some(&user_id)).await?;
+            let content = templates::second_factor_notice(lang, notice, &host(&background));
+            send(&background, &effective, &email, &content).await.map_err(smtp::SendError::into_api)?;
+            Ok::<(), ApiError>(())
+        };
+        if let Err(e) = run.await {
+            tracing::warn!(user = %user_id, "a second factor notice was not sent: {}", e.message);
+        }
+    });
 }
 
 /// Sends `content` to `to` with the settings in force.

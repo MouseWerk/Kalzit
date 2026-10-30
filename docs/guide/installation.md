@@ -350,6 +350,9 @@ without it.
    | | HTTPS port, certificate file and key file | `3443` |
    | | open the port(s) in Windows Defender Firewall | not ticked |
 
+   The wizard is in German when Windows shows German, otherwise in English; to choose German on
+   any Windows, start it with `msiexec /i kalzit-<version>-windows-x64.msi TRANSFORMS=:1031`.
+
 3. When it is done, open `http://localhost:3000` (or the port you chose). The setup code for the
    first sign-in is in `setup-token.txt` in the data folder, which only administrators can open:
    in PowerShell opened with **Run as administrator**,

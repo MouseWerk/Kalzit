@@ -56,16 +56,20 @@ export async function inspectInvitation(token: string): Promise<InvitationInfo> 
   );
 }
 
-/** Joins: with name and password for a new account, with the token alone when signed in. */
+/**
+ * Joins: with name and password for a new account, with the token alone when signed in. A new
+ * account that must set up a second factor first gets the sign-in's second step instead of the
+ * user (`secondFactor`, checked by features/security), like at any sign-in.
+ */
 export async function acceptInvitation(
   token: string,
   account?: { name: string; password: string },
-): Promise<Me> {
-  return expectShape(
-    await request("POST", "/api/auth/invitation/accept", { token, ...account }),
-    isMe,
-    "invitation",
-  );
+): Promise<Me | { secondFactor: unknown }> {
+  const body = await request("POST", "/api/auth/invitation/accept", { token, ...account });
+  if (isRecord(body) && "secondFactor" in body) {
+    return { secondFactor: body.secondFactor };
+  }
+  return expectShape(body, isMe, "invitation");
 }
 
 export async function fetchResetAvailability(): Promise<boolean> {

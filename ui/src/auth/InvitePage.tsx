@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { forgetAccountData, logout, meQuery } from "../api/auth";
+import { forgetAccountData, logout, type Me, meQuery } from "../api/auth";
 import { isApiError } from "../api/client";
 import { useBrand } from "../appearance/brand";
 import { TextField } from "../components/TextField";
 import { isBuiltInRole, roleLabel } from "../features/admin/catalog";
 import { formatDateTime } from "../features/admin/components/format";
+import { isPrompt, type Prompt } from "../features/security/api";
+import { SecondFactorSetup } from "../features/security/SecondFactorStep";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
@@ -193,7 +195,7 @@ function StateCard({ title, text, action }: { title: string; text: string; actio
 function useJoined() {
   const queryClient = useQueryClient();
   const router = useRouter();
-  return async (me: Awaited<ReturnType<typeof acceptInvitation>>) => {
+  return async (me: Me) => {
     forgetToken("invite");
     forgetAccountData(queryClient);
     queryClient.setQueryData(meQuery.queryKey, me);
@@ -229,7 +231,8 @@ function Join({ token, summary }: { token: string; summary: ReactNode }) {
   const join = useMutation({
     mutationFn: () => acceptInvitation(token),
     retry: false,
-    onSuccess: joined,
+    // Someone signed in already passed any second step.
+    onSuccess: (result) => ("secondFactor" in result ? undefined : joined(result)),
   });
   const failed = acceptError(t, join.error);
   return (
@@ -323,10 +326,21 @@ function NewAccount({
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FieldErrors<AccountField>>({});
   const refs = { name: useRef<HTMLInputElement>(null), password: useRef<HTMLInputElement>(null) };
+  // The second factor the organization or server requires, set up before the session opens.
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const navigate = useNavigate();
   const accept = useMutation({
     mutationFn: () => acceptInvitation(token, { name: trimWhitespace(name), password }),
     retry: false,
-    onSuccess: joined,
+    onSuccess: (result) => {
+      if ("secondFactor" in result) {
+        // The account exists and the invitation is used; the link is done.
+        forgetToken("invite");
+        if (isPrompt(result.secondFactor)) setPrompt(result.secondFactor);
+        return;
+      }
+      return joined(result);
+    },
     onError: (error) => {
       const field = fieldFromServer(FIELD_ORDER, error);
       if (field !== undefined) {
@@ -335,6 +349,19 @@ function NewAccount({
       }
     },
   });
+
+  if (prompt !== null) {
+    return (
+      <SecondFactorSetup
+        prompt={prompt}
+        onSignedIn={(me) => void joined(me)}
+        onSignOut={() => {
+          void logout().finally(() => void navigate({ to: "/login" }));
+        }}
+        onExpired={() => void navigate({ to: "/login" })}
+      />
+    );
+  }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

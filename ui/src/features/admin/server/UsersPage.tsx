@@ -13,6 +13,8 @@ import {
 } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
+import { resetUserSecondFactor } from "../../security/api";
+import { ResetSecondFactorDialog, SecondFactorBadge } from "../../security/ResetDialog";
 import {
   type AdminUser,
   adminKeys,
@@ -47,6 +49,7 @@ export function UsersPage() {
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<AdminUser | null>(null);
   const [settingPassword, setSettingPassword] = useState<AdminUser | null>(null);
+  const [resetting, setResetting] = useState<AdminUser | null>(null);
   const users = list.items ?? [];
   const keys = useRowKeys(users.length);
 
@@ -138,6 +141,7 @@ export function UsersPage() {
                     date: formatDateTime(user.createdAt, language, timeZone),
                   })}
                 </span>
+                <SecondFactorBadge summary={user.secondFactor} />
               </div>
               <div className="admin-row__actions">
                 <label className="admin-check">
@@ -202,6 +206,18 @@ export function UsersPage() {
                 >
                   {t("admin.users.setPassword")}
                 </button>
+                {user.id !== me.id &&
+                ((user.secondFactor?.methods.length ?? 0) > 0 ||
+                  user.secondFactor?.lockedUntil != null) ? (
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    aria-label={t("security.admin.resetNamed", { name: user.name })}
+                    onClick={() => setResetting(user)}
+                  >
+                    {t("security.admin.reset")}
+                  </button>
+                ) : null}
               </div>
             </li>
           ))}
@@ -270,6 +286,18 @@ export function UsersPage() {
           name: confirming?.user.name ?? "",
         })}
       </ConfirmDialog>
+      {resetting === null ? null : (
+        <ResetSecondFactorDialog
+          name={resetting.name}
+          reset={(reason) => resetUserSecondFactor(resetting.id, reason)}
+          onClose={() => setResetting(null)}
+          onDone={() => {
+            notice.show({ message: t("security.admin.resetDone", { name: resetting.name }) });
+            setResetting(null);
+            void refresh();
+          }}
+        />
+      )}
       {settingPassword === null ? null : (
         <SetPasswordDialog
           user={settingPassword}

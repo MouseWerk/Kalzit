@@ -23,7 +23,7 @@ use crate::net::RequestInfo;
 /// How long a reset link works.
 pub const VALID_MS: i64 = 60 * 60_000;
 /// Used and expired links are kept this long, then deleted with the next request.
-const KEEP_MS: i64 = 24 * 3_600_000;
+pub const KEEP_MS: i64 = 24 * 3_600_000;
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
@@ -95,13 +95,26 @@ async fn request(
     let network = network_key(info.client_ip);
     let address = address_key("reset", info.client_ip);
     let counted = state.mail.reset_address.try_acquire(&address, &network, mono).map_err(too_many)?;
-    if let Err(wait) = state.mail.reset_network.try_acquire(&network, &network, mono) {
-        state.mail.reset_address.refund(&address, &counted);
-        return Err(too_many(wait));
-    }
+    let network_counted = match state.mail.reset_network.try_acquire(&network, &network, mono) {
+        Ok(c) => c,
+        Err(wait) => {
+            state.mail.reset_address.refund(&address, &counted);
+            return Err(too_many(wait));
+        }
+    };
     // Counted for every address, with or without an account, so the limit tells nothing either.
-    state.mail.reset_account.try_count(&account_key(&email), &network, mono).map_err(too_many)?;
-    if email.chars().count() <= super::MAX_EMAIL_CHARS && email.contains('@') {
+    // Used up, the answer stays the same and only the mail is left out: nobody can keep a person
+    // from resetting by asking for their address over and over, and the asking client's own
+    // budgets are not charged for a mail that does not go out.
+    let mail_due = match state.mail.reset_account.try_count(&account_key(&email), &network, mono) {
+        Ok(_) => true,
+        Err(_) => {
+            state.mail.reset_address.refund(&address, &counted);
+            state.mail.reset_network.refund(&network, &network_counted);
+            false
+        }
+    };
+    if mail_due && email.chars().count() <= super::MAX_EMAIL_CHARS && email.contains('@') {
         let background = state.clone();
         let client = info.client_ip;
         state.mail.spawn(&state, async move {
@@ -324,6 +337,8 @@ async fn complete(
         .bind(&token_hash)
         .execute(&mut *tx)
         .await?;
+    // The link came by mail, so the address reaches the account's owner.
+    sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&found.user_id).execute(&mut *tx).await?;
     // Whoever knew the old password, or took over a session, is signed out: always.
     let ended = session::delete_for_user(&mut *tx, &found.user_id, None).await?;
     let event = crate::audit::AuditEvent {
@@ -390,7 +405,7 @@ async fn send_member_link(
     let mono = state.clock.monotonic_ms();
     state
         .mail
-        .reset_account
+        .member_links
         .try_acquire(&account_key(&account.email), &network_key(info.client_ip), mono)
         .map_err(too_many)?;
     let token = issue(&state, &account, Some((&ctx.user.id, &ctx.org_id)), &info.client_ip.to_string()).await?;

@@ -2,7 +2,7 @@
 
 The routes of organizations' access model, the server administration of accounts and
 organizations, and the signed-in user's own account. Everything here is implemented in
-`server/src/routes/{members,teams,roles,grants,admin_users,admin_orgs,me,setup}.rs`; the rules behind it
+`server/src/routes/{members,teams,roles,grants,admin_users,admin_orgs,me,setup,second_factor,security}.rs`; the rules behind it
 are in `server/src/authz.rs` and `docs/ARCHITECTURE.md` ("Authorization").
 
 ## Conventions
@@ -579,7 +579,7 @@ setup_token_expired` (the code of the previous start), `409 setup_done`, `429 ra
 answer never contains the code.
 
 **`POST /setup`** `{ "token", "orgName", "name", "email", "password", "language"?, "theme"?,
-"timeZone"? }` creates the first organization and its owner (also server admin) and signs them in.
+"timeZone"? }` creates the first organization and its owner (also server admin) and signs them in. When the server requires a second factor (`security.two_factor_required` other than `off`, which before setup only the environment or `kalzit.toml` can set), it opens no session: it answers `200 { "secondFactor": Prompt }` with `setup: true` and the pending cookie, and the owner sets up a second factor through the routes of "Second factor" before the session opens.
 The optional fields set the server defaults `appearance.default_language` (`de`, `en`) and
 `appearance.default_theme` (`system`, `light`, `dark`, `contrast`), and the new organization's
 `appearance.time_zone` (an IANA name such as `Europe/Berlin`), with the rules of the settings
@@ -645,3 +645,228 @@ which signs this browser out). Errors: `404` (unknown, or another user's). Audit
 
 **`POST /me/sessions/revoke-others`** (no body needed) ends every session but this one. Audit
 `auth.sessions_revoked`.
+
+## Second factor
+
+`server/src/auth/second_factor.rs` (with `totp.rs`, `passkeys.rs`, `recovery.rs`) and the routes
+in `server/src/routes/{second_factor,security}.rs`. A person may protect their account with an
+authenticator app (TOTP), passkeys and recovery codes; the server and each organization can
+require it.
+
+### Methods
+
+- **Authenticator app (TOTP, RFC 6238)**: HMAC-SHA-1, 30-second steps, 6 digits. A code is
+  accepted for the current step and one step on either side, and each step only once per account
+  (a code cannot be used twice, nor an older one after a newer). The key (160 bits) is stored
+  AES-GCM encrypted with the secrets key, bound to the account; `kalzit secrets rotate`
+  re-encrypts it with the other secrets.
+- **Passkeys (WebAuthn)** through webauthn-rs. The relying party is the host of
+  `server.public_url`, or without it the host the request named (`Host`, or `X-Forwarded-Host` of
+  a trusted proxy) with its scheme; its id is that host name, so passkeys need a host name, not an
+  IP address (`second_factor.passkey_host`). No attestation is asked for; user verification is
+  preferred (a PIN, fingerprint or face where the authenticator has one); sign counters are
+  checked against the counter stored at that moment (under the passkey's row lock), and an assertion whose counter is not above it is refused (a replay or a cloned authenticator); the stored counter never moves back. A passkey is registered to one account only.
+- **Recovery codes**: 10 per set, each 16 characters from a 32-letter alphabet without look-alikes
+  (80 bits), shown as `xxxx-xxxx-xxxx-xxxx` once, when the set is made. Only a SHA-256 of each,
+  bound to the account, is stored; each works once. Input ignores case, spaces and dashes. A set
+  comes with the account's first method and goes when its last method is removed.
+
+Codes are compared in constant time. Audit summaries name methods and ids, never keys or codes.
+
+### Policy
+
+| Setting | Scope | Values |
+|---|---|---|
+| `security.two_factor_required` | server | `off` (default), `admins`, `everyone` |
+| `security.two_factor_required` | organization | `inherit` (default: the server's rule), `admins`, `everyone` |
+| `security.two_factor_methods` | server | `all` (default), `passkey`, `totp`: what may be set up |
+
+The server's rule is the minimum everywhere; an organization can only add to it (`off` is not
+accepted there). `admins` on the server means server admins and the administrators of any
+organization; in an organization, its administrators. An administrator is a member whose role
+holds `users:write`, `roles:write` or `settings:write`. A person needs a second factor when the
+server's rule or the rule of any organization they belong to applies to them. A method turned off
+keeps working for those who have it; it can no longer be set up. Where passkeys cannot work (Kalzit opened by an IP address), the authenticator app is offered instead even when only passkeys are allowed (`allowed` says so), so a required setup, the first owner's included, never dead-ends. Changing these settings (also by import or reset) needs a fresh confirmation (`403 confirmation_required`) when the admin has a second factor. There is no grace period: whoever
+must have a second factor and has none sets one up at the next sign-in, before a session opens.
+The break-glass administrator signs in through the same steps; nothing bypasses the policy.
+
+### Sign-in
+
+`POST /auth/login` answers as before when no second step follows (no method set up and none
+required). Otherwise it opens no session and answers `200 { "secondFactor": Prompt }` with the
+cookie `kalzit_pending` (`__Host-kalzit_pending` over HTTPS; `HttpOnly`, `SameSite=Lax`,
+`Path=/`, 5 minutes). That cookie names the half-signed-in state, a server-side record (only the
+SHA-256 of its token is stored) that lives five minutes and is deleted by the request that
+completes it. It is not a session: every other route answers `401 unauthenticated` to it. A
+password changed or an account disabled meanwhile ends it.
+
+```ts
+interface Prompt {
+  email: string;
+  setup: boolean;                 // no method yet and one is required: set one up first
+  methods: ("passkey" | "totp" | "recovery")[];   // what the account can use now
+  lastUsed: "passkey" | "totp" | null;
+  allowed: { passkey: boolean; totp: boolean };   // what may be set up
+  requiredBy: { kind: "server" } | { kind: "org"; id: string; name: string } | null;
+  lockedUntil: number | null;
+  expiresAt: number;
+}
+type Proof =
+  | { method: "totp"; code: string }
+  | { method: "recovery"; code: string }
+  | { method: "passkey"; credential: PublicKeyCredentialJSON };  // the browser's answer, base64url
+```
+
+| Method and path | Answer |
+|---|---|
+| `GET /auth/second-factor` | `200 Prompt` |
+| `POST /auth/second-factor` | `200 { "me": Me, "recoveryCodesRemaining"?: number }` and the session cookie |
+| `POST /auth/second-factor/passkey` | `200 { "publicKey": PublicKeyCredentialRequestOptionsJSON }` |
+| `POST /auth/second-factor/setup/totp` | `200 TotpSetup` |
+| `POST /auth/second-factor/setup/passkey` | `200 { "publicKey": PublicKeyCredentialCreationOptionsJSON }` |
+| `POST /auth/second-factor/setup` | `200 { "me": Me, "recoveryCodes": string[] }` and the session cookie |
+
+All are `Public` and need the pending cookie; without a valid one they answer `401
+unauthenticated` with `reason` `second_factor.pending_expired`. `POST /auth/second-factor` takes a
+`Proof`; `recoveryCodesRemaining` is set after a recovery code. With `setup: true` it answers
+`validation` `second_factor.setup_needed`, and the setup routes answer `403` without it.
+`POST /auth/second-factor/setup` takes `{ "method": "totp", "code" }` or `{ "method": "passkey",
+"name"?, "credential" }` and stores the method with a first set of recovery codes, all in the
+transaction that opens the session. A completed sign-in sets the session and device cookies as
+`POST /auth/login` does, removes the pending cookie, and counts as a fresh confirmation of the new
+session. `POST /auth/logout` also ends a half-signed-in state. Audit `auth.signed_in` with
+`{ "secondFactor": method }`, `user.second_factor_enrolled` after a setup.
+
+```ts
+interface TotpSetup {
+  secret: string;    // the key in Base32, in groups of four, for typing by hand
+  uri: string;       // otpauth://totp/...
+  qr: { size: number; path: string } | null;  // the QR code of `uri`: modules per side and an SVG path
+  issuer: string;    // the product name and host, as the app shows it
+  account: string;   // the email
+}
+```
+
+### Limits
+
+Wrong codes (app or recovery) are counted per account, whatever browser or address they come
+from: 5 within 15 minutes lock the second step of the account for 15 minutes (`429
+rate_limited`, `reason` `second_factor.locked`, `params.until` the end in milliseconds, with
+`Retry-After`). An attempt is counted before its code is checked, under the account's row lock, so
+parallel guesses cannot all be checked before the lock; more attempts at once than the budget are
+refused (`second_factor.busy`). A correct code starts the count over. Passkeys cannot be guessed
+and are not locked. On top, every wrong code counts against the address's budget of failed
+sign-ins (see Sign-in rate limits). A lockout and each used recovery code are audited
+(`auth.second_factor_locked`, `auth.recovery_code_used`; every wrong code
+`auth.second_factor_failed`) and, once a mail server is set up, mailed to the person.
+
+### Own account
+
+For any signed-in user (`Authenticated`).
+
+```ts
+interface SecurityStatus {
+  required: boolean;
+  requiredBy: Prompt["requiredBy"];
+  allowed: { passkey: boolean; totp: boolean };
+  totp: { createdAt: number; lastUsedAt: number | null } | null;
+  passkeys: { id: string; name: string; createdAt: number; lastUsedAt: number | null }[];
+  recoveryCodes: { remaining: number; total: number; createdAt: number } | null;
+  confirmedUntil: number | null;   // this session's fresh confirmation, while it lasts
+  lockedUntil: number | null;
+  hasPassword: boolean;
+}
+```
+
+| Method and path | Answer |
+|---|---|
+| `GET /me/security` | `200 SecurityStatus` |
+| `POST /me/security/confirm` | `200 { "confirmedUntil": number }` |
+| `POST /me/security/confirm/passkey` | `200 { "publicKey": ... }` (request options) |
+| `POST /me/security/totp/setup` | `200 TotpSetup` |
+| `POST /me/security/totp` | `200 { "recoveryCodes": string[] \| null }` |
+| `DELETE /me/security/totp` | `204` |
+| `POST /me/security/passkeys/setup` | `200 { "publicKey": ... }` (creation options) |
+| `POST /me/security/passkeys` | `201 { "passkey", "recoveryCodes": string[] \| null }` |
+| `PATCH /me/security/passkeys/{passkeyId}` | `200` the passkey |
+| `DELETE /me/security/passkeys/{passkeyId}` | `204` |
+| `POST /me/security/recovery-codes` | `200 { "recoveryCodes": string[] }` |
+
+**Fresh confirmation.** `POST /me/security/confirm` takes a `Proof` (for a passkey, after
+`POST /me/security/confirm/passkey`) and lets this session make changes for 5 minutes; codes
+count against the account's lockout; a confirmation is audited (`user.second_factor_confirmed`, the method). Removing a method, new recovery codes, `POST /me/password`
+and, on an account that already has a method, adding or replacing one answer `403
+confirmation_required` without it. A sign-in with a second factor counts as one.
+
+**`POST /me/security/totp`** `{ "code" }` checks the first code of the key from
+`/totp/setup` (valid 10 minutes) and stores it, replacing an app set up before. A wrong code
+answers `422 invalid_code` with `field` `code` and leaves the setup open. **`POST
+/me/security/passkeys`** `{ "name"?, "credential" }` (name up to 60 characters, default
+`Passkey`). Both answer the first set of recovery codes when the account had no method before.
+Removing the last method while a second factor is required is `409 conflict` (checked again inside the removal's transaction under the account's row lock, so two removals at once cannot both pass)
+(`second_factor.last_method`); removing the last method otherwise also removes the recovery
+codes. Errors: `403 forbidden` `second_factor.method_off`, `422 validation`
+`second_factor.setup_expired` (start again), `second_factor.passkey_refused` (the browser's answer
+does not hold), `409 conflict` `second_factor.passkey_known`. Audit `user.second_factor_enrolled`,
+`user.second_factor_removed` (`{ "userId", "method", "passkeyId"? }`), `user.passkey_renamed`,
+`user.recovery_codes_generated`.
+
+### Reset by an admin
+
+| Method and path | Access | Answer |
+|---|---|---|
+| `POST /orgs/{orgId}/members/{userId}/second-factor/reset` | `users:write` | `200 { "removed", "sessionsEnded" }` |
+| `POST /admin/users/{userId}/second-factor/reset` | server admin | `200 { "removed", "sessionsEnded" }` |
+| `GET /admin/security/two-factor` | server admin | `200 { "server", "orgs": [{ "id", "name", "policy", "effective", "missing" }] }` |
+
+A reset takes `{ "reason"? }` (up to 200 characters, kept in the audit entry), removes the app,
+passkeys, recovery codes, lockout and any half-signed-in state of the account and ends all its
+sessions; at the next sign-in the person sets up a new factor if one is required. The admin
+confirms with their own second factor first (`POST /me/security/confirm`, then the reset within 5
+minutes; `403 confirmation_required`), and must have one (`403` `second_factor.admin_needs_factor`).
+Nobody resets their own here (`second_factor.reset_self`). An organization admin can reset only
+members of their organization alone who are not server admins and hold nothing the admin does not;
+other accounts need a server admin (`second_factor.reset_needs_server_admin`). Audit
+`user.second_factor_reset` (`{ "userId", "removed", "sessionsEnded", "reason"? }`), and the person
+is mailed once a mail server is set up.
+
+Lists of people carry `secondFactor: { methods: ("passkey" | "totp")[], lockedUntil: number |
+null, required: boolean }`: `GET /orgs/{orgId}/members` (required by the server or this
+organization) and `GET /admin/users` (by the server or any of the person's organizations).
+`GET /admin/security/two-factor` lists every organization with its own value, the rule that
+applies there (the stricter of server and organization) and how many members must set up a
+second factor at their next sign-in.
+
+### Sign-ins through identity providers
+
+`auth::second_factor::FirstStep` is the hook for sign-ins that do not use a local password:
+`Provider { provider_id, mfa_done, provider_mfa_trusted }` skips Kalzit's second factor only when
+the provider says it checked one (`mfa_done`, such as OIDC `amr`) and the provider's switch in
+Kalzit trusts that (`provider_mfa_trusted`, off by default); otherwise Kalzit asks. `Directory`
+(LDAP) always asks. `routes::second_factor::finish_first_step` opens the session or starts the
+second step for any of them.
+
+## Reasons
+
+| Reason | Code | When |
+|---|---|---|
+| `second_factor.pending_expired` | `401 unauthenticated` | the half-signed-in state is missing, expired, used or ended |
+| `second_factor.locked` | `429 rate_limited` | too many wrong codes; `params.until` |
+| `second_factor.busy` | `429 rate_limited` | more code attempts at once than the budget |
+| `second_factor.setup_needed` | `422 validation` | the account must set up a second factor first |
+| `second_factor.setup_done` | `409 conflict` | a forced setup when the account got a second factor meanwhile |
+| `second_factor.setup_expired` | `422 validation` | the app setup or passkey dialog was not started or expired |
+| `second_factor.no_totp` | `422 validation` | the account has no authenticator app |
+| `second_factor.no_passkey` | `422 validation` | the account has no passkey |
+| `second_factor.none` | `422 validation` | new recovery codes without any method |
+| `second_factor.passkey_host` | `422 validation` | passkeys need a host name, not an IP address |
+| `second_factor.passkey_refused` | `422 validation`, `422 invalid_code` | the browser's passkey answer does not hold |
+| `second_factor.passkey_known` | `409 conflict` | this passkey is registered already |
+| `second_factor.last_method` | `409 conflict` | the last method while a second factor is required |
+| `second_factor.method_off` | `403 forbidden` | the method is turned off on this server |
+| `second_factor.admin_needs_factor` | `403 forbidden` | a reset by an admin without a second factor of their own |
+| `second_factor.reset_self` | `403 forbidden` | an admin's reset of their own second factor |
+| `second_factor.reset_needs_server_admin` | `403 forbidden` | the account belongs to another organization or is a server admin |
+
+`invalid_code` (`422`) is a wrong or used code; `confirmation_required` (`403`) a change that
+needs a fresh confirmation.

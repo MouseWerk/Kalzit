@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { forgetAccountData, login, meQuery } from "../api/auth";
+import { forgetAccountData, login, logout, type Me, meQuery } from "../api/auth";
 import { type ErrorCode, isApiError } from "../api/client";
 import { useBrandingSync } from "../appearance/api";
 import { LimitedMarkdown } from "../appearance/LimitedMarkdown";
 import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
+import { isPrompt, type Prompt } from "../features/security/api";
+import { SecondFactorSetup, SecondFactorStep } from "../features/security/SecondFactorStep";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
@@ -60,15 +62,30 @@ export function LoginPage() {
   const waiting = until !== null && left > 0;
   const waited = until !== null && left === 0;
 
+  // The second step, when the account has a second factor or must set one up.
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const [pendingEnded, setPendingEnded] = useState(false);
+
+  async function signedIn(me: Me, to?: string) {
+    // Whatever the previous session left (its preferences above all) is not this account's.
+    forgetAccountData(queryClient);
+    queryClient.setQueryData(meQuery.queryKey, me);
+    await router.navigate({ href: to ?? search.redirect ?? "/", replace: true });
+  }
+
   const signIn = useMutation({
     mutationFn: login,
     // A sign-in is never repeated on its own: each attempt counts against the sign-in limit.
     retry: false,
-    onSuccess: async (me) => {
-      // Whatever the previous session left (its preferences above all) is not this account's.
-      forgetAccountData(queryClient);
-      queryClient.setQueryData(meQuery.queryKey, me);
-      await router.navigate({ href: search.redirect ?? "/", replace: true });
+    onSuccess: async (result) => {
+      if ("secondFactor" in result) {
+        if (isPrompt(result.secondFactor)) {
+          setPendingEnded(false);
+          setPrompt(result.secondFactor);
+        }
+        return;
+      }
+      await signedIn(result);
     },
     onError: (error) => {
       const wait = waitUntil(error);
@@ -183,6 +200,34 @@ export function LoginPage() {
         detail={t("access.login.expiredDetail")}
       />
     );
+  }
+
+  if (prompt !== null) {
+    const back = () => {
+      setPrompt(null);
+      setPassword("");
+      signIn.reset();
+    };
+    const props = {
+      prompt,
+      onSignedIn: (me: Me, to?: string) => void signedIn(me, to),
+      onSignOut: () => {
+        void logout().finally(back);
+      },
+      onExpired: () => {
+        back();
+        setPendingEnded(true);
+      },
+    };
+    return (
+      <AccessLayout>
+        {prompt.setup ? <SecondFactorSetup {...props} /> : <SecondFactorStep {...props} />}
+      </AccessLayout>
+    );
+  }
+
+  if (pendingEnded && signIn.isIdle && status === null) {
+    status = <AccessNotice tone="info" icon="clock" title={t("security.signIn.expired")} />;
   }
 
   const busy = signIn.isPending;

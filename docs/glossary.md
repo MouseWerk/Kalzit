@@ -51,6 +51,9 @@ catalog.
 | Anmelden | Sign in | Sich mit E-Mail-Adresse und Passwort beim Server ausweisen. | Einloggen, Login (als Verb), Log in |
 | Abmelden | Sign out | Die Sitzung beenden. | Ausloggen, Log out |
 | Sitzung | Session | Die Anmeldung im Browser, bis zum Abmelden oder Ablauf. | |
+| Zweiter Faktor | Second factor | Was nach dem Passwort bestätigt, dass du es bist: Passkey, Authenticator-App oder Wiederherstellungscode. | Zwei-Faktor-Code |
+| Passkey | Passkey | Anmeldung mit Fingerabdruck, Gesicht, Geräte-PIN oder Sicherheitsschlüssel (WebAuthn). | Hauptschlüssel |
+| Wiederherstellungscode | Recovery code | Einmal gültiger Code, der den zweiten Faktor ersetzt, wenn das Gerät fehlt. | Backup-Code, Notfallcode |
 | Betreuer | Maintainer | Rolle in einem Team: darf Mitglieder des Teams hinzufügen und entfernen. | Maintainer (im Deutschen) |
 | Gesperrt | Locked | Ein Konto, das sich nicht anmelden kann, bis ein Server-Admin es entsperrt. | Deaktiviert, Disabled (in English) |
 | E-Mail-Adresse | Email address | Kennung zum Anmelden. | Mail-Adresse, E-mail |

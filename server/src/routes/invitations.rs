@@ -8,7 +8,7 @@
 //! provider confirmed the invited address (`sso_options` lists what the page offers).
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
@@ -31,8 +31,8 @@ pub const VALID_MS: i64 = 7 * 24 * 3_600_000;
 pub const MAX_EMAILS: usize = 50;
 /// Accepted invitations stay this long (for "already accepted"), expired ones this long after
 /// they ended (for "expired on ..."); then they are deleted when the next one is made.
-const KEEP_ACCEPTED_MS: i64 = 30 * 24 * 3_600_000;
-const KEEP_EXPIRED_MS: i64 = 90 * 24 * 3_600_000;
+pub const KEEP_ACCEPTED_MS: i64 = 30 * 24 * 3_600_000;
+pub const KEEP_EXPIRED_MS: i64 = 90 * 24 * 3_600_000;
 
 pub fn routes() -> Vec<RouteDef> {
     use Permission::UsersInvite;
@@ -902,7 +902,7 @@ async fn accept(
     Extension(info): Extension<RequestInfo>,
     headers: HeaderMap,
     JsonBody(body): JsonBody<AcceptBody>,
-) -> ApiResult<impl IntoResponse> {
+) -> ApiResult<axum::response::Response> {
     let found = find(&state, &info, &body.token).await?;
     let now = state.clock.now_ms();
     if found.accepted_at.is_some() {
@@ -920,7 +920,8 @@ async fn accept(
         });
         (summary, user_id.to_string())
     };
-    let mut out = HeaderMap::new();
+    // A link that went by mail proves the address reaches its owner.
+    let mailed = found.delivery == "sent";
     if let Some(user) = signed_in(&state, &info, &headers).await? {
         // Joining with the account this browser is signed in with: only the invited address.
         if user.email != found.email {
@@ -929,12 +930,15 @@ async fn accept(
         }
         let mut tx = crate::db::begin(&state.db).await?;
         redeem(&mut tx, &found, &user.id, now).await?;
+        if mailed {
+            sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&user.id).execute(&mut *tx).await?;
+        }
         let (summary, id) = audit_event(&user.id, false);
         let actor = Actor { user_id: &id, info: &info, at_ms: now };
         audit(&mut tx, &actor, Some(&found.org_id), "invitation.accepted", ("invitation", &found.id), summary).await?;
         let answer = super::me(&mut tx, user).await?;
         crate::db::commit(tx).await?;
-        return Ok((out, Json(answer)));
+        return Ok(Json(answer).into_response());
     }
     let (accounts,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1").bind(&found.email).fetch_one(&state.db).await?;
@@ -957,7 +961,7 @@ async fn accept(
     .bind(&hash)
     .bind(now)
     // Only a link that reached the address by mail confirms it.
-    .bind(i64::from(found.delivery == "sent"))
+    .bind(i64::from(mailed))
     .execute(&mut *tx)
     .await
     .map_err(|e| if is_unique_violation(&e) { account_exists() } else { e.into() })?;
@@ -965,15 +969,15 @@ async fn accept(
     let (summary, id) = audit_event(&user_id, true);
     let actor = Actor { user_id: &id, info: &info, at_ms: now };
     audit(&mut tx, &actor, Some(&found.org_id), "invitation.accepted", ("invitation", &found.id), summary).await?;
-    // Signed in right away, like after a sign-in; a second factor the organization requires is
-    // asked for by the sign-in rules that apply to every session.
-    let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
-    audit(&mut tx, &actor, None, "auth.signed_in", ("user", &user_id), json!({})).await?;
-    let user = SessionUser { id: user_id, email: found.email.clone(), name, is_server_admin: 0 };
-    let answer = super::me(&mut tx, user).await?;
+    // The account and its membership first: the sign-in rules below read them, so a second factor
+    // the organization (or the server) requires is asked for like at any sign-in. Should the sign-in
+    // fail after this, the person signs in with the password just set.
     crate::db::commit(tx).await?;
-    out.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    Ok((out, Json(answer)))
+    let user = SessionUser { id: user_id, email: found.email.clone(), name, is_server_admin: 0 };
+    let first = crate::auth::second_factor::FirstStep::Password { password_hash: Some(&hash) };
+    let plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
+    let tx = crate::db::begin(&state.db).await?;
+    super::second_factor::finish_first_step(tx, &state, &info, &headers, user, first, false, plan, now).await
 }
 
 /// Forgets the sealed copies of expired links: they can no longer be copied, and a rotation of the

@@ -44,6 +44,33 @@ describe("invitation page", () => {
     });
   });
 
+  it("sets up a required second factor before the new account is signed in", async () => {
+    const server = installFakeServer();
+    server.areas.mail.links[TOKEN] = invitationInfo();
+    server.areas.mail.acceptSecondFactor = {
+      email: "nora@example.com",
+      setup: true,
+      methods: [],
+      lastUsed: null,
+      allowed: { passkey: false, totp: true },
+      requiredBy: { kind: "org", id: "o1", name: "Analytical Engines" },
+      lockedUntil: null,
+      expiresAt: Date.now() + 600_000,
+    };
+    const { user } = renderApp(`/invite#${TOKEN}`);
+    await screen.findByRole("heading", { level: 1, name: "Welcome to Kalzit" });
+    await user.type(screen.getByLabelText("Your name"), "Nora Becker");
+    await user.type(screen.getByLabelText("Password"), NEW_PASSWORD);
+    await user.click(screen.getByRole("button", { name: "Accept invitation" }));
+    // The setup of the sign-in's second step, not the app.
+    await waitFor(() => expect(server.state.signedIn).toBe(false));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Accept invitation" })).toBeNull(),
+    );
+    expect(screen.queryByRole("navigation", { name: "Main navigation" })).toBeNull();
+    expect(screen.getAllByText(/Analytical Engines/).length).toBeGreaterThan(0);
+  });
+
   it("names the day an expired invitation ended and who to ask", async () => {
     const server = installFakeServer();
     server.areas.mail.links[TOKEN] = invitationInfo({ state: "expired" });

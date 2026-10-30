@@ -38,7 +38,7 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   field of a `validation` error. The list lives in `error::ERROR_CODES`; the UI's `ErrorCode`
   type is generated from it and every code has a translation (tested). Codes: `validation`, `unauthenticated`, `forbidden`,
   `not_found`, `method_not_allowed`, `payload_too_large`, `conflict`, `version_conflict`,
-  `rate_limited`, `cross_origin`, `invalid_credentials`, `setup_done`, `invalid_setup_token`,
+  `rate_limited`, `cross_origin`, `invalid_credentials`, `invalid_code`, `confirmation_required`, `setup_done`, `invalid_setup_token`,
   `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `busy`, `internal`.
   `busy` (503, with `Retry-After`) means the database could not give the request its lock in time
   (SQLite `SQLITE_BUSY`; PostgreSQL serialization failure, lock timeout or deadlock, the last also
@@ -84,6 +84,23 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   (estimated; every entry in a network of its own, maps at their largest): about 350 bytes per
   entry, so about 105 MB per large table and 420 MB for the four together, about 10 MB per small
   table, and about 350 bytes per user with failures in the account table.
+- Second factor (`auth::second_factor`, docs/api/access.md "Second factor"): TOTP (RFC 6238,
+  SHA-1, 30 s, 6 digits, ±1 step, each step once per account; the key AES-GCM encrypted with the
+  secrets key and re-encrypted by `secrets rotate`), passkeys through webauthn-rs (pinned
+  `=0.6.1-dev`, the pure-Rust line without OpenSSL; relying party from `server.public_url` or the
+  request's host, no attestation, user verification preferred, sign counters checked) and 10
+  recovery codes of 80 bits stored as SHA-256. After the password, `routes::second_factor`
+  either opens the session or starts the half-signed-in state: a `sign_in_challenges` row named
+  by the token in the `kalzit_pending` cookie, 5 minutes, deleted in the transaction that creates
+  the session; it is not a session, so every other route answers 401. A started passkey dialog or
+  app setup lives as a "ceremony" on that row or on the session. Code attempts are counted per
+  account before the check, under the row lock of `second_factor_lockouts` (5 in 15 minutes, then
+  15 minutes locked) and against the address's sign-in budget. Weakening changes need
+  `sessions.second_factor_at` within 5 minutes. Policy: `security.two_factor_required` on the
+  server (`off`/`admins`/`everyone`) and per organization (`inherit`/`admins`/`everyone`, only
+  stricter), `security.two_factor_methods`; required means the server's rule or any membership's
+  rule applies, without grace period. `FirstStep` is the hook for identity providers (Kalzit asks
+  unless the provider's switch trusts its MFA claim) and LDAP (always asks).
 - **Every query on an organization table filters by `ctx.org_id`.** Ids in the path or body
   (`datasourceId`, folder or dashboard ids) are resolved within the organization first; an id of
   another organization is `not_found`.
@@ -1107,11 +1124,20 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   email and a fingerprint of its password hash, so a link dies when the password changed in
   another way; a newer link replaces older ones. A request answers `202` at once and the lookup,
   the link and the mail run as background work (`Mail::spawn`), so neither the answer nor its time
-  tells whether an account exists. Requests are limited per client address (10 / 15 min), per
-  network (/24, /48; 30 / 15 min) and per email asked for (3 / hour, in a bounded table that
-  answers alike for every email). Unknown, used or expired tokens of both link kinds count per
-  client address (20 / 15 min). Completing always ends every session of the account and
-  clears the account's failed sign-ins; a second factor is never touched.
+  tells whether an account exists. Requests are limited per client address (10 / 15 min) and per
+  network (/24, /48; 30 / 15 min). Mails per email asked for are 3 / hour (a bounded table that
+  answers alike for every email); beyond, the answer stays 202 without a mail and the client's
+  counts are given back, so nobody can block someone's reset. Admins' links to a member have a
+  budget of their own (5 / hour). Unknown, used or expired tokens of both link kinds count per
+  client address (20 / 15 min). Completing always ends every session of the account, clears its
+  failed sign-ins and confirms its address; a second factor is never touched.
+- **Accepting into a second factor**: a new account from an invitation is committed with its
+  membership first, then opened through `second_factor::plan` / `finish_first_step` like a
+  sign-in, so a second factor the server or organization requires is set up before any session.
+- **Notices and retention**: `second_factor::notify` mails second factor changes through
+  `mail::notify_second_factor` (background, recipient's language, nothing without a mail server).
+  `mail::cleanup` runs hourly as the leader-only job `mail:cleanup` (`cluster::spawn_job`) and
+  removes links and invitations past their retention.
 - **Audit**: `mail.settings_changed`, `invitation.created|resent|revoked|link_copied|
   delivery_failed|accepted`, `auth.password_reset_requested|completed`; ids, roles and the mail
   server's answer with addresses removed, never a token or an email.
@@ -1906,6 +1932,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0013 | Explore query history (per user, 30 days) | explore history (#76) |
 | 0014 | team ownership of folders and dashboards (team spaces), team contexts | feat/team-spaces |
 | 0015 | audit log indexes by organization, time and id, and by resource | fix/m1-wave-3-perf |
+| 0028 | second factor: app keys, passkeys, recovery codes, lockouts, half-signed-in states; sessions' confirmation and ceremonies | m5/two-factor |
 
 ## M1 work streams
 

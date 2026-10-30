@@ -11,6 +11,12 @@ import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
 import { exploreHistoryFake } from "../features/explore/test/fakeExploreHistory";
 import { catalogFake, handleCatalogRoute } from "../features/plugins/test/fakeCatalog";
 import { handlePluginAdminRoute, pluginsFake } from "../features/plugins/test/fakePlugins";
+import {
+  type FakeSecurity,
+  fakeSecurityState,
+  handleResetRoute,
+  handleSecurityRoute,
+} from "../features/security/test/fakeSecurity";
 import { acmeFake, handleAcmeRoute } from "../features/settings/test/fakeAcme";
 import { handleUsageAdminRoute, usageFake } from "../features/usage/test/fakeUsage";
 import { shellFake } from "../shell/test/fakeShell";
@@ -173,6 +179,8 @@ export interface FakeServer {
   holdNext: (path: string) => () => void;
   /** The state of every area's fake routes, for arranging data and checking what was stored. */
   areas: FakeAreaStates;
+  /** The second factor of the signed-in account (features/security/test/fakeSecurity.ts). */
+  security: FakeSecurity;
 }
 
 export function json(status: number, body: unknown): Response {
@@ -206,6 +214,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
   });
   const server: FakeServer = {
     areas: areaStates,
+    security: fakeSecurityState(),
     state: {
       setupNeeded: options.setupNeeded ?? false,
       signedIn: options.signedIn ?? false,
@@ -401,8 +410,31 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       if (input.email !== state.user.email || input.password !== password) {
         return error(401, "invalid_credentials");
       }
+      // A second factor, or one that must be set up: the second step comes first.
+      const sf = server.security;
+      if (sf.totp || sf.passkeys.length > 0 || sf.required !== null) {
+        sf.pending = true;
+        const answer = await handle("/api/auth/second-factor", "GET", undefined);
+        return json(200, { secondFactor: await answer.json() });
+      }
       state.signedIn = true;
       return json(200, state.user);
+    }
+    const security = handleSecurityRoute(server.security, path, method, input, {
+      user: state.user,
+      signedIn: state.signedIn,
+      signIn: () => {
+        state.signedIn = true;
+      },
+    });
+    if (security !== undefined) {
+      return security;
+    }
+    const reset = state.signedIn
+      ? handleResetRoute(server.security, path, method, body)
+      : undefined;
+    if (reset !== undefined) {
+      return reset;
     }
     if (
       (path === "/api/auth/logout" || path === "/api/auth/logout?forgetBrowser=true") &&

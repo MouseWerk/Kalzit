@@ -223,6 +223,61 @@ pub fn password_elsewhere(lang: Lang, host: &str) -> Content {
     Content { text: text(&paragraphs, None, &footer), html: html(&paragraphs, None, &footer), subject }
 }
 
+/// A change of the second factor (`auth::second_factor::Notice`), Identity board frame 6:
+/// "Sicherheitshinweise". No link: what to do is to sign in as usual, or to tell an admin.
+pub fn second_factor_notice(lang: Lang, notice: crate::auth::second_factor::Notice, host: &str) -> Content {
+    use crate::auth::second_factor::Notice;
+    let (subject, what) = match (lang, notice) {
+        (Lang::De, Notice::Locked) => (
+            "Zweiter Faktor vorübergehend gesperrt",
+            format!(
+                "Bei der Anmeldung an deinem Konto bei {host} wurde der zweite Faktor zu oft falsch eingegeben; er ist für eine Weile gesperrt."
+            ),
+        ),
+        (Lang::De, Notice::RecoveryCodeUsed) => (
+            "Wiederherstellungscode benutzt",
+            format!("Dein Konto bei {host} wurde mit einem Wiederherstellungscode angemeldet."),
+        ),
+        (Lang::De, Notice::Changed) => {
+            ("Zweiter Faktor geändert", format!("Der zweite Faktor deines Kontos bei {host} wurde geändert."))
+        }
+        (Lang::De, Notice::Reset) => (
+            "Zweiter Faktor zurückgesetzt",
+            format!(
+                "Ein Admin hat den zweiten Faktor deines Kontos bei {host} zurückgesetzt. Bei der nächsten Anmeldung richtest du einen neuen ein, wenn er verlangt ist."
+            ),
+        ),
+        (Lang::En, Notice::Locked) => (
+            "Second factor locked for a while",
+            format!(
+                "The second factor was entered wrongly too often when signing in to your account at {host}; it is locked for a while."
+            ),
+        ),
+        (Lang::En, Notice::RecoveryCodeUsed) => {
+            ("Recovery code used", format!("Your account at {host} was signed in with a recovery code."))
+        }
+        (Lang::En, Notice::Changed) => {
+            ("Second factor changed", format!("The second factor of your account at {host} was changed."))
+        }
+        (Lang::En, Notice::Reset) => (
+            "Second factor reset",
+            format!(
+                "An admin reset the second factor of your account at {host}. At your next sign-in you set up a new one where it is required."
+            ),
+        ),
+    };
+    let footer = match lang {
+        Lang::De => "Warst du das nicht? Sag sofort einem Admin deiner Organisation Bescheid.",
+        Lang::En => "Not you? Tell an admin of your organization right away.",
+    };
+    let paragraphs = vec![what];
+    Content {
+        text: text(&paragraphs, None, footer),
+        html: html(&paragraphs, None, footer),
+        subject: subject.to_string(),
+    }
+}
+
 /// The link that confirms an account's address (`routes::email_confirmation`).
 pub fn confirm_email(lang: Lang, link: &str, host: &str) -> Content {
     let (subject, paragraphs, button, footer) = match lang {
