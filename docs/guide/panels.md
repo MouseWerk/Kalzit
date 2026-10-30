@@ -209,6 +209,7 @@ The options are grouped as in the panel editor:
   the selection.
 - **Click on a node**: the **Action** (details, set the variable, load neighbours), the dashboard
   variable a click sets with the node property it takes, and **Open the details too**.
+- **Layout** (hierarchy only): **Kalzit layers (default)** or **ELK layered**, see below.
 - **Explorer**, **Limits and groups** (**Node limit**, **Group nodes by label**) and **Time**
   (an edge property with a timestamp adds a time slider).
 
@@ -238,7 +239,15 @@ explorer is not available for TigerGraph sources.
 ![Explorer mode: a customer's orders loaded as a step in the Steps line](../screenshots/graph-explorer-dark.png)
 
 A **Hierarchy** lays out at most 2,000 nodes; a larger result offers **Show as a network**. Edges
-that close a cycle are noted. **Paths** shows the first path open and the others folded with their
+that close a cycle are noted. By default it uses Kalzit's own layered layout. Under **Layout** you
+can pick **ELK layered** (the Eclipse Layout Kernel) instead, with its **Direction** (top to
+bottom, left to right, bottom to top, right to left), **Node spacing** and **Layer spacing** in px
+and the **Edge routing** (orthogonal or polyline; edges are still drawn straight, the routing sets
+how much room ELK keeps for them). ELK loads only when a panel uses it, so the first drawing takes
+a moment longer and says "Loading ELK and arranging the graph"; the same result always gets the
+same layout. If ELK cannot run, the panel shows Kalzit's layout and says so. ELK runs in a web
+worker; a browser without workers arranges at most 300 nodes with ELK and shows Kalzit's layout
+for larger graphs. **Paths** shows the first path open and the others folded with their
 chain of nodes; each edge shows its type, direction and properties, each node its labels and first
 two properties; at most 50 paths, with a note when there are more, and **Show as table**.
 Browsers without WebGL 2 show every graph as a table; **Show as table** is also available on

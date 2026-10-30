@@ -556,6 +556,13 @@ Kalzit is licensed under the [GNU Affero General Public License v3.0](LICENSE). 
 modified Kalzit to users over a network, the license requires you to make your source code
 available to them.
 
+Third-party components keep their own licenses; Settings, About lists every package with its
+license, and the notices ship with the interface (`THIRD-PARTY-NOTICES.txt`). The optional ELK
+hierarchy layout uses [elkjs](https://github.com/kieler/elkjs), offered under "EPL-2.0 OR
+GPL-3.0-or-later"; Kalzit takes it under GPL-3.0-or-later, which section 13 of the GPLv3 and the
+AGPLv3 allow to combine with Kalzit, and ships it unmodified as a separate file that loads only
+when a panel uses ELK.
+
 Product names and logos are trademarks of their owners. Kalzit uses them only to identify the
 data source it connects to, with no endorsement implied (see
 [ui/src/assets/logos/NOTICE.md](ui/src/assets/logos/NOTICE.md)). Kalzit is an independent
@@ -566,6 +573,7 @@ implementation and is not affiliated with any other dashboard product.
 Kalzit builds on excellent open source work, among others:
 [uPlot](https://github.com/leeoniya/uPlot) for time series,
 [Sigma.js](https://www.sigmajs.org) and [Graphology](https://graphology.github.io) for graphs,
+[elkjs](https://github.com/kieler/elkjs) for the optional ELK hierarchy layout,
 [CodeMirror](https://codemirror.net) for the query editors,
 [React](https://react.dev) and [TanStack](https://tanstack.com) for the interface,
 [axum](https://github.com/tokio-rs/axum), [Tokio](https://tokio.rs),
