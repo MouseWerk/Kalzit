@@ -741,11 +741,16 @@ pub struct SsoOption {
     pub name: String,
 }
 
-/// The single sign-on providers an invitation page offers. None yet: the package that brings
-/// single sign-on fills this in and accepts through `redeem` once the provider confirmed the
-/// invited address.
-pub async fn sso_options(_state: &AppState, _org_id: &str) -> ApiResult<Vec<SsoOption>> {
-    Ok(Vec::new())
+/// The single sign-on providers an invitation page offers (`id` is the provider's slug, for its
+/// start route): the enabled ones. Signed in through one with the invited address, the person
+/// joins with the token alone.
+pub async fn sso_options(state: &AppState, _org_id: &str) -> ApiResult<Vec<SsoOption>> {
+    Ok(crate::sso::store::all(&state.read_db)
+        .await?
+        .into_iter()
+        .filter(|p| p.enabled != 0)
+        .map(|p| SsoOption { id: p.slug, name: p.name })
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -816,7 +821,7 @@ async fn inspect(
         state: state_name,
         account_exists: accounts > 0,
         signed_in_as: signed.map(|u| SignedInView { name: u.name, email: u.email }),
-        password: true,
+        password: crate::sso::password_sign_in_allowed_in(&state, &found.org_id).await?,
     }))
 }
 
@@ -944,6 +949,15 @@ async fn accept(
         sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1").bind(&found.email).fetch_one(&state.db).await?;
     if accounts > 0 {
         return Err(account_exists());
+    }
+    // With password sign-in off for the server or the inviting organization (docs/api/sso.md), a
+    // new person gets no password: they sign in through an identity provider, then open the link
+    // again and join with that account (the branch above).
+    if !crate::sso::password_sign_in_allowed_in(&state, &found.org_id).await? {
+        return Err(ApiError::forbidden(
+            "password sign-in is off here; sign in through a provider, then open the link again",
+        )
+        .because("sso.password_sign_in_off"));
     }
     let name = super::clean_name(body.name.as_deref().unwrap_or_default(), "name").map_err(|e| e.with_field("name"))?;
     let new_password = body.password.unwrap_or_default();

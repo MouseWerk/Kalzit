@@ -225,5 +225,8 @@
   "access.confirm.confirm": "Confirm address",
   "access.confirm.signInTitle": "Sign in first.",
   "access.confirm.signInText": "Only the account the link was made for can confirm it. Sign in with it; then this page continues.",
-  "access.confirm.signIn": "Sign in"
+  "access.confirm.signIn": "Sign in",
+  "access.invite.ssoContinue": "Continue with {provider}",
+  "access.invite.ssoOnly": "At {org} you sign in through your provider. You come back here afterwards and join.",
+  "access.invite.orPassword": "or with a new password"
 }

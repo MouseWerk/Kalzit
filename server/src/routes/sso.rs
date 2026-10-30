@@ -513,13 +513,21 @@ async fn load_target(state: &AppState, row: &SignInRow, slug: &str) -> ApiResult
                     .decrypt(&store::test_owner(&row.id), CLIENT_SECRET, &blob)
                     .map_err(|e| ApiError::internal("sso", e))?
             }
-            _ => match &draft.provider_id {
-                Some(id) => match store::secret(&state.db, &state.secrets, id, CLIENT_SECRET).await? {
+            _ => {
+                // As for a check: the stored secret only goes to the stored issuer and client.
+                let Some(id) = &draft.provider_id else { return Ok(None) };
+                let Some(stored) = store::by_id(&state.db, id).await? else { return Ok(None) };
+                let same = stored
+                    .oidc()
+                    .is_ok_and(|c| c.issuer == draft.config.issuer && c.client_id == draft.config.client_id);
+                if !same {
+                    return Ok(None);
+                }
+                match store::secret(&state.db, &state.secrets, id, CLIENT_SECRET).await? {
                     Some(s) => zeroize::Zeroizing::new(s.as_str().to_string()),
                     None => return Ok(None),
-                },
-                None => return Ok(None),
-            },
+                }
+            }
         };
         let stored = match &draft.provider_id {
             Some(id) => store::by_id(&state.db, id).await?,
@@ -1058,7 +1066,20 @@ async fn update(
         store::set_secret(&mut tx, &state.secrets, &id, CLIENT_SECRET, secret).await?;
     }
     let actor = Actor { user_id: &admin.id, info: &info, at_ms: now };
+    let mut touched = BTreeSet::new();
     if issuer_changed {
+        // What the provider decided under "IdP entscheidet" goes with the links (the memberships
+        // and teams it gave), recorded per person as at a sign-in.
+        let managed: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT user_id FROM sso_managed WHERE provider_id = $1 ORDER BY user_id")
+                .bind(&id)
+                .fetch_all(&mut *tx)
+                .await?;
+        let revoke = crate::sso::mapping::Outcome { refused: true, orgs: Vec::new() };
+        for (user_id,) in managed {
+            touched
+                .extend(crate::sso::signin::apply(&mut tx, &info, (&id, &current.slug), &user_id, &revoke, now).await?);
+        }
         let removed = sqlx::query("DELETE FROM sso_identities WHERE provider_id = $1")
             .bind(&id)
             .execute(&mut *tx)
@@ -1085,6 +1106,7 @@ async fn update(
     )
     .await?;
     crate::db::commit(tx).await?;
+    crate::sso::rights_changed(&state, &touched).await;
     state.sso.forget(&old.issuer);
     state.sso.forget(&valid.config.issuer);
     let row = load_provider(&state, &id).await?;

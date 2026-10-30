@@ -99,7 +99,10 @@ Then the account:
    (`users.email_confirmed`: made from an invitation link an admin passed on) is never taken over:
    `sso=email_taken`.
 3. Otherwise, when the provider may create accounts (`createAccounts`), a new account with the
-   email and name of the token and no password (`auth.sso_account_created`).
+   email and name of the token and no password (`auth.sso_account_created`). Its email counts as
+   confirmed only when the provider verified it (as in 2.); otherwise it is unconfirmed: it cannot
+   be added to an organization by that address or linked by email until its owner confirms it by
+   mail, and, without a password, a password link gives it none (docs/api/mail.md).
 4. Otherwise `sso=no_account`.
 
 A disabled account answers `sso=disabled`, the unmapped rule `refuse` answers `sso=unmapped`
@@ -146,7 +149,11 @@ sign-in off for its members.
 With password sign-in off (for the server, or for one of the person's organizations),
 `POST /auth/login` answers `403 forbidden` with the reason `sso.password_sign_in_off`, but only
 after a correct password, so nobody can probe accounts with it. An organization's `off` never
-applies to server admins. The break-glass admin signs in
+applies to server admins. With password sign-in off for the server or the inviting organization,
+an invitation is accepted through a provider only: `POST /auth/invitation` answers
+`password: false` and the providers in `sso`, and accepting with a password answers
+`403 forbidden`, reason `sso.password_sign_in_off`; the person signs in through a provider with
+the invited address and accepts with the token alone. The break-glass admin signs in
 through `POST /auth/login/local`, the form of the fixed, unlinked page `/anmelden/lokal`:
 
 ### `POST /auth/login/local`
@@ -281,7 +288,9 @@ secret is wrong. Answers
   client id or secret changed, `checkToken`. Subjects are only unique per issuer, so a new issuer
   needs `confirmIssuerChange: true` while people are linked (`409 conflict`, reason
   `sso.issuer_change_confirm`, param `people`); the links, the groups and what the provider
-  decided for them are then removed (audit `sso.provider_identities_removed`). A sign-in never
+  decided for them are then removed: the memberships and teams it gave under "IdP entscheidet"
+  end (one `sso.memberships_changed` per person) and the links go (audit
+  `sso.provider_identities_removed`). A sign-in never
   uses a link made through another issuer. Without a valid one: `422 validation`, reason
   `sso.check_required`. A stale `version`: `409 version_conflict`. Audit `sso.provider_updated`
   with the changed field names.

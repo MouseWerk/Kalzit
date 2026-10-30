@@ -256,10 +256,16 @@ impl Reply {
 }
 
 async fn test_app() -> TestApp {
+    test_app_with(None).await
+}
+
+/// The app, with `server.public_url` when links must go out by mail.
+async fn test_app_with(public_url: Option<&str>) -> TestApp {
     let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:3999".into();
+    config.server.public_url = public_url.map(str::to_string);
     // An unencrypted relay on this machine, which only the file may set.
     let (smtp_port, inbox) = fake_smtp().await;
     config.smtp.host = "127.0.0.1".into();
@@ -711,6 +717,13 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards", "no mfa in amr: Kalzit asks");
     let (r, _) = sign_in(&app, &idp, &verified_nora, |c| c["amr"] = json!(["pwd", "mfa"])).await;
     assert_eq!(r.location(), "/dashboards");
+    // That sign-in did not take over what the earlier one kept for its second step.
+    let deferred: Option<(String,)> = sqlx::query_as("SELECT provider_id FROM sso_pending_mappings WHERE user_id = $1")
+        .bind(&nora_id.0)
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(deferred.is_none(), "a pending mapping belongs to its own sign-in");
     sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 0").execute(&app.state.db).await.unwrap();
 
     // A test sign-in signs nobody in and shows the groups and what the mapping makes of them.
@@ -864,6 +877,17 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert!(detail.contains("this Kalzit server"), "refused before connecting, not unreachable: {detail}");
     other.lock().unwrap().token_endpoint = None;
 
+    // Someone the provider made an admin ("IdP entscheidet"), before the issuer changes.
+    let enable = |on: bool| json!({ "enabled": on });
+    let enabled_path = format!("/api/admin/sign-in/providers/{provider_id}/enabled");
+    app.send(Method::PATCH, &enabled_path, Some(enable(true)), Some(&admin)).await;
+    let tess = Who { sub: "sub-tess", email: "tess@example.de", verified: true, groups: &["kalzit-admins"] };
+    let (r, _) = sign_in(&app, &idp, &tess, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    let tess_id: (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'tess@example.de'").fetch_one(&app.state.db).await.unwrap();
+    app.send(Method::PATCH, &enabled_path, Some(enable(false)), Some(&admin)).await;
+
     // Another issuer: subjects are only unique per issuer, so the links go, after a confirmation.
     let r = app.post("/api/admin/sign-in/providers/check", form(&other_issuer, Some(CLIENT_SECRET)), &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
@@ -890,9 +914,133 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         .unwrap();
     assert_eq!(managed, 0);
     assert!(app.audit_actions().await.contains(&"sso.provider_identities_removed".to_string()));
+    // The memberships the provider decided went with them, recorded per person.
+    let member: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE user_id = $1")
+        .bind(&tess_id.0)
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(member.is_none(), "{member:?}");
+    let revoked: Vec<(String,)> = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'sso.memberships_changed' AND resource_id = $1",
+    )
+    .bind(&tess_id.0)
+    .fetch_all(&app.state.db)
+    .await
+    .unwrap();
+    assert!(revoked.iter().any(|(s,)| s.contains("removed")), "{revoked:?}");
 
     // Not for anyone but server admins.
     let r = app.get("/api/admin/sign-in", &lea_session).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
+    app.finish().await;
+}
+
+/// The plain text of a mail the fake server received.
+fn mail_text(data: &str) -> String {
+    let part = data.split("Content-Type: text/plain").nth(1).unwrap_or_default();
+    let body = part.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let encoded: String = body.lines().take_while(|l| !l.starts_with("--")).collect();
+    String::from_utf8(STANDARD.decode(encoded.trim()).unwrap_or_default()).unwrap_or_default()
+}
+
+/// Adds the provider `mueller-sso` for `issuer` and answers its id.
+async fn add_provider(app: &TestApp, issuer: &str, admin: &str) -> String {
+    let r = app.post("/api/admin/sign-in/providers/check", form(issuer, Some(CLIENT_SECRET)), admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let mut body = form(issuer, Some(CLIENT_SECRET));
+    body["checkToken"] = r.body["checkToken"].clone();
+    let r = app.post("/api/admin/sign-in/providers", body, admin).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    r.body["id"].as_str().unwrap().to_string()
+}
+
+/// An account a provider made from an email it did not verify is unconfirmed: nobody adds it by
+/// that address, no other identity is linked to it by email, and a password link gives it no
+/// password. With password sign-in off, an invitation is accepted through a provider only.
+#[tokio::test]
+async fn unverified_provider_accounts_and_invitations_without_passwords() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, admin_id, org) = app.setup().await;
+    add_provider(&app, &issuer, &admin).await;
+
+    let uwe = Who { sub: "sub-uwe", email: "uwe@example.de", verified: false, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &uwe, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    let (confirmed,): (i64,) = sqlx::query_as("SELECT email_confirmed FROM users WHERE email = 'uwe@example.de'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(confirmed, 0, "the provider did not verify the address");
+    let r = app
+        .post(&format!("/api/orgs/{org}/members"), json!({ "email": "uwe@example.de", "role": "viewer" }), &admin)
+        .await;
+    assert_eq!(r.reason(), "mail.email_unconfirmed", "{}", r.body);
+    let other = Who { sub: "sub-uwe-elsewhere", email: "uwe@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &other, |_| {}).await;
+    assert_eq!(outcome_of(&r), "email_taken", "no other identity is linked to it by email");
+    let r = app.send(Method::POST, "/api/auth/password-reset", Some(json!({ "email": "uwe@example.de" })), None).await;
+    assert_eq!(r.status, StatusCode::ACCEPTED, "{}", r.body);
+    app.state.mail.settle().await;
+    let (links,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM password_resets").fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(links, 0, "no password link for an account without a password");
+    let mails = app.inbox.lock().unwrap().clone();
+    let elsewhere = mails.iter().find(|(to, _)| to == "uwe@example.de").map(|(_, d)| mail_text(d)).unwrap_or_default();
+    assert!(elsewhere.contains("Anmeldung deiner"), "the mail says where the password lives: {elsewhere}");
+
+    // A verified address makes a confirmed account.
+    let vera = Who { sub: "sub-vera", email: "vera@example.de", verified: true, groups: &[] };
+    sign_in(&app, &idp, &vera, |_| {}).await;
+    let (confirmed,): (i64,) = sqlx::query_as("SELECT email_confirmed FROM users WHERE email = 'vera@example.de'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(confirmed, 1);
+
+    // Password sign-in off: an invitation offers the provider and takes no password.
+    sqlx::query(
+        "INSERT INTO user_passkeys (id, user_id, credential_id, name, credential, created_at) \
+         VALUES ('pk-admin', $1, 'cred-admin', 'Schlüssel', '{}', 0)",
+    )
+    .bind(&admin_id)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let off = json!({ "localPassword": "off", "passwordForm": "hidden", "breakGlassUserId": admin_id });
+    let r = app.put("/api/admin/sign-in/local", off, &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app
+        .post(
+            &format!("/api/orgs/{org}/invitations"),
+            json!({ "emails": ["neu@example.de"], "role": "viewer" }),
+            &admin,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    app.state.mail.settle().await;
+    let mails = app.inbox.lock().unwrap().clone();
+    let text = mails.iter().find(|(to, _)| to == "neu@example.de").map(|(_, d)| mail_text(d)).unwrap_or_default();
+    let token: String = text
+        .split("/invite#")
+        .nth(1)
+        .unwrap_or_default()
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    assert!(!token.is_empty(), "the invitation link: {text}");
+    let r = app.send(Method::POST, "/api/auth/invitation", Some(json!({ "token": token })), None).await;
+    assert_eq!(r.body["password"], json!(false), "{}", r.body);
+    assert_eq!(r.body["sso"][0]["id"], json!("mueller-sso"));
+    let accept = json!({ "token": token, "name": "Neu", "password": PASSWORD });
+    let r = app.send(Method::POST, "/api/auth/invitation/accept", Some(accept), None).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "sso.password_sign_in_off"), "{}", r.body);
+    let made: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = 'neu@example.de'")
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(made.is_none(), "no account with a password");
     app.finish().await;
 }

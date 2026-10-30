@@ -82,6 +82,20 @@ describe("invitation page", () => {
     await waitFor(() => expect(location().pathname).toBe("/login"));
   });
 
+  it("offers only the provider when password sign-in is off", async () => {
+    const server = installFakeServer();
+    server.areas.mail.links[TOKEN] = invitationInfo({
+      password: false,
+      sso: [{ id: "mueller-sso", name: "Müller SSO" }],
+    });
+    renderApp(`/invite#${TOKEN}`);
+    const button = await screen.findByRole("link", { name: "Continue with Müller SSO" });
+    expect(button.getAttribute("href")).toBe("/api/auth/sso/mueller-sso/start?returnTo=%2Finvite");
+    expect(screen.getByText(/you sign in through your provider/)).toBeTruthy();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept invitation" })).toBeNull();
+  });
+
   it("names the day an expired invitation ended and who to ask", async () => {
     const server = installFakeServer();
     server.areas.mail.links[TOKEN] = invitationInfo({ state: "expired" });

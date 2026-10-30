@@ -480,6 +480,10 @@ pub struct Person {
     pub subject: String,
     pub username: Option<String>,
     pub email: Option<String>,
+    /// The same address as Kalzit keeps typed-in ones (`routes::normalize_email`: the domain as
+    /// written), so an account made with an internationalized domain is found either way.
+    #[serde(skip)]
+    pub email_as_typed: Option<String>,
     pub email_verified: bool,
     pub name: Option<String>,
     pub groups: Vec<String>,
@@ -531,6 +535,9 @@ pub fn person(config: &OidcConfig, id_claims: &Map<String, Value>, userinfo: &Ma
         subject: id_claims.get("sub").and_then(Value::as_str).unwrap_or_default().to_string(),
         username: text("preferred_username"),
         email: text(&config.email_claim).and_then(|e: String| matching_email(&e)),
+        email_as_typed: text(&config.email_claim)
+            .filter(|e: &String| matching_email(e).is_some())
+            .and_then(|e| crate::routes::normalize_email(&e).ok()),
         email_verified: verified || config.trust_email,
         name: text(&config.name_claim),
         groups,

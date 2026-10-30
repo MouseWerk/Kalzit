@@ -96,9 +96,11 @@ delivery, deliveryDetail, deliveredAt}`; `state` is `pending` or `expired`, `del
 `POST /auth/invitation` answers `{orgName, inviterName, email, role, roleName, teamName,
 expiresAt, state, accountExists, signedInAs, password, sso}`; `state` is `valid`, `expired` or
 `accepted`. A revoked or unknown token answers `404 not_found` with `mail.invite_invalid`, the
-same for both, so valid links cannot be guessed. `sso` lists single sign-on providers the page
-offers (empty until single sign-on exists; it accepts through `invitations::redeem` once the
-provider confirmed the invited address).
+same for both, so valid links cannot be guessed. `sso` lists the enabled single sign-on
+providers (`{id, name}`, `id` being the provider's slug for `/auth/sso/{slug}/start`); signed in
+through one with the invited address, the person accepts with the token alone. `password` is
+`false` while password sign-in is off for the server or the organization (docs/api/sso.md); then
+accepting with a password answers `403 forbidden` with `sso.password_sign_in_off`.
 
 Accepting:
 

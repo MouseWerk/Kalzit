@@ -61,7 +61,18 @@ impl Sso {
     /// The requests to a provider; none of them reaches Kalzit itself (`oidc::Fetcher`).
     pub fn client(&self, state: &AppState) -> Fetcher {
         let own = [state.config.http_addr(), state.config.https_addr()];
-        let ports = own.iter().flatten().map(|l| l.port()).collect();
+        let mut ports: Vec<u16> = own.iter().flatten().map(|l| l.port()).collect();
+        // Behind a proxy on this computer, the public port reaches Kalzit too.
+        if let Some(port) = state
+            .config
+            .server
+            .public_url
+            .as_deref()
+            .and_then(|u| url::Url::parse(u).ok())
+            .and_then(|u| u.port_or_known_default())
+        {
+            ports.push(port);
+        }
         Fetcher::new(self.policy.clone(), ports, PROVIDER_TIMEOUT)
     }
 
@@ -237,6 +248,15 @@ pub async fn unmapped(state: &AppState) -> ApiResult<mapping::Unmapped> {
         org_id: (!org.is_empty()).then_some(org),
         role: text_setting(state, "signin.default_role").await?,
     })
+}
+
+/// Whether a new member of `org_id` who is not a server admin may sign in with a password: the
+/// server's rule and that organization's (an invitation accepted with a password, for example).
+pub async fn password_sign_in_allowed_in(state: &AppState, org_id: &str) -> ApiResult<bool> {
+    if !local_policy(state).await?.local_on {
+        return Ok(false);
+    }
+    Ok(crate::settings::get_org(state, org_id, "signin.local_password").await?.as_str() != Some("off"))
 }
 
 /// Whether a person who gave the right password may sign in with it.

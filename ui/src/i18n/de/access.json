@@ -225,5 +225,8 @@
   "access.confirm.confirm": "Adresse bestätigen",
   "access.confirm.signInTitle": "Melde dich zuerst an.",
   "access.confirm.signInText": "Bestätigen kann nur das Konto, für das der Link gemacht ist. Melde dich damit an; danach geht es hier weiter.",
-  "access.confirm.signIn": "Anmelden"
+  "access.confirm.signIn": "Anmelden",
+  "access.invite.ssoContinue": "Weiter mit {provider}",
+  "access.invite.ssoOnly": "Bei {org} meldest du dich über deinen Anbieter an. Danach kommst du hierher zurück und trittst bei.",
+  "access.invite.orPassword": "oder mit einem neuen Passwort"
 }

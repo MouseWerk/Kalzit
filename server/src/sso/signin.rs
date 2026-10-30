@@ -110,11 +110,22 @@ pub async fn account(
             let Some(email) = person.email.clone() else {
                 return Ok(Err(Refusal::new("failed", "sso.email_missing", "the provider sent no usable email")));
             };
-            let existing: Option<Account> =
-                sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE email = $1")))
+            // The ASCII (IDNA) form and the form typed-in addresses keep: both name one address.
+            let as_typed = person.email_as_typed.clone().unwrap_or_else(|| email.clone());
+            let mut found: Vec<Account> =
+                sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE email = $1 OR email = $2")))
                     .bind(&email)
-                    .fetch_optional(&mut *conn)
+                    .bind(&as_typed)
+                    .fetch_all(&mut *conn)
                     .await?;
+            if found.len() > 1 {
+                return Ok(Err(Refusal::new(
+                    "email_taken",
+                    "sso.email_unverified",
+                    "two accounts have this address in different forms",
+                )));
+            }
+            let existing = found.pop();
             match existing {
                 // Server admins and the break-glass admin are linked only on purpose, never by
                 // an email a provider sends.
@@ -145,14 +156,19 @@ pub async fn account(
                         .or_else(|| person.username.clone())
                         .unwrap_or_else(|| email.split('@').next().unwrap_or_default().to_string());
                     let name: String = name.chars().filter(|c| !c.is_control()).take(100).collect();
+                    // Confirmed only when the provider verified the address (`email_verified` of
+                    // the `email` claim, or its `trustEmail` switch): otherwise the account cannot
+                    // be added to organizations by it or linked by another provider until its
+                    // owner confirms it by mail.
                     sqlx::query(
-                        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at) \
-                         VALUES ($1, $2, $3, NULL, 0, 0, $4)",
+                        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, \
+                         email_confirmed) VALUES ($1, $2, $3, NULL, 0, 0, $4, $5)",
                     )
                     .bind(&id)
                     .bind(&email)
                     .bind(&name)
                     .bind(now)
+                    .bind(i64::from(person.email_verified))
                     .execute(&mut *conn)
                     .await?;
                     created = true;
@@ -171,6 +187,8 @@ pub async fn account(
     if account.disabled != 0 {
         return Ok(Err(Refusal::new("disabled", "sso.account_disabled", "the account is disabled").of(&account.id)));
     }
+    // A mapping an earlier sign-in kept for its second step belongs to that sign-in only.
+    sqlx::query("DELETE FROM sso_pending_mappings WHERE user_id = $1").bind(&account.id).execute(&mut *conn).await?;
     sqlx::query(
         "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, username, created_at, last_sign_in_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (provider_id, subject) DO UPDATE SET \
@@ -306,7 +324,10 @@ pub async fn apply_deferred(
         .await?;
     let Some((provider_id,)) = pending else { return Ok(BTreeSet::new()) };
     sqlx::query("DELETE FROM sso_pending_mappings WHERE user_id = $1").bind(user_id).execute(&mut *conn).await?;
-    let Some(provider) = super::store::by_id(&mut *conn, &provider_id).await? else { return Ok(BTreeSet::new()) };
+    // A provider paused meanwhile decides nothing any more.
+    let Some(provider) = super::store::by_id(&mut *conn, &provider_id).await?.filter(|p| p.enabled != 0) else {
+        return Ok(BTreeSet::new());
+    };
     let identity: Option<(String,)> =
         sqlx::query_as("SELECT subject FROM sso_identities WHERE provider_id = $1 AND user_id = $2")
             .bind(&provider_id)
