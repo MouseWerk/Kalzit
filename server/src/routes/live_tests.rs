@@ -747,6 +747,49 @@ async fn mongodb_without_change_streams_is_polled() {
     t.finish().await;
 }
 
+/// A live panel's refreshes count as runs of that panel in the usage insights; free live queries
+/// count only as data source queries.
+#[tokio::test]
+async fn live_panel_refreshes_count_as_panel_runs() {
+    let t = T::new().await;
+    let (ds, path) = t.sqlite_source().await;
+    let model = json!({
+        "schemaVersion": 1, "title": "Live", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{
+            "id": "p1", "type": "table", "title": "Zähler", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT COUNT(*) AS n FROM zaehler" } }],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let created = t.post("/dashboards", json!({ "model": model })).await;
+    let dashboard = created["id"].as_str().unwrap().to_string();
+    let mut ws = t.connect(&t.owner).await;
+    let panel = json!({ "dashboardId": dashboard, "panelId": "p1" });
+    let feed =
+        subscribe(&mut ws, json!({ "type": "subscribe", "id": "p", "panel": panel, "timeRange": range() })).await;
+    assert_eq!(count_of(&next_for(&mut ws, "result", &feed).await), 1);
+    insert(&path, 2).await;
+    follow_until(&mut ws, &feed, 2).await;
+    crate::usage::flush(&t.state.usage, &t.state.db).await.unwrap();
+    let (runs,): (i64,) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(runs), 0) AS BIGINT) FROM usage_panel_runs WHERE dashboard_id = $1 AND panel_id = 'p1'",
+    )
+    .bind(&dashboard)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert!(runs >= 2, "{runs} runs");
+    let (queries,): (i64,) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(queries), 0) AS BIGINT) FROM usage_source_queries WHERE datasource_id = $1",
+    )
+    .bind(&ds)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert!(queries >= runs, "{queries} queries, {runs} runs");
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn panels_linked_to_a_saved_analysis_follow_its_queries() {
     let t = T::new().await;

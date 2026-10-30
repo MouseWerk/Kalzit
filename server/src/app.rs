@@ -93,6 +93,8 @@ pub struct AppState {
     /// This server among the servers on the same database: leader, run-once jobs and the
     /// changes they announce to each other (`cluster`).
     pub cluster: Arc<crate::cluster::Cluster>,
+    /// Usage counts waiting to be written (`usage`).
+    pub usage: Arc<crate::usage::Usage>,
 }
 
 impl AppState {
@@ -179,6 +181,7 @@ impl AppState {
             plugins,
             acme,
             cluster,
+            usage: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.

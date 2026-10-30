@@ -68,6 +68,7 @@ const SECTIONS = [
   ["admin.users.title", "/admin/server/users"],
   ["admin.orgs.title", "/admin/server/organizations"],
   ["admin.serverAudit.title", "/admin/server/audit"],
+  ["usage.title", "/admin/usage"],
 ] as const;
 
 test("members open from their own entry in the organization group", async ({ page }) => {

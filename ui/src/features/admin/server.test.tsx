@@ -264,7 +264,23 @@ describe("administration overview", () => {
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/settings/organization", "/admin/audit"]);
     const server = screen.getByRole("region", { name: "Server" });
-    expect(within(server).getAllByRole("link")).toHaveLength(6);
+    expect(within(server).getAllByRole("link")).toHaveLength(7);
+    // A server admin finds usage under Server, for every organization, not twice.
+    expect(
+      within(server)
+        .getByRole("link", { name: /^Usage/ })
+        .getAttribute("href"),
+    ).toBe("/admin/usage");
+  });
+
+  it("lists usage in the organization for an organization admin", async () => {
+    await openAdmin("/admin", { permissions: ["audit:read"] });
+    const org = await screen.findByRole("region", { name: "Organization “Analytical Engines”" });
+    expect(
+      within(org)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/admin/audit", "/admin/usage"]);
   });
 
   it("marks the current section in the section navigation", async () => {

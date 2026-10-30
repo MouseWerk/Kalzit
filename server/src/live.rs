@@ -416,6 +416,9 @@ pub struct Spec {
     /// Variables that may be identifiers (a dashboard's stored queries); `None` for free queries.
     pub identifiers: Option<BTreeSet<String>>,
     pub refresh_ms: u64,
+    /// The dashboard and panel whose stored queries these are, for the usage counts
+    /// (`usage::record_panel`); `None` for free queries.
+    pub panel: Option<(String, String)>,
 }
 
 impl Spec {
@@ -713,6 +716,7 @@ async fn run_feed(
         // One run of this feed at a time, and at most `runs_per_user` of its owner's feeds.
         let Ok(permit) = runs.clone().acquire_owned().await else { return };
         let at = state.clock.now_ms();
+        let started = Instant::now();
         let response = run_queries_with(
             &state,
             &ctx,
@@ -724,6 +728,12 @@ async fn run_feed(
             spec.identifiers.as_ref(),
         )
         .await;
+        // A panel's refresh counts as a run of that panel (per feed, not per viewer).
+        if let Some((dashboard_id, panel_id)) = &spec.panel {
+            let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+            let run = crate::usage::PanelRun::of(&response, ms);
+            crate::usage::record_panel(&state, &spec.org_id, dashboard_id, panel_id, run).await;
+        }
         let json = match serde_json::to_string(&response.results) {
             Ok(json) => json,
             Err(e) => {
@@ -859,6 +869,7 @@ mod tests {
             variables: BTreeMap::new(),
             identifiers: None,
             refresh_ms: 5_000,
+            panel: None,
         };
         let mut other = spec.clone();
         assert_eq!(spec.key(), other.key());

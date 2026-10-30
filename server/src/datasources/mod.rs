@@ -1754,7 +1754,17 @@ pub async fn run_queries_cached(
         let budget = budget.clone();
         async move {
             let ref_id = item.ref_id.clone();
+            let datasource_id = item.datasource_id.clone();
+            let started = Instant::now();
             let outcome = run_one(state, ctx, item, run, budget, cache).await;
+            // A query refused before it ran is not counted (`usage::ran`): an unknown source's id
+            // is the caller's, not a source's, and a wrong request is no query of the source.
+            let refused = matches!(&outcome, QueryOutcome::Err { error } if !crate::usage::ran(&error.code));
+            if !refused {
+                let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+                let query = crate::usage::SourceQuery::of(&outcome, ms);
+                crate::usage::record_query(state, &ctx.org_id, &datasource_id, query).await;
+            }
             (ref_id, outcome)
         }
     });

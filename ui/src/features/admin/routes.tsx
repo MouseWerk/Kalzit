@@ -68,6 +68,13 @@ const auditRoute = createRoute({
   component: lazyRouteComponent(() => import("./org/AuditPage"), "AuditPage"),
 });
 
+// Usage insights, for organization admins and server administrators (features/usage).
+const usageRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/usage",
+  component: lazyRouteComponent(() => import("../usage/UsagePage"), "UsagePage"),
+});
+
 const usersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/users",
@@ -123,6 +130,7 @@ export const adminRoutes = [
     roleRoute,
     orgSettingsRoute,
     auditRoute,
+    usageRoute,
     usersRoute,
     orgsRoute,
     serverSettingsRoute,
