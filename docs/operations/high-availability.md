@@ -98,8 +98,13 @@ a change made during a start is not missed either. What this guarantees:
   holds for settings, rights (the query cache), plugins (which ones run, their keys, the
   organizations' blocks with the connections they had, the switches), the certificate, challenge
   answers, data sources and the setup, also when the event row was missed.
-- A rights change counted without knowing its organization empties the whole query cache of the
-  other servers once.
+- A rights change applies to its organization's kept answers. Only when a server missed its row and
+  sees just the counter move, the organization is not known, and that server empties its whole
+  query cache once.
+- Not caught: a change announced after its commit (rights changes, a data source's pool, the
+  query cache emptied) whose announcement is lost because the process ends in between. Data sources
+  are still compared by their rows; for rights this keeps cached answers up to their cache time,
+  never past a permission check, since permissions are checked on every request.
 - Sessions, permissions, grants and AI providers are read from the database with every request,
   so a revoked session or permission is refused on every server at once.
 - A plugin that cannot be started on a server (its package not unpacked, a refused check) is

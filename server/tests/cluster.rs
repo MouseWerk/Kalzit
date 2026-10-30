@@ -330,6 +330,48 @@ async fn postgres_a_change_without_its_event_is_taken_by_the_counters() {
     schema.drop_schema().await;
 }
 
+/// A server that starts while the leader's certificate order runs answers the HTTP-01 challenge
+/// written before its start (its event is older than the replay), from memory.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_a_server_started_during_an_order_answers_its_challenge() {
+    let Some(schema) = schema().await else { return };
+    let a = Server::start(&schema.url).await;
+    sqlx::query(
+        "INSERT INTO acme_challenges (kind, name, value, order_id, created_at) \
+         VALUES ('http', 'tok_en-1', 'tok_en-1.key-authorization', 'order-1', 0)",
+    )
+    .execute(&a.state.db)
+    .await
+    .unwrap();
+    let b = Server::start(&schema.url).await;
+    assert_eq!(b.status("/.well-known/acme-challenge/tok_en-1", "").await, StatusCode::OK);
+    assert_eq!(b.status("/.well-known/acme-challenge/unknown", "").await, StatusCode::NOT_FOUND);
+    a.finish().await;
+    b.finish().await;
+    schema.drop_schema().await;
+}
+
+/// A rights change in one organization reaches the other server with its organization: the
+/// counter it raised does not empty the other organizations' kept answers there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_a_rights_change_keeps_other_organizations_answers() {
+    let Some(schema) = schema().await else { return };
+    let a = Server::start(&schema.url).await;
+    let b = Server::start(&schema.url).await;
+    let other = b.state.datasources.query_cache().stamp("org-2", "ds-2");
+    let before = b.state.datasources.query_cache().stamp("org-1", "ds-1");
+    a.state.cluster.announce(&a.state.db, Change::Rights(Some("org-1".into()))).await;
+    eventually("the rights change reaches the other server", Duration::from_secs(10), || async {
+        b.state.datasources.query_cache().stamp("org-1", "ds-1") != before
+    })
+    .await;
+    // Several comparisons of the counters later.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(b.state.datasources.query_cache().stamp("org-2", "ds-2"), other, "org-2 keeps its answers");
+    a.finish().await;
+    b.finish().await;
+    schema.drop_schema().await;
+}
 /// A second server on the same SQLite database stops at its start with a clear error; once the
 /// first has stopped, it starts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

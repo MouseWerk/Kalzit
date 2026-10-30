@@ -1524,7 +1524,7 @@ Windows and Linux (`acme::api_tests`).
 ## Several servers on one database
 
 Two or more servers behind a load balancer on one PostgreSQL database (`server/src/cluster.rs`,
-migration 0026; operator guide docs/operations/high-availability.md). PostgreSQL's own
+migration 0027; operator guide docs/operations/high-availability.md). PostgreSQL's own
 availability is the operator's. SQLite serves one server (`db::InstanceLock`, "Storage").
 
 - **Identity.** Every process gets a new UUID at start and a row in `cluster_instances` (node id,
@@ -1589,13 +1589,18 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
   reconciler reads these few rows plus `COUNT(*)`, `MAX(updated_at)`, the count in the trash and
   `MAX(deleted_at)` of `datasources` (their changes are announced after the commit), and acts on
   every area that moved since the last read, whatever the event rows said: all cached settings
-  dropped (and the ACME settings taken), a new global rights generation (the organization is not
-  known there), the query cache emptied, a plugin sync, the shared certificate taken, the
+  dropped (and the ACME settings taken), a new global rights generation only when the rights
+  counter moved by more than the rights rows the reader read since the last comparison (those it
+  applied with their organization; a missed one's organization is not known), the query cache
+  emptied, a plugin sync, the shared certificate taken, the
   challenge answers loaded, the setup gate closed, and every data source whose row changed
   forgotten (kept answers, pool, plugin grants). Its first comparison is against the counters
   read before the server loaded anything (`cluster::boot`, called first in `AppState::new`; the
   reader also replays the events from that moment), so a change during a start is not missed.
-  Its own changes move the counters too; taking them again is harmless. Three failed
+  Its own changes move the counters too; taking them again is harmless. Every read is done before
+  anything is taken (`Reconciler::gather`), so a comparison that fails partway keeps the last
+  baseline. A start also loads the challenge answers of an order already running (their events may
+  be older than the replay). Three failed
   comparisons in a row and every further one are logged as warnings. The policy generation of
   the query cache is not announced: each server derives its target rules from the settings.
 - **Plugin packages.** A package installed with several servers is also stored, base64, in

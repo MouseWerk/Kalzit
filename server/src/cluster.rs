@@ -2,9 +2,9 @@
 //! "Several servers on one database"; docs/operations/high-availability.md).
 //!
 //! - **Identity and heartbeat.** Every server process gets a new id at start and keeps its row in
-//!   `cluster_instances` fresh (`Options::heartbeat`); a clean stop marks it stopped. One server
-//!   per host and data directory (`db::InstanceLock`), so an earlier row of the same host and
-//!   directory is this server's own earlier run.
+//!   `cluster_instances` fresh (`Options::heartbeat`); a clean stop marks it stopped. Every run of
+//!   one server carries the node id kept in its data directory (`node_id`), so a row of the same
+//!   node id that went silent is this server's own earlier run (`is_peer`).
 //! - **Leader.** One server leads and runs the jobs that must run once (retention cleanups, the
 //!   plugin catalog refresh, certificate orders, the daily update check). The leader holds a lease
 //!   row (`cluster_leader`) that it renews with every heartbeat; once the lease has passed in the
@@ -23,8 +23,13 @@
 //!   written in it (`record`): it exists exactly when the change does. Changes made after a commit
 //!   are written before the request answers (`announce`) or, from synchronous code, through a
 //!   queue the stop flushes (`publish`). Every server reads new rows when notified and at least
-//!   every `Options::poll`, and compares cheap fingerprints of the shared tables at the same time
-//!   (`Reconciler`), so a change whose announcement was lost is still taken within one poll.
+//!   every `Options::poll`. `record` also raises a counter per area (`cluster_versions`) in the
+//!   same transaction, which every server compares on a timer of its own (`Reconciler`), so a
+//!   recorded change whose row a server missed is still taken within one poll. Not caught: a
+//!   change announced after its commit (`announce`, `publish`) whose announcement is lost because
+//!   the process ends in between; for rights changes this only keeps cached answers up to their
+//!   cache time, since authorization runs on every request. Data sources are compared by count
+//!   and newest change time as well.
 //!
 //! SQLite serves one server (`db::InstanceLock`): there the server registers itself, leads alone
 //! and announces nothing.
@@ -132,7 +137,7 @@ pub struct Options {
     pub heartbeat: Duration,
     /// How long a lease lasts without renewal: the longest a crashed leader's jobs wait.
     pub lease: Duration,
-    /// How often the events and fingerprints are read without a notification.
+    /// How often the events are read without a notification, and how often the counters are compared.
     pub poll: Duration,
     /// How often a run-once job looks whether its run is due.
     pub job_check: Duration,
@@ -190,6 +195,8 @@ pub struct Cluster {
     node: Mutex<String>,
     /// The database's time when this run registered (`start`).
     started_ms: AtomicI64,
+    /// Rights change rows the reader has read, its own included (`Reconciler::take`).
+    rights_rows: AtomicI64,
     /// The database's time and the shared state's counters when this server began to load what
     /// it keeps (`boot`): the reader replays the events from then, and the reconciler compares
     /// against these counters first, so nothing changed during the start is missed.
@@ -209,8 +216,8 @@ struct Snapshot {
 }
 
 impl Snapshot {
-    async fn read(db: &AnyPool) -> Result<Self, sqlx::Error> {
-        let at_ms = db_now(db, true).await?;
+    async fn read(db: &AnyPool, postgres: bool) -> Result<Self, sqlx::Error> {
+        let at_ms = db_now(db, postgres).await?;
         let versions: Vec<(String, i64)> =
             sqlx::query_as("SELECT area, version FROM cluster_versions").fetch_all(db).await?;
         let sources: (i64, i64, i64, i64) = sqlx::query_as(
@@ -239,7 +246,7 @@ pub async fn boot(cluster: &Cluster, db: &AnyPool, url: &str, data_dir: &std::pa
         return Ok(());
     }
     *cluster.node.lock().unwrap_or_else(|e| e.into_inner()) = node_id(data_dir)?;
-    let mut snapshot = Snapshot::read(db).await?;
+    let mut snapshot = Snapshot::read(db, true).await?;
     snapshot.read_source_rows(db).await?;
     *cluster.boot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot);
     Ok(())
@@ -413,6 +420,7 @@ impl Cluster {
             plugin_sync: PluginSync::default(),
             node: Mutex::default(),
             started_ms: AtomicI64::new(0),
+            rights_rows: AtomicI64::new(0),
             boot: Mutex::default(),
         }
     }
@@ -458,8 +466,8 @@ impl Cluster {
     }
 
     /// Queues a change for the other servers, for synchronous code after a commit; `stop`
-    /// flushes the queue, and the fingerprints catch what a crash loses. Nothing on a server
-    /// that runs alone.
+    /// flushes the queue. A crash before it is written loses it: no counter was raised for it
+    /// (only data sources are also compared by their rows). Nothing on a server that runs alone.
     pub fn publish(&self, change: Change) {
         if !self.coordinated() || self.stopped.load(Ordering::SeqCst) {
             return;
@@ -600,6 +608,9 @@ pub async fn start(state: &AppState) -> Result<()> {
     spawn_listener(state.clone());
     // Plugins another server installed whose packages this one has not unpacked yet.
     request_plugin_sync(state);
+    // The challenge answers of an order that runs now, written before this start: their events
+    // may be older than the replay.
+    state.acme.sync_challenges(state).await;
     tracing::info!(instance = %cluster.id, host = %cluster.host, "registered with the other servers on this database");
     Ok(())
 }
@@ -966,7 +977,13 @@ impl Reader {
         let mut newest = self.since + LOOKBACK_MS;
         for row in rows {
             newest = newest.max(row.created_at);
-            if self.seen.insert(row.id, row.created_at).is_some() || row.origin == cluster.id {
+            if self.seen.insert(row.id, row.created_at).is_some() {
+                continue;
+            }
+            if row.kind == "cache:rights" {
+                cluster.rights_rows.fetch_add(1, Ordering::SeqCst);
+            }
+            if row.origin == cluster.id {
                 continue;
             }
             match Change::decode(&row.kind, row.scope) {
@@ -989,7 +1006,8 @@ fn spawn_reconciler(state: AppState) {
     background.spawn(async move {
         let cluster = state.cluster.clone();
         let boot = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let mut reconciler = Reconciler { last: boot, failures: 0 };
+        let rights_rows = cluster.rights_rows.load(Ordering::SeqCst);
+        let mut reconciler = Reconciler { last: boot, failures: 0, rights_rows };
         loop {
             tokio::select! {
                 () = stopping.cancelled() => return,
@@ -1024,28 +1042,71 @@ const COMPARE_FAILURES_WARN: u32 = 3;
 struct Reconciler {
     last: Option<Snapshot>,
     failures: u32,
+    /// `Cluster::rights_rows` at the last comparison.
+    rights_rows: i64,
+}
+
+/// What one comparison read; all of it is read before anything is taken (`Reconciler::gather`),
+/// so a read that fails leaves the last comparison as it was.
+struct Gathered {
+    now: Snapshot,
+    /// The data sources' rows were read again (their aggregates moved).
+    sources_read: bool,
+    /// Another server finished the first-run setup (`setup_lock` has its row).
+    setup_done: bool,
 }
 
 impl Reconciler {
     async fn compare(&mut self, state: &AppState) -> Result<(), sqlx::Error> {
-        let mut now = Snapshot::read(&state.db).await?;
-        let Some(last) = self.last.take() else {
-            now.read_source_rows(&state.db).await?;
-            self.last = Some(now);
-            return Ok(());
+        let setup_open = state.setup.is_open().await;
+        let gathered = self.gather(&state.db, true, setup_open).await?;
+        self.take(state, gathered).await;
+        Ok(())
+    }
+
+    /// Reads everything a comparison needs; changes nothing.
+    async fn gather(&self, db: &AnyPool, postgres: bool, setup_open: bool) -> Result<Gathered, sqlx::Error> {
+        let mut now = Snapshot::read(db, postgres).await?;
+        let sources_read = match &self.last {
+            None => true,
+            Some(last) => {
+                now.versions.get("datasources") != last.versions.get("datasources") || now.sources != last.sources
+            }
         };
-        let changed: std::collections::HashSet<String> = now
-            .versions
-            .iter()
-            .filter(|(area, version)| last.versions.get(*area) != Some(*version))
-            .map(|(area, _)| area.clone())
-            .collect();
-        let moved = |area: &str| changed.contains(area);
+        if sources_read {
+            now.read_source_rows(db).await?;
+        }
+        let setup_done = if setup_open {
+            let (done,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM setup_lock").fetch_one(db).await?;
+            done > 0
+        } else {
+            false
+        };
+        Ok(Gathered { now, sources_read, setup_done })
+    }
+
+    /// Acts on what moved since the last comparison and keeps `gathered` as the new baseline.
+    async fn take(&mut self, state: &AppState, gathered: Gathered) {
+        let Gathered { mut now, sources_read, setup_done } = gathered;
+        let rights_rows = state.cluster.rights_rows.load(Ordering::SeqCst);
+        let rows_seen = rights_rows - std::mem::replace(&mut self.rights_rows, rights_rows);
+        if setup_done {
+            state.setup.close().await;
+        }
+        let Some(last) = self.last.take() else {
+            self.last = Some(now);
+            return;
+        };
+        let delta =
+            |area: &str| now.versions.get(area).copied().unwrap_or(0) - last.versions.get(area).copied().unwrap_or(0);
+        let moved = |area: &str| delta(area) != 0;
         if moved("settings") {
             crate::settings::cache(state).invalidate_all_here();
         }
-        if moved("rights") {
-            // Which organization is not known here: every kept answer goes.
+        // The reader applied each rights change it read with its organization; only changes it
+        // did not read (fewer rows than the counter moved) need every kept answer to go, since
+        // their organization is not known here.
+        if delta("rights") > rows_seen {
             state.datasources.query_cache().rights_changed_here(None);
         }
         if moved("cache") {
@@ -1061,8 +1122,7 @@ impl Reconciler {
         if moved("challenges") {
             state.acme.sync_challenges(state).await;
         }
-        if moved("datasources") || now.sources != last.sources {
-            now.read_source_rows(&state.db).await?;
+        if sources_read {
             for (id, was) in &last.source_rows {
                 if now.source_rows.get(id) != Some(was) {
                     state.datasources.forget_here(id);
@@ -1071,14 +1131,7 @@ impl Reconciler {
         } else {
             now.source_rows = last.source_rows;
         }
-        if (moved("setup") || state.setup.is_open().await) && state.setup.is_open().await {
-            let (done,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM setup_lock").fetch_one(&state.db).await?;
-            if done > 0 {
-                state.setup.close().await;
-            }
-        }
         self.last = Some(now);
-        Ok(())
     }
 }
 
@@ -1443,6 +1496,28 @@ mod tests {
         assert!(!cluster.is_leader(), "a belief that ran out is no lead");
     }
 
+    /// A comparison reads everything before it takes anything: one that fails partway (here the
+    /// setup read, after the counters and the data sources were read) keeps the last baseline, so
+    /// the next comparison still sees what moved.
+    #[tokio::test]
+    async fn a_failed_comparison_keeps_the_baseline() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        let mut baseline = Snapshot::read(&db, false).await.unwrap();
+        baseline.read_source_rows(&db).await.unwrap();
+        let reconciler = Reconciler { last: Some(baseline.clone()), failures: 0, rights_rows: 0 };
+        let gathered = reconciler.gather(&db, false, true).await.unwrap();
+        assert!(!gathered.sources_read && !gathered.setup_done, "nothing moved");
+        sqlx::query("UPDATE cluster_versions SET version = version + 1 WHERE area = 'settings'")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE setup_lock").execute(&db).await.unwrap();
+        assert!(reconciler.gather(&db, false, true).await.is_err());
+        assert_eq!(reconciler.last.as_ref(), Some(&baseline), "the baseline stays for the next comparison");
+        let gathered = reconciler.gather(&db, false, false).await.unwrap();
+        assert_ne!(gathered.now.versions.get("settings"), baseline.versions.get("settings"));
+    }
+
     #[test]
     fn the_node_id_is_made_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
@@ -1488,7 +1563,7 @@ mod tests {
 
     #[test]
     fn every_change_raises_a_counter_the_migration_seeds() {
-        let seeded = include_str!("../migrations/0026_cluster.sql");
+        let seeded = include_str!("../migrations/0027_cluster.sql");
         for change in [
             Change::Settings(None),
             Change::Rights(None),
