@@ -58,6 +58,14 @@ try {
     if ("$(Get-TransformedValues $Msi 0 $codeQuery)" -ne "$(Get-TransformedValues $Msi 1031 $codeQuery)") {
         throw 'the German transform changes the product code'
     }
+    # Upgrades and the downgrade guard match every language: no Upgrade row names one.
+    $upgradeQuery = 'SELECT `Language` FROM `Upgrade`'
+    foreach ($id in 0, 1031) {
+        $upgradeLanguages = @(Get-TransformedValues $Msi $id $upgradeQuery)
+        if ($upgradeLanguages.Count -lt 1 -or @($upgradeLanguages | Where-Object { $_ }).Count -ne 0) {
+            throw "the Upgrade table names the languages '$($upgradeLanguages -join ',')' (transform $id); it must name none"
+        }
+    }
     $files = @(Get-TransformedValues $Msi 1031 "SELECT ``File`` FROM ``File``")
     if ($files.Count -ne 2) { throw "the German transform leaves $($files.Count) files, expected 2" }
     Write-Host "$Msi carries the wizard in English and German (languages $($languages -join ', '))"

@@ -48,26 +48,25 @@ function Close-Msi([object[]] $Objects) {
 }
 
 # Stores the difference from $Base to $Localized inside $Base as the transform $LanguageId and
-# adds the language to the package's Template summary.
+# adds the language to the package's Template summary. Returns the transform's size in bytes.
 function Add-LanguageTransform([string] $Base, [string] $Localized, [int] $LanguageId, [string] $Work) {
-    $installer = New-Object -ComObject WindowsInstaller.Installer
     $transform = Join-Path $Work "$LanguageId.mst"
-
-    $baseDb = Invoke-Msi $installer 'OpenDatabase' @($Base, $script:MsiReadOnly)
-    $localizedDb = Invoke-Msi $installer 'OpenDatabase' @($Localized, $script:MsiReadOnly)
+    $installer = $null; $baseDb = $null; $localizedDb = $null
+    $db = $null; $view = $null; $record = $null; $summary = $null
     try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $baseDb = Invoke-Msi $installer 'OpenDatabase' @($Base, $script:MsiReadOnly)
+        $localizedDb = Invoke-Msi $installer 'OpenDatabase' @($Localized, $script:MsiReadOnly)
         if (-not (Invoke-Msi $localizedDb 'GenerateTransform' @($baseDb, $transform))) {
             throw "the $LanguageId package does not differ from the base package"
         }
         # No error suppressed and no validation: the transform belongs to this one package.
         [void] (Invoke-Msi $localizedDb 'CreateTransformSummaryInfo' @($baseDb, $transform, 0, 0))
-    } finally {
+        # The base package is opened for writing below; its read-only handle goes first.
         Close-Msi @($localizedDb, $baseDb)
-    }
+        $localizedDb = $null; $baseDb = $null
 
-    $db = Invoke-Msi $installer 'OpenDatabase' @($Base, $script:MsiTransact)
-    $view = $null; $record = $null; $summary = $null
-    try {
+        $db = Invoke-Msi $installer 'OpenDatabase' @($Base, $script:MsiTransact)
         $view = Invoke-Msi $db 'OpenView' @('SELECT `Name`, `Data` FROM `_Storages`')
         [void] (Invoke-Msi $view 'Execute')
         $record = Invoke-Msi $installer 'CreateRecord' @(2)
@@ -83,17 +82,18 @@ function Add-LanguageTransform([string] $Base, [string] $Localized, [int] $Langu
         Set-MsiProperty $summary 'Property' @($script:MsiSummaryTemplate, "$($Matches[1]);$($languages -join ',')")
         Invoke-Msi $summary 'Persist' | Out-Null
         Invoke-Msi $db 'Commit' | Out-Null
+        (Get-Item $transform).Length
     } finally {
-        Close-Msi @($summary, $record, $view, $db, $installer)
+        Close-Msi @($summary, $record, $view, $db, $localizedDb, $baseDb, $installer)
     }
 }
 
 # The languages of the package's Template summary, for example @('1033', '1031').
 function Get-PackageLanguages([string] $Msi) {
-    $installer = New-Object -ComObject WindowsInstaller.Installer
-    $db = Invoke-Msi $installer 'OpenDatabase' @($Msi, $script:MsiReadOnly)
-    $summary = $null
+    $installer = $null; $db = $null; $summary = $null
     try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $db = Invoke-Msi $installer 'OpenDatabase' @($Msi, $script:MsiReadOnly)
         $summary = Get-MsiProperty $db 'SummaryInformation' @(0)
         $template = [string] (Get-MsiProperty $summary 'Property' @($script:MsiSummaryTemplate))
         @(($template -split ';', 2)[1] -split ',')
@@ -103,18 +103,18 @@ function Get-PackageLanguages([string] $Msi) {
 }
 
 # Runs a query on the package with its embedded transform $LanguageId applied (in memory only;
-# the file is not changed; 0 applies none) and returns the first column of each row.
+# the file is not changed; 0 applies none) and returns the first column of each row (an empty
+# string for an empty cell).
 function Get-TransformedValues([string] $Msi, [int] $LanguageId, [string] $Query) {
-    $installer = New-Object -ComObject WindowsInstaller.Installer
-    $db = Invoke-Msi $installer 'OpenDatabase' @($Msi, $script:MsiReadOnly)
-    $view = $null
+    $installer = $null; $db = $null; $view = $null
     try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $db = Invoke-Msi $installer 'OpenDatabase' @($Msi, $script:MsiReadOnly)
         if ($LanguageId -ne 0) { Invoke-Msi $db 'ApplyTransform' @(":$LanguageId", 0) | Out-Null }
         $view = Invoke-Msi $db 'OpenView' @($Query)
         [void] (Invoke-Msi $view 'Execute')
         while ($null -ne ($record = Invoke-Msi $view 'Fetch')) {
-            Get-MsiProperty $record 'StringData' @(1)
-            Close-Msi @($record)
+            try { [string] (Get-MsiProperty $record 'StringData' @(1)) } finally { Close-Msi @($record) }
         }
     } finally {
         Close-Msi @($view, $db, $installer)

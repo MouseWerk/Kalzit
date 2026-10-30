@@ -25,6 +25,6 @@
   <String Id="KalzitRemoveText" Value="Kalzit keeps its database, dashboards, data sources, logs and the key for stored passwords in its data folder, named in [CommonAppDataFolder]Kalzit\kalzit.toml. Kept, they are used again when you install Kalzit later." />
   <String Id="KalzitRemoveData" Value="Also &amp;remove the data folder and the configuration (cannot be undone)" />
 
-  <String Id="KalzitExitNew" Value="Kalzit runs as the Windows service &quot;Kalzit&quot;. Open http://localhost:[PORT] in a browser. The setup code for the first sign-in is in [DATADIR]\setup-token.txt, which only administrators can open (for example Get-Content in PowerShell opened with Run as administrator)." />
+  <String Id="KalzitExitNew" Value="Kalzit runs as the Windows service &quot;Kalzit&quot;: http://localhost:[PORT]. The setup code for the first sign-in is in [DATADIR]\setup-token.txt (readable by administrators only)." />
   <String Id="KalzitExitKept" Value="Kalzit runs as the Windows service &quot;Kalzit&quot; with the settings of its existing kalzit.toml." />
 </WixLocalization>

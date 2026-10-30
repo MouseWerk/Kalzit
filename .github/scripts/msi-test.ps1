@@ -5,7 +5,8 @@
   data folder with a file others may read), then service running as NT SERVICE\Kalzit with only
   SeChangeNotifyPrivilege, HTTP health, data and program folder access lists, firewall rule,
   recovery actions, a graceful stop, an uninstallation that keeps the data, a reinstallation on the
-  kept data with the German transform, an uninstallation that removes it, and the same through `kalzit service install|uninstall`.
+  kept data with the German transform, an uninstallation that removes it, an upgrade of an
+  English installation with a German one (one product left, the downgrade refused), and the same through `kalzit service install|uninstall`.
 
   Only for a disposable machine (the CI job `msi`): it installs and removes a Windows service.
 #>
@@ -14,6 +15,8 @@ param(
     # The built kalzit.exe, for the `kalzit service install` part.
     [Parameter(Mandatory)] [string] $Exe,
     [Parameter(Mandatory)] [string] $Logs,
+    # The same package with a higher version, for the upgrade from English to German.
+    [string] $UpgradeMsi,
     [int] $Port = 8471
 )
 
@@ -21,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 # msiexec does not resolve paths against PowerShell's location.
 $Msi = (Resolve-Path $Msi).Path
 $Exe = (Resolve-Path $Exe).Path
+if ($UpgradeMsi) { $UpgradeMsi = (Resolve-Path $UpgradeMsi).Path }
 New-Item -ItemType Directory -Force $Logs | Out-Null
 $Logs = (Resolve-Path $Logs).Path
 $programData = [Environment]::GetFolderPath('CommonApplicationData')
@@ -226,6 +230,38 @@ Invoke-Msi @('/x', $Msi, 'REMOVEDATA=1') 'uninstall-remove-data.log'
 if (Test-Path $dataDir) { Fail 'the data folder is still there' }
 if (Test-Path $configFile) { Fail 'the configuration is still there' }
 EndStep
+
+if ($UpgradeMsi) {
+    Step 'Upgrade an English installation with the next version in German'
+    # Every earlier release is installed in English; on a German Windows the next one applies
+    # the German transform and must still replace it, not install next to it.
+    function Get-KalzitProducts {
+        @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq 'Kalzit' })
+    }
+    Invoke-Msi @('/i', $Msi, "PORT=$Port") 'upgrade-from.log'
+    Assert-Running | Out-Null
+    $before = Get-KalzitProducts
+    Invoke-Msi @('/i', $UpgradeMsi, 'TRANSFORMS=:1031') 'upgrade-to.log'
+    $after = Get-KalzitProducts
+    if ($after.Count -ne 1) { Fail "after the upgrade $($after.Count) Kalzit products are installed, expected 1" }
+    if ($after[0].PSChildName -eq $before[0].PSChildName) { Fail 'the upgrade kept the earlier product' }
+    if (@(Get-CimInstance Win32_Service -Filter "Name='Kalzit'").Count -ne 1) { Fail 'not exactly one Kalzit service' }
+    Assert-Running | Out-Null
+    Wait-Ready "http://127.0.0.1:$Port/readyz"
+    # The earlier English version over the German one is refused as a downgrade.
+    $downgradeLog = Join-Path $Logs 'downgrade.log'
+    $p = Start-Process msiexec.exe -ArgumentList @('/i', $Msi, '/qn', '/norestart', '/l*v', $downgradeLog) -Wait -PassThru
+    if ($p.ExitCode -eq 0) { Fail 'the earlier version installed over the newer one' }
+    if (-not (Select-String -Path $downgradeLog -Pattern 'A newer version of Kalzit is already installed' -SimpleMatch -Quiet)) {
+        Fail 'the earlier version was not refused as a downgrade'
+    }
+    if ((Get-KalzitProducts).Count -ne 1) { Fail 'the refused downgrade left a second Kalzit product' }
+    Invoke-Msi @('/x', $UpgradeMsi, 'REMOVEDATA=1') 'upgrade-uninstall.log'
+    if ((Get-KalzitProducts).Count -ne 0) { Fail 'Kalzit is still installed after the uninstallation' }
+    if (Test-Path $dataDir) { Fail 'the data folder is still there' }
+    EndStep
+}
 
 # --- kalzit service install|uninstall -----------------------------------------------------------
 

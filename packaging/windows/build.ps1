@@ -71,8 +71,9 @@ try {
     Build-Package 'en-US' $Out
     $german = Join-Path $work 'kalzit-de-DE.msi'
     Build-Package 'de-DE' $german
-    Add-LanguageTransform -Base (Resolve-Path $Out).Path -Localized $german -LanguageId 1031 -Work $work
-    $transformSize = (Get-Item (Join-Path $work '1031.mst')).Length
+    $transformSize = Add-LanguageTransform -Base (Resolve-Path $Out).Path -Localized $german -LanguageId 1031 -Work $work
+    # Texts only: a transform this large would carry a second copy of the program or the cabinet.
+    if ($transformSize -gt 1MB) { throw "the German transform has $transformSize bytes; it should hold texts only" }
 } finally {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $work
 }
