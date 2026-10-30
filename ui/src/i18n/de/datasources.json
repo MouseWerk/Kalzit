@@ -1022,5 +1022,13 @@
   "datasources.reason.sql.hash_comment": "Schreib Kommentare mit --; # ist außerhalb von Zeichenketten nicht erlaubt.",
   "datasources.reason.sql.dollar_in_name": "Ein $ direkt nach einem Namen ist nicht erlaubt; lass vor der Variablen ein Leerzeichen.",
   "datasources.reason.sql.identifier_characters": "Der Name {name} enthält Zeichen, die Kalzit nicht in einen Namen in Anführungszeichen setzt.",
-  "datasources.reason.sql.dollar_quote": "Ein $ ist nur vor einem Variablennamen oder einem $__-Makro erlaubt; schreib Text in einfache Anführungszeichen."
+  "datasources.reason.sql.dollar_quote": "Ein $ ist nur vor einem Variablennamen oder einem $__-Makro erlaubt; schreib Text in einfache Anführungszeichen.",
+  "datasources.reason.serviceaccount.name_invalid": "Gib 1 bis {max} Kleinbuchstaben, Ziffern oder Bindestriche ein, nicht mit einem Bindestrich am Anfang.",
+  "datasources.reason.serviceaccount.name_taken": "Ein Dienstkonto mit diesem Namen gibt es schon. Wähle einen anderen Namen.",
+  "datasources.reason.serviceaccount.role_owner": "Ein Dienstkonto kann nicht Eigentümer sein. Wähle eine andere Rolle.",
+  "datasources.reason.token.expiry_out_of_range": "Wähle einen Ablauf in der Zukunft, höchstens {maxDays} Tage voraus.",
+  "datasources.reason.token.ip_invalid": "Zeile {line}: „{value}“ ist weder eine gültige Adresse noch ein gültiger Bereich.",
+  "datasources.reason.token.ip_too_many": "Gib höchstens {max} Adressen oder Bereiche an.",
+  "datasources.reason.token.not_for_this_route": "Mit einem API-Token lassen sich keine Dienstkonten oder Tokens verwalten.",
+  "datasources.reason.token.org_routes_only": "Ein API-Token gilt nur für die Organisation seines Dienstkontos."
 }

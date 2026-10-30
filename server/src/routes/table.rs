@@ -6,15 +6,17 @@ use std::collections::{BTreeMap, HashMap};
 use axum::Router;
 use axum::extract::{FromRequestParts, Path, Request, State};
 use axum::handler::Handler;
+use axum::http::request::Parts;
 use axum::http::{Method, StatusCode};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodFilter, MethodRouter, on};
 
 use crate::app::AppState;
-use crate::auth::{CurrentUser, SessionUser};
+use crate::auth::{CurrentUser, SessionUser, api_token};
 use crate::authz::{Access, OrgCtx, effective_permissions};
 use crate::error::ApiError;
+use crate::net::RequestInfo;
 
 pub struct RouteDef {
     /// The one HTTP method this route answers; tests call every declared route with it.
@@ -107,6 +109,24 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
         return Ok(req);
     }
     let (mut parts, body) = req.into_parts();
+    // An API token signs the request in as its service account, in its organization only; it
+    // goes through the same membership and permission checks as a person.
+    if let Some(token) = api_token::bearer(&parts.headers) {
+        if !matches!(access, Access::OrgMember | Access::Org(_)) {
+            return Err(api_token::org_routes_only());
+        }
+        let org_id = path_org_id(&mut parts, state).await?;
+        let info = parts.extensions.get::<RequestInfo>().cloned().ok_or_else(ApiError::unauthenticated)?;
+        let (user, caller) = api_token::authenticate(state, &info, &token, &org_id).await?;
+        let ctx = org_ctx(state, user.clone(), org_id).await?;
+        if let Access::Org(permission) = access {
+            ctx.check(permission)?;
+        }
+        parts.extensions.insert(ctx);
+        parts.extensions.insert(caller);
+        parts.extensions.insert(user);
+        return Ok(Request::from_parts(parts, body));
+    }
     let CurrentUser(user) = CurrentUser::from_request_parts(&mut parts, state).await?;
     match access {
         Access::Public | Access::Authenticated => {}
@@ -116,15 +136,7 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
             }
         }
         Access::OrgMember | Access::Org(_) => {
-            let Path(params) = Path::<HashMap<String, String>>::from_request_parts(&mut parts, state)
-                .await
-                .map_err(|_| ApiError::not_found())?;
-            let org_id = params.get("orgId").ok_or_else(ApiError::not_found)?.clone();
-            // Organization ids are canonical UUIDs (lowercase, hyphenated); anything else cannot
-            // exist, so it needs no lookup.
-            if uuid::Uuid::parse_str(&org_id).map(|u| u.hyphenated().to_string()).ok().as_deref() != Some(&org_id) {
-                return Err(ApiError::not_found());
-            }
+            let org_id = path_org_id(&mut parts, state).await?;
             let ctx = org_ctx(state, user.clone(), org_id).await?;
             if let Access::Org(permission) = access {
                 ctx.check(permission)?;
@@ -134,6 +146,18 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
     }
     parts.extensions.insert(user);
     Ok(Request::from_parts(parts, body))
+}
+
+/// The `{orgId}` of the path. Organization ids are canonical UUIDs (lowercase, hyphenated);
+/// anything else cannot exist, so it needs no lookup.
+async fn path_org_id(parts: &mut Parts, state: &AppState) -> Result<String, ApiError> {
+    let Path(params) =
+        Path::<HashMap<String, String>>::from_request_parts(parts, state).await.map_err(|_| ApiError::not_found())?;
+    let org_id = params.get("orgId").ok_or_else(ApiError::not_found)?.clone();
+    if uuid::Uuid::parse_str(&org_id).map(|u| u.hyphenated().to_string()).ok().as_deref() != Some(&org_id) {
+        return Err(ApiError::not_found());
+    }
+    Ok(org_id)
 }
 
 /// The caller's membership in `org_id`. Non-members get `not_found`, so organization ids cannot

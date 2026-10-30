@@ -414,11 +414,15 @@ async fn put_member(
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     ensure_may_manage_members(&mut tx, &ctx, &team_id).await?;
-    let in_org: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
-        .bind(&ctx.org_id)
-        .bind(&user_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    // Service accounts act with their own role only, so they join no team.
+    let in_org: Option<(String,)> = sqlx::query_as(
+        "SELECT m.role FROM org_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.org_id = $1 AND m.user_id = $2 AND u.service_account = 0",
+    )
+    .bind(&ctx.org_id)
+    .bind(&user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     if in_org.is_none() {
         return Err(ApiError::not_found());
     }

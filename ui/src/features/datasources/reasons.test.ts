@@ -7,12 +7,13 @@ import { errorMessage } from "../dashboards/ui/errors";
 import { noticeText, reasonText } from "./reasons";
 
 /**
- * The rows of the "Reasons" tables in docs/api/datasources.md and docs/api/plugins.md (plugin
- * reasons reach the data source routes too): codes and their params.
+ * The rows of the "Reasons" tables in docs/api/datasources.md, docs/api/plugins.md (plugin
+ * reasons reach the data source routes too) and docs/api/access.md (service accounts and
+ * tokens): codes and their params.
  */
 function documentedReasons(): Map<string, Set<string>> {
   const reasons = new Map<string, Set<string>>();
-  for (const file of ["datasources.md", "plugins.md"]) {
+  for (const file of ["datasources.md", "plugins.md", "access.md"]) {
     const doc = readFileSync(resolve(import.meta.dirname, "../../../../docs/api", file), "utf8");
     readReasons(doc, reasons);
   }

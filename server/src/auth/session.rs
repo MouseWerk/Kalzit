@@ -120,6 +120,16 @@ impl Touches {
     /// reached; the session's next request tries again, since its touch is still due. Failures
     /// are only logged.
     fn spawn(&self, hash: String, now_ms: i64) {
+        self.run(Touch::Session { hash, now_ms });
+    }
+
+    /// Records the last use of an API token (`auth::api_token`) the same way: in the background,
+    /// skipped when the limit is reached.
+    pub(crate) fn token_used(&self, token_id: String, now_ms: i64, address: String) {
+        self.run(Touch::Token { token_id, now_ms, address });
+    }
+
+    fn run(&self, touch: Touch) {
         let Ok(permit) = self.permits.clone().try_acquire_owned() else {
             tracing::debug!("session touch skipped: {} already in flight", self.limit);
             return;
@@ -132,17 +142,37 @@ impl Touches {
                 return;
             }
             // A touch that waited for the lock never moves a newer one back.
-            let update =
-                sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token_hash = $2 AND last_seen_at < $1")
+            let update = match &touch {
+                Touch::Session { hash, now_ms } => {
+                    sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token_hash = $2 AND last_seen_at < $1")
+                        .bind(now_ms)
+                        .bind(hash)
+                        .execute(background.db())
+                        .await
+                }
+                Touch::Token { token_id, now_ms, address } => {
+                    sqlx::query(
+                        "UPDATE api_tokens SET last_used_at = $1, last_used_address = $2 WHERE id = $3 \
+                         AND (last_used_at IS NULL OR last_used_at <= $1)",
+                    )
                     .bind(now_ms)
-                    .bind(&hash)
+                    .bind(address)
+                    .bind(token_id)
                     .execute(background.db())
-                    .await;
+                    .await
+                }
+            };
             if let Err(e) = update {
                 tracing::debug!("session touch failed: {e}");
             }
         });
     }
+}
+
+/// A last-seen or last-used time to write.
+enum Touch {
+    Session { hash: String, now_ms: i64 },
+    Token { token_id: String, now_ms: i64, address: String },
 }
 
 /// A session last seen at or before this time has ended through the idle limit. With the idle

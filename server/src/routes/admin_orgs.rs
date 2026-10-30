@@ -35,7 +35,8 @@ pub struct AdminOrg {
 }
 
 const ORG_COLUMNS: &str = "SELECT o.id, o.name, o.created_at, \
-     (SELECT COUNT(*) FROM org_members m WHERE m.org_id = o.id) AS member_count FROM orgs o";
+     (SELECT COUNT(*) FROM org_members m JOIN users u ON u.id = m.user_id \
+      WHERE m.org_id = o.id AND u.service_account = 0) AS member_count FROM orgs o";
 
 async fn load<'c, E>(db: E, org_id: &str) -> ApiResult<AdminOrg>
 where

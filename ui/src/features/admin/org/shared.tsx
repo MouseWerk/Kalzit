@@ -40,6 +40,7 @@ export function RoleSelect({
   access,
   pending = false,
   id,
+  exclude = [],
 }: {
   label?: string;
   value: string;
@@ -48,9 +49,13 @@ export function RoleSelect({
   access: AdminAccess;
   pending?: boolean;
   id?: string;
+  /** Role keys not offered, such as owner for a service account. */
+  exclude?: readonly string[];
 }) {
   const { t } = useI18n();
-  const keys: string[] = roles === undefined ? [...ORG_ROLES] : roles.map((role) => role.id);
+  const keys: string[] = (
+    roles === undefined ? [...ORG_ROLES] : roles.map((role) => role.id)
+  ).filter((key) => !exclude.includes(key));
   // A member may hold a role the list does not know (yet); keep it shown as it is.
   if (!keys.includes(value)) {
     keys.unshift(value);

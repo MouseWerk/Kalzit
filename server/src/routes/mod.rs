@@ -34,6 +34,7 @@ pub mod preferences;
 pub mod query;
 pub mod query_cache;
 pub mod roles;
+pub mod service_accounts;
 pub mod setup;
 pub mod support;
 pub mod table;
@@ -71,6 +72,7 @@ pub fn all() -> Vec<table::RouteDef> {
         live::routes(),
         export::routes(),
         members::routes(),
+        service_accounts::routes(),
         teams::routes(),
         team_context::routes(),
         roles::routes(),

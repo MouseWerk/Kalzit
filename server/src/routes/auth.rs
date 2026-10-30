@@ -110,11 +110,13 @@ pub async fn login(
         refuse(wait)
     };
 
-    let row: Option<LoginRow> =
-        sqlx::query_as("SELECT id, email, name, password_hash, is_server_admin, disabled FROM users WHERE email = $1")
-            .bind(&email)
-            .fetch_optional(&state.read_db)
-            .await?;
+    let row: Option<LoginRow> = sqlx::query_as(
+        "SELECT id, email, name, password_hash, is_server_admin, disabled FROM users \
+             WHERE email = $1 AND service_account = 0",
+    )
+    .bind(&email)
+    .fetch_optional(&state.read_db)
+    .await?;
     // The waits named below are the whole window, so they tell nothing about the account or
     // the network.
     let window = state.login_limiter.window();

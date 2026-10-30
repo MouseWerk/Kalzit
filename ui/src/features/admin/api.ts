@@ -207,6 +207,152 @@ export function setTeamRoles(orgId: string, teamId: string, roles: string[]) {
   return send("PUT", path, { roles }, isTeam, "team");
 }
 
+// Service accounts and API tokens (docs/api/access.md, "Service accounts")
+
+export interface ServiceAccount {
+  id: string;
+  name: string;
+  description: string;
+  /** A role key; never "owner". */
+  role: string;
+  disabled: boolean;
+  activeTokens: number;
+  nextExpiry: number | null;
+  lastUsedAt: number | null;
+  createdByName: string | null;
+  createdAt: number;
+}
+
+const serviceAccountFields = {
+  id: isString,
+  name: isString,
+  description: isString,
+  role: isString,
+  disabled: isBoolean,
+  activeTokens: isNumber,
+  nextExpiry: nullable(isNumber),
+  lastUsedAt: nullable(isNumber),
+  createdByName: nullable(isString),
+  createdAt: isNumber,
+};
+
+const isServiceAccount = shape<ServiceAccount>(serviceAccountFields);
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  /** The visible start of the token; the rest is never shown again. */
+  prefix: string;
+  expiresAt: number;
+  allowedIps: string[];
+  createdAt: number;
+  createdByName: string | null;
+  lastUsedAt: number | null;
+  lastUsedAddress: string | null;
+  revokedAt: number | null;
+  revokedByName: string | null;
+}
+
+const apiTokenFields = {
+  id: isString,
+  name: isString,
+  prefix: isString,
+  expiresAt: isNumber,
+  allowedIps: arrayOf(isString),
+  createdAt: isNumber,
+  createdByName: nullable(isString),
+  lastUsedAt: nullable(isNumber),
+  lastUsedAddress: nullable(isString),
+  revokedAt: nullable(isNumber),
+  revokedByName: nullable(isString),
+};
+
+const isApiToken = shape<ApiToken>(apiTokenFields);
+
+export interface ServiceAccountDetail extends ServiceAccount {
+  tokens: ApiToken[];
+}
+
+const isServiceAccountDetail = shape<ServiceAccountDetail>({
+  ...serviceAccountFields,
+  tokens: arrayOf(isApiToken),
+});
+
+/** A token as it is made: the only answer that holds the token itself. */
+export interface CreatedToken extends ApiToken {
+  token: string;
+}
+
+const isCreatedToken = shape<CreatedToken>({ ...apiTokenFields, token: isString });
+
+const isScimTokenState = shape<{ token: ApiToken | null }>({ token: nullable(isApiToken) });
+
+export interface TokenInput {
+  name: string;
+  expiresInDays?: number;
+  expiresAt?: number;
+  allowedIps: string[];
+}
+
+export function listServiceAccounts(orgId: string, cursor?: string) {
+  const path = orgPath(orgId, `/service-accounts${query({ cursor })}`);
+  return getPage(path, isServiceAccount, "service accounts");
+}
+
+export async function fetchServiceAccount(orgId: string, accountId: string) {
+  const path = orgPath(orgId, `/service-accounts/${enc(accountId)}`);
+  return expectShape(await request("GET", path), isServiceAccountDetail, "service account");
+}
+
+export function createServiceAccount(
+  orgId: string,
+  input: { name: string; description: string; role: string },
+) {
+  return send(
+    "POST",
+    orgPath(orgId, "/service-accounts"),
+    input,
+    isServiceAccount,
+    "service account",
+  );
+}
+
+export function updateServiceAccount(
+  orgId: string,
+  accountId: string,
+  input: { description?: string; role?: string; disabled?: boolean },
+) {
+  const path = orgPath(orgId, `/service-accounts/${enc(accountId)}`);
+  return send("PATCH", path, input, isServiceAccount, "service account");
+}
+
+export async function deleteServiceAccount(orgId: string, accountId: string) {
+  await request("DELETE", orgPath(orgId, `/service-accounts/${enc(accountId)}`));
+}
+
+export function createApiToken(orgId: string, accountId: string, input: TokenInput) {
+  const path = orgPath(orgId, `/service-accounts/${enc(accountId)}/tokens`);
+  return send("POST", path, input, isCreatedToken, "token");
+}
+
+export function revokeApiToken(orgId: string, accountId: string, tokenId: string) {
+  const path = orgPath(orgId, `/service-accounts/${enc(accountId)}/tokens/${enc(tokenId)}/revoke`);
+  return send("POST", path, {}, isApiToken, "token");
+}
+
+export async function fetchScimToken(orgId: string) {
+  const answer = await request("GET", orgPath(orgId, "/scim-token"));
+  return expectShape(answer, isScimTokenState, "SCIM token").token;
+}
+
+export function createScimToken(orgId: string) {
+  return send("POST", orgPath(orgId, "/scim-token"), {}, isCreatedToken, "SCIM token");
+}
+
+export async function revokeScimToken(orgId: string) {
+  await request("DELETE", orgPath(orgId, "/scim-token"));
+}
+
 // Roles
 
 export interface Role {
@@ -627,6 +773,10 @@ export const adminKeys = {
   teams: (orgId: string) => ["admin", "org", orgId, "teams"] as const,
   team: (orgId: string, teamId: string) => ["admin", "org", orgId, "teams", teamId] as const,
   roles: (orgId: string) => ["admin", "org", orgId, "roles"] as const,
+  serviceAccounts: (orgId: string) => ["admin", "org", orgId, "service-accounts"] as const,
+  serviceAccount: (orgId: string, accountId: string) =>
+    ["admin", "org", orgId, "service-accounts", accountId] as const,
+  scimToken: (orgId: string) => ["admin", "org", orgId, "scim-token"] as const,
   grants: (orgId: string, type: ResourceType, id: string) =>
     ["admin", "org", orgId, "grants", type, id] as const,
   explain: (orgId: string, permission: string, type?: ResourceType, id?: string) =>

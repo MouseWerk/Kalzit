@@ -64,6 +64,8 @@ catalog.
 | Plugin | Plugin | Eine Erweiterung aus einem signierten Paket: ein Datenquellen-Typ (eigener Prozess in einer Sandbox) oder ein Panel-Typ (im abgeschotteten Rahmen im Browser). | |
 | Herausgeber | Publisher | Wer ein Plugin veröffentlicht, wie es das Manifest nennt; bestätigt wird nur der Schlüssel, der es signiert. | |
 | Katalog | Catalog | Die signierte Liste von Plugins zum Installieren; standardmäßig aus. | |
+| Dienstkonto | Service account | Ein Konto für Skripte und andere Systeme in einer Organisation, mit einer Rolle; arbeitet nur mit API-Tokens und meldet sich nie an. | Servicekonto |
+| API-Token | API token | Der Zugang eines Dienstkontos: einmal angezeigt, nur als Hash gespeichert, läuft spätestens nach einem Jahr ab. | Zugangstoken, Personal access token |
 
 ## Schreibweise / Style
 
