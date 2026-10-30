@@ -346,8 +346,8 @@ async fn create(
     // The account has no password and never signs in; the email column needs a unique value
     // that no mail server would accept.
     sqlx::query(
-        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, service_account) \
-         VALUES ($1, $2, $3, NULL, 0, 0, $4, 1)",
+        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, service_account, \
+         email_confirmed) VALUES ($1, $2, $3, NULL, 0, 0, $4, 1, 0)",
     )
     .bind(&id)
     .bind(format!("{id}@service-account.invalid"))

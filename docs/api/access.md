@@ -481,7 +481,9 @@ people (members, server users, team member pickers, member counts) leave service
 and the member routes answer `404` for them. They have no second factor: a required one never
 applies to them, the server's two-factor overview does not count them, and both resets answer
 `404`. A service account never becomes an organization's owner (`POST /admin/orgs` refuses it as
-`ownerUserId`). There are no personal tokens for people.
+`ownerUserId`). Its made-up address (`<id>@service-account.invalid`) gets no mail: inviting it is
+`422` (`mail.address_invalid`), a password link for it is neither sent on request nor by an admin
+(`404`), and it never counts as a confirmed address. There are no personal tokens for people.
 
 ```ts
 interface ServiceAccount {
