@@ -64,9 +64,13 @@ tonic = { version = "0.14.8", default-features = false, features = ["codegen", "
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 toml = "1.1.8"
 # The second factor (`auth::second_factor`): TOTP codes (RFC 6238, HMAC-SHA-1), their keys in
-# Base32, the QR code of the key for authenticator apps, and passkeys (WebAuthn). webauthn-rs is
-# pinned: its 0.6 line is the pure-Rust one (no OpenSSL); its registration and authentication
-# states are kept in the server's database between the two steps, which the feature allows.
+# Base32, the QR code of the key for authenticator apps, and passkeys (WebAuthn).
+# webauthn-rs is pinned to the pre-release =0.6.1-dev on purpose: the latest stable release, 0.5.5,
+# needs OpenSSL (webauthn-rs-core depends on openssl and openssl-sys), which Kalzit does not build
+# or ship on Windows or Linux (rustls and ring only). The 0.6 line from the same maintainers (kanidm)
+# does the same checks in pure Rust (RustCrypto through crypto-glue). Move to the first stable 0.6
+# release once it is published. Registration and authentication states are kept in the server's
+# database between the two steps, which the feature allows.
 hmac = "0.13.0"
 sha1 = "0.11.0"
 data-encoding = "2.11.1"

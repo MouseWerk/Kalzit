@@ -32,6 +32,7 @@ import { ConfirmFactorDialog, isConfirmed, methodsOf } from "./ConfirmFactorDial
 import { FactorForm } from "./FactorForm";
 import { RecoveryCodesPanel, TotpSetupPanel } from "./parts";
 import { createPasskey, isPasskeyCancelled, passkeysAvailable } from "./webauthn";
+import "../settings/settings.css";
 import "./security.css";
 
 type Open =

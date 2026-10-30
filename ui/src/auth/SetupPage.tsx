@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type FormEvent,
   type ReactNode,
@@ -9,10 +9,19 @@ import {
   useRef,
   useState,
 } from "react";
-import { checkSetupCode, completeSetup, type Me, meQuery, setupStatusQuery } from "../api/auth";
+import {
+  checkSetupCode,
+  completeSetup,
+  logout,
+  type Me,
+  meQuery,
+  setupStatusQuery,
+} from "../api/auth";
 import { type ErrorCode, isApiError } from "../api/client";
 import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
+import { isPrompt, type Prompt } from "../features/security/api";
+import { SecondFactorSetup } from "../features/security/SecondFactorStep";
 import { LANGUAGES, type MessageKey, useI18n } from "../i18n/i18n";
 import { THEMES, useTheme } from "../theme/theme";
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
@@ -175,13 +184,23 @@ export function SetupPage() {
     },
   });
 
+  // The second factor the server requires of the first owner, while it is set up.
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const navigate = useNavigate();
   const setup = useMutation({
     mutationFn: completeSetup,
     retry: false,
-    onSuccess: (me) => {
-      queryClient.setQueryData(meQuery.queryKey, me);
+    onSuccess: (result) => {
       markSetupDone();
-      setDone(me);
+      if ("secondFactor" in result) {
+        // The server requires a second factor: the owner sets one up before the session opens.
+        if (isPrompt(result.secondFactor)) {
+          setPrompt(result.secondFactor);
+        }
+        return;
+      }
+      queryClient.setQueryData(meQuery.queryKey, result);
+      setDone(result);
       setStep(4);
     },
     onError: (error) => {
@@ -293,6 +312,26 @@ export function SetupPage() {
   function back() {
     setErrors({});
     setStep(step === 3 ? 2 : 1);
+  }
+
+  if (prompt !== null) {
+    return (
+      <AccessLayout context={t("access.top.setupContext")} width="wide" helpInNewTab>
+        <SecondFactorSetup
+          prompt={prompt}
+          onSignedIn={(me) => {
+            queryClient.setQueryData(meQuery.queryKey, me);
+            setPrompt(null);
+            setDone(me);
+            setStep(4);
+          }}
+          onSignOut={() => {
+            void logout().finally(() => void navigate({ to: "/login" }));
+          }}
+          onExpired={() => void navigate({ to: "/login" })}
+        />
+      </AccessLayout>
+    );
   }
 
   // Kalzit is set up (by someone else, or before this page was opened): only that, no steps.

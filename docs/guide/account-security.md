@@ -57,7 +57,8 @@ applies there and how many members still have no second factor.
 
 There is no grace period: whoever must have a second factor and has none sets one up at the next
 sign-in, in three steps (method, setup, recovery codes), before Kalzit opens. People who are
-already signed in keep their session until it ends.
+already signed in keep their session until it ends. A rule set in the environment or `kalzit.toml`
+applies to the first-run setup too: the first owner sets up a second factor before Kalzit opens.
 
 ## Resetting someone's second factor (administrators)
 

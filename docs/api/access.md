@@ -579,7 +579,7 @@ setup_token_expired` (the code of the previous start), `409 setup_done`, `429 ra
 answer never contains the code.
 
 **`POST /setup`** `{ "token", "orgName", "name", "email", "password", "language"?, "theme"?,
-"timeZone"? }` creates the first organization and its owner (also server admin) and signs them in.
+"timeZone"? }` creates the first organization and its owner (also server admin) and signs them in. When the server requires a second factor (`security.two_factor_required` other than `off`, which before setup only the environment or `kalzit.toml` can set), it opens no session: it answers `200 { "secondFactor": Prompt }` with `setup: true` and the pending cookie, and the owner sets up a second factor through the routes of "Second factor" before the session opens.
 The optional fields set the server defaults `appearance.default_language` (`de`, `en`) and
 `appearance.default_theme` (`system`, `light`, `dark`, `contrast`), and the new organization's
 `appearance.time_zone` (an IANA name such as `Europe/Berlin`), with the rules of the settings

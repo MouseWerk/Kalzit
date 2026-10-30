@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "../../i18n/i18n";
 import { LoadState } from "../admin/components/Section";
 import { fetchOverview, type Requirement, securityKeys } from "./api";
+import "../settings/settings.css";
 import "./security.css";
 
 /**

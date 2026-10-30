@@ -90,8 +90,16 @@ export async function checkSetupCode(token: string): Promise<void> {
   await request("POST", "/api/setup/check", { token });
 }
 
-export async function completeSetup(input: SetupInput): Promise<Me> {
-  return expectShape(await request("POST", "/api/setup", input), isMe, "setup");
+/**
+ * Completes setup. When the server requires a second factor (set in its environment or
+ * kalzit.toml), the first owner sets one up first: the answer is then the second step's prompt.
+ */
+export async function completeSetup(input: SetupInput): Promise<Me | { secondFactor: unknown }> {
+  const body = await request("POST", "/api/setup", input);
+  if (isRecord(body) && "secondFactor" in body) {
+    return { secondFactor: body.secondFactor };
+  }
+  return expectShape(body, isMe, "setup");
 }
 
 /**
