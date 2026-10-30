@@ -27,6 +27,7 @@ catalog.
 | Server-Admin | Server admin | Verwaltet die ganze Installation über alle Organisationen hinweg. | Superuser, Root |
 | Datenquelle | Data source | Verbindung zu einer Datenbank oder einem Dienst, den Kalzit abfragt. | Datasource, Datenbankquelle, Connector |
 | Abfrage | Query | Eine Anfrage an eine Datenquelle (SQL, Pipeline, Cypher, PromQL, ...). | Query (im Deutschen) |
+| Nutzung | Usage | Stündliche Zähler je Dashboard, Panel und Datenquelle (Aufrufe, Läufe, Abfragen, Dauer, Fehler) unter Verwaltung > Nutzung; nie je Person. | Nutzungsstatistik (als Name) |
 | Abfrage-Cache | Query cache | Antworten von Abfragen, die der Server pro Person eine Zeit lang behält; „Aktualisieren“ fragt immer die Datenquelle. | Zwischenspeicher (als Name), Puffer |
 | Dashboard | Dashboard | Seite mit Panels, abgelegt in Ordnern, mit Verlauf. | Übersichtsseite, Board |
 | Ordner | Folder | Enthält Dashboards; Rechte am Ordner gelten für seinen Inhalt. | Verzeichnis |

@@ -724,6 +724,8 @@ async fn record_view(
     .execute(&mut *tx)
     .await?;
     crate::db::commit(tx).await?;
+    // Usage insights count the view for the dashboard alone, never for the person.
+    crate::usage::record_view(&state, &ctx.org_id, &id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

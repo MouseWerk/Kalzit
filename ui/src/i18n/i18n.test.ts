@@ -88,6 +88,8 @@ describe("catalogs", () => {
       "App",
       "Teams",
       "Name",
+      "Dashboard",
+      "Panel",
       "Team",
       "Person",
       "Kalzit",

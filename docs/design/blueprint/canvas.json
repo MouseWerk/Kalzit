@@ -129,6 +129,14 @@
       "w": 1440,
       "x": 9120,
       "y": 0
+    },
+    "Identity.dc.html": {
+      "expand": "fill",
+      "h": 25480,
+      "title": "Identity and sign-in (M5)",
+      "w": 1440,
+      "x": 10640,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -165,7 +173,8 @@
     "Graph.dc.html",
     "Access.dc.html",
     "Plugins.dc.html",
-    "AI.dc.html"
+    "AI.dc.html",
+    "Identity.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

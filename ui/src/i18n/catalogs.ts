@@ -25,6 +25,7 @@ import deSecurity from "./de/security.json";
 import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
 import deToolbar from "./de/toolbar.json";
+import deUsage from "./de/usage.json";
 import enAccess from "./en/access.json";
 import enAdmin from "./en/admin.json";
 import enAi from "./en/ai.json";
@@ -48,6 +49,7 @@ import enSecurity from "./en/security.json";
 import enSettings from "./en/settings.json";
 import enShell from "./en/shell.json";
 import enToolbar from "./en/toolbar.json";
+import enUsage from "./en/usage.json";
 
 const enDashboardFeatures = {
   ...enAnnotations,
@@ -83,6 +85,7 @@ export const en = {
   ...enPlugins,
   ...enPanelPlugins,
   ...enSecurity,
+  ...enUsage,
 };
 export const de = {
   ...deCore,
@@ -105,4 +108,5 @@ export const de = {
   ...dePlugins,
   ...dePanelPlugins,
   ...deSecurity,
+  ...deUsage,
 };

@@ -137,21 +137,21 @@ describe("app shell", () => {
   });
 
   it.each([
-    ["settings:read", "Organization settings"],
-    ["audit:read", "Audit log"],
-  ])("lists the section a custom role with %s may open", async (permission, section) => {
+    ["settings:read", ["Organization settings"]],
+    ["audit:read", ["Audit log", "Usage"]],
+  ])("lists the sections a custom role with %s may open", async (permission, sections) => {
     await openShell(
       "/admin",
       { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
       { steward: [permission] },
     );
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
-    const sections = await within(nav).findByRole("list", { name: "Administration sections" });
+    const list = await within(nav).findByRole("list", { name: "Administration sections" });
     expect(
-      within(sections)
+      within(list)
         .getAllByRole("link")
         .map((link) => link.textContent),
-    ).toEqual([section]);
+    ).toEqual(sections);
   });
 
   it("shows administration to a server admin who belongs to no organization", async () => {
