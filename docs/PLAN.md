@@ -361,7 +361,7 @@ mit Rückgängig (Ausnahme nach `design/principles.md`, in `CLAUDE.md` festgehal
 | Werkzeuge | Biome (Format und Lint), Vitest 5, Playwright | Schnell, wenige Abhängigkeiten |
 | HTTPS | rustls (kein OpenSSL, identisch auf Windows und Linux) | Keine Systembibliothek nötig |
 | Zeitreihen | uPlot | Sehr schnell bei vielen Punkten |
-| Graphen | Sigma.js + Graphology (WebGL); ForceAtlas2 für Netzwerke, für Hierarchien ein eigenes Schichten-Layout (Zyklen aufbrechen, Schichten nach längstem Pfad, Baryzentrum-Sortierung) im Layout-Worker | Zehntausende Knoten flüssig, keine zusätzliche Layout-Bibliothek im Bundle; ELK (elkjs) kommt höchstens in M5 als optionales Layout |
+| Graphen | Sigma.js + Graphology (WebGL); ForceAtlas2 für Netzwerke, für Hierarchien ein eigenes Schichten-Layout (Zyklen aufbrechen, Schichten nach längstem Pfad, Baryzentrum-Sortierung) im Layout-Worker | Zehntausende Knoten flüssig, keine zusätzliche Layout-Bibliothek im Start-Bundle; ELK (elkjs) ist seit M5 ein optionales Hierarchie-Layout, das erst bei Auswahl nachgeladen wird |
 | Diagramme sonst | ECharts | Balken, Heatmaps, Verteilungen |
 | Live-Daten | WebSocket; MongoDB Change Streams, sonst Polling | Push statt ständiges Neuladen |
 | Plugin-Protokoll | gRPC (tonic/prost) über Named Pipe (Windows) bzw. Unix-Socket (Linux); das Protokoll wird mit protox (Protobuf-Compiler in Rust) übersetzt, kein protoc nötig | Plattformübergreifend, SDKs in mehreren Sprachen |

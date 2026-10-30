@@ -3738,7 +3738,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -3772,7 +3777,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -3846,7 +3856,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -3884,7 +3899,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -3981,7 +4001,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -4071,7 +4096,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4105,7 +4135,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4139,7 +4174,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4173,7 +4213,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4207,7 +4252,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4241,7 +4291,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4275,7 +4330,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -4349,7 +4409,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -4387,7 +4452,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -4484,7 +4554,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {
@@ -4574,7 +4649,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4608,7 +4688,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4642,7 +4727,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4676,7 +4766,12 @@
       "clickAction": "variable",
       "clickDetails": true,
       "variable": "customer",
-      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
@@ -4710,7 +4805,12 @@
       "clickAction": "details",
       "clickDetails": true,
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal"
     },
     "fieldConfig": {
       "defaults": {},
