@@ -50,7 +50,7 @@ export function ssoErrorText(t: Translate, error: unknown, texts: ErrorTexts = {
   return errorText(t, error, texts);
 }
 
-/** The reason of a failed test sign-in (`sso.outcome.<outcome>`) as a sentence. */
+/** The reason of a failed test sign-in (`sso.outcome_<outcome>`) as a sentence. */
 export function testFailureText(t: Translate, error: { reason: string; message: string }): string {
   return reasonText(t, { reason: error.reason, fallback: error.message }) ?? error.reason;
 }

@@ -1053,9 +1053,9 @@
   "datasources.reason.sso.break_glass_protected": "The break-glass admin cannot be locked and keeps the server admin role. Choose another one first.",
   "datasources.reason.sso.settings_read_only": "kalzit.toml or the environment sets the sign-in settings.",
   "datasources.reason.sso.test_unknown": "This test sign-in no longer exists. Start a new one.",
-  "datasources.reason.sso.outcome.unavailable": "The provider could not be reached.",
-  "datasources.reason.sso.outcome.failed": "The provider’s answer was not valid.",
-  "datasources.reason.sso.outcome.cancelled": "The sign-in was cancelled at the provider.",
-  "datasources.reason.sso.outcome.expired": "The sign-in took too long or was used already.",
-  "datasources.reason.sso.outcome.email_taken": "The email address belongs to an unconfirmed account, or the provider did not confirm it."
+  "datasources.reason.sso.outcome_unavailable": "The provider could not be reached.",
+  "datasources.reason.sso.outcome_failed": "The provider’s answer was not valid.",
+  "datasources.reason.sso.outcome_cancelled": "The sign-in was cancelled at the provider.",
+  "datasources.reason.sso.outcome_expired": "The sign-in took too long or was used already.",
+  "datasources.reason.sso.outcome_email_taken": "The email address belongs to an unconfirmed account, or the provider did not confirm it."
 }

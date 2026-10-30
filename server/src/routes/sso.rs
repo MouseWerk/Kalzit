@@ -323,7 +323,7 @@ async fn callback_inner(
             let r =
                 record_failure(state, info, None, None, "sso.provider_unavailable", "the provider is paused or gone")
                     .await;
-            finish_row(state, &row, test, Err(("unavailable", "sso.outcome.unavailable"))).await?;
+            finish_row(state, &row, test, Err(("unavailable", "sso.outcome_unavailable"))).await?;
             return Ok(see_other(&sign_in_page("unavailable", slug, Some(&r)), clear()));
         }
     };
@@ -436,11 +436,11 @@ async fn open_session(
 
 fn outcome_reason(outcome: &str) -> &'static str {
     match outcome {
-        "unavailable" => "sso.outcome.unavailable",
-        "cancelled" => "sso.outcome.cancelled",
-        "expired" => "sso.outcome.expired",
-        "email_taken" => "sso.outcome.email_taken",
-        _ => "sso.outcome.failed",
+        "unavailable" => "sso.outcome_unavailable",
+        "cancelled" => "sso.outcome_cancelled",
+        "expired" => "sso.outcome_expired",
+        "email_taken" => "sso.outcome_email_taken",
+        _ => "sso.outcome_failed",
     }
 }
 
@@ -1196,7 +1196,7 @@ async fn test_result(
             "reason": result["reason"], "message": format!("the test sign-in ended: {}", result["outcome"].as_str().unwrap_or("failed")),
         } }),
         _ if expires_at <= now => json!({ "status": "failed", "error": {
-            "reason": "sso.outcome.expired", "message": "the test sign-in took too long",
+            "reason": "sso.outcome_expired", "message": "the test sign-in took too long",
         } }),
         _ => json!({ "status": "pending" }),
     }))

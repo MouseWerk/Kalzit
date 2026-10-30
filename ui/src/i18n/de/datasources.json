@@ -1053,9 +1053,9 @@
   "datasources.reason.sso.break_glass_protected": "Der Notfall-Admin lässt sich nicht sperren und behält die Rolle als Server-Admin. Wähle zuerst einen anderen.",
   "datasources.reason.sso.settings_read_only": "kalzit.toml oder die Umgebung legt die Einstellungen der Anmeldung fest.",
   "datasources.reason.sso.test_unknown": "Diese Testanmeldung gibt es nicht mehr. Starte eine neue.",
-  "datasources.reason.sso.outcome.unavailable": "Der Anbieter war nicht erreichbar.",
-  "datasources.reason.sso.outcome.failed": "Die Antwort des Anbieters war nicht gültig.",
-  "datasources.reason.sso.outcome.cancelled": "Die Anmeldung wurde beim Anbieter abgebrochen.",
-  "datasources.reason.sso.outcome.expired": "Die Anmeldung hat zu lange gedauert oder wurde schon genutzt.",
-  "datasources.reason.sso.outcome.email_taken": "Die E-Mail-Adresse gehört zu einem unbestätigten Konto, oder der Anbieter hat sie nicht bestätigt."
+  "datasources.reason.sso.outcome_unavailable": "Der Anbieter war nicht erreichbar.",
+  "datasources.reason.sso.outcome_failed": "Die Antwort des Anbieters war nicht gültig.",
+  "datasources.reason.sso.outcome_cancelled": "Die Anmeldung wurde beim Anbieter abgebrochen.",
+  "datasources.reason.sso.outcome_expired": "Die Anmeldung hat zu lange gedauert oder wurde schon genutzt.",
+  "datasources.reason.sso.outcome_email_taken": "Die E-Mail-Adresse gehört zu einem unbestätigten Konto, oder der Anbieter hat sie nicht bestätigt."
 }

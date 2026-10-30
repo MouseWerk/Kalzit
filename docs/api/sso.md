@@ -294,7 +294,7 @@ at the provider and lands on `/anmelden/sso-test`. Nobody is signed in to Kalzit
 ```
 
 `status` is `pending`, `done` or `failed` (then `error: {"reason", "message"}` with the outcome
-codes of the callback as reasons `sso.outcome.<outcome>`).
+codes of the callback as reasons `sso.outcome_<outcome>`).
 
 ### Group mappings
 
@@ -369,8 +369,32 @@ decides the member's role.
 | `sso.break_glass_protected` | | `409 conflict`: the break-glass admin cannot be disabled or lose the server admin role |
 | `sso.settings_read_only` | | `409 conflict`: the environment or `kalzit.toml` sets the sign-in settings |
 | `sso.test_unknown` | | `404`-like answer of a test sign-in that does not exist, expired or belongs to someone else (`not_found`) |
-| `sso.outcome.unavailable` | | test sign-in: the provider could not be reached |
-| `sso.outcome.failed` | | test sign-in: the provider's answer was not valid |
-| `sso.outcome.cancelled` | | test sign-in: cancelled at the provider |
-| `sso.outcome.expired` | | test sign-in: took too long or was used already |
-| `sso.outcome.email_taken` | | test sign-in: the email belongs to an unconfirmed account, or the provider did not verify it |
+| `sso.outcome_unavailable` | | test sign-in: the provider could not be reached |
+| `sso.outcome_failed` | | test sign-in: the provider's answer was not valid |
+| `sso.outcome_cancelled` | | test sign-in: cancelled at the provider |
+| `sso.outcome_expired` | | test sign-in: took too long or was used already |
+| `sso.outcome_email_taken` | | test sign-in: the email belongs to an unconfirmed account, or the provider did not verify it |
+
+## Causes in the audit log
+
+`auth.sso_failed` entries carry one of the reasons above or one of these as `reason`, with an
+English `detail`; the person only sees the outcome. They are not answered as API errors.
+
+| Cause | When |
+|---|---|
+| `sso.state_missing` | the provider sent the browser back without `state` |
+| `sso.state_unknown` | no unexpired, unused sign-in has this `state` for this browser |
+| `sso.provider_unavailable` | the provider was paused or removed during the sign-in |
+| `sso.provider_error` | the provider answered with an `error` (its code is in `detail`) |
+| `sso.code_missing` | the provider sent no authorization code |
+| `sso.token_refused` | the token endpoint refused the code |
+| `sso.token_invalid` | the token endpoint's answer has no ID token or is not JSON |
+| `sso.id_token_invalid` | the ID token failed a check (signature, issuer, audience, time, nonce) |
+| `sso.userinfo_failed` | the userinfo endpoint failed or spoke about another subject |
+| `sso.issuer_is_kalzit` | an address of the provider points at this Kalzit server |
+| `sso.email_missing` | a new person came without a usable email |
+| `sso.email_unverified` | an account has the email, but the provider or the account did not confirm it |
+| `sso.no_account` | no account matches and the provider does not create accounts |
+| `sso.account_disabled` | the account is disabled |
+| `sso.unmapped` | no group matches and the unmapped rule refuses |
+| `sso.internal` | the server failed (its log has the request) |
