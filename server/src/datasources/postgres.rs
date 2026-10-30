@@ -9,10 +9,11 @@ use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::postgres::types::PgInterval;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::{Column as _, Connection as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
 use super::Detail;
+use super::connect::{self, SqlPool};
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -88,12 +89,13 @@ pub struct Postgres;
 const IDENTITY_SQL: &str =
     "SELECT CAST(system_identifier AS TEXT), CAST(current_database() AS TEXT) FROM pg_control_system()";
 
-async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
+async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::Postgres>>, SourceError> {
     conn.shared(|| async {
         let s: Settings = conn.settings_as()?;
         let port = s.port.unwrap_or(5432) as u16;
         let mode = ssl_mode(s.ssl_mode.as_deref());
         let addr = conn.policy().pick_address(&s.host, port, CONNECT_TIMEOUT).await?;
+        let address = connect::address(&s.host, port);
         // The driver connects to the checked address. With verify-full it must connect by name,
         // because the driver checks the certificate against the host it connects to and has no
         // separate TLS name. It then resolves the name itself for every new connection, so
@@ -118,35 +120,68 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
         // One connection outside the pool first: a pool whose connections are all refused only
         // reports a timeout, which would hide why (Kalzit's own database).
         if let Some(own) = &own {
-            let mut probe = sqlx::PgConnection::connect_with(&options).await.map_err(failed)?;
+            let mut probe = sqlx::PgConnection::connect_with(&options)
+                .await
+                .map_err(|e| connect::sqlx_connect_failed(e, &address, CONNECT_TIMEOUT, failed))?;
             let checked = check_identity(&mut probe, own).await;
             let _ = sqlx::Connection::close(probe).await;
             checked.map_err(failed)?;
         }
-        PgPoolOptions::new()
+        // Lazy, so the first connection goes through `SqlPool::acquire`, which names the cause of
+        // a refused or silent server. Connections are tested before use: one that broke while
+        // idle (the server restarted) is replaced, not handed to a query. Setup errors are kept, so
+        // a pool that runs out of time retrying them can say why.
+        let setup = connect::SetupErrors::default();
+        let kept = setup.clone();
+        let probe_recheck = recheck.clone();
+        let pool = PgPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
             .acquire_timeout(CONNECT_TIMEOUT)
+            .test_before_acquire(true)
             .idle_timeout(Duration::from_secs(300))
             .after_connect(move |c, _| {
                 let own = own.clone();
                 let recheck = recheck.clone();
+                let kept = kept.clone();
                 Box::pin(async move {
-                    if let Some((policy, host, port)) = recheck {
-                        super::recheck_name(&policy, &host, port).await?;
-                    }
-                    // Every new connection is checked, not only the first: the pool reconnects.
-                    match own {
-                        Some(own) => check_identity(c, &own).await,
-                        None => Ok(()),
-                    }
+                    let step = async {
+                        if let Some((policy, host, port)) = recheck {
+                            super::recheck_name(&policy, &host, port).await?;
+                        }
+                        // Every new connection is checked, not only the first: the pool reconnects.
+                        match own {
+                            Some(own) => check_identity(c, &own).await,
+                            None => Ok(()),
+                        }
+                    };
+                    kept.keep(step.await, failed)
                 })
             })
-            .connect_with(options)
-            .await
-            .map_err(failed)
+            .connect_lazy_with(options);
+        let pool = SqlPool::new(pool, addr, address, CONNECT_TIMEOUT, setup, probe_recheck);
+        // One connection now, so a source that cannot connect is not kept.
+        drop(pool.acquire(failed).await?);
+        Ok(pool)
     })
     .await
+}
+
+/// A read-only transaction that owns its pooled connection. BEGIN is the first round trip: a
+/// connection that broke after the pool checked it (the server restarted just then) fails here,
+/// before any result, and the query goes on once with a fresh connection, which is safe as it only
+/// reads. The broken connection goes back with the failed BEGIN and the pool closes it at once, so
+/// broken connections never hold the pool's slots while the retries wait for one.
+async fn begin_read_only(
+    pool: &SqlPool<sqlx::Postgres>,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, SourceError> {
+    #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
+    let begin = |c| sqlx::Transaction::begin(c, Some("BEGIN READ ONLY".into_sql_str()));
+    match begin(pool.acquire(failed).await?).await {
+        Ok(tx) => Ok(tx),
+        Err(e) if connect::sqlx_dead(&e) => begin(pool.acquire(failed).await?).await.map_err(failed),
+        Err(e) => Err(failed(e)),
+    }
 }
 
 /// Refuses a connection to Kalzit's own database (`own` is its system identifier and name).
@@ -169,6 +204,7 @@ fn failed(e: sqlx::Error) -> SourceError {
         sqlx::Error::Configuration(inner) if inner.is::<IdentityUnknown>() => {
             SourceError::failed("target.own_database_unverifiable", inner.to_string())
         }
+        sqlx::Error::Io(io) if connect::is_dead(io.kind()) => connect::lost(io),
         sqlx::Error::Database(db) => {
             if db.code().as_deref() == Some("57014") {
                 SourceError::failed("query.statement_timeout", "the query was cancelled by the statement timeout")
@@ -205,7 +241,7 @@ impl DataSourcePlugin for Postgres {
     async fn health(&self, conn: &Connection) -> Health {
         let check = async {
             let pool = pool(conn).await?;
-            let mut c = pool.acquire().await.map_err(failed)?;
+            let mut c = pool.acquire(failed).await?;
             #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
             let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
             let (version, superuser): (String, bool) = sqlx::query_as(
@@ -226,7 +262,7 @@ impl DataSourcePlugin for Postgres {
 
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         let pool = pool(conn).await?;
-        let mut c = pool.acquire().await.map_err(failed)?;
+        let mut c = pool.acquire(failed).await?;
         #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
         let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
         let rows: Vec<(String, String, String, String)> = sqlx::query_as(
@@ -246,9 +282,7 @@ impl DataSourcePlugin for Postgres {
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let prepared = sql::prepare_query(self, conn, &req, Engine::Postgres).await?;
         let pool = pool(conn).await?;
-        let mut c = pool.acquire().await.map_err(failed)?;
-        #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
-        let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
+        let mut tx = begin_read_only(&pool).await?;
         // The server stops the statement itself, also when this request is dropped mid-query.
         let deadline = Instant::now() + req.limits.timeout;
         let timeout_ms = req.limits.timeout.as_millis().max(1);
@@ -548,6 +582,110 @@ fn money_text(bytes: &[u8], scale: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A PostgreSQL server that logs everyone in and answers simple queries and syncs. Connections
+    /// opened before `restart` is raised are cut at their next query, as a restarted server's
+    /// are, but answer syncs (the pool's ping) until then. Returns its address, the connections
+    /// it accepted and the switch.
+    async fn restarting_postgres()
+    -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicUsize>, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        // Connections numbered below this are cut at their next query.
+        let cut_below = Arc::new(AtomicUsize::new(0));
+        let (count, cut) = (accepted.clone(), cut_below.clone());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let id = count.fetch_add(1, Ordering::SeqCst);
+                let cut = cut.clone();
+                tokio::spawn(async move {
+                    let message = |tag: u8, body: &[u8]| {
+                        let mut m = vec![tag];
+                        m.extend(((body.len() + 4) as i32).to_be_bytes());
+                        m.extend(body);
+                        m
+                    };
+                    let ready = |status: u8| message(b'Z', &[status]);
+                    let Ok(len) = s.read_i32().await else { return };
+                    let mut startup = vec![0; len as usize - 4];
+                    if s.read_exact(&mut startup).await.is_err() {
+                        return;
+                    }
+                    let mut hello = message(b'R', &0i32.to_be_bytes());
+                    hello.extend(message(b'K', &[0, 0, 0, 1, 0, 0, 0, 2]));
+                    hello.extend(ready(b'I'));
+                    s.write_all(&hello).await.unwrap();
+                    loop {
+                        let Ok(tag) = s.read_u8().await else { return };
+                        let Ok(len) = s.read_i32().await else { return };
+                        let mut body = vec![0; len as usize - 4];
+                        if s.read_exact(&mut body).await.is_err() {
+                            return;
+                        }
+                        let answer = match tag {
+                            b'Q' if id < cut.load(Ordering::SeqCst) => return,
+                            b'Q' => {
+                                let text = String::from_utf8_lossy(&body).to_ascii_uppercase();
+                                let (done, status): (&[u8], u8) =
+                                    if text.starts_with("BEGIN") { (b"BEGIN\0", b'T') } else { (b"ROLLBACK\0", b'I') };
+                                let mut a = message(b'C', done);
+                                a.extend(ready(status));
+                                a
+                            }
+                            b'S' => ready(b'I'),
+                            _ => return,
+                        };
+                        if s.write_all(&answer).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (addr, accepted, cut_below)
+    }
+
+    /// Every pooled connection broke after the pool last saw it, and as many queries as the pool
+    /// holds start at once: each fails at BEGIN, gives its slot back and runs on a fresh
+    /// connection, without waiting for the pool's timeout.
+    #[tokio::test]
+    async fn queries_that_find_broken_connections_at_begin_go_on_on_fresh_ones() {
+        use std::sync::atomic::Ordering;
+        let (addr, accepted, cut_below) = restarting_postgres().await;
+        let options = PgConnectOptions::new_without_pgpass()
+            .host("127.0.0.1")
+            .port(addr.port())
+            .username("u")
+            .database("d")
+            .ssl_mode(PgSslMode::Disable);
+        // Not tested before use, so the broken connections reach BEGIN.
+        let lazy = PgPoolOptions::new()
+            .max_connections(POOL_SIZE)
+            .acquire_timeout(CONNECT_TIMEOUT)
+            .test_before_acquire(false)
+            .connect_lazy_with(options);
+        let pool = SqlPool::new(lazy, addr, addr.to_string(), CONNECT_TIMEOUT, connect::SetupErrors::default(), None);
+        let held = futures_util::future::try_join_all((0..POOL_SIZE).map(|_| pool.acquire(failed))).await.unwrap();
+        drop(held);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(pool.pool.num_idle(), POOL_SIZE as usize);
+        // The server restarts: every open connection is cut at its next query.
+        cut_below.store(accepted.load(Ordering::SeqCst), Ordering::SeqCst);
+        let started = Instant::now();
+        let queries = (0..POOL_SIZE).map(|_| async {
+            let tx = begin_read_only(&pool).await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            tx.rollback().await.map_err(failed)
+        });
+        for outcome in futures_util::future::join_all(queries).await {
+            assert!(outcome.is_ok(), "{:?}", outcome.err().map(|e| e.detail()));
+        }
+        assert!(started.elapsed() < Duration::from_secs(3), "took {:?}", started.elapsed());
+        assert_eq!(accepted.load(Ordering::SeqCst), 2 * POOL_SIZE as usize, "one fresh connection per query");
+    }
 
     /// NUMERIC bytes: digit count, weight, sign, scale and the base-10000 digits.
     fn numeric(weight: i16, negative: bool, scale: u16, digits: &[u16]) -> Vec<u8> {

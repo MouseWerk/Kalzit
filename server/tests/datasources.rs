@@ -305,6 +305,55 @@ async fn postgres_refuses_kalzits_own_database() {
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
 }
 
+/// The database kills every connection of the source (as a restart does) while all of the pool's
+/// connections wait idle: as many panel queries at once as the pool holds still answer, on fresh
+/// connections and without waiting for the connect timeout. The pool's check before use finds
+/// these; connections that break after it are covered in `postgres.rs`.
+#[tokio::test]
+async fn postgres_queries_go_on_after_the_connections_were_killed() {
+    let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
+    let (host, port, user, password, _) = parts(&url);
+    // A database of its own, so only this source's connections are killed, not those of tests
+    // running in parallel.
+    let database = format!("kalzit_kill_{}", uuid::Uuid::now_v7().simple());
+    sqlx::any::install_default_drivers();
+    let admin = sqlx::AnyPool::connect(&url).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}"))).execute(&admin).await.unwrap();
+    let t = T::new(None).await;
+    let settings = json!({ "host": host, "port": port, "database": database, "user": user });
+    let id = t.create("postgres", settings, secrets(password)).await;
+    // The pool holds four connections; each query keeps one for a moment, so all four open.
+    let round = |tag: &'static str| {
+        let (t, id) = (&t, id.clone());
+        futures_util::future::join_all((0..4).map(move |i| {
+            let id = id.clone();
+            async move {
+                let sql = format!("SELECT {i} AS n, '{tag}' AS round, (SELECT 1 FROM pg_sleep(0.3)) AS slept");
+                t.query(&id, json!({ "sql": sql })).await
+            }
+        }))
+    };
+    for r in round("before").await {
+        assert!(r.get("error").is_none(), "{r}");
+    }
+    let killed: Vec<(bool,)> = sqlx::query_as(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+    )
+    .bind(&database)
+    .fetch_all(&admin)
+    .await
+    .unwrap();
+    assert!(!killed.is_empty() && killed.len() <= 4, "the pool's connections: {killed:?}");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let started = std::time::Instant::now();
+    for r in round("after").await {
+        assert!(r.get("error").is_none(), "{r}");
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
+    t.finish().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {database} WITH (FORCE)"))).execute(&admin).await.unwrap();
+}
+
 /// A constant, a custom and a textbox variable in one statement: each binds its own numbered
 /// parameter, on the panel route as through `/query`.
 #[tokio::test]

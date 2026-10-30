@@ -288,7 +288,7 @@ pub fn decode(bytes: &[u8]) -> Result<Bv, BoltError> {
 #[derive(Debug, thiserror::Error)]
 pub enum BoltError {
     #[error("{0}")]
-    Io(String),
+    Io(std::io::Error),
     #[error("the server broke the Bolt protocol: {0}")]
     Protocol(String),
     /// The server's FAILURE: its status code and message.
@@ -305,7 +305,7 @@ fn protocol(what: &str) -> BoltError {
 
 impl From<std::io::Error> for BoltError {
     fn from(e: std::io::Error) -> Self {
-        BoltError::Io(e.to_string())
+        BoltError::Io(e)
     }
 }
 
@@ -323,8 +323,15 @@ impl BoltError {
             }
             BoltError::TooLarge(_) => SourceError::failed("bolt.too_large", self.to_string()),
             BoltError::Protocol(_) => SourceError::failed("bolt.protocol", self.to_string()).with("detail", self),
-            BoltError::Io(message) => SourceError::from_source(message),
+            BoltError::Io(e) if super::connect::is_dead(e.kind()) => super::connect::lost(e),
+            BoltError::Io(e) => SourceError::from_source(e.to_string()),
         }
+    }
+
+    /// The connection itself broke (closed or reset by the server), as opposed to an error the
+    /// server answered.
+    pub fn is_dead(&self) -> bool {
+        matches!(self, BoltError::Io(e) if super::connect::is_dead(e.kind()))
     }
 }
 
@@ -693,6 +700,16 @@ impl BoltConn {
                 (Response::Ignored, _) => return Err(protocol("PULL was ignored")),
             }
         }
+    }
+
+    /// Whether an idle connection is still open: the server has neither closed it (a restart, an
+    /// idle timeout) nor sent anything unasked. Looks without waiting and without consuming.
+    pub fn is_alive(&mut self) -> bool {
+        use std::task::{Context, Poll};
+        use tokio::io::AsyncBufRead;
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        // Pending: nothing to read, the connection waits as it should.
+        matches!(std::pin::Pin::new(&mut self.stream).poll_fill_buf(&mut cx), Poll::Pending)
     }
 
     pub async fn rollback(&mut self) -> Result<(), BoltError> {

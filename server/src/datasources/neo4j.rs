@@ -169,6 +169,8 @@ struct Opened {
 struct Lease<'p> {
     pool: &'p Pool,
     opened: Option<Opened>,
+    /// The connection waited in the pool before (it was not opened for this lease).
+    reused: bool,
     _permit: tokio::sync::SemaphorePermit<'p>,
 }
 
@@ -184,6 +186,13 @@ impl Lease<'_> {
         {
             self.pool.idle.lock().expect("pool lock").push((o, Instant::now()));
         }
+    }
+
+    /// Closes a connection that broke, and the idle ones with it: they most likely went down with
+    /// the same server.
+    fn discard(mut self) {
+        self.opened = None;
+        self.pool.idle.lock().expect("pool lock").clear();
     }
 }
 
@@ -209,20 +218,42 @@ async fn lease<'p>(flavor: Flavor, conn: &Connection, pool: &'p Pool) -> Result<
     let idle = {
         let mut idle = pool.idle.lock().expect("pool lock");
         idle.retain(|(_, since)| since.elapsed() < IDLE_TIMEOUT);
-        idle.pop().map(|(o, _)| o)
+        // One the server closed while it waited (a restart) is dropped, not handed out.
+        let mut alive = None;
+        while let Some((mut o, _)) = idle.pop() {
+            if o.conn.is_alive() {
+                alive = Some(o);
+                break;
+            }
+        }
+        alive
     };
+    let mut reused = idle.is_some();
     let opened = match idle {
         // A user's privileges can change while a connection waits in the pool.
         Some(mut o) if needs_recheck(flavor, o.checked.elapsed()) => {
             let s: Settings = conn.settings_as()?;
-            o.write_privileges = checked_privileges(&mut o.conn, &s).await?;
-            o.checked = Instant::now();
-            o
+            match checked_privileges(&mut o.conn, &s).await {
+                Ok(privileges) => {
+                    o.write_privileges = privileges;
+                    o.checked = Instant::now();
+                    o
+                }
+                // The check is the connection's first round trip: one that broke while it waited
+                // is closed, with the other idle ones, and a fresh one is opened.
+                Err(e) if super::connect::is_lost(&e) => {
+                    drop(o);
+                    pool.idle.lock().expect("pool lock").clear();
+                    reused = false;
+                    open(flavor, conn).await?
+                }
+                Err(e) => return Err(e),
+            }
         }
         Some(o) => o,
         None => open(flavor, conn).await?,
     };
-    Ok(Lease { pool, opened: Some(opened), _permit: permit })
+    Ok(Lease { pool, opened: Some(opened), reused, _permit: permit })
 }
 
 /// Whether a pooled connection has its user's privileges checked again before use.
@@ -574,18 +605,63 @@ impl DataSourcePlugin for GraphDb {
         let s: Settings = conn.settings_as()?;
         let db = s.database.as_deref();
         let pool = pool(conn).await?;
-        let mut lease = lease(self.0, conn, &pool).await?;
-        let params = parameters(&checked, &req, lease.conn().utc)?;
+        let first = lease(self.0, conn, &pool).await?;
+        let reused = first.reused;
+        match run(first, conn, &req, &q.cypher, &checked, db).await {
+            // The pooled connection broke before any record arrived (the server restarted after
+            // it was checked): once more on a fresh connection, which is safe as the query only
+            // reads. A query error is never retried.
+            Err(Attempt::Lost(_)) if reused => {
+                let fresh = lease(self.0, conn, &pool).await?;
+                run(fresh, conn, &req, &q.cypher, &checked, db).await.map_err(Attempt::into_source)
+            }
+            other => other.map_err(Attempt::into_source),
+        }
+    }
+}
+
+/// How a query attempt failed: the connection broke before any record arrived, or anything else.
+enum Attempt {
+    Lost(SourceError),
+    Failed(SourceError),
+}
+
+impl Attempt {
+    fn into_source(self) -> SourceError {
+        match self {
+            Attempt::Lost(e) | Attempt::Failed(e) => e,
+        }
+    }
+}
+
+/// One run of a query on the leased connection, which goes back to the pool after a clean finish.
+async fn run(
+    mut lease: Lease<'_>,
+    conn: &Connection,
+    req: &SourceQuery,
+    cypher: &str,
+    checked: &Checked,
+    db: Option<&str>,
+) -> Result<QueryResult, Attempt> {
+    let params = parameters(checked, req, lease.conn().utc).map_err(Attempt::Failed)?;
+    let mut received = false;
+    let outcome = async {
         let c = lease.conn();
         let utc = c.utc;
-        c.begin(db, req.limits.timeout, true).await.map_err(BoltError::into_source)?;
-        let fields = c.run(&q.cypher, params).await.map_err(BoltError::into_source)?;
+        c.begin(db, req.limits.timeout, true).await?;
+        let fields = c.run(cypher, params).await?;
         let limits = GraphLimits::from_settings(conn.settings(), req.limits.max_rows, req.limits.budget.clone());
-        let mut result = Collector::new(fields, utc, limits, &req);
+        let mut result = Collector::new(fields, utc, limits, req);
         let mut clean = true;
         loop {
             let max_message = req.limits.budget.remaining().saturating_add(1024).min(MAX_MESSAGE);
-            match c.pull(BATCH, max_message, |record, size| result.push(record, size)).await {
+            let pulled = c
+                .pull(BATCH, max_message, |record, size| {
+                    received = true;
+                    result.push(record, size)
+                })
+                .await;
+            match pulled {
                 Ok(PullEnd::More) => continue,
                 Ok(PullEnd::Done) => break,
                 Ok(PullEnd::Stopped) => {
@@ -597,14 +673,28 @@ impl DataSourcePlugin for GraphDb {
                     clean = false;
                     break;
                 }
-                Err(e) => return Err(e.into_source()),
+                Err(e) => return Err(e),
             }
         }
         if clean {
-            c.rollback().await.map_err(BoltError::into_source)?;
-            lease.release();
+            c.rollback().await?;
         }
-        Ok(result.finish(q.cypher))
+        Ok((result, clean))
+    }
+    .await;
+    match outcome {
+        Ok((result, clean)) => {
+            if clean {
+                lease.release();
+            }
+            Ok(result.finish(cypher.to_string()))
+        }
+        Err(e) if e.is_dead() => {
+            lease.discard();
+            let lost = e.into_source();
+            Err(if received { Attempt::Failed(lost) } else { Attempt::Lost(lost) })
+        }
+        Err(e) => Err(Attempt::Failed(e.into_source())),
     }
 }
 
@@ -1377,6 +1467,164 @@ mod tests {
         assert!(!is_denied("Syntax error at line 1"));
         let probes: Vec<&str> = PROBES.iter().map(|(p, _, _)| *p).collect();
         assert!(probes.contains(&"READ_FILE") && probes.contains(&"AUTH"), "{probes:?}");
+    }
+
+    /// What the fake Bolt server does next on a connection that is waiting in the pool.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Restart {
+        /// Nothing: it answers as usual.
+        None,
+        /// It closes every connection right after its query, while the connection waits idle.
+        CloseIdle,
+        /// It cuts the connection at the next BEGIN without answering, as a server does that went
+        /// away after Kalzit last checked the connection.
+        CutAtBegin,
+    }
+
+    /// A Bolt 5.0 server answering one-row queries, on any number of connections. Returns its
+    /// address, the count of connections it accepted and the switch for its next restart.
+    async fn restarting_server() -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicUsize>, Arc<Mutex<Restart>>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let restart = Arc::new(Mutex::new(Restart::None));
+        let (count, mode) = (accepted.clone(), restart.clone());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = listener.accept().await else { return };
+                count.fetch_add(1, Ordering::SeqCst);
+                let mode = mode.clone();
+                tokio::spawn(async move {
+                    let mut hs = [0u8; 20];
+                    if s.read_exact(&mut hs).await.is_err() {
+                        return;
+                    }
+                    s.write_all(&[0, 0, 0, 5]).await.unwrap();
+                    loop {
+                        let mut message = Vec::new();
+                        loop {
+                            let Ok(n) = s.read_u16().await else { return };
+                            if n == 0 {
+                                break;
+                            }
+                            let mut buf = vec![0; n as usize];
+                            if s.read_exact(&mut buf).await.is_err() {
+                                return;
+                            }
+                            message.extend_from_slice(&buf);
+                        }
+                        let Ok(Bv::Struct(tag, _)) = bolt::decode(&message) else { return };
+                        let now = *mode.lock().unwrap();
+                        if tag == 0x11 && now == Restart::CutAtBegin {
+                            *mode.lock().unwrap() = Restart::None;
+                            return;
+                        }
+                        let success = |entries: Vec<(&str, Bv)>| {
+                            Bv::Struct(0x70, vec![Bv::Map(entries.into_iter().map(|(k, v)| (k.into(), v)).collect())])
+                        };
+                        let answers = match tag {
+                            0x01 => vec![success(vec![("server", Bv::String("Neo4j/5.26.0".into()))])],
+                            0x10 => vec![success(vec![("fields", Bv::List(vec![Bv::String("n".into())]))])],
+                            0x3F => vec![
+                                Bv::Struct(0x71, vec![Bv::List(vec![Bv::Int(1)])]),
+                                success(vec![("has_more", Bv::Bool(false))]),
+                            ],
+                            _ => vec![success(Vec::new())],
+                        };
+                        for answer in answers {
+                            let mut bytes = Vec::new();
+                            bolt::encode(&answer, &mut bytes);
+                            s.write_all(&(bytes.len() as u16).to_be_bytes()).await.unwrap();
+                            s.write_all(&bytes).await.unwrap();
+                            s.write_all(&[0, 0]).await.unwrap();
+                        }
+                        // ROLLBACK ends a query: a restarting server closes the idle connection.
+                        if tag == 0x13 && now == Restart::CloseIdle {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (addr, accepted, restart)
+    }
+
+    async fn graph_connection(addr: std::net::SocketAddr) -> Connection {
+        let policy = Arc::new(super::super::targets::TargetPolicy::new(
+            &std::env::temp_dir().join("kalzit-none"),
+            "sqlite::memory:",
+            &[],
+            &[],
+        ));
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        Connection::new(
+            "ds",
+            json!({ "host": "127.0.0.1", "port": addr.port() }),
+            BTreeMap::new(),
+            policy,
+            Arc::new(crate::datasources::OwnDatabase::new(db, "sqlite::memory:")),
+        )
+    }
+
+    fn one_row() -> SourceQuery {
+        SourceQuery { query: json!({ "cypher": "RETURN 1 AS n" }), variables: BTreeMap::new(), ..req(100) }
+    }
+
+    #[tokio::test]
+    async fn an_idle_connection_the_server_closed_is_replaced_before_use() {
+        let (addr, accepted, restart) = restarting_server().await;
+        let conn = graph_connection(addr).await;
+        let plugin = GraphDb(Flavor::Neo4j);
+        *restart.lock().unwrap() = Restart::CloseIdle;
+        plugin.query(&conn, one_row()).await.unwrap();
+        *restart.lock().unwrap() = Restart::None;
+        // The server has closed the pooled connection by now (it restarted).
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // The lease drops it before sending anything, rather than finding out at BEGIN.
+        let pool = pool(&conn).await.unwrap();
+        let fresh = lease(Flavor::Neo4j, &conn, &pool).await.unwrap();
+        assert!(!fresh.reused, "the closed connection was handed out");
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+        fresh.release();
+        plugin.query(&conn, one_row()).await.unwrap();
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2, "the open one is reused");
+    }
+
+    #[tokio::test]
+    async fn a_pooled_connection_that_breaks_before_any_record_is_retried_once() {
+        let (addr, accepted, restart) = restarting_server().await;
+        let conn = graph_connection(addr).await;
+        let plugin = GraphDb(Flavor::Neo4j);
+        plugin.query(&conn, one_row()).await.unwrap();
+        // The pooled connection looks open, but the server cuts it at the next BEGIN ("early eof").
+        *restart.lock().unwrap() = Restart::CutAtBegin;
+        let result = plugin.query(&conn, one_row()).await;
+        assert!(result.is_ok(), "{:?}", result.err().map(|e| e.detail()));
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2, "one fresh connection");
+    }
+
+    #[tokio::test]
+    async fn a_fresh_connection_that_breaks_says_so_and_is_not_retried() {
+        let (addr, accepted, restart) = restarting_server().await;
+        let conn = graph_connection(addr).await;
+        *restart.lock().unwrap() = Restart::CutAtBegin;
+        let e = GraphDb(Flavor::Neo4j).query(&conn, one_row()).await.unwrap_err();
+        let detail = e.detail();
+        assert_eq!(detail.reason, "source.connection_lost", "{detail:?}");
+        assert!(detail.params.contains_key("detail"));
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_names_the_address() {
+        let addr = crate::datasources::connect::tests::closed_port().await;
+        let conn = graph_connection(addr).await;
+        let e = GraphDb(Flavor::Neo4j).query(&conn, one_row()).await.unwrap_err();
+        let detail = e.detail();
+        assert_eq!(detail.reason, "source.connect_refused", "{detail:?}");
+        assert_eq!(detail.params["address"], addr.to_string());
     }
 
     #[test]
