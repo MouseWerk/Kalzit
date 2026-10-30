@@ -1767,9 +1767,20 @@ through `settings::get`; new registry entries are requested from the orchestrato
 - Graph panels (`ui/src/panels/graph/`) draw with Sigma.js on Graphology (WebGL) and lay out in
   a worker (`layout.worker.ts`, `layoutEngine.ts`): ForceAtlas2 for the network panel, and for
   the hierarchy panel Kalzit's own layered layout (cycles broken by reversing back edges, layers
-  by longest path from the roots, barycenter sweeps against crossings). There is no ELK (elkjs)
-  in the bundle; it may come later (M5) as an optional hierarchy layout that loads only when a
-  panel chooses it, and the layered layout stays the default.
+  by longest path from the roots, barycenter sweeps against crossings), which stays the default.
+  ELK (elkjs, pinned to an exact version) is an optional hierarchy layout (`hierarchyLayout:
+  "elk"` with `elkDirection`, `elkNodeSpacing`, `elkLayerSpacing`, `elkEdgeRouting`; the server
+  checks them in `panel_options.rs`). `elkLayout.ts` loads `elkRunner.ts` with `import()` on the
+  first layout that asks for ELK, so neither elkjs nor its runner is in the start bundle or the
+  graph panels' chunk (`bundle.test.ts`). The runner starts elkjs's own worker build
+  (`elk-worker.min.js`, emitted as a separate asset) as a classic same-origin worker, which the
+  CSP (`worker-src 'self' blob:`, no eval needed) allows, registers the layered algorithm and lays
+  out; one worker per run, ended on answer, error, abort or after 60 s. Without workers it runs
+  `elk.bundled.js` on the page for at most 300 nodes. A fixed `elk.randomSeed` keeps results
+  deterministic. Any failure (load, CSP, timeout, a node without a position) falls back to the
+  Kalzit layout with a notice. elkjs is offered under "EPL-2.0 OR GPL-3.0-or-later"; Kalzit uses
+  it under GPL-3.0-or-later, which combines with the AGPL-3.0 (GPLv3/AGPLv3 section 13), and it
+  appears in the generated third-party list and notices like every other UI dependency.
 
 ## Testing contracts
 

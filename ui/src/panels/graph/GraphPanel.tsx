@@ -23,6 +23,7 @@ import { explorationQuery, MAX_QUERY_NODES, propertyText } from "./adapter";
 import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion } from "./colors";
 import type { Direction, DrawStyle } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
+import { MAIN_THREAD_ELK_LIMIT } from "./elkLayout";
 import { GraphTable } from "./GraphTable";
 import {
   capValues,
@@ -40,13 +41,19 @@ import type { LayoutMode } from "./layoutProtocol";
 import { COMMUNITY_LIMIT, type Communities, communities, components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, GRAPH_COLORS, nodeSizes } from "./model";
 import { NodeSheet, type PinEntry } from "./NodeSheet";
-import { AUTO_CLUSTER_EDGES, AUTO_CLUSTER_NODES, type GraphPanelOptions } from "./options";
+import {
+  AUTO_CLUSTER_EDGES,
+  AUTO_CLUSTER_NODES,
+  type ElkSettings,
+  elkSettings,
+  type GraphPanelOptions,
+} from "./options";
 import { labelGroupOf, type PropertyPaint, propertyPaint } from "./paint";
 import { countText } from "./plural";
 import type { CanvasHandle } from "./SigmaCanvas";
 import { useShortPanel } from "./shortPanel";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
-import { useGraphLayout } from "./useGraphLayout";
+import { type LayoutState, useGraphLayout } from "./useGraphLayout";
 import {
   allVisible,
   buildView,
@@ -950,6 +957,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                   ref={canvasRef}
                   view={view}
                   mode={layout}
+                  elk={elkSettings(options)}
                   palette={palette}
                   visibility={visibility}
                   ranks={ranks}
@@ -1102,6 +1110,8 @@ function Probes() {
 interface DrawnGraphProps {
   view: GraphView;
   mode: LayoutMode;
+  /** ELK's settings when the panel's hierarchy uses ELK; null for Kalzit's own layout. */
+  elk: ElkSettings | null;
   palette: GraphPalette;
   visibility: Visibility;
   ranks: Int32Array;
@@ -1116,8 +1126,8 @@ interface DrawnGraphProps {
 }
 
 /** The drawing with its layout. With reduced motion, nodes jump to where the layout settles. */
-function DrawnGraph({ view, mode, ref, drawStyle, ...rest }: DrawnGraphProps) {
-  const layout = useGraphLayout(view, mode);
+function DrawnGraph({ view, mode, elk, ref, drawStyle, ...rest }: DrawnGraphProps) {
+  const layout = useGraphLayout(view, mode, elk);
   const reduced = prefersReducedMotion();
   const [shown, setShown] = useState<Float32Array | null>(null);
   const positions = layout.positions;
@@ -1144,8 +1154,11 @@ function DrawnGraph({ view, mode, ref, drawStyle, ...rest }: DrawnGraphProps) {
         drawStyle={drawStyle}
         {...rest}
       />
-      {mode === "hierarchy" && layout.reversed > 0 ? <CycleNote count={layout.reversed} /> : null}
-      {layout.running && !progressive ? <SettlingNote /> : null}
+      <LayoutNotes
+        layout={layout}
+        hierarchy={mode === "hierarchy"}
+        settling={layout.running && !progressive}
+      />
     </>
   );
 }
@@ -1153,21 +1166,43 @@ function DrawnGraph({ view, mode, ref, drawStyle, ...rest }: DrawnGraphProps) {
 /** Graphs above this many nodes are drawn when their layout has settled, not while it moves. */
 export const PROGRESSIVE_NODES = 2_000;
 
-function SettlingNote() {
-  const { t } = useI18n();
-  return (
-    <p className="graph__overlay-note" role="status">
-      {t("graph.layout.settling")}
-    </p>
-  );
-}
-
-function CycleNote({ count }: { count: number }) {
+/**
+ * Notes over the drawing, one under the other: the layout still at work (ELK loading and
+ * running, or a large graph settling), why ELK's layout is not shown, and edges closing a cycle.
+ */
+function LayoutNotes({
+  layout,
+  hierarchy,
+  settling,
+}: {
+  layout: LayoutState;
+  hierarchy: boolean;
+  settling: boolean;
+}) {
   const { t, language } = useI18n();
+  const number = new Intl.NumberFormat(language);
+  const lines: string[] = [];
+  if (layout.engine === "elk" && layout.running) {
+    lines.push(t("graph.layout.elkRunning"));
+  } else if (settling) {
+    lines.push(t("graph.layout.settling"));
+  }
+  if (layout.notice === "elkFailed") lines.push(t("graph.layout.elkFailed"));
+  if (layout.notice === "elkTooLarge") {
+    lines.push(t("graph.layout.elkTooLarge", { limit: number.format(MAIN_THREAD_ELK_LIMIT) }));
+  }
+  if (hierarchy && layout.reversed > 0) {
+    lines.push(t("graph.notice.cycles", { count: number.format(layout.reversed) }));
+  }
+  if (lines.length === 0) return null;
   return (
-    <p className="graph__overlay-note">
-      {t("graph.notice.cycles", { count: new Intl.NumberFormat(language).format(count) })}
-    </p>
+    <div className="graph__overlay-note" role="status">
+      {lines.map((line) => (
+        <p key={line} className="graph__overlay-line">
+          {line}
+        </p>
+      ))}
+    </div>
   );
 }
 

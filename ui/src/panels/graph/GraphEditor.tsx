@@ -11,7 +11,12 @@ import {
   COLOR_BY,
   COLOR_RANGES,
   COLOR_SCHEMES,
+  ELK_DIRECTIONS,
+  ELK_EDGE_ROUTINGS,
+  ELK_LAYER_SPACING,
+  ELK_NODE_SPACING,
   type GraphPanelOptions,
+  HIERARCHY_LAYOUTS,
   LABEL_MODES,
   LABEL_TONES,
   MAX_LABEL_TOP,
@@ -210,7 +215,8 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 /**
  * Options of the network and hierarchy panels (Graph board, frame 4): nodes (name, color by
  * label, property, community or component, a color per label, size and its range), edges (width,
- * arrows, type labels), labels, the click on a node, the explorer, limits and groups, time.
+ * arrows, type labels), labels, the click on a node, the explorer, the hierarchy's layout
+ * (Kalzit's own or ELK with its settings), limits and groups, time.
  */
 export function GraphEditor({
   options,
@@ -430,6 +436,61 @@ export function GraphEditor({
           onChange={(expandLimit) => set({ expandLimit })}
         />
       </Group>
+      {network ? null : (
+        <Group title={t("graph.options.group.layout")}>
+          <ChoiceOption
+            label={t("graph.options.hierarchyLayout")}
+            hint={t("graph.options.hierarchyLayoutHint")}
+            value={options.hierarchyLayout}
+            choices={HIERARCHY_LAYOUTS}
+            text={(layout) => t(`graph.options.hierarchyLayout.${layout}`)}
+            onChange={(hierarchyLayout) => set({ hierarchyLayout })}
+          />
+          {options.hierarchyLayout === "elk" ? (
+            <>
+              <ChoiceOption
+                label={t("graph.options.elkDirection")}
+                value={options.elkDirection}
+                choices={ELK_DIRECTIONS}
+                text={(direction) => t(`graph.options.elkDirection.${direction}`)}
+                onChange={(elkDirection) => set({ elkDirection })}
+              />
+              <div className="graph-options__pair">
+                <NumberOption
+                  label={t("graph.options.elkNodeSpacing")}
+                  hint={t("graph.options.elkSpacingHint", {
+                    min: number.format(ELK_NODE_SPACING.min),
+                    max: number.format(ELK_NODE_SPACING.max),
+                  })}
+                  value={options.elkNodeSpacing}
+                  min={ELK_NODE_SPACING.min}
+                  max={ELK_NODE_SPACING.max}
+                  onChange={(elkNodeSpacing) => set({ elkNodeSpacing })}
+                />
+                <NumberOption
+                  label={t("graph.options.elkLayerSpacing")}
+                  hint={t("graph.options.elkSpacingHint", {
+                    min: number.format(ELK_LAYER_SPACING.min),
+                    max: number.format(ELK_LAYER_SPACING.max),
+                  })}
+                  value={options.elkLayerSpacing}
+                  min={ELK_LAYER_SPACING.min}
+                  max={ELK_LAYER_SPACING.max}
+                  onChange={(elkLayerSpacing) => set({ elkLayerSpacing })}
+                />
+              </div>
+              <ChoiceOption
+                label={t("graph.options.elkEdgeRouting")}
+                hint={t("graph.options.elkEdgeRoutingHint")}
+                value={options.elkEdgeRouting}
+                choices={ELK_EDGE_ROUTINGS}
+                text={(routing) => t(`graph.options.elkEdgeRouting.${routing}`)}
+                onChange={(elkEdgeRouting) => set({ elkEdgeRouting })}
+              />
+            </>
+          ) : null}
+        </Group>
+      )}
       <Group title={t("graph.options.group.limits")}>
         <NumberOption
           label={t("graph.options.nodeLimit")}
