@@ -19,6 +19,7 @@ pub mod folders;
 pub mod grants;
 pub mod health;
 pub mod home;
+pub mod instances;
 pub mod library_panels;
 pub mod live;
 #[cfg(test)]
@@ -71,6 +72,7 @@ pub fn all() -> Vec<table::RouteDef> {
         datasources::routes(),
         query::routes(),
         query_cache::routes(),
+        instances::routes(),
         explore_history::routes(),
         live::routes(),
         export::routes(),

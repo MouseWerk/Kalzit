@@ -117,6 +117,15 @@ impl SetupGate {
         self.state.lock().await.is_some()
     }
 
+    /// Closes the gate: another server on the same database finished setup (`cluster`).
+    pub async fn close(&self) {
+        let mut gate = self.state.lock().await;
+        if gate.is_some() {
+            close_gate(&mut gate);
+            tracing::info!("setup was completed on another server");
+        }
+    }
+
     /// Where to find the code while setup is open (`file`, `docker` or `fixed`).
     pub async fn code_hint(&self) -> Option<&'static str> {
         self.state.lock().await.as_ref().map(|g| g.hint.as_str())
@@ -507,6 +516,8 @@ pub async fn complete(
             json!({ "secondFactor": prompt })
         }
     };
+    // The other servers on the same database close their gate (`cluster`).
+    crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::SetupDone).await?;
     crate::db::commit(tx).await?;
     let cache = settings::cache(&state);
     cache.invalidate(None);

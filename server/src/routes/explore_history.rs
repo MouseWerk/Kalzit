@@ -367,19 +367,25 @@ pub fn spawn_retention(state: AppState) {
 /// `spawn_retention` on another schedule (tests).
 pub fn spawn_retention_on(state: AppState, schedule: crate::db::Schedule) {
     use crate::db::JobError;
-    let background = state.background.clone();
-    crate::db::spawn_job(&background, "deleting old Explore history", schedule, move || {
-        let state = state.clone();
-        async move {
-            match purge_expired_in(&state, state.background.db()).await {
-                Ok(0) => Ok(()),
-                Ok(n) => {
-                    tracing::info!("deleted {n} Explore history entries past their retention");
-                    Ok(())
+    let cluster_state = state.clone();
+    crate::cluster::spawn_job(
+        &cluster_state,
+        "explore_history:retention",
+        "deleting old Explore history",
+        schedule,
+        move || {
+            let state = state.clone();
+            async move {
+                match purge_expired_in(&state, state.background.db()).await {
+                    Ok(0) => Ok(()),
+                    Ok(n) => {
+                        tracing::info!("deleted {n} Explore history entries past their retention");
+                        Ok(())
+                    }
+                    Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),
+                    Err(e) => Err(JobError::Failed(e.message)),
                 }
-                Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),
-                Err(e) => Err(JobError::Failed(e.message)),
             }
-        }
-    });
+        },
+    );
 }

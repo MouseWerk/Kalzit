@@ -327,8 +327,8 @@ pub fn spawn_retention(state: AppState) {
 /// `spawn_retention` on another schedule (tests).
 pub fn spawn_retention_on(state: AppState, schedule: crate::db::Schedule) {
     use crate::db::JobError;
-    let background = state.background.clone();
-    crate::db::spawn_job(&background, "deleting old audit events", schedule, move || {
+    let cluster_state = state.clone();
+    crate::cluster::spawn_job(&cluster_state, "audit:retention", "deleting old audit events", schedule, move || {
         let state = state.clone();
         async move {
             match purge_expired_in(&state, state.background.db()).await {

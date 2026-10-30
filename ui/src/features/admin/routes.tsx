@@ -108,6 +108,12 @@ const updatesRoute = createRoute({
   component: lazyRouteComponent(() => import("./server/UpdatesPage"), "UpdatesPage"),
 });
 
+const instancesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/server/instances",
+  component: lazyRouteComponent(() => import("./server/InstancesPage"), "InstancesPage"),
+});
+
 const serverAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/audit",
@@ -129,6 +135,7 @@ export const adminRoutes = [
     orgsRoute,
     serverSettingsRoute,
     updatesRoute,
+    instancesRoute,
     serverAuditRoute,
   ]),
 ] as const;
