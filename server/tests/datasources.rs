@@ -305,11 +305,10 @@ async fn postgres_refuses_kalzits_own_database() {
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
 }
 
-/// A constant, a custom and a textbox variable in one statement: each binds its own numbered
-/// parameter, on the panel route as through `/query`.
 /// The database kills every connection of the source (as a restart does) while all of the pool's
 /// connections wait idle: as many panel queries at once as the pool holds still answer, on fresh
-/// connections and without waiting for the connect timeout.
+/// connections and without waiting for the connect timeout. The pool's check before use finds
+/// these; connections that break after it are covered in `postgres.rs`.
 #[tokio::test]
 async fn postgres_queries_go_on_after_the_connections_were_killed() {
     let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
@@ -355,6 +354,8 @@ async fn postgres_queries_go_on_after_the_connections_were_killed() {
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {database} WITH (FORCE)"))).execute(&admin).await.unwrap();
 }
 
+/// A constant, a custom and a textbox variable in one statement: each binds its own numbered
+/// parameter, on the panel route as through `/query`.
 #[tokio::test]
 async fn postgres_panels_bind_mixed_variables() {
     let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };

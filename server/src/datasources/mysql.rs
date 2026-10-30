@@ -103,6 +103,7 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::MySql>>, SourceErro
         // before use, so a connection that broke while idle is replaced; setup errors are kept.
         let setup = connect::SetupErrors::default();
         let kept = setup.clone();
+        let probe_recheck = recheck.clone();
         let pool = MySqlPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
@@ -123,7 +124,7 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::MySql>>, SourceErro
                 })
             })
             .connect_lazy_with(options);
-        let pool = SqlPool::new(pool, address, CONNECT_TIMEOUT, setup);
+        let pool = SqlPool::new(pool, addr, address, CONNECT_TIMEOUT, setup, probe_recheck);
         drop(pool.acquire(failed).await?);
         Ok(pool)
     })

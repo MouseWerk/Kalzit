@@ -133,6 +133,7 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::Postgres>>, SourceE
         // a pool that runs out of time retrying them can say why.
         let setup = connect::SetupErrors::default();
         let kept = setup.clone();
+        let probe_recheck = recheck.clone();
         let pool = PgPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
@@ -158,7 +159,7 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::Postgres>>, SourceE
                 })
             })
             .connect_lazy_with(options);
-        let pool = SqlPool::new(pool, address, CONNECT_TIMEOUT, setup);
+        let pool = SqlPool::new(pool, addr, address, CONNECT_TIMEOUT, setup, probe_recheck);
         // One connection now, so a source that cannot connect is not kept.
         drop(pool.acquire(failed).await?);
         Ok(pool)
@@ -581,6 +582,110 @@ fn money_text(bytes: &[u8], scale: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A PostgreSQL server that logs everyone in and answers simple queries and syncs. Connections
+    /// opened before `restart` is raised are cut at their next query, as a restarted server's
+    /// are, but answer syncs (the pool's ping) until then. Returns its address, the connections
+    /// it accepted and the switch.
+    async fn restarting_postgres()
+    -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicUsize>, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        // Connections numbered below this are cut at their next query.
+        let cut_below = Arc::new(AtomicUsize::new(0));
+        let (count, cut) = (accepted.clone(), cut_below.clone());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let id = count.fetch_add(1, Ordering::SeqCst);
+                let cut = cut.clone();
+                tokio::spawn(async move {
+                    let message = |tag: u8, body: &[u8]| {
+                        let mut m = vec![tag];
+                        m.extend(((body.len() + 4) as i32).to_be_bytes());
+                        m.extend(body);
+                        m
+                    };
+                    let ready = |status: u8| message(b'Z', &[status]);
+                    let Ok(len) = s.read_i32().await else { return };
+                    let mut startup = vec![0; len as usize - 4];
+                    if s.read_exact(&mut startup).await.is_err() {
+                        return;
+                    }
+                    let mut hello = message(b'R', &0i32.to_be_bytes());
+                    hello.extend(message(b'K', &[0, 0, 0, 1, 0, 0, 0, 2]));
+                    hello.extend(ready(b'I'));
+                    s.write_all(&hello).await.unwrap();
+                    loop {
+                        let Ok(tag) = s.read_u8().await else { return };
+                        let Ok(len) = s.read_i32().await else { return };
+                        let mut body = vec![0; len as usize - 4];
+                        if s.read_exact(&mut body).await.is_err() {
+                            return;
+                        }
+                        let answer = match tag {
+                            b'Q' if id < cut.load(Ordering::SeqCst) => return,
+                            b'Q' => {
+                                let text = String::from_utf8_lossy(&body).to_ascii_uppercase();
+                                let (done, status): (&[u8], u8) =
+                                    if text.starts_with("BEGIN") { (b"BEGIN\0", b'T') } else { (b"ROLLBACK\0", b'I') };
+                                let mut a = message(b'C', done);
+                                a.extend(ready(status));
+                                a
+                            }
+                            b'S' => ready(b'I'),
+                            _ => return,
+                        };
+                        if s.write_all(&answer).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (addr, accepted, cut_below)
+    }
+
+    /// Every pooled connection broke after the pool last saw it, and as many queries as the pool
+    /// holds start at once: each fails at BEGIN, gives its slot back and runs on a fresh
+    /// connection, without waiting for the pool's timeout.
+    #[tokio::test]
+    async fn queries_that_find_broken_connections_at_begin_go_on_on_fresh_ones() {
+        use std::sync::atomic::Ordering;
+        let (addr, accepted, cut_below) = restarting_postgres().await;
+        let options = PgConnectOptions::new_without_pgpass()
+            .host("127.0.0.1")
+            .port(addr.port())
+            .username("u")
+            .database("d")
+            .ssl_mode(PgSslMode::Disable);
+        // Not tested before use, so the broken connections reach BEGIN.
+        let lazy = PgPoolOptions::new()
+            .max_connections(POOL_SIZE)
+            .acquire_timeout(CONNECT_TIMEOUT)
+            .test_before_acquire(false)
+            .connect_lazy_with(options);
+        let pool = SqlPool::new(lazy, addr, addr.to_string(), CONNECT_TIMEOUT, connect::SetupErrors::default(), None);
+        let held = futures_util::future::try_join_all((0..POOL_SIZE).map(|_| pool.acquire(failed))).await.unwrap();
+        drop(held);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(pool.pool.num_idle(), POOL_SIZE as usize);
+        // The server restarts: every open connection is cut at its next query.
+        cut_below.store(accepted.load(Ordering::SeqCst), Ordering::SeqCst);
+        let started = Instant::now();
+        let queries = (0..POOL_SIZE).map(|_| async {
+            let tx = begin_read_only(&pool).await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            tx.rollback().await.map_err(failed)
+        });
+        for outcome in futures_util::future::join_all(queries).await {
+            assert!(outcome.is_ok(), "{:?}", outcome.err().map(|e| e.detail()));
+        }
+        assert!(started.elapsed() < Duration::from_secs(3), "took {:?}", started.elapsed());
+        assert_eq!(accepted.load(Ordering::SeqCst), 2 * POOL_SIZE as usize, "one fresh connection per query");
+    }
 
     /// NUMERIC bytes: digit count, weight, sign, scale and the base-10000 digits.
     fn numeric(weight: i16, negative: bool, scale: u16, digits: &[u16]) -> Vec<u8> {

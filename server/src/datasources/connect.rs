@@ -15,8 +15,9 @@
 //! found.
 
 use std::io;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{Detail, SourceError};
 
@@ -113,117 +114,214 @@ pub fn pool_timed_out(timeout: Duration) -> Detail {
         .with("seconds", seconds)
 }
 
-/// The last error of a pool's connection setup (`after_connect`). sqlx closes such a connection
-/// and tries again until the acquire timeout, then reports only `PoolTimedOut`; the setup's own
-/// refusal (Kalzit's own database, a name that now resolves to a refused address, a session
-/// setting the server keeps) is the better answer.
+/// The last error of a pool's connection setup (`after_connect`), with when it happened. sqlx
+/// closes such a connection and tries again until the acquire timeout, then reports only
+/// `PoolTimedOut`; the setup's own refusal (Kalzit's own database, a name that now resolves to a
+/// refused address, a session setting the server keeps) is the better answer. A setup that
+/// succeeds clears it, so an old refusal never explains a later timeout.
 #[derive(Clone, Default)]
-pub struct SetupErrors(Arc<Mutex<Option<SourceError>>>);
+pub struct SetupErrors(Arc<Mutex<Option<(Instant, SourceError)>>>);
 
 impl SetupErrors {
-    /// Keeps the error of a setup step, mapped with `failed`, and hands sqlx its text.
+    /// Keeps the outcome of a setup step (an error mapped with `failed`) and hands sqlx the
+    /// error's text.
     pub fn keep(
         &self,
         step: Result<(), sqlx::Error>,
         failed: fn(sqlx::Error) -> SourceError,
     ) -> Result<(), sqlx::Error> {
-        step.map_err(|e| {
-            let text = e.to_string();
-            *self.0.lock().expect("setup error lock") = Some(failed(e));
-            sqlx::Error::Configuration(text.into())
-        })
+        let mut slot = self.0.lock().expect("setup error lock");
+        match step {
+            Ok(()) => {
+                *slot = None;
+                Ok(())
+            }
+            Err(e) => {
+                let text = e.to_string();
+                *slot = Some((Instant::now(), failed(e)));
+                Err(sqlx::Error::Configuration(text.into()))
+            }
+        }
     }
 
-    fn take(&self) -> Option<SourceError> {
-        self.0.lock().expect("setup error lock").take()
+    /// The error of a setup that failed since `since`, for every waiter that asks.
+    fn since(&self, since: Instant) -> Option<SourceError> {
+        let slot = self.0.lock().expect("setup error lock");
+        slot.as_ref().filter(|(at, _)| *at >= since).map(|(_, e)| e.clone())
     }
 }
 
-/// How the direct connect of `SqlPool::acquire` went.
+/// The name a verify-full (PostgreSQL) or verify_identity (MySQL) connection resolves itself:
+/// checked against the target rules again before every connect, as `after_connect` does.
+pub type Recheck = (Arc<super::targets::TargetPolicy>, String, u16);
+
+/// The direct connect of a pool: at most one runs at a time, and every waiter reads its result.
+#[derive(Clone)]
 enum Probe {
-    NotStarted,
+    Idle,
     Running,
+    Done { at: Instant, outcome: Outcome },
+}
+
+#[derive(Clone)]
+enum Outcome {
     Connected,
-    /// The driver connected to the server but failed later (TLS, login): the answer when the
-    /// pool runs out of time too.
+    /// Refused, cut, or a target the rules refuse: the answer at once.
+    Decisive(SourceError),
+    /// The driver reached the server but failed later (TLS, login): the answer when the pool
+    /// runs out of time too.
     Failed(SourceError),
+    /// No login within the timeout.
+    Slow,
 }
 
 /// A sqlx pool with the address its connections go to, so a failure can name it.
 pub struct SqlPool<DB: sqlx::Database> {
     pub pool: sqlx::Pool<DB>,
+    /// The checked address; the last check of a pool that ran out of time goes there.
+    addr: SocketAddr,
     address: String,
     timeout: Duration,
     setup: SetupErrors,
+    recheck: Option<Recheck>,
+    probe: Arc<tokio::sync::watch::Sender<Probe>>,
+    /// Direct connects started, for the tests.
+    probes: std::sync::atomic::AtomicUsize,
 }
 
 impl<DB: sqlx::Database> SqlPool<DB> {
     /// `pool` should be lazy and test connections before handing them out (sqlx's default): a
     /// connection that died while idle is then replaced instead of failing the query. `setup`
-    /// is the slot the pool's `after_connect` keeps its errors in.
-    pub fn new(pool: sqlx::Pool<DB>, address: String, timeout: Duration, setup: SetupErrors) -> Self {
-        Self { pool, address, timeout, setup }
+    /// is the slot the pool's `after_connect` keeps its errors in; `recheck` the name a
+    /// connection resolves itself, if it does.
+    pub fn new(
+        pool: sqlx::Pool<DB>,
+        addr: SocketAddr,
+        address: String,
+        timeout: Duration,
+        setup: SetupErrors,
+        recheck: Option<Recheck>,
+    ) -> Self {
+        let probe = Arc::new(tokio::sync::watch::Sender::new(Probe::Idle));
+        Self { pool, addr, address, timeout, setup, recheck, probe, probes: Default::default() }
     }
 
     /// A connection from the pool. When the pool needs longer than `GRACE` to open one, the
     /// driver connects once on its own, outside the pool, to learn the cause: a refused or cut
     /// connection is answered at once, instead of after the pool's silent retries. The check is
     /// a regular login that is closed again, not a bare TCP connect, so MySQL does not count an
-    /// aborted handshake against the host and PostgreSQL logs no incomplete startup; the price
-    /// is one more login while a server is slow to accept one. While every connection is busy
-    /// the pool only waits, and nothing is checked.
+    /// aborted handshake against the host and PostgreSQL logs no incomplete startup; it runs in
+    /// a task of its own, so it finishes cleanly also when the pool answers first, and only one
+    /// runs per pool at a time, whose result every waiting query reads. The price is one more
+    /// login while a server is slow to accept one. While every connection is busy the pool only
+    /// waits, and nothing is checked.
     pub async fn acquire(
         &self,
         failed: fn(sqlx::Error) -> SourceError,
     ) -> Result<sqlx::pool::PoolConnection<DB>, SourceError> {
-        use sqlx::{ConnectOptions as _, Connection as _};
+        let started = Instant::now();
         let waits_for_busy = self.pool.num_idle() == 0 && self.pool.size() >= self.pool.options().get_max_connections();
-        let probe = Mutex::new(Probe::NotStarted);
-        let set = |state: Probe| *probe.lock().expect("probe lock") = state;
         let check = async {
             if waits_for_busy {
                 return std::future::pending().await;
             }
             tokio::time::sleep(GRACE).await;
-            set(Probe::Running);
-            let options = self.pool.connect_options();
-            match tokio::time::timeout(self.timeout, options.connect()).await {
-                Ok(Ok(c)) => {
-                    let _ = c.close().await;
-                    set(Probe::Connected);
+            let mut results = self.probe.subscribe();
+            self.start_probe(started, failed);
+            loop {
+                if let Probe::Done { at, outcome: Outcome::Decisive(e) } = &*results.borrow_and_update()
+                    && *at >= started
+                {
+                    return e.clone();
                 }
-                Ok(Err(sqlx::Error::Io(e))) => return connect_failed(&self.address, &e, self.timeout),
-                Ok(Err(e)) => set(Probe::Failed(failed(e))),
-                Err(_) => return timed_out(&self.address, self.timeout),
+                if results.changed().await.is_err() {
+                    return std::future::pending().await;
+                }
             }
-            // The server takes connections: the pool's own outcome tells the rest.
-            std::future::pending().await
         };
         let acquired = tokio::select! {
             acquired = self.pool.acquire() => acquired,
-            cause = check => return Err(SourceError::Failed(cause)),
+            cause = check => return Err(cause),
         };
         match acquired {
             Ok(c) => Ok(c),
-            Err(sqlx::Error::PoolTimedOut) => Err(self.timed_out(probe.into_inner().expect("probe lock"))),
+            Err(sqlx::Error::PoolTimedOut) => Err(self.timed_out(started).await),
             Err(e) => Err(sqlx_connect_failed(e, &self.address, self.timeout, failed)),
         }
     }
 
+    /// Starts the direct connect, unless one runs or one finished since `since`.
+    fn start_probe(&self, since: Instant, failed: fn(sqlx::Error) -> SourceError) {
+        let start = self.probe.send_if_modified(|state| match state {
+            Probe::Running => false,
+            Probe::Done { at, .. } if *at >= since => false,
+            _ => {
+                *state = Probe::Running;
+                true
+            }
+        });
+        if !start {
+            return;
+        }
+        self.probes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (pool, probe, recheck) = (self.pool.clone(), self.probe.clone(), self.recheck.clone());
+        let (address, timeout) = (self.address.clone(), self.timeout);
+        tokio::spawn(async move {
+            use sqlx::{ConnectOptions as _, Connection as _};
+            let outcome = async {
+                // The driver resolves the name itself here, as for the pool's own connections.
+                if let Some((policy, host, port)) = &recheck
+                    && let Err(e) = super::recheck_name(policy, host, *port).await
+                {
+                    return Outcome::Decisive(failed(e));
+                }
+                match tokio::time::timeout(timeout, pool.connect_options().connect()).await {
+                    Ok(Ok(c)) => {
+                        let _ = c.close().await;
+                        Outcome::Connected
+                    }
+                    Ok(Err(sqlx::Error::Io(e))) => {
+                        Outcome::Decisive(SourceError::Failed(connect_failed(&address, &e, timeout)))
+                    }
+                    Ok(Err(e)) => Outcome::Failed(failed(e)),
+                    Err(_) => Outcome::Slow,
+                }
+            }
+            .await;
+            probe.send_replace(Probe::Done { at: Instant::now(), outcome });
+        });
+    }
+
     /// Why the pool ran out of time: a refused setup, a failed direct connect, a server that
-    /// did not answer it, or else a pool that had no free connection.
-    fn timed_out(&self, probe: Probe) -> SourceError {
-        if let Some(e) = self.setup.take() {
+    /// does not answer, or else a pool that had no free connection (busy, or logins that slow).
+    async fn timed_out(&self, started: Instant) -> SourceError {
+        if let Some(e) = self.setup.since(started) {
             return e;
         }
+        let probe = self.probe.borrow().clone();
         match probe {
-            Probe::Failed(e) => e,
-            // Still waiting for the server since `GRACE`: it does not answer.
-            Probe::Running => SourceError::Failed(timed_out(&self.address, self.timeout)),
-            Probe::NotStarted | Probe::Connected => SourceError::Failed(pool_timed_out(self.timeout)),
+            Probe::Done { at, outcome: Outcome::Decisive(e) | Outcome::Failed(e) } if at >= started => e,
+            Probe::Done { at, outcome: Outcome::Connected } if at >= started => {
+                SourceError::Failed(pool_timed_out(self.timeout))
+            }
+            // The login has not finished: whether the server does not answer at all, or accepts
+            // the connection and is slow to log in, a plain TCP connect tells. Only now, when the
+            // pool has failed anyway, so a healthy MySQL never sees an aborted handshake from it.
+            Probe::Running | Probe::Done { outcome: Outcome::Slow, .. } => {
+                match tokio::time::timeout(TCP_CHECK, tokio::net::TcpStream::connect(self.addr)).await {
+                    Ok(Ok(_)) => SourceError::Failed(pool_timed_out(self.timeout)),
+                    Ok(Err(e)) => SourceError::Failed(connect_failed(&self.address, &e, self.timeout)),
+                    Err(_) => SourceError::Failed(timed_out(&self.address, self.timeout)),
+                }
+            }
+            _ => SourceError::Failed(pool_timed_out(self.timeout)),
         }
     }
 }
+
+/// How long the last check of a pool that ran out of time waits for a TCP connection. Windows
+/// takes about two seconds to report a refused connection on its own.
+const TCP_CHECK: Duration = Duration::from_secs(4);
 
 #[cfg(test)]
 pub mod tests {
@@ -266,23 +364,61 @@ pub mod tests {
 
     #[tokio::test]
     async fn a_pool_timeout_is_told_by_what_was_found() {
-        let options = sqlx::postgres::PgConnectOptions::new_without_pgpass().host("127.0.0.1").port(1);
+        // A server that takes TCP connections and never logs anyone in.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let open = listener.local_addr().unwrap();
+        let options = sqlx::postgres::PgConnectOptions::new_without_pgpass().host("127.0.0.1").port(open.port());
         let lazy = sqlx::postgres::PgPoolOptions::new().connect_lazy_with(options);
         let setup = SetupErrors::default();
-        let pool = SqlPool::new(lazy, "db:5432".into(), Duration::from_secs(10), setup.clone());
-        // Busy, or the server let the direct connect in: no free connection, not "no answer".
-        assert_eq!(pool.timed_out(Probe::NotStarted).detail().reason, "source.pool_timeout");
-        assert_eq!(pool.timed_out(Probe::Connected).detail().params["seconds"], "10");
-        // The direct connect still waits for an answer: the configured timeout, not less.
-        let d = pool.timed_out(Probe::Running).detail();
-        assert_eq!((d.reason, d.params["seconds"].as_str()), ("source.connect_timeout", "10"));
-        // A setup the server refused is the answer, whatever the direct connect found.
-        let kept = setup.keep(Err(sqlx::Error::Protocol("the server keeps sql_mode ANSI".into())), |e| {
-            SourceError::failed("mysql.no_time_limit", e.to_string())
-        });
+        let pool = SqlPool::new(lazy, open, open.to_string(), Duration::from_secs(10), setup.clone(), None);
+        let started = Instant::now();
+        let done = |outcome| Probe::Done { at: Instant::now(), outcome };
+        // Busy (nothing checked), or the direct connect logged in: no free connection.
+        assert_eq!(pool.timed_out(started).await.detail().reason, "source.pool_timeout");
+        pool.probe.send_replace(done(Outcome::Connected));
+        assert_eq!(pool.timed_out(started).await.detail().params["seconds"], "10");
+        // The login has not finished, but TCP is accepted: slow, not "no answer".
+        pool.probe.send_replace(Probe::Running);
+        assert_eq!(pool.timed_out(started).await.detail().reason, "source.pool_timeout");
+        // A result from before this acquire is not its answer.
+        let old = done(Outcome::Failed(SourceError::from_source("old")));
+        pool.probe.send_replace(old);
+        assert_eq!(pool.timed_out(Instant::now()).await.detail().reason, "source.pool_timeout");
+        // A setup the server refused is the answer for every waiter, whatever the probe found,
+        // until a setup succeeds again.
+        let refuse = |e: sqlx::Error| SourceError::failed("mysql.no_time_limit", e.to_string());
+        let kept = setup.keep(Err(sqlx::Error::Protocol("the server keeps sql_mode ANSI".into())), refuse);
         assert!(kept.is_err());
-        assert_eq!(pool.timed_out(Probe::Running).detail().reason, "mysql.no_time_limit");
-        assert_eq!(pool.timed_out(Probe::Running).detail().reason, "source.connect_timeout", "reported once");
+        assert_eq!(pool.timed_out(started).await.detail().reason, "mysql.no_time_limit");
+        assert_eq!(pool.timed_out(started).await.detail().reason, "mysql.no_time_limit");
+        assert!(setup.keep(Ok(()), refuse).is_ok());
+        pool.probe.send_replace(Probe::Idle);
+        assert_eq!(pool.timed_out(started).await.detail().reason, "source.pool_timeout");
+        // An old refusal does not explain a later timeout either.
+        let _ = setup.keep(Err(sqlx::Error::Protocol("old".into())), refuse);
+        assert_eq!(pool.timed_out(Instant::now()).await.detail().reason, "source.pool_timeout");
+        // Nothing listens any more: the last TCP check names the cause.
+        drop(listener);
+        pool.probe.send_replace(Probe::Running);
+        assert_eq!(pool.timed_out(Instant::now()).await.detail().reason, "source.connect_refused");
+    }
+
+    #[tokio::test]
+    async fn one_probe_per_pool_answers_every_waiter() {
+        let addr = closed_port().await;
+        let options = sqlx::postgres::PgConnectOptions::new_without_pgpass().host("127.0.0.1").port(addr.port());
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(8)
+            .acquire_timeout(Duration::from_secs(10))
+            .connect_lazy_with(options);
+        let pool = SqlPool::new(lazy, addr, addr.to_string(), Duration::from_secs(10), SetupErrors::default(), None);
+        let started = Instant::now();
+        let waiters = (0..6).map(|_| pool.acquire(|e| SourceError::from_source(e.to_string())));
+        for e in futures_util::future::join_all(waiters).await {
+            assert_eq!(e.unwrap_err().detail().reason, "source.connect_refused");
+        }
+        assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
+        assert_eq!(pool.probes.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -297,7 +433,7 @@ pub mod tests {
             .max_connections(2)
             .acquire_timeout(Duration::from_secs(10))
             .connect_lazy_with(options);
-        let pool = SqlPool::new(pool, addr.to_string(), Duration::from_secs(10), SetupErrors::default());
+        let pool = SqlPool::new(pool, addr, addr.to_string(), Duration::from_secs(10), SetupErrors::default(), None);
         let started = std::time::Instant::now();
         let e = pool.acquire(|e| SourceError::from_source(e.to_string())).await.unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
@@ -325,7 +461,7 @@ pub mod tests {
             .max_connections(2)
             .acquire_timeout(Duration::from_secs(10))
             .connect_lazy_with(options);
-        let pool = SqlPool::new(pool, addr.to_string(), Duration::from_secs(10), SetupErrors::default());
+        let pool = SqlPool::new(pool, addr, addr.to_string(), Duration::from_secs(10), SetupErrors::default(), None);
         let started = std::time::Instant::now();
         let e = pool.acquire(|e| SourceError::from_source(e.to_string())).await.unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());

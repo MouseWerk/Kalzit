@@ -333,7 +333,7 @@ impl SourceSchema {
 
 /// A source failure with its error code (`code()`) and a detail: the reason code, parameters and
 /// English text (`detail::Detail`).
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum SourceError {
     /// The query is not allowed (`query_rejected`).
     #[error("{0}")]
