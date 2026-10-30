@@ -82,6 +82,10 @@ describe("catalogs", () => {
     const same = new Set([
       "Server",
       "Admin",
+      "Passkey",
+      "Passkeys",
+      "Passkeys: {count}",
+      "App",
       "Teams",
       "Name",
       "Dashboard",

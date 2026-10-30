@@ -21,6 +21,8 @@ pub const ERROR_CODES: &[&str] = &[
     "rate_limited",
     "cross_origin",
     "invalid_credentials",
+    "invalid_code",
+    "confirmation_required",
     "setup_done",
     "invalid_setup_token",
     "setup_token_expired",
