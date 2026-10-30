@@ -336,7 +336,12 @@ function NewAccount({
       if ("secondFactor" in result) {
         // The account exists and the invitation is used; the link is done.
         forgetToken("invite");
-        if (isPrompt(result.secondFactor)) setPrompt(result.secondFactor);
+        if (isPrompt(result.secondFactor)) {
+          setPrompt(result.secondFactor);
+        } else {
+          // An answer this page cannot read: the account exists, so signing in continues.
+          void navigate({ to: "/login" });
+        }
         return;
       }
       return joined(result);

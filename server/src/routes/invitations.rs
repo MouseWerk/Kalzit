@@ -976,7 +976,20 @@ async fn accept(
     let user = SessionUser { id: user_id, email: found.email.clone(), name, is_server_admin: 0 };
     let first = crate::auth::second_factor::FirstStep::Password { password_hash: Some(&hash) };
     let plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
-    let tx = crate::db::begin(&state.db).await?;
+    let mut tx = crate::db::begin(&state.db).await?;
+    // The sign-in's lock, as in `auth::login`: the account must still be enabled and hold the
+    // password just set, so one disabled (or changed) in between gets no session.
+    let still_valid = sqlx::query(
+        "UPDATE users SET password_hash = password_hash WHERE id = $1 AND password_hash = $2 AND disabled = 0",
+    )
+    .bind(&user.id)
+    .bind(&hash)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if still_valid == 0 {
+        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid_credentials", "the account cannot sign in"));
+    }
     super::second_factor::finish_first_step(tx, &state, &info, &headers, user, first, false, plan, now).await
 }
 

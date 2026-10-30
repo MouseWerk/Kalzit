@@ -480,7 +480,10 @@ async fn do_reset(
     }
     audit(&mut tx, &actor, org_id, "user.second_factor_reset", ("user", target), summary).await?;
     crate::db::commit(tx).await?;
-    sf::notify(state, target, sf::Notice::Reset);
+    // A reset that removed nothing changed nothing worth a mail.
+    if removed.totp || removed.passkeys > 0 || removed.recovery_codes > 0 {
+        sf::notify(state, target, sf::Notice::Reset);
+    }
     Ok(ResetDone { removed, sessions_ended })
 }
 

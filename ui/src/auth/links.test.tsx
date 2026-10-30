@@ -71,6 +71,17 @@ describe("invitation page", () => {
     expect(screen.getAllByText(/Analytical Engines/).length).toBeGreaterThan(0);
   });
 
+  it("goes on to sign-in when the second step cannot be read", async () => {
+    const server = installFakeServer();
+    server.areas.mail.links[TOKEN] = invitationInfo();
+    server.areas.mail.acceptSecondFactor = { unexpected: true };
+    const { user, location } = renderApp(`/invite#${TOKEN}`);
+    await user.type(await screen.findByLabelText("Your name"), "Nora Becker");
+    await user.type(screen.getByLabelText("Password"), NEW_PASSWORD);
+    await user.click(screen.getByRole("button", { name: "Accept invitation" }));
+    await waitFor(() => expect(location().pathname).toBe("/login"));
+  });
+
   it("names the day an expired invitation ended and who to ask", async () => {
     const server = installFakeServer();
     server.areas.mail.links[TOKEN] = invitationInfo({ state: "expired" });

@@ -77,7 +77,7 @@ impl Mail {
     /// a stop aborts it. Skipped when too many are running already.
     pub fn spawn(&self, state: &AppState, task: impl Future<Output = ()> + Send + 'static) {
         let Ok(permit) = self.background.clone().try_acquire_owned() else {
-            tracing::warn!("too many mails are being sent at the moment; one password link was not sent");
+            tracing::warn!("too many mails are being sent at the moment; one mail was not sent");
             return;
         };
         state.background.spawn(async move {
