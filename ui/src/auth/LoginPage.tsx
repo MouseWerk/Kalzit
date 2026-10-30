@@ -1,11 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, useRouter } from "@tanstack/react-router";
+import { getRouteApi, Link, useRouter } from "@tanstack/react-router";
 import {
   type FormEvent,
   type MouseEvent,
   type ReactNode,
   useEffect,
-  useId,
   useRef,
   useState,
 } from "react";
@@ -103,7 +102,6 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FieldErrors<LoginField>>({});
-  const [forgotOpen, setForgotOpen] = useState(false);
   const [notMine, setNotMine] = useState(false);
   const [until, setUntil] = useState<number | null>(null);
   const [firstWait, setFirstWait] = useState(0);
@@ -111,7 +109,6 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const [focusEmail, setFocusEmail] = useState(false);
   /** The provider whose sign-in the browser is on its way to. */
   const [leaving, setLeaving] = useState<SignInProvider | null>(null);
-  const forgotId = useId();
   const refs = {
     email: useRef<HTMLInputElement>(null),
     password: useRef<HTMLInputElement>(null),
@@ -494,20 +491,12 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
               onValueChange={edit("password", setPassword)}
               error={fieldError("password")}
               aside={
-                <button
-                  type="button"
-                  className="access__quiet-link"
-                  aria-expanded={forgotOpen}
-                  aria-controls={forgotId}
-                  onClick={() => setForgotOpen(!forgotOpen)}
-                >
+                // A link by mail, or, without mail on the server, who can help (ResetPasswordPage).
+                <Link to="/reset-password" className="access__quiet-link">
                   {t("access.login.forgot")}
-                </button>
+                </Link>
               }
             />
-            <div id={forgotId} className="access__forgot" aria-live="polite">
-              {forgotOpen ? <p className="field__hint">{t("access.login.forgotHint")}</p> : null}
-            </div>
             {/* A shared or borrowed browser: it does not become a known device of the account. */}
             <label className="access__check">
               <input

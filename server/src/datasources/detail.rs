@@ -97,6 +97,8 @@ mod tests {
         "ai",
         // ACME certificates (docs/api/datasources.md, "HTTPS certificates").
         "acme",
+        // The mail server, invitations and password links (docs/api/mail.md).
+        "mail",
         // The second factor of a sign-in (docs/api/access.md).
         "second_factor",
         // Single sign-on (docs/api/sso.md), with the causes it records in the audit log.
@@ -148,6 +150,9 @@ mod tests {
         "datasource.purged",
         "datasource.restored",
         "datasource.updated",
+        // The mail settings' key and audit action.
+        "mail.settings_changed",
+        "mail.smtp",
         "secrets.key",
         "secrets.lock",
         "server.http_addr",
@@ -311,7 +316,7 @@ mod tests {
         let mut docs = BTreeSet::new();
         // The AI and plugin routes document their own reasons; they share the target and request
         // reasons.
-        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "sso.md"] {
+        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md"] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }

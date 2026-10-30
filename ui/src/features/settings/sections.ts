@@ -15,8 +15,8 @@ export type SectionKind =
   | "network"
   | "appearance"
   | "planned"
-  /** Verwaltung > Anmeldung: providers, group mapping, local sign-in (features/admin/sso). */
-  | "signin"
+  /** The mail server (`MailSection`, docs/design/blueprint/Identity.dc.html frame 6). */
+  | "mail"
   | "ai"
   | "aiOrg"
   | "plugins"
@@ -177,11 +177,10 @@ export const SECTIONS: readonly SectionDef[] = [
   {
     id: "email",
     group: "server",
-    kind: "planned",
+    kind: "mail",
     label: "settings.section.email.label",
     lead: "settings.section.email.lead",
     keywords: "settings.section.email.keywords",
-    planned: "settings.planned.email",
     visible: serverAdmin,
   },
   {

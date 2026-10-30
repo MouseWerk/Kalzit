@@ -413,8 +413,9 @@ url = "postgres://kalzit@db.internal/kalzit"   # default: SQLite in the data dir
 | `KALZIT_SECRETS_KEY` | Key for data source secrets (base64, 32 bytes) |
 | `KALZIT_SETUP_TOKEN` | A setup code of your own instead of a generated one |
 
-Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, `paths` and
-`log`; unknown keys and misspelled `KALZIT_*` variables are refused at start.
+Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, `paths`, `log`
+and `smtp` (the mail server, otherwise set in Settings, Email; give its password in
+`KALZIT_SMTP_PASSWORD`); unknown keys and misspelled `KALZIT_*` variables are refused at start.
 `kalzit check-config` validates a configuration without starting the server.
 
 - **Own database:** SQLite (default, one server) or PostgreSQL (`database.url`).

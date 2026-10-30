@@ -4,9 +4,12 @@ import { describe, expect, it } from "vitest";
 import {
   anmeldenRoute,
   appRoute,
+  confirmEmailRoute,
   helpRoute,
+  inviteRoute,
   localLoginRoute,
   loginRoute,
+  resetPasswordRoute,
   setupRoute,
   ssoTestRoute,
 } from "./baseRoutes";
@@ -30,11 +33,15 @@ describe("route tree", () => {
   // sign-in through a provider, the fixed local sign-in and the end of a test sign-in.
   const signInRoutes = [loginRoute, anmeldenRoute, localLoginRoute, ssoTestRoute];
 
-  it("puts every page except setup, sign-in and help under the sign-in guard", () => {
-    // Route ids exist only once the router has built the tree, so this is read here.
+  it("puts every page except setup, sign-in, help and the mailed links under the guard", () => {
+    // Route ids exist only once the router has built the tree, so this is read here. The pages
+    // of invitation and password links open without a session: the link's token counts.
     const publicRoutes = new Set([
       setupRoute.id,
       helpRoute.id,
+      inviteRoute.id,
+      resetPasswordRoute.id,
+      confirmEmailRoute.id,
       ...signInRoutes.map((route) => route.id),
     ]);
     const unguarded = routes
@@ -53,7 +60,7 @@ describe("route tree", () => {
   });
 
   it("keeps setup, sign-in and help directly under the root", () => {
-    for (const route of [setupRoute, helpRoute, ...signInRoutes]) {
+    for (const route of [setupRoute, helpRoute, inviteRoute, resetPasswordRoute, ...signInRoutes]) {
       expect(route.parentRoute?.id).toBe(rootRouteId);
     }
   });

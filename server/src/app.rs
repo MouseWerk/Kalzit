@@ -90,6 +90,9 @@ pub struct AppState {
     /// Automatic HTTPS certificates (`acme`): their settings, the served certificate and the
     /// challenge answers.
     pub acme: Arc<crate::acme::Acme>,
+    /// Mail: the rate limits of password resets and links, and connections to the mail server
+    /// (`mail`).
+    pub mail: Arc<crate::mail::Mail>,
     /// This server among the servers on the same database: leader, run-once jobs and the
     /// changes they announce to each other (`cluster`).
     pub cluster: Arc<crate::cluster::Cluster>,
@@ -183,6 +186,7 @@ impl AppState {
             ai: Arc::default(),
             plugins,
             acme,
+            mail: Arc::default(),
             cluster,
             usage: Arc::default(),
             sso,

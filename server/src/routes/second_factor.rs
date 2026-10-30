@@ -394,7 +394,8 @@ async fn setup(
     };
     crate::audit::record(&mut tx, &event).await?;
     let (out, me) = complete(tx, &state, &info, &headers, &pending, method, taken, now).await?;
-    sf::notify(&state, &pending.user_id, sf::Notice::Changed);
+    // The first setup, which the person just did themselves while signing in, changes nothing they
+    // need to be told about by mail.
     let body = SignedIn { me, recovery_codes_remaining: None, recovery_codes: Some(codes) };
     Ok((out, Json(body)).into_response())
 }

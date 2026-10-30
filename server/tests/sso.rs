@@ -23,6 +23,7 @@ use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt;
 
 mod common;
@@ -161,6 +162,60 @@ async fn fake_idp() -> Idp {
 }
 
 // ---------------------------------------------------------------------------------------------
+// A mail server that keeps what it receives (recipient, message)
+
+type Inbox = Arc<Mutex<Vec<(String, String)>>>;
+
+async fn fake_smtp() -> (u16, Inbox) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let inbox: Inbox = Arc::default();
+    let log = inbox.clone();
+    tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let log = log.clone();
+            tokio::spawn(async move {
+                let mut io = BufReader::new(socket);
+                let _ = io.write_all(b"220 fake ESMTP\r\n").await;
+                let mut to = String::new();
+                loop {
+                    let mut line = String::new();
+                    if io.read_line(&mut line).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let upper = line.trim_end().to_ascii_uppercase();
+                    let answer: &[u8] = if upper.starts_with("EHLO") {
+                        b"250-fake\r\n250 SMTPUTF8\r\n"
+                    } else if upper.starts_with("RCPT TO:") {
+                        to = line.trim_end()[8..].trim_matches(['<', '>']).to_string();
+                        b"250 ok\r\n"
+                    } else if upper == "DATA" {
+                        let _ = io.write_all(b"354 go\r\n").await;
+                        let mut data = String::new();
+                        loop {
+                            let mut l = String::new();
+                            if io.read_line(&mut l).await.unwrap_or(0) == 0 || l == ".\r\n" {
+                                break;
+                            }
+                            data.push_str(&l);
+                        }
+                        log.lock().unwrap().push((std::mem::take(&mut to), data));
+                        b"250 queued\r\n"
+                    } else if upper == "QUIT" {
+                        let _ = io.write_all(b"221 bye\r\n").await;
+                        return;
+                    } else {
+                        b"250 ok\r\n"
+                    };
+                    let _ = io.write_all(answer).await;
+                }
+            });
+        }
+    });
+    (port, inbox)
+}
+
+// ---------------------------------------------------------------------------------------------
 // The app
 
 struct TestApp {
@@ -168,6 +223,7 @@ struct TestApp {
     state: AppState,
     dir: Arc<tempfile::TempDir>,
     clock: Arc<ManualClock>,
+    inbox: Inbox,
 }
 
 struct Reply {
@@ -204,11 +260,19 @@ async fn test_app() -> TestApp {
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:3999".into();
+    // An unencrypted relay on this machine, which only the file may set.
+    let (smtp_port, inbox) = fake_smtp().await;
+    config.smtp.host = "127.0.0.1".into();
+    config.smtp.port = smtp_port;
+    config.smtp.security = "none".into();
+    config.smtp.from_name = "Kalzit".into();
+    config.smtp.from_address = "kalzit@example.com".into();
+    config.file_keys.insert("smtp.host".into());
     let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
     let clock = Arc::new(ManualClock::new(START_MS));
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), state, dir: Arc::new(dir), clock }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), state, dir: Arc::new(dir), clock, inbox }
 }
 
 impl TestApp {
@@ -550,6 +614,24 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     // prove it (the claim here is still `email`, so this checks the plain case).
     let (r, _) = sign_in(&app, &idp, &Who { verified: true, ..nora }, |_| {}).await;
     assert_eq!(r.location(), "/dashboards", "a verified email links the account");
+    // An account whose email was never confirmed (made from a link an admin passed on) is never
+    // taken over by email, even when the provider verified it.
+    let r = app
+        .post("/api/admin/users", json!({ "name": "Olga", "email": "olga@example.de", "password": PASSWORD }), &admin)
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    sqlx::query("UPDATE users SET email_confirmed = 0 WHERE email = 'olga@example.de'")
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let olga = Who { sub: "sub-olga", email: "olga@example.de", verified: true, groups: &["alle"] };
+    let (r, _) = sign_in(&app, &idp, &olga, |_| {}).await;
+    assert_eq!(outcome_of(&r), "email_taken");
+    let linked: Option<(String,)> = sqlx::query_as("SELECT user_id FROM sso_identities WHERE subject = 'sub-olga'")
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(linked.is_none());
     // A server admin is never linked by email, verified or not.
     let joerg = Who { sub: "sub-joerg", email: "joerg@example.de", verified: true, groups: &["alle"] };
     let (r, _) = sign_in(&app, &idp, &joerg, |_| {}).await;
@@ -731,6 +813,13 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(r.body.get("secondFactor").is_some(), "the second factor follows: {}", r.body);
     assert!(app.audit_actions().await.contains(&"auth.break_glass_signed_in".to_string()));
+    // Every server admin gets a mail about it.
+    app.state.mail.settle().await;
+    let mails = app.inbox.lock().unwrap().clone();
+    let notice = mails
+        .iter()
+        .find(|(to, data)| to == "joerg@example.de" && data.contains("Subject: Anmeldung des Notfall-Admins"));
+    assert!(notice.is_some(), "a break-glass notice to the server admins: {mails:?}");
     let r = app
         .send(Method::PATCH, &format!("/api/admin/users/{admin_id}"), Some(json!({ "disabled": true })), Some(&admin))
         .await;

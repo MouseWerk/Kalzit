@@ -308,7 +308,7 @@ pub async fn login_with(
     )
     .await?;
     if decision == PasswordSignIn::BreakGlass {
-        crate::sso::announce_break_glass(&row.id, &info);
+        crate::sso::announce_break_glass(&state, &row.id, &info);
     }
     Ok(answer)
 }
@@ -364,7 +364,8 @@ pub async fn logout(
 }
 
 pub async fn current(State(state): State<AppState>, CurrentUser(user): CurrentUser) -> ApiResult<Json<Me>> {
-    Ok(Json(me(&state.db, user).await?))
+    let mut conn = state.read_db.acquire().await?;
+    Ok(Json(me(&mut conn, user).await?))
 }
 
 #[cfg(test)]

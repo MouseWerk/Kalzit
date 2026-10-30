@@ -95,8 +95,9 @@ Then the account:
    `trustEmail`) and the account's own email is confirmed. Emails are compared in an ASCII form
    (lowercase local part, IDNA domain); an email with a non-ASCII local part is not used, since
    Unicode case folding makes different addresses look alike. Server admins and the break-glass
-   admin are never linked by email (`sso=email_taken`). An account whose email is not confirmed (from an invitation link copied without
-   mail) is never taken over: `sso=email_taken`.
+   admin are never linked by email (`sso=email_taken`). An account whose email is not confirmed
+   (`users.email_confirmed`: made from an invitation link an admin passed on) is never taken over:
+   `sso=email_taken`.
 3. Otherwise, when the provider may create accounts (`createAccounts`), a new account with the
    email and name of the token and no password (`auth.sso_account_created`).
 4. Otherwise `sso=no_account`.
@@ -157,7 +158,7 @@ second factor, and sets one up first if the account has none; their last factor 
 and an admin cannot reset it (`sso.break_glass_protected`). Every attempt counts against a budget of its
 own (10 per address in 15 minutes, `429 rate_limited`), on top of the sign-in limits. A
 break-glass sign-in with password sign-in off records `auth.break_glass_signed_in` and sends a mail
-to every server admin (once the mail server is set up).
+to every server admin when a mail server is set up (`docs/api/mail.md`).
 
 ### `GET /admin/sign-in/local`
 

@@ -8,12 +8,13 @@ import { noticeText, reasonText } from "./reasons";
 
 /**
  * The rows of the "Reasons" tables in docs/api/datasources.md, docs/api/plugins.md (plugin
- * reasons reach the data source routes too) and docs/api/sso.md (the sign-in pages and their
- * administration share the texts): codes and their params.
+ * reasons reach the data source routes too) and docs/api/mail.md (the mail server, invitations
+ * and password links share this lookup) and docs/api/sso.md (the sign-in pages and their
+ * administration): codes and their params.
  */
 function documentedReasons(): Map<string, Set<string>> {
   const reasons = new Map<string, Set<string>>();
-  for (const file of ["datasources.md", "plugins.md", "sso.md"]) {
+  for (const file of ["datasources.md", "plugins.md", "mail.md", "sso.md"]) {
     const doc = readFileSync(resolve(import.meta.dirname, "../../../../docs/api", file), "utf8");
     readReasons(doc, reasons);
   }

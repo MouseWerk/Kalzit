@@ -150,12 +150,21 @@ async fn add(
     // finds the membership.
     lock_org(&mut tx, &ctx.org_id).await?;
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
-    let user: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM users WHERE email = $1").bind(&email).fetch_optional(&mut *tx).await?;
+    let user: Option<(String, i64)> = sqlx::query_as("SELECT id, email_confirmed FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_optional(&mut *tx)
+        .await?;
     // Adding works for existing accounts only; invitations by mail come with `users:invite`.
-    let Some((user_id,)) = user else {
+    let Some((user_id, confirmed)) = user else {
         return Err(ApiError::validation("no account has this email").with_field("email"));
     };
+    // An address nobody proved to read (an account from a copied invitation link) names nobody
+    // for sure: its owner confirms it by mail first (docs/api/mail.md, "Email confirmation").
+    if confirmed == 0 {
+        return Err(conflict("the account has not confirmed this email address yet")
+            .with_field("email")
+            .because("mail.email_unconfirmed"));
+    }
     let (existing,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&ctx.org_id)
         .bind(&user_id)
@@ -198,7 +207,7 @@ async fn assignable_role(tx: &mut sqlx::AnyConnection, ctx: &OrgCtx, key: &str) 
 
 /// What a member loses besides their org role when they leave: the roles of their teams here and
 /// their own grants.
-async fn held_through_membership(
+pub(crate) async fn held_through_membership(
     tx: &mut sqlx::AnyConnection,
     org_id: &str,
     user_id: &str,

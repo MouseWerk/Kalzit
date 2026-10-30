@@ -280,11 +280,12 @@ pub async fn password_sign_in(state: &AppState, user_id: &str, break_glass_form:
     })
 }
 
-/// Tells every server admin that the break-glass admin signed in. The mail server arrives with
-/// the mail and invitations change (PR #161); until it is merged, the sign-in is recorded in the
-/// audit log (`auth.break_glass_signed_in`) and the server log only.
-pub fn announce_break_glass(user_id: &str, info: &RequestInfo) {
+/// Tells every server admin that the break-glass admin signed in with a password: by mail
+/// (`mail::notify_break_glass`), next to the audit entry (`auth.break_glass_signed_in`) and a
+/// warning in the server log.
+pub fn announce_break_glass(state: &AppState, user_id: &str, info: &RequestInfo) {
     tracing::warn!(user = user_id, client = %info.client_ip, "the break-glass admin signed in with a password");
+    crate::mail::notify_break_glass(state, user_id, info.client_ip);
 }
 
 /// Deletes sign-ins through providers that ended, on one server only (`cluster::spawn_job`).

@@ -244,10 +244,6 @@
     font-size: var(--font-size-xs);
   }
 
-  .access__forgot:empty {
-    margin-block-start: calc(var(--space-4) * -1);
-  }
-
   .access__ok {
     display: flex;
     align-items: flex-start;

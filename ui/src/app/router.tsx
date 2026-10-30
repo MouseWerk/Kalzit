@@ -12,9 +12,12 @@ import { redirectToStartDashboard } from "../preferences/startDashboard";
 import {
   anmeldenRoute,
   appRoute,
+  confirmEmailRoute,
   helpRoute,
+  inviteRoute,
   localLoginRoute,
   loginRoute,
+  resetPasswordRoute,
   rootRoute,
   setupRoute,
   ssoTestRoute,
@@ -37,6 +40,9 @@ const routeTree = rootRoute.addChildren([
   localLoginRoute,
   ssoTestRoute,
   helpRoute,
+  inviteRoute,
+  resetPasswordRoute,
+  confirmEmailRoute,
   appRoute.addChildren([
     homeRoute,
     ...dashboardsRoutes,

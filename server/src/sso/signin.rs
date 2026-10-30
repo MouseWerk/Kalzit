@@ -42,13 +42,13 @@ impl Refusal {
     }
 }
 
-/// Whether the account's email is confirmed. Accounts whose email was never proven (made from an
-/// invitation link copied without mail) come with the mail and invitations change (PR #161,
-/// `users.email_confirmed`); until it is merged, every account was made by an admin or the setup
-/// and counts as confirmed. The test `email_confirmed_is_not_in_the_schema_yet` fails once the
-/// column exists, so this is wired then.
-async fn email_confirmed(_conn: &mut sqlx::AnyConnection, _user_id: &str) -> ApiResult<bool> {
-    Ok(true)
+/// Whether the account's email is confirmed: an account made from an invitation link an admin
+/// passed on starts unconfirmed (`users.email_confirmed`, docs/api/mail.md), and is never taken
+/// over by an email a provider sends.
+async fn email_confirmed(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<bool> {
+    let (confirmed,): (i64,) =
+        sqlx::query_as("SELECT email_confirmed FROM users WHERE id = $1").bind(user_id).fetch_one(conn).await?;
+    Ok(confirmed != 0)
 }
 
 #[derive(sqlx::FromRow)]
@@ -327,16 +327,4 @@ pub async fn apply_deferred(
     let rules = mapping::rules(&mut *conn, &provider_id).await?;
     let outcome = mapping::resolve(&rules, &groups, &super::unmapped(state).await?);
     apply(conn, info, (&provider.id, &provider.slug), user_id, &outcome, now).await
-}
-
-#[cfg(test)]
-mod tests {
-    /// `email_confirmed` stands in for `users.email_confirmed` (PR #161); once the column exists,
-    /// read it there and drop this test.
-    #[tokio::test]
-    async fn email_confirmed_is_not_in_the_schema_yet() {
-        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
-        let read = sqlx::query("SELECT email_confirmed FROM users LIMIT 1").execute(&db).await;
-        assert!(read.is_err(), "users.email_confirmed exists now: read it in sso::signin::email_confirmed");
-    }
 }

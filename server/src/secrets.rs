@@ -851,7 +851,78 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
             .await?;
         count += 1;
     }
+    count += reencrypt_mail(&mut tx, keyring, new).await?;
     crate::db::commit(tx).await?;
+    Ok(count)
+}
+
+/// The mail server's password (`server_secrets`) and the sealed tokens of pending invitations
+/// (`mail::links`).
+async fn reencrypt_mail(tx: &mut sqlx::AnyConnection, keyring: &Keyring, new: &SecretKey) -> Result<usize> {
+    let mut count = 0;
+    let rows: Vec<(String, String, String, String, String)> =
+        sqlx::query_as("SELECT owner, field, key_id, nonce, ciphertext FROM server_secrets")
+            .fetch_all(&mut *tx)
+            .await?;
+    for (owner, field, key_id, nonce, ciphertext) in rows {
+        if key_id == new.id {
+            continue;
+        }
+        let blob = Blob { key_id, nonce, ciphertext };
+        let plain = match keyring.key(&blob.key_id) {
+            Some(key) => decrypt_with(key, &owner, &field, &blob),
+            None => Err(SecretError::UnknownKey(blob.key_id.clone())),
+        }
+        .with_context(|| format!("server secret {owner}/{field}; nothing was changed"))?;
+        let fresh = encrypt_with(new, &owner, &field, &plain);
+        sqlx::query(
+            "UPDATE server_secrets SET key_id = $1, nonce = $2, ciphertext = $3 WHERE owner = $4 AND field = $5",
+        )
+        .bind(&fresh.key_id)
+        .bind(&fresh.nonce)
+        .bind(&fresh.ciphertext)
+        .bind(&owner)
+        .bind(&field)
+        .execute(&mut *tx)
+        .await?;
+        count += 1;
+    }
+    // Expired links can no longer be copied: their sealed copies go instead of moving along.
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+    sqlx::query(
+        "UPDATE invitations SET token_key_id = NULL, token_nonce = NULL, token_ciphertext = NULL \
+         WHERE expires_at <= $1 AND token_key_id IS NOT NULL",
+    )
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT id, token_key_id, token_nonce, token_ciphertext FROM invitations WHERE token_key_id IS NOT NULL",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    for (id, key_id, nonce, ciphertext) in rows {
+        if key_id == new.id {
+            continue;
+        }
+        let owner = crate::mail::links::sealed_owner(&id);
+        let field = crate::mail::links::TOKEN_FIELD;
+        let blob = Blob { key_id, nonce, ciphertext };
+        let plain = match keyring.key(&blob.key_id) {
+            Some(key) => decrypt_with(key, &owner, field, &blob),
+            None => Err(SecretError::UnknownKey(blob.key_id.clone())),
+        }
+        .with_context(|| format!("the link of invitation {id}; nothing was changed"))?;
+        let fresh = encrypt_with(new, &owner, field, &plain);
+        sqlx::query("UPDATE invitations SET token_key_id = $1, token_nonce = $2, token_ciphertext = $3 WHERE id = $4")
+            .bind(&fresh.key_id)
+            .bind(&fresh.nonce)
+            .bind(&fresh.ciphertext)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        count += 1;
+    }
     Ok(count)
 }
 
