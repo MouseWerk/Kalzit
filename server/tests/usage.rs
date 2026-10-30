@@ -285,6 +285,8 @@ on_both_databases! {
     trashed_dashboards_and_sources_leave_the_totals,
     sources_follow_the_readers_rights,
     a_day_is_twenty_four_hours,
+    a_panel_on_a_trashed_source_fails,
+    only_the_server_view_names_dropped_events,
 }
 
 async fn views_and_query_runs_show_up(t: TestApp) {
@@ -398,7 +400,8 @@ async fn unused_dashboards_are_those_without_views(t: TestApp) {
     assert!(r.status.is_success(), "{}", r.body);
     assert_eq!(ids(&t.get("~/usage/unused?days=30", &t.owner).await.ok()), [old]);
     assert_eq!(t.get("~/usage/unused?days=0", &t.owner).await.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(t.get("~/usage/unused?days=366", &t.owner).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(t.get("~/usage/unused?days=91", &t.owner).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(t.get("~/usage/unused?days=90", &t.owner).await.status, StatusCode::OK);
 }
 
 async fn org_admins_see_their_organization_only(t: TestApp) {
@@ -476,7 +479,9 @@ async fn recording_off_records_nothing(t: TestApp) {
 }
 
 async fn retention_is_a_bounded_setting(t: TestApp) {
-    assert_eq!(t.set("usage.retention_days", json!(366)).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    // The owner's decision: usage is kept 90 days at most.
+    assert_eq!(t.set("usage.retention_days", json!(91)).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    t.set("usage.retention_days", json!(90)).await.ok();
     assert_eq!(t.set("usage.retention_days", json!(0)).await.status, StatusCode::UNPROCESSABLE_ENTITY);
     t.set("usage.retention_days", json!(30)).await.ok();
     let source = t.source("shop").await;
@@ -582,4 +587,28 @@ async fn a_day_is_twenty_four_hours(t: TestApp) {
     let report = t.get(&format!("~/usage?from={}&to={now}", now - DAY), &t.owner).await.ok();
     assert_eq!(report["totals"]["views"], 1, "{report}");
     assert_eq!(report["trend"].as_array().unwrap().len(), 24);
+}
+
+async fn a_panel_on_a_trashed_source_fails(t: TestApp) {
+    let source = t.source("shop").await;
+    let dashboard = t.dashboard("Releases", &source).await;
+    let r = t.send(Method::DELETE, &t.path(&format!("~/datasources/{source}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    t.run_panel(&dashboard, &t.owner).await;
+    t.flush().await;
+    let report = t.get(&format!("~/usage?{}", t.range()), &t.owner).await.ok();
+    assert_eq!(report["totals"]["panelRuns"], 1, "{report}");
+    assert_eq!(report["totals"]["panelErrors"], 1);
+    assert_eq!(report["failingPanels"][0]["panelId"], "p1");
+    // Not a query of a source: the trashed one's id is left out.
+    assert_eq!(t.rows("usage_source_queries").await, 0);
+}
+
+async fn only_the_server_view_names_dropped_events(t: TestApp) {
+    let org = t.get(&format!("~/usage?{}", t.range()), &t.owner).await.ok();
+    assert!(org.get("dropped").is_none(), "{org}");
+    let server = t.get(&format!("/admin/usage?{}", t.range()), &t.owner).await.ok();
+    assert_eq!(server["dropped"], 0, "{server}");
+    let one = t.get(&format!("/admin/usage?{}&orgId={}", t.range(), t.org), &t.owner).await.ok();
+    assert_eq!(one["dropped"], 0);
 }

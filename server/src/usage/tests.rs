@@ -293,7 +293,20 @@ fn refused_items_are_no_panel_errors() {
     assert!(!PanelRun::of(&QueryResponse { results: results.clone() }, 1).error);
     results.insert("C".to_string(), err("query_timeout"));
     assert!(PanelRun::of(&QueryResponse { results }, 1).error);
-    assert!(!ran("validation") && !ran("not_found") && ran("datasource_error") && ran("internal"));
+    assert!(ran("datasource_error") && ran("query_timeout") && ran("query_rejected"));
+}
+
+/// A stored query whose source was trashed answers `not_found`: the panel failed. For a source
+/// query it is no query of a source, nor is one Kalzit could not run itself (busy, internal).
+#[test]
+fn not_found_fails_a_panel_but_is_no_source_query() {
+    let mut results = BTreeMap::new();
+    results.insert("A".to_string(), err("not_found"));
+    assert!(PanelRun::of(&QueryResponse { results }, 1).error);
+    for code in ["validation", "not_found", "busy", "internal"] {
+        assert!(!ran(code), "{code}");
+    }
+    assert!(!fails_panel("validation") && fails_panel("not_found") && fails_panel("busy"));
 }
 
 #[test]

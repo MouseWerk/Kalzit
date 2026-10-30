@@ -78,7 +78,8 @@ export interface UsageReport {
   recording: boolean;
   retentionDays: number;
   since: number | null;
-  dropped: number;
+  /** Server view only. */
+  dropped?: number;
   totals: UsageTotals;
   trend: UsageTrendPoint[];
   dashboards: DashboardUsage[];
@@ -195,7 +196,7 @@ const isReport = shape<UsageReport>({
   recording: isBoolean,
   retentionDays: isNumber,
   since: nullable(isNumber),
-  dropped: isNumber,
+  dropped: (value: unknown) => value === undefined || isNumber(value),
   totals: isTotals,
   trend: arrayOf(isTrendPoint),
   dashboards: arrayOf(isDashboard),

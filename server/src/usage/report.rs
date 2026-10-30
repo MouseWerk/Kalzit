@@ -42,18 +42,20 @@ pub struct Scope<'a> {
     pub hiding: Option<&'a OrgCtx>,
     /// `Some` for a member who may read only some data sources: their ids (`visible_sources`).
     pub sources: Option<&'a [String]>,
+    /// A server administrator's view: it also names the server's dropped events.
+    pub server: bool,
 }
 
 impl<'a> Scope<'a> {
     /// A member's view of their organization; `sources` from `visible_sources`.
     pub fn member(ctx: &'a OrgCtx, sources: Option<&'a [String]>) -> Self {
         let hiding = (folders::sees_every_folder(ctx) == 0).then_some(ctx);
-        Self { org_id: Some(&ctx.org_id), hiding, sources }
+        Self { org_id: Some(&ctx.org_id), hiding, sources, server: false }
     }
 
     /// A server administrator's view of one organization or of all.
     pub fn server(org_id: Option<&'a str>) -> Self {
-        Self { org_id, hiding: None, sources: None }
+        Self { org_id, hiding: None, sources: None, server: true }
     }
 
     /// The same view without the dashboard rule, for queries about data sources only.
@@ -178,8 +180,10 @@ pub struct Report {
     pub retention_days: i64,
     /// The oldest bucket kept for this scope: nothing older can be known.
     pub since: Option<i64>,
-    /// Events this server dropped since it started, because its buffer was full.
-    pub dropped: u64,
+    /// Events this server dropped since it started, because its buffer was full; a count of the
+    /// whole server, so only in the server view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dropped: Option<u64>,
     pub totals: Totals,
     pub trend: Vec<TrendPoint>,
     pub dashboards: Vec<DashboardUsage>,
@@ -369,7 +373,7 @@ pub async fn report(state: &AppState, scope: Scope<'_>, from: i64, to: i64) -> A
         recording: super::enabled(state).await,
         retention_days: super::retention_days(state).await,
         since: since(state, &scope).await?,
-        dropped: state.usage.dropped(),
+        dropped: scope.server.then(|| state.usage.dropped()),
         totals,
         trend: points,
         dashboards: dashboards(state, &scope, start, to).await?,
@@ -655,8 +659,8 @@ async fn since(state: &AppState, scope: &Scope<'_>) -> ApiResult<Option<i64>> {
 /// Dashboards of the scope, not in the trash, without a view in the last `days` days before
 /// `now_ms`: never opened in the retention first, then the longest unopened.
 pub async fn unused(state: &AppState, scope: Scope<'_>, days: i64, now_ms: i64) -> ApiResult<Unused> {
-    if !(1..=365).contains(&days) {
-        return Err(ApiError::validation("days must be between 1 and 365").with_field("days"));
+    if !(1..=super::MAX_RETENTION_DAYS).contains(&days) {
+        return Err(ApiError::validation("days must be between 1 and 90").with_field("days"));
     }
     let cut = bucket_of(now_ms) + HOUR_MS - days * DAY_MS;
     let mut sql = Sql::new(&scope);

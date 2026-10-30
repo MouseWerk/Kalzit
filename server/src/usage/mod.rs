@@ -52,6 +52,8 @@ pub const FLUSH_CHUNK: usize = 500;
 pub const ENABLED_SETTING: &str = "usage.enabled";
 /// Days the buckets are kept.
 pub const RETENTION_SETTING: &str = "usage.retention_days";
+/// The longest retention, also the default (owner decision: usage is kept 90 days).
+pub const MAX_RETENTION_DAYS: i64 = 90;
 
 /// The start of the hour `at_ms` falls in.
 pub fn bucket_of(at_ms: i64) -> i64 {
@@ -111,11 +113,19 @@ pub enum ErrorClass {
     Other,
 }
 
-/// Whether an error code means the query ran and failed. `validation` and `not_found` mean the
-/// request was refused before anything ran (a wrong variable, an unknown source): such answers
-/// are not counted at all.
+/// Whether an error code means a query was asked of its source and failed there. `validation`
+/// and `not_found` mean the request was refused before anything ran (a wrong variable, an unknown
+/// or trashed source), `busy` and `internal` that Kalzit itself could not run it (its database
+/// was busy, a fault of its own): such answers are not counted as queries of the source.
 pub fn ran(code: &str) -> bool {
-    !matches!(code, "validation" | "not_found")
+    !matches!(code, "validation" | "not_found" | "busy" | "internal")
+}
+
+/// Whether an error code makes a panel run a failed one: anything but `validation` (a wrong
+/// variable or range of the request). A stored query whose data source was trashed or deleted
+/// answers `not_found`, and the panel failed for whoever looked at it.
+pub fn fails_panel(code: &str) -> bool {
+    code != "validation"
 }
 
 impl ErrorClass {
@@ -139,8 +149,8 @@ pub struct PanelRun {
 }
 
 impl PanelRun {
-    /// The run of a whole panel request: an error when one of its queries ran and failed (an
-    /// item refused before it ran, `ran`, is no error of the panel), a hit when
+    /// The run of a whole panel request: an error when one of its queries failed
+    /// (`fails_panel`; an item refused as invalid is no error of the panel), a hit when
     /// every answer came from the cache, a miss when one of them ran in its source with the cache
     /// in use.
     pub fn of(response: &QueryResponse, duration_ms: i64) -> Self {
@@ -157,7 +167,7 @@ impl PanelRun {
                         None => {}
                     }
                 }
-                QueryOutcome::Err { error } => run.error |= ran(&error.code),
+                QueryOutcome::Err { error } => run.error |= fails_panel(&error.code),
             }
         }
         run.cache = if misses > 0 {
@@ -612,7 +622,7 @@ pub fn spawn_flusher_every(state: AppState, every: Duration) {
 /// The retention in days (`usage.retention_days`).
 pub async fn retention_days(state: &AppState) -> i64 {
     match crate::settings::get(state, RETENTION_SETTING).await {
-        Ok(v) => v.as_i64().unwrap_or(90).clamp(1, 365),
+        Ok(v) => v.as_i64().unwrap_or(MAX_RETENTION_DAYS).clamp(1, MAX_RETENTION_DAYS),
         Err(_) => 90,
     }
 }

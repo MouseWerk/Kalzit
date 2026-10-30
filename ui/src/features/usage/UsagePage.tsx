@@ -195,7 +195,7 @@ function UsageView({
         </>
       )}
       <UnusedCard scope={scope} currentOrgId={currentOrgId} showOrg={showOrg} format={format} />
-      {data !== undefined && data.dropped > 0 ? (
+      {data?.dropped !== undefined && data.dropped > 0 ? (
         <p className="usage-muted">{t("usage.dropped", { count: format.number(data.dropped) })}</p>
       ) : null}
     </div>

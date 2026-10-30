@@ -141,6 +141,31 @@ describe("usage insights", () => {
   });
 });
 
+describe("dropped events", () => {
+  it("names them when the server view reports them, and leaves them out otherwise", async () => {
+    await openAdmin("/admin/usage", {
+      permissions: [],
+      isServerAdmin: true,
+      setupServer: (server) => {
+        server.areas.usage.report = { ...sampleReport(), dropped: 12 };
+      },
+    });
+    expect(await screen.findByText(/^12 events were not counted/)).toBeTruthy();
+  });
+
+  it("shows nothing about them in an organization view without the count", async () => {
+    await openAdmin("/admin/usage", {
+      permissions: ["audit:read"],
+      setupServer: (server) => {
+        const { dropped: _, ...report } = sampleReport();
+        server.areas.usage.report = report;
+      },
+    });
+    await screen.findByText("1,234");
+    expect(screen.queryByText(/events were not counted/)).toBeNull();
+  });
+});
+
 describe("usage helpers", () => {
   it("computes shares without dividing by zero", () => {
     expect(hitRate(0, 0)).toBeNull();

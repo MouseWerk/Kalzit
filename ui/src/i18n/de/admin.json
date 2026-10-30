@@ -482,7 +482,7 @@
   "admin.settings.usage.enabled.label": "Nutzung aufzeichnen",
   "admin.settings.usage.enabled.description": "Zählt Aufrufe von Dashboards und Abfragen von Panels und Datenquellen für Verwaltung > Nutzung, nur je Dashboard, Panel und Datenquelle, nie je Person. Gilt sofort.",
   "admin.settings.usage.retention_days.label": "Aufbewahrung der Nutzung (Tage)",
-  "admin.settings.usage.retention_days.description": "Zähler der Nutzung werden nach so vielen Tagen gelöscht, höchstens nach 365.",
+  "admin.settings.usage.retention_days.description": "Zähler der Nutzung werden nach so vielen Tagen gelöscht, höchstens nach 90.",
   "admin.settings.appearance.default_language.label": "Standardsprache",
   "admin.settings.appearance.default_language.description": "Sprache der Oberfläche für Benutzer, die keine eigene gewählt haben.",
   "admin.settings.appearance.default_theme.label": "Standard-Darstellung",

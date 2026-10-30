@@ -400,7 +400,7 @@ Counts of dashboard views, panel runs and data source queries in hourly buckets
   commit failed is dropped and counted (never added twice). Each instance writes its own counts, so this
   task runs on every instance. Rows of an organization deleted meanwhile are not written.
 - **Retention.** `usage::spawn_retention` deletes buckets older than `usage.retention_days`
-  (default 90, at most 365) every hour, one hour of one table per statement. It is idempotent and
+  (default and at most 90) every hour, one hour of one table per statement. It is idempotent and
   may run on one instance only.
 - **Reading.** `usage::report` sums the buckets in SQL (`CAST(SUM(..) AS BIGINT)` on both
   databases), estimates medians and 95th percentiles from 13 duration ranges, and leaves out

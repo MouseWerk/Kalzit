@@ -11,7 +11,7 @@ Usage).
   tables have no column for one (a server test pins their columns).
 - A dashboard opened by one person and by ten people counts the same way: as views. Nobody, also
   no server administrator, can read from these counts who looked at what.
-- Counts are deleted after `usage.retention_days` (90 by default, at most 365). Recording can be
+- Counts are deleted after `usage.retention_days` (90 by default and at most). Recording can be
   turned off with `usage.enabled`; off, nothing new is counted, and what was counted stays until
   it expires.
 
@@ -41,8 +41,8 @@ Recording adds the event to the counts of its hour in memory; it never waits for
 and never fails a request. Every 15 seconds, and once more when the server stops, the counts are
 added to the stored rows, in transactions of at most 500 buckets, so a write never holds the
 database for long. The memory holds at most 20,000 hour buckets between two writes; an event for a
-new bucket while it is full is dropped and counted (`dropped` in the answers, since the server
-started). A transaction that fails before its commit (the database is busy) keeps its counts for
+new bucket while it is full is dropped and counted (`dropped` in the server view's answers, since
+the server started). A transaction that fails before its commit (the database is busy) keeps its counts for
 the next write; one whose commit fails is dropped and counted, because it may have been saved and
 is never added twice. Each server instance writes its own counts; the hourly retention job is
 idempotent.
@@ -81,7 +81,7 @@ organization routes is a `validation` error; an `orgId` of no organization on th
   recording: boolean;      // usage.enabled now
   retentionDays: number;
   since: number | null;    // the oldest hour kept for this scope; nothing older is known
-  dropped: number;         // events this server dropped since it started (buffer full)
+  dropped?: number;        // server view only: events this server dropped since it started (buffer full)
   totals: { views, panelRuns, panelErrors, queries, queryErrors, cacheHits, cacheMisses };
   trend: { at, views, panelRuns, panelErrors, queries, queryErrors }[];  // a point per step, zeros included
   dashboards: { orgId, orgName, id, title, views, lastViewedAt }[];      // most viewed, at most 20
@@ -105,7 +105,7 @@ hit, not as a duration. The cache hit rate is `cacheHits / (cacheHits + cacheMis
 
 `GET /orgs/{orgId}/usage/unused?days=` and `GET /admin/usage/unused?days=&orgId=`
 
-Dashboards (not in the trash) without a view in the last `days` days (default 30, 1 to 365),
+Dashboards (not in the trash) without a view in the last `days` days (default 30, 1 to 90),
 counted in whole hours.
 
 ```ts

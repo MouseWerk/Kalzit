@@ -118,7 +118,7 @@ one name it and do not link. Viewers and editors do not see the page.
 person. It stores no user, session or address for these counts, so nobody, server admins
 included, can tell from them who opened or queried what. Counts are kept for 90 days by default.
 Under **Settings** > **Storage and retention** server admins turn **Record usage** off (at once,
-with undo) and set **Usage retention (days)** (1 to 365). Details:
+with undo) and set **Usage retention (days)** (1 to 90). Details:
 [usage insights API](../api/usage.md).
 
 ## Users (server admins)

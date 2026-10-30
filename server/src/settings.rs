@@ -732,7 +732,7 @@ fn rule(key: &str) -> Option<Rule> {
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "usage.enabled" => Rule::Bool,
-        "usage.retention_days" => Rule::Int { min: 1, max: 365 },
+        "usage.retention_days" => Rule::Int { min: 1, max: crate::usage::MAX_RETENTION_DAYS },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),
         "appearance.default_theme" => Rule::OneOf(&["system", "light", "dark", "contrast"]),
         // The same bounds as `config.rs`, which checks the file and environment at startup.
