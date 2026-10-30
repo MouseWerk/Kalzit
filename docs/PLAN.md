@@ -501,7 +501,10 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Barrierefreiheit, Doku und Screenshots, ein vollständiger Durchgang nach
    `quality/perfection-pass.md` über alle Bereiche. Dazu gehört auch, was schon versprochen, aber nie
    gebaut wurde: Graph-Export (GraphML, JSON, Bild), Graph-Algorithmen der Datenbank (Neo4j GDS,
-   Memgraph MAGE) nur lesend im Stream-Modus freischalten, Form je Label laut Graph-Board.
+   Memgraph MAGE) nur lesend im Stream-Modus freischalten, Form je Label laut Graph-Board. Außerdem
+   die beiden Ausnahmen in `.cargo/audit.toml` entfernen (RUSTSEC-2023-0071 `rsa`,
+   RUSTSEC-2026-0387 `crypto-bigint`, nur über webauthn-rs), sobald webauthn-rs auf Crates mit den
+   Korrekturen wechselt, und dann auf die erste stabile 0.6-Version gehen.
 8. **M7 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
    (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase); Data-Warehouses (BigQuery, Snowflake,

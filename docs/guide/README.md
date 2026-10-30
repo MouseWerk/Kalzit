@@ -21,6 +21,7 @@ written as the English interface shows them, with the German label in parenthese
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
 | [Plugins](plugins.md) | Installing data source and panel plugins from a file or the signed catalog, the checks and permissions, a plugin's status, log, sandbox and network, trusted keys, unsigned plugins, blocking per organization, panels of plugins |
 | [AI](ai.md) | Turning AI on with a provider, a provider per function, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize, Ask (chat about your data) with its history and retention |
+| [Sign-in and security](account-security.md) | Your second factor (passkeys, authenticator app, recovery codes), the second step of the sign-in, requiring a second factor on the server and per organization, resetting someone's second factor |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 
 The HTTP API behind every function is described in [docs/api](../api): [access](../api/access.md),

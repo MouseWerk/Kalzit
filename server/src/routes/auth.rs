@@ -235,6 +235,17 @@ pub async fn login(
         limiter.refund(key, counted);
     }
 
+    // Whether a second step follows (`second_factor`), read before the transaction so it holds
+    // no second connection.
+    let user = SessionUser {
+        id: row.id.clone(),
+        email: row.email.clone(),
+        name: row.name.clone(),
+        is_server_admin: row.is_server_admin,
+    };
+    let first = crate::auth::second_factor::FirstStep::Password { password_hash: row.password_hash.as_deref() };
+    let plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
+
     let mut tx = crate::db::begin(&state.db).await?;
     // Lock the user row and confirm it still holds the hash we verified and is still enabled. A
     // password change or a disable takes the same lock, so a sign-in that raced one either sees
@@ -250,31 +261,11 @@ pub async fn login(
     if still_valid == 0 {
         return Err(invalid_credentials());
     }
-    // Signing in again replaces the session this browser had, instead of leaving it behind.
-    if let Some(old) = session::read_cookie(&headers, info.https) {
-        session::delete(&mut *tx, &old).await?;
-    }
-    let token = session::create(&mut *tx, &state.config.sessions, now, &row.id).await?;
-    let mut event = audit("auth.signed_in", None);
-    event.actor_user_id = Some(&row.id);
-    event.resource_id = Some(&row.id);
-    crate::audit::record(&mut tx, &event).await?;
-    // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
-    let device = (!req.forget_browser)
-        .then(|| crate::auth::device::issue(&state.secrets, &row.id, row.password_hash.as_deref(), now));
-    let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
-    let answer = me(&mut *tx, user).await?;
-    crate::db::commit(tx).await?;
-    let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    // This browser is now a known device of the account (renewed with every sign-in), unless the
-    // user said it is not theirs: then it forgets any device it was.
-    let device_cookie = match &device {
-        Some(value) => crate::auth::device::set_cookie(value, info.https),
-        None => crate::auth::device::clear_cookie(info.https),
-    };
-    headers.append(header::SET_COOKIE, device_cookie);
-    Ok((headers, Json(answer)))
+    // The session opens now, or the second step starts (`routes::second_factor`). Everything the
+    // answer needs is read before the commit: once it is committed, nothing may fail as "busy,
+    // nothing changed".
+    super::second_factor::finish_first_step(tx, &state, &info, &headers, user, first, req.forget_browser, plan, now)
+        .await
 }
 
 pub async fn logout(
@@ -306,8 +297,19 @@ pub async fn logout(
         }
         crate::db::commit(tx).await?;
     }
+    // Signing out during the second step of a sign-in ends that too.
+    let pending = crate::auth::second_factor::read_pending_cookie(&headers, info.https);
+    if let Some(token) = &pending {
+        sqlx::query("DELETE FROM sign_in_challenges WHERE token_hash = $1")
+            .bind(session::hash_token(token))
+            .execute(&state.db)
+            .await?;
+    }
     let mut out = HeaderMap::new();
     out.insert(header::SET_COOKIE, session::clear_cookie(info.https));
+    if pending.is_some() {
+        out.append(header::SET_COOKIE, crate::auth::second_factor::clear_pending_cookie(info.https));
+    }
     // The device cookie survives a plain sign-out, so the owner keeps the known-device budget in
     // their own browser; on request it goes too.
     if forget_browser(&uri) {

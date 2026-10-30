@@ -1,5 +1,5 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
+import { getRouteApi, Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
@@ -23,6 +23,9 @@ import { AiOrgSection } from "../ai/admin/AiOrgSection";
 import { AiServerSection } from "../ai/admin/AiServerSection";
 import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
 import { PluginsSection } from "../plugins/PluginsSection";
+import { useConfirmedCalls } from "../security/ConfirmFactorDialog";
+import { PolicyOverview } from "../security/PolicyOverview";
+import { SecuritySection } from "../security/SecuritySection";
 import { AboutSection } from "./AboutSection";
 import { AcmeSection } from "./AcmeSection";
 import { AppearanceSection } from "./AppearanceSection";
@@ -100,8 +103,10 @@ export function SectionPage() {
   );
 }
 
+const appRoute = getRouteApi("/_app");
+
 function SectionBody({ section }: { section: SectionDef }) {
-  const { t } = useI18n();
+  const { me } = appRoute.useRouteContext();
   switch (section.kind) {
     case "appearance":
       return <ServerSettings section={section} />;
@@ -123,30 +128,18 @@ function SectionBody({ section }: { section: SectionDef }) {
           <AcmeSection />
         </>
       );
-    case "planned":
+    case "signin":
       return (
-        <div className="settings-card settings-card--padded">
-          <div className="settings-planned">
-            <Icon name="activity" />
-            <div>
-              <h3 className="settings-row__title">{t("settings.planned.title")}</h3>
-              <p className="settings-row__description">
-                {section.planned === undefined ? null : t(section.planned)}
-              </p>
-              {section.id === "signin" ? (
-                <Link
-                  to="/settings/$section"
-                  params={{ section: "appearance" }}
-                  hash="signin.page"
-                  className="settings-planned__link"
-                >
-                  {t("settings.planned.signinPage")}
-                </Link>
-              ) : null}
-            </div>
-          </div>
-        </div>
+        <>
+          <ServerSettings section={section} />
+          <PolicyOverview />
+          <PlannedCard section={section} />
+        </>
       );
+    case "accountSecurity":
+      return <SecuritySection email={me.email} />;
+    case "planned":
+      return <PlannedCard section={section} />;
     case "ai":
       return <AiServerSection section={section} />;
     case "aiOrg":
@@ -179,6 +172,34 @@ function SectionBody({ section }: { section: SectionDef }) {
     case "about":
       return <AboutSection />;
   }
+}
+
+/** What a section will hold once it is built, with the way to what exists already. */
+function PlannedCard({ section }: { section: SectionDef }) {
+  const { t } = useI18n();
+  return (
+    <div className="settings-card settings-card--padded">
+      <div className="settings-planned">
+        <Icon name="activity" />
+        <div>
+          <h3 className="settings-row__title">{t("settings.planned.title")}</h3>
+          <p className="settings-row__description">
+            {section.planned === undefined ? null : t(section.planned)}
+          </p>
+          {section.id === "signin" ? (
+            <Link
+              to="/settings/$section"
+              params={{ section: "appearance" }}
+              hash="signin.page"
+              className="settings-planned__link"
+            >
+              {t("settings.planned.signinPage")}
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** The way to the Updates page (`/admin/server/updates`), which has the update settings too. */
@@ -232,7 +253,10 @@ function SettingsCard({
             rowId={id}
             changes={changes}
             canWrite={canWrite}
-            inheritable={inheritable && key.startsWith("appearance.")}
+            inheritable={
+              inheritable &&
+              (key.startsWith("appearance.") || key === "security.two_factor_required")
+            }
             found={found === id}
           />
         );
@@ -259,12 +283,17 @@ function ServerSettings({ section }: { section: SectionDef }) {
   const queryKey = adminKeys.serverSettings;
   const settings = useQuery({ queryKey, queryFn: listServerSettings });
   const queryClient = useQueryClient();
+  // Changing the second factor's rule asks for a fresh confirmation first.
+  const confirmed = useConfirmedCalls();
   const changes = useSettingChanges({
     queryKey,
     patch: async (key, value, version) =>
-      refreshLook(queryClient, await updateServerSetting(key, value, version)),
+      refreshLook(queryClient, await confirmed.run(() => updateServerSetting(key, value, version))),
     reset: async (key, version) =>
-      refreshLook(queryClient, await resetSetting({ kind: "server" }, key, version)),
+      refreshLook(
+        queryClient,
+        await confirmed.run(() => resetSetting({ kind: "server" }, key, version)),
+      ),
   });
   if (settings.data === undefined) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
@@ -279,6 +308,7 @@ function ServerSettings({ section }: { section: SectionDef }) {
       changes={changes}
       canWrite
       inheritable={false}
+      before={confirmed.dialog}
     />
   );
 }
@@ -293,12 +323,19 @@ function OrgSettings({ section }: { section: SectionDef }) {
     queryFn: () => listOrgSettings(orgId),
     enabled: orgId !== "",
   });
+  const confirmed = useConfirmedCalls();
   const changes = useSettingChanges({
     queryKey,
     patch: async (key, value, version) =>
-      refreshLook(queryClient, await updateOrgSetting(orgId, key, value, version)),
+      refreshLook(
+        queryClient,
+        await confirmed.run(() => updateOrgSetting(orgId, key, value, version)),
+      ),
     reset: async (key, version) =>
-      refreshLook(queryClient, await resetSetting({ kind: "org", orgId }, key, version)),
+      refreshLook(
+        queryClient,
+        await confirmed.run(() => resetSetting({ kind: "org", orgId }, key, version)),
+      ),
   });
   if (settings.data === undefined) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
@@ -310,6 +347,7 @@ function OrgSettings({ section }: { section: SectionDef }) {
       changes={changes}
       canWrite={access.permissions.has("settings:write")}
       inheritable
+      before={confirmed.dialog}
     />
   );
 }
