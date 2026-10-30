@@ -20,9 +20,8 @@ use crate::auth::ratelimit::{Capacity, RateLimiter};
 use crate::config::Config;
 use crate::datasources::targets::TargetPolicy;
 use crate::error::ApiResult;
-use crate::http::{HttpClient, HttpOptions};
 use crate::net::RequestInfo;
-use oidc::{Cached, OidcConfig, OidcError};
+use oidc::{Cached, Fetcher, OidcConfig, OidcError};
 
 /// How long a sign-in may take at the provider, and how long a test sign-in's result is kept.
 pub const SIGN_IN_TTL_MS: i64 = 10 * 60 * 1000;
@@ -59,19 +58,11 @@ impl Sso {
         }
     }
 
-    /// A client for requests to `issuer`; it never reaches Kalzit's own ports on this computer.
-    pub fn client(&self, state: &AppState, issuer: &url::Url) -> Result<HttpClient, OidcError> {
-        let port = issuer.port_or_known_default();
+    /// The requests to a provider; none of them reaches Kalzit itself (`oidc::Fetcher`).
+    pub fn client(&self, state: &AppState) -> Fetcher {
         let own = [state.config.http_addr(), state.config.https_addr()];
-        let guard = own.iter().flatten().any(|l| Some(l.port()) == port).then(|| crate::http::LocalGuard {
-            refused: crate::datasources::Detail::new("sso.issuer_is_kalzit", "the address is this Kalzit server"),
-            private: None,
-        });
-        crate::http::client_guarded(
-            HttpOptions { timeout: PROVIDER_TIMEOUT, extra_root_pem: None, policy: self.policy.clone() },
-            guard,
-        )
-        .map_err(|e| OidcError::DiscoveryUnreachable(e.detail().message))
+        let ports = own.iter().flatten().map(|l| l.port()).collect();
+        Fetcher::new(self.policy.clone(), ports, PROVIDER_TIMEOUT)
     }
 
     /// The discovery document and keys of `config`'s issuer, from the cache unless older than
@@ -79,7 +70,7 @@ impl Sso {
     /// `mono` is the server's monotonic clock (`Clock::monotonic_ms`).
     pub async fn provider(
         &self,
-        http: &HttpClient,
+        http: &Fetcher,
         config: &OidcConfig,
         fresh: bool,
         mono: i64,
@@ -103,7 +94,7 @@ impl Sso {
     #[expect(clippy::too_many_arguments, reason = "the token, what it must say and the two clocks")]
     pub async fn check_id_token(
         &self,
-        http: &HttpClient,
+        http: &Fetcher,
         config: &OidcConfig,
         cached: &Cached,
         token: &str,
@@ -167,19 +158,38 @@ pub fn redirect_uri(base: &str, slug: &str) -> String {
     format!("{base}/auth/oidc/{slug}/callback")
 }
 
-/// A path on this server to return to after the sign-in; anything else is `/`.
+/// A path on this server to return to after the sign-in; anything else is `/`. Dot segments are
+/// resolved first, as the UI's `safeRedirect` does, so `/..//evil.example` cannot become
+/// `//evil.example`.
 pub fn safe_return_to(raw: Option<&str>) -> String {
-    match raw {
-        Some(p)
-            if p.starts_with('/')
-                && !p.starts_with("//")
-                && !p.starts_with("/\\")
-                && p.len() <= 2048
-                && !p.chars().any(|c| c.is_control() || c == '\\') =>
-        {
-            p.to_string()
-        }
-        _ => "/".into(),
+    let Some(p) = raw.filter(|p| {
+        p.starts_with('/') && !p.starts_with("//") && p.len() <= 2048 && !p.chars().any(|c| c.is_control() || c == '\\')
+    }) else {
+        return "/".into();
+    };
+    let base = url::Url::parse("http://kalzit.invalid/").expect("a valid base");
+    let Ok(url) = base.join(p) else { return "/".into() };
+    if url.origin() != base.origin() {
+        return "/".into();
+    }
+    let mut out = url.path().to_string();
+    if let Some(q) = url.query() {
+        out.push('?');
+        out.push_str(q);
+    }
+    if let Some(f) = url.fragment() {
+        out.push('#');
+        out.push_str(f);
+    }
+    if out.starts_with("//") { "/".into() } else { out }
+}
+
+/// Tells this server's query cache and the other servers that the rights of `orgs` changed
+/// (after a group mapping applied), as `routes::table` does for routes that change rights.
+pub async fn rights_changed(state: &AppState, orgs: &std::collections::BTreeSet<String>) {
+    for org in orgs {
+        state.datasources.query_cache().rights_changed_here(Some(org));
+        state.cluster.announce(&state.db, crate::cluster::Change::Rights(Some(org.clone()))).await;
     }
 }
 
@@ -243,7 +253,13 @@ pub enum PasswordSignIn {
 pub async fn password_sign_in(state: &AppState, user_id: &str, break_glass_form: bool) -> ApiResult<PasswordSignIn> {
     let policy = local_policy(state).await?;
     let mut off = !policy.local_on;
-    if !off {
+    // An organization's "off" is about its members; it never reaches server admins, who answer to
+    // the server's rule alone.
+    let (server_admin,): (i64,) = sqlx::query_as("SELECT is_server_admin FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.read_db)
+        .await?;
+    if !off && server_admin == 0 {
         let orgs: Vec<(String,)> = sqlx::query_as("SELECT org_id FROM org_members WHERE user_id = $1")
             .bind(user_id)
             .fetch_all(&state.read_db)
@@ -284,6 +300,12 @@ pub fn spawn_cleanup(state: AppState) {
                 .execute(state.background.db())
                 .await
                 .map_err(|e| crate::db::JobError::Failed(e.to_string()))?;
+            // A second step that never came: its half-signed-in state lasted minutes.
+            sqlx::query("DELETE FROM sso_pending_mappings WHERE created_at <= $1")
+                .bind(now - SIGN_IN_TTL_MS)
+                .execute(state.background.db())
+                .await
+                .map_err(|e| crate::db::JobError::Failed(e.to_string()))?;
             Ok(())
         }
     });
@@ -296,10 +318,21 @@ mod tests {
     #[test]
     fn return_paths_stay_on_this_server() {
         assert_eq!(safe_return_to(Some("/dashboards/1?x=2")), "/dashboards/1?x=2");
-        for bad in ["//evil.example", "/\\evil.example", "https://evil.example", "", "x", "/a\nb", "/a\\b"] {
+        for bad in [
+            "//evil.example",
+            "/\\evil.example",
+            "https://evil.example",
+            "",
+            "x",
+            "/a\nb",
+            "/a\\b",
+            "/..//evil.example",
+            "/./..//evil.example/x",
+        ] {
             assert_eq!(safe_return_to(Some(bad)), "/", "{bad:?}");
         }
         assert_eq!(safe_return_to(None), "/");
+        assert_eq!(safe_return_to(Some("/a/../b/./c?x=1#y")), "/b/c?x=1#y");
     }
 
     #[test]

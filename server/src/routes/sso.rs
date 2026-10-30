@@ -179,12 +179,8 @@ async fn start(
     let config = provider.oidc()?;
     let return_to = crate::sso::safe_return_to(query.get("returnTo").map(String::as_str));
     let redirect_uri = crate::sso::redirect_uri(&crate::sso::public_base(&state, &info), &provider.slug);
-    let prepared = async {
-        let issuer = url::Url::parse(&config.issuer).map_err(|e| OidcError::DiscoveryInvalid(e.to_string()))?;
-        let http = state.sso.client(&state, &issuer)?;
-        state.sso.provider(&http, &config, false, state.clock.monotonic_ms()).await
-    }
-    .await;
+    let http = state.sso.client(&state);
+    let prepared = state.sso.provider(&http, &config, false, state.clock.monotonic_ms()).await;
     let cached = match prepared {
         Ok(c) => c,
         Err(e) => {
@@ -228,7 +224,6 @@ async fn start(
 #[derive(sqlx::FromRow)]
 struct SignInRow {
     id: String,
-    binding_hash: String,
     provider_id: Option<String>,
     purpose: String,
     nonce: String,
@@ -287,18 +282,22 @@ async fn callback_inner(
         let r = record_failure(state, info, None, None, "sso.state_missing", "the provider sent no state").await;
         return Ok(expired(r));
     };
-    // Each start works once: the row is taken before anything else happens.
+    // Each start works once, and only in the browser that started it: the row is taken, with its
+    // binding cookie, before anything else happens.
+    let binding = session::cookie_value(headers, binding_cookie(info.https)).unwrap_or_default();
     let taken = sqlx::query(
-        "UPDATE sso_sign_ins SET status = 'running' WHERE state_hash = $1 AND status = 'pending' AND expires_at > $2",
+        "UPDATE sso_sign_ins SET status = 'running' WHERE state_hash = $1 AND binding_hash = $2 \
+         AND status = 'pending' AND expires_at > $3",
     )
     .bind(hash(state_param))
+    .bind(hash(&binding))
     .bind(now)
     .execute(&state.db)
     .await?
     .rows_affected();
-    let row: Option<SignInRow> = if taken == 1 {
+    let row: Option<SignInRow> = if taken == 1 && !binding.is_empty() {
         sqlx::query_as(
-            "SELECT id, binding_hash, provider_id, purpose, nonce, verifier, redirect_uri, return_to, draft, \
+            "SELECT id, provider_id, purpose, nonce, verifier, redirect_uri, return_to, draft, \
              draft_secret_key_id, draft_secret_nonce, draft_secret FROM sso_sign_ins WHERE state_hash = $1",
         )
         .bind(hash(state_param))
@@ -307,11 +306,7 @@ async fn callback_inner(
     } else {
         None
     };
-    let binding = session::cookie_value(headers, binding_cookie(info.https));
-    let Some(row) = row.filter(|r| {
-        use subtle::ConstantTimeEq;
-        binding.as_deref().is_some_and(|b| bool::from(hash(b).as_bytes().ct_eq(r.binding_hash.as_bytes())))
-    }) else {
+    let Some(row) = row else {
         let r = record_failure(state, info, None, None, "sso.state_unknown", "the sign-in is unknown, used or expired")
             .await;
         return Ok(expired(r));
@@ -335,6 +330,12 @@ async fn callback_inner(
         let page = if test { "/anmelden/sso-test".to_string() } else { sign_in_page(outcome, slug, Some(&r)) };
         Ok::<Response, ApiError>(see_other(&page, clear()))
     };
+    // RFC 9207: a provider that names itself in the answer must be the one asked (no mix-up).
+    if let Some(iss) = query.get("iss")
+        && iss != &target.config.issuer
+    {
+        return fail("failed", "sso.iss_mismatch", "the answer names another issuer".into(), None).await;
+    }
     if let Some(error) = query.get("error") {
         let code: String = error.chars().filter(char::is_ascii_graphic).take(64).collect();
         let outcome = if code == "access_denied" { "cancelled" } else { "failed" };
@@ -357,22 +358,36 @@ async fn callback_inner(
         return Ok(see_other("/anmelden/sso-test", clear()));
     }
     sqlx::query("DELETE FROM sso_sign_ins WHERE id = $1").bind(&row.id).execute(&state.db).await?;
+    use crate::sso::signin;
+    let refuse = |refusal: signin::Refusal| async move {
+        let r =
+            record_failure(state, info, Some(ids), refusal.user_id.as_deref(), refusal.reason, &refusal.detail).await;
+        see_other(&sign_in_page(refusal.outcome, slug, Some(&r)), clear())
+    };
+    // The account and its identity (`sso::signin`, which also explains the order below).
     let mut tx = crate::db::begin(&state.db).await?;
-    let signed_in = match crate::sso::signin::account(&mut tx, state, info, &target.provider, &person, now).await? {
-        Ok(s) => s,
+    let issuer = target.config.issuer.as_str();
+    let linked = match signin::account(&mut tx, state, info, &target.provider, issuer, &person, now).await? {
+        Ok(l) => l,
         Err(refusal) => {
             drop(tx);
-            let r = record_failure(state, info, Some(ids), refusal.user_id.as_deref(), refusal.reason, &refusal.detail)
-                .await;
-            return Ok(see_other(&sign_in_page(refusal.outcome, slug, Some(&r)), clear()));
+            return Ok(refuse(refusal).await);
         }
     };
-    crate::db::commit(tx).await?;
-    // The mapping may have changed rights: no kept answer may outlive them (`routes::table`).
-    for org in &signed_in.touched {
-        state.datasources.query_cache().rights_changed_here(Some(org));
-        state.cluster.announce(&state.db, crate::cluster::Change::Rights(Some(org.clone()))).await;
+    let outcome = signin::decide(&mut tx, state, &target.provider.id, &linked, &person.groups).await?;
+    if let Some(o) = outcome.as_ref().filter(|o| o.refused) {
+        // Refused, or a server admin without a mapped group: what the provider decided goes now
+        // (that only takes rights away); nothing is given.
+        let touched = signin::apply(&mut tx, info, ids, &linked.user.id, o, now).await?;
+        crate::db::commit(tx).await?;
+        crate::sso::rights_changed(state, &touched).await;
+        if linked.user.is_server_admin == 0 {
+            let refusal = signin::Refusal::new("unmapped", "sso.unmapped", "no group of the person is mapped");
+            return Ok(refuse(signin::Refusal { user_id: Some(linked.user.id.clone()), ..refusal }).await);
+        }
+        tx = crate::db::begin(&state.db).await?;
     }
+    crate::db::commit(tx).await?;
     // Kalzit's own second factor, unless the provider's switch says to take its word for one
     // (`trust_provider_mfa` and the token's `amr`).
     let first = FirstStep::Provider {
@@ -380,14 +395,17 @@ async fn callback_inner(
         mfa_done: person.mfa_done,
         provider_mfa_trusted: target.provider.trust_provider_mfa != 0,
     };
-    let plan = super::second_factor::plan(state, info, &signed_in.user, first, now).await?;
+    let plan = super::second_factor::plan(state, info, &linked.user, first, now).await?;
     let mut cookies = clear();
-    let tx = crate::db::begin(&state.db).await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     if plan.is_some() {
-        // The half-signed-in state starts; the sign-in page asks for the second factor and then
-        // goes on to where the person was headed.
+        // The half-signed-in state starts; the mapping waits for it to end well. The sign-in page
+        // asks for the second factor and then goes on to where the person was headed.
+        if outcome.as_ref().is_some_and(|o| !o.refused) {
+            signin::defer(&mut tx, &linked.user.id, &target.provider.id, now).await?;
+        }
         let answer =
-            super::second_factor::finish_first_step(tx, state, info, headers, signed_in.user, first, false, plan, now)
+            super::second_factor::finish_first_step(tx, state, info, headers, linked.user, first, false, plan, now)
                 .await?;
         cookies.extend(answer.headers().get_all(header::SET_COOKIE).iter().cloned());
         let page = format!(
@@ -396,9 +414,13 @@ async fn callback_inner(
         );
         return Ok(see_other(&page, cookies));
     }
-    let mut tx = tx;
-    cookies.extend(open_session(&mut tx, state, info, headers, &signed_in.user, &target.provider, &person, now).await?);
+    let touched = match outcome.as_ref().filter(|o| !o.refused) {
+        Some(o) => signin::apply(&mut tx, info, ids, &linked.user.id, o, now).await?,
+        None => Default::default(),
+    };
+    cookies.extend(open_session(&mut tx, state, info, headers, &linked.user, &target.provider, &person, now).await?);
     crate::db::commit(tx).await?;
+    crate::sso::rights_changed(state, &touched).await;
     Ok(see_other(&row.return_to, cookies))
 }
 
@@ -531,8 +553,7 @@ async fn load_target(state: &AppState, row: &SignInRow, slug: &str) -> ApiResult
 
 /// The person, from the code: the token exchange, the ID token and the userinfo endpoint.
 async fn person(state: &AppState, target: &Target, row: &SignInRow, code: &str, now: i64) -> Result<Person, OidcError> {
-    let issuer = url::Url::parse(&target.config.issuer).map_err(|e| OidcError::DiscoveryInvalid(e.to_string()))?;
-    let http = state.sso.client(state, &issuer)?;
+    let http = state.sso.client(state);
     let cached = state.sso.provider(&http, &target.config, row.purpose == "test", state.clock.monotonic_ms()).await?;
     let tokens = oidc::exchange(
         &http,
@@ -650,6 +671,10 @@ struct ProviderBody {
     check_token: Option<String>,
     #[serde(default)]
     version: Option<i64>,
+    /// Changing the issuer of a provider people sign in through removes their links; the admin
+    /// confirms that.
+    #[serde(default)]
+    confirm_issuer_change: Option<bool>,
 }
 
 fn field_error(field: &'static str, reason: &'static str, message: &str) -> ApiError {
@@ -675,6 +700,7 @@ struct Valid {
     provider_id: Option<String>,
     check_token: Option<String>,
     version: Option<i64>,
+    confirm_issuer_change: bool,
 }
 
 fn validate(body: ProviderBody) -> ApiResult<Valid> {
@@ -725,6 +751,7 @@ fn validate(body: ProviderBody) -> ApiResult<Valid> {
         provider_id: body.provider_id,
         check_token: body.check_token,
         version: body.version,
+        confirm_issuer_change: body.confirm_issuer_change.unwrap_or(false),
     };
     Ok(valid)
 }
@@ -738,12 +765,22 @@ async fn form_secret(
     if let Some(s) = &valid.secret {
         return Ok(zeroize::Zeroizing::new(s.clone()));
     }
+    // The stored secret goes only to the issuer and client it was given for: a form that names
+    // another one must bring the secret again, so a changed issuer cannot collect it.
     if let Some(id) = provider_id
+        && let Some(stored) = store::by_id(&state.db, id).await?
+        && let Ok(config) = stored.oidc()
+        && config.issuer == valid.config.issuer
+        && config.client_id == valid.config.client_id
         && let Some(s) = store::secret(&state.db, &state.secrets, id, CLIENT_SECRET).await?
     {
         return Ok(zeroize::Zeroizing::new(s.as_str().to_string()));
     }
-    Err(field_error("clientSecret", "sso.client_secret_required", "a client secret is required"))
+    Err(field_error(
+        "clientSecret",
+        "sso.client_secret_required",
+        "enter the client secret: a new provider, or a changed issuer or client id, needs it",
+    ))
 }
 
 fn check_material(config: &OidcConfig, secret: &str, at: i64) -> Vec<u8> {
@@ -799,9 +836,7 @@ async fn check(
     let secret = form_secret(&state, &valid, provider_id.as_deref()).await?;
     let started = std::time::Instant::now();
     let redirect_uri = crate::sso::redirect_uri(&crate::sso::public_base(&state, &info), &valid.slug);
-    let issuer = url::Url::parse(&valid.config.issuer)
-        .map_err(|_| field_error("issuer", "sso.issuer_invalid", "the issuer is not a URL"))?;
-    let http = state.sso.client(&state, &issuer).map_err(|e| check_error(&e))?;
+    let http = state.sso.client(&state);
     let cached = state
         .sso
         .provider(&http, &valid.config, true, state.clock.monotonic_ms())
@@ -963,6 +998,22 @@ async fn update(
         let secret = form_secret(&state, &valid, Some(&id)).await?;
         verify_check_token(&state, token.as_deref(), &valid.config, &secret, now)?;
     }
+    // Subjects are only unique per issuer: with another issuer, the people linked through the old
+    // one are not the same people. Their links and what the provider decided for them go, after
+    // the admin confirmed it.
+    let issuer_changed = old.issuer != valid.config.issuer;
+    if issuer_changed && !valid.confirm_issuer_change {
+        let (people,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_identities WHERE provider_id = $1")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await?;
+        if people > 0 {
+            return Err(conflict("changing the issuer removes the links of the people who sign in through it")
+                .with_field("issuer")
+                .because("sso.issuer_change_confirm")
+                .param("people", people));
+        }
+    }
     let mut fields = Vec::new();
     if valid.name != current.name {
         fields.push("name");
@@ -1007,6 +1058,23 @@ async fn update(
         store::set_secret(&mut tx, &state.secrets, &id, CLIENT_SECRET, secret).await?;
     }
     let actor = Actor { user_id: &admin.id, info: &info, at_ms: now };
+    if issuer_changed {
+        let removed = sqlx::query("DELETE FROM sso_identities WHERE provider_id = $1")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        for table in ["sso_identity_groups", "sso_managed", "sso_pending_mappings"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE provider_id = $1")))
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if removed > 0 {
+            let summary = json!({ "providerId": id, "identities": removed });
+            audit(&mut tx, &actor, None, "sso.provider_identities_removed", ("sso_provider", &id), summary).await?;
+        }
+    }
     audit(
         &mut tx,
         &actor,
@@ -1132,9 +1200,7 @@ async fn test_start(
     let secret = form_secret(&state, &valid, provider_id.as_deref()).await?;
     let now = state.clock.now_ms();
     verify_check_token(&state, token.as_deref(), &valid.config, &secret, now)?;
-    let issuer = url::Url::parse(&valid.config.issuer)
-        .map_err(|_| field_error("issuer", "sso.issuer_invalid", "the issuer is not a URL"))?;
-    let http = state.sso.client(&state, &issuer).map_err(|e| check_error(&e))?;
+    let http = state.sso.client(&state);
     let cached = state
         .sso
         .provider(&http, &valid.config, true, state.clock.monotonic_ms())

@@ -76,7 +76,8 @@ Outside `/api`; this is the redirect URI to register at the provider:
 `<public URL>/auth/oidc/<slug>/callback` (`server.public_url`, or the address the admin uses).
 
 The server checks, in this order: the `kalzit_sso` cookie and `state` belong to one unexpired
-start for this provider (each start works once); the provider sent no `error`; the code is
+start for this provider (each start works once, taken together with its cookie); an `iss`
+parameter (RFC 9207), when sent, is the provider's issuer; the provider sent no `error`; the code is
 exchanged at the token endpoint (with the client secret, `client_secret_basic`, and the PKCE
 verifier); the ID token's signature (RS256/384/512, PS256/384/512, ES256/384 or EdDSA, with the
 key from the provider's JWKS; an unknown `kid` reloads the keys at most once a minute, so keys
@@ -90,21 +91,27 @@ Then the account:
 
 1. An identity for this provider and `sub` exists: its account.
 2. Otherwise an account with the token's email, when the provider says the email is verified
-   (`email_verified: true`, or the provider's switch `trustEmail`) and the account's own email
-   is confirmed. An account whose email is not confirmed (from an invitation link copied without
+   (`email_verified: true`, read only when the email claim is `email`; or the provider's switch
+   `trustEmail`) and the account's own email is confirmed. Emails are compared in an ASCII form
+   (lowercase local part, IDNA domain); an email with a non-ASCII local part is not used, since
+   Unicode case folding makes different addresses look alike. Server admins and the break-glass
+   admin are never linked by email (`sso=email_taken`). An account whose email is not confirmed (from an invitation link copied without
    mail) is never taken over: `sso=email_taken`.
 3. Otherwise, when the provider may create accounts (`createAccounts`), a new account with the
    email and name of the token and no password (`auth.sso_account_created`).
 4. Otherwise `sso=no_account`.
 
-A disabled account answers `sso=disabled`, the unmapped rule `refuse` answers `sso=unmapped`.
-Then the group mapping is applied (one `sso.memberships_changed` entry when it changed something)
-and the session opens: `auth.signed_in` with `{"provider": "<slug>"}`.
+A disabled account answers `sso=disabled`, the unmapped rule `refuse` answers `sso=unmapped`
+(the memberships the provider decided end then too). The account and its link exist from here on,
+since the second step needs an account; it has no rights until the mapping applies. The group
+mapping applies only once the sign-in is complete: at once without Kalzit's second factor, after
+that step otherwise (one `sso.memberships_changed` entry when it changed something), and the
+session opens: `auth.signed_in`.
 
 Whether Kalzit asks for its own second factor after a provider sign-in is the provider's switch
 `trustProviderMfa`: off ("Kalzit fragt", the default), Kalzit always asks when the account has a
 second factor or must have one; on, Kalzit does not ask when the ID token's `amr` says the
-provider checked several factors (`mfa`, `otp`, `hwk` or `sc`).
+provider checked several factors (`mfa`, or methods of two kinds such as `pwd` and `otp`).
 
 When Kalzit asks for its second factor, the answer is `303` to
 `/anmelden?secondFactor=1&redirect=<returnTo>` with the half-signed-in state of
@@ -137,14 +144,17 @@ sign-in off for its members.
 
 With password sign-in off (for the server, or for one of the person's organizations),
 `POST /auth/login` answers `403 forbidden` with the reason `sso.password_sign_in_off`, but only
-after a correct password, so nobody can probe accounts with it. The break-glass admin signs in
+after a correct password, so nobody can probe accounts with it. An organization's `off` never
+applies to server admins. The break-glass admin signs in
 through `POST /auth/login/local`, the form of the fixed, unlinked page `/anmelden/lokal`:
 
 ### `POST /auth/login/local`
 
 Public. Same body and answers as `POST /auth/login`. With password sign-in on it works for
 everyone like `POST /auth/login`. With it off only the break-glass admin gets in; others get
-`sso.password_sign_in_off` after a correct password. Every attempt counts against a budget of its
+`sso.password_sign_in_off` after a correct password. The break-glass admin always goes on to the
+second factor, and sets one up first if the account has none; their last factor cannot be removed
+and an admin cannot reset it (`sso.break_glass_protected`). Every attempt counts against a budget of its
 own (10 per address in 15 minutes, `429 rate_limited`), on top of the sign-in limits. A
 break-glass sign-in with password sign-in off records `auth.break_glass_signed_in` and sends a mail
 to every server admin (once the mail server is set up).
@@ -187,7 +197,7 @@ The break-glass admin cannot be disabled or lose the server admin role while set
 
 ## Administration: `/admin/sign-in`
 
-Server admins only.
+Server admins only; organization admins cannot map groups to their organization yet.
 
 ### Overview: `GET /admin/sign-in`
 
@@ -238,6 +248,9 @@ yet.
 ```
 
 `clientSecret` is required for a new provider; when editing, leave it out to keep the stored one.
+The stored secret is only used with the stored issuer and client id: a form with another one must
+bring the secret again (`sso.client_secret_required` on `clientSecret`), so it never reaches an
+address it was not given for.
 `issuer` is an `https://` URL (`http://` only for `localhost` and loopback addresses) without
 credentials, query or fragment. `slug` is 1 to 40 of `a-z`, `0-9` and `-`, starting with a letter
 or digit, unique. Claims are 1 to 100 characters; `scopes` at most 20, each 1 to 100 of printable
@@ -264,7 +277,11 @@ secret is wrong. Answers
 - `POST /admin/sign-in/providers`: `ProviderInput` and `checkToken`. `201` with the provider.
   Audit `sso.provider_created`.
 - `PUT /admin/sign-in/providers/{providerId}`: `ProviderInput`, `version` and, when the issuer,
-  client id or secret changed, `checkToken`. Without a valid one: `422 validation`, reason
+  client id or secret changed, `checkToken`. Subjects are only unique per issuer, so a new issuer
+  needs `confirmIssuerChange: true` while people are linked (`409 conflict`, reason
+  `sso.issuer_change_confirm`, param `people`); the links, the groups and what the provider
+  decided for them are then removed (audit `sso.provider_identities_removed`). A sign-in never
+  uses a link made through another issuer. Without a valid one: `422 validation`, reason
   `sso.check_required`. A stale `version`: `409 version_conflict`. Audit `sso.provider_updated`
   with the changed field names.
 - `PATCH /admin/sign-in/providers/{providerId}/enabled`: `{"enabled": false}` pauses, `true`
@@ -357,6 +374,7 @@ decides the member's role.
 | `sso.claim_invalid` | | `422` on a claim field: empty, longer than 100 or with control characters |
 | `sso.scopes_invalid` | | `422` on `scopes`: more than 20, or one is empty, too long or has spaces |
 | `sso.check_required` | | `422` on `issuer`: the connection was not checked with these values (or the check is older than 30 minutes) |
+| `sso.issuer_change_confirm` | `people` | `409 conflict` on `issuer`: changing the issuer removes the links of `people` people; send `confirmIssuerChange: true` |
 | `sso.provider_in_use` | `people` | `409 conflict`: people sign in through the provider; pause it instead |
 | `sso.group_invalid` | | `422` on `group`: empty, longer than 256 or with control characters |
 | `sso.role_invalid` | | `422` on `role` or `defaultRole`: not one of the roles a mapping may give |
@@ -398,3 +416,6 @@ English `detail`; the person only sees the outcome. They are not answered as API
 | `sso.account_disabled` | the account is disabled |
 | `sso.unmapped` | no group matches and the unmapped rule refuses |
 | `sso.internal` | the server failed (its log has the request) |
+| `sso.iss_mismatch` | the answer's `iss` parameter (RFC 9207) names another issuer |
+| `sso.identity_issuer_mismatch` | the identity was linked through another issuer than the provider has now |
+| `sso.email_link_admin` | the email belongs to a server admin or the break-glass admin, who are never linked by email |

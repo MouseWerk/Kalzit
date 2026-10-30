@@ -209,8 +209,12 @@ export async function updateProvider(
   input: ProviderInput,
   version: number,
   checkToken: string | undefined,
+  confirmIssuerChange = false,
 ): Promise<Provider> {
-  const body = checkToken === undefined ? { ...input, version } : { ...input, version, checkToken };
+  const base = confirmIssuerChange
+    ? { ...input, version, confirmIssuerChange }
+    : { ...input, version };
+  const body = checkToken === undefined ? base : { ...base, checkToken };
   return expectShape(
     await request("PUT", `/api/admin/sign-in/providers/${enc(providerId)}`, body),
     isProvider,

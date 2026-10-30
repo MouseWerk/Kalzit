@@ -190,5 +190,8 @@
   "sso.checks.breakGlassMissing": "No valid break-glass admin chosen",
   "sso.checks.selfReady": "You yourself can sign in through a provider",
   "sso.checks.selfMissing": "You yourself cannot sign in through any provider",
-  "sso.checks.passwordOnly": "Accounts with only a local password: {count}. These people sign in through a provider afterwards."
+  "sso.checks.passwordOnly": "Accounts with only a local password: {count}. These people sign in through a provider afterwards.",
+  "sso.form.issuerChangeTitle": "Change the issuer?",
+  "sso.form.issuerChangeText": "With another issuer, the people at the provider are not the same people. The link of {people} people to this provider is removed, and so are the roles the provider decided for them. They sign in anew afterwards.",
+  "sso.form.issuerChangeConfirm": "Remove links and save"
 }

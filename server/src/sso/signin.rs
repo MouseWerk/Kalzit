@@ -1,11 +1,19 @@
 //! The end of a sign-in through a provider, the same for every kind: the account (linked, matched
-//! by a confirmed email, or created), the group mapping, and the session.
+//! by a confirmed email, or created), the group mapping, and what waits for Kalzit's second
+//! factor.
+//!
+//! Order (docs/api/sso.md, "Callback"): the account and its identity are settled first, since
+//! the second step needs an account to belong to; a new account has no rights until the mapping
+//! applies. The mapping only applies once the sign-in is complete: at once without a second step,
+//! otherwise after it (`apply_deferred`, called by `routes::second_factor`). Only what takes rights
+//! away applies before: a person the unmapped rule refuses loses the memberships the provider
+//! decided.
 
 use std::collections::BTreeSet;
 
 use serde_json::json;
 
-use super::mapping;
+use super::mapping::{self, Outcome};
 use super::oidc::Person;
 use super::store::ProviderRow;
 use crate::app::AppState;
@@ -27,12 +35,18 @@ impl Refusal {
     pub fn new(outcome: &'static str, reason: &'static str, detail: impl Into<String>) -> Self {
         Self { outcome, reason, detail: detail.into(), user_id: None }
     }
+
+    fn of(mut self, user_id: &str) -> Self {
+        self.user_id = Some(user_id.to_string());
+        self
+    }
 }
 
 /// Whether the account's email is confirmed. Accounts whose email was never proven (made from an
 /// invitation link copied without mail) come with the mail and invitations change (PR #161,
 /// `users.email_confirmed`); until it is merged, every account was made by an admin or the setup
-/// and counts as confirmed.
+/// and counts as confirmed. The test `email_confirmed_is_not_in_the_schema_yet` fails once the
+/// column exists, so this is wired then.
 async fn email_confirmed(_conn: &mut sqlx::AnyConnection, _user_id: &str) -> ApiResult<bool> {
     Ok(true)
 }
@@ -48,41 +62,52 @@ struct Account {
 
 const ACCOUNT_COLUMNS: &str = "SELECT id, email, name, is_server_admin, disabled FROM users";
 
-/// What a finished first step gives the session code.
-pub struct SignedIn {
+/// The account a provider's person signs in to.
+pub struct Linked {
     pub user: SessionUser,
     pub created: bool,
-    /// Organizations whose rights changed (for the query cache and the other servers).
-    pub touched: BTreeSet<String>,
+    /// The break-glass admin: never changed by a group mapping.
+    pub break_glass: bool,
 }
 
-/// Finds or makes the account of `person` at `provider`, applies the group mapping and records
-/// the identity, inside `conn` (a transaction). A refusal changes nothing that matters: the
-/// caller rolls back.
+/// Finds or makes the account of `person` at `provider` (whose issuer is `issuer`) and records the
+/// identity with this sign-in's groups, inside `conn` (a transaction). A refusal changes nothing:
+/// the caller rolls back.
 pub async fn account(
     conn: &mut sqlx::AnyConnection,
     state: &AppState,
     info: &RequestInfo,
     provider: &ProviderRow,
+    issuer: &str,
     person: &Person,
     now: i64,
-) -> ApiResult<Result<SignedIn, Refusal>> {
-    let linked: Option<(String,)> =
-        sqlx::query_as("SELECT user_id FROM sso_identities WHERE provider_id = $1 AND subject = $2")
+) -> ApiResult<Result<Linked, Refusal>> {
+    let break_glass = super::local_policy(state).await?.break_glass;
+    let linked: Option<(String, String)> =
+        sqlx::query_as("SELECT user_id, issuer FROM sso_identities WHERE provider_id = $1 AND subject = $2")
             .bind(&provider.id)
             .bind(&person.subject)
             .fetch_optional(&mut *conn)
             .await?;
     let mut created = false;
     let account: Account = match linked {
-        Some((user_id,)) => {
+        // A link made with another issuer is not this person: subjects are only unique per issuer.
+        Some((user_id, linked_issuer)) if linked_issuer != issuer => {
+            return Ok(Err(Refusal::new(
+                "failed",
+                "sso.identity_issuer_mismatch",
+                "the identity was linked through another issuer",
+            )
+            .of(&user_id)));
+        }
+        Some((user_id, _)) => {
             sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE id = $1")))
                 .bind(&user_id)
                 .fetch_one(&mut *conn)
                 .await?
         }
         None => {
-            let Some(email) = person.email.as_deref().and_then(|e| crate::routes::normalize_email(e).ok()) else {
+            let Some(email) = person.email.clone() else {
                 return Ok(Err(Refusal::new("failed", "sso.email_missing", "the provider sent no usable email")));
             };
             let existing: Option<Account> =
@@ -91,15 +116,24 @@ pub async fn account(
                     .fetch_optional(&mut *conn)
                     .await?;
             match existing {
+                // Server admins and the break-glass admin are linked only on purpose, never by
+                // an email a provider sends.
+                Some(a) if a.is_server_admin != 0 || break_glass.as_deref() == Some(a.id.as_str()) => {
+                    return Ok(Err(Refusal::new(
+                        "email_taken",
+                        "sso.email_link_admin",
+                        "a server admin's account is never linked by email",
+                    )
+                    .of(&a.id)));
+                }
                 Some(a) => {
                     if !person.email_verified || !email_confirmed(&mut *conn, &a.id).await? {
-                        let mut r = Refusal::new(
+                        return Ok(Err(Refusal::new(
                             "email_taken",
                             "sso.email_unverified",
                             "an account has this email, but the provider or the account did not confirm it",
-                        );
-                        r.user_id = Some(a.id);
-                        return Ok(Err(r));
+                        )
+                        .of(&a.id)));
                     }
                     a
                 }
@@ -135,34 +169,16 @@ pub async fn account(
         }
     };
     if account.disabled != 0 {
-        let mut r = Refusal::new("disabled", "sso.account_disabled", "the account is disabled");
-        r.user_id = Some(account.id);
-        return Ok(Err(r));
+        return Ok(Err(Refusal::new("disabled", "sso.account_disabled", "the account is disabled").of(&account.id)));
     }
-    // The break-glass admin is never changed by a group mapping.
-    let break_glass = super::local_policy(state).await?.break_glass;
-    let mut touched = BTreeSet::new();
-    let mut changes = Vec::new();
-    if break_glass.as_deref() != Some(account.id.as_str()) {
-        let rules = mapping::rules(&mut *conn, &provider.id).await?;
-        let outcome = mapping::resolve(&rules, &person.groups, &super::unmapped(state).await?);
-        if outcome.refused && account.is_server_admin == 0 {
-            let mut r = Refusal::new("unmapped", "sso.unmapped", "no group of the person is mapped");
-            r.user_id = Some(account.id);
-            return Ok(Err(r));
-        }
-        if !outcome.refused {
-            (changes, touched) = mapping::apply(&mut *conn, &provider.id, &account.id, &outcome, now).await?;
-        }
-    }
-    // The identity, with the groups of this sign-in.
     sqlx::query(
-        "INSERT INTO sso_identities (provider_id, subject, user_id, username, created_at, last_sign_in_at) \
-         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (provider_id, subject) DO UPDATE SET \
+        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, username, created_at, last_sign_in_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (provider_id, subject) DO UPDATE SET \
          username = excluded.username, last_sign_in_at = excluded.last_sign_in_at",
     )
     .bind(&provider.id)
     .bind(&person.subject)
+    .bind(issuer)
     .bind(&account.id)
     .bind(person.username.as_deref())
     .bind(now)
@@ -187,28 +203,140 @@ pub async fn account(
         .bind(&provider.id)
         .execute(&mut *conn)
         .await?;
-    let event = |action: &'static str, summary| crate::audit::AuditEvent {
-        org_id: None,
-        actor_user_id: Some(&account.id),
-        actor_address: Some(info.client_ip.to_string()),
-        action,
-        resource_type: Some("user"),
-        resource_id: Some(&account.id),
-        summary,
-        at_ms: now,
-    };
     if created {
-        crate::audit::record(conn, &event("auth.sso_account_created", json!({ "provider": provider.slug }))).await?;
+        let event = crate::audit::AuditEvent {
+            org_id: None,
+            actor_user_id: Some(&account.id),
+            actor_address: Some(info.client_ip.to_string()),
+            action: "auth.sso_account_created",
+            resource_type: Some("user"),
+            resource_id: Some(&account.id),
+            summary: json!({ "provider": provider.slug }),
+            at_ms: now,
+        };
+        crate::audit::record(conn, &event).await?;
     }
-    if !changes.is_empty() {
-        let summary = json!({ "provider": provider.slug, "changes": changes });
-        crate::audit::record(conn, &event("sso.memberships_changed", summary)).await?;
-    }
+    let is_break_glass = break_glass.as_deref() == Some(account.id.as_str());
     let user = SessionUser {
         id: account.id,
         email: account.email,
         name: account.name,
         is_server_admin: account.is_server_admin,
     };
-    Ok(Ok(SignedIn { user, created, touched }))
+    Ok(Ok(Linked { user, created, break_glass: is_break_glass }))
+}
+
+/// What the group mapping makes of `groups` for `linked`, without changing anything. `None` for
+/// the break-glass admin, whom no mapping changes.
+pub async fn decide(
+    conn: &mut sqlx::AnyConnection,
+    state: &AppState,
+    provider_id: &str,
+    linked: &Linked,
+    groups: &[String],
+) -> ApiResult<Option<Outcome>> {
+    if linked.break_glass {
+        return Ok(None);
+    }
+    let rules = mapping::rules(&mut *conn, provider_id).await?;
+    Ok(Some(mapping::resolve(&rules, groups, &super::unmapped(state).await?)))
+}
+
+/// Applies `outcome` (a refused one takes away what the provider decided and gives nothing) and
+/// records the changes; answers the organizations whose rights changed.
+pub async fn apply(
+    conn: &mut sqlx::AnyConnection,
+    info: &RequestInfo,
+    provider: (&str, &str),
+    user_id: &str,
+    outcome: &Outcome,
+    now: i64,
+) -> ApiResult<BTreeSet<String>> {
+    let effective;
+    let outcome = if outcome.refused {
+        effective = Outcome { refused: true, orgs: Vec::new() };
+        &effective
+    } else {
+        outcome
+    };
+    let (changes, touched) = mapping::apply(&mut *conn, provider.0, user_id, outcome, now).await?;
+    if !changes.is_empty() {
+        let event = crate::audit::AuditEvent {
+            org_id: None,
+            actor_user_id: Some(user_id),
+            actor_address: Some(info.client_ip.to_string()),
+            action: "sso.memberships_changed",
+            resource_type: Some("user"),
+            resource_id: Some(user_id),
+            summary: json!({ "provider": provider.1, "changes": changes }),
+            at_ms: now,
+        };
+        crate::audit::record(conn, &event).await?;
+    }
+    Ok(touched)
+}
+
+/// Keeps the mapping of a sign-in through `provider_id` for after Kalzit's second factor.
+pub async fn defer(conn: &mut sqlx::AnyConnection, user_id: &str, provider_id: &str, now: i64) -> ApiResult<()> {
+    sqlx::query(
+        "INSERT INTO sso_pending_mappings (user_id, provider_id, created_at) VALUES ($1, $2, $3) \
+         ON CONFLICT (user_id) DO UPDATE SET provider_id = excluded.provider_id, created_at = excluded.created_at",
+    )
+    .bind(user_id)
+    .bind(provider_id)
+    .bind(now)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// After a completed second step: applies the mapping a sign-in through a provider kept for it,
+/// from the groups of that sign-in, inside the transaction that opens the session. Answers the
+/// organizations whose rights changed (empty after a password sign-in).
+pub async fn apply_deferred(
+    conn: &mut sqlx::AnyConnection,
+    state: &AppState,
+    info: &RequestInfo,
+    user_id: &str,
+    now: i64,
+) -> ApiResult<BTreeSet<String>> {
+    let pending: Option<(String,)> = sqlx::query_as("SELECT provider_id FROM sso_pending_mappings WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let Some((provider_id,)) = pending else { return Ok(BTreeSet::new()) };
+    sqlx::query("DELETE FROM sso_pending_mappings WHERE user_id = $1").bind(user_id).execute(&mut *conn).await?;
+    let Some(provider) = super::store::by_id(&mut *conn, &provider_id).await? else { return Ok(BTreeSet::new()) };
+    let identity: Option<(String,)> =
+        sqlx::query_as("SELECT subject FROM sso_identities WHERE provider_id = $1 AND user_id = $2")
+            .bind(&provider_id)
+            .bind(user_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some((subject,)) = identity else { return Ok(BTreeSet::new()) };
+    let groups: Vec<(String,)> =
+        sqlx::query_as("SELECT group_name FROM sso_identity_groups WHERE provider_id = $1 AND subject = $2")
+            .bind(&provider_id)
+            .bind(&subject)
+            .fetch_all(&mut *conn)
+            .await?;
+    let groups: Vec<String> = groups.into_iter().map(|(g,)| g).collect();
+    if super::local_policy(state).await?.break_glass.as_deref() == Some(user_id) {
+        return Ok(BTreeSet::new());
+    }
+    let rules = mapping::rules(&mut *conn, &provider_id).await?;
+    let outcome = mapping::resolve(&rules, &groups, &super::unmapped(state).await?);
+    apply(conn, info, (&provider.id, &provider.slug), user_id, &outcome, now).await
+}
+
+#[cfg(test)]
+mod tests {
+    /// `email_confirmed` stands in for `users.email_confirmed` (PR #161); once the column exists,
+    /// read it there and drop this test.
+    #[tokio::test]
+    async fn email_confirmed_is_not_in_the_schema_yet() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        let read = sqlx::query("SELECT email_confirmed FROM users LIMIT 1").execute(&db).await;
+        assert!(read.is_err(), "users.email_confirmed exists now: read it in sso::signin::email_confirmed");
+    }
 }

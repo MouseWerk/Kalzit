@@ -786,5 +786,6 @@
   "admin.settings.signin.default_org.label": "Organization for people without a group",
   "admin.settings.signin.default_org.description": "Where people without a matching group get the default role.",
   "admin.settings.signin.default_role.label": "Default role for people without a group",
-  "admin.settings.signin.default_role.description": "Viewer or editor, as a minimum role."
+  "admin.settings.signin.default_role.description": "Viewer or editor, as a minimum role.",
+  "admin.auditAction.sso.provider_identities_removed": "Links of a provider removed"
 }

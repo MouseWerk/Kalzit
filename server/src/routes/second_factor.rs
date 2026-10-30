@@ -59,6 +59,22 @@ pub async fn plan(
     }))
 }
 
+/// The prompt that makes an account without a second factor set one up before it is signed in,
+/// whatever the policy says: for the break-glass admin, whom a password alone never lets in
+/// (docs/api/sso.md).
+pub async fn forced_setup(state: &AppState, info: &RequestInfo, user: &SessionUser, now: i64) -> ApiResult<Prompt> {
+    Ok(Prompt {
+        email: user.email.clone(),
+        setup: true,
+        methods: Vec::new(),
+        last_used: None,
+        allowed: sf::allowed(state, info).await?,
+        required_by: None,
+        locked_until: sf::locked_until(&state.db, &user.id, now).await?,
+        expires_at: now + sf::CHALLENGE_TTL_MS,
+    })
+}
+
 /// The device cookie a completed sign-in sets (`auth::device`).
 pub enum DeviceCookie<'a> {
     /// Issue (renew) it for the account's current password hash.
@@ -208,9 +224,21 @@ async fn complete(
     } else {
         DeviceCookie::Keep
     };
+    // After a provider, its group mapping applies now that the sign-in is complete (`sso::signin`);
+    // what an earlier, abandoned one kept goes with any other first step.
+    let touched = if taken.first_step == "provider" {
+        crate::sso::signin::apply_deferred(&mut tx, state, info, &pending.user_id, now).await?
+    } else {
+        sqlx::query("DELETE FROM sso_pending_mappings WHERE user_id = $1")
+            .bind(&pending.user_id)
+            .execute(&mut *tx)
+            .await?;
+        Default::default()
+    };
     let (mut out, answer) =
         open_session(&mut tx, state, info, headers, pending.user(), Some(method), device, now).await?;
     crate::db::commit(tx).await?;
+    crate::sso::rights_changed(state, &touched).await;
     out.append(header::SET_COOKIE, sf::clear_pending_cookie(info.https));
     Ok((out, answer))
 }

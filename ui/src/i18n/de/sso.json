@@ -190,5 +190,8 @@
   "sso.checks.breakGlassMissing": "Kein gültiger Notfall-Admin gewählt",
   "sso.checks.selfReady": "Du selbst kannst dich über einen Anbieter anmelden",
   "sso.checks.selfMissing": "Du selbst kannst dich über keinen Anbieter anmelden",
-  "sso.checks.passwordOnly": "Konten nur mit lokalem Passwort: {count}. Diese Personen melden sich danach über einen Anbieter an."
+  "sso.checks.passwordOnly": "Konten nur mit lokalem Passwort: {count}. Diese Personen melden sich danach über einen Anbieter an.",
+  "sso.form.issuerChangeTitle": "Issuer ändern?",
+  "sso.form.issuerChangeText": "Mit einem anderen Issuer sind die Personen beim Anbieter nicht mehr dieselben. Die Verknüpfung von {people} Personen mit diesem Anbieter wird entfernt, ebenso die Rollen, die der Anbieter für sie entschieden hat. Diese Personen melden sich danach neu an.",
+  "sso.form.issuerChangeConfirm": "Verknüpfungen entfernen und speichern"
 }

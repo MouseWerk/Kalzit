@@ -168,6 +168,7 @@ mod tests {
         "sso.memberships_changed",
         "sso.provider_created",
         "sso.provider_deleted",
+        "sso.provider_identities_removed",
         "sso.provider_paused",
         "sso.provider_resumed",
         "sso.provider_updated",

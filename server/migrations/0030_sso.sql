@@ -34,9 +34,12 @@ CREATE TABLE sso_provider_secrets (
 );
 
 -- A person at a provider (`subject`, OIDC `sub`) and the Kalzit account it signs in to.
+-- Subjects are only unique per issuer, so `issuer` is the one the link was made through; a
+-- sign-in through another issuer never uses it (changing a provider's issuer removes its links).
 CREATE TABLE sso_identities (
     provider_id      TEXT NOT NULL REFERENCES sso_providers (id) ON DELETE CASCADE,
     subject          TEXT NOT NULL,
+    issuer           TEXT NOT NULL,
     user_id          TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     username         TEXT,
     created_at       BIGINT NOT NULL,
@@ -82,6 +85,14 @@ CREATE TABLE sso_managed (
     org_id       TEXT NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
     team_id      TEXT NOT NULL,
     PRIMARY KEY (user_id, provider_id, org_id, team_id)
+);
+
+-- A sign-in through a provider that waits for Kalzit's second factor: its group mapping applies
+-- only once that step succeeds (`sso::signin::apply_deferred`), from the identity's groups.
+CREATE TABLE sso_pending_mappings (
+    user_id      TEXT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    provider_id  TEXT NOT NULL REFERENCES sso_providers (id) ON DELETE CASCADE,
+    created_at   BIGINT NOT NULL
 );
 
 -- A sign-in or an admin's test sign-in on its way through a provider. `state_hash` is the SHA-256

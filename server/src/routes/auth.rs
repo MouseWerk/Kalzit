@@ -264,7 +264,12 @@ pub async fn login_with(
         is_server_admin: row.is_server_admin,
     };
     let first = crate::auth::second_factor::FirstStep::Password { password_hash: row.password_hash.as_deref() };
-    let plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
+    let mut plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
+    // The break-glass admin never gets in with a password alone: without a second factor (it can
+    // only be gone through a database change), one is set up first.
+    if decision == PasswordSignIn::BreakGlass && plan.is_none() {
+        plan = Some(super::second_factor::forced_setup(&state, &info, &user, now).await?);
+    }
 
     let mut tx = crate::db::begin(&state.db).await?;
     // Lock the user row and confirm it still holds the hash we verified and is still enabled. A

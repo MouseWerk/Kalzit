@@ -1057,5 +1057,6 @@
   "datasources.reason.sso.outcome_failed": "Die Antwort des Anbieters war nicht gültig.",
   "datasources.reason.sso.outcome_cancelled": "Die Anmeldung wurde beim Anbieter abgebrochen.",
   "datasources.reason.sso.outcome_expired": "Die Anmeldung hat zu lange gedauert oder wurde schon genutzt.",
-  "datasources.reason.sso.outcome_email_taken": "Die E-Mail-Adresse gehört zu einem unbestätigten Konto, oder der Anbieter hat sie nicht bestätigt."
+  "datasources.reason.sso.outcome_email_taken": "Die E-Mail-Adresse gehört zu einem unbestätigten Konto, oder der Anbieter hat sie nicht bestätigt.",
+  "datasources.reason.sso.issuer_change_confirm": "Wenn du den Issuer änderst, verlieren {people} Personen ihre Verknüpfung mit diesem Anbieter und melden sich neu an. Bestätige die Änderung."
 }

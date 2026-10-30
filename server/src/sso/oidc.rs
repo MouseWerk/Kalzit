@@ -14,7 +14,54 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::jwt::{self, JwkSet, TokenError};
-use crate::http::{HttpClient, HttpError};
+use crate::datasources::targets::TargetPolicy;
+use crate::http::{HttpClient, HttpError, HttpOptions};
+
+/// Requests to one provider. Every URL, the issuer's and each endpoint its discovery names, gets
+/// its own client: when its port is one of Kalzit's own, that client refuses every address of this
+/// computer (`http::LocalGuard`), so no endpoint can point a request back at Kalzit. Redirects are
+/// checked hop by hop: one to a port of Kalzit's from a client without that guard is refused.
+pub struct Fetcher {
+    policy: std::sync::Arc<TargetPolicy>,
+    own_ports: Vec<u16>,
+    timeout: std::time::Duration,
+}
+
+impl Fetcher {
+    pub fn new(policy: std::sync::Arc<TargetPolicy>, own_ports: Vec<u16>, timeout: std::time::Duration) -> Self {
+        Self { policy, own_ports, timeout }
+    }
+
+    fn own_port(&self, url: &Url) -> bool {
+        url.port_or_known_default().is_some_and(|p| self.own_ports.contains(&p))
+    }
+
+    fn refused() -> crate::datasources::Detail {
+        crate::datasources::Detail::new("sso.issuer_is_kalzit", "the address is this Kalzit server")
+    }
+
+    fn client(&self, url: &Url) -> Result<(HttpClient, bool), HttpError> {
+        let guarded = self.own_port(url);
+        let guard = guarded.then(|| crate::http::LocalGuard { refused: Self::refused(), private: None });
+        let opts = HttpOptions { timeout: self.timeout, extra_root_pem: None, policy: self.policy.clone() };
+        Ok((crate::http::client_guarded(opts, guard)?, guarded))
+    }
+
+    /// A GET that follows redirects, each hop checked.
+    pub async fn get(&self, url: Url, headers: HeaderMap) -> Result<reqwest::Response, HttpError> {
+        let (http, guarded) = self.client(&url)?;
+        let hop = |_: &Method, next: &Url| {
+            if !guarded && self.own_port(next) { Err(Self::refused()) } else { Ok(()) }
+        };
+        http.send_checked(Method::GET, url, headers, None, Some(&hop)).await
+    }
+
+    /// One POST that does not follow redirects (a token request carries the client secret).
+    pub async fn post_once(&self, url: Url, headers: HeaderMap, body: Vec<u8>) -> Result<reqwest::Response, HttpError> {
+        let (http, _) = self.client(&url)?;
+        http.send_once(Method::POST, url, headers, Some(body)).await
+    }
+}
 
 /// Largest discovery document, key set, token or userinfo answer read.
 const MAX_ANSWER_BYTES: usize = 256 * 1024;
@@ -158,7 +205,7 @@ pub fn check_issuer(raw: &str) -> Option<Url> {
     (url.query().is_none() && url.fragment().is_none() && raw.len() <= 2048).then_some(url)
 }
 
-async fn get_json(http: &HttpClient, url: Url, bearer: Option<&str>) -> Result<(StatusCode, Vec<u8>), HttpError> {
+async fn get_json(http: &Fetcher, url: Url, bearer: Option<&str>) -> Result<(StatusCode, Vec<u8>), HttpError> {
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
     if let Some(token) = bearer {
@@ -167,13 +214,13 @@ async fn get_json(http: &HttpClient, url: Url, bearer: Option<&str>) -> Result<(
         value.set_sensitive(true);
         headers.insert(AUTHORIZATION, value);
     }
-    let response = http.send(Method::GET, url, headers).await?;
+    let response = http.get(url, headers).await?;
     let status = response.status();
     Ok((status, crate::http::read_limited(response, MAX_ANSWER_BYTES).await?))
 }
 
 /// Reads the discovery document of `issuer`; its `issuer` must be the same string exactly.
-pub async fn discover(http: &HttpClient, issuer: &str) -> Result<Discovery, OidcError> {
+pub async fn discover(http: &Fetcher, issuer: &str) -> Result<Discovery, OidcError> {
     let base = issuer.trim_end_matches('/');
     let url = Url::parse(&format!("{base}/.well-known/openid-configuration"))
         .map_err(|e| OidcError::DiscoveryInvalid(e.to_string()))?;
@@ -201,7 +248,7 @@ pub async fn discover(http: &HttpClient, issuer: &str) -> Result<Discovery, Oidc
     Ok(doc)
 }
 
-pub async fn load_keys(http: &HttpClient, jwks_uri: &str) -> Result<JwkSet, OidcError> {
+pub async fn load_keys(http: &Fetcher, jwks_uri: &str) -> Result<JwkSet, OidcError> {
     let url = Url::parse(jwks_uri).map_err(|e| OidcError::KeysUnreachable(e.to_string()))?;
     let (status, body) = get_json(http, url, None).await.map_err(|e| OidcError::KeysUnreachable(http_text(&e)))?;
     if !status.is_success() {
@@ -300,7 +347,7 @@ fn form_body(pairs: &[(&str, &str)]) -> Vec<u8> {
 }
 
 async fn token_request(
-    http: &HttpClient,
+    http: &Fetcher,
     discovery: &Discovery,
     config: &OidcConfig,
     secret: &str,
@@ -327,10 +374,7 @@ async fn token_request(
         value.set_sensitive(true);
         headers.insert(AUTHORIZATION, value);
     }
-    let response = http
-        .send_once(Method::POST, url, headers, Some(body))
-        .await
-        .map_err(|e| OidcError::TokenUnreachable(http_text(&e)))?;
+    let response = http.post_once(url, headers, body).await.map_err(|e| OidcError::TokenUnreachable(http_text(&e)))?;
     let status = response.status();
     let bytes = crate::http::read_limited(response, MAX_ANSWER_BYTES)
         .await
@@ -342,7 +386,7 @@ async fn token_request(
 
 /// Exchanges the authorization code for tokens.
 pub async fn exchange(
-    http: &HttpClient,
+    http: &Fetcher,
     discovery: &Discovery,
     config: &OidcConfig,
     secret: &str,
@@ -375,7 +419,7 @@ fn clean_error(error: &str) -> String {
 /// accepted the client (and only refused the code), `Some(false)` when it refused the client,
 /// `None` when its answer does not say.
 pub async fn probe_client(
-    http: &HttpClient,
+    http: &Fetcher,
     discovery: &Discovery,
     config: &OidcConfig,
     secret: &str,
@@ -398,7 +442,7 @@ pub async fn probe_client(
 
 /// The claims of the userinfo endpoint; its `sub` must be the ID token's.
 pub async fn userinfo(
-    http: &HttpClient,
+    http: &Fetcher,
     discovery: &Discovery,
     access_token: &str,
     subject: &str,
@@ -457,7 +501,11 @@ pub fn person(config: &OidcConfig, id_claims: &Map<String, Value>, userinfo: &Ma
     };
     let groups = match claim(&config.groups_claim) {
         Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).map(str::to_string).collect(),
-        Some(Value::String(one)) => one.split([',', ' ']).filter(|s| !s.is_empty()).map(str::to_string).collect(),
+        // One group, or several separated by commas; never split on spaces, which group names
+        // (such as LDAP distinguished names) contain.
+        Some(Value::String(one)) => {
+            one.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+        }
         _ => Vec::new(),
     };
     let mut groups: Vec<String> = groups
@@ -467,11 +515,14 @@ pub fn person(config: &OidcConfig, id_claims: &Map<String, Value>, userinfo: &Ma
     groups.sort();
     groups.dedup();
     groups.truncate(500);
-    let verified = match claim("email_verified") {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::String(s)) => s == "true",
-        _ => false,
-    };
+    // `email_verified` speaks about the `email` claim only; another email claim counts as verified
+    // only through the provider's switch.
+    let verified = config.email_claim == "email"
+        && match claim("email_verified") {
+            Some(Value::Bool(b)) => *b,
+            Some(Value::String(s)) => s == "true",
+            _ => false,
+        };
     let amr: Vec<&str> = match id_claims.get("amr") {
         Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).collect(),
         _ => Vec::new(),
@@ -479,12 +530,44 @@ pub fn person(config: &OidcConfig, id_claims: &Map<String, Value>, userinfo: &Ma
     Person {
         subject: id_claims.get("sub").and_then(Value::as_str).unwrap_or_default().to_string(),
         username: text("preferred_username"),
-        email: text(&config.email_claim).map(|e: String| e.to_lowercase()),
+        email: text(&config.email_claim).and_then(|e: String| matching_email(&e)),
         email_verified: verified || config.trust_email,
         name: text(&config.name_claim),
         groups,
-        mfa_done: amr.iter().any(|m| matches!(*m, "mfa" | "otp" | "hwk" | "sc")),
+        mfa_done: several_factors(&amr),
     }
+}
+
+/// Whether `amr` (RFC 8176) says the provider checked several factors: `mfa`, or methods of two
+/// different kinds (something known, something held, something one is). One kind alone, such as a
+/// one-time code without a password, is one factor.
+pub fn several_factors(amr: &[&str]) -> bool {
+    if amr.contains(&"mfa") {
+        return true;
+    }
+    let kind = |m: &str| match m {
+        "pwd" | "pin" | "kba" => Some(0),
+        "otp" | "hwk" | "swk" | "sc" | "sms" | "tel" => Some(1),
+        "fpt" | "face" | "iris" | "retina" | "vbm" => Some(2),
+        _ => None,
+    };
+    let kinds: std::collections::BTreeSet<u8> = amr.iter().filter_map(|m| kind(m)).collect();
+    kinds.len() >= 2
+}
+
+/// The form of an email Kalzit compares with its accounts: an ASCII local part in lowercase and
+/// the domain in its ASCII (IDNA) form. Other local parts are not used, since Unicode case folding
+/// makes different addresses look alike (the Kelvin sign `\u{212A}` folds to `k`).
+pub fn matching_email(raw: &str) -> Option<String> {
+    let (local, domain) = raw.trim().rsplit_once('@')?;
+    if local.is_empty() || !local.is_ascii() || local.bytes().any(|b| b.is_ascii_control() || b == b' ') {
+        return None;
+    }
+    let domain = match url::Host::parse(domain).ok()? {
+        url::Host::Domain(d) => d,
+        _ => return None,
+    };
+    crate::routes::normalize_email(&format!("{}@{domain}", local.to_ascii_lowercase())).ok()
 }
 
 /// Checks an ID token against the provider's keys and the sign-in.
@@ -564,5 +647,46 @@ mod tests {
         assert_eq!(p.groups, ["a", "b"]);
         let p = person(&config(), json!({ "sub": "s", "amr": ["pwd"] }).as_object().unwrap(), &Map::new());
         assert!(!p.email_verified && !p.mfa_done && p.groups.is_empty());
+    }
+
+    #[test]
+    fn email_verified_speaks_only_about_the_email_claim() {
+        let id = json!({ "sub": "s", "email": "a@example.de", "upn": "b@example.de", "email_verified": true });
+        let mut c = config();
+        c.email_claim = "upn".into();
+        let p = person(&c, id.as_object().unwrap(), &Map::new());
+        assert_eq!(p.email.as_deref(), Some("b@example.de"));
+        assert!(!p.email_verified, "email_verified is about `email`, not `upn`");
+        c.trust_email = true;
+        assert!(person(&c, id.as_object().unwrap(), &Map::new()).email_verified);
+    }
+
+    #[test]
+    fn a_string_groups_claim_splits_on_commas_only() {
+        let id = json!({ "sub": "s", "groups": "CN=Kalzit Leser,OU=Gruppen , admins" });
+        let p = person(&config(), id.as_object().unwrap(), &Map::new());
+        assert_eq!(p.groups, ["CN=Kalzit Leser", "OU=Gruppen", "admins"]);
+        let id = json!({ "sub": "s", "groups": "Kalzit Leser" });
+        assert_eq!(person(&config(), id.as_object().unwrap(), &Map::new()).groups, ["Kalzit Leser"]);
+    }
+
+    #[test]
+    fn several_factors_need_mfa_or_two_kinds() {
+        assert!(several_factors(&["mfa"]));
+        assert!(several_factors(&["pwd", "otp"]));
+        assert!(several_factors(&["hwk", "fpt"]));
+        for one in [&["otp"][..], &["hwk"], &["sc"], &["pwd"], &["otp", "hwk"], &["pwd", "pin"], &[]] {
+            assert!(!several_factors(one), "{one:?}");
+        }
+    }
+
+    #[test]
+    fn emails_match_in_an_ascii_form() {
+        assert_eq!(matching_email("Lea.Hoffmann@Example.DE").as_deref(), Some("lea.hoffmann@example.de"));
+        assert_eq!(matching_email("lea@bücher.example").as_deref(), Some("lea@xn--bcher-kva.example"));
+        // The Kelvin sign folds to `k` in Unicode; such a local part is never matched.
+        assert_eq!(matching_email("\u{212A}ate@example.de"), None);
+        assert_eq!(matching_email("jörg@example.de"), None);
+        assert_eq!(matching_email("no-at-sign"), None);
     }
 }

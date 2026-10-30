@@ -82,16 +82,21 @@ struct IdpState {
     grants: HashMap<String, Grant>,
     tokens: HashMap<String, Value>,
     jwks_reads: usize,
+    /// A token endpoint the discovery names instead of the provider's own.
+    token_endpoint: Option<String>,
 }
 
 type Idp = Arc<Mutex<IdpState>>;
 
 async fn discovery(State(idp): State<Idp>) -> axum::Json<Value> {
-    let issuer = idp.lock().unwrap().issuer.clone();
+    let (issuer, token) = {
+        let s = idp.lock().unwrap();
+        (s.issuer.clone(), s.token_endpoint.clone())
+    };
     axum::Json(json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/authorize"),
-        "token_endpoint": format!("{issuer}/token"),
+        "token_endpoint": token.unwrap_or_else(|| format!("{issuer}/token")),
         "userinfo_endpoint": format!("{issuer}/userinfo"),
         "jwks_uri": format!("{issuer}/jwks"),
         "token_endpoint_auth_methods_supported": ["client_secret_basic"],
@@ -514,8 +519,16 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     // "Ablehnen": nobody without a group gets in.
     let r = app.put("/api/admin/sign-in/unmapped", json!({ "rule": "refuse", "defaultRole": "viewer" }), &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (_, _) = sign_in(&app, &idp, &Who { groups: &["kalzit-admins"], ..lea }, |_| {}).await;
     let (r, _) = sign_in(&app, &idp, &Who { groups: &[], ..lea }, |_| {}).await;
     assert_eq!(outcome_of(&r), "unmapped");
+    // Refused, the person still loses what the provider decided.
+    let member: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE user_id = $1")
+        .bind(&lea_id)
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(member.is_none(), "the \"IdP entscheidet\" membership ends with a refusal: {member:?}");
     let r = app
         .put(
             "/api/admin/sign-in/unmapped",
@@ -533,8 +546,49 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let nora = Who { sub: "sub-nora", email: "nora@example.de", verified: false, groups: &["alle"] };
     let (r, _) = sign_in(&app, &idp, &nora, |_| {}).await;
     assert_eq!(outcome_of(&r), "email_taken");
+    // `email_verified` counts only for the `email` claim; an email claim of another name does not
+    // prove it (the claim here is still `email`, so this checks the plain case).
     let (r, _) = sign_in(&app, &idp, &Who { verified: true, ..nora }, |_| {}).await;
     assert_eq!(r.location(), "/dashboards", "a verified email links the account");
+    // A server admin is never linked by email, verified or not.
+    let joerg = Who { sub: "sub-joerg", email: "joerg@example.de", verified: true, groups: &["alle"] };
+    let (r, _) = sign_in(&app, &idp, &joerg, |_| {}).await;
+    assert_eq!(outcome_of(&r), "email_taken");
+    // Nor an email whose local part only looks alike after Unicode case folding (the Kelvin sign).
+    let kelvin = Who { sub: "sub-kelvin", email: "\u{212A}elvin@example.de", verified: true, groups: &["alle"] };
+    let (r, _) = sign_in(&app, &idp, &kelvin, |_| {}).await;
+    assert_eq!(outcome_of(&r), "failed", "no usable email: {}", r.location());
+
+    // The callback is bound to the browser that started it: another cookie takes nothing, the
+    // right one still works.
+    let start = app.send(Method::GET, "/api/auth/sso/mueller-sso/start", None, None).await;
+    let binding = start.cookie("kalzit_sso").unwrap();
+    let q: HashMap<String, String> = url::Url::parse(&start.location()).unwrap().query_pairs().into_owned().collect();
+    let r = app
+        .send(
+            Method::GET,
+            &format!("/auth/oidc/mueller-sso/callback?code=x&state={}", q["state"]),
+            None,
+            Some("kalzit_sso=fremd"),
+        )
+        .await;
+    assert_eq!(outcome_of(&r), "expired");
+    // RFC 9207: an `iss` that names another issuer is refused.
+    let r = app
+        .send(
+            Method::GET,
+            &format!("/auth/oidc/mueller-sso/callback?code=x&state={}&iss=https%3A%2F%2Fevil.example", q["state"]),
+            None,
+            Some(&format!("kalzit_sso={binding}")),
+        )
+        .await;
+    assert_eq!(outcome_of(&r), "failed");
+    let causes: Vec<(String,)> = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'auth.sso_failed'")
+        .fetch_all(&app.state.db)
+        .await
+        .unwrap();
+    assert!(causes.iter().any(|(s,)| s.contains("sso.iss_mismatch")));
+    assert!(causes.iter().any(|(s,)| s.contains("sso.email_link_admin")));
 
     // With a second factor, Kalzit asks for it after the provider ("Kalzit fragt"), unless the
     // provider's switch takes its word for one and the token says it checked several factors.
@@ -555,6 +609,21 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let pending =
         r.headers.get_all(header::SET_COOKIE).iter().any(|c| c.to_str().unwrap().starts_with("kalzit_pending="));
     assert!(pending, "the half-signed-in state starts: {:?}", r.headers);
+    // The mapping waits for the second step: a new admin group gives nothing before it.
+    let (r, _) = sign_in(&app, &idp, &Who { groups: &["kalzit-admins"], ..verified_nora }, |_| {}).await;
+    assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards");
+    let role: (String,) = sqlx::query_as("SELECT role FROM org_members WHERE user_id = $1")
+        .bind(&nora_id.0)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(role.0, "viewer", "nothing applies before the second factor");
+    let deferred: Option<(String,)> = sqlx::query_as("SELECT provider_id FROM sso_pending_mappings WHERE user_id = $1")
+        .bind(&nora_id.0)
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(deferred.map(|d| d.0), Some(provider_id.clone()));
     sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 1").execute(&app.state.db).await.unwrap();
     let (r, _) = sign_in(&app, &idp, &verified_nora, |_| {}).await;
     assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards", "no mfa in amr: Kalzit asks");
@@ -587,6 +656,33 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         .await
         .unwrap();
     assert!(tester_exists.is_none());
+
+    // A form that names another issuer never gets the stored secret: it must bring it again.
+    let mut body = form("https://other-idp.example", None);
+    body["providerId"] = json!(provider_id);
+    let r = app.post("/api/admin/sign-in/providers/check", body, &admin).await;
+    assert_eq!((r.reason(), r.body["error"]["field"].as_str()), ("sso.client_secret_required", Some("clientSecret")));
+
+    // An organization's "off" applies to its members, never to server admins.
+    let settings = app.get(&format!("/api/orgs/{org}/settings"), &admin).await;
+    let version = settings.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == "signin.local_password")
+        .map(|s| s["version"].as_i64().unwrap())
+        .unwrap();
+    let path = format!("/api/orgs/{org}/settings/signin.local_password");
+    let r = app.send(Method::PATCH, &path, Some(json!({ "value": "off", "version": version })), Some(&admin)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let login = |email: &str, password: &str| json!({ "email": email, "password": password });
+    let r = app.send(Method::POST, "/api/auth/login", Some(login("nora@example.de", PASSWORD)), None).await;
+    assert_eq!(r.reason(), "sso.password_sign_in_off", "a member of the organization");
+    let r = app.send(Method::POST, "/api/auth/login", Some(login("joerg@example.de", PASSWORD)), None).await;
+    assert_eq!(r.status, StatusCode::OK, "a server admin in the organization: {}", r.body);
+    let r =
+        app.send(Method::PATCH, &path, Some(json!({ "value": "inherit", "version": version + 1 })), Some(&admin)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
 
     // Password sign-in off: only with a break-glass admin and a checked provider.
     let r =
@@ -622,7 +718,6 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!((r.body["localSignIn"].clone(), r.body["passwordForm"].clone()), (json!(false), json!("hidden")));
 
     // Nora still has a password, but it no longer signs her in; a wrong one says nothing more.
-    let login = |email: &str, password: &str| json!({ "email": email, "password": password });
     let r = app.send(Method::POST, "/api/auth/login", Some(login("nora@example.de", PASSWORD)), None).await;
     assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "sso.password_sign_in_off"));
     let r = app.send(Method::POST, "/api/auth/login", Some(login("nora@example.de", "falsch-falsch")), None).await;
@@ -640,6 +735,12 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         .send(Method::PATCH, &format!("/api/admin/users/{admin_id}"), Some(json!({ "disabled": true })), Some(&admin))
         .await;
     assert_eq!(r.reason(), "sso.break_glass_protected");
+    // Without a second factor (gone through a database change), the break-glass admin sets one up
+    // before getting in: a password alone never opens the server.
+    sqlx::query("DELETE FROM user_passkeys WHERE user_id = $1").bind(&admin_id).execute(&app.state.db).await.unwrap();
+    let r = app.send(Method::POST, "/api/auth/login/local", Some(login("joerg@example.de", PASSWORD)), None).await;
+    assert_eq!(r.body["secondFactor"]["setup"], json!(true), "{}", r.body);
+    assert!(r.cookie("kalzit_session").is_none());
     // The break-glass form has a budget of its own.
     let mut limited = false;
     for _ in 0..12 {
@@ -663,6 +764,43 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(r.body["enabled"], json!(false));
     let r = app.send(Method::GET, "/api/auth/sso/mueller-sso/start", None, None).await;
     assert_eq!(outcome_of(&r), "unavailable");
+
+    // No endpoint of a provider may point back at Kalzit (its own port on this computer).
+    let other = fake_idp().await;
+    let other_issuer = other.lock().unwrap().issuer.clone();
+    other.lock().unwrap().token_endpoint = Some("http://127.0.0.1:3999/api/auth/login".into());
+    let r = app.post("/api/admin/sign-in/providers/check", form(&other_issuer, Some(CLIENT_SECRET)), &admin).await;
+    assert_eq!(r.reason(), "sso.token_unreachable", "{}", r.body);
+    let detail = r.body["error"]["params"]["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("this Kalzit server"), "refused before connecting, not unreachable: {detail}");
+    other.lock().unwrap().token_endpoint = None;
+
+    // Another issuer: subjects are only unique per issuer, so the links go, after a confirmation.
+    let r = app.post("/api/admin/sign-in/providers/check", form(&other_issuer, Some(CLIENT_SECRET)), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let detail = app.get(&format!("/api/admin/sign-in/providers/{provider_id}"), &admin).await;
+    let mut body = form(&other_issuer, Some(CLIENT_SECRET));
+    body["checkToken"] = r.body["checkToken"].clone();
+    body["version"] = detail.body["version"].clone();
+    let provider_path = format!("/api/admin/sign-in/providers/{provider_id}");
+    let r = app.put(&provider_path, body.clone(), &admin).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "sso.issuer_change_confirm"), "{}", r.body);
+    body["confirmIssuerChange"] = json!(true);
+    let r = app.put(&provider_path, body, &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (links,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_identities WHERE provider_id = $1")
+        .bind(&provider_id)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(links, 0);
+    let (managed,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_managed WHERE provider_id = $1")
+        .bind(&provider_id)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(managed, 0);
+    assert!(app.audit_actions().await.contains(&"sso.provider_identities_removed".to_string()));
 
     // Not for anyone but server admins.
     let r = app.get("/api/admin/sign-in", &lea_session).await;

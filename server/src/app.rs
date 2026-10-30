@@ -244,6 +244,15 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), net::origin_check))
         .layer(from_fn_with_state(state.clone(), net::security_headers))
         .layer(from_fn_with_state(state.clone(), net::request_info))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(request_span))
         .with_state(state)
+}
+
+/// The span of a request in the trace log, as tower-http makes it, except that the query of a
+/// provider's callback (`/auth/oidc/{slug}/callback`, which carries the authorization code and
+/// state) is left out.
+fn request_span(req: &axum::http::Request<axum::body::Body>) -> tracing::Span {
+    let uri = req.uri();
+    let shown = if uri.path().starts_with("/auth/oidc/") { uri.path().to_string() } else { uri.to_string() };
+    tracing::debug_span!("request", method = %req.method(), uri = %shown, version = ?req.version())
 }

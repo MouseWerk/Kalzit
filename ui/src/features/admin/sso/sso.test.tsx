@@ -142,6 +142,32 @@ describe("sign-in administration, providers", () => {
     expect(open).toHaveBeenCalledWith("https://sso.example/authorize?state=test");
   });
 
+  it("asks before a new issuer removes the links of the people, then saves", async () => {
+    const { user, server } = await openSignIn("/settings/signin", (server) => {
+      server.areas.sso.providers = [sampleProvider()];
+    });
+    await user.click(await screen.findByRole("button", { name: "Edit Müller SSO" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit Müller SSO" });
+    const issuer = within(dialog).getByLabelText("Issuer URL");
+    await user.clear(issuer);
+    await user.type(issuer, "https://new-sso.example/realms/kalzit");
+    await user.type(within(dialog).getByLabelText("Client secret"), "s3cret");
+    await user.click(within(dialog).getByRole("button", { name: "Check connection" }));
+    await within(dialog).findByText(/^Connection ok/);
+    await user.click(saveButton(dialog));
+    const confirm = await screen.findByRole("dialog", { name: "Change the issuer?" });
+    expect(
+      within(confirm).getByText(/The link of 3 people to this provider is removed/),
+    ).toBeTruthy();
+    expect(server.areas.sso.providers[0]?.oidc.issuer).toBe("https://sso.example/realms/kalzit");
+    await user.click(within(confirm).getByRole("button", { name: "Remove links and save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(server.areas.sso.providers[0]?.oidc.issuer).toBe(
+      "https://new-sso.example/realms/kalzit",
+    );
+    expect(server.areas.sso.providers[0]?.people).toBe(0);
+  });
+
   it("changes the order of the buttons with Alt+Arrow, at once and with undo", async () => {
     const { user, server } = await openSignIn("/settings/signin", (server) => {
       server.areas.sso.providers = [

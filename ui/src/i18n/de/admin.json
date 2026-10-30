@@ -786,5 +786,6 @@
   "admin.settings.signin.default_org.label": "Organisation für Personen ohne Gruppe",
   "admin.settings.signin.default_org.description": "Wo Personen ohne passende Gruppe die Standardrolle bekommen.",
   "admin.settings.signin.default_role.label": "Standardrolle für Personen ohne Gruppe",
-  "admin.settings.signin.default_role.description": "Betrachter oder Bearbeiter, als Mindestrolle."
+  "admin.settings.signin.default_role.description": "Betrachter oder Bearbeiter, als Mindestrolle.",
+  "admin.auditAction.sso.provider_identities_removed": "Verknüpfungen eines Anbieters entfernt"
 }

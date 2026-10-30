@@ -1057,5 +1057,6 @@
   "datasources.reason.sso.outcome_failed": "The provider’s answer was not valid.",
   "datasources.reason.sso.outcome_cancelled": "The sign-in was cancelled at the provider.",
   "datasources.reason.sso.outcome_expired": "The sign-in took too long or was used already.",
-  "datasources.reason.sso.outcome_email_taken": "The email address belongs to an unconfirmed account, or the provider did not confirm it."
+  "datasources.reason.sso.outcome_email_taken": "The email address belongs to an unconfirmed account, or the provider did not confirm it.",
+  "datasources.reason.sso.issuer_change_confirm": "Changing the issuer removes the link of {people} people to this provider; they sign in anew. Confirm the change."
 }

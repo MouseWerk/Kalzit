@@ -6,7 +6,7 @@ import { type Translate, useI18n } from "../../../i18n/i18n";
 import { writeClipboard } from "../../../lib/clipboard";
 import { leavePage } from "../../../lib/leavePage";
 import { reasonText } from "../../datasources/reasons";
-import { Dialog } from "../components/Dialog";
+import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { LoadState } from "../components/Section";
 import {
   checkProvider,
@@ -21,7 +21,7 @@ import {
   type TestSignInStart,
   updateProvider,
 } from "./api";
-import { outcomeText, ssoErrorText, testFailureText } from "./texts";
+import { outcomeText, ssoErrorText, ssoReason, testFailureText } from "./texts";
 import "../../settings/settings.css";
 import "./sso.css";
 
@@ -209,6 +209,8 @@ function ProviderForm({
   const [formError, setFormError] = useState<string | undefined>(undefined);
   const [checked, setChecked] = useState<Checked | null>(null);
   const [busy, setBusy] = useState<"check" | "save" | "test" | null>(null);
+  // A new issuer for a provider people sign in through removes their links: asked first.
+  const [confirmIssuer, setConfirmIssuer] = useState<string | null>(null);
   const [test, setTest] = useState<TestSignInStart | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -380,7 +382,7 @@ function ProviderForm({
     }
   }
 
-  async function onSave() {
+  async function onSave(confirmIssuerChange = false) {
     if (!canSave) {
       setFormError(t("sso.form.checkFirst"));
       return;
@@ -389,13 +391,21 @@ function ProviderForm({
     try {
       const token = checkCurrent ? checked?.check.checkToken : undefined;
       if (editing) {
-        await updateProvider(provider.id, input(), version, connectionChanged ? token : undefined);
+        const sent = connectionChanged ? token : undefined;
+        await updateProvider(provider.id, input(), version, sent, confirmIssuerChange);
       } else {
         await createProvider(input(), token ?? "");
       }
+      setConfirmIssuer(null);
       onSaved(name.trim(), !editing);
     } catch (error) {
-      showFailure(error);
+      const reason = ssoReason(error);
+      if (reason?.reason === "sso.issuer_change_confirm") {
+        setConfirmIssuer(reason.params.people ?? "");
+      } else {
+        setConfirmIssuer(null);
+        showFailure(error);
+      }
     } finally {
       setBusy(null);
     }
@@ -446,254 +456,268 @@ function ProviderForm({
 
   const testResult = testState.data;
   return (
-    <Dialog
-      open
-      wide
-      title={editing ? t("sso.form.editTitleFor", { name: provider.name }) : t("sso.form.addTitle")}
-      onClose={onClose}
-      initialFocus={refs.name}
-      footer={
-        <div className="sso-dialog__footer">
-          <button
-            type="button"
-            className="button button--secondary"
-            aria-disabled={busy !== null}
-            onClick={() => void onCheck()}
-          >
-            <Icon name="refresh" />
-            {busy === "check" ? t("sso.form.checking") : t("sso.form.check")}
-          </button>
-          <button
-            type="button"
-            className="button button--secondary"
-            aria-disabled={busy !== null}
-            onClick={() => void onTest()}
-          >
-            <Icon name="external" />
-            {busy === "test" ? t("sso.form.testing") : t("sso.form.test")}
-          </button>
-          <span className="sso-dialog__spacer" />
-          <button type="button" className="button button--secondary" onClick={onClose}>
-            {t("admin.common.cancel")}
-          </button>
-          <button
-            type="button"
-            className="button button--primary"
-            aria-disabled={!canSave || busy !== null}
-            aria-describedby={canSave ? undefined : `${ids}-save-hint`}
-            onClick={() => void onSave()}
-          >
-            {busy === "save" ? t("sso.form.saving") : t("sso.form.save")}
-          </button>
-        </div>
-      }
-    >
-      <form
-        className="form sso-form"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          void onSave();
-        }}
+    <>
+      <ConfirmDialog
+        open={confirmIssuer !== null}
+        title={t("sso.form.issuerChangeTitle")}
+        confirmLabel={t("sso.form.issuerChangeConfirm")}
+        busy={busy === "save"}
+        onClose={() => setConfirmIssuer(null)}
+        onConfirm={() => void onSave(true)}
       >
-        <div role="alert" aria-atomic="true">
-          {formError === undefined ? null : (
-            <p className="sso-alarm">
-              <Icon name="alert" />
-              <span>{formError}</span>
-            </p>
-          )}
-        </div>
-        {textInput(
-          "name",
-          name,
-          (value) => {
-            setName(value);
-            if (!slugEdited) {
-              setSlug(slugFrom(value));
-            }
-          },
-          {
-            label: t("sso.form.name"),
-            hint: t("sso.form.nameHint", { name: name.trim() === "" ? "…" : name.trim() }),
-          },
-        )}
-        {textInput(
-          "slug",
-          slug,
-          (value) => {
-            setSlug(value);
-            setSlugEdited(true);
-          },
-          {
-            label: t("sso.form.slug"),
-            mono: true,
-            readOnly: editing,
-            hint: t(editing ? "sso.form.slugFixed" : "sso.form.slugHint"),
-          },
-        )}
-        {textInput("issuer", issuer, setIssuer, {
-          label: t("sso.form.issuer"),
-          mono: true,
-          hint: t("sso.form.issuerHint"),
-        })}
-        <div className="sso-form__pair">
-          {textInput("clientId", clientId, setClientId, {
-            label: t("sso.form.clientId"),
-            mono: true,
-          })}
-          {textInput("clientSecret", clientSecret, setClientSecret, {
-            label: t("sso.form.clientSecret"),
-            mono: true,
-            type: "password",
-            hint:
-              editing && provider.oidc.clientSecretSet
-                ? t("sso.form.clientSecretKeep")
-                : t("sso.form.clientSecretHint"),
-          })}
-        </div>
-        <div className="field">
-          <label className="field__label" htmlFor={`${ids}-redirect`}>
-            {t("sso.form.redirectUri")}
-          </label>
-          <div className="sso-copy">
-            <input
-              id={`${ids}-redirect`}
-              className="input input--mono sso-copy__value"
-              value={redirectUri}
-              readOnly
-              aria-describedby={`${ids}-redirect-hint`}
-            />
+        {t("sso.form.issuerChangeText", { people: confirmIssuer ?? "" })}
+      </ConfirmDialog>
+      <Dialog
+        open
+        wide
+        title={
+          editing ? t("sso.form.editTitleFor", { name: provider.name }) : t("sso.form.addTitle")
+        }
+        onClose={onClose}
+        initialFocus={refs.name}
+        footer={
+          <div className="sso-dialog__footer">
             <button
               type="button"
-              className="button button--ghost button--small"
-              onClick={() => {
-                void writeClipboard(redirectUri).then((ok) => setCopied(ok));
-              }}
+              className="button button--secondary"
+              aria-disabled={busy !== null}
+              onClick={() => void onCheck()}
             >
-              <Icon name="copy" />
-              {t("sso.form.copy")}
+              <Icon name="refresh" />
+              {busy === "check" ? t("sso.form.checking") : t("sso.form.check")}
+            </button>
+            <button
+              type="button"
+              className="button button--secondary"
+              aria-disabled={busy !== null}
+              onClick={() => void onTest()}
+            >
+              <Icon name="external" />
+              {busy === "test" ? t("sso.form.testing") : t("sso.form.test")}
+            </button>
+            <span className="sso-dialog__spacer" />
+            <button type="button" className="button button--secondary" onClick={onClose}>
+              {t("admin.common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="button button--primary"
+              aria-disabled={!canSave || busy !== null}
+              aria-describedby={canSave ? undefined : `${ids}-save-hint`}
+              onClick={() => void onSave()}
+            >
+              {busy === "save" ? t("sso.form.saving") : t("sso.form.save")}
             </button>
           </div>
-          <p className="field__hint" id={`${ids}-redirect-hint`} role="status">
-            {copied ? t("sso.form.copied") : t("sso.form.redirectUriHint")}
-          </p>
-        </div>
-        <div className="sso-form__pair">
-          {textInput("groupsClaim", groupsClaim, setGroupsClaim, {
-            label: t("sso.form.groupsClaim"),
+        }
+      >
+        <form
+          className="form sso-form"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onSave();
+          }}
+        >
+          <div role="alert" aria-atomic="true">
+            {formError === undefined ? null : (
+              <p className="sso-alarm">
+                <Icon name="alert" />
+                <span>{formError}</span>
+              </p>
+            )}
+          </div>
+          {textInput(
+            "name",
+            name,
+            (value) => {
+              setName(value);
+              if (!slugEdited) {
+                setSlug(slugFrom(value));
+              }
+            },
+            {
+              label: t("sso.form.name"),
+              hint: t("sso.form.nameHint", { name: name.trim() === "" ? "…" : name.trim() }),
+            },
+          )}
+          {textInput(
+            "slug",
+            slug,
+            (value) => {
+              setSlug(value);
+              setSlugEdited(true);
+            },
+            {
+              label: t("sso.form.slug"),
+              mono: true,
+              readOnly: editing,
+              hint: t(editing ? "sso.form.slugFixed" : "sso.form.slugHint"),
+            },
+          )}
+          {textInput("issuer", issuer, setIssuer, {
+            label: t("sso.form.issuer"),
             mono: true,
+            hint: t("sso.form.issuerHint"),
           })}
-          {textInput("scopes", scopes, setScopes, {
-            label: t("sso.form.scopes"),
-            mono: true,
-            hint: t("sso.form.scopesHint"),
-          })}
-        </div>
-        <label className="sso-check">
-          <input
-            type="checkbox"
-            checked={createAccounts}
-            onChange={(event) => setCreateAccounts(event.currentTarget.checked)}
-          />
-          <span>
-            {t("sso.form.createAccounts")}
-            <span className="field__hint">{t("sso.form.createAccountsHint")}</span>
-          </span>
-        </label>
-        <div className="sso-switch-row">
-          <span className="sso-switch-row__text">
-            <span className="field__label" id={`${ids}-mfa`}>
-              {t("sso.form.trustMfa")}
-            </span>
-            <span className="field__hint" id={`${ids}-mfa-hint`}>
-              {t(trustMfa ? "sso.form.trustMfaOnHint" : "sso.form.trustMfaOffHint")}
-            </span>
-          </span>
-          <span className="sso-switch-row__control">
+          <div className="sso-form__pair">
+            {textInput("clientId", clientId, setClientId, {
+              label: t("sso.form.clientId"),
+              mono: true,
+            })}
+            {textInput("clientSecret", clientSecret, setClientSecret, {
+              label: t("sso.form.clientSecret"),
+              mono: true,
+              type: "password",
+              hint:
+                editing && provider.oidc.clientSecretSet
+                  ? t("sso.form.clientSecretKeep")
+                  : t("sso.form.clientSecretHint"),
+            })}
+          </div>
+          <div className="field">
+            <label className="field__label" htmlFor={`${ids}-redirect`}>
+              {t("sso.form.redirectUri")}
+            </label>
+            <div className="sso-copy">
+              <input
+                id={`${ids}-redirect`}
+                className="input input--mono sso-copy__value"
+                value={redirectUri}
+                readOnly
+                aria-describedby={`${ids}-redirect-hint`}
+              />
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                onClick={() => {
+                  void writeClipboard(redirectUri).then((ok) => setCopied(ok));
+                }}
+              >
+                <Icon name="copy" />
+                {t("sso.form.copy")}
+              </button>
+            </div>
+            <p className="field__hint" id={`${ids}-redirect-hint`} role="status">
+              {copied ? t("sso.form.copied") : t("sso.form.redirectUriHint")}
+            </p>
+          </div>
+          <div className="sso-form__pair">
+            {textInput("groupsClaim", groupsClaim, setGroupsClaim, {
+              label: t("sso.form.groupsClaim"),
+              mono: true,
+            })}
+            {textInput("scopes", scopes, setScopes, {
+              label: t("sso.form.scopes"),
+              mono: true,
+              hint: t("sso.form.scopesHint"),
+            })}
+          </div>
+          <label className="sso-check">
             <input
               type="checkbox"
-              role="switch"
-              className="settings-switch"
-              checked={trustMfa}
-              aria-checked={trustMfa}
-              aria-labelledby={`${ids}-mfa`}
-              aria-describedby={`${ids}-mfa-hint`}
-              onChange={(event) => setTrustMfa(event.currentTarget.checked)}
+              checked={createAccounts}
+              onChange={(event) => setCreateAccounts(event.currentTarget.checked)}
             />
-            <span>{t(trustMfa ? "sso.form.trustMfaOn" : "sso.form.trustMfaOff")}</span>
-          </span>
-        </div>
-        <div className="sso-advanced">
-          <button
-            type="button"
-            className="sso-advanced__toggle"
-            aria-expanded={advanced}
-            aria-controls={`${ids}-advanced`}
-            onClick={() => setAdvanced(!advanced)}
-          >
-            <Icon name={advanced ? "chevronDown" : "chevron"} />
-            {t("sso.form.advanced")}
-          </button>
-          <div id={`${ids}-advanced`} className="sso-advanced__body" hidden={!advanced}>
-            <div className="sso-form__pair">
-              {textInput("emailClaim", emailClaim, setEmailClaim, {
-                label: t("sso.form.emailClaim"),
-                mono: true,
-              })}
-              {textInput("nameClaim", nameClaim, setNameClaim, {
-                label: t("sso.form.nameClaim"),
-                mono: true,
-              })}
-            </div>
-            <label className="sso-check">
+            <span>
+              {t("sso.form.createAccounts")}
+              <span className="field__hint">{t("sso.form.createAccountsHint")}</span>
+            </span>
+          </label>
+          <div className="sso-switch-row">
+            <span className="sso-switch-row__text">
+              <span className="field__label" id={`${ids}-mfa`}>
+                {t("sso.form.trustMfa")}
+              </span>
+              <span className="field__hint" id={`${ids}-mfa-hint`}>
+                {t(trustMfa ? "sso.form.trustMfaOnHint" : "sso.form.trustMfaOffHint")}
+              </span>
+            </span>
+            <span className="sso-switch-row__control">
               <input
                 type="checkbox"
-                checked={pkce}
-                onChange={(event) => setPkce(event.currentTarget.checked)}
+                role="switch"
+                className="settings-switch"
+                checked={trustMfa}
+                aria-checked={trustMfa}
+                aria-labelledby={`${ids}-mfa`}
+                aria-describedby={`${ids}-mfa-hint`}
+                onChange={(event) => setTrustMfa(event.currentTarget.checked)}
               />
-              <span>
-                {t("sso.form.pkce")}
-                <span className="field__hint">{t("sso.form.pkceHint")}</span>
-              </span>
-            </label>
-            <label className="sso-check">
-              <input
-                type="checkbox"
-                checked={trustEmail}
-                onChange={(event) => setTrustEmail(event.currentTarget.checked)}
-              />
-              <span>
-                {t("sso.form.trustEmail")}
-                <span className="field__hint">{t("sso.form.trustEmailHint")}</span>
-              </span>
-            </label>
+              <span>{t(trustMfa ? "sso.form.trustMfaOn" : "sso.form.trustMfaOff")}</span>
+            </span>
           </div>
-        </div>
-        <div role="status" aria-atomic="true" className="sso-results">
-          {checkCurrent && checked !== null ? (
-            <p className="sso-note-ok">
-              <Icon name="check" />
-              <span>{checkText(t, checked.check)}</span>
+          <div className="sso-advanced">
+            <button
+              type="button"
+              className="sso-advanced__toggle"
+              aria-expanded={advanced}
+              aria-controls={`${ids}-advanced`}
+              onClick={() => setAdvanced(!advanced)}
+            >
+              <Icon name={advanced ? "chevronDown" : "chevron"} />
+              {t("sso.form.advanced")}
+            </button>
+            <div id={`${ids}-advanced`} className="sso-advanced__body" hidden={!advanced}>
+              <div className="sso-form__pair">
+                {textInput("emailClaim", emailClaim, setEmailClaim, {
+                  label: t("sso.form.emailClaim"),
+                  mono: true,
+                })}
+                {textInput("nameClaim", nameClaim, setNameClaim, {
+                  label: t("sso.form.nameClaim"),
+                  mono: true,
+                })}
+              </div>
+              <label className="sso-check">
+                <input
+                  type="checkbox"
+                  checked={pkce}
+                  onChange={(event) => setPkce(event.currentTarget.checked)}
+                />
+                <span>
+                  {t("sso.form.pkce")}
+                  <span className="field__hint">{t("sso.form.pkceHint")}</span>
+                </span>
+              </label>
+              <label className="sso-check">
+                <input
+                  type="checkbox"
+                  checked={trustEmail}
+                  onChange={(event) => setTrustEmail(event.currentTarget.checked)}
+                />
+                <span>
+                  {t("sso.form.trustEmail")}
+                  <span className="field__hint">{t("sso.form.trustEmailHint")}</span>
+                </span>
+              </label>
+            </div>
+          </div>
+          <div role="status" aria-atomic="true" className="sso-results">
+            {checkCurrent && checked !== null ? (
+              <p className="sso-note-ok">
+                <Icon name="check" />
+                <span>{checkText(t, checked.check)}</span>
+              </p>
+            ) : null}
+            {test === null ? null : (
+              <TestLine
+                t={t}
+                url={test.url}
+                blocked={blocked}
+                state={testResult}
+                error={testState.error}
+              />
+            )}
+          </div>
+          {canSave ? null : (
+            <p className="field__hint" id={`${ids}-save-hint`}>
+              {t("sso.form.saveNeedsCheck")}
             </p>
-          ) : null}
-          {test === null ? null : (
-            <TestLine
-              t={t}
-              url={test.url}
-              blocked={blocked}
-              state={testResult}
-              error={testState.error}
-            />
           )}
-        </div>
-        {canSave ? null : (
-          <p className="field__hint" id={`${ids}-save-hint`}>
-            {t("sso.form.saveNeedsCheck")}
-          </p>
-        )}
-      </form>
-    </Dialog>
+        </form>
+      </Dialog>
+    </>
   );
 }
 

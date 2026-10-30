@@ -333,8 +333,19 @@ export function handleSsoRoute(
       if (changed && tokens.get(String(input.checkToken ?? "")) !== connectionOf(input, provider)) {
         return refusal(422, "validation", "sso.check_required", "issuer");
       }
+      // Another issuer removes the links of the people, after a confirmation (docs/api/sso.md).
+      const issuer = (input.oidc as Input | undefined)?.issuer;
+      const issuerChanged = issuer !== provider.oidc.issuer;
+      if (issuerChanged && provider.people > 0 && input.confirmIssuerChange !== true) {
+        return refusal(409, "conflict", "sso.issuer_change_confirm", "issuer", {
+          people: provider.people,
+        });
+      }
       const updated = fromInput(state, input, provider.id, provider);
       Object.assign(provider, updated);
+      if (issuerChanged) {
+        provider.people = 0;
+      }
       return json(200, detail(provider));
     }
     if (method === "DELETE") {
