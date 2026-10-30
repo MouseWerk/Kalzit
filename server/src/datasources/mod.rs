@@ -1087,6 +1087,8 @@ pub struct DataSources {
     forget_hooks: std::sync::RwLock<Vec<ForgetHook>>,
     /// Answers of read-only queries (`cache`).
     cache: cache::QueryCache,
+    /// Tells the other servers on the same database what `forget` dropped (`cluster`).
+    publisher: std::sync::OnceLock<crate::cluster::Publisher>,
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
     pub(crate) test_settings: Mutex<BTreeMap<String, Value>>,
@@ -1114,6 +1116,7 @@ impl DataSources {
             blocked: std::sync::RwLock::default(),
             forget_hooks: std::sync::RwLock::default(),
             cache: cache::QueryCache::default(),
+            publisher: std::sync::OnceLock::new(),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
@@ -1150,7 +1153,12 @@ impl DataSources {
         !blocked.is_empty() && blocked.contains(&(org_id.to_string(), kind.to_string()))
     }
 
-    /// Replaces every block (at start).
+    /// Every block now, as (organization, kind).
+    pub fn blocks(&self) -> Vec<(String, String)> {
+        self.blocked.read().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+    }
+
+    /// Replaces every block (at start, and when another server changed them).
     pub fn set_blocks(&self, blocks: Vec<(String, String)>) {
         *self.blocked.write().unwrap_or_else(|e| e.into_inner()) = blocks.into_iter().collect();
     }
@@ -1210,9 +1218,24 @@ impl DataSources {
         Ok(Some(limit))
     }
 
+    /// Sends changes of data sources and rights to the other servers on the same database
+    /// (`cluster`).
+    pub fn set_publisher(&self, publisher: crate::cluster::Publisher) {
+        self.cache.set_publisher(publisher.clone());
+        let _ = self.publisher.set(publisher);
+    }
+
     /// Drops the cached connection and the kept answers after the source changed or went to the
-    /// trash.
+    /// trash, here and on the other servers on the same database.
     pub fn forget(&self, datasource_id: &str) {
+        self.forget_here(datasource_id);
+        if let Some(publish) = self.publisher.get() {
+            publish(crate::cluster::Change::Datasource(datasource_id.to_string()));
+        }
+    }
+
+    /// `forget` on this server only: another server reported the change.
+    pub fn forget_here(&self, datasource_id: &str) {
         self.cache.forget_datasource(datasource_id);
         for hook in self.forget_hooks.read().unwrap_or_else(|e| e.into_inner()).iter() {
             hook(datasource_id);
@@ -2287,8 +2310,8 @@ async fn run_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResu
         Err(_) => return Ok(failed(SourceError::Timeout(timeout.as_secs()), None)),
     };
     if !health.ok {
-        // The next query should not reuse a pool that just failed.
-        registry.forget(&ds.id);
+        // The next query should not reuse a pool that just failed (this server's own pool).
+        registry.forget_here(&ds.id);
     }
     let warnings = health_warnings(&health, &conn);
     let detail = health.detail.scrubbed(|t| conn.scrub(t));

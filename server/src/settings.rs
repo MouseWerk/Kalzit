@@ -13,8 +13,9 @@
 //!
 //! Organization settings are the `org_settings` table, then the default. A setting set in the
 //! environment or file is read-only in the UI. Database values are cached per process and the
-//! cache is dropped on every write; other server processes on the same database see a change
-//! within `CACHE_TTL_MS`.
+//! cache is dropped on every write; other server processes on the same database drop theirs when
+//! the change reaches them (`cluster`, usually within a second), and at the latest after
+//! `CACHE_TTL_MS`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
@@ -1071,7 +1072,18 @@ impl Cache {
         }
     }
 
-    /// Drops the cached rows of the server (`None`) or one organization.
+    /// Drops every cached row (another server may have changed anything while this one could
+    /// not hear about it).
+    pub fn invalidate_all_here(&self) {
+        let mut inner = self.lock();
+        inner.generation += 1;
+        inner.server = None;
+        inner.orgs.clear();
+    }
+
+    /// Drops the cached rows of the server (`None`) or one organization on this server. The
+    /// other servers on the same database learn of the write from `store` and `reset`, which
+    /// announce it in the write's transaction (`cluster::record`).
     pub fn invalidate(&self, org_id: Option<&str>) {
         let mut inner = self.lock();
         inner.generation += 1;
@@ -1261,6 +1273,11 @@ pub async fn reset(
         }
     }
     .rows_affected();
+    if affected == 1 {
+        // The other servers on the same database drop their copy (`cluster`); in this
+        // transaction, so the announcement exists exactly when the write does.
+        crate::cluster::record(conn, "", &crate::cluster::Change::Settings(org_id.map(str::to_string))).await?;
+    }
     Ok((affected == 1).then_some(next))
 }
 
@@ -1334,6 +1351,11 @@ pub async fn store(
             }
         }
         .rows_affected();
+    if affected == 1 {
+        // The other servers on the same database drop their copy (`cluster`); in this
+        // transaction, so the announcement exists exactly when the write does.
+        crate::cluster::record(conn, "", &crate::cluster::Change::Settings(org_id.map(str::to_string))).await?;
+    }
     Ok((affected == 1).then_some(next))
 }
 

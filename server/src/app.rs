@@ -90,6 +90,9 @@ pub struct AppState {
     /// Automatic HTTPS certificates (`acme`): their settings, the served certificate and the
     /// challenge answers.
     pub acme: Arc<crate::acme::Acme>,
+    /// This server among the servers on the same database: leader, run-once jobs and the
+    /// changes they announce to each other (`cluster`).
+    pub cluster: Arc<crate::cluster::Cluster>,
     /// Usage counts waiting to be written (`usage`).
     pub usage: Arc<crate::usage::Usage>,
 }
@@ -113,6 +116,10 @@ impl AppState {
         let setup_limiter = login(Capacity::SMALL);
         let setup_all_limiter = RateLimiter::new(sec.setup_max_failures, sec.setup_window_secs, Capacity::SMALL);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
+        // The node id, and the moment before anything shared is loaded: with several servers on one
+        // database, what changes from now on is replayed and compared (`cluster::boot`).
+        let cluster = Arc::new(crate::cluster::Cluster::new());
+        crate::cluster::boot(&cluster, &db, &config.database_url(), &config.paths.data_dir).await?;
         let acme = Arc::new(crate::acme::Acme::load(&config, &secrets, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
         let plugins = Arc::new(
@@ -173,6 +180,7 @@ impl AppState {
             ai: Arc::default(),
             plugins,
             acme,
+            cluster,
             usage: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
@@ -186,6 +194,8 @@ impl AppState {
     /// files in the data directory stay open, and Windows cannot delete them (tests delete their
     /// temporary data directory right after).
     pub async fn close(&self) {
+        // First, while the database is open: the next server takes over the lead at once.
+        crate::cluster::stop(self).await;
         // Live connections are not requests the listeners wait for; they are told to close.
         self.live.shutdown(crate::live::SHUTDOWN_WAIT).await;
         self.plugins.shutdown().await;

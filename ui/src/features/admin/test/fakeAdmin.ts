@@ -1,5 +1,6 @@
 import type { FakeServer } from "../../../test/fakeServer";
 import { TEST_PASSWORD } from "../../../test/fakeServer";
+import type { ClusterView } from "../server/instancesApi";
 
 /**
  * The administration routes of the fake server (test/fakeServer.ts registers them), written from
@@ -138,6 +139,8 @@ export interface FakeAdminState {
     hits: number;
     misses: number;
   };
+  /** The servers on the database (`/api/admin/instances`). */
+  instances: ClusterView;
 }
 
 const DAY = 86_400_000;
@@ -408,6 +411,53 @@ function initialState(server: FakeServer): FakeAdminState {
       bytes: 3_400_000,
       hits: 30,
       misses: 10,
+    },
+    instances: {
+      mode: "cluster",
+      database: "postgres",
+      transport: "notify",
+      leaderSince: T0,
+      leaderTerm: 3,
+      heartbeatSecs: 5,
+      leaseSecs: 15,
+      instances: [
+        {
+          id: "0196f2c1-aaaa-7000-8000-000000000001",
+          host: "kalzit-a",
+          version: "0.5.0",
+          address: "0.0.0.0:3000",
+          startedAt: T0,
+          heartbeatAt: T0 + DAY,
+          stoppedAt: null,
+          alive: true,
+          leader: true,
+          current: true,
+        },
+        {
+          id: "0196f2c1-bbbb-7000-8000-000000000002",
+          host: "kalzit-b",
+          version: "0.4.1",
+          address: "0.0.0.0:3000",
+          startedAt: T0,
+          heartbeatAt: T0 + DAY,
+          stoppedAt: null,
+          alive: true,
+          leader: false,
+          current: false,
+        },
+        {
+          id: "0196f2c1-cccc-7000-8000-000000000003",
+          host: "kalzit-c",
+          version: "0.4.1",
+          address: "0.0.0.0:3000",
+          startedAt: T0,
+          heartbeatAt: T0,
+          stoppedAt: T0 + 1000,
+          alive: false,
+          leader: false,
+          current: false,
+        },
+      ],
     },
   };
 }
@@ -1301,6 +1351,9 @@ function handleServerAdmin(
   search: URLSearchParams,
 ): Response {
   const [, , , area = "", id] = path.split("/").map(decodeURIComponent);
+  if (area === "instances" && id === undefined && method === "GET") {
+    return json(200, state.instances);
+  }
   if (area === "query-cache" && id === undefined) {
     if (method === "GET") {
       return json(200, state.queryCache);

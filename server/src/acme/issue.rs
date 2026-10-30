@@ -27,6 +27,73 @@ pub struct Context<'a> {
     pub db_url: &'a str,
     pub keyring: &'a Keyring,
     pub now_ms: i64,
+    /// Several servers on one database (`cluster`): the challenge answers go to the database
+    /// too, so the server the certificate authority reaches answers.
+    pub shared: Option<Shared<'a>>,
+}
+
+pub struct Shared<'a> {
+    pub state: &'a crate::app::AppState,
+    /// This order's id: its rows in `acme_challenges` carry it, and only they are removed.
+    pub order_id: String,
+}
+
+/// How long the leader waits for the other servers to serve a shared answer before it lets the
+/// CA validate (they load it when the change reaches them, at once by NOTIFY, else at their
+/// next poll); past that the order goes on and a server that is behind may fail the validation.
+const SPREAD_WAIT: Duration = Duration::from_secs(30);
+
+impl Shared<'_> {
+    async fn answer(&self, kind: &str, name: &str, value: &str, now_ms: i64) -> Result<(), Failure> {
+        let db = &self.state.db;
+        let not_shared = |e: sqlx::Error| {
+            Failure::new("acme.challenge_not_shared", format!("sharing the challenge answer: {e}")).with("detail", e)
+        };
+        // The answer and its announcement in one transaction (`cluster::record`).
+        let write = async {
+            let mut tx = crate::db::begin(db).await?;
+            sqlx::query(
+                "INSERT INTO acme_challenges (kind, name, value, order_id, created_at) VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (kind, name) DO UPDATE SET value = excluded.value, order_id = excluded.order_id, \
+                 created_at = excluded.created_at",
+            )
+            .bind(kind)
+            .bind(name)
+            .bind(value)
+            .bind(&self.order_id)
+            .bind(now_ms)
+            .execute(&mut *tx)
+            .await?;
+            crate::cluster::record(&mut tx, self.state.cluster.id(), &crate::cluster::Change::AcmeChallenges).await?;
+            crate::db::commit(tx).await
+        };
+        write.await.map_err(not_shared)?;
+        // Every running server confirms that it serves the answers as they are now.
+        let rows = super::challenge_rows(db).await.map_err(not_shared)?;
+        let fingerprint = super::challenge_fingerprint(&rows);
+        if !crate::cluster::await_challenges(self.state, &fingerprint, SPREAD_WAIT).await {
+            tracing::warn!(
+                "not every server confirmed the challenge answer for {name} within {SPREAD_WAIT:?}; validating anyway"
+            );
+        }
+        Ok(())
+    }
+
+    /// Removes this order's shared answers.
+    async fn clear(&self) {
+        let removed = async {
+            let mut tx = crate::db::begin(&self.state.db).await?;
+            sqlx::query("DELETE FROM acme_challenges WHERE order_id = $1")
+                .bind(&self.order_id)
+                .execute(&mut *tx)
+                .await?;
+            crate::cluster::record(&mut tx, self.state.cluster.id(), &crate::cluster::Change::AcmeChallenges).await?;
+            crate::db::commit(tx).await
+        };
+        if let Err(e) = removed.await {
+            tracing::warn!("removing the shared challenge answers: {e}");
+        }
+    }
 }
 
 /// Orders a certificate for `settings`. The challenge answers are removed again whatever
@@ -35,6 +102,9 @@ pub async fn obtain(acme: &Acme, settings: &AcmeSettings, cx: &Context<'_>) -> R
     let mut answered = Answered { acme, http: Vec::new(), alpn: Vec::new() };
     let result = order(acme, settings, cx, &mut answered).await;
     drop(answered);
+    if let Some(shared) = &cx.shared {
+        shared.clear().await;
+    }
     result
 }
 
@@ -109,12 +179,19 @@ async fn order(
             Challenge::Http01 => {
                 acme.add_http_challenge(&challenge.token, key_authorization.as_str());
                 answered.http.push(challenge.token.clone());
+                if let Some(shared) = &cx.shared {
+                    shared.answer("http", &challenge.token, key_authorization.as_str(), cx.now_ms).await?;
+                }
             }
             Challenge::TlsAlpn01 => {
+                let digest = key_authorization.digest();
                 acme.certificates
-                    .add_challenge(&domain, key_authorization.digest().as_ref())
+                    .add_challenge(&domain, digest.as_ref())
                     .map_err(|e| Failure::new("acme.certificate_failed", format!("{e:#}")))?;
                 answered.alpn.push(domain.clone());
+                if let Some(shared) = &cx.shared {
+                    shared.answer("alpn", &domain, &hex::encode(digest.as_ref()), cx.now_ms).await?;
+                }
             }
         }
         challenge.set_ready().await.map_err(|e| failure("acme.validation_failed", e).with("domain", &domain))?;

@@ -18,7 +18,7 @@ pub mod settings;
 pub mod store;
 pub mod transport;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -45,6 +45,12 @@ const BACKOFF_MINUTES: [i64; 6] = [5, 15, 60, 180, 360, 720];
 /// The background task looks again at least this often (a changed clock, a missed wake-up).
 const MAX_SLEEP: Duration = Duration::from_secs(3600);
 const DNS_TIMEOUT: Duration = Duration::from_secs(10);
+/// A server that does not lead looks this often whether it leads now.
+const NOT_LEADING_RECHECK: Duration = Duration::from_secs(10);
+/// The claim of a certificate order among several servers (`cluster::leader_claim`): one at a
+/// time, held for longer than an order can take (validation and issuing get 2 minutes each).
+const ORDER_JOB: &str = "acme:order";
+const ORDER_LEASE: Duration = Duration::from_secs(15 * 60);
 
 /// Why an order failed or a check found a problem, with a reason the UI translates.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -177,12 +183,32 @@ pub struct Acme {
     http: Mutex<HashMap<String, String>>,
     runtime: Mutex<Runtime>,
     wake: tokio::sync::Notify,
+    /// TLS-ALPN-01 answers this server serves for the leader's order (`sync_challenges`).
+    shared_alpn: Mutex<HashSet<String>>,
+    /// HTTP-01 tokens this server answers for the leader's order (`sync_challenges`).
+    shared_http: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for Acme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Acme").finish_non_exhaustive()
     }
+}
+
+/// The shared challenge answers (`acme_challenges`) as (kind, name, value), in a fixed order.
+pub async fn challenge_rows(db: &sqlx::AnyPool) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    sqlx::query_as("SELECT kind, name, value FROM acme_challenges ORDER BY kind, name").fetch_all(db).await
+}
+
+/// What the leader and the other servers compare to know that a server serves the shared
+/// answers as they are now (`cluster::await_challenges`).
+pub fn challenge_fingerprint(rows: &[(String, String, String)]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for (kind, name, value) in rows {
+        hash.update(format!("{kind}\t{name}\t{value}\n").as_bytes());
+    }
+    hex::encode(hash.finalize())
 }
 
 /// When a certificate is renewed: once two thirds of its lifetime have passed (30 days before
@@ -222,6 +248,12 @@ impl Acme {
     /// server starts with what it has.
     pub async fn load(config: &Config, keyring: &Keyring, db: &sqlx::AnyPool) -> anyhow::Result<Self> {
         let (settings, version) = load_settings(db).await?;
+        // On PostgreSQL another server may have ordered the certificate (`store::share`).
+        if !config.database_url().starts_with("sqlite:")
+            && let Err(e) = store::pull(db, &config.paths.data_dir).await
+        {
+            tracing::warn!("taking the certificate the other servers share: {e:#}");
+        }
         let certificate = match store::load_certificate(&config.paths.data_dir, keyring) {
             Ok(c) => c,
             Err(e) => {
@@ -259,6 +291,8 @@ impl Acme {
             http: Mutex::default(),
             runtime: Mutex::new(runtime),
             wake: tokio::sync::Notify::new(),
+            shared_alpn: Mutex::default(),
+            shared_http: Mutex::default(),
         })
     }
 
@@ -411,9 +445,115 @@ impl Acme {
         }
     }
 
+    /// Several servers on one database (`cluster`): copies the stored account and certificate
+    /// into the database and tells the other servers. Nothing for a server alone.
+    async fn share(&self, state: &AppState) -> anyhow::Result<()> {
+        if !state.cluster.coordinated() {
+            return Ok(());
+        }
+        // The copies and their announcement in one transaction (`cluster::record`).
+        let mut tx = crate::db::begin(&state.db).await?;
+        store::share(&mut tx, &state.config.paths.data_dir, state.clock.now_ms()).await?;
+        crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Acme).await?;
+        crate::db::commit(tx).await?;
+        Ok(())
+    }
+
+    /// Takes what another server changed: the saved settings and the certificate it ordered
+    /// (`store::pull`), served from the next handshake on.
+    pub async fn refresh_shared(&self, state: &AppState) {
+        if !state.cluster.coordinated() {
+            return;
+        }
+        match load_settings(&state.db).await {
+            Ok((settings, version)) if version != self.settings().1 => self.apply_saved(settings, version),
+            Ok(_) => {}
+            Err(e) => tracing::warn!("reading the ACME settings another server saved: {e:#}"),
+        }
+        if let Err(e) = store::pull(&state.db, &state.config.paths.data_dir).await {
+            tracing::warn!("taking the certificate the other servers share: {e:#}");
+            return;
+        }
+        let certificate = match store::load_certificate(&state.config.paths.data_dir, &state.secrets) {
+            Ok(Some(c)) => c,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!("the certificate another server shared cannot be used: {e:#}");
+                return;
+            }
+        };
+        let mut rt = self.lock();
+        if rt.certificate.as_ref() == Some(&certificate) {
+            return;
+        }
+        match self.certificates.set(&certificate.chain_pem, &certificate.key_pem) {
+            Ok(()) => {
+                tracing::info!(
+                    "serving the HTTPS certificate another server ordered, valid until {}",
+                    certificate.not_after_ms
+                );
+                rt.certificate = Some(certificate);
+                rt.store_retry = None;
+                rt.store_error = None;
+            }
+            Err(e) => tracing::warn!("the certificate another server shared cannot be served: {e:#}"),
+        }
+    }
+
+    /// Serves the challenge answers of the leader's running order (`acme_challenges`), so the
+    /// server the certificate authority reaches answers it: HTTP-01 answers go into this server's
+    /// own token map, TLS-ALPN-01 answers into the resolver, both in memory, so a validation never
+    /// waits for the database. Then confirms to the leader which answers this server serves
+    /// (`cluster::ack_challenges`), which it waits for before the CA validates.
+    pub async fn sync_challenges(&self, state: &AppState) {
+        let rows = match challenge_rows(&state.db).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!("reading the challenge answers of the other servers: {e}");
+                return;
+            }
+        };
+        let fingerprint = challenge_fingerprint(&rows);
+        {
+            let mut tokens = self.shared_http.lock().unwrap_or_else(|p| p.into_inner());
+            let mut http = self.lock_http();
+            let wanted: HashSet<&str> =
+                rows.iter().filter(|(kind, _, _)| kind == "http").map(|(_, token, _)| token.as_str()).collect();
+            for gone in tokens.iter().filter(|t| !wanted.contains(t.as_str())) {
+                http.remove(gone);
+            }
+            tokens.clear();
+            for (_, token, answer) in rows.iter().filter(|(kind, _, _)| kind == "http") {
+                if is_token(token) {
+                    http.insert(token.clone(), answer.clone());
+                    tokens.insert(token.clone());
+                }
+            }
+        }
+        {
+            let mut served = self.shared_alpn.lock().unwrap_or_else(|p| p.into_inner());
+            let wanted: HashSet<String> =
+                rows.iter().filter(|(kind, _, _)| kind == "alpn").map(|(_, domain, _)| domain.clone()).collect();
+            for gone in served.difference(&wanted) {
+                self.certificates.remove_challenge(gone);
+            }
+            served.clear();
+            for (_, domain, digest) in rows.into_iter().filter(|(kind, _, _)| kind == "alpn") {
+                let Ok(digest) = hex::decode(&digest) else { continue };
+                match self.certificates.add_challenge(&domain, &digest) {
+                    Ok(()) => {
+                        served.insert(domain);
+                    }
+                    Err(e) => tracing::warn!("answering the TLS-ALPN-01 challenge for {domain}: {e:#}"),
+                }
+            }
+        }
+        crate::cluster::ack_challenges(state, &fingerprint).await;
+    }
+
     /// Stores a certificate that is served but could not be stored, once its pause is over; an
     /// order is not repeated for it, and renewing it when due goes on regardless.
-    fn retry_store(&self, state: &AppState, now: i64) {
+    async fn retry_store(&self, state: &AppState, now: i64) {
         let (tries, certificate) = {
             let rt = self.lock();
             match rt.store_retry {
@@ -422,7 +562,10 @@ impl Acme {
             }
         };
         let Some(certificate) = certificate else { return };
-        let stored = store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate);
+        let stored = match store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate) {
+            Ok(()) => self.share(state).await,
+            Err(e) => Err(e),
+        };
         let mut rt = self.lock();
         match stored {
             Ok(()) => {
@@ -439,15 +582,30 @@ impl Acme {
 
     /// Orders a certificate when one is due. Runs in the background task only.
     async fn tick(&self, state: &AppState) {
+        // A new leader first takes what the previous one ordered and stored.
+        self.refresh_shared(state).await;
         let now = state.clock.now_ms();
-        self.retry_store(state, now);
+        self.retry_store(state, now).await;
+        if !Self::due(&self.lock(), now) {
+            return;
+        }
+        // Several servers: one order at a time across all of them, only while the lease holds in
+        // the database (a leader that paused past its lease does not order on an old belief).
+        if !crate::cluster::leader_claim(state, ORDER_JOB, Duration::ZERO, ORDER_LEASE).await {
+            return;
+        }
         let settings = {
             let mut rt = self.lock();
-            if !Self::due(&rt, now) {
-                return;
+            if Self::due(&rt, now) {
+                rt.working = true;
+                Some(rt.settings.clone())
+            } else {
+                None
             }
-            rt.working = true;
-            rt.settings.clone()
+        };
+        let Some(settings) = settings else {
+            crate::cluster::leader_done(state, ORDER_JOB).await;
+            return;
         };
         tracing::info!(
             "ordering an HTTPS certificate for {} from {}",
@@ -459,6 +617,10 @@ impl Acme {
             db_url: &state.config.database_url(),
             keyring: &state.secrets,
             now_ms: now,
+            shared: state
+                .cluster
+                .coordinated()
+                .then(|| issue::Shared { state, order_id: uuid::Uuid::now_v7().to_string() }),
         };
         // A certificate counts only once it is served.
         let outcome = issue::obtain(self, &settings, &cx).await.and_then(|certificate| {
@@ -472,7 +634,10 @@ impl Acme {
             Ok(certificate) => {
                 // Not stored, it stays in use from memory and storing is retried after a pause;
                 // the CA is not asked again for it until it is due for renewal.
-                let stored = store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate);
+                let stored = match store::save_certificate(&state.config.paths.data_dir, &state.secrets, &certificate) {
+                    Ok(()) => self.share(state).await,
+                    Err(e) => Err(e),
+                };
                 if let Err(e) = &stored {
                     tracing::error!("the new HTTPS certificate is served but could not be stored: {e:#}");
                 }
@@ -533,6 +698,7 @@ impl Acme {
                 record(state, "tls.certificate_failed", summary).await;
             }
         }
+        crate::cluster::leader_done(state, ORDER_JOB).await;
         let mut rt = self.lock();
         rt.working = false;
         rt.forced = false;
@@ -670,7 +836,10 @@ pub async fn http_challenge(State(state): State<AppState>, Path(token): Path<Str
     if !is_token(&token) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match state.acme.lock_http().get(&token).cloned() {
+    // Memory only: with several servers on one database, the leader's answers are loaded here
+    // before it lets the CA validate (`Acme::sync_challenges`).
+    let answer = state.acme.lock_http().get(&token).cloned();
+    match answer {
         Some(answer) => ([(header::CONTENT_TYPE, "application/octet-stream")], answer).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
@@ -682,11 +851,20 @@ pub fn spawn(state: AppState) {
     let background = state.background.clone();
     background.spawn(async move {
         loop {
-            let wait = state.acme.sleep_for(state.clock.now_ms());
+            // Several servers on one database: only the leader orders; the others look again
+            // shortly, to take over when it goes.
+            let leads = state.cluster.is_leader();
+            let mut wait = state.acme.sleep_for(state.clock.now_ms());
+            if !leads {
+                wait = wait.max(Duration::from_secs(1)).min(NOT_LEADING_RECHECK);
+            }
             tokio::select! {
                 () = stopping.cancelled() => return,
                 () = state.acme.wake.notified() => {}
                 () = tokio::time::sleep(wait) => {}
+            }
+            if !state.cluster.is_leader() {
+                continue;
             }
             tokio::select! {
                 () = stopping.cancelled() => return,
@@ -774,6 +952,8 @@ mod tests {
             http: Mutex::default(),
             runtime: Mutex::new(rt),
             wake: tokio::sync::Notify::new(),
+            shared_alpn: Mutex::default(),
+            shared_http: Mutex::default(),
         }
     }
 
