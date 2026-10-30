@@ -36,19 +36,45 @@ $license = (Resolve-Path (Join-Path $PSScriptRoot '..\..\LICENSE')).Path
 $outDir = Split-Path -Parent $Out
 if ($outDir) { New-Item -ItemType Directory -Force $outDir | Out-Null }
 
-$command = $Wix[0]
-$arguments = @($Wix | Select-Object -Skip 1) + @(
-    'build',
-    '-arch', 'x64',
-    '-culture', 'en-US',
-    '-ext', $UiExtension,
-    '-d', "Version=$msiVersion",
-    '-d', "ExePath=$exePath",
-    '-d', "LicensePath=$license",
-    '-o', $Out,
-    (Join-Path $PSScriptRoot 'Kalzit.wxs'),
-    (Join-Path $PSScriptRoot 'KalzitUI.wxs')
-)
-& $command @arguments
-if ($LASTEXITCODE -ne 0) { throw "wix build failed with exit code $LASTEXITCODE" }
-Write-Host "built $Out (MSI version $msiVersion)"
+. (Join-Path $PSScriptRoot 'language.ps1')
+
+# One product code for every language of this build, so a language transform changes only texts.
+$productCode = '{' + [guid]::NewGuid().ToString().ToUpperInvariant() + '}'
+
+function Build-Package([string] $Culture, [string] $Path) {
+    $command = $Wix[0]
+    $arguments = @($Wix | Select-Object -Skip 1) + @(
+        'build',
+        '-arch', 'x64',
+        '-culture', $Culture,
+        '-ext', $UiExtension,
+        '-loc', (Join-Path $PSScriptRoot 'Kalzit.en-US.wxl'),
+        '-loc', (Join-Path $PSScriptRoot 'Kalzit.de-DE.wxl'),
+        '-d', "Version=$msiVersion",
+        '-d', "ProductCode=$productCode",
+        '-d', "ExePath=$exePath",
+        '-d', "LicensePath=$license",
+        '-o', $Path,
+        (Join-Path $PSScriptRoot 'Kalzit.wxs'),
+        (Join-Path $PSScriptRoot 'KalzitUI.wxs')
+    )
+    & $command @arguments
+    if ($LASTEXITCODE -ne 0) { throw "wix build ($Culture) failed with exit code $LASTEXITCODE" }
+}
+
+# English is the package itself; German goes inside it as the transform 1031, which Windows
+# Installer applies on its own when the Windows display language is German. The release keeps
+# one MSI file.
+$work = Join-Path ([IO.Path]::GetTempPath()) ("kalzit-msi-build-" + [guid]::NewGuid())
+New-Item -ItemType Directory $work | Out-Null
+try {
+    Build-Package 'en-US' $Out
+    $german = Join-Path $work 'kalzit-de-DE.msi'
+    Build-Package 'de-DE' $german
+    $transformSize = Add-LanguageTransform -Base (Resolve-Path $Out).Path -Localized $german -LanguageId 1031 -Work $work
+    # Texts only: a transform this large would carry a second copy of the program or the cabinet.
+    if ($transformSize -gt 1MB) { throw "the German transform has $transformSize bytes; it should hold texts only" }
+} finally {
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $work
+}
+Write-Host "built $Out (MSI version $msiVersion; languages $((Get-PackageLanguages (Resolve-Path $Out).Path) -join ', '); German transform $transformSize bytes)"
