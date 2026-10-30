@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The installer's own texts in English; the WixUI dialogs bring theirs. German: Kalzit.de-DE.wxl. -->
+<WixLocalization Culture="en-US" Codepage="1252" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="KalzitLanguage" Value="1033" />
+  <String Id="KalzitDowngrade" Value="A newer version of Kalzit is already installed." />
+  <String Id="KalzitQuoteInSetting" Value="A setting contains a quote (&quot;), which no folder, file or value of Kalzit may contain." />
+
+  <String Id="KalzitSettingsTitle" Value="Server settings" />
+  <String Id="KalzitSettingsDescription" Value="Where Kalzit listens and keeps its data. You can change this later in kalzit.toml." />
+  <String Id="KalzitPortLabel" Value="HTTP &amp;port:" />
+  <String Id="KalzitDataLabel" Value="&amp;Data folder:" />
+  <String Id="KalzitDataNote" Value="Only Administrators and the service account get access." />
+  <String Id="KalzitHttpsLabel" Value="HTTPS:" />
+  <String Id="KalzitHttpsOff" Value="&amp;Off (HTTP only)" />
+  <String Id="KalzitHttpsSelfSigned" Value="&amp;Self-signed certificate for this computer" />
+  <String Id="KalzitHttpsCertificate" Value="&amp;Existing certificate (PEM files)" />
+  <String Id="KalzitHttpsPortLabel" Value="HTTPS p&amp;ort:" />
+  <String Id="KalzitCertLabel" Value="&amp;Certificate file:" />
+  <String Id="KalzitKeyLabel" Value="&amp;Key file:" />
+  <String Id="KalzitFirewall" Value="Open the port(s) in Windows Defender &amp;Firewall" />
+  <String Id="KalzitCertMissing" Value="Enter the certificate and key file." />
+
+  <String Id="KalzitRemoveTitle" Value="Remove Kalzit" />
+  <String Id="KalzitRemoveDescription" Value="The program and the service go. Your data stays unless you choose otherwise." />
+  <String Id="KalzitRemoveText" Value="Kalzit keeps its database, dashboards, data sources, logs and the key for stored passwords in its data folder, named in [CommonAppDataFolder]Kalzit\kalzit.toml. Kept, they are used again when you install Kalzit later." />
+  <String Id="KalzitRemoveData" Value="Also &amp;remove the data folder and the configuration (cannot be undone)" />
+
+  <String Id="KalzitExitNew" Value="Kalzit runs as the Windows service &quot;Kalzit&quot;. Open http://localhost:[PORT] in a browser. The setup code for the first sign-in is in [DATADIR]\setup-token.txt, which only administrators can open (for example Get-Content in PowerShell opened with Run as administrator)." />
+  <String Id="KalzitExitKept" Value="Kalzit runs as the Windows service &quot;Kalzit&quot; with the settings of its existing kalzit.toml." />
+</WixLocalization>

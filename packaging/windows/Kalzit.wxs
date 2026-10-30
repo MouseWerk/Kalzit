@@ -21,22 +21,27 @@
   Settings (wizard or msiexec properties, see the guide): PORT, DATADIR, HTTPS (off, self-signed,
   certificate), HTTPSPORT, CERTFILE, KEYFILE, FIREWALL, SELFUPDATE; REMOVEDATA when uninstalling.
   An existing %ProgramData%\Kalzit\kalzit.toml is kept, so an upgrade keeps its settings.
+
+  Texts: Kalzit.en-US.wxl and Kalzit.de-DE.wxl. build.ps1 builds the package per language with the
+  same product code and stores German inside the English package as a language transform
+  (language.ps1), which Windows applies on a German Windows.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
       Name="Kalzit"
       Manufacturer="MouseWerk"
       Version="$(Version)"
+      ProductCode="$(ProductCode)"
       UpgradeCode="1D4828C2-1200-4926-BC6E-4959850AE762"
       Scope="perMachine"
       Compressed="yes"
-      Language="1033">
+      Language="!(loc.KalzitLanguage)">
     <SummaryInformation Description="Kalzit $(Version): visualize and analyze your data" />
 
     <!-- The previous version goes completely before the new one is installed: kalzit.exe may
          have been replaced by Kalzit's own updater since, and its files and service are put in
          place fresh. The configuration and the data are not part of the package and stay. -->
-    <MajorUpgrade Schedule="afterInstallValidate" DowngradeErrorMessage="A newer version of Kalzit is already installed." />
+    <MajorUpgrade Schedule="afterInstallValidate" DowngradeErrorMessage="!(loc.KalzitDowngrade)" />
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/MouseWerk/Kalzit" />
@@ -61,7 +66,7 @@
     <Property Id="KALZITQUOTE" Value="&quot;" />
     <Launch
         Condition="Installed OR NOT (DATADIR &gt;&lt; KALZITQUOTE OR CERTFILE &gt;&lt; KALZITQUOTE OR KEYFILE &gt;&lt; KALZITQUOTE OR PORT &gt;&lt; KALZITQUOTE OR HTTPS &gt;&lt; KALZITQUOTE OR HTTPSPORT &gt;&lt; KALZITQUOTE OR FIREWALL &gt;&lt; KALZITQUOTE OR SELFUPDATE &gt;&lt; KALZITQUOTE OR INSTALLFOLDER &gt;&lt; KALZITQUOTE)"
-        Message="A setting contains a quote (&quot;), which no folder, file or value of Kalzit may contain." />
+        Message="!(loc.KalzitQuoteInSetting)" />
 
     <!-- An existing configuration is kept; the wizard then skips the settings. -->
     <Property Id="CONFIGEXISTS">

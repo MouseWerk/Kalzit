@@ -5,7 +5,7 @@
   data folder with a file others may read), then service running as NT SERVICE\Kalzit with only
   SeChangeNotifyPrivilege, HTTP health, data and program folder access lists, firewall rule,
   recovery actions, a graceful stop, an uninstallation that keeps the data, a reinstallation on the
-  kept data, an uninstallation that removes it, and the same through `kalzit service install|uninstall`.
+  kept data with the German transform, an uninstallation that removes it, and the same through `kalzit service install|uninstall`.
 
   Only for a disposable machine (the CI job `msi`): it installs and removes a Windows service.
 #>
@@ -208,8 +208,12 @@ Invoke-MsiRefused @('/i', $Msi) 'refused-data-folder.log' 'was not private to Ka
 icacls $logsFolder /remove:g '*S-1-5-32-545' | Out-Null
 EndStep
 
-Step 'Reinstall on the kept data, then uninstall with REMOVEDATA=1'
-Invoke-Msi @('/i', $Msi, 'PORT=1', 'SELFUPDATE=1') 'reinstall.log'
+Step 'Reinstall on the kept data in German, then uninstall with REMOVEDATA=1'
+# TRANSFORMS=:1031 applies the embedded German transform, as Windows does on a German Windows.
+Invoke-Msi @('/i', $Msi, 'TRANSFORMS=:1031', 'PORT=1', 'SELFUPDATE=1') 'reinstall.log'
+if (-not (Select-String -Path (Join-Path $Logs 'reinstall.log') -Pattern 'ProductLanguage = 1031' -SimpleMatch -Quiet)) {
+    Fail 'the German transform was not applied'
+}
 Assert-Running | Out-Null
 # The kept configuration wins over the PORT given now.
 Wait-Ready "http://127.0.0.1:$Port/readyz"
