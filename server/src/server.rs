@@ -318,6 +318,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     crate::routes::audit::spawn_retention(state.clone());
     crate::routes::explore_history::spawn_retention(state.clone());
     crate::routes::datasources::spawn_trash_purge(state.clone());
+    crate::sso::spawn_cleanup(state.clone());
     crate::ai::chats::spawn_retention(state.clone());
     crate::usage::spawn_flusher(state.clone());
     crate::usage::spawn_retention(state.clone());

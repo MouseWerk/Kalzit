@@ -250,6 +250,25 @@
     white-space: nowrap;
   }
 
+  /* A role a group mapping of the identity provider sets: the role and a lock with its reason. */
+  .admin-row__locked {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .admin-row__lock {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .admin-row__lock .icon {
+    width: var(--font-size-md);
+    height: var(--font-size-md);
+  }
+
   .admin-tags {
     display: flex;
     flex-wrap: wrap;

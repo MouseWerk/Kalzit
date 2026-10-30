@@ -2,7 +2,13 @@
 // pointed somewhere else and is rejected. ".invalid" can never be a real host (RFC 2606).
 const BASE = "http://kalzit.invalid";
 
-const AUTH_PATHS = new Set(["/login", "/setup"]);
+const AUTH_PATHS = new Set([
+  "/login",
+  "/setup",
+  "/anmelden",
+  "/anmelden/lokal",
+  "/anmelden/sso-test",
+]);
 
 /**
  * Returns a same-origin path to go back to after signing in, or undefined. Rejects absolute and

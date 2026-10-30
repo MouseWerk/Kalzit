@@ -36,6 +36,7 @@ pub mod query;
 pub mod query_cache;
 pub mod roles;
 pub mod setup;
+pub mod sso;
 pub mod support;
 pub mod table;
 pub mod team_context;
@@ -54,6 +55,7 @@ pub fn all() -> Vec<table::RouteDef> {
         setup::routes(),
         about::routes(),
         auth::routes(),
+        sso::routes(),
         orgs::routes(),
         admin_settings::routes(),
         acme::routes(),
@@ -198,6 +200,12 @@ mod access_guard {
         "POST /setup/check",
         "POST /auth/login",
         "POST /auth/logout",
+        // Single sign-on (docs/api/sso.md): the buttons of the sign-in page, the start of a sign-in
+        // through a provider (rate-limited per address) and the break-glass form (its own limit on
+        // top of the sign-in limits).
+        "GET /auth/providers",
+        "GET /auth/sso/{slug}/start",
+        "POST /auth/login/local",
         // What the sign-in page shows anyway: product name, logo, sign-in texts and default look.
         "GET /branding",
         "GET /branding/logo",

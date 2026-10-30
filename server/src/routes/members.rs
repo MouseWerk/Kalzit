@@ -40,10 +40,25 @@ pub struct Member {
     /// A built-in role name or a custom role id.
     role: String,
     joined_at: i64,
+    /// An "IdP entscheidet" group mapping decides the role (docs/api/sso.md).
+    #[sqlx(try_from = "i64")]
+    idp_managed: IdpManaged,
 }
 
-const MEMBER_COLUMNS: &str = "SELECT u.id AS user_id, u.email, u.name, m.role, m.created_at AS joined_at FROM org_members m \
-     JOIN users u ON u.id = m.user_id";
+/// A 0/1 column as a JSON boolean.
+#[derive(Serialize, Clone, Copy)]
+#[serde(transparent)]
+struct IdpManaged(bool);
+
+impl From<i64> for IdpManaged {
+    fn from(v: i64) -> Self {
+        Self(v != 0)
+    }
+}
+
+const MEMBER_COLUMNS: &str = "SELECT u.id AS user_id, u.email, u.name, m.role, m.created_at AS joined_at, \
+     CASE WHEN EXISTS (SELECT 1 FROM sso_managed s WHERE s.user_id = m.user_id AND s.org_id = m.org_id \
+     AND s.team_id = '') THEN 1 ELSE 0 END AS idp_managed FROM org_members m JOIN users u ON u.id = m.user_id";
 
 async fn load<'c, E>(db: E, org_id: &str, user_id: &str) -> ApiResult<Member>
 where
@@ -215,6 +230,7 @@ async fn change_role(
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     let previous = current_role_checked(&mut tx, &ctx, &user_id, Some(&role.key)).await?;
     if previous != role.key {
+        ensure_not_idp_managed(&mut tx, &ctx.org_id, &user_id).await?;
         sqlx::query("UPDATE org_members SET role = $1 WHERE org_id = $2 AND user_id = $3")
             .bind(&role.key)
             .bind(&ctx.org_id)
@@ -239,45 +255,70 @@ async fn remove(
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     current_role_checked(&mut tx, &ctx, &user_id, None).await?;
-    // Team memberships and grants in this organization go with the membership; the account and
-    // its memberships elsewhere stay.
-    sqlx::query("DELETE FROM team_members WHERE user_id = $1 AND team_id IN (SELECT id FROM teams WHERE org_id = $2)")
-        .bind(&user_id)
-        .bind(&ctx.org_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND subject_type = 'user' AND subject_id = $2")
-        .bind(&ctx.org_id)
-        .bind(&user_id)
-        .execute(&mut *tx)
-        .await?;
-    // So does what they kept of panels in this organization (`panel_state.rs`).
-    sqlx::query("DELETE FROM panel_view_state WHERE org_id = $1 AND user_id = $2")
-        .bind(&ctx.org_id)
-        .bind(&user_id)
-        .execute(&mut *tx)
-        .await?;
-    // And their chats of "Fragen" in this organization (`ai::chats`), with their messages.
-    sqlx::query(
-        "DELETE FROM ai_chat_messages WHERE chat_id IN (SELECT id FROM ai_chats WHERE org_id = $1 AND user_id = $2)",
-    )
-    .bind(&ctx.org_id)
-    .bind(&user_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("DELETE FROM ai_chats WHERE org_id = $1 AND user_id = $2")
-        .bind(&ctx.org_id)
-        .bind(&user_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
-        .bind(&ctx.org_id)
-        .bind(&user_id)
-        .execute(&mut *tx)
-        .await?;
+    ensure_not_idp_managed(&mut tx, &ctx.org_id, &user_id).await?;
+    remove_membership(&mut tx, &ctx.org_id, &user_id).await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.removed", ("user", &user_id), json!({ "userId": user_id }))
         .await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Ends `user_id`'s membership in `org_id` with everything that belongs to it there; the account
+/// and its memberships elsewhere stay. Inside a transaction that holds `lock_org`; also used when
+/// an "IdP entscheidet" group mapping ends a membership (`sso::mapping`).
+pub async fn remove_membership(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str) -> ApiResult<()> {
+    // Team memberships and grants in this organization go with the membership; the account and
+    // its memberships elsewhere stay.
+    sqlx::query("DELETE FROM team_members WHERE user_id = $1 AND team_id IN (SELECT id FROM teams WHERE org_id = $2)")
+        .bind(user_id)
+        .bind(org_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND subject_type = 'user' AND subject_id = $2")
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    // So does what they kept of panels in this organization (`panel_state.rs`).
+    sqlx::query("DELETE FROM panel_view_state WHERE org_id = $1 AND user_id = $2")
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    // And their chats of "Fragen" in this organization (`ai::chats`), with their messages.
+    sqlx::query(
+        "DELETE FROM ai_chat_messages WHERE chat_id IN (SELECT id FROM ai_chats WHERE org_id = $1 AND user_id = $2)",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM ai_chats WHERE org_id = $1 AND user_id = $2")
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM sso_managed WHERE org_id = $1 AND user_id = $2")
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
+        .bind(org_id)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Refuses changing a member whose role an "IdP entscheidet" group mapping decides
+/// (docs/api/sso.md).
+async fn ensure_not_idp_managed(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str) -> ApiResult<()> {
+    if crate::sso::mapping::is_managed(&mut *conn, org_id, user_id).await? {
+        return Err(
+            conflict("a group mapping of the identity provider decides this member's role").because("sso.role_managed")
+        );
+    }
+    Ok(())
 }

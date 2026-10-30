@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
+import { handleSsoRoute, ssoFake } from "../features/admin/sso/test/fakeSso";
 import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
 import { aiChatFake } from "../features/ai/chat/test/fakeAiChat";
 import { aiAdminFake, handleAiAdminRoute } from "../features/ai/test/fakeAiAdmin";
@@ -119,6 +120,7 @@ const AREA_FAKES = {
   shell: shellFake,
   acme: acmeFake,
   usage: usageFake,
+  sso: ssoFake,
 };
 
 export type FakeAreaStates = {
@@ -357,6 +359,12 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     }
     const { state } = server;
     const input = (body ?? {}) as Record<string, unknown>;
+    // Signing in (with a password, the local sign-in, through providers) and the sign-in
+    // administration (docs/api/sso.md).
+    const sso = handleSsoRoute(areaStates.sso, server, path, method, input, password);
+    if (sso !== undefined) {
+      return sso;
+    }
 
     if (path === "/api/setup" && method === "GET") {
       return json(
@@ -392,13 +400,6 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         email: String(input.email),
         orgs: [{ id: "o1", name: String(input.orgName), role: "owner" }],
       };
-      return json(200, state.user);
-    }
-    if (path === "/api/auth/login" && method === "POST") {
-      if (input.email !== state.user.email || input.password !== password) {
-        return error(401, "invalid_credentials");
-      }
-      state.signedIn = true;
       return json(200, state.user);
     }
     if (

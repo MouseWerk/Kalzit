@@ -32,7 +32,7 @@ describe("settings shell", () => {
       "General",
       "Network, HTTPS and proxy",
       "Sessions and security",
-      "Sign-in (OIDC, LDAP)",
+      "Sign-in",
       "Email",
       "Data sources and targets",
       "Storage and retention",

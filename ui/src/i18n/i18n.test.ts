@@ -206,6 +206,10 @@ describe("catalogs", () => {
       "Sandbox",
       "Beta",
       "Let’s Encrypt",
+      // Single sign-on: terms of the OpenID Connect and OAuth specifications.
+      "Slug",
+      "Scopes",
+      "PKCE",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

@@ -23,6 +23,7 @@ import dePlaylists from "./de/playlists.json";
 import dePlugins from "./de/plugins.json";
 import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
+import deSso from "./de/sso.json";
 import deToolbar from "./de/toolbar.json";
 import deUsage from "./de/usage.json";
 import enAccess from "./en/access.json";
@@ -46,6 +47,7 @@ import enPlaylists from "./en/playlists.json";
 import enPlugins from "./en/plugins.json";
 import enSettings from "./en/settings.json";
 import enShell from "./en/shell.json";
+import enSso from "./en/sso.json";
 import enToolbar from "./en/toolbar.json";
 import enUsage from "./en/usage.json";
 
@@ -83,6 +85,7 @@ export const en = {
   ...enPlugins,
   ...enPanelPlugins,
   ...enUsage,
+  ...enSso,
 };
 export const de = {
   ...deCore,
@@ -105,4 +108,5 @@ export const de = {
   ...dePlugins,
   ...dePanelPlugins,
   ...deUsage,
+  ...deSso,
 };

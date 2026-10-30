@@ -159,6 +159,7 @@ async fn update(
     let current = load(&mut *tx, &user_id).await?;
     let disabled = req.disabled.unwrap_or(current.disabled.0);
     let is_admin = req.is_server_admin.unwrap_or(current.is_server_admin.0);
+    super::sso::ensure_break_glass_kept(&state, &user_id, disabled, is_admin).await?;
     ensure_admin_remains(current.is_server_admin.0 && !current.disabled.0, is_admin && !disabled, admins)?;
     if disabled && !current.disabled.0 && lock_orgs_left_without_owner(&mut tx, &user_id).await? > 0 {
         return Err(conflict(

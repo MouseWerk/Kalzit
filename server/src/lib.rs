@@ -34,6 +34,7 @@ pub mod server;
 pub mod service;
 pub mod settings;
 pub mod shapes;
+pub mod sso;
 pub mod text;
 pub mod tls;
 pub mod updates;

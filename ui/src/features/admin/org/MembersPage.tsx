@@ -2,8 +2,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
+import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
-import { useI18n } from "../../../i18n/i18n";
+import { type Translate, useI18n } from "../../../i18n/i18n";
 import {
   addMember,
   adminKeys,
@@ -21,7 +22,19 @@ import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
 import { ADD_MEMBER_ERRORS, errorText, MEMBER_ERRORS } from "../errors";
 import { allowedWhen, useAdminAccess } from "../sections";
+import { ssoReason } from "../sso/texts";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
+
+/**
+ * Why a change of a member failed. An "IdP decides" group mapping holds the role
+ * (`sso.role_managed`); the other conflicts are the last owner.
+ */
+function memberErrorText(t: Translate, error: unknown): string {
+  if (ssoReason(error)?.reason === "sso.role_managed") {
+    return t("admin.members.idpManagedError");
+  }
+  return errorText(t, error, MEMBER_ERRORS);
+}
 
 export function MembersPage() {
   const { t, language, timeZone } = useI18n();
@@ -62,7 +75,11 @@ export function MembersPage() {
             },
       );
     },
-    onError: (error) => notice.showError(errorText(t, error, MEMBER_ERRORS)),
+    onError: (error) => {
+      notice.showError(memberErrorText(t, error));
+      // The member list may be older than the mapping that locked the role.
+      void refresh();
+    },
   });
 
   const remove = useMutation({
@@ -93,8 +110,10 @@ export function MembersPage() {
       ) : (
         <ul className="admin-list" aria-label={t("admin.members.title")} {...keys.listProps}>
           {members.map((member, index) => {
-            // Nobody changes or removes someone whose role holds more than they do.
-            const canChange = canWrite && holdsRole(access, member.role, roles.data);
+            // Nobody changes or removes someone whose role holds more than they do, nor a role an
+            // "IdP decides" group mapping sets.
+            const managed = member.idpManaged === true;
+            const canChange = canWrite && !managed && holdsRole(access, member.role, roles.data);
             return (
               <li key={member.userId} className="admin-row" {...keys.rowProps(index)}>
                 <div className="admin-row__main">
@@ -129,6 +148,14 @@ export function MembersPage() {
                         {t("admin.common.removeAsk")}
                       </button>
                     </>
+                  ) : managed ? (
+                    <span className="admin-row__locked" title={t("admin.members.idpManagedHint")}>
+                      <span className="admin-badge">{roleLabel(t, member.role, roles.data)}</span>
+                      <span className="admin-row__meta admin-row__lock">
+                        <Icon name="lock" />
+                        {t("admin.members.idpManaged")}
+                      </span>
+                    </span>
                   ) : (
                     <span
                       className="admin-badge"
@@ -169,7 +196,7 @@ export function MembersPage() {
         title={t("admin.members.removeTitle")}
         confirmLabel={t("admin.common.remove")}
         busy={remove.isPending}
-        error={remove.error === null ? null : errorText(t, remove.error, MEMBER_ERRORS)}
+        error={remove.error === null ? null : memberErrorText(t, remove.error)}
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           if (removing !== null) {

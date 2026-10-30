@@ -186,6 +186,44 @@ describe("members", () => {
     expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
   });
 
+  it("locks a role an “IdP decides” group mapping sets", async () => {
+    await openAdmin("/admin/members", {
+      setup: (admin) => {
+        const grace = admin.members.find((member) => member.userId === "u2");
+        if (grace !== undefined) {
+          grace.idpManaged = true;
+        }
+      },
+    });
+    const list = await membersList();
+    const grace = within(list).getAllByRole("listitem")[1] as HTMLElement;
+    expect(within(grace).getByText("IdP decides")).toBeTruthy();
+    expect(within(grace).getByText("Editor")).toBeTruthy();
+    expect(within(list).queryByRole("combobox", { name: "Role of Grace Hopper" })).toBeNull();
+    expect(within(list).queryByRole("button", { name: "Remove Grace Hopper…" })).toBeNull();
+    expect(within(list).getByRole("combobox", { name: "Role of Alan Turing" })).toBeTruthy();
+  });
+
+  it("explains a role the provider took over after the list was read", async () => {
+    const { user, admin } = await openAdmin("/admin/members");
+    const list = await membersList();
+    const grace = admin.members.find((member) => member.userId === "u2");
+    if (grace !== undefined) {
+      grace.idpManaged = true;
+    }
+    await user.selectOptions(
+      within(list).getByRole("combobox", { name: "Role of Grace Hopper" }),
+      "viewer",
+    );
+    const message = await screen.findByText(
+      "An “IdP decides” group mapping sets this member’s role. Change it at the provider.",
+    );
+    expect(message.closest('[role="alert"]')).not.toBeNull();
+    expect(admin.members.find((member) => member.userId === "u2")?.role).toBe("editor");
+    // The list is read again and shows the lock.
+    expect(await within(list).findByText("IdP decides")).toBeTruthy();
+  });
+
   it("moves between rows with the arrow keys", async () => {
     const { user } = await openAdmin("/admin/members");
     const list = await membersList();

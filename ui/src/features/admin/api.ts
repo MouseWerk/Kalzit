@@ -95,6 +95,11 @@ export interface Member {
   /** A role key: a built-in name (owner, admin, editor, viewer) or a custom role id. */
   role: string;
   joinedAt: number;
+  /**
+   * An "IdP decides" group mapping sets the role (docs/api/sso.md): it is locked here, and
+   * changing or removing the member answers `sso.role_managed`.
+   */
+  idpManaged?: boolean | undefined;
 }
 
 const isMember = shape<Member>({
@@ -103,6 +108,7 @@ const isMember = shape<Member>({
   name: isString,
   role: isString,
   joinedAt: isNumber,
+  idpManaged: (value) => value === undefined || isBoolean(value),
 });
 
 export function listMembers(orgId: string, cursor?: string, limit?: number, signal?: AbortSignal) {

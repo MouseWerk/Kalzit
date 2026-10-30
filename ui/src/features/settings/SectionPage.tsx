@@ -19,6 +19,7 @@ import {
 } from "../admin/api";
 import { LoadState } from "../admin/components/Section";
 import { ConflictDialog, useSettingChanges } from "../admin/components/Settings";
+import { SignInSection } from "../admin/sso/SignInSection";
 import { AiOrgSection } from "../ai/admin/AiOrgSection";
 import { AiServerSection } from "../ai/admin/AiServerSection";
 import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
@@ -133,20 +134,12 @@ function SectionBody({ section }: { section: SectionDef }) {
               <p className="settings-row__description">
                 {section.planned === undefined ? null : t(section.planned)}
               </p>
-              {section.id === "signin" ? (
-                <Link
-                  to="/settings/$section"
-                  params={{ section: "appearance" }}
-                  hash="signin.page"
-                  className="settings-planned__link"
-                >
-                  {t("settings.planned.signinPage")}
-                </Link>
-              ) : null}
             </div>
           </div>
         </div>
       );
+    case "signin":
+      return <SignInSection />;
     case "ai":
       return <AiServerSection section={section} />;
     case "aiOrg":

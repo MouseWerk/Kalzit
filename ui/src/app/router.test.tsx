@@ -216,11 +216,26 @@ describe("parseLoginSearch", () => {
 
   it("overrides absolute, protocol-relative and non-string targets with undefined", () => {
     // The key must be present: the router merges this result over the raw search.
-    const dropped = { redirect: undefined, signedOut: undefined, expired: undefined };
+    const dropped = {
+      redirect: undefined,
+      signedOut: undefined,
+      expired: undefined,
+      sso: undefined,
+      provider: undefined,
+      ref: undefined,
+    };
     expect(parseLoginSearch({ redirect: "https://evil.example/" })).toStrictEqual(dropped);
     expect(parseLoginSearch({ redirect: "//evil.example/" })).toStrictEqual(dropped);
     expect(parseLoginSearch({ redirect: 42 })).toStrictEqual(dropped);
     expect(parseLoginSearch({})).toStrictEqual(dropped);
+  });
+
+  it("keeps the outcome of a provider sign-in only in its documented form", () => {
+    expect(
+      parseLoginSearch({ sso: "failed", provider: "mueller-sso", ref: "7Q2K-91XD" }),
+    ).toMatchObject({ sso: "failed", provider: "mueller-sso", ref: "7Q2K-91XD" });
+    const odd = parseLoginSearch({ sso: "pwned", provider: "<b>x</b>", ref: "a b" });
+    expect([odd.sso, odd.provider, odd.ref]).toEqual([undefined, undefined, undefined]);
   });
 });
 

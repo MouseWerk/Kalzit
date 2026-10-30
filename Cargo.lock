@@ -1973,6 +1973,7 @@ dependencies = [
  "rcgen",
  "regex",
  "reqwest",
+ "ring",
  "rust-embed",
  "rust_xlsxwriter",
  "rustls",

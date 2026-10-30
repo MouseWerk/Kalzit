@@ -15,6 +15,8 @@ export type SectionKind =
   | "network"
   | "appearance"
   | "planned"
+  /** Verwaltung > Anmeldung: providers, group mapping, local sign-in (features/admin/sso). */
+  | "signin"
   | "ai"
   | "aiOrg"
   | "plugins"
@@ -47,6 +49,20 @@ export interface SectionDef {
 }
 
 const serverAdmin = (access: SettingsAccess) => access.permissions.isServerAdmin;
+
+/**
+ * The sign-in settings, changed only through `PUT /admin/sign-in/local` and
+ * `PUT /admin/sign-in/unmapped` (docs/api/sso.md), so the page that changes them checks that
+ * nobody is locked out. Listed as plain strings: the generated registry keys follow the server.
+ */
+const SIGN_IN_KEYS: readonly string[] = [
+  "signin.local_password",
+  "signin.password_form",
+  "signin.break_glass_user",
+  "signin.unmapped",
+  "signin.default_org",
+  "signin.default_role",
+];
 
 /** Extra rows of the appearance section that are not one registry setting. */
 export const LOGO_ROW = "appearance.logo";
@@ -139,13 +155,14 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
+    // The board docs/design/blueprint/Identity.dc.html, frames 5A to 5G.
     id: "signin",
     group: "server",
-    kind: "planned",
+    kind: "signin",
     label: "settings.section.signin.label",
     lead: "settings.section.signin.lead",
     keywords: "settings.section.signin.keywords",
-    planned: "settings.planned.signin",
+    keys: SIGN_IN_KEYS as readonly SettingKey[],
     visible: serverAdmin,
   },
   {
@@ -268,6 +285,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.week_start",
       "dashboards.default_time_range",
       "dashboards.new_in_team_space",
+      // Organizations may only be stricter than the server: inherit, or off for their members.
+      "signin.local_password" as string as SettingKey,
     ],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
   },
