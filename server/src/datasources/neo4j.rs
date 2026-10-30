@@ -228,14 +228,27 @@ async fn lease<'p>(flavor: Flavor, conn: &Connection, pool: &'p Pool) -> Result<
         }
         alive
     };
-    let reused = idle.is_some();
+    let mut reused = idle.is_some();
     let opened = match idle {
         // A user's privileges can change while a connection waits in the pool.
         Some(mut o) if needs_recheck(flavor, o.checked.elapsed()) => {
             let s: Settings = conn.settings_as()?;
-            o.write_privileges = checked_privileges(&mut o.conn, &s).await?;
-            o.checked = Instant::now();
-            o
+            match checked_privileges(&mut o.conn, &s).await {
+                Ok(privileges) => {
+                    o.write_privileges = privileges;
+                    o.checked = Instant::now();
+                    o
+                }
+                // The check is the connection's first round trip: one that broke while it waited
+                // is closed, with the other idle ones, and a fresh one is opened.
+                Err(e) if super::connect::is_lost(&e) => {
+                    drop(o);
+                    pool.idle.lock().expect("pool lock").clear();
+                    reused = false;
+                    open(flavor, conn).await?
+                }
+                Err(e) => return Err(e),
+            }
         }
         Some(o) => o,
         None => open(flavor, conn).await?,
@@ -1569,8 +1582,14 @@ mod tests {
         *restart.lock().unwrap() = Restart::None;
         // The server has closed the pooled connection by now (it restarted).
         tokio::time::sleep(Duration::from_millis(200)).await;
-        plugin.query(&conn, one_row()).await.unwrap();
+        // The lease drops it before sending anything, rather than finding out at BEGIN.
+        let pool = pool(&conn).await.unwrap();
+        let fresh = lease(Flavor::Neo4j, &conn, &pool).await.unwrap();
+        assert!(!fresh.reused, "the closed connection was handed out");
         assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+        fresh.release();
+        plugin.query(&conn, one_row()).await.unwrap();
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2, "the open one is reused");
     }
 
     #[tokio::test]

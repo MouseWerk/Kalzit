@@ -129,7 +129,10 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::Postgres>>, SourceE
         }
         // Lazy, so the first connection goes through `SqlPool::acquire`, which names the cause of
         // a refused or silent server. Connections are tested before use: one that broke while
-        // idle (the server restarted) is replaced, not handed to a query.
+        // idle (the server restarted) is replaced, not handed to a query. Setup errors are kept, so
+        // a pool that runs out of time retrying them can say why.
+        let setup = connect::SetupErrors::default();
+        let kept = setup.clone();
         let pool = PgPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
@@ -139,24 +142,45 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::Postgres>>, SourceE
             .after_connect(move |c, _| {
                 let own = own.clone();
                 let recheck = recheck.clone();
+                let kept = kept.clone();
                 Box::pin(async move {
-                    if let Some((policy, host, port)) = recheck {
-                        super::recheck_name(&policy, &host, port).await?;
-                    }
-                    // Every new connection is checked, not only the first: the pool reconnects.
-                    match own {
-                        Some(own) => check_identity(c, &own).await,
-                        None => Ok(()),
-                    }
+                    let step = async {
+                        if let Some((policy, host, port)) = recheck {
+                            super::recheck_name(&policy, &host, port).await?;
+                        }
+                        // Every new connection is checked, not only the first: the pool reconnects.
+                        match own {
+                            Some(own) => check_identity(c, &own).await,
+                            None => Ok(()),
+                        }
+                    };
+                    kept.keep(step.await, failed)
                 })
             })
             .connect_lazy_with(options);
-        let pool = SqlPool::new(pool, addr, address, CONNECT_TIMEOUT);
+        let pool = SqlPool::new(pool, address, CONNECT_TIMEOUT, setup);
         // One connection now, so a source that cannot connect is not kept.
         drop(pool.acquire(failed).await?);
         Ok(pool)
     })
     .await
+}
+
+/// A read-only transaction that owns its pooled connection. BEGIN is the first round trip: a
+/// connection that broke after the pool checked it (the server restarted just then) fails here,
+/// before any result, and the query goes on once with a fresh connection, which is safe as it only
+/// reads. The broken connection goes back with the failed BEGIN and the pool closes it at once, so
+/// broken connections never hold the pool's slots while the retries wait for one.
+async fn begin_read_only(
+    pool: &SqlPool<sqlx::Postgres>,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, SourceError> {
+    #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
+    let begin = |c| sqlx::Transaction::begin(c, Some("BEGIN READ ONLY".into_sql_str()));
+    match begin(pool.acquire(failed).await?).await {
+        Ok(tx) => Ok(tx),
+        Err(e) if connect::sqlx_dead(&e) => begin(pool.acquire(failed).await?).await.map_err(failed),
+        Err(e) => Err(failed(e)),
+    }
 }
 
 /// Refuses a connection to Kalzit's own database (`own` is its system identifier and name).
@@ -257,21 +281,7 @@ impl DataSourcePlugin for Postgres {
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let prepared = sql::prepare_query(self, conn, &req, Engine::Postgres).await?;
         let pool = pool(conn).await?;
-        let mut c = pool.acquire(failed).await?;
-        // A connection that broke after its check fails here, before any result: the query runs
-        // once more on a fresh connection, which is safe as it only reads. The broken one goes
-        // back with this request; the pool's check before use closes it.
-        let mut fresh;
-        #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
-        let mut tx = match c.begin_with("BEGIN READ ONLY").await {
-            Ok(tx) => tx,
-            Err(e) if connect::sqlx_dead(&e) => {
-                fresh = pool.acquire(failed).await?;
-                #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
-                fresh.begin_with("BEGIN READ ONLY").await.map_err(failed)?
-            }
-            Err(e) => return Err(failed(e)),
-        };
+        let mut tx = begin_read_only(&pool).await?;
         // The server stops the statement itself, also when this request is dropped mid-query.
         let deadline = Instant::now() + req.limits.timeout;
         let timeout_ms = req.limits.timeout.as_millis().max(1);

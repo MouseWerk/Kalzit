@@ -28,6 +28,8 @@ const MAX_HANDSHAKES: usize = 64;
 const SLOT_WAIT: Duration = Duration::from_secs(2);
 /// How often `next_refusal` looks for a refusal.
 const REFUSAL_POLL: Duration = Duration::from_millis(50);
+/// How long a refusal stands before `next_refusal` answers it.
+const REFUSAL_GRACE: Duration = Duration::from_secs(2);
 
 /// Why the relay did not connect: a refused target, or a name that does not resolve or answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,14 +116,15 @@ impl Relay {
 
     /// Waits for the first refusal after `mark`. The driver keeps trying a server that refuses
     /// until its selection timeout and then reports only that no server answered; with a single
-    /// server, the refusal is the answer already.
+    /// server, the refusal is the answer already. It is answered `REFUSAL_GRACE` after it
+    /// happened, so an operation during a short restart still gets its chance; the caller lets
+    /// the operation win if it finishes first.
     pub async fn next_refusal(&self, mark: u64) -> Refusal {
-        loop {
-            if let Some(refusal) = self.refusal_since(mark) {
-                return refusal;
-            }
+        while self.refusal_since(mark).is_none() {
             tokio::time::sleep(REFUSAL_POLL).await;
         }
+        tokio::time::sleep(REFUSAL_GRACE).await;
+        self.refusal_since(mark).expect("refusals are never forgotten")
     }
 }
 

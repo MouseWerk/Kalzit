@@ -1988,8 +1988,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 |---|---|---|
 | `source.error` | `detail` | the database or Prometheus answered an error |
 | `source.no_answer` | | the server sent no answer |
-| `source.connect_refused` | `address` | the server at `address` (`host:port`) refused the connection: nothing listens there (it is down or restarting) or a firewall rejects it; reported within about a second, not after the connect timeout |
-| `source.connect_timeout` | `address`, `seconds` | no connection to `address` within `seconds` |
+| `source.connect_refused` | `address` | the server at `address` (`host:port`) refused the connection: nothing listens there (it is down or restarting) or a firewall rejects it; reported within a few seconds, not after the connect timeout |
+| `source.connect_timeout` | `address`, `seconds` | no connection to `address` within `seconds` (the server does not answer) |
+| `source.pool_timeout` | `seconds` | the server takes connections, but none of the source's pool was free within `seconds` (every connection busy, or logging in takes that long); a refused connection setup answers its own reason instead |
 | `source.connect_failed` | `address`, `detail` | the connection to `address` failed for another reason; `detail` is the system's text |
 | `source.connection_lost` | `detail` | the connection broke while in use (closed or reset by the server, for example after a restart); `detail` is the driver's text (such as `early eof`), shown only as the secondary detail. A read-only query on a pooled connection that breaks before any result arrived is run once more on a fresh connection first |
 | `sqlite.open_failed` | `detail` | the SQLite file cannot be opened |

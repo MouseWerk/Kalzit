@@ -454,6 +454,7 @@
   "datasources.reason.source.connect_refused": "Keine Verbindung zu {address}: Verbindung abgelehnt. Prüfe, ob der Datenbankserver läuft und auf diesem Port erreichbar ist.",
   "datasources.reason.source.connect_timeout": "Keine Verbindung zu {address}: keine Antwort innerhalb von {seconds} Sekunden. Prüfe Adresse, Port und Firewall.",
   "datasources.reason.source.connect_failed": "Keine Verbindung zu {address}: {detail}",
+  "datasources.reason.source.pool_timeout": "Innerhalb von {seconds} Sekunden war keine Verbindung zur Datenquelle frei. Der Server ist erreichbar, aber ausgelastet oder langsam bei der Anmeldung; versuch es gleich noch einmal.",
   "datasources.reason.source.connection_lost": "Die Verbindung zur Datenquelle wurde unterbrochen, zum Beispiel weil der Datenbankserver neu gestartet wurde. Versuch es gleich noch einmal.",
   "datasources.reason.sqlite.open_failed": "Die SQLite-Datei ließ sich nicht öffnen: {detail}",
   "datasources.reason.mysql.no_time_limit": "Dieser MySQL- oder MariaDB-Server kann die Laufzeit einer Abfrage nicht begrenzen, deshalb fragt Kalzit ihn nicht ab.",

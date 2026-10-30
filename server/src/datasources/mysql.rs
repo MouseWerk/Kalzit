@@ -100,7 +100,9 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::MySql>>, SourceErro
         }
         let recheck = matches!(mode, MySqlSslMode::VerifyIdentity).then(|| (conn.policy_arc(), s.host.clone(), port));
         // As for PostgreSQL: lazy, so connect failures are named by `SqlPool::acquire`, and tested
-        // before use, so a connection that broke while idle is replaced.
+        // before use, so a connection that broke while idle is replaced; setup errors are kept.
+        let setup = connect::SetupErrors::default();
+        let kept = setup.clone();
         let pool = MySqlPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
@@ -109,15 +111,19 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::MySql>>, SourceErro
             .idle_timeout(Duration::from_secs(300))
             .after_connect(move |c, _| {
                 let recheck = recheck.clone();
+                let kept = kept.clone();
                 Box::pin(async move {
-                    if let Some((policy, host, port)) = recheck {
-                        super::recheck_name(&policy, &host, port).await?;
-                    }
-                    pin_sql_mode(c).await
+                    let step = async {
+                        if let Some((policy, host, port)) = recheck {
+                            super::recheck_name(&policy, &host, port).await?;
+                        }
+                        pin_sql_mode(c).await
+                    };
+                    kept.keep(step.await, failed)
                 })
             })
             .connect_lazy_with(options);
-        let pool = SqlPool::new(pool, addr, address, CONNECT_TIMEOUT);
+        let pool = SqlPool::new(pool, address, CONNECT_TIMEOUT, setup);
         drop(pool.acquire(failed).await?);
         Ok(pool)
     })
@@ -239,7 +245,9 @@ impl DataSourcePlugin for MySql {
         // result, and the query runs once more on a fresh connection (it only reads).
         match limit_session(&mut c, req.limits.timeout).await {
             Err(e) if connect::is_lost(&e) => {
+                // Closed before the next is taken, so dead connections never hold the pool's slots.
                 c.close_on_drop();
+                drop(c);
                 c = pool.acquire(failed).await?;
                 limit_session(&mut c, req.limits.timeout).await?;
             }

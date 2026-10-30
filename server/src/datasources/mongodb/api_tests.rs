@@ -479,7 +479,7 @@ async fn an_unreachable_server_does_not_stop_the_save() {
     // selection timeout (10 seconds).
     assert_eq!(h["reason"], "source.connect_refused", "{h}");
     assert_eq!(h["params"]["address"], format!("127.0.0.1:{closed}"), "{h}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(7), "took {:?}", started.elapsed());
+    assert!(started.elapsed() < std::time::Duration::from_secs(8), "took {:?}", started.elapsed());
     t.finish().await;
 }
 
