@@ -19,7 +19,7 @@ sources: a MongoDB result stays a set of documents, a Cypher result stays a grap
 edges, and nothing is turned into a table unless you add that step yourself. The server is one
 binary with the web interface built in, and runs on Windows and Linux.
 
-> **Status: early development.** The current version is 0.4.1;
+> **Status: early development.** The current version is 0.4.2;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
