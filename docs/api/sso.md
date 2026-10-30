@@ -428,4 +428,5 @@ English `detail`; the person only sees the outcome. They are not answered as API
 | `sso.internal` | the server failed (its log has the request) |
 | `sso.iss_mismatch` | the answer's `iss` parameter (RFC 9207) names another issuer |
 | `sso.identity_issuer_mismatch` | the identity was linked through another issuer than the provider has now |
+| `sso.email_ambiguous` | two accounts have the address, one with the ASCII (IDNA) form of its domain and one as typed |
 | `sso.email_link_admin` | the email belongs to a server admin or the break-glass admin, who are never linked by email |

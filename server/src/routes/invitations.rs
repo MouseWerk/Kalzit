@@ -727,6 +727,23 @@ async fn find(state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<Fo
     }
 }
 
+/// Whether two stored addresses are one: the same, or the same in the ASCII (IDNA) form of their
+/// domain (an account a provider made, `sso::oidc::matching_email`).
+fn same_address(a: &str, b: &str) -> bool {
+    a == b || crate::sso::oidc::matching_email(a).is_some_and(|x| Some(x) == crate::sso::oidc::matching_email(b))
+}
+
+/// The accounts with `email`, in the form it was typed or the ASCII form of its domain.
+async fn accounts_with(state: &AppState, email: &str) -> ApiResult<i64> {
+    let ascii = crate::sso::oidc::matching_email(email).unwrap_or_else(|| email.to_string());
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1 OR email = $2")
+        .bind(email)
+        .bind(&ascii)
+        .fetch_one(&state.db)
+        .await?;
+    Ok(n)
+}
+
 /// The signed-in user of this browser, if any.
 async fn signed_in(state: &AppState, info: &RequestInfo, headers: &HeaderMap) -> ApiResult<Option<SessionUser>> {
     let Some(token) = session::read_cookie(headers, info.https) else { return Ok(None) };
@@ -806,8 +823,7 @@ async fn inspect(
     } else {
         "valid"
     };
-    let (accounts,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1").bind(&found.email).fetch_one(&state.db).await?;
+    let accounts = accounts_with(&state, &found.email).await?;
     let signed = signed_in(&state, &info, &headers).await?;
     Ok(Json(InvitationInfo {
         sso: sso_options(&state, &found.org_id).await?,
@@ -928,8 +944,9 @@ async fn accept(
     // A link that went by mail proves the address reaches its owner.
     let mailed = found.delivery == "sent";
     if let Some(user) = signed_in(&state, &info, &headers).await? {
-        // Joining with the account this browser is signed in with: only the invited address.
-        if user.email != found.email {
+        // Joining with the account this browser is signed in with: only the invited address (in
+        // either form of its domain, as a provider's account may keep it).
+        if !same_address(&user.email, &found.email) {
             return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "signed in with another account")
                 .because("mail.invite_other_account"));
         }
@@ -941,13 +958,43 @@ async fn accept(
         let (summary, id) = audit_event(&user.id, false);
         let actor = Actor { user_id: &id, info: &info, at_ms: now };
         audit(&mut tx, &actor, Some(&found.org_id), "invitation.accepted", ("invitation", &found.id), summary).await?;
-        let answer = super::me(&mut tx, user).await?;
         crate::db::commit(tx).await?;
+        // The new membership may require a second factor this account does not have: this
+        // session ends, and the account sets one up before it gets one with the membership, as at
+        // a sign-in (`routes::second_factor`).
+        use crate::auth::second_factor as sf;
+        let required = sf::required_for(&state, &user.id, user.is_server_admin != 0).await?;
+        if required.is_some() && !sf::methods(&state.db, &user.id).await?.any() {
+            let prompt = super::second_factor::forced_setup(&state, &info, &user, required, now).await?;
+            let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id = $1")
+                .bind(&user.id)
+                .fetch_one(&state.db)
+                .await?;
+            let mut tx = crate::db::begin(&state.db).await?;
+            if let Some(token) = session::read_cookie(&headers, info.https) {
+                session::delete(&mut *tx, &token).await?;
+            }
+            let first = sf::FirstStep::Password { password_hash: hash.as_deref() };
+            let mut answer = super::second_factor::finish_first_step(
+                tx,
+                &state,
+                &info,
+                &headers,
+                user,
+                first,
+                false,
+                Some(prompt),
+                now,
+            )
+            .await?;
+            answer.headers_mut().append(axum::http::header::SET_COOKIE, session::clear_cookie(info.https));
+            return Ok(answer);
+        }
+        let mut conn = state.db.acquire().await?;
+        let answer = super::me(&mut conn, user).await?;
         return Ok(Json(answer).into_response());
     }
-    let (accounts,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1").bind(&found.email).fetch_one(&state.db).await?;
-    if accounts > 0 {
+    if accounts_with(&state, &found.email).await? > 0 {
         return Err(account_exists());
     }
     // With password sign-in off for the server or the inviting organization (docs/api/sso.md), a

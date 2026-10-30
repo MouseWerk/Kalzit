@@ -255,6 +255,8 @@ export function handleMailRoute(
     };
     info.state = "accepted";
     if (state.acceptSecondFactor !== undefined) {
+      // A session the joining account had ends until the second factor is set up.
+      server.state.signedIn = false;
       return json(200, { secondFactor: state.acceptSecondFactor });
     }
     server.state.signedIn = true;

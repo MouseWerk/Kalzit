@@ -62,14 +62,20 @@ pub async fn plan(
 /// The prompt that makes an account without a second factor set one up before it is signed in,
 /// whatever the policy says: for the break-glass admin, whom a password alone never lets in
 /// (docs/api/sso.md).
-pub async fn forced_setup(state: &AppState, info: &RequestInfo, user: &SessionUser, now: i64) -> ApiResult<Prompt> {
+pub async fn forced_setup(
+    state: &AppState,
+    info: &RequestInfo,
+    user: &SessionUser,
+    required_by: Option<sf::RequiredBy>,
+    now: i64,
+) -> ApiResult<Prompt> {
     Ok(Prompt {
         email: user.email.clone(),
         setup: true,
         methods: Vec::new(),
         last_used: None,
         allowed: sf::allowed(state, info).await?,
-        required_by: None,
+        required_by,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         expires_at: now + sf::CHALLENGE_TTL_MS,
     })

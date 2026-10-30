@@ -121,7 +121,7 @@ pub async fn account(
             if found.len() > 1 {
                 return Ok(Err(Refusal::new(
                     "email_taken",
-                    "sso.email_unverified",
+                    "sso.email_ambiguous",
                     "two accounts have this address in different forms",
                 )));
             }
@@ -164,15 +164,17 @@ pub async fn account(
                         "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, \
                          email_confirmed) VALUES ($1, $2, $3, NULL, 0, 0, $4, $5)",
                     )
+                    // Kept in the form typed-in addresses have (`routes::normalize_email`), so an
+                    // invitation to the same address names this account.
                     .bind(&id)
-                    .bind(&email)
+                    .bind(&as_typed)
                     .bind(&name)
                     .bind(now)
                     .bind(i64::from(person.email_verified))
                     .execute(&mut *conn)
                     .await?;
                     created = true;
-                    Account { id, email, name, is_server_admin: 0, disabled: 0 }
+                    Account { id, email: as_typed.clone(), name, is_server_admin: 0, disabled: 0 }
                 }
                 None => {
                     return Ok(Err(Refusal::new(
@@ -261,13 +263,15 @@ pub async fn decide(
 }
 
 /// Applies `outcome` (a refused one takes away what the provider decided and gives nothing) and
-/// records the changes; answers the organizations whose rights changed.
+/// records the changes; answers the organizations whose rights changed. `by` is the admin whose
+/// change caused it (a changed issuer), else the person's own sign-in.
 pub async fn apply(
     conn: &mut sqlx::AnyConnection,
     info: &RequestInfo,
     provider: (&str, &str),
     user_id: &str,
     outcome: &Outcome,
+    by: Option<&str>,
     now: i64,
 ) -> ApiResult<BTreeSet<String>> {
     let effective;
@@ -279,14 +283,18 @@ pub async fn apply(
     };
     let (changes, touched) = mapping::apply(&mut *conn, provider.0, user_id, outcome, now).await?;
     if !changes.is_empty() {
+        let mut summary = json!({ "provider": provider.1, "changes": changes });
+        if by.is_some() {
+            summary["cause"] = json!("issuer_changed");
+        }
         let event = crate::audit::AuditEvent {
             org_id: None,
-            actor_user_id: Some(user_id),
+            actor_user_id: Some(by.unwrap_or(user_id)),
             actor_address: Some(info.client_ip.to_string()),
             action: "sso.memberships_changed",
             resource_type: Some("user"),
             resource_id: Some(user_id),
-            summary: json!({ "provider": provider.1, "changes": changes }),
+            summary,
             at_ms: now,
         };
         crate::audit::record(conn, &event).await?;
@@ -347,5 +355,5 @@ pub async fn apply_deferred(
     }
     let rules = mapping::rules(&mut *conn, &provider_id).await?;
     let outcome = mapping::resolve(&rules, &groups, &super::unmapped(state).await?);
-    apply(conn, info, (&provider.id, &provider.slug), user_id, &outcome, now).await
+    apply(conn, info, (&provider.id, &provider.slug), user_id, &outcome, None, now).await
 }

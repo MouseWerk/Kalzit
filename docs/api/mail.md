@@ -112,8 +112,11 @@ Accepting:
   set up;
 - with an account for the address: `409 conflict` `mail.invite_account_exists`; sign in, then
   accept with the token alone;
-- signed in as the invited address: joins with the token alone; the session stays; a link that
-  went by mail also confirms the account's address;
+- signed in as the invited address (also in the ASCII form of an internationalized domain, as an
+  account a provider made may have it): joins with the token alone; the session stays, unless the
+  organization requires a second factor the account does not have: then the session ends and the
+  answer is the second step (`{secondFactor}` with `setup: true`), the membership applying from the
+  next session; a link that went by mail also confirms the account's address;
 - an account made from a link that went by mail has its address confirmed; one made from a link
   an admin passed on starts unconfirmed (`emailConfirmed: false` in `GET /me`, see "Email
   confirmation"); `invitation.accepted` records `viaCopiedLink` and pairs with

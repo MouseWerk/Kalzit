@@ -228,5 +228,7 @@
   "access.confirm.signIn": "Anmelden",
   "access.invite.ssoContinue": "Weiter mit {provider}",
   "access.invite.ssoOnly": "Bei {org} meldest du dich über deinen Anbieter an. Danach kommst du hierher zurück und trittst bei.",
-  "access.invite.orPassword": "oder mit einem neuen Passwort"
+  "access.invite.orPassword": "oder mit einem neuen Passwort",
+  "access.invite.noWayTitle": "Hier gibt es gerade keinen Weg zur Anmeldung.",
+  "access.invite.noWayText": "Bei {org} ist die Anmeldung mit Passwort abgeschaltet, und es ist kein Anbieter eingerichtet. Wende dich an einen Admin der Organisation."
 }

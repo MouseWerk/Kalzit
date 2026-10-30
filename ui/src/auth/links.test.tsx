@@ -130,6 +130,37 @@ describe("invitation page", () => {
     expect(window.sessionStorage.getItem("kalzit.link.invite")).toBe(TOKEN);
   });
 
+  it("sets up the second factor the organization requires before a signed-in account joins", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.areas.mail.links[TOKEN] = invitationInfo({
+      signedInAs: { name: "Nora Becker", email: "nora@example.com" },
+    });
+    server.areas.mail.acceptSecondFactor = {
+      email: "nora@example.com",
+      setup: true,
+      methods: [],
+      lastUsed: null,
+      allowed: { passkey: false, totp: true },
+      requiredBy: { kind: "org", id: "o1", name: "Analytical Engines" },
+      lockedUntil: null,
+      expiresAt: Date.now() + 600_000,
+    };
+    const { user } = renderApp(`/invite#${TOKEN}`);
+    await user.click(await screen.findByRole("button", { name: "Accept and join" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Join" })).toBeNull());
+    expect(server.state.signedIn).toBe(false);
+    expect(screen.queryByRole("navigation", { name: "Main navigation" })).toBeNull();
+    expect(screen.getAllByText(/Analytical Engines/).length).toBeGreaterThan(0);
+  });
+
+  it("says whom to ask when neither a password nor a provider can be used", async () => {
+    const server = installFakeServer();
+    server.areas.mail.links[TOKEN] = invitationInfo({ password: false, sso: [] });
+    renderApp(`/invite#${TOKEN}`);
+    expect(await screen.findByText("There is no way to sign in here right now.")).toBeTruthy();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+  });
+
   it("refuses to join with another signed-in account until it signs out", async () => {
     const server = installFakeServer({ signedIn: true });
     server.areas.mail.links[TOKEN] = invitationInfo({

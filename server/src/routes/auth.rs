@@ -268,7 +268,7 @@ pub async fn login_with(
     // The break-glass admin never gets in with a password alone: without a second factor (it can
     // only be gone through a database change), one is set up first.
     if decision == PasswordSignIn::BreakGlass && plan.is_none() {
-        plan = Some(super::second_factor::forced_setup(&state, &info, &user, now).await?);
+        plan = Some(super::second_factor::forced_setup(&state, &info, &user, None, now).await?);
     }
 
     let mut tx = crate::db::begin(&state.db).await?;

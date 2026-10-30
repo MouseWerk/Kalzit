@@ -378,7 +378,7 @@ async fn callback_inner(
     if let Some(o) = outcome.as_ref().filter(|o| o.refused) {
         // Refused, or a server admin without a mapped group: what the provider decided goes now
         // (that only takes rights away); nothing is given.
-        let touched = signin::apply(&mut tx, info, ids, &linked.user.id, o, now).await?;
+        let touched = signin::apply(&mut tx, info, ids, &linked.user.id, o, None, now).await?;
         crate::db::commit(tx).await?;
         crate::sso::rights_changed(state, &touched).await;
         if linked.user.is_server_admin == 0 {
@@ -415,7 +415,7 @@ async fn callback_inner(
         return Ok(see_other(&page, cookies));
     }
     let touched = match outcome.as_ref().filter(|o| !o.refused) {
-        Some(o) => signin::apply(&mut tx, info, ids, &linked.user.id, o, now).await?,
+        Some(o) => signin::apply(&mut tx, info, ids, &linked.user.id, o, None, now).await?,
         None => Default::default(),
     };
     cookies.extend(open_session(&mut tx, state, info, headers, &linked.user, &target.provider, &person, now).await?);
@@ -1077,8 +1077,18 @@ async fn update(
                 .await?;
         let revoke = crate::sso::mapping::Outcome { refused: true, orgs: Vec::new() };
         for (user_id,) in managed {
-            touched
-                .extend(crate::sso::signin::apply(&mut tx, &info, (&id, &current.slug), &user_id, &revoke, now).await?);
+            touched.extend(
+                crate::sso::signin::apply(
+                    &mut tx,
+                    &info,
+                    (&id, &current.slug),
+                    &user_id,
+                    &revoke,
+                    Some(&admin.id),
+                    now,
+                )
+                .await?,
+            );
         }
         let removed = sqlx::query("DELETE FROM sso_identities WHERE provider_id = $1")
             .bind(&id)

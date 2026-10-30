@@ -228,13 +228,42 @@ function acceptError(t: ReturnType<typeof useI18n>["t"], error: unknown): string
 function Join({ token, summary }: { token: string; summary: ReactNode }) {
   const { t } = useI18n();
   const joined = useJoined();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  // The organization requires a second factor the account does not have: its session ended, and
+  // the account sets one up before it is signed in again with the membership.
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
   const join = useMutation({
     mutationFn: () => acceptInvitation(token),
     retry: false,
-    // Someone signed in already passed any second step.
-    onSuccess: (result) => ("secondFactor" in result ? undefined : joined(result)),
+    onSuccess: (result) => {
+      if ("secondFactor" in result) {
+        forgetToken("invite");
+        forgetAccountData(queryClient);
+        queryClient.setQueryData(meQuery.queryKey, null);
+        if (isPrompt(result.secondFactor)) {
+          setPrompt(result.secondFactor);
+        } else {
+          void navigate({ to: "/login" });
+        }
+        return;
+      }
+      return joined(result);
+    },
   });
   const failed = acceptError(t, join.error);
+  if (prompt !== null) {
+    return (
+      <SecondFactorSetup
+        prompt={prompt}
+        onSignedIn={(me) => void joined(me)}
+        onSignOut={() => {
+          void logout().finally(() => void navigate({ to: "/login" }));
+        }}
+        onExpired={() => void navigate({ to: "/login" })}
+      />
+    );
+  }
   return (
     <div className="access__card">
       {summary}
@@ -423,7 +452,14 @@ function NewAccount({
       <AccessAlert>
         {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
       </AccessAlert>
-      {info.password ? null : (
+      {info.password ? null : info.sso.length === 0 ? (
+        <AccessNotice
+          tone="info"
+          icon="lock"
+          title={t("access.invite.noWayTitle")}
+          detail={t("access.invite.noWayText", { org: info.orgName })}
+        />
+      ) : (
         <p className="access__lead">{t("access.invite.ssoOnly", { org: info.orgName })}</p>
       )}
       {info.password && info.sso.length > 0 ? (

@@ -921,14 +921,16 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         .await
         .unwrap();
     assert!(member.is_none(), "{member:?}");
-    let revoked: Vec<(String,)> = sqlx::query_as(
-        "SELECT summary FROM audit_events WHERE action = 'sso.memberships_changed' AND resource_id = $1",
+    let revoked: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT summary, actor_user_id FROM audit_events WHERE action = 'sso.memberships_changed' \
+         AND resource_id = $1 AND summary LIKE '%issuer_changed%'",
     )
     .bind(&tess_id.0)
     .fetch_all(&app.state.db)
     .await
     .unwrap();
-    assert!(revoked.iter().any(|(s,)| s.contains("removed")), "{revoked:?}");
+    assert!(revoked.iter().any(|(s, _)| s.contains("removed")), "{revoked:?}");
+    assert!(revoked.iter().all(|(_, actor)| actor.as_deref() == Some(admin_id.as_str())), "the admin changed it");
 
     // Not for anyone but server admins.
     let r = app.get("/api/admin/sign-in", &lea_session).await;
@@ -1012,25 +1014,7 @@ async fn unverified_provider_accounts_and_invitations_without_passwords() {
     let off = json!({ "localPassword": "off", "passwordForm": "hidden", "breakGlassUserId": admin_id });
     let r = app.put("/api/admin/sign-in/local", off, &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let r = app
-        .post(
-            &format!("/api/orgs/{org}/invitations"),
-            json!({ "emails": ["neu@example.de"], "role": "viewer" }),
-            &admin,
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
-    app.state.mail.settle().await;
-    let mails = app.inbox.lock().unwrap().clone();
-    let text = mails.iter().find(|(to, _)| to == "neu@example.de").map(|(_, d)| mail_text(d)).unwrap_or_default();
-    let token: String = text
-        .split("/invite#")
-        .nth(1)
-        .unwrap_or_default()
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
-    assert!(!token.is_empty(), "the invitation link: {text}");
+    let token = invite(&app, &admin, &org, "neu@example.de").await;
     let r = app.send(Method::POST, "/api/auth/invitation", Some(json!({ "token": token })), None).await;
     assert_eq!(r.body["password"], json!(false), "{}", r.body);
     assert_eq!(r.body["sso"][0]["id"], json!("mueller-sso"));
@@ -1042,5 +1026,72 @@ async fn unverified_provider_accounts_and_invitations_without_passwords() {
         .await
         .unwrap();
     assert!(made.is_none(), "no account with a password");
+
+    // An invitation to an internationalized domain names the account a provider made from its
+    // ASCII (IDNA) form.
+    let anna_token = invite(&app, &admin, &org, "anna@bücher.example").await;
+    let anna = Who { sub: "sub-anna", email: "anna@xn--bcher-kva.example", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &anna, |_| {}).await;
+    let anna_session = session_of(&r);
+    let r = app.send(Method::POST, "/api/auth/invitation", Some(json!({ "token": anna_token })), None).await;
+    assert_eq!(r.body["accountExists"], json!(true), "{}", r.body);
+    let r = app.post("/api/auth/invitation/accept", json!({ "token": anna_token }), &anna_session).await;
+    assert_eq!(r.status, StatusCode::OK, "the invited address in another form: {}", r.body);
+    assert_eq!(r.body["orgs"][0]["id"], json!(org));
+
+    // The organization requires a second factor: someone who signed in through the provider and
+    // joins sets one up first; the session they had ends.
+    let settings = app.get(&format!("/api/orgs/{org}/settings"), &admin).await;
+    let version = settings.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == "security.two_factor_required")
+        .map(|s| s["version"].as_i64().unwrap())
+        .unwrap();
+    let path = format!("/api/orgs/{org}/settings/security.two_factor_required");
+    let r =
+        app.send(Method::PATCH, &path, Some(json!({ "value": "everyone", "version": version })), Some(&admin)).await;
+    assert!(r.status == StatusCode::OK || r.status == StatusCode::FORBIDDEN, "{}", r.body);
+    if r.status == StatusCode::FORBIDDEN {
+        // The change asks for a fresh confirmation of the admin's own factor; set it directly.
+        sqlx::query(
+            "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at) \
+             VALUES ($1, 'security.two_factor_required', '\"everyone\"', 1, $2, 0)",
+        )
+        .bind(&org)
+        .bind(&admin_id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+        kalzit::settings::cache(&app.state).invalidate(Some(&org));
+    }
+    let neu = Who { sub: "sub-neu", email: "neu@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &neu, |_| {}).await;
+    let neu_session = session_of(&r);
+    let r = app.post("/api/auth/invitation/accept", json!({ "token": token }), &neu_session).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["secondFactor"]["setup"], json!(true), "{}", r.body);
+    assert!(r.cookie("kalzit_pending").is_some(), "the second step starts");
+    assert_eq!(app.get("/api/me", &neu_session).await.status, StatusCode::UNAUTHORIZED, "the session ended");
     app.finish().await;
+}
+
+/// Invites `email` to `org` and answers the token of the mailed link.
+async fn invite(app: &TestApp, admin: &str, org: &str, email: &str) -> String {
+    let r =
+        app.post(&format!("/api/orgs/{org}/invitations"), json!({ "emails": [email], "role": "viewer" }), admin).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    app.state.mail.settle().await;
+    let mails = app.inbox.lock().unwrap().clone();
+    let text = mails.iter().rev().find(|(to, _)| to == email).map(|(_, d)| mail_text(d)).unwrap_or_default();
+    let token: String = text
+        .split("/invite#")
+        .nth(1)
+        .unwrap_or_default()
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    assert!(!token.is_empty(), "the invitation link: {text}");
+    token
 }

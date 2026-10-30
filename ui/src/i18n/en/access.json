@@ -228,5 +228,7 @@
   "access.confirm.signIn": "Sign in",
   "access.invite.ssoContinue": "Continue with {provider}",
   "access.invite.ssoOnly": "At {org} you sign in through your provider. You come back here afterwards and join.",
-  "access.invite.orPassword": "or with a new password"
+  "access.invite.orPassword": "or with a new password",
+  "access.invite.noWayTitle": "There is no way to sign in here right now.",
+  "access.invite.noWayText": "At {org}, password sign-in is off and no provider is set up. Contact an admin of the organization."
 }
