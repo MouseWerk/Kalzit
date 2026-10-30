@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { openAdmin, sent } from "../admin/test/openAdmin";
 import { base64UrlForTests } from "./webauthn";
 
 async function enterPassword(path: string) {
@@ -150,6 +151,38 @@ describe("account: sign-in and security", () => {
     await user.type(within(dialog).getByLabelText("Six-digit code"), server.security.code);
     const codes = await screen.findByRole("dialog", { name: "Your recovery codes" });
     expect(within(codes).getAllByRole("listitem")).toHaveLength(10);
+  });
+});
+
+describe("the second factor’s rule", () => {
+  it("asks for a fresh confirmation before the change goes through", async () => {
+    const path = "/api/admin/settings/security.two_factor_required";
+    const { user, server } = await openAdmin("/settings/signin", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        admin.serverSettings.push({
+          key: "security.two_factor_required",
+          scope: "server",
+          value: "off",
+          default: "off",
+          source: "default",
+          editable: true,
+          version: 0,
+          description: "Who must sign in with a second factor",
+          updatedAt: null,
+          updatedBy: null,
+        });
+      },
+      setupServer: (fake) => {
+        fake.security.totp = true;
+        fake.failNext(path, 403, "confirmation_required", "PATCH");
+      },
+    });
+    await user.click(await screen.findByRole("radio", { name: "For everyone" }));
+    const dialog = await screen.findByRole("dialog", { name: "Confirm with your second factor" });
+    await user.type(within(dialog).getByLabelText("Six-digit code"), server.security.code);
+    await waitFor(() => expect(sent(server, "PATCH").filter((p) => p === path)).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });
 

@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use axum::extract::{Path, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -110,20 +110,22 @@ async fn patch_server(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     Path(key): Path<String>,
     JsonBody(body): JsonBody<PatchSetting>,
 ) -> ApiResult<Json<SettingView>> {
-    patch(&state, &user, &info, None, &key, body).await
+    patch(&state, &user, &info, &headers, None, &key, body).await
 }
 
 async fn patch_org(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     Path((_, key)): Path<(String, String)>,
     JsonBody(body): JsonBody<PatchSetting>,
 ) -> ApiResult<Json<SettingView>> {
-    patch(&state, &ctx.user, &info, Some(&ctx.org_id), &key, body).await
+    patch(&state, &ctx.user, &info, &headers, Some(&ctx.org_id), &key, body).await
 }
 
 async fn current(state: &AppState, org_id: Option<&str>, key: &str) -> ApiResult<Effective> {
@@ -153,11 +155,14 @@ async fn patch(
     state: &AppState,
     user: &SessionUser,
     info: &RequestInfo,
+    headers: &HeaderMap,
     org_id: Option<&str>,
     key: &str,
     body: PatchSetting,
 ) -> ApiResult<Json<SettingView>> {
     let def = settings::find(key, scope_of(org_id)).ok_or_else(ApiError::not_found)?;
+    let now = state.clock.now_ms();
+    crate::auth::second_factor::require_fresh_for_setting(state, &user.id, headers, info.https, key, now).await?;
     let before = current(state, org_id, key).await?;
     if let Some(reason) = locked_reason(def, &before) {
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", reason));
@@ -169,7 +174,6 @@ async fn patch(
         return Err(conflict(before));
     }
 
-    let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     let Some(version) = settings::store(&mut tx, org_id, key, &body.value, body.version, &user.id, now).await? else {
         drop(tx);
@@ -407,10 +411,12 @@ async fn batch(
     state: &AppState,
     user: &SessionUser,
     info: &RequestInfo,
+    headers: &HeaderMap,
     org_id: Option<&str>,
     body: BatchRequest,
 ) -> ApiResult<Json<Page<SettingView>>> {
     let scope = scope_of(org_id);
+    let started = state.clock.now_ms();
     if body.changes.is_empty() || body.changes.len() > MAX_BATCH {
         return Err(ApiError::validation(format!("a batch changes 1 to {MAX_BATCH} settings")).with_field("changes"));
     }
@@ -428,6 +434,8 @@ async fn batch(
         if let Some(reason) = locked_reason(def, &before) {
             return Err(ApiError::new(StatusCode::CONFLICT, "conflict", reason));
         }
+        crate::auth::second_factor::require_fresh_for_setting(state, &user.id, headers, info.https, def.key, started)
+            .await?;
         match (&change.value, change.reset) {
             (Some(value), false) => {
                 settings::validate(def, value).map_err(|e| ApiError::validation(e).with_field("changes"))?;
@@ -489,16 +497,18 @@ async fn batch_server(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     JsonBody(body): JsonBody<BatchRequest>,
 ) -> ApiResult<Json<Page<SettingView>>> {
-    batch(&state, &user, &info, None, body).await
+    batch(&state, &user, &info, &headers, None, body).await
 }
 
 async fn batch_org(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     JsonBody(body): JsonBody<BatchRequest>,
 ) -> ApiResult<Json<Page<SettingView>>> {
-    batch(&state, &ctx.user, &info, Some(&ctx.org_id), body).await
+    batch(&state, &ctx.user, &info, &headers, Some(&ctx.org_id), body).await
 }

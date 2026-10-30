@@ -162,13 +162,21 @@ pub struct Allowed {
     pub totp: bool,
 }
 
-pub async fn allowed(state: &AppState) -> ApiResult<Allowed> {
+/// The methods that can be set up through this request. Passkeys need a host name
+/// (`passkeys::relying_party`); where they cannot work (Kalzit opened by an IP address), the
+/// authenticator app is offered instead even when the setting allows passkeys only, so a required
+/// setup, the first owner's at first-run setup included, can never dead-end.
+pub async fn allowed(state: &AppState, info: &RequestInfo) -> ApiResult<Allowed> {
     let value = crate::settings::get(state, METHODS_KEY).await?;
-    Ok(match value.as_str() {
+    let mut allowed = match value.as_str() {
         Some("passkey") => Allowed { passkey: true, totp: false },
         Some("totp") => Allowed { passkey: false, totp: true },
         _ => Allowed { passkey: true, totp: true },
-    })
+    };
+    if allowed.passkey && relying_party(state, info).await.is_err() {
+        allowed = Allowed { passkey: false, totp: true };
+    }
+    Ok(allowed)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -800,6 +808,21 @@ pub async fn start_passkey_check(
     serde_json::to_value(options).map_err(|e| ApiError::internal("passkey sign-in", e))
 }
 
+/// The sign counter of a stored passkey (webauthn-rs keeps it as `cred.counter`).
+fn stored_counter(json: &str) -> u32 {
+    serde_json::from_str::<Value>(json)
+        .ok()
+        .and_then(|v| v["cred"]["counter"].as_u64())
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0)
+}
+
+/// Whether an assertion's counter may follow the stored one. Authenticators without a counter
+/// (synced passkeys) always send 0; once either side counts, the new value must be greater.
+fn counter_advances(stored: u32, new: u32) -> bool {
+    (stored == 0 && new == 0) || new > stored
+}
+
 fn passkey_refused() -> ApiError {
     invalid_code().because("second_factor.passkey_refused")
 }
@@ -823,6 +846,13 @@ async fn verify_passkey(
     };
     let wanted = passkeys::credential_key(result.cred_id());
     let mut tx = crate::db::begin(&state.db).await?;
+    // The passkey's row is locked before it is read, so two sign-ins with it at once run one after
+    // the other and each compares its counter with what the other stored.
+    sqlx::query("UPDATE user_passkeys SET last_used_at = last_used_at WHERE user_id = $1 AND credential_id = $2")
+        .bind(user_id)
+        .bind(&wanted)
+        .execute(&mut *tx)
+        .await?;
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT id, credential FROM user_passkeys WHERE user_id = $1 AND credential_id = $2")
             .bind(user_id)
@@ -831,7 +861,12 @@ async fn verify_passkey(
             .await?;
     let Some((id, json)) = row else { return Err(passkey_refused()) };
     let mut key: SecurityKey = serde_json::from_str(&json).map_err(|e| ApiError::internal("passkey", e))?;
-    // The new sign counter, so a cloned authenticator with an older counter is refused later.
+    // The counter as stored now, not as the dialog's start saw it: a counter that does not go
+    // beyond it (a replay, a cloned authenticator, or a sign-in that raced this one) is refused, and
+    // the stored counter never moves back.
+    if !counter_advances(stored_counter(&json), result.counter()) {
+        return Err(passkey_refused());
+    }
     key.update_credential(&result);
     let json = serde_json::to_string(&key).map_err(|e| ApiError::internal("passkey", e))?;
     sqlx::query("UPDATE user_passkeys SET credential = $1, last_used_at = $2 WHERE id = $3")
@@ -1038,6 +1073,27 @@ where
     }
 }
 
+/// Changing who must have a second factor, or which methods people may set up, weakens or
+/// strengthens every account at once: an admin who has a second factor confirms it first, within
+/// `CONFIRMATION_TTL_MS`, as for their own weakening changes. Other settings pass.
+pub async fn require_fresh_for_setting(
+    state: &AppState,
+    user_id: &str,
+    headers: &HeaderMap,
+    secure: bool,
+    key: &str,
+    now: i64,
+) -> ApiResult<()> {
+    if key != POLICY_KEY && key != METHODS_KEY {
+        return Ok(());
+    }
+    if !methods(&state.db, user_id).await?.any() {
+        return Ok(());
+    }
+    let token = session::read_cookie(headers, secure).ok_or_else(ApiError::unauthenticated)?;
+    require_fresh(&state.db, &session::hash_token(&token), now).await
+}
+
 // ---------------------------------------------------------------------------------------------
 // The half-signed-in state
 
@@ -1240,6 +1296,7 @@ pub async fn take_pending(conn: &mut sqlx::AnyConnection, pending: &Pending, now
 
 pub async fn prompt(
     state: &AppState,
+    info: &RequestInfo,
     pending: &Pending,
     required_by: Option<RequiredBy>,
     now: i64,
@@ -1251,7 +1308,7 @@ pub async fn prompt(
         setup: pending.setup != 0,
         methods,
         last_used,
-        allowed: allowed(state).await?,
+        allowed: allowed(state, info).await?,
         required_by,
         locked_until: locked_until(&state.db, &pending.user_id, now).await?,
         expires_at: pending.expires_at,
@@ -1378,6 +1435,17 @@ mod tests {
         assert!(!ask(true, true));
         assert!(FirstStep::Directory.asks_second_factor());
         assert!(FirstStep::Password { password_hash: None }.asks_second_factor());
+    }
+
+    #[test]
+    fn a_passkey_counter_only_moves_forward() {
+        assert!(counter_advances(0, 0), "authenticators without a counter");
+        assert!(counter_advances(0, 1) && counter_advances(5, 6));
+        assert!(!counter_advances(5, 5), "a replay");
+        assert!(!counter_advances(5, 3), "an older counter");
+        assert!(!counter_advances(5, 0), "a counter that stopped counting");
+        assert_eq!(stored_counter(r#"{"cred":{"counter":7}}"#), 7);
+        assert_eq!(stored_counter("not json"), 0);
     }
 
     #[test]

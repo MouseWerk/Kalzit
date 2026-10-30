@@ -108,7 +108,20 @@ impl TestApp {
     }
 
     async fn send(&self, method: Method, path: &str, body: Option<Value>, who: &Browser) -> Reply {
-        let mut req = Request::builder().method(method).uri(path).header(header::HOST, HOST).header("origin", ORIGIN);
+        self.send_on(HOST, ORIGIN, method, path, body, who).await
+    }
+
+    /// `send` to another host the person opened Kalzit by (such as an IP address).
+    async fn send_on(
+        &self,
+        host: &str,
+        origin: &str,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        who: &Browser,
+    ) -> Reply {
+        let mut req = Request::builder().method(method).uri(path).header(header::HOST, host).header("origin", origin);
         let cookies = who.header();
         if !cookies.is_empty() {
             req = req.header(header::COOKIE, cookies);
@@ -493,6 +506,113 @@ async fn member_id(t: &TestApp, email: &str) -> String {
     id
 }
 
+async fn check_the_last_method_cannot_go_in_a_race(t: TestApp) {
+    use authenticator::Authenticator;
+    let (owner, _) = t.setup().await;
+    let (secret, _) = t.enroll_totp(&owner).await;
+    let r = t.post("/api/me/security/confirm", json!({ "method": "totp", "code": t.code(&secret) }), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let key = Authenticator::new();
+    let options = t.post("/api/me/security/passkeys/setup", json!({}), &owner).await;
+    let r =
+        t.post("/api/me/security/passkeys", json!({ "credential": key.register(&options.body, ORIGIN) }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let passkey = format!("/api/me/security/passkeys/{}", r.body["passkey"]["id"].as_str().unwrap());
+    let r = t.put_setting(&owner, "/api/admin/settings/security.two_factor_required", json!("everyone")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    // Both removals pass the check before either deletes; inside its transaction the second finds
+    // nothing would be left and is refused.
+    let (a, b) = tokio::join!(
+        t.send(Method::DELETE, "/api/me/security/totp", None, &owner),
+        t.send(Method::DELETE, &passkey, None, &owner),
+    );
+    let removed = [a.status, b.status].iter().filter(|s| **s == StatusCode::NO_CONTENT).count();
+    assert_eq!(removed, 1, "{} / {}", a.body, b.body);
+    assert!([a.reason(), b.reason()].contains(&"second_factor.last_method"));
+    let status = t.get("/api/me/security", &owner).await;
+    let left = usize::from(status.body["totp"].is_object()) + status.body["passkeys"].as_array().unwrap().len();
+    assert_eq!(left, 1, "{}", status.body);
+    assert!(status.body["recoveryCodes"].is_object(), "the codes stay with the remaining method");
+    t.finish().await;
+}
+
+async fn check_a_forced_setup_never_replaces_a_factor_set_up_meanwhile(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let member = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let r = t.put_setting(&owner, "/api/admin/settings/security.two_factor_required", json!("everyone")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (pending, r) = t.password("vera@example.de").await;
+    assert_eq!(r.body["secondFactor"]["setup"], true);
+    let r = t.post("/api/auth/second-factor/setup/totp", json!({}), &pending).await;
+    let forced = totp::decode_secret(&r.body["secret"].as_str().unwrap().replace(' ', "")).unwrap();
+    // Meanwhile, in a session from before the rule, the person sets up an app.
+    let (kept, codes) = t.enroll_totp(&member).await;
+    let r =
+        t.post("/api/auth/second-factor/setup", json!({ "method": "totp", "code": t.code(&forced) }), &pending).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "second_factor.setup_done"), "{}", r.body);
+    // The app and the codes set up meanwhile are untouched.
+    let (pending, r) = t.password("vera@example.de").await;
+    assert_eq!(r.body["secondFactor"]["setup"], false, "{}", r.body);
+    let (_, r) = second_step(&t, &pending, json!({ "method": "recovery", "code": codes[0] })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let _ = kept;
+    t.finish().await;
+}
+
+async fn check_passkeys_need_a_host_name_and_the_app_is_offered_instead(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    t.member(&owner, &org, "vera@example.de", "viewer").await;
+    for (key, value) in [("security.two_factor_methods", "passkey"), ("security.two_factor_required", "everyone")] {
+        let r = t.put_setting(&owner, &format!("/api/admin/settings/{key}"), json!(value)).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+    let login = json!({ "email": "vera@example.de", "password": PASSWORD });
+    // By its name: passkeys only, as the server says.
+    let r = t.post("/api/auth/login", login.clone(), &Browser::default()).await;
+    assert_eq!(r.body["secondFactor"]["allowed"], json!({ "passkey": true, "totp": false }), "{}", r.body);
+    // By an IP address, where browsers refuse passkeys: the app instead, so the setup can finish.
+    let (ip, ip_origin) = ("10.0.0.5:3000", "http://10.0.0.5:3000");
+    let r = t.send_on(ip, ip_origin, Method::POST, "/api/auth/login", Some(login), &Browser::default()).await;
+    assert_eq!(r.body["secondFactor"]["allowed"], json!({ "passkey": false, "totp": true }), "{}", r.body);
+    let pending = Browser { session: None, pending: r.cookie("kalzit_pending") };
+    let r =
+        t.send_on(ip, ip_origin, Method::POST, "/api/auth/second-factor/setup/totp", Some(json!({})), &pending).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let secret = totp::decode_secret(&r.body["secret"].as_str().unwrap().replace(' ', "")).unwrap();
+    let body = json!({ "method": "totp", "code": t.code(&secret) });
+    let r = t.send_on(ip, ip_origin, Method::POST, "/api/auth/second-factor/setup", Some(body), &pending).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.finish().await;
+}
+
+async fn check_the_rule_changes_only_with_a_fresh_confirmation(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let (secret, _) = t.enroll_totp(&owner).await;
+    t.clock.advance_ms(6 * 60_000);
+    for path in [
+        "/api/admin/settings/security.two_factor_required".to_string(),
+        "/api/admin/settings/security.two_factor_methods".to_string(),
+        format!("/api/orgs/{org}/settings/security.two_factor_required"),
+    ] {
+        let value = if path.ends_with("methods") { "totp" } else { "admins" };
+        let r = t.put_setting(&owner, &path, json!(value)).await;
+        assert_eq!(r.code(), "confirmation_required", "{path}: {}", r.body);
+    }
+    let batch = json!({ "changes": [{ "key": "security.two_factor_required", "reset": true, "version": 0 }] });
+    assert_eq!(t.post("/api/admin/settings/batch", batch, &owner).await.code(), "confirmation_required");
+    // Other settings need none.
+    let r = t.put_setting(&owner, "/api/admin/settings/audit.retention_days", json!(30)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    let r = t.post("/api/me/security/confirm", json!({ "method": "totp", "code": t.code(&secret) }), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.put_setting(&owner, "/api/admin/settings/security.two_factor_required", json!("admins")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let actions = t.audit_actions().await;
+    assert!(actions.contains(&"user.second_factor_confirmed".to_string()), "{actions:?}");
+    t.finish().await;
+}
 // ---------------------------------------------------------------------------------------------
 // A software authenticator: one P-256 key, "none" attestation, user present and verified.
 
@@ -756,6 +876,26 @@ async fn passkeys_sign_in_and_a_cloned_authenticator_is_refused() {
 }
 
 #[tokio::test]
+async fn the_last_method_cannot_go_in_a_race() {
+    check_the_last_method_cannot_go_in_a_race(test_app().await).await;
+}
+
+#[tokio::test]
+async fn a_forced_setup_never_replaces_a_factor_set_up_meanwhile() {
+    check_a_forced_setup_never_replaces_a_factor_set_up_meanwhile(test_app().await).await;
+}
+
+#[tokio::test]
+async fn passkeys_need_a_host_name_and_the_app_is_offered_instead() {
+    check_passkeys_need_a_host_name_and_the_app_is_offered_instead(test_app().await).await;
+}
+
+#[tokio::test]
+async fn the_rule_changes_only_with_a_fresh_confirmation() {
+    check_the_rule_changes_only_with_a_fresh_confirmation(test_app().await).await;
+}
+
+#[tokio::test]
 async fn postgres_two_factor() {
     let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
         eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL test not run");
@@ -770,4 +910,8 @@ async fn postgres_two_factor() {
     check_an_admin_resets_a_second_factor_after_confirming_their_own(postgres_app(&base).await).await;
     check_a_new_password_needs_a_fresh_confirmation_with_a_second_factor(postgres_app(&base).await).await;
     check_passkeys_sign_in_and_a_cloned_authenticator_is_refused(postgres_app(&base).await).await;
+    check_the_last_method_cannot_go_in_a_race(postgres_app(&base).await).await;
+    check_a_forced_setup_never_replaces_a_factor_set_up_meanwhile(postgres_app(&base).await).await;
+    check_passkeys_need_a_host_name_and_the_app_is_offered_instead(postgres_app(&base).await).await;
+    check_the_rule_changes_only_with_a_fresh_confirmation(postgres_app(&base).await).await;
 }

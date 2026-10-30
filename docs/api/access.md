@@ -665,8 +665,7 @@ require it.
   a trusted proxy) with its scheme; its id is that host name, so passkeys need a host name, not an
   IP address (`second_factor.passkey_host`). No attestation is asked for; user verification is
   preferred (a PIN, fingerprint or face where the authenticator has one); sign counters are
-  checked, and an assertion whose counter is not above the stored one is refused (a cloned
-  authenticator). A passkey is registered to one account only.
+  checked against the counter stored at that moment (under the passkey's row lock), and an assertion whose counter is not above it is refused (a replay or a cloned authenticator); the stored counter never moves back. A passkey is registered to one account only.
 - **Recovery codes**: 10 per set, each 16 characters from a 32-letter alphabet without look-alikes
   (80 bits), shown as `xxxx-xxxx-xxxx-xxxx` once, when the set is made. Only a SHA-256 of each,
   bound to the account, is stored; each works once. Input ignores case, spaces and dashes. A set
@@ -687,7 +686,7 @@ accepted there). `admins` on the server means server admins and the administrato
 organization; in an organization, its administrators. An administrator is a member whose role
 holds `users:write`, `roles:write` or `settings:write`. A person needs a second factor when the
 server's rule or the rule of any organization they belong to applies to them. A method turned off
-keeps working for those who have it; it can no longer be set up. There is no grace period: whoever
+keeps working for those who have it; it can no longer be set up. Where passkeys cannot work (Kalzit opened by an IP address), the authenticator app is offered instead even when only passkeys are allowed (`allowed` says so), so a required setup, the first owner's included, never dead-ends. Changing these settings (also by import or reset) needs a fresh confirmation (`403 confirmation_required`) when the admin has a second factor. There is no grace period: whoever
 must have a second factor and has none sets one up at the next sign-in, before a session opens.
 The break-glass administrator signs in through the same steps; nothing bypasses the policy.
 
@@ -795,7 +794,7 @@ interface SecurityStatus {
 
 **Fresh confirmation.** `POST /me/security/confirm` takes a `Proof` (for a passkey, after
 `POST /me/security/confirm/passkey`) and lets this session make changes for 5 minutes; codes
-count against the account's lockout. Removing a method, new recovery codes, `POST /me/password`
+count against the account's lockout; a confirmation is audited (`user.second_factor_confirmed`, the method). Removing a method, new recovery codes, `POST /me/password`
 and, on an account that already has a method, adding or replacing one answer `403
 confirmation_required` without it. A sign-in with a second factor counts as one.
 
@@ -804,7 +803,7 @@ confirmation_required` without it. A sign-in with a second factor counts as one.
 answers `422 invalid_code` with `field` `code` and leaves the setup open. **`POST
 /me/security/passkeys`** `{ "name"?, "credential" }` (name up to 60 characters, default
 `Passkey`). Both answer the first set of recovery codes when the account had no method before.
-Removing the last method while a second factor is required is `409 conflict`
+Removing the last method while a second factor is required is `409 conflict` (checked again inside the removal's transaction under the account's row lock, so two removals at once cannot both pass)
 (`second_factor.last_method`); removing the last method otherwise also removes the recovery
 codes. Errors: `403 forbidden` `second_factor.method_off`, `422 validation`
 `second_factor.setup_expired` (start again), `second_factor.passkey_refused` (the browser's answer
@@ -855,6 +854,7 @@ second step for any of them.
 | `second_factor.locked` | `429 rate_limited` | too many wrong codes; `params.until` |
 | `second_factor.busy` | `429 rate_limited` | more code attempts at once than the budget |
 | `second_factor.setup_needed` | `422 validation` | the account must set up a second factor first |
+| `second_factor.setup_done` | `409 conflict` | a forced setup when the account got a second factor meanwhile |
 | `second_factor.setup_expired` | `422 validation` | the app setup or passkey dialog was not started or expired |
 | `second_factor.no_totp` | `422 validation` | the account has no authenticator app |
 | `second_factor.no_passkey` | `422 validation` | the account has no passkey |

@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
@@ -8,6 +8,7 @@ import {
   confirmFactor,
   confirmPasskeyOptions,
   type FactorMethod,
+  fetchSecurity,
   type SecurityStatus,
   securityKeys,
 } from "./api";
@@ -141,4 +142,61 @@ export function ConfirmFactorDialog({
       )}
     </Dialog>
   );
+}
+
+interface Waiting {
+  call: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+  error: unknown;
+}
+
+/**
+ * Runs calls that may need a fresh confirmation (`confirmation_required`, such as a change of the
+ * second factor's rule): such a call opens the confirmation dialog and runs again once confirmed;
+ * closing the dialog fails it with the server's error. Render `dialog` next to the caller.
+ */
+export function useConfirmedCalls() {
+  const { t } = useI18n();
+  const [waiting, setWaiting] = useState<Waiting | null>(null);
+  const status = useQuery({
+    queryKey: securityKeys.status,
+    queryFn: fetchSecurity,
+    enabled: waiting !== null,
+  });
+
+  async function run<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (error) {
+      if (!isApiError(error, "confirmation_required")) {
+        throw error;
+      }
+      return new Promise<T>((resolve, reject) => {
+        setWaiting({ call, resolve: (value) => resolve(value as T), reject, error });
+      });
+    }
+  }
+
+  const dialog =
+    waiting === null || status.data === undefined ? null : (
+      <ConfirmFactorDialog
+        open
+        title={t("security.dialog.confirmTitle")}
+        confirmLabel={t("security.factor.confirm")}
+        status={status.data}
+        onClose={() => {
+          waiting.reject(waiting.error);
+          setWaiting(null);
+        }}
+        action={async () => {
+          const value = await waiting.call();
+          setWaiting(null);
+          waiting.resolve(value);
+        }}
+      >
+        {t("security.dialog.settingText")}
+      </ConfirmFactorDialog>
+    );
+  return { run, dialog };
 }

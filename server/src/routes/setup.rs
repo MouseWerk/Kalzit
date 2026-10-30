@@ -422,7 +422,7 @@ pub async fn complete(
             setup: true,
             methods: Vec::new(),
             last_used: None,
-            allowed: sf::allowed(&state).await?,
+            allowed: sf::allowed(&state, &info).await?,
             required_by: Some(sf::RequiredBy::Server),
             locked_until: None,
             expires_at: now + sf::CHALLENGE_TTL_MS,

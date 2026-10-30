@@ -84,7 +84,7 @@ async fn status(
     Ok(Json(Status {
         required: required_by.is_some(),
         required_by,
-        allowed: sf::allowed(&state).await?,
+        allowed: sf::allowed(&state, &info).await?,
         methods: sf::methods(&state.db, &user.id).await?,
         confirmed_until: sf::confirmed_until(&state.db, &hash, now).await?,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
@@ -108,8 +108,13 @@ async fn confirm(
 ) -> ApiResult<Json<Confirmed>> {
     let now = state.clock.now_ms();
     let hash = session_hash(&headers, &info)?;
-    sf::verify(&state, &info, sf::Owner::Session(&hash), &user.id, &proof, now).await?;
-    sf::mark_confirmed(&state.db, &hash, now).await?;
+    let verified = sf::verify(&state, &info, sf::Owner::Session(&hash), &user.id, &proof, now).await?;
+    let mut tx = crate::db::begin(&state.db).await?;
+    sf::mark_confirmed(&mut *tx, &hash, now).await?;
+    let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
+    let summary = json!({ "userId": user.id, "method": verified.method() });
+    audit(&mut tx, &actor, None, "user.second_factor_confirmed", ("user", &user.id), summary).await?;
+    crate::db::commit(tx).await?;
     Ok(Json(Confirmed { confirmed_until: now + sf::CONFIRMATION_TTL_MS }))
 }
 
@@ -146,7 +151,7 @@ async fn totp_setup(
 ) -> ApiResult<Json<sf::TotpSetup>> {
     let now = state.clock.now_ms();
     let hash = session_hash(&headers, &info)?;
-    if !sf::allowed(&state).await?.totp {
+    if !sf::allowed(&state, &info).await?.totp {
         return Err(method_off());
     }
     require_fresh_if_any(&state, &user.id, &hash, now).await?;
@@ -189,7 +194,7 @@ async fn totp_save(
 ) -> ApiResult<Json<Saved>> {
     let now = state.clock.now_ms();
     let hash = session_hash(&headers, &info)?;
-    if !sf::allowed(&state).await?.totp {
+    if !sf::allowed(&state, &info).await?.totp {
         return Err(method_off());
     }
     let has = require_fresh_if_any(&state, &user.id, &hash, now).await?;
@@ -205,23 +210,41 @@ async fn totp_save(
     Ok(Json(Saved { passkey: None, recovery_codes: codes }))
 }
 
-/// Refuses removing the account's last method while a second factor is required.
-async fn guard_last(state: &AppState, user: &SessionUser, has: &Methods) -> ApiResult<()> {
-    if has.count() <= 1 && sf::required_for(state, &user.id, user.is_server_admin != 0).await?.is_some() {
-        return Err(conflict("this is the last method and a second factor is required; set up another one first")
-            .because("second_factor.last_method"));
+fn last_method() -> ApiError {
+    conflict("this is the last method and a second factor is required; set up another one first")
+        .because("second_factor.last_method")
+}
+
+/// Refuses removing the account's last method while a second factor is required; answers whether
+/// one is required, for the check inside the transaction (`after_removal`).
+async fn guard_last(state: &AppState, user: &SessionUser, has: &Methods) -> ApiResult<bool> {
+    let required = sf::required_for(state, &user.id, user.is_server_admin != 0).await?.is_some();
+    if has.count() <= 1 && required {
+        return Err(last_method());
     }
+    Ok(required)
+}
+
+/// Locks the account's row first in a transaction that removes a method, so two removals of the
+/// same account at once run one after the other and the second sees what the first left.
+async fn lock_account(tx: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<()> {
+    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(user_id).execute(&mut *tx).await?;
     Ok(())
 }
 
-/// After a removal: without any method left, the recovery codes have nothing to stand in for.
-async fn drop_codes_if_none_left(tx: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<()> {
+/// After a removal, inside its transaction: the methods are counted again, so removals that raced
+/// past `guard_last` cannot take the last one while it is required (the transaction is then rolled
+/// back). Without any method left, the recovery codes have nothing to stand in for.
+async fn after_removal(tx: &mut sqlx::AnyConnection, user_id: &str, required: bool) -> ApiResult<()> {
     let (left,): (i64,) = sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM user_totp WHERE user_id = $1) + (SELECT COUNT(*) FROM user_passkeys WHERE user_id = $1)",
     )
     .bind(user_id)
     .fetch_one(&mut *tx)
     .await?;
+    if left == 0 && required {
+        return Err(last_method());
+    }
     if left == 0 {
         sqlx::query("DELETE FROM user_recovery_codes WHERE user_id = $1").bind(user_id).execute(&mut *tx).await?;
     }
@@ -241,10 +264,11 @@ async fn totp_remove(
     if has.totp.is_none() {
         return Err(ApiError::not_found());
     }
-    guard_last(&state, &user, &has).await?;
+    let required = guard_last(&state, &user, &has).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    lock_account(&mut tx, &user.id).await?;
     sqlx::query("DELETE FROM user_totp WHERE user_id = $1").bind(&user.id).execute(&mut *tx).await?;
-    drop_codes_if_none_left(&mut tx, &user.id).await?;
+    after_removal(&mut tx, &user.id, required).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user.id, "method": "totp" });
     audit(&mut tx, &actor, None, "user.second_factor_removed", ("user", &user.id), summary).await?;
@@ -261,7 +285,7 @@ async fn passkey_setup(
 ) -> ApiResult<Json<Value>> {
     let now = state.clock.now_ms();
     let hash = session_hash(&headers, &info)?;
-    if !sf::allowed(&state).await?.passkey {
+    if !sf::allowed(&state, &info).await?.passkey {
         return Err(method_off());
     }
     require_fresh_if_any(&state, &user.id, &hash, now).await?;
@@ -284,7 +308,7 @@ async fn passkey_save(
 ) -> ApiResult<(StatusCode, Json<Saved>)> {
     let now = state.clock.now_ms();
     let hash = session_hash(&headers, &info)?;
-    if !sf::allowed(&state).await?.passkey {
+    if !sf::allowed(&state, &info).await?.passkey {
         return Err(method_off());
     }
     let name = sf::clean_passkey_name(req.name.as_deref())?;
@@ -353,8 +377,9 @@ async fn passkey_remove(
         return Err(ApiError::not_found());
     }
     sf::require_fresh(&state.db, &hash, now).await?;
-    guard_last(&state, &user, &has).await?;
+    let required = guard_last(&state, &user, &has).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    lock_account(&mut tx, &user.id).await?;
     let removed = sqlx::query("DELETE FROM user_passkeys WHERE id = $1 AND user_id = $2")
         .bind(&passkey_id)
         .bind(&user.id)
@@ -364,7 +389,7 @@ async fn passkey_remove(
     if removed == 0 {
         return Err(ApiError::not_found());
     }
-    drop_codes_if_none_left(&mut tx, &user.id).await?;
+    after_removal(&mut tx, &user.id, required).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user.id, "method": "passkey", "passkeyId": passkey_id });
     audit(&mut tx, &actor, None, "user.second_factor_removed", ("user", &user.id), summary).await?;

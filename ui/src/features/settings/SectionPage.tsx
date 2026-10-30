@@ -23,6 +23,7 @@ import { AiOrgSection } from "../ai/admin/AiOrgSection";
 import { AiServerSection } from "../ai/admin/AiServerSection";
 import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
 import { PluginsSection } from "../plugins/PluginsSection";
+import { useConfirmedCalls } from "../security/ConfirmFactorDialog";
 import { PolicyOverview } from "../security/PolicyOverview";
 import { SecuritySection } from "../security/SecuritySection";
 import { AboutSection } from "./AboutSection";
@@ -282,12 +283,17 @@ function ServerSettings({ section }: { section: SectionDef }) {
   const queryKey = adminKeys.serverSettings;
   const settings = useQuery({ queryKey, queryFn: listServerSettings });
   const queryClient = useQueryClient();
+  // Changing the second factor's rule asks for a fresh confirmation first.
+  const confirmed = useConfirmedCalls();
   const changes = useSettingChanges({
     queryKey,
     patch: async (key, value, version) =>
-      refreshLook(queryClient, await updateServerSetting(key, value, version)),
+      refreshLook(queryClient, await confirmed.run(() => updateServerSetting(key, value, version))),
     reset: async (key, version) =>
-      refreshLook(queryClient, await resetSetting({ kind: "server" }, key, version)),
+      refreshLook(
+        queryClient,
+        await confirmed.run(() => resetSetting({ kind: "server" }, key, version)),
+      ),
   });
   if (settings.data === undefined) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
@@ -302,6 +308,7 @@ function ServerSettings({ section }: { section: SectionDef }) {
       changes={changes}
       canWrite
       inheritable={false}
+      before={confirmed.dialog}
     />
   );
 }
@@ -316,12 +323,19 @@ function OrgSettings({ section }: { section: SectionDef }) {
     queryFn: () => listOrgSettings(orgId),
     enabled: orgId !== "",
   });
+  const confirmed = useConfirmedCalls();
   const changes = useSettingChanges({
     queryKey,
     patch: async (key, value, version) =>
-      refreshLook(queryClient, await updateOrgSetting(orgId, key, value, version)),
+      refreshLook(
+        queryClient,
+        await confirmed.run(() => updateOrgSetting(orgId, key, value, version)),
+      ),
     reset: async (key, version) =>
-      refreshLook(queryClient, await resetSetting({ kind: "org", orgId }, key, version)),
+      refreshLook(
+        queryClient,
+        await confirmed.run(() => resetSetting({ kind: "org", orgId }, key, version)),
+      ),
   });
   if (settings.data === undefined) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
@@ -333,6 +347,7 @@ function OrgSettings({ section }: { section: SectionDef }) {
       changes={changes}
       canWrite={access.permissions.has("settings:write")}
       inheritable
+      before={confirmed.dialog}
     />
   );
 }

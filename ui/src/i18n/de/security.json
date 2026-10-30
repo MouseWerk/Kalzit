@@ -121,6 +121,7 @@
   "security.dialog.loading": "Wird geladen…",
   "security.dialog.confirmFirst": "Bestätige zuerst mit deinem zweiten Faktor.",
   "security.dialog.confirmTitle": "Mit dem zweiten Faktor bestätigen",
+  "security.dialog.settingText": "Wer einen zweiten Faktor braucht und welche Methoden man einrichten darf, ändert sich für alle auf einmal; deshalb fragt Kalzit zuerst nach deinem eigenen zweiten Faktor.",
   "security.dialog.passwordText": "Ein neues Passwort schwächt, was dein Konto schützt; deshalb fragt Kalzit zuerst nach deinem zweiten Faktor.",
   "security.dialog.appTitle": "Authenticator-App einrichten",
   "security.dialog.appSave": "Prüfen und speichern",

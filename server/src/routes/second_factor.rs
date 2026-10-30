@@ -11,6 +11,7 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::support::conflict;
 use super::table::{RouteDef, route};
 use super::{Me, me};
 use crate::app::AppState;
@@ -34,7 +35,13 @@ pub fn routes() -> Vec<RouteDef> {
 
 /// What the first step leads to, worked out before its transaction: no second step, or the
 /// prompt of the second step (`expiresAt` from now).
-pub async fn plan(state: &AppState, user: &SessionUser, first: FirstStep<'_>, now: i64) -> ApiResult<Option<Prompt>> {
+pub async fn plan(
+    state: &AppState,
+    info: &RequestInfo,
+    user: &SessionUser,
+    first: FirstStep<'_>,
+    now: i64,
+) -> ApiResult<Option<Prompt>> {
     let Some((setup, required_by)) = sf::second_step(state, &user.id, user.is_server_admin != 0, first).await? else {
         return Ok(None);
     };
@@ -45,7 +52,7 @@ pub async fn plan(state: &AppState, user: &SessionUser, first: FirstStep<'_>, no
         setup,
         methods,
         last_used,
-        allowed: sf::allowed(state).await?,
+        allowed: sf::allowed(state, info).await?,
         required_by,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         expires_at: now + sf::CHALLENGE_TTL_MS,
@@ -167,7 +174,7 @@ async fn current(
     let now = state.clock.now_ms();
     let pending = pending(&state, &info, &headers, now).await?;
     let required_by = sf::required_for(&state, &pending.user_id, pending.is_server_admin != 0).await?;
-    Ok(Json(sf::prompt(&state, &pending, required_by, now).await?))
+    Ok(Json(sf::prompt(&state, &info, &pending, required_by, now).await?))
 }
 
 #[derive(Serialize)]
@@ -262,7 +269,7 @@ async fn setup_totp(
 ) -> ApiResult<Json<sf::TotpSetup>> {
     let now = state.clock.now_ms();
     let pending = setup_pending(&state, &info, &headers, now).await?;
-    if !sf::allowed(&state).await?.totp {
+    if !sf::allowed(&state, &info).await?.totp {
         return Err(method_not_allowed());
     }
     Ok(Json(sf::start_totp(&state, &info, pending.owner(), &pending.user_id, &pending.email, now).await?))
@@ -275,7 +282,7 @@ async fn setup_passkey_options(
 ) -> ApiResult<Json<Value>> {
     let now = state.clock.now_ms();
     let pending = setup_pending(&state, &info, &headers, now).await?;
-    if !sf::allowed(&state).await?.passkey {
+    if !sf::allowed(&state, &info).await?.passkey {
         return Err(method_not_allowed());
     }
     Ok(Json(sf::start_passkey_setup(&state, &info, pending.owner(), &pending.user(), now).await?))
@@ -298,7 +305,7 @@ async fn setup(
 ) -> ApiResult<Response> {
     let now = state.clock.now_ms();
     let pending = setup_pending(&state, &info, &headers, now).await?;
-    let allowed = sf::allowed(&state).await?;
+    let allowed = sf::allowed(&state, &info).await?;
     enum New {
         Totp(Vec<u8>, i64),
         Passkey(String, Box<webauthn_rs::prelude::SecurityKey>),
@@ -323,6 +330,19 @@ async fn setup(
     };
     let mut tx = crate::db::begin(&state.db).await?;
     let Some(taken) = sf::take_pending(&mut tx, &pending, now).await? else { return Err(sf::pending_expired()) };
+    // Still no method, checked under the account's row lock that taking the state holds: a forced
+    // setup never replaces an app or the recovery codes the account got meanwhile.
+    let (has,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM user_totp WHERE user_id = $1) + (SELECT COUNT(*) FROM user_passkeys WHERE user_id = $1)",
+    )
+    .bind(&pending.user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if has > 0 {
+        return Err(
+            conflict("the account has a second factor already; sign in with it").because("second_factor.setup_done")
+        );
+    }
     let (method, summary) = match &new {
         New::Totp(secret, step) => {
             sf::save_totp(&mut tx, &state, &pending.user_id, secret, *step, now).await?;

@@ -121,6 +121,7 @@
   "security.dialog.loading": "Loading…",
   "security.dialog.confirmFirst": "Confirm with your second factor first.",
   "security.dialog.confirmTitle": "Confirm with your second factor",
+  "security.dialog.settingText": "Who must have a second factor, and which methods people may set up, change for everyone at once; so Kalzit asks for your own second factor first.",
   "security.dialog.passwordText": "A new password weakens what protects your account, so Kalzit asks for your second factor first.",
   "security.dialog.appTitle": "Set up an authenticator app",
   "security.dialog.appSave": "Check and save",
