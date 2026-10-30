@@ -14,6 +14,7 @@ pub mod audit;
 pub mod auth;
 pub mod authz;
 pub mod clock;
+pub mod cluster;
 pub mod config;
 pub mod dashboards;
 pub mod data_dir;

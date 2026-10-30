@@ -469,6 +469,9 @@ pub struct QueryCache {
     generations: Mutex<Generations>,
     hits: AtomicU64,
     misses: AtomicU64,
+    /// Tells the other servers on the same database about a rights change (`cluster`); unset
+    /// for a single server.
+    publisher: std::sync::OnceLock<crate::cluster::Publisher>,
 }
 
 impl QueryCache {
@@ -492,9 +495,22 @@ impl QueryCache {
         }
     }
 
+    /// Sends rights changes to the other servers on the same database (`cluster`).
+    pub fn set_publisher(&self, publisher: crate::cluster::Publisher) {
+        let _ = self.publisher.set(publisher);
+    }
+
     /// Rights changed in an organization (`None`: on the whole server): its kept answers are no
-    /// longer served.
+    /// longer served, here and on the other servers on the same database.
     pub fn rights_changed(&self, org_id: Option<&str>) {
+        self.rights_changed_here(org_id);
+        if let Some(publish) = self.publisher.get() {
+            publish(crate::cluster::Change::Rights(org_id.map(str::to_string)));
+        }
+    }
+
+    /// `rights_changed` on this server only: another server reported the change.
+    pub fn rights_changed_here(&self, org_id: Option<&str>) {
         let mut g = self.generations();
         match org_id {
             Some(org_id) => *g.orgs.entry(org_id.to_string()).or_default() += 1,
