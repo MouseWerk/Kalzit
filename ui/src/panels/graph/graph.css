@@ -696,6 +696,10 @@
     bottom: var(--space-2);
   }
 
+  .graph__overlay-line {
+    margin: 0;
+  }
+
   .graph__details {
     display: grid;
     align-content: start;

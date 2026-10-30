@@ -48,6 +48,11 @@ pub const MAX_NODE_SIZE: u32 = 40;
 pub const MAX_LABEL_TOP: u32 = 200;
 /// Labels with a color of their own (`MAX_LABEL_COLORS` in the UI).
 pub const MAX_LABEL_COLORS: usize = 50;
+/// ELK's gaps in the hierarchy panel, in px (`ELK_NODE_SPACING`, `ELK_LAYER_SPACING` in the UI).
+pub const MIN_ELK_NODE_SPACING: u32 = 5;
+pub const MAX_ELK_NODE_SPACING: u32 = 200;
+pub const MIN_ELK_LAYER_SPACING: u32 = 10;
+pub const MAX_ELK_LAYER_SPACING: u32 = 400;
 
 /// The panel types whose options this module checks.
 pub const PANEL_TYPES: &[&str] = &[
@@ -294,6 +299,9 @@ choice!(ShowWhen { Selection = "selection", Always = "always", Never = "never" }
 choice!(LabelMode { Zoom = "zoom", Always = "always", Selection = "selection" });
 choice!(ClickAction { Details = "details", Variable = "variable", Expand = "expand" });
 choice!(ClusterMode { Auto = "auto", Label = "label", Off = "off" });
+choice!(HierarchyLayout { Kalzit = "kalzit", Elk = "elk" });
+choice!(ElkDirection { Down = "down", Right = "right", Up = "up", Left = "left" });
+choice!(ElkEdgeRouting { Orthogonal = "orthogonal", Polyline = "polyline" });
 choice!(DrawStyle { Line = "line", Bars = "bars", Points = "points" });
 choice!(Interpolation { Linear = "linear", Smooth = "smooth", StepBefore = "stepBefore", StepAfter = "stepAfter" });
 choice!(LineStyle { Solid = "solid", Dashed = "dashed", Dotted = "dotted" });
@@ -510,6 +518,12 @@ struct GraphOptions {
     click_details: Option<bool>,
     variable: Option<String>,
     variable_property: Option<String>,
+    /// Kalzit's own layered layout or ELK, with ELK's settings (`elkLayout.ts` in the UI).
+    hierarchy_layout: Option<HierarchyLayout>,
+    elk_direction: Option<ElkDirection>,
+    elk_node_spacing: Option<u32>,
+    elk_layer_spacing: Option<u32>,
+    elk_edge_routing: Option<ElkEdgeRouting>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -854,6 +868,8 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 return Err("options.sizeMin must not be above options.sizeMax".into());
             }
             check_range("options.labelTop", o.label_top, 0, MAX_LABEL_TOP)?;
+            check_range("options.elkNodeSpacing", o.elk_node_spacing, MIN_ELK_NODE_SPACING, MAX_ELK_NODE_SPACING)?;
+            check_range("options.elkLayerSpacing", o.elk_layer_spacing, MIN_ELK_LAYER_SPACING, MAX_ELK_LAYER_SPACING)?;
             if let (Some(min), Some(max)) = (o.color_min, o.color_max)
                 && min >= max
             {
@@ -959,6 +975,20 @@ mod tests {
             ),
             ("hierarchy", json!({ "colorBy": "component", "cluster": "auto", "caption": "x".repeat(100) })),
             ("hierarchy", json!({})),
+            (
+                "hierarchy",
+                json!({
+                    "hierarchyLayout": "elk", "elkDirection": "right", "elkEdgeRouting": "polyline",
+                    "elkNodeSpacing": MIN_ELK_NODE_SPACING, "elkLayerSpacing": MAX_ELK_LAYER_SPACING
+                }),
+            ),
+            (
+                "hierarchy",
+                json!({
+                    "hierarchyLayout": "kalzit", "elkDirection": "down", "elkEdgeRouting": "orthogonal",
+                    "elkNodeSpacing": MAX_ELK_NODE_SPACING, "elkLayerSpacing": MIN_ELK_LAYER_SPACING
+                }),
+            ),
             ("path", json!({ "caption": "title", "variable": "", "variableProperty": "" })),
             ("path", json!({})),
         ] {
@@ -1024,6 +1054,11 @@ mod tests {
             ("network", json!({ "variable": long }), "options.variable"),
             ("network", json!({ "variableProperty": long }), "options.variableProperty"),
             ("hierarchy", json!({ "layout": "radial" }), "unknown field"),
+            ("hierarchy", json!({ "hierarchyLayout": "radial" }), "options"),
+            ("hierarchy", json!({ "elkDirection": "diagonal" }), "options"),
+            ("hierarchy", json!({ "elkEdgeRouting": "splines" }), "options"),
+            ("hierarchy", json!({ "elkNodeSpacing": MIN_ELK_NODE_SPACING - 1 }), "options.elkNodeSpacing"),
+            ("hierarchy", json!({ "elkLayerSpacing": MAX_ELK_LAYER_SPACING + 1 }), "options.elkLayerSpacing"),
             ("network", json!({ "sizeMin": 1 }), "options.sizeMin"),
             ("network", json!({ "sizeMax": MAX_NODE_SIZE + 1 }), "options.sizeMax"),
             ("network", json!({ "sizeMin": 20, "sizeMax": 10 }), "options.sizeMin"),

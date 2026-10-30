@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { ElkUnavailable, elkLayout } from "./elkLayout";
 import { ForceLayout, forceIterations, hierarchyLayout, seedPositions } from "./layoutEngine";
 import type { LayoutMode, LayoutProgress, LayoutRequest } from "./layoutProtocol";
+import type { ElkSettings } from "./options";
 import type { GraphView } from "./view";
 
 /**
@@ -38,6 +40,12 @@ export function setLayoutWorkerFactory(factory: WorkerFactory): () => void {
   };
 }
 
+/**
+ * Why a hierarchy that asked for ELK shows Kalzit's layout: ELK failed (or could not load), or
+ * the graph is too large for ELK without a worker.
+ */
+export type ElkNotice = "elkFailed" | "elkTooLarge";
+
 export interface LayoutState {
   positions: Float32Array | null;
   running: boolean;
@@ -45,6 +53,9 @@ export interface LayoutState {
   reversed: number;
   /** Whether positions come from a worker (false: main thread, or none). */
   worker: boolean;
+  /** Which layout the positions come from; "elk" while ELK loads and runs, too. */
+  engine: "kalzit" | "elk";
+  notice: ElkNotice | null;
 }
 
 /** Average width of a label's character in px, at the renderer's label size. */
@@ -113,15 +124,117 @@ export function layoutRequest(
   };
 }
 
-export function useGraphLayout(view: GraphView, mode: LayoutMode): LayoutState {
+/** What Kalzit's own layouts report as they go. */
+type KalzitProgress = Pick<LayoutState, "positions" | "running" | "reversed" | "worker">;
+
+/**
+ * Runs Kalzit's own layout of `request`: in a worker, or without one in slices on the main thread
+ * (small graphs only). Returns the cleanup that stops it.
+ */
+function runKalzit(
+  request: LayoutRequest,
+  mode: LayoutMode,
+  remember: (positions: Float32Array) => void,
+  update: (progress: KalzitProgress) => void,
+): (() => void) | undefined {
+  const run = request.run;
+  const worker = createWorker();
+  if (worker !== null) {
+    // The request's arrays move to the worker; the panel draws a copy of the start meanwhile.
+    update({ positions: request.start.slice(), running: true, reversed: 0, worker: true });
+    worker.onmessage = (event: MessageEvent<LayoutProgress>) => {
+      const message = event.data;
+      if (message.run !== run) {
+        return;
+      }
+      if (message.done) {
+        remember(message.positions);
+      }
+      update({
+        positions: message.positions,
+        running: !message.done,
+        reversed: message.reversed ?? 0,
+        worker: true,
+      });
+    };
+    worker.postMessage(request, [
+      request.sources.buffer,
+      request.targets.buffer,
+      request.weights.buffer,
+      request.sizes.buffer,
+      request.labels.buffer,
+      request.start.buffer,
+    ]);
+    return () => {
+      worker.terminate();
+    };
+  }
+
+  // No worker: slices on the main thread, small graphs only.
+  if (mode === "hierarchy") {
+    if (request.count > MAIN_THREAD_HIERARCHY_LIMIT) {
+      update({ positions: request.start, running: false, reversed: 0, worker: false });
+      return;
+    }
+    const result = hierarchyLayout(request);
+    remember(result.positions);
+    update({
+      positions: result.positions,
+      running: false,
+      reversed: result.reversed,
+      worker: false,
+    });
+    return;
+  }
+  if (request.count > MAIN_THREAD_FORCE_LIMIT) {
+    update({ positions: request.start, running: false, reversed: 0, worker: false });
+    return;
+  }
+  const layout = new ForceLayout(request, request.start);
+  const total = forceIterations(request.count);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const slice = () => {
+    const started = performance.now();
+    do {
+      layout.step(1);
+    } while (layout.done < total && performance.now() - started < SLICE_MS);
+    const positions = layout.positions();
+    const done = layout.done >= total;
+    if (done) remember(positions);
+    update({ positions, running: !done, reversed: 0, worker: false });
+    if (!done) timer = setTimeout(slice, 0);
+  };
+  update({ positions: request.start, running: true, reversed: 0, worker: false });
+  timer = setTimeout(slice, 0);
+  return () => clearTimeout(timer);
+}
+
+/**
+ * The layout of a view. A hierarchy with `elk` settings is laid out by ELK, loaded on first use;
+ * while it loads and runs the nodes stand at their start, and when ELK fails (or the graph is too
+ * large for it without a worker) Kalzit's own layout takes over with a notice.
+ */
+export function useGraphLayout(
+  view: GraphView,
+  mode: LayoutMode,
+  elk: ElkSettings | null = null,
+): LayoutState {
   const [state, setState] = useState<LayoutState>({
     positions: null,
     running: false,
     reversed: 0,
     worker: false,
+    engine: "kalzit",
+    notice: null,
   });
   const placed = useRef(new Map<string, [number, number]>());
   const runs = useRef(0);
+  // The settings as values, so a new object with the same settings starts no new layout.
+  const useElk = mode === "hierarchy" && elk !== null;
+  const direction = elk?.direction ?? "down";
+  const nodeSpacing = elk?.nodeSpacing ?? 0;
+  const layerSpacing = elk?.layerSpacing ?? 0;
+  const edgeRouting = elk?.edgeRouting ?? "orthogonal";
 
   useEffect(() => {
     const run = ++runs.current;
@@ -133,76 +246,50 @@ export function useGraphLayout(view: GraphView, mode: LayoutMode): LayoutState {
       });
       placed.current = map;
     };
-    const worker = createWorker();
-    if (worker !== null) {
-      // The request's arrays move to the worker; the panel draws a copy of the start meanwhile.
-      setState({ positions: request.start.slice(), running: true, reversed: 0, worker: true });
-      worker.onmessage = (event: MessageEvent<LayoutProgress>) => {
-        const message = event.data;
-        if (message.run !== run) {
-          return;
-        }
-        if (message.done) {
-          remember(message.positions);
-        }
-        setState({
-          positions: message.positions,
-          running: !message.done,
-          reversed: message.reversed ?? 0,
-          worker: true,
-        });
-      };
-      worker.postMessage(request, [
-        request.sources.buffer,
-        request.targets.buffer,
-        request.weights.buffer,
-        request.sizes.buffer,
-        request.labels.buffer,
-        request.start.buffer,
-      ]);
-      return () => {
-        worker.terminate();
-      };
+    const kalzit = (notice: ElkNotice | null) =>
+      runKalzit(request, mode, remember, (progress) =>
+        setState({ ...progress, engine: "kalzit", notice }),
+      );
+    if (!useElk) {
+      return kalzit(null);
     }
 
-    // No worker: slices on the main thread, small graphs only.
-    if (mode === "hierarchy") {
-      if (request.count > MAIN_THREAD_HIERARCHY_LIMIT) {
-        setState({ positions: request.start, running: false, reversed: 0, worker: false });
-        return;
-      }
-      const result = hierarchyLayout(request);
-      remember(result.positions);
-      setState({
-        positions: result.positions,
-        running: false,
-        reversed: result.reversed,
-        worker: false,
-      });
-      return;
-    }
-    if (request.count > MAIN_THREAD_FORCE_LIMIT) {
-      setState({ positions: request.start, running: false, reversed: 0, worker: false });
-      return;
-    }
-    const layout = new ForceLayout(request, request.start);
-    const total = forceIterations(request.count);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const slice = () => {
-      const started = performance.now();
-      do {
-        layout.step(1);
-      } while (layout.done < total && performance.now() - started < SLICE_MS);
-      const positions = layout.positions();
-      const done = layout.done >= total;
-      if (done) remember(positions);
-      setState({ positions, running: !done, reversed: 0, worker: false });
-      if (!done) timer = setTimeout(slice, 0);
+    const settings: ElkSettings = { direction, nodeSpacing, layerSpacing, edgeRouting };
+    const worker = typeof Worker !== "undefined";
+    const controller = new AbortController();
+    let stop: (() => void) | undefined;
+    setState({
+      positions: request.start.slice(),
+      running: true,
+      reversed: 0,
+      worker,
+      engine: "elk",
+      notice: null,
+    });
+    elkLayout(request, settings, controller.signal, worker).then(
+      (result) => {
+        if (controller.signal.aborted) return;
+        remember(result.positions);
+        setState({
+          positions: result.positions,
+          running: false,
+          reversed: result.reversed,
+          worker,
+          engine: "elk",
+          notice: null,
+        });
+      },
+      (error: unknown) => {
+        if (controller.signal.aborted) return;
+        const tooLarge = error instanceof ElkUnavailable && error.reason === "tooLarge";
+        stop = kalzit(tooLarge ? "elkTooLarge" : "elkFailed");
+      },
+    );
+    return () => {
+      controller.abort();
+      stop?.();
     };
-    setState({ positions: request.start, running: true, reversed: 0, worker: false });
-    timer = setTimeout(slice, 0);
-    return () => clearTimeout(timer);
-  }, [view, mode]);
+  }, [view, mode, useElk, direction, nodeSpacing, layerSpacing, edgeRouting]);
 
   return state;
 }
