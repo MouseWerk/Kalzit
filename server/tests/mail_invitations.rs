@@ -974,3 +974,39 @@ async fn a_server_admins_password_link_is_for_server_admins() {
     assert!(app.mails().is_empty());
     app.finish().await;
 }
+
+#[tokio::test]
+async fn a_team_with_a_team_space_takes_invitations_from_maintainers_and_admins_only() {
+    let app = test_app(Setup::NoMail).await;
+    let (owner, org) = app.setup().await;
+    let r = app
+        .post(
+            &format!("/api/orgs/{org}/roles"),
+            json!({ "name": "Einlader", "permissions": ["users:read", "users:invite", "teams:read", "teams:members",
+                    "dashboards:read", "folders:read", "analyses:read"] }),
+            &owner,
+        )
+        .await;
+    let inviter_role = r.body["id"].as_str().unwrap().to_string();
+    let mira = member_with_role(&app, &owner, &org, "Mira", "mira@example.com", &inviter_role).await;
+    let team = app.post(&format!("/api/orgs/{org}/teams"), json!({ "name": "Vertrieb" }), &owner).await;
+    let team_id = team.body["id"].as_str().unwrap().to_string();
+    let space = app
+        .post(&format!("/api/orgs/{org}/folders"), json!({ "name": "Vertrieb", "ownerTeamId": team_id }), &owner)
+        .await;
+    assert_eq!(space.status, StatusCode::CREATED, "{}", space.body);
+
+    // Mira holds the team's (no) roles, but the team owns a team space: not hers to fill.
+    let body = json!({ "emails": ["x@example.com"], "role": "viewer", "teamId": team_id });
+    let r = app.post(&format!("/api/orgs/{org}/invitations"), body.clone(), &mira).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+
+    // An org admin may, and that access to the team's content is in the audit log.
+    let r = app.post(&format!("/api/orgs/{org}/invitations"), body, &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["items"][0]["invitation"]["id"].as_str().unwrap().to_string();
+    let audit = app.audit().await;
+    let access = audit.iter().find(|(a, _)| a == "team_space.admin_access").expect("an admin access entry");
+    assert!(access.1.contains("invitation.created") && access.1.contains(&id), "{}", access.1);
+    app.finish().await;
+}
