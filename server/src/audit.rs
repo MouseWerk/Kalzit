@@ -43,12 +43,22 @@ pub fn acting_token() -> Option<ActingToken> {
 }
 
 pub async fn record(conn: &mut sqlx::AnyConnection, event: &AuditEvent<'_>) -> Result<(), sqlx::Error> {
+    record_with_id(conn, &uuid::Uuid::now_v7().to_string(), event).await
+}
+
+/// `record` with the entry's id chosen by the caller, for an entry a later one names (the closing
+/// entry of a rate-limited address's refused API tokens, `auth::api_token`).
+pub async fn record_with_id(
+    conn: &mut sqlx::AnyConnection,
+    id: &str,
+    event: &AuditEvent<'_>,
+) -> Result<(), sqlx::Error> {
     let token = acting_token();
     sqlx::query(
         "INSERT INTO audit_events (id, org_id, actor_user_id, actor_address, action, resource_type, resource_id, \
          summary, created_at, actor_token_id, actor_token_prefix) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
-    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(id)
     .bind(event.org_id)
     .bind(event.actor_user_id)
     .bind(event.actor_address.as_deref())

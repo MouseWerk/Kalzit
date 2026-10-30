@@ -267,6 +267,8 @@ pub async fn authenticate(
     // hopeless at 128 bits); every other token from there is refused with the wait, unrecorded,
     // so a few bad tokens behind a shared address cannot lock out the good ones.
     let blocked = state.token_limiter.wait(&key, mono);
+    // A rate-limit window of this address that has ended gets its closing entry first.
+    close_ended(state, info, &key, mono).await;
     let row: Option<TokenRow> = sqlx::query_as(
         "SELECT t.id, t.org_id, t.kind, t.prefix, t.allowed_ips, t.expires_at, t.revoked_at, t.last_used_at, \
          t.service_account_id, a.disabled AS account_disabled, u.email AS user_email, \
@@ -285,6 +287,8 @@ pub async fn authenticate(
     if let Some(reason) = refusal {
         if let Some(wait) = blocked {
             tracing::info!(client = %info.client_ip, reason, "refused an API token while rate-limited");
+            let seen = Refusal { row: row.as_ref(), token, reason };
+            note_limited(state, info, &key, &seen, wait, mono, now).await;
             return Err(ApiError::rate_limited("too many refused API tokens, wait a few minutes", wait));
         }
         state.token_limiter.record(&key, &network, mono);
@@ -308,6 +312,149 @@ pub async fn authenticate(
         last_used_at: row.last_used_at,
     };
     Ok((user, caller))
+}
+
+/// Refused tokens of addresses whose budget is used up. Each such address writes one audit entry
+/// per limiter window, at its first refusal (`api_token.refused_rate_limited`), and when the
+/// window ends one more with the number of refusals after it (`api_token.rate_limit_ended`), so
+/// every refusal is accounted for without one entry each.
+#[derive(Default)]
+pub struct LimitedRefusals {
+    windows: std::sync::Mutex<std::collections::HashMap<String, LimitedWindow>>,
+}
+
+struct LimitedWindow {
+    /// The id of the window's first entry, which the closing entry names.
+    entry_id: String,
+    org_id: Option<String>,
+    ends_mono: i64,
+    /// Refusals after the first one.
+    suppressed: u64,
+}
+
+impl LimitedRefusals {
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, LimitedWindow>> {
+        self.windows.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Takes the window of `key` when it has ended (or, with `entry_id`, when it is that one).
+    fn take(&self, key: &str, mono: i64, entry_id: Option<&str>) -> Option<LimitedWindow> {
+        let mut windows = self.lock();
+        let done = windows.get(key).is_some_and(|w| match entry_id {
+            Some(id) => w.entry_id == id,
+            None => w.ends_mono <= mono,
+        });
+        if done { windows.remove(key) } else { None }
+    }
+}
+
+/// A refused token as the audit log may name it.
+struct Refusal<'a> {
+    row: Option<&'a TokenRow>,
+    token: &'a str,
+    reason: &'a str,
+}
+
+/// The visible prefix of a token in our format, also of one that is unknown; `None` for anything
+/// else, which is never written anywhere.
+fn visible_prefix(token: &str) -> Option<&str> {
+    let (kind, rest) = token
+        .strip_prefix(SERVICE_ACCOUNT_PREFIX)
+        .map(|rest| (SERVICE_ACCOUNT_PREFIX, rest))
+        .or_else(|| token.strip_prefix(SCIM_PREFIX).map(|rest| (SCIM_PREFIX, rest)))?;
+    let well_formed = rest.len() == TOKEN_BYTES * 2 && rest.bytes().all(|b| b.is_ascii_hexdigit());
+    well_formed.then(|| &token[..kind.len() + VISIBLE_HEX])
+}
+
+/// Accounts for a refusal while the address is rate-limited: the first of the window is written
+/// to the audit log, the others are counted for the window's closing entry.
+async fn note_limited(
+    state: &AppState,
+    info: &RequestInfo,
+    key: &str,
+    seen: &Refusal<'_>,
+    wait: std::time::Duration,
+    mono: i64,
+    now: i64,
+) {
+    let wait_ms = i64::try_from(wait.as_millis()).unwrap_or(i64::MAX);
+    let entry_id = {
+        let mut windows = state.limited_refusals.lock();
+        if let Some(window) = windows.get_mut(key).filter(|w| w.ends_mono > mono) {
+            window.suppressed += 1;
+            return;
+        }
+        let entry_id = uuid::Uuid::now_v7().to_string();
+        let window = LimitedWindow {
+            entry_id: entry_id.clone(),
+            org_id: seen.row.map(|r| r.org_id.clone()),
+            ends_mono: mono.saturating_add(wait_ms),
+            suppressed: 0,
+        };
+        windows.insert(key.to_string(), window);
+        entry_id
+    };
+    let prefix = seen.row.map(|r| r.prefix.as_str()).or_else(|| visible_prefix(seen.token));
+    let mut summary = json!({ "reason": seen.reason, "endsAt": now.saturating_add(wait_ms) });
+    if let Some(prefix) = prefix {
+        summary["prefix"] = json!(prefix);
+    }
+    let event = crate::audit::AuditEvent {
+        org_id: seen.row.map(|r| r.org_id.as_str()),
+        actor_user_id: None,
+        actor_address: Some(info.client_ip.to_string()),
+        action: "api_token.refused_rate_limited",
+        resource_type: Some("api_token"),
+        resource_id: seen.row.map(|r| r.id.as_str()),
+        summary,
+        at_ms: now,
+    };
+    write_entry(state, info, &entry_id, &event).await;
+    // Closed when the window ends, also without another request from the address; a request
+    // after the end closes it earlier (`close_ended`), whichever comes first.
+    let (task_state, task_info, task_key) = (state.clone(), info.clone(), key.to_string());
+    let stopping = state.background.stopping();
+    state.background.spawn(async move {
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = stopping.cancelled() => return,
+        }
+        let mono = task_state.clock.monotonic_ms();
+        if let Some(window) = task_state.limited_refusals.take(&task_key, mono, Some(&entry_id)) {
+            write_closing(&task_state, &task_info, window).await;
+        }
+    });
+}
+
+/// Writes the closing entry of the address's rate-limit window when it has ended.
+async fn close_ended(state: &AppState, info: &RequestInfo, key: &str, mono: i64) {
+    if let Some(window) = state.limited_refusals.take(key, mono, None) {
+        write_closing(state, info, window).await;
+    }
+}
+
+async fn write_closing(state: &AppState, info: &RequestInfo, window: LimitedWindow) {
+    let event = crate::audit::AuditEvent {
+        org_id: window.org_id.as_deref(),
+        actor_user_id: None,
+        actor_address: Some(info.client_ip.to_string()),
+        action: "api_token.rate_limit_ended",
+        resource_type: Some("api_token"),
+        resource_id: None,
+        summary: json!({ "entryId": window.entry_id, "suppressed": window.suppressed }),
+        at_ms: state.clock.now_ms(),
+    };
+    write_entry(state, info, &uuid::Uuid::now_v7().to_string(), &event).await;
+}
+
+async fn write_entry(state: &AppState, info: &RequestInfo, id: &str, event: &crate::audit::AuditEvent<'_>) {
+    let recorded = match state.db.acquire().await {
+        Ok(mut conn) => crate::audit::record_with_id(&mut conn, id, event).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = recorded {
+        tracing::warn!(client = %info.client_ip, "recording a refused API token in the audit log failed: {e}");
+    }
 }
 
 /// Writes the audit entry of a refused token. The token itself is never recorded: its prefix when
@@ -359,6 +506,17 @@ mod tests {
         let s = generate(Kind::Scim);
         assert!(s.token.starts_with("kz_scim_") && s.prefix.len() == 16);
         assert_ne!(generate(Kind::ServiceAccount).token, a.token);
+    }
+
+    #[test]
+    fn only_well_formed_tokens_show_a_prefix() {
+        let a = generate(Kind::ServiceAccount);
+        assert_eq!(visible_prefix(&a.token), Some(a.prefix.as_str()));
+        let s = generate(Kind::Scim);
+        assert_eq!(visible_prefix(&s.token), Some(s.prefix.as_str()));
+        for other in ["kz_sa_", "kz_sa_abc", &format!("kz_sa_{}", "g".repeat(40)), &format!("{}0", a.token)] {
+            assert_eq!(visible_prefix(other), None, "{other}");
+        }
     }
 
     #[test]

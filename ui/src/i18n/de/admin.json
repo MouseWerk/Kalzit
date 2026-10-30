@@ -846,6 +846,8 @@
   "admin.auditAction.service_account.token_created": "Token eines Dienstkontos erstellt",
   "admin.auditAction.service_account.token_revoked": "Token eines Dienstkontos widerrufen",
   "admin.auditAction.api_token.refused": "API-Token abgewiesen",
+  "admin.auditAction.api_token.refused_rate_limited": "API-Token abgewiesen, Adresse gebremst",
+  "admin.auditAction.api_token.rate_limit_ended": "Bremse für API-Tokens einer Adresse beendet",
   "admin.auditAction.scim.token_created": "SCIM-Token erstellt",
   "admin.auditAction.scim.token_revoked": "SCIM-Token widerrufen",
   "admin.auditArea.service_account": "Alle Änderungen an Dienstkonten",

@@ -846,6 +846,8 @@
   "admin.auditAction.service_account.token_created": "Service account token created",
   "admin.auditAction.service_account.token_revoked": "Service account token revoked",
   "admin.auditAction.api_token.refused": "API token refused",
+  "admin.auditAction.api_token.refused_rate_limited": "API token refused, address rate-limited",
+  "admin.auditAction.api_token.rate_limit_ended": "Rate limit of API tokens for an address ended",
   "admin.auditAction.scim.token_created": "SCIM token created",
   "admin.auditAction.scim.token_revoked": "SCIM token revoked",
   "admin.auditArea.service_account": "All changes to service accounts",

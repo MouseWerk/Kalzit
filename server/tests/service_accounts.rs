@@ -320,18 +320,48 @@ async fn refused_tokens_answer_401_are_audited_and_rate_limited() {
     }
 
     // Three refusals in this window (the day moved past the first two): expired, disabled and
-    // unknown. The budget is ten per window; then other tokens from this address wait, unaudited,
-    // while a working token still gets through.
+    // unknown. The budget is ten per window; then other tokens from this address wait, while a
+    // working token still gets through. The window writes one entry at its first refusal and one
+    // with the count of the others when it ends.
     for _ in 0..7 {
         assert_eq!(t.with_token(Method::GET, &path, None, &unknown).await.status, StatusCode::UNAUTHORIZED);
     }
-    let audited = t.audit_actions().await.len();
     let r = t.with_token(Method::GET, &path, None, &unknown).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
-    let r = t.with_token(Method::GET, &path, None, &revoked).await;
-    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(t.audit_actions().await.len(), audited, "a refusal while rate-limited is not audited");
+    for _ in 0..3 {
+        let r = t.with_token(Method::GET, &path, None, &revoked).await;
+        assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    }
+    let not_ours = "kz_sa_kein-gueltiges-format";
+    assert_eq!(t.with_token(Method::GET, &path, None, not_ours).await.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(t.with_token(Method::GET, &path, None, &good).await.status, StatusCode::OK);
+    let limited: Vec<Value> = t
+        .audit_actions()
+        .await
+        .into_iter()
+        .filter(|(action, _)| action.starts_with("api_token.r") && action != "api_token.refused")
+        .map(|(action, summary)| json!({ "action": action, "summary": serde_json::from_str::<Value>(&summary).unwrap() }))
+        .collect();
+    assert_eq!(limited.len(), 1, "one entry while the window runs: {limited:?}");
+    assert_eq!(limited[0]["action"], "api_token.refused_rate_limited");
+    assert_eq!(limited[0]["summary"]["reason"], "unknown");
+    assert_eq!(limited[0]["summary"]["prefix"], &unknown[..14], "the prefix of a well-formed token");
+    // The window ends; the next request from the address closes it with the count.
+    t.clock.advance_ms(16 * 60_000);
+    assert_eq!(t.with_token(Method::GET, &path, None, &unknown).await.status, StatusCode::UNAUTHORIZED);
+    let closing: Vec<String> = t
+        .audit_actions()
+        .await
+        .into_iter()
+        .filter(|(action, _)| action == "api_token.rate_limit_ended")
+        .map(|(_, summary)| summary)
+        .collect();
+    assert_eq!(closing.len(), 1, "{closing:?}");
+    let closing: Value = serde_json::from_str(&closing[0]).unwrap();
+    assert_eq!(closing["suppressed"], 4, "{closing}");
+    for (_, summary) in t.audit_actions().await {
+        assert!(!summary.contains("kein-gueltiges") && !summary.contains(&revoked), "{summary}");
+    }
     // Revoked tokens stay listed, grey, until 90 days after they ended.
     let detail = t.owner(Method::GET, &format!("/service-accounts/{id}"), None).await;
     assert_eq!(detail.body["tokens"].as_array().unwrap().len(), 4, "{}", detail.body);

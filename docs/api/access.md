@@ -566,9 +566,14 @@ same `401 unauthenticated`; each refusal writes `api_token.refused` with the rea
 address and the token's prefix when it is known. Only refusals count, per client address, with
 the budget of failed sign-ins (`security.login_max_failures` per `security.login_window_secs`), so
 working requests never use it up, however many arrive at once. Once it is used up, a token from
-that address that would be refused answers `429 rate_limited` until the window ends, logged but
-not written to the audit log again; a working token still works, so a few bad tokens behind a
-shared address cannot lock out the good ones.
+that address that would be refused answers `429 rate_limited` until the window ends; a working
+token still works, so a few bad tokens behind a shared address cannot lock out the good ones.
+Such refusals are audited per address and window, not one entry each: the first writes
+`api_token.refused_rate_limited` (reason, `endsAt`, and the prefix when the token has our form,
+never the token), and when the window ends `api_token.rate_limit_ended` names that entry
+(`entryId`) and how many refusals followed it (`suppressed`). The closing entry is written when
+the window ends, or at the address's next token request after that, whichever comes first; a
+server that stops in between leaves the first entry without it.
 
 Every audit entry written by a request made with a token names the token next to its service
 account: `actorTokenId` and `actorTokenPrefix` in the audit API (`null` otherwise).
