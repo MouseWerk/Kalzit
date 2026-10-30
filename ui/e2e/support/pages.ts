@@ -156,6 +156,16 @@ export const MAIN_PAGES: readonly MainPage[] = [
     ready: settingsRows,
   },
   { name: "audit log", path: () => "/admin/audit", ready: heading("admin.audit.title") },
+  // The usage page once its counts and the unused dashboards arrived.
+  {
+    name: "usage",
+    path: () => "/admin/usage",
+    ready: async (page, world, language) => {
+      await heading("usage.dashboards.title")(page, world, language);
+      await heading("usage.unused.title")(page, world, language);
+      await expect(page.locator(".usage-tiles")).toBeVisible();
+    },
+  },
   { name: "users", path: () => "/admin/server/users", ready: heading("admin.users.title") },
   {
     name: "updates",

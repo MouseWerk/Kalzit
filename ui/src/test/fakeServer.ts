@@ -12,6 +12,7 @@ import { exploreHistoryFake } from "../features/explore/test/fakeExploreHistory"
 import { catalogFake, handleCatalogRoute } from "../features/plugins/test/fakeCatalog";
 import { handlePluginAdminRoute, pluginsFake } from "../features/plugins/test/fakePlugins";
 import { acmeFake, handleAcmeRoute } from "../features/settings/test/fakeAcme";
+import { handleUsageAdminRoute, usageFake } from "../features/usage/test/fakeUsage";
 import { shellFake } from "../shell/test/fakeShell";
 import { handleMailRoute, mailFake } from "./fakeMail";
 
@@ -120,6 +121,7 @@ const AREA_FAKES = {
   acme: acmeFake,
   // Invitations and password links of an organization; the rest in handleMailRoute.
   mail: mailFake,
+  usage: usageFake,
 };
 
 export type FakeAreaStates = {
@@ -524,6 +526,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       handleMailRoute(areaStates.mail, server, path, method, input) ??
       handlePluginAdminRoute(areaStates.plugins, path, method, input) ??
       handleAiAdminRoute(areaStates.aiAdmin, server, path, method, input) ??
+      handleUsageAdminRoute(areaStates.usage, server, path, method) ??
       handleAdminRoute(server, path, method, body) ??
       error(404, "not_found")
     );

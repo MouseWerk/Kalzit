@@ -275,6 +275,20 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Audit events older than this are deleted, since they hold client addresses.",
     },
     SettingDef {
+        key: "usage.enabled",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Count dashboard views and panel and data source queries for the usage insights (never per person).",
+    },
+    SettingDef {
+        key: "usage.retention_days",
+        scope: Scope::Server,
+        default: || json!(90),
+        ui_editable: true,
+        description: "Usage counts older than this are deleted.",
+    },
+    SettingDef {
         key: "appearance.default_language",
         scope: Scope::Server,
         default: || json!("de"),
@@ -717,6 +731,8 @@ fn rule(key: &str) -> Option<Rule> {
         "ai.notice_text" => Rule::Text { max_chars: 2000, multiline: true, required: false },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
+        "usage.enabled" => Rule::Bool,
+        "usage.retention_days" => Rule::Int { min: 1, max: crate::usage::MAX_RETENTION_DAYS },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),
         "appearance.default_theme" => Rule::OneOf(&["system", "light", "dark", "contrast"]),
         // The same bounds as `config.rs`, which checks the file and environment at startup.

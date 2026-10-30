@@ -229,7 +229,12 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.storage.label",
     lead: "settings.section.storage.lead",
     keywords: "settings.section.storage.keywords",
-    keys: ["audit.retention_days", "dashboards.version_retention"],
+    keys: [
+      "audit.retention_days",
+      "dashboards.version_retention",
+      "usage.enabled",
+      "usage.retention_days",
+    ],
     visible: serverAdmin,
   },
   {

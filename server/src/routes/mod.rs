@@ -44,6 +44,7 @@ pub mod table;
 pub mod team_context;
 pub mod teams;
 pub mod updates;
+pub mod usage;
 
 use serde::Serialize;
 
@@ -95,6 +96,7 @@ pub fn all() -> Vec<table::RouteDef> {
         invitations::routes(),
         password_reset::routes(),
         email_confirmation::routes(),
+        usage::routes(),
     ]
     .into_iter()
     .flatten()

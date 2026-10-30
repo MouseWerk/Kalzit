@@ -630,5 +630,6 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
         variables,
         identifiers,
         refresh_ms,
+        panel: sub.panel.as_ref().map(|p| (p.dashboard_id.clone(), p.panel_id.clone())),
     })
 }

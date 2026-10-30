@@ -37,4 +37,5 @@ pub mod shapes;
 pub mod text;
 pub mod tls;
 pub mod updates;
+pub mod usage;
 pub mod web;

@@ -93,6 +93,8 @@ pub struct AppState {
     /// Mail: the rate limits of password resets and links, and connections to the mail server
     /// (`mail`).
     pub mail: Arc<crate::mail::Mail>,
+    /// Usage counts waiting to be written (`usage`).
+    pub usage: Arc<crate::usage::Usage>,
 }
 
 impl AppState {
@@ -175,6 +177,7 @@ impl AppState {
             plugins,
             acme,
             mail: Arc::default(),
+            usage: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.
