@@ -47,4 +47,8 @@ CREATE TABLE api_tokens (
 );
 
 CREATE INDEX api_tokens_account ON api_tokens (service_account_id, created_at);
+
+-- A change made with an API token names the token next to its service account: its id and prefix.
+ALTER TABLE audit_events ADD COLUMN actor_token_id TEXT;
+ALTER TABLE audit_events ADD COLUMN actor_token_prefix TEXT;
 CREATE INDEX api_tokens_org_kind ON api_tokens (org_id, kind, created_at);

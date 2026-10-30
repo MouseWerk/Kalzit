@@ -94,7 +94,7 @@ async fn enforce(
             // dropped mid-change, after a commit it can no longer see; not for a refused change.
             let cache = state.datasources.query_cache();
             let mut bump = cache.bump_on_drop(org_id.clone());
-            let res = next.run(req).await;
+            let res = run(next, req).await;
             bump.disarm();
             if res.status().is_success() {
                 // Here, and written for the other servers on the same database before the
@@ -104,8 +104,17 @@ async fn enforce(
             }
             res
         }
-        Ok(req) => next.run(req).await,
+        Ok(req) => run(next, req).await,
         Err(e) => e.into_response(),
+    }
+}
+
+/// Runs the handler; a request made with an API token runs with the token known to the audit log,
+/// so every entry it writes names the token.
+async fn run(next: Next, req: Request) -> Response {
+    match req.extensions().get::<api_token::TokenCaller>().map(api_token::TokenCaller::acting) {
+        Some(token) => crate::audit::with_token(token, next.run(req)).await,
+        None => next.run(req).await,
     }
 }
 
@@ -127,6 +136,8 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
         if let Access::Org(permission) = access {
             ctx.check(permission)?;
         }
+        // Only a use that passed every check counts as the token's last use.
+        api_token::record_use(state, &caller, &info);
         parts.extensions.insert(ctx);
         parts.extensions.insert(caller);
         parts.extensions.insert(user);

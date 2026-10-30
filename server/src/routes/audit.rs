@@ -54,6 +54,8 @@ struct AuditRow {
     actor_user_id: Option<String>,
     actor_name: Option<String>,
     actor_address: Option<String>,
+    actor_token_id: Option<String>,
+    actor_token_prefix: Option<String>,
     action: String,
     resource_type: Option<String>,
     resource_id: Option<String>,
@@ -70,6 +72,8 @@ pub struct AuditItem {
     /// The actor's current name; `null` for the system or a removed account.
     actor_name: Option<String>,
     actor_address: Option<String>,
+    actor_token_id: Option<String>,
+    actor_token_prefix: Option<String>,
     action: String,
     resource_type: Option<String>,
     resource_id: Option<String>,
@@ -171,6 +175,8 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
             actor_user_id: r.actor_user_id,
             actor_name: r.actor_name,
             actor_address: r.actor_address,
+            actor_token_id: r.actor_token_id,
+            actor_token_prefix: r.actor_token_prefix,
             action: r.action,
             resource_type: r.resource_type,
             resource_id: r.resource_id,
@@ -252,7 +258,8 @@ fn list_sql<'a>(viewer: &Viewer<'a>, q: &'a AuditQuery, paging: &'a Paging) -> (
     args.push(Arg::Int(paging.fetch_limit()));
     let limit = args.len();
     let sql = format!(
-        "{} SELECT e.id, e.org_id, e.actor_user_id, u.name AS actor_name, e.actor_address, e.action, e.resource_type, \
+        "{} SELECT e.id, e.org_id, e.actor_user_id, u.name AS actor_name, e.actor_address, e.actor_token_id, \
+         e.actor_token_prefix, e.action, e.resource_type, \
          e.resource_id, e.summary, e.created_at \
          FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id \
          WHERE {} ORDER BY e.created_at DESC, e.id DESC LIMIT ${limit}",

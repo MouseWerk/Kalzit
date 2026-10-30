@@ -26,8 +26,9 @@ use crate::shapes::Page;
 
 pub fn routes() -> Vec<RouteDef> {
     let write = Access::Org(Permission::ServiceAccountsWrite);
-    // The SCIM token provisions people, so it needs the right to change members.
-    let scim = Access::Org(Permission::UsersWrite);
+    // The SCIM token provisions people and their roles across the organization; its handlers also
+    // need every permission of an admin (`ensure_scim_manager`).
+    let scim = Access::Org(Permission::ServiceAccountsWrite);
     vec![
         route(Method::GET, "/orgs/{orgId}/service-accounts", write, list),
         route(Method::POST, "/orgs/{orgId}/service-accounts", write, create).changes_rights(),
@@ -644,12 +645,19 @@ where
     Ok(row.map(ApiToken::from))
 }
 
+/// The SCIM token is for people (no API token) who hold every permission of an admin: it will
+/// create, change and lock members and map groups to roles up to admin.
+fn ensure_scim_manager(ctx: &OrgCtx, caller: Option<&TokenCaller>) -> ApiResult<()> {
+    refuse_tokens(caller)?;
+    ensure_holds(&ctx.permissions, &BuiltinRole::Admin.permissions())
+}
+
 async fn scim_token(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     caller: Option<Extension<TokenCaller>>,
 ) -> ApiResult<Json<ScimTokenState>> {
-    refuse_tokens(caller.as_deref())?;
+    ensure_scim_manager(&ctx, caller.as_deref())?;
     Ok(Json(ScimTokenState { token: current_scim(&state.read_db, &ctx.org_id).await? }))
 }
 
@@ -684,7 +692,7 @@ async fn create_scim_token(
     caller: Option<Extension<TokenCaller>>,
     JsonBody(req): JsonBody<ScimTokenRequest>,
 ) -> ApiResult<(StatusCode, Json<CreatedToken>)> {
-    refuse_tokens(caller.as_deref())?;
+    ensure_scim_manager(&ctx, caller.as_deref())?;
     let now = state.clock.now_ms();
     let expires_at = api_token::expiry(now, req.expires_in_days, req.expires_at)?;
     let mut tx = crate::db::begin(&state.db).await?;
@@ -708,7 +716,7 @@ async fn revoke_scim_token(
     Extension(info): Extension<RequestInfo>,
     caller: Option<Extension<TokenCaller>>,
 ) -> ApiResult<StatusCode> {
-    refuse_tokens(caller.as_deref())?;
+    ensure_scim_manager(&ctx, caller.as_deref())?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;

@@ -170,7 +170,27 @@ pub fn allow_list_entries(list: &str) -> Vec<String> {
 #[derive(Clone, Debug)]
 pub struct TokenCaller {
     pub token_id: String,
+    /// The visible start of the token, which names it in the audit log.
+    pub prefix: String,
     pub service_account_id: String,
+    /// When the token was last used, as read for this request.
+    last_used_at: Option<i64>,
+}
+
+impl TokenCaller {
+    /// The token as the audit log names it.
+    pub fn acting(&self) -> crate::audit::ActingToken {
+        crate::audit::ActingToken { id: self.token_id.clone(), prefix: self.prefix.clone() }
+    }
+}
+
+/// Records that the token was used, once the request passed every access check: in the
+/// background, at most once a minute, with the address of the latest use.
+pub fn record_use(state: &AppState, caller: &TokenCaller, info: &RequestInfo) {
+    let now = state.clock.now_ms();
+    if caller.last_used_at.is_none_or(|at| now - at >= USE_INTERVAL_MS) {
+        state.touches.token_used(caller.token_id.clone(), now, info.client_ip.to_string());
+    }
 }
 
 /// For routes a person must call: managing service accounts and the SCIM token.
@@ -202,7 +222,6 @@ struct TokenRow {
     expires_at: i64,
     revoked_at: Option<i64>,
     last_used_at: Option<i64>,
-    last_used_address: Option<String>,
     service_account_id: Option<String>,
     account_disabled: Option<i64>,
     user_email: Option<String>,
@@ -243,15 +262,14 @@ pub async fn authenticate(
     let mono = state.clock.monotonic_ms();
     let key = address_key("token", info.client_ip);
     let network = network_key(info.client_ip);
-    // Counted before the lookup, under the limiter's lock, so parallel guesses cannot all pass;
-    // a token that works gives the attempt back.
-    let counted = state
-        .token_limiter
-        .try_acquire(&key, &network, mono)
-        .map_err(|wait| ApiError::rate_limited("too many refused API tokens, wait a few minutes", wait))?;
+    // Only refusals count, so any number of working requests at once never uses up the budget.
+    // An address that used it up still gets through with a working token (guessing one is
+    // hopeless at 128 bits); every other token from there is refused with the wait, unrecorded,
+    // so a few bad tokens behind a shared address cannot lock out the good ones.
+    let blocked = state.token_limiter.wait(&key, mono);
     let row: Option<TokenRow> = sqlx::query_as(
         "SELECT t.id, t.org_id, t.kind, t.prefix, t.allowed_ips, t.expires_at, t.revoked_at, t.last_used_at, \
-         t.last_used_address, t.service_account_id, a.disabled AS account_disabled, u.email AS user_email, \
+         t.service_account_id, a.disabled AS account_disabled, u.email AS user_email, \
          u.name AS user_name, u.disabled AS user_disabled FROM api_tokens t \
          LEFT JOIN service_accounts a ON a.id = t.service_account_id LEFT JOIN users u ON u.id = a.id \
          WHERE t.token_hash = $1",
@@ -265,11 +283,15 @@ pub async fn authenticate(
         Some(r) => r.refusal(now, info.client_ip, org_id),
     };
     if let Some(reason) = refusal {
+        if let Some(wait) = blocked {
+            tracing::info!(client = %info.client_ip, reason, "refused an API token while rate-limited");
+            return Err(ApiError::rate_limited("too many refused API tokens, wait a few minutes", wait));
+        }
+        state.token_limiter.record(&key, &network, mono);
         record_refusal(state, info, row.as_ref(), reason, now).await;
         // A token of another organization answers like an organization the caller is not in.
         return Err(if reason == "other_org" { ApiError::not_found() } else { refused() });
     }
-    state.token_limiter.refund(&key, &counted);
     let (Some(row), Some(account_id), Some(email), Some(name)) = (
         row.as_ref(),
         row.as_ref().and_then(|r| r.service_account_id.clone()),
@@ -278,13 +300,14 @@ pub async fn authenticate(
     ) else {
         return Err(refused());
     };
-    let address = info.client_ip.to_string();
-    let due = row.last_used_at.is_none_or(|at| now - at >= USE_INTERVAL_MS);
-    if due || row.last_used_address.as_deref() != Some(address.as_str()) {
-        state.touches.token_used(row.id.clone(), now, address);
-    }
     let user = SessionUser { id: account_id.clone(), email, name, is_server_admin: 0 };
-    Ok((user, TokenCaller { token_id: row.id.clone(), service_account_id: account_id }))
+    let caller = TokenCaller {
+        token_id: row.id.clone(),
+        prefix: row.prefix.clone(),
+        service_account_id: account_id,
+        last_used_at: row.last_used_at,
+    };
+    Ok((user, caller))
 }
 
 /// Writes the audit entry of a refused token. The token itself is never recorded: its prefix when

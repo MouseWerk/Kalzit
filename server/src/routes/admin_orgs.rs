@@ -88,11 +88,13 @@ async fn create(
     let mut tx = crate::db::begin(&state.db).await?;
     // Locks the owner's row, which also makes the transaction write first (docs/ARCHITECTURE.md,
     // "write first"): a disable of that account waits for this to finish.
-    let owner = sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1 AND disabled = 0")
-        .bind(&req.owner_user_id)
-        .execute(&mut *tx)
-        .await?;
-    // A disabled account cannot sign in, so it could not use the organization it owns.
+    let owner =
+        sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1 AND disabled = 0 AND service_account = 0")
+            .bind(&req.owner_user_id)
+            .execute(&mut *tx)
+            .await?;
+    // A disabled account cannot sign in, so it could not use the organization it owns; a service
+    // account belongs to one organization and is never an owner.
     if owner.rows_affected() == 0 {
         return Err(ApiError::validation("no such account, or it is disabled").with_field("ownerUserId"));
     }

@@ -95,7 +95,7 @@ function created(state: FakeServiceAccountsState, prefix: string, fields: Partia
 function handle(state: FakeServiceAccountsState, request: FakeRequest): Response | undefined {
   const parts = request.route.split("/").slice(4);
   if (parts[0] === "scim-token") {
-    if (!request.permissions.has("users:write")) {
+    if (!request.permissions.has("serviceaccounts:write")) {
       return error(403, "forbidden");
     }
     if (request.method === "GET") {

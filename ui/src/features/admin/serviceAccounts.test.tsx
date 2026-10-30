@@ -129,6 +129,14 @@ describe("service accounts", () => {
     expect(sent(server, "POST").filter((path) => path.endsWith("/scim-token"))).toHaveLength(1);
   });
 
+  it("offers the SCIM token only to someone with an admin's permissions", async () => {
+    await openAdmin("/admin/service-accounts", {
+      permissions: ["serviceaccounts:write", "users:write", "dashboards:read"],
+    });
+    await accountsTable();
+    expect(screen.queryByRole("region", { name: "SCIM provisioning" })).toBeNull();
+  });
+
   it("hides the page without the permission", async () => {
     await openAdmin("/admin/service-accounts", { permissions: ["users:read", "users:write"] });
     expect(await screen.findByText("No access")).toBeTruthy();

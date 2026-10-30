@@ -215,6 +215,7 @@
   "admin.audit.older": "Older",
   "admin.audit.system": "Kalzit",
   "admin.audit.actorFrom": "{name} from {address}",
+  "admin.audit.actorWithToken": "{name} with the token {token}",
   "admin.auditAction.setup.completed": "Setup completed",
   "admin.auditAction.auth.signed_in": "Signed in",
   "admin.auditAction.auth.sign_in_failed": "Sign-in failed",

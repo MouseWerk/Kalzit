@@ -478,7 +478,10 @@ Accounts for scripts and other systems (`server/src/routes/service_accounts.rs`,
 role there: `admin`, `editor`, `viewer` or a custom role, never `owner`. It acts through API
 tokens only; it has no password, never signs in, joins no team and receives no grants. Lists of
 people (members, server users, team member pickers, member counts) leave service accounts out,
-and the member routes answer `404` for them. There are no personal tokens for people.
+and the member routes answer `404` for them. They have no second factor: a required one never
+applies to them, the server's two-factor overview does not count them, and both resets answer
+`404`. A service account never becomes an organization's owner (`POST /admin/orgs` refuses it as
+`ownerUserId`). There are no personal tokens for people.
 
 ```ts
 interface ServiceAccount {
@@ -502,7 +505,7 @@ interface ApiToken {
   allowedIps: string[];    // canonical addresses and networks; empty for anywhere
   createdAt: number;
   createdByName: string | null;
-  lastUsedAt: number | null;      // written at most once a minute per address
+  lastUsedAt: number | null;      // after a use that passed every check; written at most once a minute
   lastUsedAddress: string | null;
   revokedAt: number | null;
   revokedByName: string | null;
@@ -518,9 +521,9 @@ interface ApiToken {
 | `DELETE /orgs/{orgId}/service-accounts/{accountId}` | `serviceaccounts:write` | `204` |
 | `POST /orgs/{orgId}/service-accounts/{accountId}/tokens` | `serviceaccounts:write` | `201 ApiToken & { token: string }` |
 | `POST /orgs/{orgId}/service-accounts/{accountId}/tokens/{tokenId}/revoke` | `serviceaccounts:write` | `200 ApiToken` |
-| `GET /orgs/{orgId}/scim-token` | `users:write` | `200 { token: ApiToken \| null }` |
-| `POST /orgs/{orgId}/scim-token` | `users:write` | `201 ApiToken & { token: string }` |
-| `DELETE /orgs/{orgId}/scim-token` | `users:write` | `204` |
+| `GET /orgs/{orgId}/scim-token` | `serviceaccounts:write` and an admin's permissions | `200 { token: ApiToken \| null }` |
+| `POST /orgs/{orgId}/scim-token` | `serviceaccounts:write` and an admin's permissions | `201 ApiToken & { token: string }` |
+| `DELETE /orgs/{orgId}/scim-token` | `serviceaccounts:write` and an admin's permissions | `204` |
 
 The guards of members apply: giving a role, and acting on an account (changing, deleting, making
 or revoking its tokens), needs the caller to hold every permission of the account's role, so
@@ -560,13 +563,20 @@ token in front of Kalzit leaves the session cookie in charge. Unknown, revoked, 
 disabled tokens, tokens used from an address outside their list and the SCIM token all answer the
 same `401 unauthenticated`; each refusal writes `api_token.refused` with the reason (`unknown`,
 `revoked`, `expired`, `account_disabled`, `address_not_allowed`, `wrong_kind`, `other_org`), the
-address and the token's prefix when it is known. Refusals count per client address like failed
-sign-ins (`security.login_max_failures` per `security.login_window_secs`); once the budget is used
-up, every token from that address answers `429 rate_limited` until the window ends. A working
-token gives its attempt back.
+address and the token's prefix when it is known. Only refusals count, per client address, with
+the budget of failed sign-ins (`security.login_max_failures` per `security.login_window_secs`), so
+working requests never use it up, however many arrive at once. Once it is used up, a token from
+that address that would be refused answers `429 rate_limited` until the window ends, logged but
+not written to the audit log again; a working token still works, so a few bad tokens behind a
+shared address cannot lock out the good ones.
+
+Every audit entry written by a request made with a token names the token next to its service
+account: `actorTokenId` and `actorTokenPrefix` in the audit API (`null` otherwise).
 
 **SCIM token.** One per organization, for the SCIM endpoints of a later version; the same rules
 (shown once, hashed, revocable, audited, 90 days by default, at most a year) without an IP list.
+It provisions people and roles, so its routes need `serviceaccounts:write` and every permission
+of the built-in admin role (`403` otherwise), and never an API token.
 `POST` `{ "expiresInDays"?, "expiresAt"? }` revokes the current one and answers the new one.
 `DELETE` revokes it (`404` without one). Audit `scim.token_created` and `scim.token_revoked`.
 

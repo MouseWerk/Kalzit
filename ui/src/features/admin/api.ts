@@ -610,6 +610,8 @@ export interface AuditEvent {
   actorUserId: string | null;
   actorName: string | null;
   actorAddress: string | null;
+  /** The prefix of the API token the change was made with; absent from older servers. */
+  actorTokenPrefix?: string | null;
   action: string;
   resourceType: string | null;
   resourceId: string | null;
@@ -624,6 +626,7 @@ const isAuditEvent = shape<AuditEvent>({
   actorUserId: nullable(isString),
   actorName: nullable(isString),
   actorAddress: nullable(isString),
+  actorTokenPrefix: (value) => value === undefined || nullable(isString)(value),
   action: isString,
   resourceType: nullable(isString),
   resourceId: nullable(isString),

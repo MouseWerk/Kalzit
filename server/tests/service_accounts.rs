@@ -320,12 +320,18 @@ async fn refused_tokens_answer_401_are_audited_and_rate_limited() {
     }
 
     // Three refusals in this window (the day moved past the first two): expired, disabled and
-    // unknown. The budget is ten per window, then even a good token waits.
+    // unknown. The budget is ten per window; then other tokens from this address wait, unaudited,
+    // while a working token still gets through.
     for _ in 0..7 {
         assert_eq!(t.with_token(Method::GET, &path, None, &unknown).await.status, StatusCode::UNAUTHORIZED);
     }
-    let r = t.with_token(Method::GET, &path, None, &good).await;
+    let audited = t.audit_actions().await.len();
+    let r = t.with_token(Method::GET, &path, None, &unknown).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    let r = t.with_token(Method::GET, &path, None, &revoked).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(t.audit_actions().await.len(), audited, "a refusal while rate-limited is not audited");
+    assert_eq!(t.with_token(Method::GET, &path, None, &good).await.status, StatusCode::OK);
     // Revoked tokens stay listed, grey, until 90 days after they ended.
     let detail = t.owner(Method::GET, &format!("/service-accounts/{id}"), None).await;
     assert_eq!(detail.body["tokens"].as_array().unwrap().len(), 4, "{}", detail.body);
@@ -439,5 +445,221 @@ async fn one_scim_token_per_organization() {
     let actions: Vec<String> = t.audit_actions().await.into_iter().map(|(a, _)| a).collect();
     assert_eq!(actions.iter().filter(|a| *a == "scim.token_created").count(), 2);
     assert_eq!(actions.iter().filter(|a| *a == "scim.token_revoked").count(), 2);
+    t.finish().await;
+}
+
+impl TestApp {
+    /// Sends `count` requests with `token` at the same moment, each from its own task.
+    async fn parallel_with_token(&self, path: &str, token: &str, count: usize) -> Vec<StatusCode> {
+        let mut tasks = Vec::new();
+        for _ in 0..count {
+            let (app, path, bearer) = (self.app.clone(), path.to_string(), format!("Bearer {token}"));
+            tasks.push(tokio::spawn(async move {
+                let req = Request::builder()
+                    .uri(path)
+                    .header(header::HOST, "kalzit.test")
+                    .header(header::AUTHORIZATION, bearer)
+                    .body(Body::empty())
+                    .unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }));
+        }
+        let mut out = Vec::new();
+        for task in tasks {
+            out.push(task.await.unwrap());
+        }
+        out
+    }
+
+    /// A request with both the owner's session cookie and `token`.
+    async fn both(&mut self, method: Method, path: &str, body: Option<Value>, token: &str) -> Reply {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, "kalzit.test")
+            .header(header::COOKIE, &self.owner)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        if body.is_some() {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+        }
+        let req = req.body(body.map_or_else(Body::empty, |b| Body::from(b.to_string()))).unwrap();
+        let res = self.app.clone().oneshot(req).await.unwrap();
+        let status = res.status();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        self.clock.advance_ms(1);
+        Reply { status, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null) }
+    }
+}
+
+/// Working tokens never use up the budget of refusals, however many arrive at once.
+#[tokio::test]
+async fn many_requests_with_a_working_token_at_once_all_pass() {
+    let mut t = TestApp::new().await;
+    let id = t.account("ci-dashboards", "viewer").await;
+    let (token, _) = t.token(&id, json!({ "name": "ci" })).await;
+    let statuses = t.parallel_with_token(&t.path("/dashboards"), &token, 25).await;
+    assert!(statuses.iter().all(|s| *s == StatusCode::OK), "{statuses:?}");
+    // Bad tokens from the same address are refused and counted; the good one goes on working.
+    let unknown = format!("kz_sa_{}", "1".repeat(40));
+    let path = t.path("");
+    for _ in 0..12 {
+        t.with_token(Method::GET, &path, None, &unknown).await;
+    }
+    let statuses = t.parallel_with_token(&t.path("/dashboards"), &token, 12).await;
+    assert!(statuses.iter().all(|s| *s == StatusCode::OK), "{statuses:?}");
+    t.finish().await;
+}
+
+/// Every change made with a token names the token in the audit log, never the token itself.
+#[tokio::test]
+async fn changes_made_with_a_token_name_it_in_the_audit_log() {
+    let mut t = TestApp::new().await;
+    let id = t.account("ci-dashboards", "editor").await;
+    let (token, token_id) = t.token(&id, json!({ "name": "ci" })).await;
+    let r = t.with_token(Method::POST, &t.path("/folders"), Some(json!({ "name": "Vertrieb" })), &token).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    type Row = (String, Option<String>, Option<String>, Option<String>);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT action, actor_user_id, actor_token_id, actor_token_prefix FROM audit_events \
+         WHERE actor_token_id IS NOT NULL",
+    )
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let (action, actor, tid, prefix) = &rows[0];
+    let prefix = prefix.clone().unwrap();
+    assert!(action.starts_with("folder."), "{action}");
+    assert_eq!((actor.as_deref(), tid.as_deref()), (Some(id.as_str()), Some(token_id.as_str())));
+    assert!(token.starts_with(&prefix) && prefix.len() == 14);
+    // The owner's own changes name no token; the audit API shows both.
+    let audit = t.owner(Method::GET, "/audit?action=folder.", None).await;
+    assert_eq!(audit.body["items"][0]["actorTokenId"], token_id.as_str(), "{}", audit.body);
+    assert_eq!(audit.body["items"][0]["actorTokenPrefix"], prefix.as_str());
+    let created = t.owner(Method::GET, "/audit?action=service_account.created", None).await;
+    assert!(created.body["items"][0]["actorTokenId"].is_null(), "{}", created.body);
+    t.finish().await;
+}
+
+/// The bearer token decides when both arrive; it never borrows the session's rights.
+#[tokio::test]
+async fn a_token_next_to_a_session_cookie_acts_as_the_token() {
+    let mut t = TestApp::new().await;
+    let id = t.account("leser", "viewer").await;
+    let (token, _) = t.token(&id, json!({ "name": "x" })).await;
+    let r = t.both(Method::GET, &t.path(""), None, &token).await;
+    assert_eq!(r.body["role"], "viewer", "{}", r.body);
+    let r = t.both(Method::POST, &t.path("/folders"), Some(json!({ "name": "Neu" })), &token).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "the owner's cookie lends nothing: {}", r.body);
+    let r = t.both(Method::GET, "/api/me", None, &token).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "token.org_routes_only"));
+    // Live updates (a WebSocket) are refused to tokens too: `routes::live_tests`.
+    t.finish().await;
+}
+
+/// An admin service account cannot raise itself or anyone above its role.
+#[tokio::test]
+async fn a_token_cannot_raise_its_own_role_or_anyone_above_it() {
+    let mut t = TestApp::new().await;
+    let id = t.account("admin-bot", "admin").await;
+    let (token, _) = t.token(&id, json!({ "name": "x" })).await;
+    let own = t.path(&format!("/members/{id}"));
+    for role in ["owner", "admin"] {
+        let r = t.with_token(Method::PATCH, &own, Some(json!({ "role": role })), &token).await;
+        assert!(matches!(r.status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN), "{role}: {}", r.body);
+    }
+    let cookie = t.owner.clone();
+    let r = t
+        .send(
+            Method::POST,
+            "/api/admin/users",
+            Some(json!({ "name": "Vera", "email": "vera@example.de", "password": PASSWORD })),
+            Some(Who::Cookie(&cookie)),
+        )
+        .await;
+    let vera = r.body["id"].as_str().unwrap().to_string();
+    t.owner(Method::POST, "/members", Some(json!({ "email": "vera@example.de", "role": "viewer" }))).await;
+    let path = t.path(&format!("/members/{vera}"));
+    let r = t.with_token(Method::PATCH, &path, Some(json!({ "role": "owner" })), &token).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "an admin does not make owners: {}", r.body);
+    // A custom role with more than the account holds cannot be made either.
+    let roles = t.path("/roles");
+    let r = t
+        .with_token(Method::POST, &roles, Some(json!({ "name": "Alles", "permissions": ["org:delete"] })), &token)
+        .await;
+    assert!(r.status.is_client_error(), "{}", r.body);
+    let (custom,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM roles").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(custom, 0);
+    let (role,): (String,) = sqlx::query_as("SELECT role FROM org_members WHERE user_id = $1")
+        .bind(&id)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(role, "admin");
+    t.finish().await;
+}
+
+/// A service account never owns an organization.
+#[tokio::test]
+async fn a_service_account_cannot_own_a_new_organization() {
+    let mut t = TestApp::new().await;
+    let id = t.account("bot", "viewer").await;
+    let cookie = t.owner.clone();
+    let body = json!({ "name": "Neue Firma", "ownerUserId": id });
+    let r = t.send(Method::POST, "/api/admin/orgs", Some(body), Some(Who::Cookie(&cookie))).await;
+    assert_eq!((r.status, r.body["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("ownerUserId")));
+    t.finish().await;
+}
+
+/// The SCIM token is for people who hold everything an admin holds.
+#[tokio::test]
+async fn the_scim_token_needs_an_admin() {
+    let mut t = TestApp::new().await;
+    let permissions = json!(["serviceaccounts:write", "users:write", "users:read"]);
+    let role = t.owner(Method::POST, "/roles", Some(json!({ "name": "Leute", "permissions": permissions }))).await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    let role_id = role.body["id"].as_str().unwrap().to_string();
+    let cookie = t.owner.clone();
+    let lea = json!({ "name": "Lea", "email": "lea@example.de", "password": PASSWORD });
+    t.send(Method::POST, "/api/admin/users", Some(lea), Some(Who::Cookie(&cookie))).await;
+    t.owner(Method::POST, "/members", Some(json!({ "email": "lea@example.de", "role": role_id }))).await;
+    let saved = std::mem::take(&mut t.owner);
+    let login = json!({ "email": "lea@example.de", "password": PASSWORD });
+    assert_eq!(t.send(Method::POST, "/api/auth/login", Some(login), None).await.status, StatusCode::OK);
+    let lea = std::mem::replace(&mut t.owner, saved);
+    let path = t.path("/scim-token");
+    let r = t.send(Method::POST, &path, Some(json!({})), Some(Who::Cookie(&lea))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert_eq!(t.owner(Method::POST, "/scim-token", Some(json!({}))).await.status, StatusCode::CREATED);
+    t.finish().await;
+}
+
+/// The second factor is for people: a required one never holds up a token, and the overview and
+/// resets leave service accounts out.
+#[tokio::test]
+async fn service_accounts_are_outside_the_second_factor_rules() {
+    let mut t = TestApp::new().await;
+    let id = t.account("bot", "admin").await;
+    let (token, _) = t.token(&id, json!({ "name": "x" })).await;
+    let cookie = t.owner.clone();
+    let required = json!({ "value": "everyone", "version": 0 });
+    let path = "/api/admin/settings/security.two_factor_required";
+    let r = t.send(Method::PATCH, path, Some(required), Some(Who::Cookie(&cookie))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.with_token(Method::GET, &t.path("/dashboards"), None, &token).await.status, StatusCode::OK);
+    let overview = t.send(Method::GET, "/api/admin/security/two-factor", None, Some(Who::Cookie(&cookie))).await;
+    assert_eq!(overview.body["orgs"][0]["missing"], 1, "only the owner lacks one: {}", overview.body);
+    let reset = t.path(&format!("/members/{id}/second-factor/reset"));
+    let r = t.send(Method::POST, &reset, Some(json!({})), Some(Who::Cookie(&cookie))).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let reset = format!("/api/admin/users/{id}/second-factor/reset");
+    let r = t.send(Method::POST, &reset, Some(json!({})), Some(Who::Cookie(&cookie))).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let (pending,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sign_in_challenges WHERE user_id = $1")
+        .bind(&id)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(pending, 0);
     t.finish().await;
 }

@@ -63,7 +63,8 @@ export function ServiceAccountsPage() {
   const access = useAdminAccess();
   const orgId = access.orgId ?? "";
   const canManage = access.has("serviceaccounts:write");
-  const canScim = access.has("users:write");
+  // The SCIM token needs every permission of an admin, as the server checks.
+  const canScim = holdsRole(access, "admin", undefined);
   const roles = useRoles(access.orgId, access.has("roles:read"));
   const list = usePagedList(
     adminKeys.serviceAccounts(orgId),
@@ -660,7 +661,12 @@ function CreateTokenDialog({
             : { expiresAt }),
         allowedIps: allowList.ok ? allowList.entries : [],
       }),
-    onSuccess: onCreated,
+    // The token is shown once from state; the mutation keeps no copy of it.
+    gcTime: 0,
+    onSuccess: (created) => {
+      onCreated(created);
+      create.reset();
+    },
     onError: (error) => {
       if (isApiError(error) && error.field === "name") {
         setNameError(errorMessage(t, error));
@@ -901,9 +907,12 @@ function ScimCard({ orgId }: { orgId: string }) {
 
   const create = useMutation({
     mutationFn: () => createScimToken(orgId),
+    // The token is shown once from state; the mutation keeps no copy of it.
+    gcTime: 0,
     onSuccess: async (created) => {
       setAsking(null);
       setShown(created);
+      create.reset();
       await refresh();
     },
   });

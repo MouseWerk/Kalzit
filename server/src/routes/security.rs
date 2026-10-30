@@ -499,7 +499,7 @@ async fn reset_member(
     let hash = session_hash(&headers, &info)?;
     let member: Option<(String, i64)> = sqlx::query_as(
         "SELECT m.role, u.is_server_admin FROM org_members m JOIN users u ON u.id = m.user_id \
-         WHERE m.org_id = $1 AND m.user_id = $2",
+         WHERE m.org_id = $1 AND m.user_id = $2 AND u.service_account = 0",
     )
     .bind(&ctx.org_id)
     .bind(&user_id)
@@ -531,8 +531,10 @@ async fn reset_user(
 ) -> ApiResult<Json<ResetDone>> {
     let now = state.clock.now_ms();
     let hash = session_hash(&headers, &info)?;
-    let exists: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM users WHERE id = $1").bind(&user_id).fetch_optional(&state.db).await?;
+    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE id = $1 AND service_account = 0")
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await?;
     if exists.is_none() {
         return Err(ApiError::not_found());
     }
@@ -570,7 +572,7 @@ async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
     // Members without any method, per organization.
     let without: Vec<(String, String, String, i64)> = sqlx::query_as(
         "SELECT m.org_id, m.user_id, m.role, u.is_server_admin FROM org_members m JOIN users u ON u.id = m.user_id \
-         WHERE u.disabled = 0 AND NOT EXISTS (SELECT 1 FROM user_totp t WHERE t.user_id = u.id) \
+         WHERE u.disabled = 0 AND u.service_account = 0 AND NOT EXISTS (SELECT 1 FROM user_totp t WHERE t.user_id = u.id) \
          AND NOT EXISTS (SELECT 1 FROM user_passkeys p WHERE p.user_id = u.id)",
     )
     .fetch_all(&state.db)
