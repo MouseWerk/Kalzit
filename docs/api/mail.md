@@ -122,7 +122,7 @@ Accepting:
 | `GET /auth/password-reset` | public | `{available}`: a mail server and `server.public_url` are set |
 | `POST /auth/password-reset` | public | `{email}`: `202 {accepted: true}`, always the same |
 | `POST /auth/password-reset/inspect` | public | `{token}`: `{email, expiresAt}` |
-| `POST /auth/password-reset/complete` | public | `{token, password, signOutEverywhere?}`: `204` |
+| `POST /auth/password-reset/complete` | public | `{token, password}`: `204` |
 | `POST /orgs/{orgId}/members/{userId}/password-link` | `users:write` | Send the member the link; answers like a test mail |
 
 - Asking answers `202` with the same body whether or not an account has the address; the lookup,
@@ -138,7 +138,7 @@ Accepting:
   used, expired and unknown ones all answer `404 not_found` with `mail.reset_invalid`. Unknown
   tokens (invitation and password links) count against the client address: 20 per 15 minutes.
 - Completing sets the password (policy of every account), ends every session of the account
-  unless `signOutEverywhere` is false, and clears the account's failed sign-ins. A second factor
+  (always: whoever knew the old password or held a session is out), and clears the account's failed sign-ins. A second factor
   is never changed.
 - The admin's link: only for a member whose role the admin holds entirely, with a password of
   Kalzit's own (else `mail.reset_password_elsewhere`), within the same per-account limit.
@@ -150,7 +150,13 @@ Accepting:
 | Method and path | Access | What |
 |---|---|---|
 | `POST /me/email-confirmation` | signed in | Mails the user's own address a link (24 hours, once); answers like a test mail |
-| `POST /auth/email-confirmation` | public | `{token}`: confirms the address; `204` |
+| `POST /me/email-confirmation/confirm` | signed in | `{token}`: confirms the address of the signed-in account the link was made for; `204` |
+
+Confirming needs a session of the account the link was made for: a link proves only that someone
+reads the mailbox, so someone who made an account for another person's address cannot have that
+person confirm it. Another account's link answers like an unknown one. The page behind the link
+sends the person to sign in first (the token waits in the tab), names the account and confirms on
+an explicit click.
 
 An account whose address is unconfirmed (made from a copied invitation link) is not added to an
 organization by address (`POST /orgs/{orgId}/members` answers `409 conflict`

@@ -3,6 +3,11 @@
 //! address unconfirmed: nobody showed that the person reads that mailbox. Until its owner confirms
 //! it here, the account is not added to an organization by address, and single sign-on never
 //! links to it by address (`confirmed_account_by_email`).
+//!
+//! Confirming needs a session of the same account: a link proves that someone reads the mailbox,
+//! and only together with the account's own session does it prove that the account's owner does.
+//! Otherwise someone could make an account for another person's address and have that person
+//! click the link.
 
 use axum::extract::State;
 use axum::http::{Method, StatusCode};
@@ -27,7 +32,7 @@ pub const VALID_MS: i64 = 24 * 3_600_000;
 pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::POST, "/me/email-confirmation", Access::Authenticated, request),
-        route(Method::POST, "/auth/email-confirmation", Access::Public, confirm),
+        route(Method::POST, "/me/email-confirmation/confirm", Access::Authenticated, confirm),
     ]
 }
 
@@ -115,6 +120,7 @@ struct TokenBody {
 
 async fn confirm(
     State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
     JsonBody(body): JsonBody<TokenBody>,
 ) -> ApiResult<StatusCode> {
@@ -135,10 +141,14 @@ async fn confirm(
     let mut tx = crate::db::begin(&state.db).await?;
     let found: Option<(String, String)> = sqlx::query_as(
         "SELECT c.user_id, c.email FROM email_confirmations c JOIN users u ON u.id = c.user_id \
-         WHERE c.token_hash = $1 AND c.used_at IS NULL AND c.expires_at > $2 AND u.email = c.email",
+         WHERE c.token_hash = $1 AND c.used_at IS NULL AND c.expires_at > $2 AND u.email = c.email \
+         AND c.user_id = $3",
     )
     .bind(&hash)
     .bind(now)
+    // Only the account the link was made for, signed in: another account's link answers like an
+    // unknown one.
+    .bind(&user.id)
     .fetch_optional(&mut *tx)
     .await?;
     let Some((user_id, _)) = found else { return Err(invalid()) };

@@ -70,8 +70,8 @@ and [Installation](installation.md); both ship with Kalzit and can be read witho
 **Reset password** asks for your email address and sends a link that works for 60 minutes and
 once. The page answers the same whether or not an account has the address, so nobody can find
 out who has an account here; if nothing arrives, check the spam folder and try again after a
-minute. The link opens **New password**: choose one (at least 12 characters) and keep **Sign out
-on all other devices** ticked to end your other sessions. A newer link replaces an older one, and
+minute. The link opens **New password**: choose one (at least 12 characters); saving it signs
+you out everywhere else. A newer link replaces an older one, and
 a link stops working once your password changed some other way. Accounts that sign in through
 their organization's sign-in instead get a mail saying where to change the password.
 

@@ -228,7 +228,6 @@ mod access_guard {
         "POST /auth/password-reset",
         "POST /auth/password-reset/inspect",
         "POST /auth/password-reset/complete",
-        "POST /auth/email-confirmation",
     ];
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[
@@ -243,6 +242,8 @@ mod access_guard {
         "PATCH /me/preferences",
         // Sends the user's own address a confirmation link (docs/api/mail.md).
         "POST /me/email-confirmation",
+        // Confirms with the link's token, for the signed-in account the link was made for only.
+        "POST /me/email-confirmation/confirm",
     ];
 
     /// The path layout decides the access rule, so a route cannot be scoped to an organization

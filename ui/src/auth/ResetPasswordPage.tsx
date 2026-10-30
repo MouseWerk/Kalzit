@@ -215,11 +215,10 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
     retry: false,
   });
   const [password, setPassword] = useState("");
-  const [everywhere, setEverywhere] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
   const passwordRef = useRef<HTMLInputElement>(null);
   const save = useMutation({
-    mutationFn: () => completePasswordReset(token, password, everywhere),
+    mutationFn: () => completePasswordReset(token, password),
     retry: false,
     onSuccess: () => forgetToken("reset"),
     onError: (failure) => {
@@ -252,9 +251,7 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
     return (
       <div className="access__card link-state" role="status">
         <h1 className="link-state__title">{t("access.reset.doneTitle")}</h1>
-        <p className="access__lead">
-          {everywhere ? t("access.reset.doneText") : t("access.reset.doneTextKept")}
-        </p>
+        <p className="access__lead">{t("access.reset.doneText")}</p>
         <Link to="/login" className="button button--primary">
           {t("access.reset.signIn")}
         </Link>
@@ -329,20 +326,10 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
           }}
           error={error}
         />
-        <div className="link-actions link-actions--split">
-          <label className="access__check">
-            <input
-              type="checkbox"
-              checked={everywhere}
-              disabled={save.isPending}
-              onChange={(event) => setEverywhere(event.currentTarget.checked)}
-            />
-            <span>{t("access.reset.signOutEverywhere")}</span>
-          </label>
-          <button type="submit" className="button button--primary" aria-disabled={save.isPending}>
-            {t("access.reset.save")}
-          </button>
-        </div>
+        <p className="field__hint">{t("access.reset.endsSessions")}</p>
+        <button type="submit" className="button button--primary" aria-disabled={save.isPending}>
+          {t("access.reset.save")}
+        </button>
       </form>
     </>
   );

@@ -285,13 +285,6 @@ async fn inspect(
 struct CompleteBody {
     token: String,
     password: String,
-    /// Ends every session of the account (on by default).
-    #[serde(default = "yes")]
-    sign_out_everywhere: bool,
-}
-
-fn yes() -> bool {
-    true
 }
 
 async fn complete(
@@ -331,8 +324,8 @@ async fn complete(
         .bind(&token_hash)
         .execute(&mut *tx)
         .await?;
-    let ended =
-        if body.sign_out_everywhere { session::delete_for_user(&mut *tx, &found.user_id, None).await? } else { 0 };
+    // Whoever knew the old password, or took over a session, is signed out: always.
+    let ended = session::delete_for_user(&mut *tx, &found.user_id, None).await?;
     let event = crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: Some(&found.user_id),

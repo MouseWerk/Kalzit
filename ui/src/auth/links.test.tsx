@@ -121,7 +121,7 @@ describe("password reset page", () => {
     expect(screen.queryByRole("button", { name: "Send link" })).toBeNull();
   });
 
-  it("sets the new password with the link and signs out elsewhere by default", async () => {
+  it("sets the new password with the link, always signing out elsewhere", async () => {
     const server = installFakeServer();
     server.areas.mail.resets[TOKEN] = {
       email: "lea@example.com",
@@ -129,14 +129,13 @@ describe("password reset page", () => {
     };
     const { user } = renderApp(`/reset-password#${TOKEN}`);
     expect(await screen.findByText("For lea@example.com")).toBeTruthy();
-    const everywhere = screen.getByRole("checkbox", { name: "Sign out on all other devices" });
-    expect((everywhere as HTMLInputElement).checked).toBe(true);
+    // No way to keep the other sessions: the page says they end.
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText("This ends every other session of your account.")).toBeTruthy();
     await user.type(screen.getByLabelText("New password", { selector: "input" }), NEW_PASSWORD);
     await user.click(screen.getByRole("button", { name: "Save password" }));
     expect(await screen.findByText("Your password is changed.")).toBeTruthy();
-    expect(server.areas.mail.completed).toEqual([
-      { token: TOKEN, password: NEW_PASSWORD, signOutEverywhere: true },
-    ]);
+    expect(server.areas.mail.completed).toEqual([{ token: TOKEN, password: NEW_PASSWORD }]);
   });
 
   it("offers a new link when the link no longer works", async () => {

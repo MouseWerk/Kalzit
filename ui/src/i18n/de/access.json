@@ -176,11 +176,9 @@
   "access.reset.newTitle": "Neues Passwort",
   "access.reset.newFor": "Für {email}",
   "access.reset.newPassword": "Neues Passwort",
-  "access.reset.signOutEverywhere": "Auf allen anderen Geräten abmelden",
   "access.reset.save": "Passwort speichern",
   "access.reset.doneTitle": "Dein Passwort ist geändert.",
   "access.reset.doneText": "Andere Sitzungen sind beendet. Dein zweiter Faktor bleibt unverändert.",
-  "access.reset.doneTextKept": "Deine anderen Sitzungen laufen weiter. Dein zweiter Faktor bleibt unverändert.",
   "access.reset.signIn": "Anmelden",
   "access.reset.invalidTitle": "Dieser Link gilt nicht mehr.",
   "access.reset.invalidText": "Links zum Zurücksetzen gelten 60 Minuten und einmal. Fordere einfach einen neuen an.",
@@ -191,5 +189,12 @@
   "access.confirm.doneText": "Dein Konto kann jetzt auch über diese Adresse in weitere Organisationen aufgenommen werden.",
   "access.confirm.invalidTitle": "Dieser Link gilt nicht mehr.",
   "access.confirm.invalidText": "Bestätigungslinks gelten 24 Stunden und einmal. Fordere unter Profil einen neuen an.",
-  "access.confirm.toStart": "Zur Startseite"
+  "access.confirm.toStart": "Zur Startseite",
+  "access.reset.endsSessions": "Damit endet jede andere Sitzung deines Kontos.",
+  "access.confirm.title": "Adresse bestätigen",
+  "access.confirm.forAccount": "Bestätige {email} für das Konto {name}.",
+  "access.confirm.confirm": "Adresse bestätigen",
+  "access.confirm.signInTitle": "Melde dich zuerst an.",
+  "access.confirm.signInText": "Bestätigen kann nur das Konto, für das der Link gemacht ist. Melde dich damit an; danach geht es hier weiter.",
+  "access.confirm.signIn": "Anmelden"
 }

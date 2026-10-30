@@ -587,6 +587,14 @@ async fn a_password_link_sets_a_new_password_once_and_ends_the_sessions() {
     let seen = app.public("/api/auth/password-reset/inspect", json!({ "token": token })).await;
     assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
     assert_eq!(seen.body["email"], "lea@example.com");
+    // A link always signs every session out; keeping them is no option.
+    let keep = app
+        .public(
+            "/api/auth/password-reset/complete",
+            json!({ "token": token, "password": NEW_PASSWORD, "signOutEverywhere": false }),
+        )
+        .await;
+    assert_eq!(keep.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", keep.body);
     let short = app.public("/api/auth/password-reset/complete", json!({ "token": token, "password": "kurz" })).await;
     assert_eq!(short.field(), "password");
     let done =
@@ -918,10 +926,18 @@ async fn an_address_is_confirmed_by_mail() {
     let r = app.post("/api/me/email-confirmation", json!({}), &nora).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let token = app.mails()[0].token("confirm-email");
-    let done = app.public("/api/auth/email-confirmation", json!({ "token": token })).await;
+    // Whoever reads the mailbox but is not signed in as the account cannot confirm it: not
+    // without a session, and not with another account's session.
+    let anonymous = app.public("/api/me/email-confirmation/confirm", json!({ "token": token })).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    let other = app.user(&owner, "Ceo", "ceo@example.com").await;
+    let wrong = app.post("/api/me/email-confirmation/confirm", json!({ "token": token }), &other).await;
+    assert_eq!((wrong.status, wrong.reason()), (StatusCode::NOT_FOUND, "mail.confirm_invalid"));
+    assert_eq!(app.get("/api/me", &nora).await.body["emailConfirmed"], false);
+    let done = app.post("/api/me/email-confirmation/confirm", json!({ "token": token }), &nora).await;
     assert_eq!(done.status, StatusCode::NO_CONTENT, "{}", done.body);
     assert_eq!(app.get("/api/me", &nora).await.body["emailConfirmed"], true);
-    let again = app.public("/api/auth/email-confirmation", json!({ "token": token })).await;
+    let again = app.post("/api/me/email-confirmation/confirm", json!({ "token": token }), &nora).await;
     assert_eq!((again.status, again.reason()), (StatusCode::NOT_FOUND, "mail.confirm_invalid"));
     let r = app.post("/api/me/email-confirmation", json!({}), &nora).await;
     assert_eq!(r.reason(), "mail.email_confirmed_already");

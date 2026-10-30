@@ -298,10 +298,19 @@ fn resolve_error(e: ResolveError) -> SendError {
     out
 }
 
-async fn connect(connector: &Connector, host: &str, port: u16) -> Result<TcpStream, SendError> {
+/// `loopback_only`: without encryption, every address connected to must be this machine's, not
+/// only the host's name (a name that looks local can resolve elsewhere).
+async fn connect(connector: &Connector, host: &str, port: u16, loopback_only: bool) -> Result<TcpStream, SendError> {
     let addrs: Vec<SocketAddr> = connector.policy.resolve_all(host, port).await.map_err(resolve_error)?;
     let mut last = String::new();
     for addr in addrs {
+        if loopback_only && !addr.ip().to_canonical().is_loopback() {
+            return Err(SendError::new(
+                Some("security"),
+                "mail.unencrypted_not_local",
+                format!("{host} resolves to {}, not this machine; without encryption only a local relay", addr.ip()),
+            ));
+        }
         if let Err(detail) = connector.own.check(addr).await {
             let mut out = SendError::new(Some("host"), detail.reason, detail.message);
             out.params = detail.params;
@@ -361,7 +370,8 @@ async fn run(
     mail: Option<&Outgoing<'_>>,
 ) -> Result<(String, Option<TlsInfo>), SendError> {
     let host = settings.host.as_str();
-    let tcp: Box<dyn Io> = Box::new(connect(connector, host, settings.port).await?);
+    let tcp: Box<dyn Io> =
+        Box::new(connect(connector, host, settings.port, settings.security == Security::None).await?);
     let (stream, mut tls) = match settings.security {
         Security::Tls => {
             let (stream, info) = handshake(connector, host, tcp).await?;
@@ -637,6 +647,16 @@ mod tests {
         c.own = Arc::new(OwnEndpoints::new(vec![SocketAddr::from(([0, 0, 0, 0], fake.port()))], None));
         let e = deliver(&c, &settings(fake.port(), Security::Starttls, ""), None, "x", None).await.unwrap_err();
         assert_eq!(e.reason, "target.own_address");
+    }
+
+    #[tokio::test]
+    async fn unencrypted_mail_goes_only_to_a_loopback_address() {
+        let c = connector(platform_tls().unwrap());
+        // A literal address that is not this machine never gets the unencrypted dialogue, even
+        // when the name check was passed some other way.
+        let s = SmtpSettings { host: "192.0.2.10".into(), ..settings(25, Security::None, "") };
+        let e = deliver(&c, &s, None, "x", None).await.unwrap_err();
+        assert_eq!((e.field, e.reason), (Some("security"), "mail.unencrypted_not_local"));
     }
 
     #[tokio::test]

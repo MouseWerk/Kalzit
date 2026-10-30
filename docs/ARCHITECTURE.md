@@ -1058,7 +1058,8 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
 - **Copied links and confirmed addresses**: a link that went by mail is never shown again, so only
   its mailbox opens it; only links to pass on (no mail server) keep a sealed copy, cleared on
   accept or expiry and skipped by key rotation. An account made from a passed-on link has
-  `users.email_confirmed = 0` until its owner confirms the address by mail
+  `users.email_confirmed = 0` until its owner confirms the address by mail, signed in as that account (a link alone
+  proves only that someone reads the mailbox)
   (`routes/email_confirmation.rs`); such accounts are not added to organizations by address, and
   single sign-on must look accounts up by email only through
   `email_confirmation::confirmed_account_by_email` (confirmed and enabled only). Copying,
@@ -1073,7 +1074,7 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   tells whether an account exists. Requests are limited per client address (10 / 15 min), per
   network (/24, /48; 30 / 15 min) and per email asked for (3 / hour, in a bounded table that
   answers alike for every email). Unknown, used or expired tokens of both link kinds count per
-  client address (20 / 15 min). Completing ends every session unless the person keeps them and
+  client address (20 / 15 min). Completing always ends every session of the account and
   clears the account's failed sign-ins; a second factor is never touched.
 - **Audit**: `mail.settings_changed`, `invitation.created|resent|revoked|link_copied|
   delivery_failed|accepted`, `auth.password_reset_requested|completed`; ids, roles and the mail

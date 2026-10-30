@@ -176,11 +176,9 @@
   "access.reset.newTitle": "New password",
   "access.reset.newFor": "For {email}",
   "access.reset.newPassword": "New password",
-  "access.reset.signOutEverywhere": "Sign out on all other devices",
   "access.reset.save": "Save password",
   "access.reset.doneTitle": "Your password is changed.",
   "access.reset.doneText": "Other sessions have ended. Your second factor stays as it is.",
-  "access.reset.doneTextKept": "Your other sessions go on. Your second factor stays as it is.",
   "access.reset.signIn": "Sign in",
   "access.reset.invalidTitle": "This link no longer works.",
   "access.reset.invalidText": "Password links work for 60 minutes and once. Just request a new one.",
@@ -191,5 +189,12 @@
   "access.confirm.doneText": "Your account can now also be added to further organizations by this address.",
   "access.confirm.invalidTitle": "This link no longer works.",
   "access.confirm.invalidText": "Confirmation links work for 24 hours and once. Request a new one under Profile.",
-  "access.confirm.toStart": "Go to Start"
+  "access.confirm.toStart": "Go to Start",
+  "access.reset.endsSessions": "This ends every other session of your account.",
+  "access.confirm.title": "Confirm address",
+  "access.confirm.forAccount": "Confirm {email} for the account {name}.",
+  "access.confirm.confirm": "Confirm address",
+  "access.confirm.signInTitle": "Sign in first.",
+  "access.confirm.signInText": "Only the account the link was made for can confirm it. Sign in with it; then this page continues.",
+  "access.confirm.signIn": "Sign in"
 }

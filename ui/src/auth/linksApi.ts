@@ -96,19 +96,12 @@ export async function inspectPasswordLink(
 
 /** Confirms the address of the link's account (docs/api/mail.md, "Email confirmation"). */
 export async function confirmEmail(token: string): Promise<void> {
-  await request("POST", "/api/auth/email-confirmation", { token });
+  await request("POST", "/api/me/email-confirmation/confirm", { token });
 }
 
-export async function completePasswordReset(
-  token: string,
-  password: string,
-  signOutEverywhere: boolean,
-): Promise<void> {
-  await request("POST", "/api/auth/password-reset/complete", {
-    token,
-    password,
-    signOutEverywhere,
-  });
+/** Sets the new password; every session of the account ends with it. */
+export async function completePasswordReset(token: string, password: string): Promise<void> {
+  await request("POST", "/api/auth/password-reset/complete", { token, password });
 }
 
 export type LinkKind = "invite" | "reset" | "confirm";

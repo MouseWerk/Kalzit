@@ -37,7 +37,7 @@ export interface FakeMailState {
   /** Password links by token. */
   resets: Record<string, { email: string; expiresAt: number }>;
   resetRequests: string[];
-  completed: { token: string; password: string; signOutEverywhere: boolean }[];
+  completed: { token: string; password: string }[];
   passwordLinks: string[];
   passwordLinkAnswer?: Refusal | undefined;
   /** Email confirmation links that work, by token. */
@@ -264,7 +264,8 @@ export function handleMailRoute(
     state.confirmRequests += 1;
     return json(200, DELIVERED);
   }
-  if (route === "/api/auth/email-confirmation" && method === "POST") {
+  if (route === "/api/me/email-confirmation/confirm" && method === "POST") {
+    if (!server.state.signedIn) return error(401, "unauthenticated");
     const token = String(body.token);
     if (!state.confirmations.includes(token)) {
       return refusal({ status: 404, code: "not_found", reason: "mail.confirm_invalid" });
@@ -294,11 +295,8 @@ export function handleMailRoute(
       return refusal({ status: 404, code: "not_found", reason: "mail.reset_invalid" });
     }
     delete state.resets[token];
-    state.completed.push({
-      token,
-      password: String(body.password),
-      signOutEverywhere: body.signOutEverywhere === true,
-    });
+    if ("signOutEverywhere" in body) return error(422, "validation");
+    state.completed.push({ token, password: String(body.password) });
     return new Response(null, { status: 204 });
   }
   return undefined;
