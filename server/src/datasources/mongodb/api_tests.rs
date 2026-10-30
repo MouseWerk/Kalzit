@@ -471,9 +471,15 @@ async fn an_unreachable_server_does_not_stop_the_save() {
     let mut s = json!({ "hosts": format!("127.0.0.1:{closed}"), "database": "shop" });
     s["queryTimeoutSecs"] = json!(30);
     let id = t.create_ok(s).await;
+    let started = std::time::Instant::now();
     let (_, h) = t.send(Method::POST, &format!("/datasources/{id}/health"), Some(json!({}))).await;
     assert_eq!(h["ok"], false, "{h}");
     assert_eq!(h["code"], "datasource_error", "{h}");
+    // The refusal is the answer, named with the address, without waiting for the driver's
+    // selection timeout (10 seconds).
+    assert_eq!(h["reason"], "source.connect_refused", "{h}");
+    assert_eq!(h["params"]["address"], format!("127.0.0.1:{closed}"), "{h}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(7), "took {:?}", started.elapsed());
     t.finish().await;
 }
 

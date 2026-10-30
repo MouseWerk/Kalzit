@@ -1715,7 +1715,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `target.own_database` | | the source is Kalzit's own database |
 | `target.own_database_unverifiable` | | `datasource_error`: a PostgreSQL-compatible server where Kalzit cannot verify that it is not its own database |
 | `target.unresolvable` | `host`, `detail` | `datasource_error`: the host name does not resolve |
-| `target.unreachable` | `host`, `detail` | `datasource_error`: no address of the host accepts a connection |
+| `target.unreachable` | `host`, `detail` | `datasource_error`: no address of the host accepts a connection (plugin connections; the built-in kinds answer `source.connect_*`) |
 | `mongodb.srv_target` | | an SRV record names a target that is not a host |
 | `mongodb.socket_member` | | the deployment names a Unix socket as a member |
 
@@ -1988,6 +1988,10 @@ The browser shows these at the step; the export routes answer them as `422 valid
 |---|---|---|
 | `source.error` | `detail` | the database or Prometheus answered an error |
 | `source.no_answer` | | the server sent no answer |
+| `source.connect_refused` | `address` | the server at `address` (`host:port`) refused the connection: nothing listens there (it is down or restarting) or a firewall rejects it; reported within about a second, not after the connect timeout |
+| `source.connect_timeout` | `address`, `seconds` | no connection to `address` within `seconds` |
+| `source.connect_failed` | `address`, `detail` | the connection to `address` failed for another reason; `detail` is the system's text |
+| `source.connection_lost` | `detail` | the connection broke while in use (closed or reset by the server, for example after a restart); `detail` is the driver's text (such as `early eof`), shown only as the secondary detail. A read-only query on a pooled connection that breaks before any result arrived is run once more on a fresh connection first |
 | `sqlite.open_failed` | `detail` | the SQLite file cannot be opened |
 | `mysql.no_time_limit` | | the server supports neither `max_execution_time` nor `max_statement_time` |
 | `mssql.login_timeout` | | SQL Server did not complete the login in time |

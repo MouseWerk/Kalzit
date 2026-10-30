@@ -9,10 +9,11 @@ use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::postgres::types::PgInterval;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::{Column as _, Connection as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
 use super::Detail;
+use super::connect::{self, SqlPool};
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -88,12 +89,13 @@ pub struct Postgres;
 const IDENTITY_SQL: &str =
     "SELECT CAST(system_identifier AS TEXT), CAST(current_database() AS TEXT) FROM pg_control_system()";
 
-async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
+async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::Postgres>>, SourceError> {
     conn.shared(|| async {
         let s: Settings = conn.settings_as()?;
         let port = s.port.unwrap_or(5432) as u16;
         let mode = ssl_mode(s.ssl_mode.as_deref());
         let addr = conn.policy().pick_address(&s.host, port, CONNECT_TIMEOUT).await?;
+        let address = connect::address(&s.host, port);
         // The driver connects to the checked address. With verify-full it must connect by name,
         // because the driver checks the certificate against the host it connects to and has no
         // separate TLS name. It then resolves the name itself for every new connection, so
@@ -118,15 +120,21 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
         // One connection outside the pool first: a pool whose connections are all refused only
         // reports a timeout, which would hide why (Kalzit's own database).
         if let Some(own) = &own {
-            let mut probe = sqlx::PgConnection::connect_with(&options).await.map_err(failed)?;
+            let mut probe = sqlx::PgConnection::connect_with(&options)
+                .await
+                .map_err(|e| connect::sqlx_connect_failed(e, &address, CONNECT_TIMEOUT, failed))?;
             let checked = check_identity(&mut probe, own).await;
             let _ = sqlx::Connection::close(probe).await;
             checked.map_err(failed)?;
         }
-        PgPoolOptions::new()
+        // Lazy, so the first connection goes through `SqlPool::acquire`, which names the cause of
+        // a refused or silent server. Connections are tested before use: one that broke while
+        // idle (the server restarted) is replaced, not handed to a query.
+        let pool = PgPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
             .acquire_timeout(CONNECT_TIMEOUT)
+            .test_before_acquire(true)
             .idle_timeout(Duration::from_secs(300))
             .after_connect(move |c, _| {
                 let own = own.clone();
@@ -142,9 +150,11 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
                     }
                 })
             })
-            .connect_with(options)
-            .await
-            .map_err(failed)
+            .connect_lazy_with(options);
+        let pool = SqlPool::new(pool, addr, address, CONNECT_TIMEOUT);
+        // One connection now, so a source that cannot connect is not kept.
+        drop(pool.acquire(failed).await?);
+        Ok(pool)
     })
     .await
 }
@@ -169,6 +179,7 @@ fn failed(e: sqlx::Error) -> SourceError {
         sqlx::Error::Configuration(inner) if inner.is::<IdentityUnknown>() => {
             SourceError::failed("target.own_database_unverifiable", inner.to_string())
         }
+        sqlx::Error::Io(io) if connect::is_dead(io.kind()) => connect::lost(io),
         sqlx::Error::Database(db) => {
             if db.code().as_deref() == Some("57014") {
                 SourceError::failed("query.statement_timeout", "the query was cancelled by the statement timeout")
@@ -205,7 +216,7 @@ impl DataSourcePlugin for Postgres {
     async fn health(&self, conn: &Connection) -> Health {
         let check = async {
             let pool = pool(conn).await?;
-            let mut c = pool.acquire().await.map_err(failed)?;
+            let mut c = pool.acquire(failed).await?;
             #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
             let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
             let (version, superuser): (String, bool) = sqlx::query_as(
@@ -226,7 +237,7 @@ impl DataSourcePlugin for Postgres {
 
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         let pool = pool(conn).await?;
-        let mut c = pool.acquire().await.map_err(failed)?;
+        let mut c = pool.acquire(failed).await?;
         #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
         let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
         let rows: Vec<(String, String, String, String)> = sqlx::query_as(
@@ -246,9 +257,21 @@ impl DataSourcePlugin for Postgres {
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let prepared = sql::prepare_query(self, conn, &req, Engine::Postgres).await?;
         let pool = pool(conn).await?;
-        let mut c = pool.acquire().await.map_err(failed)?;
+        let mut c = pool.acquire(failed).await?;
+        // A connection that broke after its check fails here, before any result: the query runs
+        // once more on a fresh connection, which is safe as it only reads. The broken one goes
+        // back with this request; the pool's check before use closes it.
+        let mut fresh;
         #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
-        let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
+        let mut tx = match c.begin_with("BEGIN READ ONLY").await {
+            Ok(tx) => tx,
+            Err(e) if connect::sqlx_dead(&e) => {
+                fresh = pool.acquire(failed).await?;
+                #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
+                fresh.begin_with("BEGIN READ ONLY").await.map_err(failed)?
+            }
+            Err(e) => return Err(failed(e)),
+        };
         // The server stops the statement itself, also when this request is dropped mid-query.
         let deadline = Instant::now() + req.limits.timeout;
         let timeout_ms = req.limits.timeout.as_millis().max(1);

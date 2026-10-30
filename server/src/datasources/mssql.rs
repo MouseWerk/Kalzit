@@ -86,6 +86,8 @@ const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
 struct Lease<'p> {
     pool: &'p Pool,
     client: Option<Client>,
+    /// The client waited in the pool before (it was not opened for this lease).
+    reused: bool,
     _permit: tokio::sync::SemaphorePermit<'p>,
 }
 
@@ -98,6 +100,13 @@ impl Lease<'_> {
         if let Some(c) = self.client.take() {
             self.pool.idle.lock().expect("pool lock").push((c, Instant::now()));
         }
+    }
+
+    /// Closes a client whose connection broke, and the idle ones with it: they most likely went
+    /// down with the same server.
+    fn discard(mut self) {
+        self.client = None;
+        self.pool.idle.lock().expect("pool lock").clear();
     }
 }
 
@@ -118,7 +127,10 @@ impl Drop for Lease<'_> {
 pub struct MsSql;
 
 fn failed(e: tiberius::error::Error) -> SourceError {
-    SourceError::from_source(e.to_string())
+    match e {
+        tiberius::error::Error::Io { kind, message } if super::connect::is_dead(kind) => super::connect::lost(message),
+        other => SourceError::from_source(other.to_string()),
+    }
 }
 
 async fn pool(conn: &Connection) -> Result<Arc<Pool>, SourceError> {
@@ -159,11 +171,12 @@ async fn lease<'p>(conn: &Connection, pool: &'p Pool) -> Result<Lease<'p>, Sourc
         idle.retain(|(_, since)| since.elapsed() < IDLE_TIMEOUT);
         idle.pop().map(|(c, _)| c)
     };
+    let reused = idle.is_some();
     let client = match idle {
         Some(c) => c,
         None => open(conn).await?,
     };
-    Ok(Lease { pool, client: Some(client), _permit: permit })
+    Ok(Lease { pool, client: Some(client), reused, _permit: permit })
 }
 
 async fn simple(client: &mut Client, sql: &'static str) -> Result<(), SourceError> {
@@ -236,8 +249,18 @@ impl DataSourcePlugin for MsSql {
         let pool = pool(conn).await?;
         let mut lease = lease(conn, &pool).await?;
         // A transaction on the user's SQL Server, through tiberius and raw SQL: not one of Kalzit's
-        // own (db::begin), so clippy's rule on sqlx transactions does not apply here.
-        simple(lease.client(), "BEGIN TRANSACTION").await?;
+        // own (db::begin), so clippy's rule on sqlx transactions does not apply here. It is the
+        // first round trip: a pooled client whose connection broke while idle (the server
+        // restarted) fails here, before any result, and the query runs once more on a fresh
+        // connection, which is safe as it only reads.
+        match simple(lease.client(), "BEGIN TRANSACTION").await {
+            Err(e) if super::connect::is_lost(&e) && lease.reused => {
+                lease.discard();
+                lease = self::lease(conn, &pool).await?;
+                simple(lease.client(), "BEGIN TRANSACTION").await?;
+            }
+            other => other?,
+        }
         let mut q = Query::new(prepared.sql.clone());
         for bind in prepared.binds {
             match bind {

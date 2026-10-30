@@ -10,6 +10,7 @@ mod api_tests;
 pub mod bolt;
 pub mod cache;
 pub mod clickhouse;
+pub mod connect;
 pub mod csv;
 pub mod cypher;
 pub mod detail;
