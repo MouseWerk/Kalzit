@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The installer's own texts in German (with "du", terms as in docs/glossary.md); the WixUI dialogs
+  bring theirs. build.ps1 embeds this language as a transform that Windows Installer applies by
+  itself when the Windows display language is German.
+-->
+<WixLocalization Culture="de-DE" Codepage="1252" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="KalzitLanguage" Value="1031" />
+  <String Id="KalzitDowngrade" Value="Eine neuere Version von Kalzit ist bereits installiert." />
+  <String Id="KalzitQuoteInSetting" Value="Eine Einstellung enthält ein Anführungszeichen (&quot;). Kein Ordner, keine Datei und kein Wert von Kalzit darf eines enthalten." />
+
+  <String Id="KalzitSettingsTitle" Value="Servereinstellungen" />
+  <String Id="KalzitSettingsDescription" Value="Wo Kalzit erreichbar ist und seine Daten ablegt. Später in kalzit.toml änderbar." />
+  <String Id="KalzitPortLabel" Value="HTTP-&amp;Port:" />
+  <String Id="KalzitDataLabel" Value="&amp;Datenordner:" />
+  <String Id="KalzitDataNote" Value="Zugriff nur für Administratoren und das Dienstkonto." />
+  <String Id="KalzitHttpsLabel" Value="HTTPS:" />
+  <String Id="KalzitHttpsOff" Value="&amp;Aus (nur HTTP)" />
+  <String Id="KalzitHttpsSelfSigned" Value="&amp;Selbstsigniertes Zertifikat für diesen Computer" />
+  <String Id="KalzitHttpsCertificate" Value="&amp;Vorhandenes Zertifikat (PEM-Dateien)" />
+  <String Id="KalzitHttpsPortLabel" Value="HTTPS-P&amp;ort:" />
+  <String Id="KalzitCertLabel" Value="Zert&amp;ifikatsdatei:" />
+  <String Id="KalzitKeyLabel" Value="Schlüsse&amp;ldatei:" />
+  <String Id="KalzitFirewall" Value="Port(s) in der Windows Defender &amp;Firewall öffnen" />
+  <String Id="KalzitCertMissing" Value="Gib die Zertifikats- und die Schlüsseldatei an." />
+
+  <String Id="KalzitRemoveTitle" Value="Kalzit entfernen" />
+  <String Id="KalzitRemoveDescription" Value="Programm und Dienst werden entfernt. Deine Daten bleiben erhalten." />
+  <String Id="KalzitRemoveText" Value="Kalzit legt Datenbank, Dashboards, Datenquellen, Protokolle und den Schlüssel für gespeicherte Passwörter in seinem Datenordner ab, den [CommonAppDataFolder]Kalzit\kalzit.toml nennt. Bleiben sie erhalten, nutzt Kalzit sie bei einer späteren Installation wieder." />
+  <String Id="KalzitRemoveData" Value="Auch Datenordner und Konfiguration &amp;löschen (endgültig)" />
+
+  <String Id="KalzitExitNew" Value="Kalzit läuft als Windows-Dienst „Kalzit“: http://localhost:[PORT]. Den Einrichtungscode für die erste Anmeldung findest du in [DATADIR]\setup-token.txt (nur als Administrator lesbar)." />
+  <String Id="KalzitExitKept" Value="Kalzit läuft als Windows-Dienst „Kalzit“ mit den Einstellungen der vorhandenen kalzit.toml." />
+</WixLocalization>

@@ -56,7 +56,7 @@ place there a SQLite source may read. Remove the source like any other; the file
 Enter the **Email address** and **Password** of your account and press **Sign in**. The password
 field can show what you typed and warns when Caps Lock is on. After too many failed sign-ins you
 have to wait: the page says how long, and the button counts down until you can try again.
-**Forgot password?** explains that an admin of your organization can reset it. When your
+**Forgot password?** opens **Reset password** (see below). When your
 session ended while you worked, the page says so and takes you back to where you were after
 signing in. Accounts are local for now; sign-in through OIDC or LDAP is planned (M5). There is
 no "Stay signed in" choice yet: a session lasts as long as the server's session settings allow.
@@ -64,6 +64,29 @@ no "Stay signed in" choice yet: a session lasts as long as the server's session 
 The bar on top has **Language**, **Theme** and **Help**. A language or theme you choose there
 becomes your preference when you sign in, unless you already have one. **Help** opens this page
 and [Installation](installation.md); both ship with Kalzit and can be read without an account.
+
+### Forgot your password
+
+**Reset password** asks for your email address and sends a link that works for 60 minutes and
+once. The page answers the same whether or not an account has the address, so nobody can find
+out who has an account here; if nothing arrives, check the spam folder and try again after a
+minute. The link opens **New password**: choose one (at least 12 characters); saving it signs
+you out everywhere else. A newer link replaces an older one, and
+a link stops working once your password changed some other way. Accounts that sign in through
+their organization's sign-in instead get a mail saying where to change the password.
+
+When the server sends no mail, the page says that an admin of your organization can set a new
+password for you.
+
+### Accepting an invitation
+
+An invitation link (by mail, or passed on by an admin) opens **Welcome to Kalzit** with the
+organization, who invited you, your role and team, and until when the link works. Choose your
+name and a password and press **Accept invitation**: you are signed in and start in that
+organization. If you already have an account on this server, **Sign in and join** first signs you
+in, then adds you to the organization with the link alone. A link works for seven days and once;
+an expired one names the day and who to ask for a new one, and a revoked link says it no longer
+works.
 
 ## Your first data source
 

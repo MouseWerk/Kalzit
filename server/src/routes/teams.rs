@@ -191,7 +191,7 @@ async fn rename(
 
 /// Everything the team's roles allow, so that taking them away from its members (deleting the
 /// team, removing a member) or handing them out (adding a member) needs the caller to hold it.
-async fn team_permissions(
+pub(crate) async fn team_permissions(
     conn: &mut sqlx::AnyConnection,
     org_id: &str,
     team_id: &str,
@@ -393,6 +393,47 @@ async fn ensure_may_manage_members(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx,
     }
 }
 
+/// The guards of bringing someone into a team, after the caller may manage its members: the
+/// caller holds every role the team hands out, and a team with team spaces or team-only content
+/// takes new members only from its maintainers or from org admins. Answers whether it is such an
+/// admin's access, which the caller audits (`audit_admin_access`). Also used when an invitation
+/// names a team (`routes::invitations`).
+pub(crate) async fn ensure_may_join(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, team_id: &str) -> ApiResult<bool> {
+    // Joining a team hands out its roles.
+    ensure_holds(&ctx.permissions, &team_permissions(&mut *conn, &ctx.org_id, team_id).await?)?;
+    // And its team spaces and team-only content: that is for the team's maintainers, and for org
+    // admins, whose access to a team's content is audited.
+    let (owned,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1) \
+         + (SELECT COUNT(*) FROM analyses WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
+    )
+    .bind(&ctx.org_id)
+    .bind(team_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    let maintainer = authz::team_membership(&mut *conn, ctx, team_id).await?.as_deref() == Some("maintainer");
+    let admin_access = owned > 0 && !maintainer;
+    if admin_access && !authz::role_sees_restricted(&ctx.permissions) {
+        return Err(ApiError::forbidden(
+            "the team owns team spaces or team-only content; only its maintainers and org admins add members",
+        ));
+    }
+    Ok(admin_access)
+}
+
+/// The audit entry of an org admin bringing someone into a team with team spaces or team-only
+/// content (`ensure_may_join`).
+pub(crate) async fn audit_admin_access(
+    conn: &mut sqlx::AnyConnection,
+    actor: &Actor<'_>,
+    org_id: &str,
+    team_id: &str,
+    summary: serde_json::Value,
+) -> ApiResult<()> {
+    audit(conn, actor, Some(org_id), "team_space.admin_access", ("team", team_id), summary).await
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PutMemberRequest {
@@ -426,26 +467,7 @@ async fn put_member(
     if in_org.is_none() {
         return Err(ApiError::not_found());
     }
-    // Joining a team hands out its roles.
-    ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
-    // And its team spaces and team-only content: that is for the team's maintainers, and for org
-    // admins, whose access to a team's content is audited.
-    let (owned,): (i64,) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
-         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1) \
-         + (SELECT COUNT(*) FROM analyses WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
-    )
-    .bind(&ctx.org_id)
-    .bind(&team_id)
-    .fetch_one(&mut *tx)
-    .await?;
-    let maintainer = authz::team_membership(&mut *tx, &ctx, &team_id).await?.as_deref() == Some("maintainer");
-    let admin_access = owned > 0 && !maintainer;
-    if admin_access && !authz::role_sees_restricted(&ctx.permissions) {
-        return Err(ApiError::forbidden(
-            "the team owns team spaces or team-only content; only its maintainers and org admins add members",
-        ));
-    }
+    let admin_access = ensure_may_join(&mut tx, &ctx, &team_id).await?;
     let current: Option<(String,)> =
         sqlx::query_as("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2")
             .bind(&team_id)
@@ -467,8 +489,7 @@ async fn put_member(
             audit(&mut tx, &actor, Some(&ctx.org_id), "team.member_added", ("team", &team_id), summary.clone()).await?;
             if admin_access {
                 let access = json!({ "action": "team.member_added", "teamId": team_id, "userId": user_id });
-                audit(&mut tx, &actor, Some(&ctx.org_id), "team_space.admin_access", ("team", &team_id), access)
-                    .await?;
+                audit_admin_access(&mut tx, &actor, &ctx.org_id, &team_id, access).await?;
             }
         }
         Some((previous,)) if previous != role => {

@@ -83,14 +83,19 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlitePool>, SourceError> {
 /// cancelled request, whose answer nobody reads).
 fn failed_within(timeout: std::time::Duration) -> impl Fn(sqlx::Error) -> SourceError {
     move |e| match e {
-        sqlx::Error::Database(db) if db.message().contains("interrupted") => SourceError::Timeout(timeout.as_secs()),
+        sqlx::Error::Database(db) if interrupted(db.as_ref()) => SourceError::Timeout(timeout.as_secs()),
         other => failed(other),
     }
 }
 
+/// SQLITE_INTERRUPT: the statement was stopped (`sqlite3_interrupt`).
+fn interrupted(db: &dyn sqlx::error::DatabaseError) -> bool {
+    db.code().as_deref() == Some("9")
+}
+
 fn failed(e: sqlx::Error) -> SourceError {
     match e {
-        sqlx::Error::Database(db) if db.message().contains("interrupted") => {
+        sqlx::Error::Database(db) if interrupted(db.as_ref()) => {
             SourceError::failed("query.stopped", "the query was stopped (time limit or cancelled)")
         }
         sqlx::Error::Database(db) => SourceError::from_source(db.message()),

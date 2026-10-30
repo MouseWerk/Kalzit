@@ -40,6 +40,10 @@ pub enum HttpError {
     /// The caller's hop check refused a request (the first or a redirect), with its reason.
     #[error("{0}")]
     Refused(crate::datasources::Detail),
+    /// The server could not be reached or the connection broke, by its cause
+    /// (`target.unresolvable`, `source.connect_*`, `source.connection_lost`).
+    #[error("{0}")]
+    Connection(crate::datasources::Detail),
 }
 
 /// Asked before every hop, the first request and each redirect, with the method and URL that
@@ -52,7 +56,7 @@ impl HttpError {
         use crate::datasources::Detail;
         match self {
             HttpError::Blocked(b) => b.0.clone(),
-            HttpError::Refused(d) => d.clone(),
+            HttpError::Refused(d) | HttpError::Connection(d) => d.clone(),
             HttpError::Timeout => Detail::new("http.timeout", self.to_string()),
             HttpError::TooLarge(max) => Detail::new("http.too_large", self.to_string()).with("bytes", max),
             HttpError::Other(message) => Detail::new("http.failed", message.clone()).with("detail", message),
@@ -64,7 +68,7 @@ impl From<ResolveError> for HttpError {
     fn from(e: ResolveError) -> Self {
         match e {
             ResolveError::Blocked(b) => Self::Blocked(b),
-            other => Self::Other(other.to_string()),
+            other => Self::Connection(other.detail()),
         }
     }
 }
@@ -74,16 +78,44 @@ impl From<reqwest::Error> for HttpError {
         if e.is_timeout() {
             return Self::Timeout;
         }
-        // A blocked address from the resolver arrives wrapped in connector errors.
+        // A blocked address or a name that does not resolve arrives from the resolver wrapped in
+        // connector errors, and so does the I/O error of a refused or broken connection.
+        let address =
+            e.url().and_then(|u| Some(crate::datasources::connect::address(u.host_str()?, u.port_or_known_default()?)));
+        let mut causes = Vec::new();
         let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&e);
         while let Some(err) = source {
             if let Some(blocked) = err.downcast_ref::<Blocked>() {
                 return Self::Blocked(blocked.clone());
             }
+            if let Some(unresolved) = err.downcast_ref::<ResolveError>() {
+                return Self::Connection(unresolved.detail());
+            }
+            if let Some(io) = err.downcast_ref::<std::io::Error>() {
+                if crate::datasources::connect::is_dead(io.kind()) {
+                    return Self::Connection(crate::datasources::connect::lost_detail(io));
+                }
+                if e.is_connect()
+                    && let Some(address) = &address
+                {
+                    return Self::Connection(crate::datasources::connect::connect_failed(address, io, CONNECT_TIMEOUT));
+                }
+            }
+            if !std::ptr::addr_eq(err, &e as &dyn std::error::Error) {
+                causes.push(err.to_string());
+            }
             source = err.source();
         }
-        // The URL may carry query parameters; the message without it is enough.
-        Self::Other(e.without_url().to_string())
+        // The URL may carry query parameters; the message without it is enough. Its causes
+        // (a TLS failure, say) follow, since "error sending request" alone says nothing.
+        let mut message = e.without_url().to_string();
+        for cause in causes {
+            if !message.contains(&cause) {
+                message.push_str(": ");
+                message.push_str(&cause);
+            }
+        }
+        Self::Other(message)
     }
 }
 
@@ -481,6 +513,18 @@ mod tests {
         let ok = test_client(&["localhost"]);
         let url = Url::parse(&format!("http://localhost:{}/ok", addr.port())).unwrap();
         assert!(ok.send(Method::GET, url, HeaderMap::new()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_refused_or_unresolvable_target_is_named_by_its_cause() {
+        let closed = crate::datasources::connect::tests::closed_port().await;
+        let c = test_client(&[]);
+        let e = c.send(Method::GET, Url::parse(&format!("http://{closed}/")).unwrap(), HeaderMap::new()).await;
+        let d = e.unwrap_err().detail();
+        assert_eq!(d.reason, "source.connect_refused", "{d:?}");
+        assert_eq!(d.params["address"], closed.to_string());
+        let e = c.send(Method::GET, Url::parse("http://does-not-exist.invalid/").unwrap(), HeaderMap::new()).await;
+        assert_eq!(e.unwrap_err().detail().reason, "target.unresolvable");
     }
 
     #[tokio::test]

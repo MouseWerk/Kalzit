@@ -321,7 +321,8 @@ pub async fn logout(
 }
 
 pub async fn current(State(state): State<AppState>, CurrentUser(user): CurrentUser) -> ApiResult<Json<Me>> {
-    Ok(Json(me(&state.db, user).await?))
+    let mut conn = state.read_db.acquire().await?;
+    Ok(Json(me(&mut conn, user).await?))
 }
 
 #[cfg(test)]

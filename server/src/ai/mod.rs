@@ -356,6 +356,7 @@ impl AiError {
             HttpError::Timeout => Self::Timeout,
             HttpError::TooLarge(max) => Self::TooLarge(max),
             HttpError::Other(m) => Self::Unreachable(m),
+            HttpError::Connection(d) => Self::Unreachable(d.message),
         }
     }
 
@@ -480,8 +481,10 @@ async fn send_with_retries(
                 }
                 wait
             }
-            Err(HttpError::Other(message)) if attempt < ATTEMPTS && Instant::now() + backoff(attempt) < deadline => {
-                tracing::debug!("AI provider request failed, trying again: {message}");
+            Err(e @ (HttpError::Other(_) | HttpError::Connection(_)))
+                if attempt < ATTEMPTS && Instant::now() + backoff(attempt) < deadline =>
+            {
+                tracing::debug!("AI provider request failed, trying again: {e}");
                 backoff(attempt)
             }
             Err(e) => return Err(AiError::from_http(e)),

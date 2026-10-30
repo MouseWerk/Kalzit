@@ -148,6 +148,27 @@ export function validateSetup(values: SetupValues): FieldErrors<SetupField> {
   });
 }
 
+/** A new account from an invitation: name and password, as setup checks them. */
+export function validateNewAccount(values: {
+  name: string;
+  password: string;
+}): FieldErrors<"name" | "password"> {
+  return withoutEmpty<"name" | "password">({
+    name: nameError(values.name, "validation.nameRequired"),
+    password: newPasswordError(values.password),
+  });
+}
+
+/** A new password from a password link. */
+export function validateNewPassword(password: string): FieldErrors<"password"> {
+  return withoutEmpty<"password">({ password: newPasswordError(password) });
+}
+
+/** An address to send a password link to: the same rough shape sign-in checks. */
+export function validateResetEmail(email: string): FieldErrors<"email"> {
+  return withoutEmpty<"email">({ email: loginEmailError(email) });
+}
+
 export type PasswordStrengthLevel = "empty" | "short" | "fair" | "strong";
 
 const CHARACTER_KINDS = [/\p{Ll}/u, /\p{Lu}/u, /\p{N}/u, /[^\p{L}\p{N}]/u];

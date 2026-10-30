@@ -8,14 +8,16 @@ import { noticeText, reasonText } from "./reasons";
 
 /**
  * The rows of the "Reasons" tables in docs/api/datasources.md, docs/api/plugins.md (plugin
- * reasons reach the data source routes too) and the service account part of docs/api/access.md
- * (the second factor's reasons there have texts of their own): codes and their params.
+ * reasons reach the data source routes too), docs/api/mail.md (the mail server, invitations and
+ * password links share this lookup) and the service account part of docs/api/access.md (the
+ * second factor's reasons there have texts of their own): codes and their params.
  */
 function documentedReasons(): Map<string, Set<string>> {
   const reasons = new Map<string, Set<string>>();
   for (const [file, heading] of [
     ["datasources.md", "\n## Reasons"],
     ["plugins.md", "\n## Reasons"],
+    ["mail.md", "\n## Reasons"],
     ["access.md", "\n### Service accounts and tokens"],
   ] as const) {
     const doc = readFileSync(resolve(import.meta.dirname, "../../../../docs/api", file), "utf8");

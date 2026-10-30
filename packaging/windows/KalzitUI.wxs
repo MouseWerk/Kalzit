@@ -3,7 +3,8 @@
   The installer's wizard: Welcome, program folder, Kalzit's settings (port, data folder, HTTPS,
   firewall; skipped when a kalzit.toml exists), ready, progress, done. Removing asks whether the
   data goes too. Built on the WixUI dialogs of WixToolset.UI.wixext (the InstallDir set without
-  the license page: Kalzit's license, the AGPL, needs no acceptance to install).
+  the license page: Kalzit's license, the AGPL, needs no acceptance to install). The texts are in
+  Kalzit.en-US.wxl and Kalzit.de-DE.wxl.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
@@ -56,34 +57,34 @@
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Server settings" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Where Kalzit listens and keeps its data. You can change this later in kalzit.toml." />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}!(loc.KalzitSettingsTitle)" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.KalzitSettingsDescription)" />
 
-        <Control Id="PortLabel" Type="Text" X="20" Y="56" Width="100" Height="10" Text="HTTP &amp;port:" />
+        <Control Id="PortLabel" Type="Text" X="20" Y="56" Width="100" Height="10" Text="!(loc.KalzitPortLabel)" />
         <Control Id="Port" Type="Edit" X="125" Y="53" Width="50" Height="15" Property="PORT" Text="{5}" />
 
-        <Control Id="DataLabel" Type="Text" X="20" Y="76" Width="100" Height="10" Text="&amp;Data folder:" />
+        <Control Id="DataLabel" Type="Text" X="20" Y="76" Width="100" Height="10" Text="!(loc.KalzitDataLabel)" />
         <Control Id="Data" Type="Edit" X="125" Y="73" Width="225" Height="15" Property="DATADIR" Text="{260}" />
-        <Control Id="DataNote" Type="Text" X="125" Y="90" Width="225" Height="10" NoPrefix="yes" Text="Only Administrators and the service account get access." />
+        <Control Id="DataNote" Type="Text" X="125" Y="90" Width="225" Height="10" NoPrefix="yes" Text="!(loc.KalzitDataNote)" />
 
-        <Control Id="HttpsLabel" Type="Text" X="20" Y="106" Width="100" Height="10" Text="HTTPS:" />
+        <Control Id="HttpsLabel" Type="Text" X="20" Y="106" Width="100" Height="10" Text="!(loc.KalzitHttpsLabel)" />
         <Control Id="Https" Type="RadioButtonGroup" X="125" Y="104" Width="225" Height="42" Property="HTTPS">
           <RadioButtonGroup Property="HTTPS">
-            <RadioButton Value="off" X="0" Y="0" Width="225" Height="13" Text="&amp;Off (HTTP only)" />
-            <RadioButton Value="self-signed" X="0" Y="14" Width="225" Height="13" Text="&amp;Self-signed certificate for this computer" />
-            <RadioButton Value="certificate" X="0" Y="28" Width="225" Height="13" Text="&amp;Existing certificate (PEM files)" />
+            <RadioButton Value="off" X="0" Y="0" Width="225" Height="13" Text="!(loc.KalzitHttpsOff)" />
+            <RadioButton Value="self-signed" X="0" Y="14" Width="225" Height="13" Text="!(loc.KalzitHttpsSelfSigned)" />
+            <RadioButton Value="certificate" X="0" Y="28" Width="225" Height="13" Text="!(loc.KalzitHttpsCertificate)" />
           </RadioButtonGroup>
         </Control>
 
-        <Control Id="HttpsPortLabel" Type="Text" X="20" Y="152" Width="100" Height="10" Text="HTTPS p&amp;ort:" />
+        <Control Id="HttpsPortLabel" Type="Text" X="20" Y="152" Width="100" Height="10" Text="!(loc.KalzitHttpsPortLabel)" />
         <Control Id="HttpsPort" Type="Edit" X="125" Y="149" Width="50" Height="15" Property="HTTPSPORT" Text="{5}" DisableCondition="HTTPS = &quot;off&quot;" EnableCondition="HTTPS &lt;&gt; &quot;off&quot;" />
-        <Control Id="CertLabel" Type="Text" X="20" Y="172" Width="100" Height="10" Text="&amp;Certificate file:" />
+        <Control Id="CertLabel" Type="Text" X="20" Y="172" Width="100" Height="10" Text="!(loc.KalzitCertLabel)" />
         <Control Id="Cert" Type="Edit" X="125" Y="169" Width="225" Height="15" Property="CERTFILE" Text="{260}" DisableCondition="HTTPS &lt;&gt; &quot;certificate&quot;" EnableCondition="HTTPS = &quot;certificate&quot;" />
-        <Control Id="KeyLabel" Type="Text" X="20" Y="192" Width="100" Height="10" Text="&amp;Key file:" />
+        <Control Id="KeyLabel" Type="Text" X="20" Y="192" Width="100" Height="10" Text="!(loc.KalzitKeyLabel)" />
         <Control Id="Key" Type="Edit" X="125" Y="189" Width="225" Height="15" Property="KEYFILE" Text="{260}" DisableCondition="HTTPS &lt;&gt; &quot;certificate&quot;" EnableCondition="HTTPS = &quot;certificate&quot;" />
 
-        <Control Id="Firewall" Type="CheckBox" X="20" Y="212" Width="330" Height="15" Property="FIREWALL" CheckBoxValue="1" Text="Open the port(s) in Windows Defender &amp;Firewall" />
-        <Control Id="CertMissing" Type="Text" X="20" Y="240" Width="150" Height="20" NoPrefix="yes" Text="Enter the certificate and key file." HideCondition="HTTPS &lt;&gt; &quot;certificate&quot; OR (CERTFILE AND KEYFILE)" ShowCondition="HTTPS = &quot;certificate&quot; AND (NOT CERTFILE OR NOT KEYFILE)" />
+        <Control Id="Firewall" Type="CheckBox" X="20" Y="212" Width="330" Height="15" Property="FIREWALL" CheckBoxValue="1" Text="!(loc.KalzitFirewall)" />
+        <Control Id="CertMissing" Type="Text" X="20" Y="240" Width="150" Height="20" NoPrefix="yes" Text="!(loc.KalzitCertMissing)" HideCondition="HTTPS &lt;&gt; &quot;certificate&quot; OR (CERTFILE AND KEYFILE)" ShowCondition="HTTPS = &quot;certificate&quot; AND (NOT CERTFILE OR NOT KEYFILE)" />
 
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
           <Publish Event="NewDialog" Value="InstallDirDlg" />
@@ -100,10 +101,10 @@
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.MaintenanceTypeDlgBannerBitmap)" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Remove Kalzit" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="The program and the service go. Your data stays unless you choose otherwise." />
-        <Control Id="Text" Type="Text" X="20" Y="60" Width="330" Height="50" NoPrefix="yes" Text="Kalzit keeps its database, dashboards, data sources, logs and the key for stored passwords in its data folder, named in [CommonAppDataFolder]Kalzit\kalzit.toml. Kept, they are used again when you install Kalzit later." />
-        <Control Id="RemoveData" Type="CheckBox" X="20" Y="120" Width="330" Height="15" Property="REMOVEDATA" CheckBoxValue="1" Text="Also &amp;remove the data folder and the configuration (cannot be undone)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}!(loc.KalzitRemoveTitle)" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.KalzitRemoveDescription)" />
+        <Control Id="Text" Type="Text" X="20" Y="60" Width="330" Height="56" NoPrefix="yes" Text="!(loc.KalzitRemoveText)" />
+        <Control Id="RemoveData" Type="CheckBox" X="20" Y="120" Width="330" Height="15" Property="REMOVEDATA" CheckBoxValue="1" Text="!(loc.KalzitRemoveData)" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
           <Publish Event="NewDialog" Value="MaintenanceTypeDlg" />
         </Control>
@@ -122,14 +123,14 @@
     <SetProperty
         Id="WIXUI_EXITDIALOGOPTIONALTEXT"
         Action="KalzitExitTextNew"
-        Value="Kalzit runs as the Windows service &quot;Kalzit&quot;. Open http://localhost:[PORT] in a browser. The setup code for the first sign-in is in [DATADIR]\setup-token.txt, which only administrators can open (for example Get-Content in PowerShell opened with Run as administrator)."
+        Value="!(loc.KalzitExitNew)"
         After="CostFinalize"
         Sequence="ui"
         Condition="NOT Installed AND NOT CONFIGEXISTS" />
     <SetProperty
         Id="WIXUI_EXITDIALOGOPTIONALTEXT"
         Action="KalzitExitTextKept"
-        Value="Kalzit runs as the Windows service &quot;Kalzit&quot; with the settings of its existing kalzit.toml."
+        Value="!(loc.KalzitExitKept)"
         After="CostFinalize"
         Sequence="ui"
         Condition="NOT Installed AND CONFIGEXISTS" />
