@@ -16,6 +16,7 @@ everything else is M1.
 | `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
 | `server/src/saved_analyses.rs` | Saved analyses: the versioned model, its checks and dashboard links (routes in `routes/analyses.rs`, docs/api/analyses.md). |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
+| `server/src/usage/` | Usage insights: hourly counts per dashboard, panel and data source, never per person; recording, batched writes, retention and the reports (see "Usage insights"; routes in `routes/usage.rs`, docs/api/usage.md). |
 | `server/src/ai/` | AI: the provider interface with the OpenAI-compatible and Anthropic clients, stored providers and keys, limits, usage and audit (see "AI"; routes in `routes/ai.rs`, docs/api/ai.md). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `plugin-api/` | Crate `kalzit-plugin-api`: the data source plugin protocol (`proto/`), the plugin manifest and its validator, the plugin signing context (see "Plugins"). |
@@ -376,6 +377,38 @@ contract:
   out.
 - **Never kept:** errors, timeouts and answers with a failed graph step. Hits are counted
   (`GET /admin/query-cache`), not audited.
+
+### Usage insights (`usage/`, M5)
+
+Counts of dashboard views, panel runs and data source queries in hourly buckets
+(docs/api/usage.md). The contract:
+
+- **Never per person.** An event carries an organization, a dashboard, panel or data source id and
+  numbers (duration, rows, error class, cache hit or miss); no user, session or address reaches
+  `usage`, and its tables (migration 0026) have no column for one. A unit test pins their columns.
+- **Where.** `record_view` in the view route (`routes/home.rs`), `record_panel` in the panel query
+  route (`routes/query.rs`, around `run_stored_panel`) and for each refresh of a live panel feed
+  (`live`, `Spec::panel`), `record_query` for every item of
+  `run_queries_cached` (so every caller of the query path counts, cache hits included), each only
+  while `usage.enabled` is on (read through the settings cache, so turning it off applies at once).
+  Requests refused before anything ran (`validation`, `not_found`, `usage::ran`) are not counted.
+- **Off the query path.** Recording adds to the counts of the event's bucket in an in-memory map
+  under a short lock (`usage::Usage`, at most `MAX_KEYS` buckets; a new bucket while full is
+  dropped and counted). `usage::spawn_flusher` writes the map every 15 s and once more at a stop,
+  through the background pool (`db::Background`), in transactions of at most 500 upserts that add
+  to the stored rows; a transaction that fails before its commit puts its counts back, one whose
+  commit failed is dropped and counted (never added twice). Each instance writes its own counts, so this
+  task runs on every instance. Rows of an organization deleted meanwhile are not written.
+- **Retention.** `usage::spawn_retention` deletes buckets older than `usage.retention_days`
+  (default and at most 90) every hour, one hour of one table per statement. It is idempotent and
+  may run on one instance only.
+- **Reading.** `usage::report` sums the buckets in SQL (`CAST(SUM(..) AS BIGINT)` on both
+  databases), estimates medians and 95th percentiles from 13 duration ranges, and leaves out
+  dashboards a member cannot see (`folders::VISIBILITY_CTE`) and sources they may not read,
+  trashed or purged dashboards and sources (from totals and trend too), and panels no longer on
+  their dashboard (their titles are read in one query). The unused dashboards use the index
+  `usage_dashboard_views (org_id, dashboard_id, bucket)`. Organization routes need `audit:read`; server
+  administrators read every organization through `/admin/usage`.
 
 ## Plugins
 

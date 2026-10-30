@@ -90,6 +90,8 @@ pub struct AppState {
     /// Automatic HTTPS certificates (`acme`): their settings, the served certificate and the
     /// challenge answers.
     pub acme: Arc<crate::acme::Acme>,
+    /// Usage counts waiting to be written (`usage`).
+    pub usage: Arc<crate::usage::Usage>,
 }
 
 impl AppState {
@@ -171,6 +173,7 @@ impl AppState {
             ai: Arc::default(),
             plugins,
             acme,
+            usage: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.

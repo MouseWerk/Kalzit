@@ -298,6 +298,8 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     crate::routes::explore_history::spawn_retention(state.clone());
     crate::routes::datasources::spawn_trash_purge(state.clone());
     crate::ai::chats::spawn_retention(state.clone());
+    crate::usage::spawn_flusher(state.clone());
+    crate::usage::spawn_retention(state.clone());
     match listen(&config, &state).await {
         Ok(running) => {
             // Orders and renews certificates once the listeners can answer the challenges.
