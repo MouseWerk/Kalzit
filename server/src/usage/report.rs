@@ -4,8 +4,10 @@
 //! for server administrators.
 //!
 //! Dashboards and panels a member cannot see (restricted folders, team spaces) are left out for a
-//! viewer who does not see every folder, by the rule of `folders::VISIBILITY_CTE`. Purged
-//! dashboards and data sources are left out; their buckets expire.
+//! viewer who does not see every folder, by the rule of `folders::VISIBILITY_CTE`, and data
+//! sources a member may not read (`datasources:read`, role or grant) are left out for them, also
+//! from the totals and the trend. Dashboards and data sources in the trash or purged are left out
+//! everywhere; their buckets expire.
 
 use std::collections::HashMap;
 
@@ -16,7 +18,7 @@ use sqlx::any::AnyRow;
 
 use super::{DAY_MS, HOUR_MS, RANGES, bucket_of, quantile};
 use crate::app::AppState;
-use crate::authz::OrgCtx;
+use crate::authz::{OrgCtx, Permission, Resource, check_resource};
 use crate::error::{ApiError, ApiResult};
 use crate::folders;
 
@@ -31,25 +33,59 @@ pub const MAX_UNUSED: usize = 200;
 /// Panel rows read at most for one report, the most run first.
 const MAX_PANEL_ROWS: i64 = 10_000;
 
-/// Whose view: one organization or all, and the member whose hidden dashboards are left out.
+/// Whose view: one organization or all, the member whose hidden dashboards are left out, and the
+/// data sources the viewer may read.
 #[derive(Clone, Copy)]
 pub struct Scope<'a> {
     pub org_id: Option<&'a str>,
     /// `Some` for a member who does not see every folder.
     pub hiding: Option<&'a OrgCtx>,
+    /// `Some` for a member who may read only some data sources: their ids (`visible_sources`).
+    pub sources: Option<&'a [String]>,
 }
 
 impl<'a> Scope<'a> {
-    /// A member's view of their organization.
-    pub fn member(ctx: &'a OrgCtx) -> Self {
+    /// A member's view of their organization; `sources` from `visible_sources`.
+    pub fn member(ctx: &'a OrgCtx, sources: Option<&'a [String]>) -> Self {
         let hiding = (folders::sees_every_folder(ctx) == 0).then_some(ctx);
-        Self { org_id: Some(&ctx.org_id), hiding }
+        Self { org_id: Some(&ctx.org_id), hiding, sources }
     }
 
     /// A server administrator's view of one organization or of all.
     pub fn server(org_id: Option<&'a str>) -> Self {
-        Self { org_id, hiding: None }
+        Self { org_id, hiding: None, sources: None }
     }
+
+    /// The same view without the dashboard rule, for queries about data sources only.
+    fn sources_only(&self) -> Self {
+        Self { hiding: None, ..*self }
+    }
+}
+
+/// The data sources of the organization (not in the trash) a member may read, when the member's
+/// role does not let them read every one; `None` when it does.
+pub async fn visible_sources(state: &AppState, ctx: &OrgCtx) -> ApiResult<Option<Vec<String>>> {
+    if ctx.permissions.contains(&Permission::DatasourcesRead) {
+        return Ok(None);
+    }
+    let ids: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND deleted_at IS NULL ORDER BY id")
+            .bind(&ctx.org_id)
+            .fetch_all(&state.db)
+            .await?;
+    let mut visible = Vec::new();
+    for (id,) in ids {
+        if check_resource(&state.db, ctx, Permission::DatasourcesRead, Resource::Datasource(&id)).await.is_ok() {
+            visible.push(id);
+        }
+    }
+    Ok(Some(visible))
+}
+
+/// The first hour a report from `from` counts: the first that starts at or after it, so a
+/// period of 24 hours covers 24 hourly buckets, not 25.
+pub fn first_bucket(from: i64) -> i64 {
+    bucket_of(from.saturating_add(HOUR_MS - 1))
 }
 
 #[derive(Debug, Serialize, Default, PartialEq, Eq)]
@@ -230,6 +266,18 @@ impl<'a> Sql<'a> {
         }
     }
 
+    /// `AND alias.datasource_id IN (...)` when the scope may read only some sources.
+    fn sources(&mut self, scope: &Scope<'a>, alias: &str) -> String {
+        match scope.sources {
+            None => String::new(),
+            Some([]) => " AND 1 = 0".to_string(),
+            Some(ids) => {
+                let list: Vec<String> = ids.iter().map(|id| self.arg(Arg::Text(id))).collect();
+                format!(" AND {alias}.datasource_id IN ({})", list.join(", "))
+            }
+        }
+    }
+
     async fn fetch(self, state: &AppState) -> ApiResult<Vec<AnyRow>> {
         let mut query = sqlx::query(sqlx::AssertSqlSafe(self.text));
         for arg in self.args {
@@ -278,10 +326,11 @@ fn ranges(row: &AnyRow, first: usize) -> ApiResult<[i64; RANGES]> {
     Ok(out)
 }
 
-/// The report of `scope` for the period `from` to `to` (Unix ms; buckets whose hour starts in it).
+/// The report of `scope` for the period `from` to `to` (Unix ms; the buckets whose hour starts
+/// in it, `first_bucket`).
 pub async fn report(state: &AppState, scope: Scope<'_>, from: i64, to: i64) -> ApiResult<Report> {
     check_range(from, to)?;
-    let start = bucket_of(from);
+    let start = first_bucket(from);
     let step_ms = if to - from <= HOURLY_UP_TO_MS { HOUR_MS } else { DAY_MS };
     let trend_rows = trend(state, &scope, start, to).await?;
     let mut totals = Totals::default();
@@ -333,19 +382,19 @@ pub async fn report(state: &AppState, scope: Scope<'_>, from: i64, to: i64) -> A
 /// Counts per hour from the three tables.
 async fn trend(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) -> ApiResult<Vec<(i64, TrendPoint)>> {
     let mut out: HashMap<i64, TrendPoint> = HashMap::new();
-    // Views and panel runs belong to dashboards: a hiding scope counts only those it sees.
+    // Views and panel runs belong to dashboards: only those that exist and are not in the trash
+    // count, as in the lists, and a hiding scope counts only those it sees.
     for (table, count, errors) in
         [("usage_dashboard_views", "views", None), ("usage_panel_runs", "runs", Some("errors"))]
     {
         let mut sql = Sql::new(scope);
         let (a, b) = (sql.arg(Arg::Int(start)), sql.arg(Arg::Int(to)));
         let org = sql.org(scope, "u");
-        let (join, vis) = match scope.hiding {
-            Some(_) => (" JOIN dashboards d ON d.id = u.dashboard_id AND d.org_id = u.org_id", visible(scope, "d")),
-            None => ("", String::new()),
-        };
+        let vis = visible(scope, "d");
         sql.text += &format!(
-            "SELECT u.bucket, {}, {} FROM {table} u{join} WHERE u.bucket >= {a} AND u.bucket < {b}{org}{vis} \
+            "SELECT u.bucket, {}, {} FROM {table} u \
+             JOIN dashboards d ON d.id = u.dashboard_id AND d.org_id = u.org_id AND d.deleted_at IS NULL \
+             WHERE u.bucket >= {a} AND u.bucket < {b}{org}{vis} \
              GROUP BY u.bucket",
             sum(&format!("u.{count}")),
             errors.map_or("CAST(0 AS BIGINT)".to_string(), |e| sum(&format!("u.{e}"))),
@@ -360,12 +409,15 @@ async fn trend(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) -> ApiR
             }
         }
     }
-    // Queries are the sources', which every viewer of the report may know.
-    let mut sql = Sql::new(&Scope { hiding: None, ..*scope });
+    // Queries of the sources that exist, are not in the trash and the viewer may read.
+    let mut sql = Sql::new(&scope.sources_only());
     let (a, b) = (sql.arg(Arg::Int(start)), sql.arg(Arg::Int(to)));
     let org = sql.org(scope, "u");
+    let readable = sql.sources(scope, "u");
     sql.text += &format!(
-        "SELECT u.bucket, {}, {} FROM usage_source_queries u WHERE u.bucket >= {a} AND u.bucket < {b}{org} \
+        "SELECT u.bucket, {}, {} FROM usage_source_queries u \
+         JOIN datasources s ON s.id = u.datasource_id AND s.org_id = u.org_id AND s.deleted_at IS NULL \
+         WHERE u.bucket >= {a} AND u.bucket < {b}{org}{readable} \
          GROUP BY u.bucket",
         sum("u.queries"),
         sum("u.errors"),
@@ -470,70 +522,78 @@ async fn panels(
         // Share of failing runs, compared without division: x.errors / x.runs.
         (y.errors as i128 * x.runs as i128).cmp(&(x.errors as i128 * y.runs as i128)).then(y.errors.cmp(&x.errors))
     });
-    let mut titles = PanelTitles::default();
-    let slow = titles.named(state, slow).await?;
-    let failing = titles.named(state, failing).await?;
-    Ok((slow, failing))
+    // The titles of the candidates' dashboards, read in one query. Panels no longer on their
+    // dashboard are left out, so a few more than `TOP` of each list are considered.
+    let candidates: Vec<&PanelUsage> =
+        slow.iter().take(TITLE_CANDIDATES).chain(failing.iter().take(TITLE_CANDIDATES)).copied().collect();
+    let titles = panel_titles(state, &candidates).await?;
+    Ok((named(&titles, slow), named(&titles, failing)))
 }
 
-/// Panel titles from the current version of their dashboards, read once per dashboard.
-#[derive(Default)]
-struct PanelTitles(HashMap<String, HashMap<String, String>>);
+/// Candidates of each panel list whose dashboards' titles are read.
+const TITLE_CANDIDATES: usize = 4 * TOP;
 
-impl PanelTitles {
-    /// The first `TOP` of `panels` still on their dashboard, with their titles.
-    async fn named(&mut self, state: &AppState, panels: Vec<&PanelUsage>) -> ApiResult<Vec<PanelUsage>> {
-        let mut out = Vec::new();
-        for p in panels {
-            if out.len() == TOP {
-                break;
-            }
-            if !self.0.contains_key(&p.dashboard_id) {
-                let titles = panel_titles(state, &p.org_id, &p.dashboard_id).await?;
-                self.0.insert(p.dashboard_id.clone(), titles);
-            }
-            if let Some(title) = self.0.get(&p.dashboard_id).and_then(|t| t.get(&p.panel_id)) {
-                out.push(PanelUsage { panel_title: title.clone(), ..p.clone() });
-            }
-        }
-        Ok(out)
-    }
-}
+/// Panel titles per (organization, dashboard): panel id to title.
+type Titles = HashMap<(String, String), HashMap<String, String>>;
 
-async fn panel_titles(state: &AppState, org_id: &str, dashboard_id: &str) -> ApiResult<HashMap<String, String>> {
-    let raw: Option<(String,)> = sqlx::query_as(
-        "SELECT v.model FROM dashboards d JOIN dashboard_versions v \
-         ON v.dashboard_id = d.id AND v.version = d.version WHERE d.org_id = $1 AND d.id = $2",
-    )
-    .bind(org_id)
-    .bind(dashboard_id)
-    .fetch_optional(&state.db)
-    .await?;
-    let Some((raw,)) = raw else { return Ok(HashMap::new()) };
-    let model: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-    let panels = model.get("panels").and_then(Value::as_array).cloned().unwrap_or_default();
-    Ok(panels
-        .iter()
+/// The first `TOP` of `panels` still on their dashboard, with their titles.
+fn named(titles: &Titles, panels: Vec<&PanelUsage>) -> Vec<PanelUsage> {
+    panels
+        .into_iter()
+        .take(TITLE_CANDIDATES)
         .filter_map(|p| {
-            let id = p.get("id")?.as_str()?.to_string();
-            let title = p.get("title").and_then(Value::as_str).unwrap_or_default().to_string();
-            Some((id, title))
+            let title = titles.get(&(p.org_id.clone(), p.dashboard_id.clone()))?.get(&p.panel_id)?;
+            Some(PanelUsage { panel_title: title.clone(), ..p.clone() })
         })
-        .collect())
+        .take(TOP)
+        .collect()
+}
+
+/// The panel titles of the current versions of the dashboards of `panels`, in one query.
+async fn panel_titles(state: &AppState, panels: &[&PanelUsage]) -> ApiResult<Titles> {
+    let mut dashboards: Vec<&str> = panels.iter().map(|p| p.dashboard_id.as_str()).collect();
+    dashboards.sort_unstable();
+    dashboards.dedup();
+    if dashboards.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut sql = Sql { text: String::new(), args: Vec::new() };
+    let list: Vec<String> = dashboards.iter().map(|id| sql.arg(Arg::Text(id))).collect();
+    sql.text = format!(
+        "SELECT d.org_id, d.id, v.model FROM dashboards d JOIN dashboard_versions v \
+         ON v.dashboard_id = d.id AND v.version = d.version WHERE d.id IN ({})",
+        list.join(", ")
+    );
+    let mut out = Titles::new();
+    for row in sql.fetch(state).await? {
+        let model: Value = serde_json::from_str(&text(&row, 2)?).unwrap_or(Value::Null);
+        let panels = model.get("panels").and_then(Value::as_array).cloned().unwrap_or_default();
+        let titles = panels
+            .iter()
+            .filter_map(|p| {
+                let id = p.get("id")?.as_str()?.to_string();
+                let title = p.get("title").and_then(Value::as_str).unwrap_or_default().to_string();
+                Some((id, title))
+            })
+            .collect();
+        out.insert((text(&row, 0)?, text(&row, 1)?), titles);
+    }
+    Ok(out)
 }
 
 /// Every data source asked in the period that still exists, the most asked first.
 async fn sources(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) -> ApiResult<Vec<SourceUsage>> {
-    let mut sql = Sql::new(&Scope { hiding: None, ..*scope });
+    let mut sql = Sql::new(&scope.sources_only());
     let (a, b) = (sql.arg(Arg::Int(start)), sql.arg(Arg::Int(to)));
     let org = sql.org(scope, "u");
+    let readable = sql.sources(scope, "u");
     sql.text += &format!(
         "SELECT u.org_id, o.name, u.datasource_id, s.name, s.kind, {queries} AS queries, {}, {}, {}, {}, {}, {}, \
          {}, {}, MAX(u.duration_max_ms), {} \
          FROM usage_source_queries u \
          JOIN datasources s ON s.id = u.datasource_id AND s.org_id = u.org_id AND s.deleted_at IS NULL \
          JOIN orgs o ON o.id = u.org_id \
-         WHERE u.bucket >= {a} AND u.bucket < {b}{org} \
+         WHERE u.bucket >= {a} AND u.bucket < {b}{org}{readable} \
          GROUP BY u.org_id, o.name, u.datasource_id, s.name, s.kind \
          ORDER BY queries DESC, s.name, u.datasource_id",
         sum("u.errors"),
@@ -580,7 +640,7 @@ async fn sources(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) -> Ap
 async fn since(state: &AppState, scope: &Scope<'_>) -> ApiResult<Option<i64>> {
     let mut oldest: Option<i64> = None;
     for table in ["usage_dashboard_views", "usage_panel_runs", "usage_source_queries"] {
-        let mut sql = Sql::new(&Scope { hiding: None, ..*scope });
+        let mut sql = Sql::new(&scope.sources_only());
         let org = sql.org(scope, "u");
         sql.text += &format!("SELECT MIN(u.bucket) FROM {table} u WHERE 1 = 1{org}");
         if let Some(row) = sql.fetch(state).await?.first()

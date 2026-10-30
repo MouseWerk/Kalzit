@@ -20,13 +20,15 @@ Usage).
 | Table | Key | Counts |
 |---|---|---|
 | `usage_dashboard_views` | hour, organization, dashboard | views: each `POST /orgs/{orgId}/dashboards/{dashboardId}/views` (the UI sends it when a dashboard opens) |
-| `usage_panel_runs` | hour, organization, dashboard, panel | runs of a panel's stored queries from its dashboard (`POST .../panels/{panelId}/query`): errors (a run with at least one failed query), cache hits (every answer from the query cache) and misses (at least one query ran in its source with the cache in use), rows, durations |
+| `usage_panel_runs` | hour, organization, dashboard, panel | runs of a panel's stored queries: each load from its dashboard (`POST .../panels/{panelId}/query`) and each refresh of a live panel (one per refresh of the feed, however many people follow it, docs/api/live.md); errors (a run in which at least one query ran and failed), cache hits (every answer from the query cache) and misses (at least one query ran in its source with the cache in use), rows, durations |
 | `usage_source_queries` | hour, organization, data source | every query asked of a data source (free queries, panels, variables, live updates, exports, annotations, AI): errors by class, cache hits and misses, rows and durations of the queries that ran in the source |
 
 Error classes: `timeout` (`query_timeout`), `rejected` (`query_rejected`, refused before it ran),
-`source` (`datasource_error`, `datasource_target_blocked`) and `other`. A query for a data source
-that does not exist in the organization is not counted. Rows are frame rows, documents, or nodes
-plus edges.
+`source` (`datasource_error`, `datasource_target_blocked`) and `other`. A request refused before
+anything ran is not counted at all: a query answering `validation` or `not_found` (an unknown data
+source, a wrong variable), and a panel request refused as a whole (a wrong range or variable). A
+panel run whose only failed items were refused that way is no error. Rows are frame rows,
+documents, or nodes plus edges.
 
 Durations are counted in 13 ranges (up to 5, 10, 25, 50, 100, 250, 500 ms, 1, 2.5, 5, 10, 30 s
 and above), with their sum and the longest one. Medians (`p50Ms`) and 95th percentiles (`p95Ms`)
@@ -37,10 +39,13 @@ longest one.
 
 Recording adds the event to the counts of its hour in memory; it never waits for the database
 and never fails a request. Every 15 seconds, and once more when the server stops, the counts are
-added to the stored rows in one transaction. The memory holds at most 20,000 hour buckets between
-two writes; an event for a new bucket while it is full is dropped and counted (`dropped` in the
-answers, since the server started). When the database is busy, the counts are kept for the next
-write. Each server instance writes its own counts; the hourly retention job is idempotent.
+added to the stored rows, in transactions of at most 500 buckets, so a write never holds the
+database for long. The memory holds at most 20,000 hour buckets between two writes; an event for a
+new bucket while it is full is dropped and counted (`dropped` in the answers, since the server
+started). A transaction that fails before its commit (the database is busy) keeps its counts for
+the next write; one whose commit fails is dropped and counted, because it may have been saved and
+is never added twice. Each server instance writes its own counts; the hourly retention job is
+idempotent.
 
 ## Who may read
 
@@ -54,8 +59,10 @@ write. Each server instance writes its own counts; the hourly retention job is i
 Viewers and editors get `403 forbidden`; members of another organization `404 not_found`. A
 member with `audit:read` who does not see every folder (a custom role without
 `folders:permissions`) gets no counts of dashboards and panels in restricted folders or team
-spaces they cannot see, also not in the totals and the trend; data sources are listed for every
-reader. Dashboards and data sources in the trash or purged are left out of the lists. Server
+spaces they cannot see, also not in the totals and the trend. A member without `datasources:read`
+in their role gets only the data sources a grant lets them read, again also in the totals and the
+trend. Dashboards and data sources in the trash or purged are left out of the lists, the totals and
+the trend. Server
 administrators see every dashboard, also of organizations they are not a member of. `orgId` on the
 organization routes is a `validation` error; an `orgId` of no organization on the server routes is
 `not_found`.
@@ -64,8 +71,8 @@ organization routes is a `validation` error; an `orgId` of no organization on th
 
 `GET /orgs/{orgId}/usage?from=&to=` and `GET /admin/usage?from=&to=&orgId=`
 
-`from` and `to` are Unix ms; the report covers the hours that start from the hour of `from` up to
-before `to`. `to` must be after `from` and the period at most 366 days (`validation` otherwise).
+`from` and `to` are Unix ms; the report covers the hours that start at or after `from` and before
+`to` (a period of 24 hours ending now covers 24 hourly buckets, the current one included). `to` must be after `from` and the period at most 366 days (`validation` otherwise).
 
 ```ts
 {

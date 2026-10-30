@@ -56,7 +56,8 @@ async fn org_report(
     QueryParams(q): QueryParams<ReportQuery>,
 ) -> ApiResult<Json<Report>> {
     no_org_filter(q.org_id.as_ref())?;
-    Ok(Json(report::report(&state, Scope::member(&ctx), q.from, q.to).await?))
+    let sources = report::visible_sources(&state, &ctx).await?;
+    Ok(Json(report::report(&state, Scope::member(&ctx, sources.as_deref()), q.from, q.to).await?))
 }
 
 async fn org_unused(
@@ -66,7 +67,7 @@ async fn org_unused(
 ) -> ApiResult<Json<Unused>> {
     no_org_filter(q.org_id.as_ref())?;
     let days = q.days.unwrap_or(DEFAULT_UNUSED_DAYS);
-    Ok(Json(report::unused(&state, Scope::member(&ctx), days, state.clock.now_ms()).await?))
+    Ok(Json(report::unused(&state, Scope::member(&ctx, None), days, state.clock.now_ms()).await?))
 }
 
 /// The organization a server view is narrowed to: `None` for all, `not_found` for one that does

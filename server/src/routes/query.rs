@@ -433,13 +433,13 @@ async fn panel_query(
     req.refresh = Some(wants_refresh(&headers, req.refresh));
     let started = std::time::Instant::now();
     let ran = run_stored_panel(&state, &ctx, &model, panel, req).await;
-    // Usage insights count the run per dashboard and panel, never per person.
-    let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-    let run = match &ran {
-        Ok(response) => crate::usage::PanelRun::of(response, ms),
-        Err(_) => crate::usage::PanelRun { duration_ms: ms, rows: 0, error: true, cache: crate::usage::Cache::NotUsed },
-    };
-    crate::usage::record_panel(&state, &ctx.org_id, &dashboard_id, &panel_id, run).await;
+    // Usage insights count the run per dashboard and panel, never per person. A request refused
+    // before its queries ran (a wrong range or variable) is no run.
+    if let Ok(response) = &ran {
+        let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+        let run = crate::usage::PanelRun::of(response, ms);
+        crate::usage::record_panel(&state, &ctx.org_id, &dashboard_id, &panel_id, run).await;
+    }
     Ok(answer(ran?))
 }
 

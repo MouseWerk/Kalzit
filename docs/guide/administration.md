@@ -100,7 +100,7 @@ default, setting `audit.retention_days`). Server admins also have a server-wide 
 **Administration** > **Usage** (**Verwaltung** > **Nutzung**) shows how your organization uses
 Kalzit, for the last 24 hours, 7, 30 or 90 days:
 
-- **Totals**: dashboard views, panel runs, data source queries, the share of failed queries and
+- **Totals**: dashboard views, panel runs (loads and live refreshes), data source queries, the share of failed queries and
   of answers from the query cache, and a **Trend** per hour or day.
 - **Most viewed dashboards**, **Slowest panels** (median and 95th percentile of their run time),
   **Panels with errors** (by the share of failed runs) and **Data sources** with their queries,

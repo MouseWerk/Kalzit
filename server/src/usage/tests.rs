@@ -284,3 +284,86 @@ async fn retention_deletes_old_buckets_only() {
     pool.close().await;
     drop(dir);
 }
+
+#[test]
+fn refused_items_are_no_panel_errors() {
+    let mut results = BTreeMap::new();
+    results.insert("A".to_string(), ok(1, None));
+    results.insert("B".to_string(), err("validation"));
+    assert!(!PanelRun::of(&QueryResponse { results: results.clone() }, 1).error);
+    results.insert("C".to_string(), err("query_timeout"));
+    assert!(PanelRun::of(&QueryResponse { results }, 1).error);
+    assert!(!ran("validation") && !ran("not_found") && ran("datasource_error") && ran("internal"));
+}
+
+#[test]
+fn a_report_starts_at_the_first_full_hour() {
+    let hour = bucket_of(T0);
+    assert_eq!(report::first_bucket(hour), hour);
+    assert_eq!(report::first_bucket(hour + 1), hour + HOUR_MS);
+    // 24 hours ending inside an hour: that hour and the 23 before it.
+    let to = hour + HOUR_MS / 2;
+    let start = report::first_bucket(to - DAY_MS);
+    assert_eq!((to - start).div_euclid(HOUR_MS) + 1, 24);
+}
+
+#[tokio::test]
+async fn flushes_write_in_chunks() {
+    let (dir, pool) = database().await;
+    let usage = Usage::default();
+    for i in 0..7 {
+        usage.view(T0, "o1", &format!("d{i}"));
+    }
+    assert_eq!(flush_in(&usage, &pool, 3).await.unwrap(), 7);
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM usage_dashboard_views").await, 7);
+    assert_eq!(usage.pending(), 0);
+    pool.close().await;
+    drop(dir);
+}
+
+#[tokio::test]
+async fn a_failed_chunk_keeps_its_counts_once() {
+    let (dir, pool) = database().await;
+    let usage = Usage::default();
+    for i in 0..5 {
+        usage.view(T0, "o1", &format!("d{i}"));
+    }
+    pool.close().await;
+    assert!(flush_in(&usage, &pool, 2).await.is_err());
+    // Nothing was written, everything waits for the next write, and nothing counts as dropped.
+    assert_eq!(usage.pending(), 5);
+    assert_eq!(usage.dropped(), 0);
+    let total: i64 = usage.take().values().map(|c| c.count).sum();
+    assert_eq!(total, 5);
+    drop(dir);
+}
+
+#[test]
+fn put_back_counts_each_dropped_event_once() {
+    let usage = Usage::with_capacity(1);
+    usage.view(T0, "o1", "d1");
+    let mut batch = HashMap::new();
+    batch.insert(
+        Key::View { bucket: bucket_of(T0), org_id: "o1".into(), dashboard_id: "d2".into() },
+        Counts { count: 3, ..Default::default() },
+    );
+    usage.put_back(batch);
+    assert_eq!(usage.dropped(), 3);
+}
+
+/// The unused dashboards look up the views of each dashboard through its index, not a scan.
+#[tokio::test]
+async fn views_per_dashboard_use_their_index() {
+    let (dir, pool) = database().await;
+    let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN SELECT 1 FROM usage_dashboard_views w \
+         WHERE w.org_id = 'o1' AND w.dashboard_id = 'd1' AND w.bucket >= 0",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let plan: Vec<&str> = rows.iter().map(|r| r.3.as_str()).collect();
+    assert!(plan.iter().any(|d| d.contains("usage_dashboard_views_dashboard")), "{plan:?}");
+    pool.close().await;
+    drop(dir);
+}

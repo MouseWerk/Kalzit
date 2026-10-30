@@ -79,7 +79,12 @@ export function UsagePage() {
       }
     >
       {allowed && scope !== undefined ? (
-        <UsageView scope={scope} currentOrgId={access.orgId} showOrg={scope.orgId === undefined} />
+        <UsageView
+          scope={scope}
+          currentOrgId={access.orgId}
+          showOrg={scope.orgId === undefined}
+          canChangeSettings={access.isServerAdmin}
+        />
       ) : null}
     </Section>
   );
@@ -89,12 +94,15 @@ function UsageView({
   scope,
   currentOrgId,
   showOrg,
+  canChangeSettings,
 }: {
   scope: UsageScope;
   /** Rows of this organization link to their dashboard, panel or source. */
   currentOrgId: string | undefined;
   /** Every organization: rows name theirs. */
   showOrg: boolean;
+  /** Server administrators may turn recording on; only they get the link to its setting. */
+  canChangeSettings: boolean;
 }) {
   const { t, language, timeZone } = useI18n();
   const periodId = useId();
@@ -132,10 +140,15 @@ function UsageView({
         <>
           {data.recording ? null : (
             <div className="notice" role="status">
-              <span>{t("usage.recordingOff")}</span>{" "}
-              <Link to="/settings/$section" params={{ section: "storage" }}>
-                {t("usage.recordingSettings")}
-              </Link>
+              <span>{t("usage.recordingOff")}</span>
+              {canChangeSettings ? (
+                <>
+                  {" "}
+                  <Link to="/settings/$section" params={{ section: "storage" }}>
+                    {t("usage.recordingSettings")}
+                  </Link>
+                </>
+              ) : null}
             </div>
           )}
           {data.since !== null && data.since > data.from ? (

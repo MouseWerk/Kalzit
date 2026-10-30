@@ -7,10 +7,13 @@
 //! have no column for one (a test pins their columns).
 //!
 //! Recording costs the query path a lock on an in-memory map: events are added to the counts of
-//! their bucket there (`Usage::add`), and a background task writes the counts in one transaction
-//! every `FLUSH_EVERY` (`flush`), adding them to the stored rows. The map holds at most
-//! `MAX_KEYS` buckets; an event for a new bucket while it is full is dropped and counted
-//! (`Usage::dropped`). A write that finds the database busy puts the counts back for the next one.
+//! their bucket there (`Usage::add`), and a background task writes the counts every
+//! `FLUSH_EVERY` (`flush`), adding them to the stored rows in transactions of at most
+//! `FLUSH_CHUNK` buckets, so no write holds the database's write lock for long. The map holds at
+//! most `MAX_KEYS` buckets; an event for a new bucket while it is full is dropped and counted
+//! (`Usage::dropped`). A chunk that fails before its commit goes back to the map for the next
+//! write; one whose commit failed is dropped and counted instead, since it may have been saved
+//! and must not be added twice.
 //! Every server instance flushes its own counts, so the flush is per instance; the retention job
 //! (`spawn_retention`) is idempotent and may run on one instance only.
 
@@ -41,6 +44,9 @@ pub const MAX_KEYS: usize = 20_000;
 
 /// How often the counts are written.
 pub const FLUSH_EVERY: Duration = Duration::from_secs(15);
+
+/// Buckets written per transaction.
+pub const FLUSH_CHUNK: usize = 500;
 
 /// The setting that turns recording on and off.
 pub const ENABLED_SETTING: &str = "usage.enabled";
@@ -101,8 +107,15 @@ pub enum ErrorClass {
     Rejected,
     /// `datasource_error`, `datasource_target_blocked`: the source failed or may not be reached.
     Source,
-    /// Anything else (validation, internal, limits).
+    /// Anything else that failed while running (internal, limits).
     Other,
+}
+
+/// Whether an error code means the query ran and failed. `validation` and `not_found` mean the
+/// request was refused before anything ran (a wrong variable, an unknown source): such answers
+/// are not counted at all.
+pub fn ran(code: &str) -> bool {
+    !matches!(code, "validation" | "not_found")
 }
 
 impl ErrorClass {
@@ -126,7 +139,8 @@ pub struct PanelRun {
 }
 
 impl PanelRun {
-    /// The run of a whole panel request: an error when one of its queries failed, a hit when
+    /// The run of a whole panel request: an error when one of its queries ran and failed (an
+    /// item refused before it ran, `ran`, is no error of the panel), a hit when
     /// every answer came from the cache, a miss when one of them ran in its source with the cache
     /// in use.
     pub fn of(response: &QueryResponse, duration_ms: i64) -> Self {
@@ -143,7 +157,7 @@ impl PanelRun {
                         None => {}
                     }
                 }
-                QueryOutcome::Err { .. } => run.error = true,
+                QueryOutcome::Err { error } => run.error |= ran(&error.code),
             }
         }
         run.cache = if misses > 0 {
@@ -343,8 +357,8 @@ impl Usage {
     }
 
     /// Puts back the buckets of a write that failed, merged with what arrived meanwhile. Buckets
-    /// beyond the map's size are dropped and counted.
-    pub fn put_back(&self, batch: HashMap<Key, Counts>) {
+    /// beyond the map's size are dropped, and their events counted once (`lose`).
+    pub fn put_back(&self, batch: impl IntoIterator<Item = (Key, Counts)>) {
         let mut pending = self.lock();
         for (key, counts) in batch {
             if let Some(mine) = pending.get_mut(&key) {
@@ -352,9 +366,14 @@ impl Usage {
             } else if pending.len() < self.max_keys {
                 pending.insert(key, counts);
             } else {
-                self.dropped.fetch_add(counts.count.max(1) as u64, Ordering::Relaxed);
+                self.lose(&counts);
             }
         }
+    }
+
+    /// Counts the events of a bucket that will not be written.
+    fn lose(&self, counts: &Counts) {
+        self.dropped.fetch_add(u64::try_from(counts.count).unwrap_or(0), Ordering::Relaxed);
     }
 
     /// Buckets waiting for the next write.
@@ -449,24 +468,60 @@ fn upsert_sql(table: &str, keys: &[&str], columns: &[&str]) -> String {
     )
 }
 
-/// Writes every pending bucket in one transaction through `db`, adding to the stored rows.
-/// Answers the number of buckets written; on an error they go back to the map for the next
-/// write, and the error is returned.
+/// How a chunk's write failed.
+enum WriteError {
+    /// Before the commit: nothing of the chunk was saved.
+    Before(sqlx::Error),
+    /// The commit itself: the chunk may or may not be saved.
+    Commit(sqlx::Error),
+}
+
+/// Writes every pending bucket through `db`, adding to the stored rows, `FLUSH_CHUNK` buckets per
+/// transaction. Answers the number of buckets written. On an error the chunks not yet written go
+/// back to the map for the next write (a chunk whose commit failed is dropped and counted, never
+/// written twice), and the error is returned.
 pub async fn flush(usage: &Usage, db: &AnyPool) -> Result<usize, sqlx::Error> {
-    let batch = usage.take();
-    if batch.is_empty() {
-        return Ok(0);
-    }
-    match write(db, &batch).await {
-        Ok(()) => Ok(batch.len()),
-        Err(e) => {
-            usage.put_back(batch);
-            Err(e)
+    flush_in(usage, db, FLUSH_CHUNK).await
+}
+
+async fn flush_in(usage: &Usage, db: &AnyPool, chunk: usize) -> Result<usize, sqlx::Error> {
+    let mut batch: Vec<(Key, Counts)> = usage.take().into_iter().collect();
+    let mut written = 0;
+    while !batch.is_empty() {
+        let rest = batch.split_off(chunk.max(1).min(batch.len()));
+        match write(db, &batch).await {
+            Ok(()) => written += batch.len(),
+            Err(WriteError::Before(e)) => {
+                usage.put_back(batch.into_iter().chain(rest));
+                return Err(e);
+            }
+            Err(WriteError::Commit(e)) => {
+                for (_, counts) in &batch {
+                    usage.lose(counts);
+                }
+                usage.put_back(rest);
+                return Err(e);
+            }
         }
+        batch = rest;
+    }
+    Ok(written)
+}
+
+async fn write(db: &AnyPool, batch: &[(Key, Counts)]) -> Result<(), WriteError> {
+    write_rows(db, batch).await.map_err(WriteError::Before)?.commit().await
+}
+
+/// A transaction holding the chunk's upserts, ready to commit.
+struct Written(sqlx::Transaction<'static, sqlx::Any>);
+
+impl Written {
+    async fn commit(self) -> Result<(), WriteError> {
+        crate::db::commit(self.0).await.map_err(WriteError::Commit)
     }
 }
 
-async fn write(db: &AnyPool, batch: &HashMap<Key, Counts>) -> Result<(), sqlx::Error> {
+async fn write_rows(db: &AnyPool, batch: &[(Key, Counts)]) -> Result<Written, sqlx::Error> {
     let views = "INSERT INTO usage_dashboard_views (bucket, org_id, dashboard_id, views) \
                  SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM orgs WHERE id = $2) \
                  ON CONFLICT (bucket, org_id, dashboard_id) DO UPDATE SET views = usage_dashboard_views.views + excluded.views";
@@ -519,7 +574,7 @@ async fn write(db: &AnyPool, batch: &HashMap<Key, Counts>) -> Result<(), sqlx::E
             }
         }
     }
-    crate::db::commit(tx).await
+    Ok(Written(tx))
 }
 
 /// Writes the counts every `FLUSH_EVERY` through the background pool, and once more when the

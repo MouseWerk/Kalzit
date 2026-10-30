@@ -18,6 +18,8 @@ CREATE TABLE usage_dashboard_views (
 );
 
 CREATE INDEX usage_dashboard_views_org ON usage_dashboard_views (org_id, bucket);
+-- The last view of each dashboard, for the unused dashboards (`usage::report::unused`).
+CREATE INDEX usage_dashboard_views_dashboard ON usage_dashboard_views (org_id, dashboard_id, bucket);
 
 -- Runs of a panel's stored queries from the dashboard (`POST .../panels/{panelId}/query`).
 -- `cache_hits` counts runs answered entirely from the query cache, `cache_misses` runs of which at

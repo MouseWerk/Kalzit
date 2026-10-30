@@ -387,23 +387,27 @@ Counts of dashboard views, panel runs and data source queries in hourly buckets
   numbers (duration, rows, error class, cache hit or miss); no user, session or address reaches
   `usage`, and its tables (migration 0026) have no column for one. A unit test pins their columns.
 - **Where.** `record_view` in the view route (`routes/home.rs`), `record_panel` in the panel query
-  route (`routes/query.rs`, around `run_stored_panel`), `record_query` for every item of
+  route (`routes/query.rs`, around `run_stored_panel`) and for each refresh of a live panel feed
+  (`live`, `Spec::panel`), `record_query` for every item of
   `run_queries_cached` (so every caller of the query path counts, cache hits included), each only
   while `usage.enabled` is on (read through the settings cache, so turning it off applies at once).
-  An item whose source is not found in the organization is not counted.
+  Requests refused before anything ran (`validation`, `not_found`, `usage::ran`) are not counted.
 - **Off the query path.** Recording adds to the counts of the event's bucket in an in-memory map
   under a short lock (`usage::Usage`, at most `MAX_KEYS` buckets; a new bucket while full is
   dropped and counted). `usage::spawn_flusher` writes the map every 15 s and once more at a stop,
-  through the background pool (`db::Background`), in one transaction of upserts that add to the
-  stored rows; a failed write puts the counts back. Each instance writes its own counts, so this
+  through the background pool (`db::Background`), in transactions of at most 500 upserts that add
+  to the stored rows; a transaction that fails before its commit puts its counts back, one whose
+  commit failed is dropped and counted (never added twice). Each instance writes its own counts, so this
   task runs on every instance. Rows of an organization deleted meanwhile are not written.
 - **Retention.** `usage::spawn_retention` deletes buckets older than `usage.retention_days`
   (default 90, at most 365) every hour, one hour of one table per statement. It is idempotent and
   may run on one instance only.
 - **Reading.** `usage::report` sums the buckets in SQL (`CAST(SUM(..) AS BIGINT)` on both
   databases), estimates medians and 95th percentiles from 13 duration ranges, and leaves out
-  dashboards a member cannot see (`folders::VISIBILITY_CTE`), trashed or purged dashboards and
-  sources, and panels no longer on their dashboard. Organization routes need `audit:read`; server
+  dashboards a member cannot see (`folders::VISIBILITY_CTE`) and sources they may not read,
+  trashed or purged dashboards and sources (from totals and trend too), and panels no longer on
+  their dashboard (their titles are read in one query). The unused dashboards use the index
+  `usage_dashboard_views (org_id, dashboard_id, bucket)`. Organization routes need `audit:read`; server
   administrators read every organization through `/admin/usage`.
 
 ## Plugins

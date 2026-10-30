@@ -82,9 +82,10 @@ describe("usage insights", () => {
     await waitFor(() => expect(sent(server, "GET")).toContain("/api/orgs/o1/usage/unused?days=90"));
   });
 
-  it("says when recording is off and links to its setting", async () => {
+  it("says when recording is off and links server admins to its setting", async () => {
     await openAdmin("/admin/usage", {
-      permissions: ["audit:read"],
+      permissions: [],
+      isServerAdmin: true,
       setupServer: (server) => {
         server.areas.usage.report = { ...sampleReport(), recording: false };
       },
@@ -95,6 +96,19 @@ describe("usage insights", () => {
     expect(
       screen.getByRole("link", { name: "Go to storage and retention" }).getAttribute("href"),
     ).toBe("/settings/storage");
+  });
+
+  it("says when recording is off without a link organization admins cannot follow", async () => {
+    await openAdmin("/admin/usage", {
+      permissions: ["audit:read"],
+      setupServer: (server) => {
+        server.areas.usage.report = { ...sampleReport(), recording: false };
+      },
+    });
+    expect(
+      await screen.findByText("Recording is off; new views and queries are not counted."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Go to storage and retention" })).toBeNull();
   });
 
   it("shows no access without audit:read", async () => {

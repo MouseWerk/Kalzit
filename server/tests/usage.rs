@@ -281,6 +281,10 @@ on_both_databases! {
     recording_off_records_nothing,
     retention_is_a_bounded_setting,
     reports_check_their_period,
+    refused_requests_are_not_counted,
+    trashed_dashboards_and_sources_leave_the_totals,
+    sources_follow_the_readers_rights,
+    a_day_is_twenty_four_hours,
 }
 
 async fn views_and_query_runs_show_up(t: TestApp) {
@@ -495,4 +499,87 @@ async fn reports_check_their_period(t: TestApp) {
     let r = t.get(&format!("~/usage?from={}&to={T0}", T0 - 30 * DAY), &t.owner).await.ok();
     assert_eq!(r["stepMs"], DAY);
     assert_eq!(r["trend"].as_array().unwrap().len(), 31);
+}
+
+async fn refused_requests_are_not_counted(t: TestApp) {
+    let source = t.source("shop").await;
+    let dashboard = t.dashboard("Releases", &source).await;
+    // A range that ends before it starts is refused before anything runs.
+    let body = json!({ "timeRange": { "from": T0, "to": T0 - DAY }, "variables": {} });
+    let r = t.post(&format!("~/dashboards/{dashboard}/panels/p1/query"), body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    // A free query on a source of no organization is not found, not a query of a source.
+    let missing = uuid::Uuid::now_v7().to_string();
+    t.free_query(&missing, "SELECT 1").await.ok();
+    t.flush().await;
+    assert_eq!(t.rows("usage_panel_runs").await, 0);
+    assert_eq!(t.rows("usage_source_queries").await, 0);
+    // A run that ran and failed in its source is an error.
+    t.free_query(&source, "SELECT nothing FROM missing").await.ok();
+    t.flush().await;
+    let report = t.get(&format!("~/usage?{}", t.range()), &t.owner).await.ok();
+    assert_eq!(report["totals"]["queryErrors"], 1, "{report}");
+}
+
+async fn trashed_dashboards_and_sources_leave_the_totals(t: TestApp) {
+    let source = t.source("shop").await;
+    let dashboard = t.dashboard("Releases", &source).await;
+    t.view(&dashboard, &t.owner).await;
+    t.run_panel(&dashboard, &t.owner).await;
+    t.flush().await;
+    let report = t.get(&format!("~/usage?{}", t.range()), &t.owner).await.ok();
+    assert_eq!((report["totals"]["views"].as_i64(), report["totals"]["panelRuns"].as_i64()), (Some(1), Some(1)));
+    assert_eq!(report["totals"]["queries"], 1);
+    let r = t.send(Method::DELETE, &t.path(&format!("~/dashboards/{dashboard}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let r = t.send(Method::DELETE, &t.path(&format!("~/datasources/{source}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let report = t.get(&format!("~/usage?{}", t.range()), &t.owner).await.ok();
+    assert_eq!(report["totals"]["views"], 0, "{report}");
+    assert_eq!(report["totals"]["panelRuns"], 0);
+    assert_eq!(report["totals"]["queries"], 0);
+    assert!(report["trend"].as_array().unwrap().iter().all(|p| p["views"] == 0 && p["queries"] == 0));
+}
+
+async fn sources_follow_the_readers_rights(t: TestApp) {
+    let shop = t.source("shop").await;
+    let hidden = t.source("intern").await;
+    t.free_query(&shop, "SELECT text FROM releases").await.ok();
+    t.free_query(&hidden, "SELECT text FROM releases").await.ok();
+    t.flush().await;
+    // An auditor role: the audit log and usage, no data source rights; a grant opens "shop".
+    let role = t.post("~/roles", json!({ "name": "Prüfer", "permissions": ["audit:read"] }), &t.owner).await;
+    assert!(role.status.is_success(), "{}", role.body);
+    let role_id = role.body["id"].as_str().unwrap().to_string();
+    let auditor = t.member_of(&t.org, "Paula", &role_id).await;
+    let names = |v: &Value| -> Vec<String> {
+        v["sources"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap().to_string()).collect()
+    };
+    let report = t.get(&format!("~/usage?{}", t.range()), &auditor).await.ok();
+    assert_eq!(names(&report), Vec::<String>::new(), "{report}");
+    assert_eq!(report["totals"]["queries"], 0);
+    let grant = json!({ "subjectType": "role", "subjectId": role_id, "resourceType": "datasource",
+                        "resourceId": shop, "level": "query" });
+    let r = t.post("~/grants", grant, &t.owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let report = t.get(&format!("~/usage?{}", t.range()), &auditor).await.ok();
+    assert_eq!(names(&report), ["shop"], "{report}");
+    assert_eq!(report["totals"]["queries"], 1);
+    // Admins read every source.
+    let report = t.get(&format!("~/usage?{}", t.range()), &t.owner).await.ok();
+    assert_eq!(report["totals"]["queries"], 2);
+}
+
+async fn a_day_is_twenty_four_hours(t: TestApp) {
+    let source = t.source("shop").await;
+    let dashboard = t.dashboard("Releases", &source).await;
+    let now = t.clock.now_ms();
+    // One view in the hour that starts before the day began, one in the first hour of the day.
+    let first = (now - DAY + HOUR - 1) - (now - DAY + HOUR - 1).rem_euclid(HOUR);
+    t.state.usage.view(first - HOUR, &t.org, &dashboard);
+    t.state.usage.view(first, &t.org, &dashboard);
+    t.flush().await;
+    let report = t.get(&format!("~/usage?from={}&to={now}", now - DAY), &t.owner).await.ok();
+    assert_eq!(report["totals"]["views"], 1, "{report}");
+    assert_eq!(report["trend"].as_array().unwrap().len(), 24);
 }
