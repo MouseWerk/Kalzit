@@ -1677,7 +1677,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0013 | Explore query history (per user, 30 days) | explore history (#76) |
 | 0014 | team ownership of folders and dashboards (team spaces), team contexts | feat/team-spaces |
 | 0015 | audit log indexes by organization, time and id, and by resource | fix/m1-wave-3-perf |
-| 0027 | second factor: app keys, passkeys, recovery codes, lockouts, half-signed-in states; sessions' confirmation and ceremonies | m5/two-factor |
+| 0028 | second factor: app keys, passkeys, recovery codes, lockouts, half-signed-in states; sessions' confirmation and ceremonies | m5/two-factor |
 
 ## M1 work streams
 

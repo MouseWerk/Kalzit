@@ -105,13 +105,13 @@ async function password(page: Page, email: string, secret: string): Promise<void
 }
 
 const LEA = {
-  name: "Lea Hoffmann",
-  email: "lea.hoffmann@kalzit.test",
+  name: "Mira Okonkwo",
+  email: "mira.okonkwo.2fa@kalzit.test",
   password: "demo-password-lea",
 };
 const TOM = {
-  name: "Tobias Brandt",
-  email: "tobias.brandt@kalzit.test",
+  name: "Paul Weber",
+  email: "paul.weber.2fa@kalzit.test",
   password: "demo-password-tobias",
 };
 

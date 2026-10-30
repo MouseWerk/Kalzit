@@ -135,18 +135,18 @@ export function TotpSetupPanel({
           <span className="totp-setup__meta">
             {t("security.totp.meta", { issuer: setup.issuer })}
           </span>
-          <div className="recovery-codes__actions">
-            <CopyButton
-              text={setup.secret.replace(/\s/g, "")}
-              label={t("security.totp.copyKey")}
-              done={t("security.totp.copied")}
-            />
-            {/* On a phone the app can take the key straight from the link. */}
-            <a className="button button--ghost" href={setup.uri}>
-              {t("security.totp.open")}
-            </a>
-          </div>
         </div>
+      </div>
+      <div className="recovery-codes__actions">
+        <CopyButton
+          text={setup.secret.replace(/\s/g, "")}
+          label={t("security.totp.copyKey")}
+          done={t("security.totp.copied")}
+        />
+        {/* On a phone the app can take the key straight from the link. */}
+        <a className="button button--ghost" href={setup.uri}>
+          {t("security.totp.open")}
+        </a>
       </div>
       <p className="totp-setup__step">{t("security.totp.codeStep")}</p>
       <CodeField
