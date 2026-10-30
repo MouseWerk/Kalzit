@@ -92,10 +92,15 @@ async fn enforce(
             let org_id = req.extensions().get::<OrgCtx>().map(|c| c.org_id.clone());
             // Bumped when the handler ends, also when the client goes away and the request is
             // dropped mid-change, after a commit it can no longer see; not for a refused change.
-            let mut bump = state.datasources.query_cache().bump_on_drop(org_id);
+            let cache = state.datasources.query_cache();
+            let mut bump = cache.bump_on_drop(org_id.clone());
             let res = next.run(req).await;
-            if !res.status().is_success() {
-                bump.disarm();
+            bump.disarm();
+            if res.status().is_success() {
+                // Here, and written for the other servers on the same database before the
+                // answer goes out (`cluster`).
+                cache.rights_changed_here(org_id.as_deref());
+                state.cluster.announce(&state.db, crate::cluster::Change::Rights(org_id)).await;
             }
             res
         }

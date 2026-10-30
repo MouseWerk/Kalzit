@@ -36,6 +36,9 @@ pub struct AdminUser {
     #[sqlx(try_from = "i64")]
     disabled: Flag,
     created_at: i64,
+    /// The account's second factor; `required` by the server or any of its organizations.
+    #[sqlx(skip)]
+    second_factor: crate::auth::second_factor::Summary,
 }
 
 /// A 0/1 column (portable SQL has no boolean) as a JSON boolean.
@@ -69,7 +72,7 @@ async fn list(
     QueryParams(q): QueryParams<PageQuery>,
 ) -> ApiResult<Json<Page<AdminUser>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
-    let rows: Vec<AdminUser> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let mut rows: Vec<AdminUser> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{USER_COLUMNS} AND (created_at < $1 OR (created_at = $1 AND id < $2)) ORDER BY created_at DESC, id DESC LIMIT $3"
     )))
     .bind(paging.before_time())
@@ -77,6 +80,15 @@ async fn list(
     .bind(paging.fetch_limit())
     .fetch_all(&state.db)
     .await?;
+    let now = state.clock.now_ms();
+    for user in &mut rows {
+        use crate::auth::second_factor as sf;
+        let has = sf::methods(&state.db, &user.id).await?;
+        let required = sf::required_for(&state, &user.id, user.is_server_admin.0).await?.is_some();
+        let locked = sf::locked_until(&state.db, &user.id, now).await?;
+        user.second_factor =
+            sf::summary(i64::from(has.totp.is_some()), has.passkeys.len() as i64, locked, required, now);
+    }
     Ok(Json(paging.page(rows, |u| (u.created_at, u.id.as_str()))))
 }
 

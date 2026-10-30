@@ -264,7 +264,7 @@ describe("administration overview", () => {
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/settings/organization", "/admin/audit"]);
     const server = screen.getByRole("region", { name: "Server" });
-    expect(within(server).getAllByRole("link")).toHaveLength(6);
+    expect(within(server).getAllByRole("link")).toHaveLength(7);
     // A server admin finds usage under Server, for every organization, not twice.
     expect(
       within(server)

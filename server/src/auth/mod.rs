@@ -1,8 +1,12 @@
 pub mod api_token;
 pub mod device;
+pub mod passkeys;
 pub mod password;
 pub mod ratelimit;
+pub mod recovery;
+pub mod second_factor;
 pub mod session;
+pub mod totp;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;

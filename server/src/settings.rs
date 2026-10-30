@@ -13,8 +13,9 @@
 //!
 //! Organization settings are the `org_settings` table, then the default. A setting set in the
 //! environment or file is read-only in the UI. Database values are cached per process and the
-//! cache is dropped on every write; other server processes on the same database see a change
-//! within `CACHE_TTL_MS`.
+//! cache is dropped on every write; other server processes on the same database drop theirs when
+//! the change reaches them (`cluster`, usually within a second), and at the latest after
+//! `CACHE_TTL_MS`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
@@ -444,6 +445,32 @@ pub const REGISTRY: &[SettingDef] = &[
         ui_editable: true,
         description: "First day of the week for users who have not chosen one.",
     },
+    // The second factor (`auth::second_factor`): who must have one, server-wide and per
+    // organization (only ever stricter than the server), and which methods may be set up.
+    SettingDef {
+        key: "security.two_factor_required",
+        scope: Scope::Server,
+        default: || json!("off"),
+        ui_editable: true,
+        description: "Who must sign in with a second factor: off, admins (server admins and organization admins) or \
+                      everyone. Whoever has none sets one up at the next sign-in. The minimum for every organization.",
+    },
+    SettingDef {
+        key: "security.two_factor_methods",
+        scope: Scope::Server,
+        default: || json!("all"),
+        ui_editable: true,
+        description: "Second factors people may set up: all, passkey or totp (authenticator app). Recovery codes \
+                      always come with them.",
+    },
+    SettingDef {
+        key: "security.two_factor_required",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Who in this organization must sign in with a second factor: inherit (the server's rule), admins \
+                      or everyone. Never laxer than the server.",
+    },
     SettingDef {
         key: "signin.welcome",
         scope: Scope::Server,
@@ -697,6 +724,10 @@ fn rule_for(key: &str, scope: Scope) -> Option<Rule> {
     if scope == Scope::Org && (key.starts_with("appearance.") || (key.starts_with("ai.") && key != "ai.org_enabled")) {
         return Some(Rule::Inherit(Box::new(rule(key)?)));
     }
+    // An organization's second factor rule adds to the server's; it cannot turn it off.
+    if scope == Scope::Org && key == "security.two_factor_required" {
+        return Some(Rule::Inherit(Box::new(Rule::OneOf(&["admins", "everyone"]))));
+    }
     rule(key)
 }
 
@@ -748,6 +779,8 @@ fn rule(key: &str) -> Option<Rule> {
         "appearance.start_page" => Rule::OneOf(crate::appearance::START_PAGES),
         "appearance.time_zone" => Rule::TimeZone,
         "appearance.week_start" => Rule::OneOf(crate::routes::preferences::WEEK_STARTS),
+        "security.two_factor_required" => Rule::OneOf(&["off", "admins", "everyone"]),
+        "security.two_factor_methods" => Rule::OneOf(&["all", "passkey", "totp"]),
         "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
         "signin.notice" => Rule::Text { max_chars: 2000, multiline: true, required: false },
         "updates.channel" => Rule::OneOf(&["stable", "preview"]),
@@ -1071,7 +1104,18 @@ impl Cache {
         }
     }
 
-    /// Drops the cached rows of the server (`None`) or one organization.
+    /// Drops every cached row (another server may have changed anything while this one could
+    /// not hear about it).
+    pub fn invalidate_all_here(&self) {
+        let mut inner = self.lock();
+        inner.generation += 1;
+        inner.server = None;
+        inner.orgs.clear();
+    }
+
+    /// Drops the cached rows of the server (`None`) or one organization on this server. The
+    /// other servers on the same database learn of the write from `store` and `reset`, which
+    /// announce it in the write's transaction (`cluster::record`).
     pub fn invalidate(&self, org_id: Option<&str>) {
         let mut inner = self.lock();
         inner.generation += 1;
@@ -1261,6 +1305,11 @@ pub async fn reset(
         }
     }
     .rows_affected();
+    if affected == 1 {
+        // The other servers on the same database drop their copy (`cluster`); in this
+        // transaction, so the announcement exists exactly when the write does.
+        crate::cluster::record(conn, "", &crate::cluster::Change::Settings(org_id.map(str::to_string))).await?;
+    }
     Ok((affected == 1).then_some(next))
 }
 
@@ -1334,6 +1383,11 @@ pub async fn store(
             }
         }
         .rows_affected();
+    if affected == 1 {
+        // The other servers on the same database drop their copy (`cluster`); in this
+        // transaction, so the announcement exists exactly when the write does.
+        crate::cluster::record(conn, "", &crate::cluster::Change::Settings(org_id.map(str::to_string))).await?;
+    }
     Ok((affected == 1).then_some(next))
 }
 
@@ -1350,7 +1404,13 @@ mod tests {
             assert!(!d.description.is_empty());
             // A key in both scopes is an organization override of the server's value.
             if d.scope == Scope::Org && find(d.key, Scope::Server).is_some() {
-                assert!(d.key.starts_with("appearance.") || d.key.starts_with("ai."), "{} is in both scopes", d.key);
+                assert!(
+                    d.key.starts_with("appearance.")
+                        || d.key.starts_with("ai.")
+                        || d.key == "security.two_factor_required",
+                    "{} is in both scopes",
+                    d.key
+                );
                 assert_eq!((d.default)(), json!(INHERIT), "{} starts by following the server", d.key);
             }
         }

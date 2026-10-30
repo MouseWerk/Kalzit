@@ -1,0 +1,361 @@
+/*
+ * The second factor (docs/design/blueprint/Identity.dc.html, frames 2, 4 and 7): the second step of
+ * the sign-in, the forced setup, the account's methods and the admin's reset. Selected tiles are a
+ * neutral tint with weight and a check, never a colored frame; errors are a tinted fill.
+ */
+@layer components {
+  .factor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .factor__or {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-align: center;
+  }
+
+  .factor__links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .factor__code input {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    letter-spacing: var(--letter-spacing-caps);
+  }
+
+  .factor__who {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .factor__who strong {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .factor-tiles {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .factor-tile {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text);
+    text-align: start;
+  }
+
+  .factor-tile:hover {
+    background: var(--bg-hover);
+  }
+
+  .factor-tile[aria-checked="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .factor-tile__text {
+    display: grid;
+    flex: 1;
+    gap: var(--space-1);
+  }
+
+  .factor-tile__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .factor-tile__check {
+    color: var(--text);
+  }
+
+  .totp-setup {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .totp-setup__scan {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-4);
+  }
+
+  .totp-setup__qr {
+    flex: none;
+    width: var(--size-qr);
+    height: var(--size-qr);
+    border-radius: var(--radius-sm);
+    background: var(--qr-light);
+  }
+
+  .totp-setup__qr path {
+    fill: var(--qr-dark);
+  }
+
+  .totp-setup__manual {
+    display: grid;
+    /* Next to the code while there is room for the key, otherwise below it. */
+    flex: 1 1 var(--size-qr);
+    gap: var(--space-2);
+    min-width: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .totp-setup__key {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .totp-setup__meta {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .totp-setup__step {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .recovery-codes {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .recovery-codes__list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-1) var(--space-4);
+    max-width: var(--size-recovery-codes);
+    margin: 0;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    list-style: none;
+  }
+
+  .recovery-codes__item {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .recovery-codes__number {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .recovery-codes__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .recovery-codes__saved {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .recovery-codes__note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .security-card {
+    display: grid;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .security-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .security-row:first-child {
+    border-top: 0;
+  }
+
+  .security-row__text {
+    display: grid;
+    flex: 1;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .security-row__title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .security-row__meta {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .security-row__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .security-passkeys {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .security-passkeys__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .security-passkeys__table th {
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    text-align: start;
+  }
+
+  .security-passkeys__table td {
+    padding: var(--space-2);
+    border-top: var(--border-width) solid var(--border);
+    vertical-align: middle;
+  }
+
+  .security-passkeys__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .security-quiet {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+    font-size: var(--font-size-sm);
+  }
+
+  .security-quiet p {
+    flex: 1;
+    margin: 0;
+  }
+
+  .security-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--font-size-sm);
+  }
+
+  .security-status--missing {
+    color: var(--warning-text);
+  }
+
+  .security-reset__list {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding-inline-start: var(--space-5);
+    font-size: var(--font-size-sm);
+  }
+
+  .security-policy {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .security-policy th {
+    padding: var(--space-2);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    text-align: start;
+  }
+
+  .security-policy td {
+    padding: var(--space-2);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  @media print {
+    body * {
+      visibility: hidden;
+    }
+
+    .recovery-codes__list,
+    .recovery-codes__list * {
+      visibility: visible;
+    }
+
+    .recovery-codes__list {
+      position: absolute;
+      inset: 0 auto auto 0;
+    }
+  }
+
+  @media (width <= 40rem) {
+    .security-passkeys__table thead {
+      display: none;
+    }
+
+    .security-passkeys__table tr {
+      display: grid;
+      gap: var(--space-1);
+      padding: var(--space-2) 0;
+      border-top: var(--border-width) solid var(--border);
+    }
+
+    .security-passkeys__table td {
+      padding: 0;
+      border-top: 0;
+    }
+
+    .security-passkeys__actions {
+      justify-content: flex-start;
+    }
+  }
+}

@@ -97,6 +97,8 @@ mod tests {
         "ai",
         // ACME certificates (docs/api/datasources.md, "HTTPS certificates").
         "acme",
+        // The second factor of a sign-in (docs/api/access.md).
+        "second_factor",
         // Service accounts and API tokens (docs/api/access.md).
         "serviceaccount",
         "token",
@@ -304,7 +306,7 @@ mod tests {
         let unknown: Vec<_> = docs.difference(&code).collect();
         assert!(
             undocumented.is_empty() && unknown.is_empty(),
-            "in the code but not in docs/api/datasources.md, ai.md or plugins.md: {undocumented:?}; documented but not in the code: {unknown:?}"
+            "in the code but not in docs/api/datasources.md, ai.md, plugins.md or access.md: {undocumented:?}; documented but not in the code: {unknown:?}"
         );
         assert!(code.len() > 100, "the scan found only {} reasons", code.len());
     }

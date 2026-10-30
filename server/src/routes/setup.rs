@@ -117,6 +117,15 @@ impl SetupGate {
         self.state.lock().await.is_some()
     }
 
+    /// Closes the gate: another server on the same database finished setup (`cluster`).
+    pub async fn close(&self) {
+        let mut gate = self.state.lock().await;
+        if gate.is_some() {
+            close_gate(&mut gate);
+            tracing::info!("setup was completed on another server");
+        }
+    }
+
     /// Where to find the code while setup is open (`file`, `docker` or `fixed`).
     pub async fn code_hint(&self) -> Option<&'static str> {
         self.state.lock().await.as_ref().map(|g| g.hint.as_str())
@@ -409,6 +418,25 @@ pub async fn complete(
     ];
     let org_time_zone = setup_setting("appearance.time_zone", Scope::Org, req.time_zone.as_deref(), "timeZone")?;
     let hash = password::hash(req.password).await?;
+    // The first owner is a server admin and the owner of the organization: a second factor rule of
+    // the server (only the environment or kalzit.toml can set one before setup) applies to them as
+    // to everyone, so they set one up before a session opens, as at any sign-in. Read before the
+    // transaction, so it holds no second connection.
+    use crate::auth::second_factor as sf;
+    let second_step = if sf::server_requirement(&state).await? == sf::Requirement::Off {
+        None
+    } else {
+        Some(sf::Prompt {
+            email: email.clone(),
+            setup: true,
+            methods: Vec::new(),
+            last_used: None,
+            allowed: sf::allowed(&state, &info).await?,
+            required_by: Some(sf::RequiredBy::Server),
+            locked_until: None,
+            expires_at: now + sf::CHALLENGE_TTL_MS,
+        })
+    };
 
     let org_id = new_id();
     let user_id = new_id();
@@ -471,11 +499,25 @@ pub async fn complete(
     if let Some((def, value)) = &org_time_zone {
         store_setup_setting(&mut tx, Some(&org_id), def.key, value, &user_id, &info, now).await?;
     }
-    // The session and the answer are part of the transaction: once it is committed, nothing may
-    // fail as "busy, nothing changed".
-    let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
-    let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
-    let answer = me(&mut *tx, user).await?;
+    // The session (or, with a second factor required, the half-signed-in state) and the answer are
+    // part of the transaction: once it is committed, nothing may fail as "busy, nothing changed".
+    let mut headers = HeaderMap::new();
+    let body = match second_step {
+        None => {
+            let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
+            let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
+            headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
+            serde_json::to_value(me(&mut *tx, user).await?).map_err(|e| ApiError::internal("setup", e))?
+        }
+        Some(prompt) => {
+            let first = sf::FirstStep::Password { password_hash: Some(&hash) };
+            let token = sf::create_pending(&mut tx, &user_id, true, false, first, now).await?;
+            headers.insert(header::SET_COOKIE, sf::set_pending_cookie(&token, info.https));
+            json!({ "secondFactor": prompt })
+        }
+    };
+    // The other servers on the same database close their gate (`cluster`).
+    crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::SetupDone).await?;
     crate::db::commit(tx).await?;
     let cache = settings::cache(&state);
     cache.invalidate(None);
@@ -484,10 +526,7 @@ pub async fn complete(
     close_gate(&mut gate);
     drop(gate);
     tracing::info!(user = %user_id, org = %org_id, "setup complete");
-
-    let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    Ok((headers, Json(answer)))
+    Ok((headers, Json(body)))
 }
 
 #[cfg(test)]

@@ -1140,21 +1140,27 @@ pub fn spawn_trash_purge(state: AppState) {
 /// `spawn_trash_purge` on another schedule (tests).
 pub fn spawn_trash_purge_on(state: AppState, schedule: crate::db::Schedule) {
     use crate::db::JobError;
-    let background = state.background.clone();
-    crate::db::spawn_job(&background, "purging trashed data sources", schedule, move || {
-        let state = state.clone();
-        async move {
-            match purge_expired_in(&state, state.background.db()).await {
-                Ok(0) => Ok(()),
-                Ok(n) => {
-                    tracing::info!("purged {n} data sources that were in the trash for {TRASH_DAYS} days");
-                    Ok(())
+    let cluster_state = state.clone();
+    crate::cluster::spawn_job(
+        &cluster_state,
+        "datasources:trash_purge",
+        "purging trashed data sources",
+        schedule,
+        move || {
+            let state = state.clone();
+            async move {
+                match purge_expired_in(&state, state.background.db()).await {
+                    Ok(0) => Ok(()),
+                    Ok(n) => {
+                        tracing::info!("purged {n} data sources that were in the trash for {TRASH_DAYS} days");
+                        Ok(())
+                    }
+                    Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),
+                    Err(e) => Err(JobError::Failed(e.message)),
                 }
-                Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),
-                Err(e) => Err(JobError::Failed(e.message)),
             }
-        }
-    });
+        },
+    );
 }
 
 async fn health(

@@ -8,20 +8,24 @@ import { noticeText, reasonText } from "./reasons";
 
 /**
  * The rows of the "Reasons" tables in docs/api/datasources.md, docs/api/plugins.md (plugin
- * reasons reach the data source routes too) and docs/api/access.md (service accounts and
- * tokens): codes and their params.
+ * reasons reach the data source routes too) and the service account part of docs/api/access.md
+ * (the second factor's reasons there have texts of their own): codes and their params.
  */
 function documentedReasons(): Map<string, Set<string>> {
   const reasons = new Map<string, Set<string>>();
-  for (const file of ["datasources.md", "plugins.md", "access.md"]) {
+  for (const [file, heading] of [
+    ["datasources.md", "\n## Reasons"],
+    ["plugins.md", "\n## Reasons"],
+    ["access.md", "\n### Service accounts and tokens"],
+  ] as const) {
     const doc = readFileSync(resolve(import.meta.dirname, "../../../../docs/api", file), "utf8");
-    readReasons(doc, reasons);
+    readReasons(doc, reasons, heading);
   }
   return reasons;
 }
 
-function readReasons(doc: string, reasons: Map<string, Set<string>>): void {
-  const start = doc.indexOf("\n## Reasons");
+function readReasons(doc: string, reasons: Map<string, Set<string>>, heading: string): void {
+  const start = doc.indexOf(heading);
   const next = doc.indexOf("\n## ", start + 1);
   const end = next === -1 ? doc.length : next;
   // "Every reason here has the param `field`", says the settings section of the docs.

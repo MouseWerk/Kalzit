@@ -107,6 +107,7 @@ accounts.
 | "Certificate files are set in kalzit.toml" | Remove `tls.cert_file` and `tls.key_file` and restart |
 | The browser warns about a self-signed certificate | No certificate yet: see the card's state and last error |
 
-With several Kalzit servers behind one load balancer, each orders its own certificate and
-answers only its own validations; terminate TLS at the load balancer instead, or give each
-server its own name.
+With several Kalzit servers on one PostgreSQL database behind a load balancer, the leading server
+orders and renews the certificate and every server serves it; HTTP-01 validations are answered
+by whichever server the certificate authority reaches. Prefer HTTP-01 there: TLS-ALPN-01 needs
+the balancer to pass port 443 through as plain TCP. See docs/operations/high-availability.md.

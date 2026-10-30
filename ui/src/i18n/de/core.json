@@ -46,6 +46,8 @@
   "errors.unauthenticated": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
   "errors.forbidden": "Dafür fehlt dir die Berechtigung.",
   "errors.invalid_credentials": "E-Mail-Adresse oder Passwort stimmt nicht.",
+  "errors.invalid_code": "Der Code stimmt nicht. Codes wechseln alle 30 Sekunden; prüf auch die Uhrzeit deines Telefons.",
+  "errors.confirmation_required": "Bestätige zuerst mit deinem zweiten Faktor, dann versuch es erneut.",
   "errors.rate_limited": "Zu viele Versuche. Warte einen Moment und versuch es dann noch einmal.",
   "errors.busy": "Der Server ist gerade ausgelastet. Versuch es gleich noch einmal.",
   "errors.cross_origin": "Der Server hat die Anfrage abgelehnt, weil diese Adresse nicht zu seiner Konfiguration passt. Wenn der Server hinter einem Reverse Proxy läuft, setz in seiner Konfiguration server.public_url oder security.trusted_proxies.",
