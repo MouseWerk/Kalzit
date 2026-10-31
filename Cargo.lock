@@ -2925,6 +2925,8 @@ dependencies = [
  "icu_collator",
  "icu_collator_data",
  "icu_locale_core",
+ "icu_normalizer_data",
+ "icu_properties_data",
  "instant-acme",
  "ipnet",
  "kalzit-plugin-api",

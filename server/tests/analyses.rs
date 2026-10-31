@@ -270,6 +270,33 @@ macro_rules! on_both_databases {
     };
 }
 
+/// The sort key refresh at startup holds its advisory lock and does its work on one connection,
+/// so a server with `database.max_connections = 1` still starts on PostgreSQL, and fills keys
+/// that are missing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_sort_key_refresh_needs_one_connection() {
+    let Some(base) = common::postgres_url("the sort key refresh on one connection") else { return };
+    let schema = common::postgres_schema(&base).await;
+    let connect = kalzit::db::connect(&schema.url, 1);
+    let db = tokio::time::timeout(std::time::Duration::from_secs(60), connect).await.expect("starts").unwrap();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)").execute(&db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO dashboards (id, org_id, title, search_title, version, created_at, updated_at) \
+         VALUES ('d', 'o', 'Äpfel', 'äpfel', 1, 0, 0)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(60), kalzit::collation::refresh(&db))
+        .await
+        .expect("refreshes")
+        .unwrap();
+    let (stored,): (Vec<u8>,) = sqlx::query_as("SELECT sort_title FROM dashboards").fetch_one(&db).await.unwrap();
+    assert_eq!(stored, kalzit::collation::key("Äpfel"));
+    db.close().await;
+    schema.drop_now().await;
+}
+
 on_both_databases! {
     create_read_save_and_list,
     lists_follow_the_language_order_on_every_database,

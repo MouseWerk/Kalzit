@@ -202,13 +202,13 @@ async fn list(
 ) -> ApiResult<Json<Page<ServiceAccount>>> {
     refuse_tokens(caller.as_deref())?;
     let limit = page_limit(q.limit)?;
-    let after: String = decode_cursor(q.cursor.as_deref())?.unwrap_or_default();
+    let after: Option<String> = decode_cursor(q.cursor.as_deref())?;
     let mut rows: Vec<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{ACCOUNT_COLUMNS} AND a.sort_name > $3 ORDER BY a.sort_name, a.id LIMIT $4"
+        "{ACCOUNT_COLUMNS} AND (CAST($3 AS TEXT) IS NULL OR a.sort_name > $3) ORDER BY a.sort_name, a.id LIMIT $4"
     )))
     .bind(&ctx.org_id)
     .bind(state.clock.now_ms())
-    .bind(collation::key(&after))
+    .bind(after.as_deref().map(collation::key))
     .bind(i64::from(limit) + 1)
     .fetch_all(&state.read_db)
     .await?;

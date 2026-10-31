@@ -115,9 +115,11 @@ a change made during a start is not missed either. What this guarantees:
 - The query cache keeps answers per server. A change of rights or of a data source ends the kept
   answers on every server; permissions are checked on every request before the cache, so an
   answer is never served to someone who may no longer see it.
-Connection poolers: PgBouncer in transaction mode does not pass `LISTEN`; Kalzit then polls every
-second, which works but adds a small query per second per server. Session mode, or a direct
-connection for Kalzit, keeps notifications.
+Connection poolers: a pooler between Kalzit and PostgreSQL must run in session mode (PgBouncer
+`pool_mode = session`), or Kalzit connects directly. At startup the database migrations and the
+sort key refresh hold an advisory lock on one connection, which transaction mode does not keep;
+session mode also passes `LISTEN`, so changes arrive by notification instead of the polling every
+second that remains as a fallback.
 
 ## What stays per server
 
@@ -164,10 +166,13 @@ servers promptly. Verwaltung, Instanzen lists each server's version and warns wh
 `kalzit update apply` (the command line, with that server stopped) works per server as well.
 
 Lists sort by keys the server stores next to each title and name. A release with a new collator
-recomputes them at its first start, one server at a time (the others wait for it), in batches, so
-a large installation stays usable meanwhile. An older server would keep writing keys in its own
-order for what it saves, and a start repairs only keys that are missing, so the release notes of
-such a release say "stop every server": stop all servers, update one, start it, then the others.
+recomputes them at its first start, in batches, one server at a time: a server that is
+recomputing, or waiting for another to finish, does not answer `/readyz` until it is done, while
+servers that are already running keep serving. An older server would keep writing keys in its
+own order for what it saves, and a start repairs only keys that are missing, so the release notes
+of such a release say "stop every server": stop all servers, update one, start it, then the
+others. On large installations that first start can take longer than usual; raise
+`updates.health_timeout_secs` before a self-update if the notes ask for it.
 
 ## Adding and removing servers
 

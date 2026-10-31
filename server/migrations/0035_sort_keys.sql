@@ -21,6 +21,12 @@ CREATE INDEX analyses_org_sort ON analyses (org_id, sort_title, id);
 CREATE INDEX library_panels_org_sort ON library_panels (org_id, sort_name, id);
 CREATE INDEX playlists_org_sort ON playlists (org_id, sort_name, id);
 CREATE INDEX service_accounts_org_sort ON service_accounts (org_id, sort_name, id);
+-- Rows still without a key, which every start fills: normally none, so these stay empty.
+CREATE INDEX dashboards_sort_missing ON dashboards (id) WHERE sort_title = '';
+CREATE INDEX analyses_sort_missing ON analyses (id) WHERE sort_title = '';
+CREATE INDEX library_panels_sort_missing ON library_panels (id) WHERE sort_name = '';
+CREATE INDEX playlists_sort_missing ON playlists (id) WHERE sort_name = '';
+CREATE INDEX service_accounts_sort_missing ON service_accounts (id) WHERE sort_name = '';
 
 -- The order the stored keys were made with (`collation::VERSION`); one row.
 CREATE TABLE sort_key_state (

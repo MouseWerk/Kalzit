@@ -95,10 +95,13 @@ tower = { version = "0.5.3", features = ["util"] }
 unicode-normalization = "0.1.26"
 # The sort order of titles and names (`collation`): ICU4X's collator with its compiled CLDR data,
 # pure Rust, no system ICU. The same keys on SQLite and PostgreSQL, Windows and Linux. Pinned
-# exactly: the stored sort keys depend on the collator and its data, so any bump must change
-# `collation::VERSION` (which recomputes them; a test compares it with Cargo.lock).
+# exactly: the stored sort keys depend on the collator and its data (collation, normalization and
+# character properties), so any bump must change `collation::VERSION` (which recomputes them; a
+# test compares it with Cargo.lock).
 icu_collator = "=2.4.0"
 icu_collator_data = "=2.4.0"
+icu_normalizer_data = "=2.4.0"
+icu_properties_data = "=2.4.0"
 tower-http = { version = "0.7.1", features = ["trace", "set-header", "catch-panic"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }

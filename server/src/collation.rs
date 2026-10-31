@@ -24,11 +24,13 @@ use icu_collator::options::{CollatorOptions, Strength};
 use icu_collator::{Collator, CollatorBorrowed};
 use sqlx::AnyPool;
 
-/// Names the order of the stored keys: the collator and its data (pinned exactly in Cargo.toml),
-/// the strength and the key layout. A build with another value recomputes every key at startup,
-/// so any change of the collator or its data changes this too (a test compares it with
-/// Cargo.lock).
-pub const VERSION: &str = "icu_collator-2.4.0+data-2.4.0/root/secondary/400";
+/// Names the order of the stored keys: the collator and the data it reads (collation,
+/// normalization, character properties; all pinned exactly in Cargo.toml), the strength and the
+/// key layout. A build with another value recomputes every key at startup, so any change of the
+/// collator or its data changes this too (a test compares it with Cargo.lock). The release notes
+/// of such a version say "stop every server" (docs/operations/high-availability.md) and warn that
+/// the first start may take longer than `updates.health_timeout_secs` on large installations.
+pub const VERSION: &str = "icu_collator-2.4.0+data-2.4.0+normalizer-2.4.0+properties-2.4.0/root/secondary/400";
 
 /// The sort key bytes kept per text. Titles are at most 200 characters; most keys are far shorter.
 const MAX_KEY_BYTES: usize = 400;
@@ -75,43 +77,62 @@ pub fn compare(a: &str, b: &str) -> Ordering {
 /// - Otherwise only rows without a key are filled (rows written by an older build or by hand).
 ///
 /// Rows go in batches of `BATCH` per transaction, in id order. A key is written only while the
-/// text is still the one it was made from, so a rename meanwhile keeps its own key. On PostgreSQL
-/// an advisory lock lets one server at a time do this; a server that waited finds the keys up to
-/// date. (The migrations before it take such a lock as well, so the same connection rules apply.)
+/// text is still the one it was made from, so a rename meanwhile keeps its own key.
+///
+/// Everything runs on one connection, so a pool of one connection is enough. On PostgreSQL that
+/// connection holds an advisory lock, so one server at a time does this; a server that waited
+/// finds the keys up to date. (The migrations before it take such a lock as well, so the same
+/// connection rules apply: a pooler in between must run in session mode.) A connection that may
+/// still hold the lock never goes back to the pool: it is closed.
 pub async fn refresh(pool: &AnyPool) -> Result<()> {
-    let mut lock = None;
-    if pool.connect_options().database_url.scheme() != "sqlite" {
-        let mut conn = pool.acquire().await.context("locking the sort key refresh")?;
+    let conn = pool.acquire().await.context("connecting for the sort key refresh")?;
+    let postgres = conn.backend_name() == "PostgreSQL";
+    let mut held = Held(Some(conn));
+    let conn = held.0.as_mut().expect("held above");
+    if postgres {
         // `pg_advisory_lock` returns void, which the `Any` driver cannot read; counting the row works.
         sqlx::query("SELECT COUNT(*) FROM (SELECT pg_advisory_lock($1)) AS locked")
             .bind(REFRESH_LOCK)
-            .execute(&mut *conn)
+            .execute(&mut **conn)
             .await
             .context("locking the sort key refresh")?;
-        lock = Some(conn);
     }
-    let result = refresh_keys(pool).await;
-    if let Some(mut conn) = lock {
-        let unlocked =
-            sqlx::query("SELECT pg_advisory_unlock($1)").bind(REFRESH_LOCK).execute(&mut *conn).await.is_ok();
-        if !unlocked {
-            // Closing the connection lets go of the lock.
-            let _ = conn.close().await;
+    let result = refresh_keys(conn).await;
+    if postgres {
+        let unlocked: Option<(bool,)> =
+            sqlx::query_as("SELECT pg_advisory_unlock($1)").bind(REFRESH_LOCK).fetch_one(&mut **conn).await.ok();
+        if unlocked != Some((true,)) {
+            // Dropping `held` closes the connection, which lets go of the lock.
+            return result;
         }
     }
+    // Unlocked (or SQLite): the connection may go back to the pool.
+    held.0.take();
     result
 }
 
-async fn refresh_keys(pool: &AnyPool) -> Result<()> {
+/// The refresh's connection. Dropped while it holds one (an error, a panic, a cancelled start), it
+/// is detached from the pool and closed, so a held advisory lock ends with it.
+struct Held(Option<sqlx::pool::PoolConnection<sqlx::Any>>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let Some(conn) = self.0.take() {
+            drop(conn.detach());
+        }
+    }
+}
+
+async fn refresh_keys(conn: &mut sqlx::AnyConnection) -> Result<()> {
     let stored: Option<(String,)> = sqlx::query_as("SELECT version FROM sort_key_state WHERE id = 1")
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await
         .context("reading the sort key version")?;
     let current = stored.as_ref().is_some_and(|(v,)| v == VERSION);
     for (table, text, key_column) in KEYED {
-        // Table and column names are the constants above, so nothing else reaches the SQL.
-        let only_missing =
-            if current { format!(" AND length({key_column}) = 0 AND length({text}) > 0") } else { String::new() };
+        // Table and column names are the constants above, so nothing else reaches the SQL. Missing
+        // keys are the column default; a partial index (0035) finds them.
+        let only_missing = if current { format!(" AND {key_column} = '' AND {text} <> ''") } else { String::new() };
         let select = format!("SELECT id, {text} FROM {table} WHERE id > $1{only_missing} ORDER BY id LIMIT $2");
         let update =
             format!("UPDATE {table} SET {key_column} = $1 WHERE id = $2 AND {text} = $3 AND {key_column} <> $1");
@@ -120,12 +141,12 @@ async fn refresh_keys(pool: &AnyPool) -> Result<()> {
             let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(select.as_str()))
                 .bind(&after)
                 .bind(BATCH)
-                .fetch_all(pool)
+                .fetch_all(&mut *conn)
                 .await
                 .with_context(|| format!("reading {table} for their sort keys"))?;
             let Some((last, _)) = rows.last() else { break };
             after = last.clone();
-            let mut tx = crate::db::begin(pool).await.context("writing sort keys")?;
+            let mut tx = crate::db::begin_on(conn).await.context("writing sort keys")?;
             for (id, value) in &rows {
                 sqlx::query(sqlx::AssertSqlSafe(update.as_str()))
                     .bind(key(value))
@@ -147,7 +168,7 @@ async fn refresh_keys(pool: &AnyPool) -> Result<()> {
              ON CONFLICT (id) DO UPDATE SET version = excluded.version",
         )
         .bind(VERSION)
-        .execute(pool)
+        .execute(&mut *conn)
         .await
         .context("storing the sort key version")?;
     }
@@ -238,7 +259,13 @@ mod tests {
     /// `VERSION`, which recomputes the stored keys.
     #[test]
     fn the_version_names_the_collator_and_its_data() {
-        let expected = format!("icu_collator-{}+data-{}/", locked("icu_collator"), locked("icu_collator_data"));
+        let expected = format!(
+            "icu_collator-{}+data-{}+normalizer-{}+properties-{}/",
+            locked("icu_collator"),
+            locked("icu_collator_data"),
+            locked("icu_normalizer_data"),
+            locked("icu_properties_data"),
+        );
         assert!(VERSION.starts_with(&expected), "change VERSION to start with {expected}");
     }
 

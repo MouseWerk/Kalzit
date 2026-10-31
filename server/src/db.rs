@@ -345,6 +345,14 @@ pub async fn begin(pool: &AnyPool) -> Result<Transaction<'static, Any>, sqlx::Er
     }
 }
 
+/// `begin` on a connection the caller holds, for work that must stay on one connection (the sort
+/// key refresh keeps its PostgreSQL advisory lock on it).
+#[expect(clippy::disallowed_methods, reason = "the one place transactions of Kalzit's database start")]
+pub async fn begin_on(conn: &mut sqlx::AnyConnection) -> Result<Transaction<'_, Any>, sqlx::Error> {
+    use sqlx::Connection;
+    if conn.backend_name() == "SQLite" { conn.begin_with("BEGIN IMMEDIATE").await } else { conn.begin().await }
+}
+
 tokio::task_local! {
     /// Set once a transaction of the current request has committed (see `commit`).
     static COMMITTED: Cell<bool>;
@@ -354,7 +362,7 @@ tokio::task_local! {
 /// database error answers `internal`, never `busy`, because "nothing changed, send it again" would
 /// no longer be true. Every commit goes through here (clippy refuses sqlx's own elsewhere).
 #[expect(clippy::disallowed_methods, reason = "the one place transactions of Kalzit's database commit")]
-pub async fn commit(tx: Transaction<'static, Any>) -> Result<(), sqlx::Error> {
+pub async fn commit(tx: Transaction<'_, Any>) -> Result<(), sqlx::Error> {
     tx.commit().await?;
     // Outside a request (startup, background tasks, tests) there is no scope and nothing to mark.
     let _ = COMMITTED.try_with(|c| c.set(true));
