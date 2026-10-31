@@ -108,8 +108,6 @@ rcgen = "0.14.10"
 
 [dev-dependencies]
 http-body-util = "0.1.5"
-# An HTTP/2 client for the connection limit tests; the hyper the server already uses.
-hyper = { version = "1.12.0", features = ["client", "http1", "http2"] }
 # The software authenticator of the passkey tests: P-256 keys and ECDSA signatures (ES256).
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
 # Packages the example plugin in the plugin contract tests.

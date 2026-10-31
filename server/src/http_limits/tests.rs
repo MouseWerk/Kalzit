@@ -6,8 +6,7 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
-use http_body_util::{BodyExt, Empty};
-use hyper_util::rt::TokioIo;
+use http_body_util::BodyExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tower::ServiceExt;
@@ -157,20 +156,27 @@ async fn a_silent_connection_is_closed() {
 #[tokio::test]
 async fn http2_connections_without_streams_are_closed() {
     let addr = serve().await;
-    let tcp = TcpStream::connect(addr).await.unwrap();
-    let (mut send, conn) =
-        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tcp)).await.unwrap();
-    let driver = tokio::spawn(conn);
-    let get = |path: &str| http::Request::get(format!("http://x{path}")).body(Empty::<Bytes>::new()).unwrap();
+    // A bare prior-knowledge HTTP/2 client: the preface, empty SETTINGS, and one HEADERS frame on
+    // stream 1 (END_STREAM | END_HEADERS) for GET /stream, its header block in HPACK with the
+    // static table (:method GET, :scheme http, :path and :authority as literals).
+    let mut headers = vec![0x82, 0x86, 0x44, 7];
+    headers.extend_from_slice(b"/stream");
+    headers.extend_from_slice(&[0x41, 1, b'x']);
+    let mut hello = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+    hello.extend_from_slice(&[0, 0, 0, 0x04, 0, 0, 0, 0, 0]);
+    hello.extend_from_slice(&[0, 0, headers.len() as u8, 0x01, 0x05, 0, 0, 0, 1]);
+    hello.extend_from_slice(&headers);
+    let mut conn = TcpStream::connect(addr).await.unwrap();
+    conn.write_all(&hello).await.unwrap();
 
-    let res = send.send_request(get("/stream")).await.unwrap();
-    assert_eq!(res.version(), Version::HTTP_2);
-    let body = res.into_body().collect().await.expect("the open stream is not cut").to_bytes();
-    assert_eq!(&body[..], b"done");
-    assert!(!driver.is_finished());
-
-    let closed = tokio::time::timeout(SHORT.idle * 3, driver).await;
-    assert!(closed.is_ok(), "the connection without streams is closed");
+    let started = Instant::now();
+    let mut received = Vec::new();
+    let read = tokio::time::timeout(SHORT.idle * 6, conn.read_to_end(&mut received)).await;
+    assert!(read.is_ok(), "the connection without streams is closed");
+    let at = started.elapsed();
+    assert!(received.windows(4).any(|w| w == b"done"), "the open stream finished its answer");
+    // The answer took two idle periods and the close came one later, not while the stream was open.
+    assert!(at >= SHORT.idle * 3, "closed after {at:?}");
 }
 
 /// A WebSocket (an upgraded HTTP/1 connection) stays open while it is quiet.
