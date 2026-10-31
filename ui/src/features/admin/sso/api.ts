@@ -73,6 +73,8 @@ export interface SignInOverview {
   viaProviders: number;
   /** The start of the redirect URI of a provider not saved yet. */
   redirectBase: string;
+  /** The start of SAML addresses (`server.public_url`); null while it is not set. */
+  samlBase?: string | null | undefined;
 }
 
 function isOverview(value: unknown): value is SignInOverview {
@@ -291,7 +293,8 @@ export interface TestSignInResult {
 export interface TestSignIn {
   status: "pending" | "done" | "failed";
   result?: TestSignInResult | undefined;
-  error?: { reason: string; message: string } | undefined;
+  /** `params` fills the reason's text (SAML: `minutes` of a clock that is off). */
+  error?: { reason: string; message: string; params?: Record<string, unknown> } | undefined;
 }
 
 function isTestSignIn(value: unknown): value is TestSignIn {
@@ -541,6 +544,192 @@ export async function updateLdap(
     await request("PUT", `/api/admin/sign-in/ldap/${enc(providerId)}`, body),
     isLdapProvider,
     "provider",
+  );
+}
+
+// SAML 2.0 (docs/api/sso.md, "SAML 2.0")
+
+/** The provider's values Kalzit pins, as stored and as a check found them. */
+export interface SamlTrust {
+  metadataUrl: string;
+  idpEntityId: string;
+  ssoUrl: string;
+  /** The pinned signing certificates, base64 DER: one, or two during a rollover. */
+  certificates: string[];
+}
+
+export interface SamlCertificate {
+  fingerprint: string;
+  subject: string;
+  notAfter: number;
+  expired: boolean;
+}
+
+export interface SamlSettings extends SamlTrust {
+  certificateInfo: SamlCertificate[];
+  emailAttribute: string;
+  nameAttribute: string;
+  groupsAttribute: string;
+  trustEmail: boolean;
+}
+
+/** Kalzit's addresses for the provider; null while `server.public_url` is not set. */
+export interface SamlAddresses {
+  spEntityId: string | null;
+  acsUrl: string | null;
+  spMetadataUrl: string | null;
+}
+
+export interface SamlProvider extends SamlAddresses {
+  id: string;
+  slug: string;
+  kind: "saml";
+  name: string;
+  enabled: boolean;
+  position: number;
+  version: number;
+  createAccounts: boolean;
+  trustProviderMfa: boolean;
+  saml: SamlSettings;
+}
+
+const isCertificate = (value: unknown) =>
+  has(value, { fingerprint: isString, subject: isString, notAfter: isNumber, expired: isBoolean });
+const isCertificates = (value: unknown) => Array.isArray(value) && value.every(isCertificate);
+
+const SAML_TRUST = {
+  metadataUrl: isString,
+  idpEntityId: isString,
+  ssoUrl: isString,
+  certificates: isStrings,
+};
+
+const SAML_ADDRESSES = {
+  spEntityId: isStringOrNull,
+  acsUrl: isStringOrNull,
+  spMetadataUrl: isStringOrNull,
+};
+
+function isSamlProvider(value: unknown): value is SamlProvider {
+  return has(value, {
+    ...SAML_ADDRESSES,
+    id: isString,
+    slug: isString,
+    kind: (kind) => kind === "saml",
+    name: isString,
+    enabled: isBoolean,
+    position: isNumber,
+    version: isNumber,
+    createAccounts: isBoolean,
+    trustProviderMfa: isBoolean,
+    saml: (saml) =>
+      has(saml, {
+        ...SAML_TRUST,
+        certificateInfo: isCertificates,
+        emailAttribute: isString,
+        nameAttribute: isString,
+        groupsAttribute: isString,
+        trustEmail: isBoolean,
+      }),
+  });
+}
+
+/**
+ * The form of a SAML provider. For the check, `metadataXml` (an uploaded file) or `metadataUrl`
+ * is read; without either, the provider's values as typed are checked. Saving sends the values
+ * the check found.
+ */
+export interface SamlInput {
+  slug: string;
+  name: string;
+  createAccounts: boolean;
+  trustProviderMfa: boolean;
+  saml: {
+    metadataUrl: string;
+    metadataXml?: string;
+    idpEntityId: string;
+    ssoUrl: string;
+    certificates: string[];
+    emailAttribute: string;
+    nameAttribute: string;
+    groupsAttribute: string;
+    trustEmail: boolean;
+  };
+}
+
+export interface SamlCheck extends SamlAddresses {
+  checkToken: string;
+  durationMs: number;
+  saml: SamlTrust;
+  certificates: SamlCertificate[];
+}
+
+function isSamlCheck(value: unknown): value is SamlCheck {
+  return has(value, {
+    ...SAML_ADDRESSES,
+    checkToken: isString,
+    durationMs: isNumber,
+    saml: (saml) => has(saml, SAML_TRUST),
+    certificates: isCertificates,
+  });
+}
+
+export async function fetchSamlProvider(providerId: string): Promise<SamlProvider> {
+  return expectShape(
+    await request("GET", `/api/admin/sign-in/providers/${enc(providerId)}`),
+    isSamlProvider,
+    "provider",
+  );
+}
+
+export async function checkSaml(
+  input: SamlInput,
+  providerId: string | undefined,
+): Promise<SamlCheck> {
+  const body = providerId === undefined ? input : { ...input, providerId };
+  return expectShape(
+    await request("POST", "/api/admin/sign-in/saml/check", body),
+    isSamlCheck,
+    "provider check",
+  );
+}
+
+export async function createSaml(input: SamlInput, checkToken: string): Promise<SamlProvider> {
+  return expectShape(
+    await request("POST", "/api/admin/sign-in/saml", { ...input, checkToken }),
+    isSamlProvider,
+    "provider",
+  );
+}
+
+export async function updateSaml(
+  providerId: string,
+  input: SamlInput,
+  version: number,
+  checkToken: string | undefined,
+  confirmIssuerChange = false,
+): Promise<SamlProvider> {
+  const body: Record<string, unknown> = { ...input, version };
+  if (checkToken !== undefined) body.checkToken = checkToken;
+  if (confirmIssuerChange) body.confirmIssuerChange = true;
+  return expectShape(
+    await request("PUT", `/api/admin/sign-in/saml/${enc(providerId)}`, body),
+    isSamlProvider,
+    "provider",
+  );
+}
+
+export async function startSamlTest(
+  input: SamlInput,
+  providerId: string | undefined,
+  checkToken: string,
+): Promise<TestSignInStart> {
+  const body =
+    providerId === undefined ? { ...input, checkToken } : { ...input, providerId, checkToken };
+  return expectShape(
+    await request("POST", "/api/admin/sign-in/saml/test-sign-ins", body),
+    (value): value is TestSignInStart => has(value, { id: isString, url: isString }),
+    "test sign-in",
   );
 }
 

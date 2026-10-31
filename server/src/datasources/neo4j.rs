@@ -34,6 +34,7 @@ use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
     SourceQuery, SourceSchema,
 };
+use crate::locks::MutexExt;
 use crate::shapes::{Edge, FieldType, GraphPath, Node, NoticeSeverity, QueryResult, Shape};
 
 const fn common() -> [SettingField; 10] {
@@ -184,7 +185,7 @@ impl Lease<'_> {
         if let Some(o) = self.opened.take()
             && !o.conn.broken
         {
-            self.pool.idle.lock().expect("pool lock").push((o, Instant::now()));
+            self.pool.idle.lock_or_recover().push((o, Instant::now()));
         }
     }
 
@@ -192,7 +193,7 @@ impl Lease<'_> {
     /// the same server.
     fn discard(mut self) {
         self.opened = None;
-        self.pool.idle.lock().expect("pool lock").clear();
+        self.pool.idle.lock_or_recover().clear();
     }
 }
 
@@ -216,7 +217,7 @@ async fn lease<'p>(flavor: Flavor, conn: &Connection, pool: &'p Pool) -> Result<
     let permit =
         pool.slots.acquire().await.map_err(|_| SourceError::failed("server.shutting_down", "the pool is closed"))?;
     let idle = {
-        let mut idle = pool.idle.lock().expect("pool lock");
+        let mut idle = pool.idle.lock_or_recover();
         idle.retain(|(_, since)| since.elapsed() < IDLE_TIMEOUT);
         // One the server closed while it waited (a restart) is dropped, not handed out.
         let mut alive = None;
@@ -243,7 +244,7 @@ async fn lease<'p>(flavor: Flavor, conn: &Connection, pool: &'p Pool) -> Result<
                 // is closed, with the other idle ones, and a fresh one is opened.
                 Err(e) if super::connect::is_lost(&e) => {
                     drop(o);
-                    pool.idle.lock().expect("pool lock").clear();
+                    pool.idle.lock_or_recover().clear();
                     reused = false;
                     open(flavor, conn).await?
                 }

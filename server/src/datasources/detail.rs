@@ -110,6 +110,8 @@ mod tests {
         "scim",
         // LDAP and Active Directory (docs/api/sso.md), with the causes it records in the audit log.
         "ldap",
+        // SAML 2.0 (docs/api/sso.md): its administration and what a sign-in refuses.
+        "saml",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.

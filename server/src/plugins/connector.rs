@@ -42,6 +42,7 @@ use tokio_util::sync::CancellationToken;
 use super::supervisor::Logs;
 use crate::datasources::targets::{TargetPolicy, canonical_ip};
 use crate::datasources::{Connection, Detail};
+use crate::locks::MutexExt;
 
 /// How long a plugin may take to send its request (Windows, one pipe connection per request).
 #[cfg(windows)]
@@ -92,7 +93,7 @@ pub struct DraftGrant {
 
 impl Drop for DraftGrant {
     fn drop(&mut self) {
-        let draft = self.grants.drafts.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+        let draft = self.grants.drafts.lock_or_recover().remove(&self.id);
         if let Some(draft) = draft {
             draft.token.cancel();
         }
@@ -102,7 +103,7 @@ impl Drop for DraftGrant {
 impl Grants {
     /// Called with every call that hands the plugin a data source.
     pub fn record(&self, conn: &Connection) {
-        self.handed.lock().unwrap_or_else(|e| e.into_inner()).entry(conn.datasource_id().to_string()).or_default();
+        self.handed.lock_or_recover().entry(conn.datasource_id().to_string()).or_default();
     }
 
     /// A grant for one call with settings that are not stored, under an id of its own.
@@ -110,13 +111,13 @@ impl Grants {
         let id = format!("draft-{}", uuid::Uuid::now_v7().simple());
         let draft =
             Draft { settings: conn.settings().clone(), policy: conn.policy_arc(), token: CancellationToken::new() };
-        self.drafts.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), draft);
+        self.drafts.lock_or_recover().insert(id.clone(), draft);
         DraftGrant { grants: self.clone(), id }
     }
 
     /// Takes back a data source: its connections close, its connects are refused.
     pub fn revoke(&self, datasource_id: &str) {
-        let token = self.handed.lock().unwrap_or_else(|e| e.into_inner()).remove(datasource_id);
+        let token = self.handed.lock_or_recover().remove(datasource_id);
         if let Some(token) = token {
             token.cancel();
         }
@@ -124,11 +125,11 @@ impl Grants {
 
     /// What a connection for the data source holds, while it is handed over.
     fn token(&self, datasource_id: &str) -> Option<CancellationToken> {
-        self.handed.lock().unwrap_or_else(|e| e.into_inner()).get(datasource_id).map(CancellationToken::child_token)
+        self.handed.lock_or_recover().get(datasource_id).map(CancellationToken::child_token)
     }
 
     fn draft_of(&self, id: &str) -> Option<Draft> {
-        self.drafts.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
+        self.drafts.lock_or_recover().get(id).cloned()
     }
 }
 
@@ -393,7 +394,7 @@ impl Context {
 
     /// Whether another refusal may be logged and audited now (per plugin, whatever the target).
     fn may_log_refusal(&self) -> bool {
-        let mut bucket = self.refusals.lock().unwrap_or_else(|e| e.into_inner());
+        let mut bucket = self.refusals.lock_or_recover();
         let now = Instant::now();
         let refill = now.duration_since(bucket.1).as_secs_f64() / REFUSALS_REFILL.as_secs_f64();
         bucket.0 = (bucket.0 + refill).min(REFUSALS_BURST);
@@ -408,7 +409,7 @@ impl Context {
 
     /// Whether `key` may be logged now: at most once per `NOTE_EVERY`.
     fn may_note(&self, key: String) -> bool {
-        let mut noted = self.noted.lock().unwrap_or_else(|e| e.into_inner());
+        let mut noted = self.noted.lock_or_recover();
         let now = Instant::now();
         if noted.get(&key).is_some_and(|at| now.duration_since(*at) < NOTE_EVERY) {
             return false;
@@ -534,7 +535,7 @@ impl Context {
         if SEVERE.contains(&detail.reason) {
             // Always audited, keyed by the reason alone: junk the plugin sends cannot hide it.
             let due = {
-                let mut severe = self.severe.lock().unwrap_or_else(|e| e.into_inner());
+                let mut severe = self.severe.lock_or_recover();
                 let now = Instant::now();
                 let due = severe.get(detail.reason).is_none_or(|at| now.duration_since(*at) >= NOTE_EVERY);
                 if due {
@@ -573,7 +574,7 @@ impl Context {
 
     /// Counts a refusal that was not logged, for the next summary.
     fn suppressed(&self, reason: &'static str) {
-        *self.suppressed.lock().unwrap_or_else(|e| e.into_inner()).0.entry(reason).or_default() += 1;
+        *self.suppressed.lock_or_recover().0.entry(reason).or_default() += 1;
         self.flush_suppressed(false);
     }
 
@@ -581,7 +582,7 @@ impl Context {
     /// minute (or now, with `force`, as the process ends).
     pub fn flush_suppressed(&self, force: bool) {
         let counts = {
-            let mut suppressed = self.suppressed.lock().unwrap_or_else(|e| e.into_inner());
+            let mut suppressed = self.suppressed.lock_or_recover();
             let now = Instant::now();
             if suppressed.0.is_empty() || (!force && now.duration_since(suppressed.1) < NOTE_EVERY) {
                 return;
@@ -599,7 +600,7 @@ impl Context {
     /// One row of the audit log about this plugin, written in the background.
     fn audit(&self, action: &'static str, summary: Value) {
         #[cfg(test)]
-        self.audited_rows.lock().unwrap_or_else(|e| e.into_inner()).push((action, summary.clone()));
+        self.audited_rows.lock_or_recover().push((action, summary.clone()));
         let Some(pool) = self.audit.clone() else { return };
         let plugin = self.plugin.clone();
         tokio::spawn(async move {

@@ -17,6 +17,7 @@ use crate::app::AppState;
 use crate::auth::SessionUser;
 use crate::auth::ratelimit::{address_key, network_key};
 use crate::error::{ApiError, ApiResult};
+use crate::locks::MutexExt;
 use crate::net::RequestInfo;
 
 pub const SERVICE_ACCOUNT_PREFIX: &str = "kz_sa_";
@@ -376,7 +377,7 @@ struct LimitedWindow {
 
 impl LimitedRefusals {
     fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, LimitedWindow>> {
-        self.windows.lock().unwrap_or_else(|e| e.into_inner())
+        self.windows.lock_or_recover()
     }
 
     /// Takes the window of `key` when it has ended (or, with `entry_id`, when it is that one).

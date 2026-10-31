@@ -31,6 +31,7 @@ use crate::audit::{self, AuditEvent};
 use crate::datasources::registry::Origin;
 use crate::datasources::{DataSources, DefaultValue, Kind, SettingField, SettingType};
 use crate::error::{ApiError, ApiResult};
+use crate::locks::{MutexExt, RwLockExt};
 
 /// Who acts, for the audit log.
 pub struct Actor<'a> {
@@ -86,7 +87,7 @@ type Forms = HashMap<(String, String), &'static [SettingField]>;
 /// The settings form of a plugin kind, built once per plugin version.
 fn settings_form(m: &Manifest) -> &'static [SettingField] {
     static FORMS: LazyLock<Mutex<Forms>> = LazyLock::new(Mutex::default);
-    let mut forms = FORMS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut forms = FORMS.lock_or_recover();
     if let Some(form) = forms.get(&(m.id.clone(), m.version.clone())) {
         return form;
     }
@@ -261,7 +262,7 @@ pub struct StateLookup {
 #[async_trait::async_trait]
 impl super::connector::Lookup for StateLookup {
     async fn current(&self, datasource_id: &str) -> Option<super::connector::Current> {
-        let state = self.state.read().unwrap_or_else(|e| e.into_inner()).clone()?;
+        let state = self.state.read_or_recover().clone()?;
         let row: Option<(String, String, String)> =
             sqlx::query_as("SELECT org_id, kind, settings FROM datasources WHERE id = $1 AND deleted_at IS NULL")
                 .bind(datasource_id)
@@ -343,7 +344,7 @@ impl PluginHost {
         // with them their processes) alive once the server lets go of them.
         let mut detached = state;
         detached.plugins = Arc::new(PluginHost::new(&detached.config.paths.data_dir));
-        *self.lookup.state.write().unwrap_or_else(|e| e.into_inner()) = Some(detached);
+        *self.lookup.state.write_or_recover() = Some(detached);
     }
 
     /// The warnings of `exposed_secrets`, shown with every plugin and logged when one is enabled.
@@ -365,12 +366,12 @@ impl PluginHost {
 
     /// Changes the supervision times and limits for plugins started from now on (tests).
     pub fn set_options(&self, options: Options) {
-        *self.options.write().unwrap_or_else(|e| e.into_inner()) = options;
+        *self.options.write_or_recover() = options;
     }
 
     /// Trusts `key` as Kalzit's own plugin key (tests; builds name theirs at build time).
     pub fn trust_kalzit_key(&self, key: VerifyingKey) {
-        self.kalzit_keys.write().unwrap_or_else(|e| e.into_inner()).push(key);
+        self.kalzit_keys.write_or_recover().push(key);
     }
 
     fn dir(&self, name: &str) -> PathBuf {
@@ -407,7 +408,7 @@ impl PluginHost {
         let running = Arc::downgrade(&self.running);
         datasources.on_forget(Arc::new(move |datasource_id| {
             let Some(running) = running.upgrade() else { return };
-            for supervisor in running.lock().unwrap_or_else(|e| e.into_inner()).values() {
+            for supervisor in running.lock_or_recover().values() {
                 supervisor.grants().revoke(datasource_id);
             }
         }));
@@ -439,7 +440,7 @@ impl PluginHost {
     }
 
     fn trusted(&self, keys: &[KeyRow]) -> Vec<TrustedKey> {
-        let kalzit = self.kalzit_keys.read().unwrap_or_else(|e| e.into_inner());
+        let kalzit = self.kalzit_keys.read_or_recover();
         kalzit
             .iter()
             .map(|k| TrustedKey { key: *k, signer: Signer::Kalzit })
@@ -462,7 +463,7 @@ impl PluginHost {
         match signer {
             "unsigned" => true,
             "kalzit" => {
-                let kalzit = self.kalzit_keys.read().unwrap_or_else(|e| e.into_inner());
+                let kalzit = self.kalzit_keys.read_or_recover();
                 public_key.and_then(key_from_hex).is_some_and(|k| kalzit.contains(&k))
             }
             _ => public_key.is_some_and(|p| keys.iter().any(|k| k.public_key == p)),
@@ -486,7 +487,7 @@ impl PluginHost {
         if manifest.plugin_kind() == manifest::PluginKind::Panel {
             // Nothing runs on the server: the panel may be shown.
             self.panels.insert(&row.id, ActivePanel { manifest: Arc::new(manifest), package_dir });
-            self.registered.lock().unwrap_or_else(|e| e.into_inner()).insert(row.id.clone(), row.dir.clone());
+            self.registered.lock_or_recover().insert(row.id.clone(), row.dir.clone());
             return Ok(true);
         }
         let program = package::binary(&manifest, &package_dir)?;
@@ -501,7 +502,7 @@ impl PluginHost {
             exposure: self.exposed.clone(),
             lookup: self.lookup.clone(),
         };
-        let options = self.options.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let options = self.options.read_or_recover().clone();
         let supervisor = Supervisor::new(launch, options);
         let m = supervisor.manifest().clone();
         let kind = Kind {
@@ -514,18 +515,18 @@ impl PluginHost {
             .registry()
             .register(kind, Origin::Plugin { version: m.version.clone() })
             .map_err(|e| HostError::new("plugin.kind_taken", e.to_string()))?;
-        self.running.lock().unwrap_or_else(|e| e.into_inner()).insert(row.id.clone(), supervisor);
-        self.registered.lock().unwrap_or_else(|e| e.into_inner()).insert(row.id.clone(), row.dir.clone());
+        self.running.lock_or_recover().insert(row.id.clone(), supervisor);
+        self.registered.lock_or_recover().insert(row.id.clone(), row.dir.clone());
         Ok(true)
     }
 
     /// Takes the plugin's kind out of the registry and ends its process. Running queries finish
     /// on the kind they hold; new ones answer `datasource.kind_unavailable`.
     async fn unregister(&self, id: &str, datasources: &DataSources) {
-        self.registered.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        self.registered.lock_or_recover().remove(id);
         self.panels.remove(id);
         let _ = datasources.registry().unregister(id);
-        let supervisor = self.running.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        let supervisor = self.running.lock_or_recover().remove(id);
         if let Some(s) = supervisor {
             s.shutdown().await;
         }
@@ -533,16 +534,15 @@ impl PluginHost {
 
     /// Ends every plugin process (Kalzit stops).
     pub async fn shutdown(&self) {
-        *self.lookup.state.write().unwrap_or_else(|e| e.into_inner()) = None;
-        let all: Vec<Arc<Supervisor>> =
-            self.running.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
+        *self.lookup.state.write_or_recover() = None;
+        let all: Vec<Arc<Supervisor>> = self.running.lock_or_recover().values().cloned().collect();
         for s in all {
             s.shutdown().await;
         }
     }
 
     pub fn supervisor(&self, id: &str) -> Option<Arc<Supervisor>> {
-        self.running.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
+        self.running.lock_or_recover().get(id).cloned()
     }
 
     /// The texts of a plugin kind, for the kind list.
@@ -1316,7 +1316,7 @@ impl PluginHost {
         self.without_landlock.store(switches.allow_without_landlock, Ordering::SeqCst);
         let rows = store::all(&state.db).await?;
         let keys = store::keys(&state.db).await?;
-        let registered = self.registered.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let registered = self.registered.lock_or_recover().clone();
         for (id, dir) in &registered {
             let keep = rows.iter().any(|r| {
                 &r.id == id
@@ -1330,7 +1330,7 @@ impl PluginHost {
             }
         }
         // Read again: what was just stopped (an update, an approval) starts from its new package.
-        let registered = self.registered.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let registered = self.registered.lock_or_recover().clone();
         let mut complete = true;
         for row in rows.iter().filter(|r| r.approved && r.enabled && !registered.contains_key(&r.id)) {
             if row.signer == "unsigned" && !switches.allow_unsigned {

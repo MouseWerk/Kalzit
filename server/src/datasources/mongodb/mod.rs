@@ -38,6 +38,7 @@ use super::{
     Connection, DataSourcePlugin, DefaultValue, Detail, FieldError, Health, Kind, SettingField, SettingType,
     SourceError, SourceQuery, SourceSchema,
 };
+use crate::locks::MutexExt;
 use crate::shapes::{DocumentSet, FieldSchema, Notice, NoticeSeverity, QueryResult, Shape, Truncated};
 use documents::Converter;
 use pipeline::Binder;
@@ -243,7 +244,7 @@ fn stream_permits(datasource_id: &str) -> Arc<tokio::sync::Semaphore> {
     static PERMITS: std::sync::LazyLock<
         std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
     > = std::sync::LazyLock::new(Default::default);
-    let mut permits = PERMITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut permits = PERMITS.lock_or_recover();
     // Forget sources without a client, so the map does not grow with every source ever seen.
     permits.retain(|_, s| Arc::strong_count(s) > 1 || s.available_permits() < MAX_STREAMS);
     permits

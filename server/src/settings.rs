@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use crate::app::AppState;
 use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
+use crate::locks::MutexExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1140,7 +1141,7 @@ pub struct Cache {
 impl Cache {
     fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
         // The data is a cache: after a panic elsewhere it is still safe to use or rebuild.
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+        self.inner.lock_or_recover()
     }
 
     fn get(&self, org_id: Option<&str>, now_ms: i64) -> Result<Arc<HashMap<String, Stored>>, u64> {
@@ -1200,7 +1201,7 @@ type CacheEntry = (Weak<Config>, Arc<Cache>);
 static CACHES: LazyLock<Mutex<Vec<CacheEntry>>> = LazyLock::new(Mutex::default);
 
 pub fn cache(state: &AppState) -> Arc<Cache> {
-    let mut caches = CACHES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut caches = CACHES.lock_or_recover();
     caches.retain(|(config, _)| config.strong_count() > 0);
     let key = Arc::downgrade(&state.config);
     if let Some((_, cache)) = caches.iter().find(|(config, _)| config.ptr_eq(&key)) {

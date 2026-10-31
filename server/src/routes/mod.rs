@@ -40,6 +40,7 @@ pub mod preferences;
 pub mod query;
 pub mod query_cache;
 pub mod roles;
+pub mod saml;
 pub mod second_factor;
 pub mod security;
 pub mod service_accounts;
@@ -65,6 +66,7 @@ pub fn all() -> Vec<table::RouteDef> {
         auth::routes(),
         sso::routes(),
         ldap::routes(),
+        saml::routes(),
         second_factor::routes(),
         security::routes(),
         orgs::routes(),
@@ -245,6 +247,42 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Streaming and self-bounded routes are left out of the request timeout; normal routes get it.
+    #[test]
+    fn only_normal_routes_get_the_request_timeout() {
+        use axum::http::Method;
+        let timed = |method: Method, path: &str| {
+            let def = all().into_iter().find(|d| d.method == method && d.path == path);
+            def.unwrap_or_else(|| panic!("{method} {path} is declared")).request_timeout
+        };
+        for (method, path) in [
+            (Method::GET, "/orgs/{orgId}/live"),
+            (Method::POST, "/orgs/{orgId}/export"),
+            (Method::POST, "/orgs/{orgId}/ai/chats/{chatId}/messages"),
+            (Method::POST, "/orgs/{orgId}/query"),
+            (Method::POST, "/admin/updates/upload"),
+            (Method::POST, "/admin/updates/backups"),
+            (Method::POST, "/admin/updates/apply"),
+            (Method::POST, "/admin/updates/rollback"),
+            (Method::POST, "/admin/plugins"),
+            (Method::POST, "/admin/ai/providers/{providerId}/test"),
+            (Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema"),
+        ] {
+            assert!(!timed(method.clone(), path), "{method} {path} has no request timeout");
+        }
+        assert!(timed(Method::GET, "/orgs/{orgId}/dashboards"));
+        assert!(timed(Method::POST, "/orgs/{orgId}/dashboards"));
+        // Plain reads and changes in the same modules keep it.
+        for (method, path) in [
+            (Method::GET, "/orgs/{orgId}/datasources"),
+            (Method::GET, "/orgs/{orgId}/ai/chats"),
+            (Method::PATCH, "/admin/plugin-host"),
+            (Method::PUT, "/admin/updates/schedule"),
+        ] {
+            assert!(timed(method.clone(), path), "{method} {path} has the request timeout");
+        }
+    }
 
     #[test]
     fn email_forms_compare_as_one() {

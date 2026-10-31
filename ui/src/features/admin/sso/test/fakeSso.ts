@@ -7,6 +7,7 @@ import type {
   OidcSettings,
   PasswordFormMode,
   ProviderSummary,
+  SamlSettings,
   SyncPerson,
   SyncRun,
   SyncState,
@@ -25,6 +26,8 @@ export interface FakeProvider extends ProviderSummary {
   secret: string;
   /** LDAP providers only (`kind: "ldap"`). */
   ldap?: LdapSettings | undefined;
+  /** SAML providers only (`kind: "saml"`). */
+  saml?: SamlSettings | undefined;
 }
 
 /** The sync of an LDAP provider: its state and the lists of halted runs. */
@@ -54,6 +57,12 @@ export interface FakeSsoState {
   checksSent: unknown[];
   /** The bodies of LDAP creates and changes. */
   ldapSaved: Record<string, unknown>[];
+  /** `server.public_url` as the overview reports it (`samlBase`). */
+  samlBase: string | null;
+  /** The bodies of SAML creates and changes. */
+  samlSaved: Record<string, unknown>[];
+  /** The bodies of SAML test sign-ins started. */
+  samlTests: Record<string, unknown>[];
   /**
    * How a directory answers `POST /auth/login` with a user name: `ok` signs the test user in,
    * `unreachable` and a refusal answer as docs/api/sso.md says.
@@ -126,6 +135,39 @@ export function sampleLdapProvider(overrides: Partial<FakeProvider> = {}): FakeP
       syncSchedule: "daily",
       syncHour: 2,
       syncThreshold: 10,
+    },
+    ...overrides,
+  });
+}
+
+/** A pinned certificate (base64 DER) as the fake's metadata names it. */
+export const SAMPLE_CERT = "MIIBszCCAVmgAwIBAgIUSAMPLE";
+
+export function sampleSamlProvider(overrides: Partial<FakeProvider> = {}): FakeProvider {
+  return sampleProvider({
+    id: "s1",
+    slug: "partnerportal",
+    kind: "saml",
+    name: "Partnerportal",
+    issuer: "https://idp.partnerportal.example/saml",
+    redirectUri: "https://kalzit.example/auth/saml/partnerportal/acs",
+    saml: {
+      metadataUrl: "https://idp.partnerportal.example/saml/metadata.xml",
+      idpEntityId: "https://idp.partnerportal.example/saml",
+      ssoUrl: "https://idp.partnerportal.example/saml/sso",
+      certificates: [SAMPLE_CERT],
+      certificateInfo: [
+        {
+          fingerprint: "AB:CD:EF",
+          subject: "CN=idp.partnerportal.example",
+          notAfter: Date.UTC(2027, 5, 1),
+          expired: false,
+        },
+      ],
+      emailAttribute: "mail",
+      nameAttribute: "displayName",
+      groupsAttribute: "memberOf",
+      trustEmail: false,
     },
     ...overrides,
   });
@@ -229,6 +271,9 @@ function initialState(): FakeSsoState {
     },
     checksSent: [],
     ldapSaved: [],
+    samlBase: "https://kalzit.example",
+    samlSaved: [],
+    samlTests: [],
     directoryAnswer: "ok",
     syncs: {},
   };
@@ -258,11 +303,43 @@ function refusal(
 }
 
 function summary(provider: FakeProvider): ProviderSummary {
-  const { version: _version, oidc: _oidc, secret: _secret, ldap: _ldap, ...rest } = provider;
+  const {
+    version: _version,
+    oidc: _oidc,
+    secret: _secret,
+    ldap: _ldap,
+    saml: _saml,
+    ...rest
+  } = provider;
   return rest;
 }
 
-function detail(provider: FakeProvider) {
+function samlAddresses(base: string | null, slug: string) {
+  const entity = base === null ? null : `${base}/auth/saml/${slug}`;
+  return {
+    spEntityId: entity,
+    acsUrl: entity === null ? null : `${entity}/acs`,
+    spMetadataUrl: entity === null ? null : `${entity}/metadata`,
+  };
+}
+
+function detail(provider: FakeProvider, samlBase: string | null = "https://kalzit.example") {
+  if (provider.kind === "saml") {
+    return {
+      ...samlAddresses(samlBase, provider.slug),
+      id: provider.id,
+      slug: provider.slug,
+      kind: provider.kind,
+      name: provider.name,
+      enabled: provider.enabled,
+      position: provider.position,
+      version: provider.version,
+      createAccounts: provider.createAccounts,
+      trustProviderMfa: provider.trustProviderMfa,
+      checkedAt: provider.checkedAt,
+      saml: provider.saml,
+    };
+  }
   if (provider.kind === "ldap") {
     return {
       id: provider.id,
@@ -388,6 +465,139 @@ function storedLdapConnection(provider: FakeProvider): string {
   ]);
 }
 
+/** The provider's values a SAML check covers. */
+function samlTrustOf(input: Input): string {
+  const saml = (input.saml ?? {}) as Input;
+  return JSON.stringify(["saml", saml.idpEntityId, saml.ssoUrl, saml.certificates]);
+}
+
+function fromSamlInput(state: FakeSsoState, input: Input, id: string, previous?: FakeProvider) {
+  const saml = (input.saml ?? {}) as Input;
+  const slug = String(input.slug);
+  const certificates = (saml.certificates as string[]) ?? [];
+  return sampleSamlProvider({
+    id,
+    slug,
+    name: String(input.name),
+    issuer: String(saml.idpEntityId),
+    position: previous?.position ?? state.providers.length,
+    enabled: previous?.enabled ?? true,
+    people: previous?.people ?? 0,
+    lastSignInAt: previous?.lastSignInAt ?? null,
+    checkedAt: T0,
+    createAccounts: Boolean(input.createAccounts),
+    trustProviderMfa: Boolean(input.trustProviderMfa),
+    redirectUri: `${state.samlBase ?? ""}/auth/saml/${slug}/acs`,
+    version: (previous?.version ?? 0) + 1,
+    saml: {
+      metadataUrl: String(saml.metadataUrl ?? ""),
+      idpEntityId: String(saml.idpEntityId),
+      ssoUrl: String(saml.ssoUrl),
+      certificates,
+      certificateInfo: certificates.map((_, index) => ({
+        fingerprint: `AB:CD:0${index}`,
+        subject: "CN=idp.partnerportal.example",
+        notAfter: Date.UTC(2027, 5, 1),
+        expired: false,
+      })),
+      emailAttribute: String(saml.emailAttribute),
+      nameAttribute: String(saml.nameAttribute),
+      groupsAttribute: String(saml.groupsAttribute),
+      trustEmail: Boolean(saml.trustEmail),
+    },
+  });
+}
+
+/** The SAML routes of the administration; undefined for any other path. */
+function handleSamlRoute(
+  state: FakeSsoState,
+  rest: string,
+  method: string,
+  input: Input,
+): Response | undefined {
+  if (rest === "/saml/check" && method === "POST") {
+    state.checksSent.push(input);
+    const refused = state.checkRefusal;
+    if (refused !== null) {
+      state.checkRefusal = null;
+      return refusal(422, "validation", refused.reason, refused.field, refused.params);
+    }
+    const saml = (input.saml ?? {}) as Input;
+    // Metadata (a file or a URL) names the provider's values; without it the typed ones count.
+    const fromMetadata = typeof saml.metadataXml === "string" || saml.metadataUrl !== "";
+    const found = fromMetadata
+      ? {
+          metadataUrl: typeof saml.metadataXml === "string" ? "" : String(saml.metadataUrl),
+          idpEntityId: "https://idp.partnerportal.example/saml",
+          ssoUrl: "https://idp.partnerportal.example/saml/sso",
+          certificates: [SAMPLE_CERT],
+        }
+      : {
+          metadataUrl: "",
+          idpEntityId: String(saml.idpEntityId),
+          ssoUrl: String(saml.ssoUrl),
+          certificates: (saml.certificates as string[]) ?? [],
+        };
+    const token = `saml-token-${tokens.size + 1}`;
+    tokens.set(token, samlTrustOf({ saml: found }));
+    return json(200, {
+      ...samlAddresses(state.samlBase, String(input.slug)),
+      checkToken: token,
+      durationMs: 95,
+      saml: found,
+      certificates: found.certificates.map((_, index) => ({
+        fingerprint: `AB:CD:0${index}`,
+        subject: "CN=idp.partnerportal.example",
+        notAfter: Date.UTC(2027, 5, 1),
+        expired: false,
+      })),
+    });
+  }
+  if (rest === "/saml" && method === "POST") {
+    state.samlSaved.push(input);
+    if (tokens.get(String(input.checkToken ?? "")) !== samlTrustOf(input)) {
+      return refusal(422, "validation", "saml.check_required", "idpEntityId");
+    }
+    const provider = fromSamlInput(state, input, `s${state.providers.length + 1}`);
+    state.providers.push(provider);
+    return json(201, detail(provider, state.samlBase));
+  }
+  if (rest === "/saml/test-sign-ins" && method === "POST") {
+    state.samlTests.push(input);
+    if (tokens.get(String(input.checkToken ?? "")) !== samlTrustOf(input)) {
+      return refusal(422, "validation", "saml.check_required", "idpEntityId");
+    }
+    return json(201, {
+      id: "saml-test-1",
+      url: "https://idp.partnerportal.example/saml/sso?SAMLRequest=x",
+    });
+  }
+  const change = /^\/saml\/([^/]+)$/.exec(rest);
+  if (change !== null && method === "PUT") {
+    state.samlSaved.push(input);
+    const provider = state.providers.find((candidate) => candidate.id === change[1]);
+    if (provider === undefined) {
+      return error(404, "not_found");
+    }
+    if (input.version !== provider.version) {
+      return json(409, {
+        error: { code: "version_conflict", message: "stale" },
+        current: detail(provider, state.samlBase),
+      });
+    }
+    const trust = samlTrustOf(input);
+    if (
+      trust !== samlTrustOf({ saml: provider.saml }) &&
+      tokens.get(String(input.checkToken ?? "")) !== trust
+    ) {
+      return refusal(422, "validation", "saml.check_required", "idpEntityId");
+    }
+    Object.assign(provider, fromSamlInput(state, input, provider.id, provider));
+    return json(200, detail(provider, state.samlBase));
+  }
+  return undefined;
+}
+
 /** The LDAP routes of the administration; undefined for any other path. */
 function handleLdapRoute(
   state: FakeSsoState,
@@ -434,7 +644,7 @@ function handleLdapRoute(
     }
     const provider = fromLdapInput(state, input, `l${state.providers.length + 1}`);
     state.providers.push(provider);
-    return json(201, detail(provider));
+    return json(201, detail(provider, state.samlBase));
   }
   const change = /^\/ldap\/([^/]+)$/.exec(rest);
   if (change !== null && method === "PUT") {
@@ -446,7 +656,7 @@ function handleLdapRoute(
     if (input.version !== provider.version) {
       return json(409, {
         error: { code: "version_conflict", message: "stale" },
-        current: detail(provider),
+        current: detail(provider, state.samlBase),
       });
     }
     const connection = ldapConnectionOf(input, provider);
@@ -457,7 +667,7 @@ function handleLdapRoute(
       return refusal(422, "validation", "ldap.check_required", "url");
     }
     Object.assign(provider, fromLdapInput(state, input, provider.id, provider));
-    return json(200, detail(provider));
+    return json(200, detail(provider, state.samlBase));
   }
   const sync = /^\/providers\/([^/]+)\/sync(?:\/runs\/([^/]+)(\/apply)?)?$/.exec(rest);
   if (sync === null) {
@@ -573,6 +783,10 @@ export function handleSsoRoute(
   if (ldap !== undefined) {
     return ldap;
   }
+  const saml = handleSamlRoute(state, rest, method, input);
+  if (saml !== undefined) {
+    return saml;
+  }
 
   if (rest === "" && method === "GET") {
     return json(200, {
@@ -580,6 +794,7 @@ export function handleSsoRoute(
       accounts: state.accounts,
       viaProviders: state.viaProviders,
       redirectBase: state.redirectBase,
+      samlBase: state.samlBase,
     });
   }
   if (rest === "/providers/check" && method === "POST") {
@@ -604,7 +819,7 @@ export function handleSsoRoute(
     }
     const provider = fromInput(state, input, `p${state.providers.length + 1}`);
     state.providers.push(provider);
-    return json(201, detail(provider));
+    return json(201, detail(provider, state.samlBase));
   }
   const one = /^\/providers\/([^/]+)(\/enabled)?$/.exec(rest);
   if (one !== null) {
@@ -617,13 +832,13 @@ export function handleSsoRoute(
       return new Response(null, { status: 204 });
     }
     if (method === "GET") {
-      return json(200, detail(provider));
+      return json(200, detail(provider, state.samlBase));
     }
     if (method === "PUT") {
       if (input.version !== provider.version) {
         return json(409, {
           error: { code: "version_conflict", message: "stale" },
-          current: detail(provider),
+          current: detail(provider, state.samlBase),
         });
       }
       const changed =
@@ -645,7 +860,7 @@ export function handleSsoRoute(
       if (issuerChanged) {
         provider.people = 0;
       }
-      return json(200, detail(provider));
+      return json(200, detail(provider, state.samlBase));
     }
     if (method === "DELETE") {
       if (provider.people > 0) {

@@ -28,6 +28,7 @@ use super::HostError;
 use super::connector::{self, Grants, OwnEndpoints};
 use super::package::{PluginAccess, private_dir};
 use super::process::{self, Control, Limits};
+use crate::locks::MutexExt;
 
 /// The token every call carries (`kalzit-plugin-token`).
 #[derive(Clone)]
@@ -196,7 +197,7 @@ impl Logs {
     }
 
     pub fn push(&self, plugin: &str, stream: &'static str, text: String) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock_or_recover();
         let now = Instant::now();
         if state.window.is_none_or(|w| now.duration_since(w) >= Duration::from_secs(1)) {
             if state.dropped_in_window > 0 {
@@ -221,7 +222,7 @@ impl Logs {
 
     /// The kept lines, oldest first, and how many lines were dropped in all.
     pub fn snapshot(&self) -> (Vec<LogLine>, u64) {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let state = self.state.lock_or_recover();
         (state.lines.iter().cloned().collect(), state.dropped)
     }
 }
@@ -440,7 +441,7 @@ impl Supervisor {
     }
 
     pub fn status(&self) -> Status {
-        self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.status.lock_or_recover().clone()
     }
 
     pub fn logs(&self) -> &Logs {
@@ -448,7 +449,7 @@ impl Supervisor {
     }
 
     fn set_status(&self, change: impl FnOnce(&mut Status)) {
-        change(&mut self.status.lock().unwrap_or_else(|e| e.into_inner()));
+        change(&mut self.status.lock_or_recover());
     }
 
     /// A client of the running process, started if it is not running. While the plugin waits
@@ -499,7 +500,7 @@ impl Supervisor {
     /// Records a failure and decides the next state.
     fn failed_locked(&self, state: &mut State, error: HostError, ran_for: Option<Duration>) {
         tracing::warn!(plugin = %self.id, reason = error.reason, "plugin failed: {}", error.message);
-        let mut status = self.status.lock().unwrap_or_else(|e| e.into_inner());
+        let mut status = self.status.lock_or_recover();
         if ran_for.is_some_and(|d| d >= self.options.stable_after) {
             status.failures = 0;
         }

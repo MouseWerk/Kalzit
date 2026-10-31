@@ -34,6 +34,7 @@ use crate::audit::{self, AuditEvent};
 use crate::datasources::Detail;
 use crate::error::{ApiError, ApiResult};
 use crate::http::{self, HttpClient, HttpError, HttpOptions, LocalGuard};
+use crate::locks::RwLockExt;
 
 /// The time limit of each request for the index and for its signature.
 pub const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
@@ -293,7 +294,7 @@ pub struct Catalog {
 impl Catalog {
     /// Trusts `pem` for the catalog's HTTPS in addition to the platform's store (tests).
     pub fn set_extra_root(&self, pem: Option<String>) {
-        *self.extra_root_pem.write().unwrap_or_else(|e| e.into_inner()) = pem;
+        *self.extra_root_pem.write_or_recover() = pem;
     }
 
     /// The clients of one catalog operation for the configured address `url` (see `Clients`).
@@ -327,7 +328,7 @@ impl Catalog {
         } else {
             None
         };
-        let extra_root_pem = self.extra_root_pem.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let extra_root_pem = self.extra_root_pem.read_or_recover().clone();
         let build = |guard: Option<LocalGuard>| {
             http::client_guarded(
                 HttpOptions { timeout, extra_root_pem: extra_root_pem.clone(), policy: policy.clone() },
