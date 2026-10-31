@@ -259,6 +259,8 @@ mod tests {
             (Method::POST, "/orgs/{orgId}/query"),
             (Method::POST, "/admin/updates/upload"),
             (Method::POST, "/admin/updates/backups"),
+            (Method::POST, "/admin/updates/apply"),
+            (Method::POST, "/admin/updates/rollback"),
             (Method::POST, "/admin/plugins"),
             (Method::POST, "/admin/ai/providers/{providerId}/test"),
             (Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema"),

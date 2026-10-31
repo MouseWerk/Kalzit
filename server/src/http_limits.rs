@@ -91,6 +91,7 @@ type ByAddress = Arc<Mutex<HashMap<IpAddr, usize>>>;
 #[derive(Clone)]
 pub struct ConnectionLimit {
     permits: Arc<Semaphore>,
+    max: usize,
     per_address: usize,
     by_address: ByAddress,
     trusted: Arc<[IpNet]>,
@@ -104,6 +105,7 @@ impl ConnectionLimit {
     pub fn new(max: usize, per_address: usize, trusted: &[IpNet], timeouts: Timeouts) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(max)),
+            max,
             per_address,
             by_address: Arc::default(),
             trusted: trusted.into(),
@@ -130,9 +132,7 @@ impl ConnectionLimit {
     /// A place for a connection from `peer`, or `None` when a cap is reached.
     fn admit(&self, peer: IpAddr) -> Option<Slot> {
         let Ok(permit) = self.permits.clone().try_acquire_owned() else {
-            self.warn(format_args!(
-                "{MAX_CONNECTIONS} connections are open; new connections are closed until some end"
-            ));
+            self.warn(format_args!("{} connections are open; new connections are closed until some end", self.max));
             return None;
         };
         let key = self.address_key(peer);

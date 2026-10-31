@@ -33,10 +33,10 @@ pub fn routes() -> Vec<RouteDef> {
             .long_running()
             .body_limit(MAX_UPLOAD_BYTES),
         route(Method::DELETE, "/admin/updates/staged", Access::ServerAdmin, discard),
-        route(Method::POST, "/admin/updates/apply", Access::ServerAdmin, apply),
+        route(Method::POST, "/admin/updates/apply", Access::ServerAdmin, apply).long_running(),
         route(Method::PUT, "/admin/updates/schedule", Access::ServerAdmin, schedule),
         route(Method::DELETE, "/admin/updates/schedule", Access::ServerAdmin, unschedule),
-        route(Method::POST, "/admin/updates/rollback", Access::ServerAdmin, rollback),
+        route(Method::POST, "/admin/updates/rollback", Access::ServerAdmin, rollback).long_running(),
         route(Method::POST, "/admin/updates/skip", Access::ServerAdmin, skip),
         route(Method::POST, "/admin/updates/backups", Access::ServerAdmin, backup_now).long_running(),
         route(Method::GET, "/admin/updates/backups/{file}", Access::ServerAdmin, download_backup),
