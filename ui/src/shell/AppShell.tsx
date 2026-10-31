@@ -63,6 +63,8 @@ export function AppShell() {
   })).filter((section) => section.items.length > 0);
   const currentOrg = currentOrgOf(me);
   const [collapsed, setCollapsed] = useState(readCollapsed);
+  // While signing out the page is taken off screen, with everything it polls or streams.
+  const [leaving, setLeaving] = useState(false);
   const wide = useWideLayout();
   // Below the column breakpoint the sidebar is a bar on top; it has nothing to collapse.
   const rail = collapsed && wide;
@@ -228,7 +230,7 @@ export function AppShell() {
             placement="sidebar"
           />
         )}
-        <UserMenu me={me} rail={rail} />
+        <UserMenu me={me} rail={rail} onLeaving={setLeaving} />
         <RailTooltip rail={rail} sidebarRef={sidebarRef} />
       </header>
       <main ref={mainRef} id="main" className="shell__main" tabIndex={-1}>
@@ -246,7 +248,14 @@ export function AppShell() {
         <div className="shell__content">
           <CrumbSlotContext value={crumbSlot}>
             <SidebarColumnContext value={wide && !rail}>
-              <Outlet />
+              {leaving ? (
+                // Quietly in place of the page while the session ends.
+                <p className="loading" role="status">
+                  {t("userMenu.signingOut")}
+                </p>
+              ) : (
+                <Outlet />
+              )}
             </SidebarColumnContext>
           </CrumbSlotContext>
         </div>

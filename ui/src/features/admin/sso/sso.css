@@ -218,13 +218,10 @@
     gap: var(--space-1);
   }
 
-  /* The provider form. */
-  .sso-form .input[aria-invalid="true"],
-  .sso-form .select[aria-invalid="true"],
-  .sso-local .select[aria-invalid="true"] {
-    background: var(--danger-bg);
-  }
-
+  /*
+   * The provider form. A field in error says so in its message, as everywhere in the app; the
+   * tinted fill belongs to the sign-in pages only (auth.css).
+   */
   .sso-form__pair {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));

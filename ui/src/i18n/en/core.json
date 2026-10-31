@@ -17,6 +17,7 @@
   "userMenu.label": "Account",
   "userMenu.signOut": "Sign out",
   "userMenu.signOutForget": "Sign out and forget this browser",
+  "userMenu.signingOut": "Signing out…",
   "theme.label": "Theme",
   "theme.system": "System",
   "theme.light": "Light",

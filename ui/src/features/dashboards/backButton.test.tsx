@@ -46,7 +46,12 @@ function open() {
   cleanup = destroy;
   const app = createApp({ history, retry: false });
   render(<App app={app} />);
-  return { app, user: userEvent.setup(), back: () => act(() => window.history.back()) };
+  return {
+    app,
+    server,
+    user: userEvent.setup(),
+    back: () => act(() => window.history.back()),
+  };
 }
 
 async function makeDirty(user: ReturnType<typeof userEvent.setup>) {
@@ -83,5 +88,57 @@ describe("the Back button on a dashboard", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     back();
     expect(await screen.findByRole("dialog", { name: "Leave without saving?" })).toBeTruthy();
+  });
+});
+
+describe("signing out of a dashboard with unsaved changes", () => {
+  async function signOut(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: /Account/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+  }
+
+  it("asks first; Cancel stays on the dashboard with the edits", async () => {
+    const { app, server, user } = open();
+    await makeDirty(user);
+    await signOut(user);
+    const ask = await screen.findByRole("dialog", { name: "Leave without saving?" });
+    await user.click(within(ask).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull(),
+    );
+    expect(app.router.state.location.pathname).toBe("/dashboards/d-main");
+    // Still in edit mode, the removed panel still gone, and the session untouched.
+    expect(screen.getByRole("button", { name: "Save…" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Orders" })).toBeNull();
+    expect(server.calls.some((call) => call.path.startsWith("/api/auth/logout"))).toBe(false);
+  });
+
+  it("signs out after Leave, with nothing asked of the ended session", async () => {
+    const { app, server, user } = open();
+    await makeDirty(user);
+    await signOut(user);
+    const ask = await screen.findByRole("dialog", { name: "Leave without saving?" });
+    await user.click(within(ask).getByRole("button", { name: "Leave" }));
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(app.router.state.location.pathname).toBe("/login");
+    const logoutAt = server.calls.findIndex((call) => call.path.startsWith("/api/auth/logout"));
+    expect(logoutAt).toBeGreaterThanOrEqual(0);
+    const after = server.calls
+      .slice(logoutAt + 1)
+      .map((call) => call.path)
+      .filter(
+        (path) =>
+          !["/api/me", "/api/setup", "/api/branding"].includes(path) &&
+          !path.startsWith("/api/auth/"),
+      );
+    expect(after).toEqual([]);
+  });
+
+  it("signs out without asking when nothing is unsaved", async () => {
+    const { user } = open();
+    await screen.findByRole("button", { name: "Edit" });
+    await signOut(user);
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull();
   });
 });
