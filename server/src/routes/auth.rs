@@ -259,6 +259,7 @@ pub async fn login_with(
     };
     fn event<'a>(
         info: &RequestInfo,
+        agent: Option<&str>,
         now: i64,
         action: &'a str,
         user_id: Option<&'a str>,
@@ -273,14 +274,18 @@ pub async fn login_with(
             // The account's own recent sign-ins list its refused attempts (`auth::sign_ins`).
             resource_id: user_id,
             summary: match (user_id, reason) {
-                (Some(id), Some(reason)) => serde_json::json!({ "userId": id, "reason": reason, "method": "password" }),
+                (Some(id), Some(reason)) => serde_json::json!({
+                    "userId": id, "reason": reason, "method": "password", "userAgent": agent,
+                }),
                 (Some(id), None) => serde_json::json!({ "userId": id }),
                 _ => serde_json::json!({}),
             },
             at_ms: now,
         }
     }
-    let audit = |action, user_id, reason| event(&info, now, action, user_id, reason);
+    // The browser, for the account's own list of refused attempts only.
+    let agent = crate::auth::sign_ins::user_agent(&headers);
+    let audit = |action, user_id, reason| event(&info, agent.as_deref(), now, action, user_id, reason);
     let known_id = row.as_ref().map(|r| r.id.clone());
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");

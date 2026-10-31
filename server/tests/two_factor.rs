@@ -865,6 +865,7 @@ async fn check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(t: T
     );
     assert_eq!(items[0]["address"], "127.0.0.1");
     assert!(items[0]["userAgent"].as_str().unwrap().contains("Firefox/142.0"));
+    assert!(items[2]["userAgent"].as_str().unwrap().contains("Firefox/142.0"), "a refused attempt names the browser");
     // Pages.
     let r = t.get("/api/me/sign-ins?limit=3", &ana).await;
     assert_eq!(r.body["items"].as_array().unwrap().len(), 3);
