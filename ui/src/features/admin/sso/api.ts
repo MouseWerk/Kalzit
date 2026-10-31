@@ -45,6 +45,8 @@ export interface ProviderSummary {
   createAccounts: boolean;
   trustProviderMfa: boolean;
   redirectUri: string;
+  /** LDAP only: `ad` or `ldap`, when the server says (for the label in the list). */
+  flavor?: string | undefined;
 }
 
 const PROVIDER_SUMMARY = {
@@ -333,6 +335,348 @@ export async function fetchTestSignIn(testId: string): Promise<TestSignIn> {
   );
 }
 
+// LDAP and Active Directory (docs/api/sso.md, "LDAP and Active Directory")
+
+export type LdapFlavor = "ad" | "ldap";
+export type LdapEncryption = "ldaps" | "starttls" | "none";
+export type LdapSchedule = "daily" | "every6h" | "off";
+
+/** The login attributes each flavor offers. */
+export const LOGIN_ATTRIBUTES: Record<LdapFlavor, readonly string[]> = {
+  ad: ["sAMAccountName", "userPrincipalName", "mail"],
+  ldap: ["uid", "mail", "cn"],
+};
+
+/** The fields of an LDAP provider as stored, without the bind password. */
+export interface LdapFields {
+  flavor: LdapFlavor;
+  url: string;
+  encryption: LdapEncryption;
+  certificate: "system" | "custom";
+  caPem: string | null;
+  bindDn: string;
+  userBaseDn: string;
+  loginAttribute: string;
+  userFilter: string;
+  groupBaseDn: string;
+  nestedGroups: boolean;
+  emailAttribute: string;
+  nameAttribute: string;
+  trustEmail: boolean;
+  syncSchedule: LdapSchedule;
+  syncHour: number;
+  syncThreshold: number;
+}
+
+export interface LdapSettings extends LdapFields {
+  bindPasswordSet: boolean;
+}
+
+export interface LdapProvider {
+  id: string;
+  slug: string;
+  kind: "ldap";
+  name: string;
+  enabled: boolean;
+  position: number;
+  version: number;
+  createAccounts: boolean;
+  ldap: LdapSettings;
+}
+
+const isTextOrEmpty = (value: unknown) => value === undefined || isStringOrNull(value);
+
+function isLdapSettings(value: unknown): value is LdapSettings {
+  return has(value, {
+    flavor: (flavor) => flavor === "ad" || flavor === "ldap",
+    url: isString,
+    encryption: (mode) => mode === "ldaps" || mode === "starttls" || mode === "none",
+    certificate: (mode) => mode === "system" || mode === "custom",
+    caPem: isTextOrEmpty,
+    bindDn: isString,
+    bindPasswordSet: isBoolean,
+    userBaseDn: isString,
+    loginAttribute: isString,
+    // Empty values may come as null or be left out.
+    userFilter: isTextOrEmpty,
+    groupBaseDn: isTextOrEmpty,
+    nestedGroups: isBoolean,
+    emailAttribute: isString,
+    nameAttribute: isString,
+    trustEmail: isBoolean,
+    syncSchedule: (mode) => mode === "daily" || mode === "every6h" || mode === "off",
+    syncHour: isNumber,
+    syncThreshold: isNumber,
+  });
+}
+
+function isLdapProvider(value: unknown): value is LdapProvider {
+  return has(value, {
+    id: isString,
+    slug: isString,
+    kind: (kind) => kind === "ldap",
+    name: isString,
+    enabled: isBoolean,
+    position: isNumber,
+    version: isNumber,
+    createAccounts: isBoolean,
+    ldap: isLdapSettings,
+  });
+}
+
+/** An LDAP provider as the form starts from it: empty values as empty text. */
+function normalized(provider: LdapProvider): LdapProvider {
+  return {
+    ...provider,
+    ldap: {
+      ...provider.ldap,
+      caPem: provider.ldap.caPem ?? null,
+      userFilter: provider.ldap.userFilter ?? "",
+      groupBaseDn: provider.ldap.groupBaseDn ?? "",
+    },
+  };
+}
+
+/** The form of an LDAP provider (`LdapInput`); `bindPassword` left out keeps the stored one. */
+export interface LdapInput {
+  slug: string;
+  name: string;
+  createAccounts: boolean;
+  ldap: LdapFields & { bindPassword?: string };
+}
+
+export interface LdapTestPerson {
+  dn: string;
+  login: string;
+  email: string | null;
+  name: string | null;
+  disabled: boolean;
+  bound: boolean;
+  groups: string[];
+  outcome: Outcome;
+}
+
+export interface LdapCheck {
+  checkToken: string;
+  durationMs: number;
+  /** "TLS 1.3"; null for an unencrypted connection. */
+  tls: string | null;
+  sample: { users: string[]; groups: string[] };
+  test: LdapTestPerson | null;
+}
+
+const isStrings = (value: unknown) => Array.isArray(value) && value.every(isString);
+
+function isLdapCheck(value: unknown): value is LdapCheck {
+  return has(value, {
+    checkToken: isString,
+    durationMs: isNumber,
+    tls: isStringOrNull,
+    sample: (sample) => has(sample, { users: isStrings, groups: isStrings }),
+    test: (test) =>
+      test === null ||
+      test === undefined ||
+      has(test, {
+        dn: isString,
+        login: isString,
+        email: isStringOrNull,
+        name: isStringOrNull,
+        disabled: isBoolean,
+        bound: isBoolean,
+        groups: isStrings,
+        outcome: isOutcome,
+      }),
+  });
+}
+
+export async function fetchLdapProvider(providerId: string): Promise<LdapProvider> {
+  const provider = expectShape(
+    await request("GET", `/api/admin/sign-in/providers/${enc(providerId)}`),
+    isLdapProvider,
+    "provider",
+  );
+  return normalized(provider);
+}
+
+/** The connection check, with the optional test person ("Testanmeldung mit"). */
+export async function checkLdap(
+  input: LdapInput,
+  providerId: string | undefined,
+  test: { login: string; password: string },
+): Promise<LdapCheck> {
+  const body: Record<string, unknown> = { ...input };
+  if (providerId !== undefined) {
+    body.providerId = providerId;
+  }
+  if (test.login !== "") {
+    body.testLogin = test.login;
+    if (test.password !== "") {
+      body.testPassword = test.password;
+    }
+  }
+  const answer = expectShape(
+    await request("POST", "/api/admin/sign-in/ldap/check", body),
+    isLdapCheck,
+    "provider check",
+  );
+  return { ...answer, test: answer.test ?? null };
+}
+
+export async function createLdap(input: LdapInput, checkToken: string): Promise<LdapProvider> {
+  return expectShape(
+    await request("POST", "/api/admin/sign-in/ldap", { ...input, checkToken }),
+    isLdapProvider,
+    "provider",
+  );
+}
+
+export async function updateLdap(
+  providerId: string,
+  input: LdapInput,
+  version: number,
+  checkToken: string | undefined,
+): Promise<LdapProvider> {
+  const body = checkToken === undefined ? { ...input, version } : { ...input, version, checkToken };
+  return expectShape(
+    await request("PUT", `/api/admin/sign-in/ldap/${enc(providerId)}`, body),
+    isLdapProvider,
+    "provider",
+  );
+}
+
+// LDAP sync
+
+export type SyncStatus = "running" | "done" | "halted" | "failed" | "applied";
+
+export interface SyncRun {
+  id: string;
+  trigger: "schedule" | "manual" | "apply";
+  status: SyncStatus;
+  startedAt: number;
+  finishedAt: number | null;
+  checked: number;
+  changed: number;
+  deactivated: number;
+  reactivated: number;
+  skipped: number;
+  wouldDeactivate: number;
+  accounts: number;
+  threshold: number;
+  error: string | null;
+  appliedBy: string | null;
+  appliedAt: number | null;
+}
+
+/** A person a sync disabled or would disable, with the reason (`not_in_directory`, ...). */
+export interface SyncPerson {
+  userId: string;
+  name: string;
+  email: string;
+  login: string | null;
+  reason: string;
+}
+
+export interface Deactivated extends SyncPerson {
+  at: number;
+}
+
+export interface SyncState {
+  schedule: LdapSchedule;
+  hour: number;
+  threshold: number;
+  nextRunAt: number | null;
+  failuresInRow: number;
+  runs: SyncRun[];
+  deactivated: Deactivated[];
+}
+
+export interface SyncRunDetail extends SyncRun {
+  pending: SyncPerson[];
+}
+
+const SYNC_STATUSES: readonly string[] = ["running", "done", "halted", "failed", "applied"];
+
+function isSyncRun(value: unknown): value is SyncRun {
+  return has(value, {
+    id: isString,
+    trigger: (trigger) => trigger === "schedule" || trigger === "manual" || trigger === "apply",
+    status: (status) => typeof status === "string" && SYNC_STATUSES.includes(status),
+    startedAt: isNumber,
+    finishedAt: isNumberOrNull,
+    checked: isNumber,
+    changed: isNumber,
+    deactivated: isNumber,
+    reactivated: isNumber,
+    skipped: isNumber,
+    wouldDeactivate: isNumber,
+    accounts: isNumber,
+    threshold: isNumber,
+    error: isStringOrNull,
+    appliedBy: isStringOrNull,
+    appliedAt: isNumberOrNull,
+  });
+}
+
+const SYNC_PERSON = {
+  userId: isString,
+  name: isString,
+  email: isString,
+  login: isTextOrEmpty,
+  reason: isString,
+};
+
+function isSyncState(value: unknown): value is SyncState {
+  return has(value, {
+    schedule: (mode) => mode === "daily" || mode === "every6h" || mode === "off",
+    hour: isNumber,
+    threshold: isNumber,
+    nextRunAt: isNumberOrNull,
+    failuresInRow: isNumber,
+    runs: (runs) => Array.isArray(runs) && runs.every(isSyncRun),
+    deactivated: (list) =>
+      Array.isArray(list) && list.every((item) => has(item, { ...SYNC_PERSON, at: isNumber })),
+  });
+}
+
+function isSyncRunDetail(value: unknown): value is SyncRunDetail {
+  return (
+    isSyncRun(value) &&
+    has(value, {
+      pending: (list) => Array.isArray(list) && list.every((item) => has(item, SYNC_PERSON)),
+    })
+  );
+}
+
+function syncPath(providerId: string): string {
+  return `/api/admin/sign-in/providers/${enc(providerId)}/sync`;
+}
+
+export async function fetchSync(providerId: string): Promise<SyncState> {
+  return expectShape(await request("GET", syncPath(providerId)), isSyncState, "sync");
+}
+
+/** "Jetzt abgleichen": runs a sync now and answers it. */
+export async function runSync(providerId: string): Promise<SyncRun> {
+  return expectShape(await request("POST", syncPath(providerId)), isSyncRun, "sync run");
+}
+
+export async function fetchSyncRun(providerId: string, runId: string): Promise<SyncRunDetail> {
+  return expectShape(
+    await request("GET", `${syncPath(providerId)}/runs/${enc(runId)}`),
+    isSyncRunDetail,
+    "sync run",
+  );
+}
+
+/** "Trotzdem anwenden": needs a second factor confirmed in this session within 5 minutes. */
+export async function applySyncRun(providerId: string, runId: string): Promise<SyncRun> {
+  return expectShape(
+    await request("POST", `${syncPath(providerId)}/runs/${enc(runId)}/apply`),
+    isSyncRun,
+    "sync run",
+  );
+}
+
 // Group mappings
 
 export interface Mapping {
@@ -537,4 +881,6 @@ export const ssoKeys = {
   mappings: ["sso", "mappings"] as const,
   local: ["sso", "local"] as const,
   test: (id: string) => ["sso", "test", id] as const,
+  sync: (id: string) => ["sso", "sync", id] as const,
+  syncRun: (id: string, runId: string) => ["sso", "sync", id, runId] as const,
 };

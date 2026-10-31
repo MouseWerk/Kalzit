@@ -35,6 +35,7 @@
   "validation.orgNameRequired": "Enter a name for the organization.",
   "validation.nameRequired": "Enter your name.",
   "validation.emailRequired": "Enter your email address.",
+  "validation.loginRequired": "Enter your email address or username.",
   "validation.emailInvalid": "Enter an email address like name@example.com.",
   "validation.passwordRequired": "Enter your password.",
   "validation.passwordTooShort": "The password needs at least {count} characters.",
