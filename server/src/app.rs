@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
-use axum::routing::get;
+use axum::routing::{get, post};
 use sqlx::AnyPool;
 use tower_http::trace::TraceLayer;
 
@@ -244,6 +244,11 @@ pub fn router(state: AppState) -> Router {
         // The redirect URI of identity providers (docs/api/sso.md); outside `/api`, since it is a
         // page the browser is sent to.
         .route(routes::sso::CALLBACK_ROUTE, get(routes::sso::callback))
+        // SAML: Kalzit's metadata per provider, the assertion consumer service (an HTTP-POST from
+        // the provider) and the step back into the browser that started the sign-in.
+        .route(routes::saml::METADATA_ROUTE, get(routes::saml::metadata))
+        .route(routes::saml::ACS_ROUTE, post(routes::saml::acs))
+        .route(routes::saml::FINISH_ROUTE, get(routes::saml::finish))
         .nest("/api", api)
         .fallback(web::static_files);
     with_layers(routes, state)
@@ -270,7 +275,11 @@ fn with_layers(routes: Router<AppState>, state: AppState) -> Router {
 /// state) is left out.
 fn request_span(req: &axum::http::Request<axum::body::Body>) -> tracing::Span {
     let uri = req.uri();
-    let shown = if uri.path().starts_with("/auth/oidc/") { uri.path().to_string() } else { uri.to_string() };
+    let shown = if uri.path().starts_with("/auth/oidc/") || uri.path().starts_with("/auth/saml/") {
+        uri.path().to_string()
+    } else {
+        uri.to_string()
+    };
     tracing::debug_span!("request", method = %req.method(), uri = %shown, version = ?req.version())
 }
 

@@ -106,10 +106,21 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
     if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
         return next.run(req).await;
     }
+    // A SAML provider posts its answer from its own origin (HTTP-POST binding). The ACS acts on
+    // no cookie: it only accepts a signed answer to a request Kalzit made, and the session opens
+    // in the next step, which needs the browser that started the sign-in (`routes::saml`).
+    if is_saml_acs(req.uri().path()) {
+        return next.run(req).await;
+    }
     if let Err(e) = check_origin(&state, req.headers(), req.extensions().get::<RequestInfo>()) {
         return e.into_response();
     }
     next.run(req).await
+}
+
+/// `/auth/saml/<slug>/acs`, with a valid slug.
+fn is_saml_acs(path: &str) -> bool {
+    path.strip_prefix("/auth/saml/").and_then(|rest| rest.strip_suffix("/acs")).is_some_and(crate::sso::valid_slug)
 }
 
 /// Refuses a request whose `Origin` is not this server; one without `Origin` passes (see
@@ -222,6 +233,21 @@ pub async fn security_headers(State(state): State<AppState>, req: Request, next:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_saml_acs_skips_the_origin_check() {
+        assert!(is_saml_acs("/auth/saml/partnerportal/acs"));
+        for other in [
+            "/auth/saml/partnerportal/finish",
+            "/auth/saml//acs",
+            "/auth/saml/a/b/acs",
+            "/api/auth/saml/p/acs",
+            "/auth/saml/Partner/acs",
+            "/auth/oidc/p/acs",
+        ] {
+            assert!(!is_saml_acs(other), "{other}");
+        }
+    }
 
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
         let mut h = HeaderMap::new();

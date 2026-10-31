@@ -40,6 +40,7 @@ pub mod preferences;
 pub mod query;
 pub mod query_cache;
 pub mod roles;
+pub mod saml;
 pub mod second_factor;
 pub mod security;
 pub mod service_accounts;
@@ -65,6 +66,7 @@ pub fn all() -> Vec<table::RouteDef> {
         auth::routes(),
         sso::routes(),
         ldap::routes(),
+        saml::routes(),
         second_factor::routes(),
         security::routes(),
         orgs::routes(),

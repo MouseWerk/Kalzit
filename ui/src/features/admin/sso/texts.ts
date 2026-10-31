@@ -50,9 +50,21 @@ export function ssoErrorText(t: Translate, error: unknown, texts: ErrorTexts = {
   return errorText(t, error, texts);
 }
 
-/** The reason of a failed test sign-in (`sso.outcome_<outcome>`) as a sentence. */
-export function testFailureText(t: Translate, error: { reason: string; message: string }): string {
-  return reasonText(t, { reason: error.reason, fallback: error.message }) ?? error.reason;
+/**
+ * The reason of a failed test sign-in (`sso.outcome_<outcome>`, or what a SAML check refused)
+ * as a sentence.
+ */
+export function testFailureText(
+  t: Translate,
+  error: { reason: string; message: string; params?: Record<string, unknown> },
+): string {
+  const params: Record<string, string> = {};
+  for (const [name, value] of Object.entries(error.params ?? {})) {
+    if (typeof value === "string" || typeof value === "number") {
+      params[name] = String(value);
+    }
+  }
+  return reasonText(t, { reason: error.reason, params, fallback: error.message }) ?? error.reason;
 }
 
 /** "Admin in Analytical Engines", with the team and who decides, for one organization. */

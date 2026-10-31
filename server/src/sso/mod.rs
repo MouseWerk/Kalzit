@@ -1,13 +1,14 @@
-//! Single sign-on (docs/api/sso.md): identity providers (OpenID Connect, LDAP and Active
-//! Directory; SAML uses the same providers, identities and group mapping later), the mapping of their groups to
-//! organizations, teams and roles, and the rules for the local password sign-in with its
-//! break-glass admin.
+//! Single sign-on (docs/api/sso.md): identity providers (OpenID Connect, SAML 2.0, LDAP and
+//! Active Directory, all with the same providers, identities and group mapping), the mapping of
+//! their groups to organizations, teams and roles, and the rules for the local password sign-in
+//! with its break-glass admin.
 
 pub mod directory;
 pub mod jwt;
 pub mod ldap;
 pub mod mapping;
 pub mod oidc;
+pub mod saml;
 pub mod signin;
 pub mod store;
 pub mod sync;
@@ -202,6 +203,12 @@ pub fn public_base(state: &AppState, info: &RequestInfo) -> String {
     format!("{scheme}://{host}")
 }
 
+/// The address SAML addresses are built from: `server.public_url` only, never the request's
+/// headers, since the provider pins the entity ID and ACS and the ACS must name itself exactly.
+pub fn saml_base(state: &AppState) -> Option<String> {
+    state.config.server.public_url.as_deref().map(|u| u.trim_end_matches('/').to_string()).filter(|u| !u.is_empty())
+}
+
 pub fn redirect_uri(base: &str, slug: &str) -> String {
     format!("{base}/auth/oidc/{slug}/callback")
 }
@@ -354,6 +361,12 @@ pub fn spawn_cleanup(state: AppState) {
         async move {
             let now = state.clock.now_ms();
             sqlx::query("DELETE FROM sso_sign_ins WHERE expires_at <= $1")
+                .bind(now)
+                .execute(state.background.db())
+                .await
+                .map_err(|e| crate::db::JobError::Failed(e.to_string()))?;
+            // SAML assertions that would be refused anyway need not be remembered.
+            sqlx::query("DELETE FROM saml_assertions WHERE expires_at <= $1")
                 .bind(now)
                 .execute(state.background.db())
                 .await
