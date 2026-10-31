@@ -24,7 +24,8 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use kalzit::app::{AppState, router};
-use kalzit::clock::ManualClock;
+use kalzit::auth::totp;
+use kalzit::clock::{Clock, ManualClock};
 use kalzit::config::Config;
 use ldap3::{Ldap, LdapConnAsync, Mod, Scope};
 use serde_json::{Value, json};
@@ -194,6 +195,7 @@ struct TestApp {
     app: Router,
     state: AppState,
     dir: Arc<tempfile::TempDir>,
+    clock: Arc<ManualClock>,
 }
 
 struct Reply {
@@ -210,6 +212,18 @@ impl Reply {
 
     fn field(&self) -> &str {
         self.body["error"]["field"].as_str().unwrap_or("")
+    }
+
+    /// `name=value` of the cookie `name` this answer sets.
+    fn cookie(&self, name: &str) -> Option<String> {
+        self.headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .filter_map(|v| v.split(';').next())
+            .filter(|v| v.split_once('=').is_some_and(|(n, value)| n == name && !value.is_empty()))
+            .map(str::to_string)
+            .next()
     }
 
     fn session(&self) -> String {
@@ -240,9 +254,9 @@ async fn test_app_with(failures: u32) -> TestApp {
     config.server.http_addr = "127.0.0.1:3999".into();
     let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
     let clock = Arc::new(ManualClock::new(START_MS));
-    let state = AppState::new(config, pool, clock, Some(SETUP_CODE.into())).await.unwrap();
+    let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), state, dir: Arc::new(dir) }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), state, dir: Arc::new(dir), clock }
 }
 
 impl TestApp {
@@ -330,6 +344,28 @@ impl TestApp {
         .await
         .unwrap();
         row.map(|(r,)| r)
+    }
+
+    /// Sets up an authenticator app for the signed-in `session`; answers its key. The code that
+    /// confirmed it is used, so the clock moves on a step.
+    async fn enroll_totp(&self, session: &str) -> Vec<u8> {
+        let r = self.post("/api/me/security/totp/setup", json!({}), session).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let secret = totp::decode_secret(&r.body["secret"].as_str().unwrap().replace(' ', "")).unwrap();
+        let r = self.post("/api/me/security/totp", json!({ "code": self.code(&secret) }), session).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        self.clock.advance_ms(totp::STEP_SECS * 1000);
+        secret
+    }
+
+    fn code(&self, secret: &[u8]) -> String {
+        totp::code_at(secret, totp::step_at(self.clock.now_ms()))
+    }
+
+    /// The second step of a sign-in with the app's code.
+    async fn second_step(&self, pending: &str, secret: &[u8]) -> Reply {
+        let body = json!({ "method": "totp", "code": self.code(secret) });
+        self.send(Method::POST, "/api/auth/second-factor", Some(body), Some(pending)).await
     }
 
     async fn disabled(&self, email: &str) -> bool {
@@ -595,7 +631,7 @@ async fn local_account(app: &TestApp, email: &str, admin: bool, confirmed: bool,
 async fn ldap_budgets_email_links_and_admin_decisions() {
     let Some(env) = env() else { return };
     let mut dir = Dir::open(&env).await;
-    for uid in ["conf", "unconf", "adm", "bg", "svc", "gina", "hans", "ida"] {
+    for uid in ["conf", "unconf", "adm", "bg", "svc", "gina", "hans", "ida", "jo", "kai"] {
         dir.person(uid, &format!("Person {uid}"), &format!("{uid}-geheim-1")).await;
     }
     // Three wrong sign-ins per budget.
@@ -630,6 +666,8 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // Without the server admin role, so the break-glass rule alone refuses the link.
+    sqlx::query("UPDATE users SET is_server_admin = 0 WHERE id = $1").bind(&bg).execute(&app.state.db).await.unwrap();
     let refused = |r: &Reply| (r.status, r.reason().to_string(), r.body["error"]["params"]["outcome"].clone());
     let taken = (StatusCode::FORBIDDEN, "ldap.sign_in_refused".to_string(), json!("email_taken"));
     assert_eq!(refused(&app.login("conf", "conf-geheim-1").await), taken, "trustEmail is off by default");
@@ -684,14 +722,7 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     // With a second factor, a sign-in enables an account the sync disabled only after that step.
     let r = app.login("hans", "hans-geheim-1").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let hans = r.body["id"].as_str().unwrap().to_string();
-    sqlx::query(
-        "INSERT INTO user_totp (user_id, key_id, nonce, ciphertext, last_step, created_at) VALUES ($1, 'k', 'n', 'c', 0, 0)",
-    )
-    .bind(&hans)
-    .execute(&app.state.db)
-    .await
-    .unwrap();
+    let hans = app.enroll_totp(&r.session()).await;
     dir.move_person("hans", &people, &gone).await;
     assert_eq!(app.post(&sync, json!({}), &admin).await.body["deactivated"], 1);
     dir.move_person("hans", &gone, &people).await;
@@ -699,6 +730,37 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(r.body["secondFactor"].is_object(), "{}", r.body);
     assert!(app.disabled("hans@kalzit.test").await, "enabled only after the second factor");
+    let r = app.second_step(&r.cookie("kalzit_pending").expect("a pending cookie"), &hans).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(!app.disabled("hans@kalzit.test").await, "enabled once the second factor succeeded");
+    assert_eq!(app.get("/api/me", &r.session()).await.status, StatusCode::OK);
+
+    // An account an admin disabled is refused before any second step.
+    let r = app.login("jo", "jo-geheim-1").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let jo_id = r.body["id"].as_str().unwrap().to_string();
+    app.enroll_totp(&r.session()).await;
+    let user = format!("/api/admin/users/{jo_id}");
+    let r = app.send(Method::PATCH, &user, Some(json!({ "disabled": true })), Some(&admin)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.login("jo", "jo-geheim-1").await;
+    assert_eq!((r.status, r.body["error"]["params"]["outcome"].as_str()), (StatusCode::FORBIDDEN, Some("disabled")));
+    assert!(r.cookie("kalzit_pending").is_none() && r.body["secondFactor"].is_null(), "no second step");
+
+    // A second step started while the account was enabled, finished after the sync disabled it:
+    // refused, and the account stays disabled.
+    let r = app.login("kai", "kai-geheim-1").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let kai = app.enroll_totp(&r.session()).await;
+    let r = app.login("kai", "kai-geheim-1").await;
+    assert!(r.body["secondFactor"].is_object(), "{}", r.body);
+    let pending = r.cookie("kalzit_pending").expect("a pending cookie");
+    dir.move_person("kai", &people, &gone).await;
+    assert_eq!(app.post(&sync, json!({}), &admin).await.body["deactivated"], 1);
+    let r = app.second_step(&pending, &kai).await;
+    assert_ne!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.cookie("kalzit_session").is_none());
+    assert!(app.disabled("kai@kalzit.test").await, "a stale second step never enables the account");
 
     // One budget for every spelling of a login: after three wrong passwords for the address
     // (each from another network, so only the login's and the entry's budgets carry over), the
@@ -737,4 +799,8 @@ fn logins_count_without_domain_and_case() {
     assert_eq!(kalzit::routes::auth::login_key(" ZENTRALE\\Anna "), "anna");
     assert_eq!(kalzit::routes::auth::login_key("Anna@Example.DE"), "anna@example.de");
     assert_eq!(kalzit::routes::auth::login_key("a\\b\\C"), "c");
+    assert_eq!(kalzit::routes::auth::login_key("DOM\\anna"), "anna");
+    // An address with a backslash stays the address.
+    assert_eq!(kalzit::routes::auth::login_key("a\\b@x.de"), "a\\b@x.de");
+    assert_eq!(kalzit::routes::auth::login_key(" A\\B@X.de "), "a\\b@x.de");
 }

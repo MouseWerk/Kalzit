@@ -13,7 +13,6 @@ use super::oidc::{Person, matching_email};
 use super::signin::{self, Refusal};
 use super::store::{self, ProviderRow};
 use crate::app::AppState;
-use crate::auth::SessionUser;
 use crate::auth::second_factor::FirstStep;
 use crate::error::{ApiError, ApiResult};
 use crate::net::RequestInfo;
@@ -204,31 +203,51 @@ async fn attempt_one(
 }
 
 /// The account linked to `subject` at `provider_id`, when the sync disabled it (and no admin
-/// enabled or disabled it since, which removes the record).
-async fn sync_disabled_account(state: &AppState, provider_id: &str, subject: &str) -> ApiResult<Option<SessionUser>> {
-    let row: Option<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT u.id, u.email, u.name, u.is_server_admin FROM ldap_deactivations d JOIN sso_identities i \
+/// enabled or disabled it since, which removes the record): its id and the run that disabled it.
+async fn sync_disabled_account(
+    state: &AppState,
+    provider_id: &str,
+    subject: &str,
+) -> ApiResult<Option<(String, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT u.id, d.run_id FROM ldap_deactivations d JOIN sso_identities i \
          ON i.user_id = d.user_id AND i.provider_id = d.provider_id JOIN users u ON u.id = d.user_id \
          WHERE d.provider_id = $1 AND i.subject = $2 AND u.disabled = 1",
     )
     .bind(provider_id)
     .bind(subject)
     .fetch_optional(&state.db)
-    .await?;
-    Ok(row.map(|(id, email, name, is_server_admin)| SessionUser { id, email, name, is_server_admin }))
+    .await?)
 }
 
-/// Enables again an account the sync of `provider_id` disabled, once a directory sign-in of the
-/// person is complete (with Kalzit's second factor when one is asked, `auth::second_factor`).
+/// Enables again an account the sync disabled in `run_id`, once a directory sign-in of the person
+/// is complete (with Kalzit's second factor when one is asked, `auth::second_factor`). Answers
+/// `false`, changing nothing, when that record is gone: an admin enabled or disabled the account
+/// since, or a later run disabled it again.
 pub async fn enable_sync_disabled(
     conn: &mut sqlx::AnyConnection,
     address: Option<std::net::IpAddr>,
     user_id: &str,
-    provider_id: &str,
+    run_id: &str,
     now: i64,
-) -> ApiResult<()> {
+) -> ApiResult<bool> {
+    let record: Option<(String,)> =
+        sqlx::query_as("SELECT provider_id FROM ldap_deactivations WHERE user_id = $1 AND run_id = $2")
+            .bind(user_id)
+            .bind(run_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some((provider_id,)) = record else { return Ok(false) };
+    let removed = sqlx::query("DELETE FROM ldap_deactivations WHERE user_id = $1 AND run_id = $2")
+        .bind(user_id)
+        .bind(run_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Ok(false);
+    }
     sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
-    sqlx::query("DELETE FROM ldap_deactivations WHERE user_id = $1").bind(user_id).execute(&mut *conn).await?;
     let event = crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: Some(user_id),
@@ -239,11 +258,11 @@ pub async fn enable_sync_disabled(
         summary: json!({ "userId": user_id, "cause": "ldap_sign_in", "providerId": provider_id }),
         at_ms: now,
     };
-    Ok(crate::audit::record(conn, &event).await?)
+    crate::audit::record(conn, &event).await?;
+    Ok(true)
 }
 
-/// Puts back the disabled flag the sign-in lifted inside its transaction only, when the account is
-/// enabled after the second step instead.
+/// Puts back the disabled flag the sign-in lifted inside its transaction only.
 async fn keep_disabled(conn: &mut sqlx::AnyConnection, user_id: Option<&str>) -> ApiResult<()> {
     if let Some(id) = user_id {
         sqlx::query("UPDATE users SET disabled = 1 WHERE id = $1").bind(id).execute(conn).await?;
@@ -278,23 +297,14 @@ pub async fn finish(
             .param("outcome", refusal.outcome)
             .param("ref", r)
     };
-    let first = FirstStep::Directory;
-    // An account the sync disabled is enabled again: at once without a second step, otherwise
-    // only once that step succeeds (`auth::second_factor::take_pending`). Until then the flag is
-    // lifted inside this transaction only, for the account's checks.
+    // An account the sync disabled is enabled again, in the transaction that opens the session,
+    // or after the second step (`auth::second_factor::take_pending`), never before. For the
+    // account's checks the flag is lifted inside this first transaction only.
     let sync_disabled = sync_disabled_account(state, &provider.id, &person.subject).await?;
-    let enable_now = match &sync_disabled {
-        Some(user) => crate::routes::second_factor::plan(state, info, user, first, now).await?.is_none(),
-        None => false,
-    };
-    let later = sync_disabled.as_ref().filter(|_| !enable_now).map(|u| u.id.clone());
+    let lifted = sync_disabled.as_ref().map(|(id, _)| id.clone());
     let mut tx = crate::db::begin(&state.db).await?;
-    if let Some(user) = &sync_disabled {
-        if enable_now {
-            enable_sync_disabled(&mut tx, Some(info.client_ip), &user.id, &provider.id, now).await?;
-        } else {
-            sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(&user.id).execute(&mut *tx).await?;
-        }
+    if let Some(id) = &lifted {
+        sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(id).execute(&mut *tx).await?;
     }
     let linked = match signin::account(&mut tx, state, info, provider, ldap::ISSUER, person, now).await? {
         Ok(l) => l,
@@ -306,7 +316,7 @@ pub async fn finish(
     let outcome = signin::decide(&mut tx, state, &provider.id, &linked, &person.groups).await?;
     if let Some(o) = outcome.as_ref().filter(|o| o.refused) {
         let touched = signin::apply(&mut tx, info, ids, &linked.user.id, o, None, now).await?;
-        keep_disabled(&mut tx, later.as_deref()).await?;
+        keep_disabled(&mut tx, lifted.as_deref()).await?;
         crate::db::commit(tx).await?;
         super::rights_changed(state, &touched).await;
         if linked.user.is_server_admin == 0 {
@@ -315,10 +325,22 @@ pub async fn finish(
         }
         tx = crate::db::begin(&state.db).await?;
     }
-    keep_disabled(&mut tx, later.as_deref()).await?;
+    keep_disabled(&mut tx, lifted.as_deref()).await?;
     crate::db::commit(tx).await?;
+    // The one plan for the second step, from which both the answer and the enabling follow.
+    let sync_run = sync_disabled.as_ref().map(|(_, run)| run.as_str());
+    let first = FirstStep::Directory { sync_run };
     let plan = crate::routes::second_factor::plan(state, info, &linked.user, first, now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    if plan.is_none()
+        && let Some((id, run)) = &sync_disabled
+        && !enable_sync_disabled(&mut tx, Some(info.client_ip), id, run, now).await?
+    {
+        // An admin or a newer sync run changed the account meanwhile: it stays disabled.
+        drop(tx);
+        let refusal = Refusal::new("disabled", "sso.account_disabled", "the account is disabled");
+        return Err(refuse(Refusal { user_id: Some(id.clone()), ..refusal }).await);
+    }
     let mapping = outcome.as_ref().filter(|o| !o.refused);
     let touched = match (plan.is_some(), mapping) {
         // The mapping waits for the second step to end well (`signin::apply_deferred`).

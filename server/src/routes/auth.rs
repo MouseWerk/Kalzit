@@ -89,12 +89,13 @@ pub async fn login(
 
 /// The form a typed login is counted and looked up in: trimmed and lowercased, and a Windows
 /// `DOMAIN\name` as `name` (as the directory search reads it, `sso::ldap::LdapConfig::login_filter`),
-/// so every spelling of one login shares its budgets. No email address has a backslash.
+/// so every spelling of one login shares its budgets. An address keeps its backslash (`a\b@x.de`
+/// is an address): only a name without `@` loses the domain.
 pub fn login_key(typed: &str) -> String {
     let login = typed.trim().to_lowercase();
     match login.rsplit_once('\\') {
-        Some((_, name)) => name.to_string(),
-        None => login,
+        Some((_, name)) if !name.contains('@') => name.to_string(),
+        _ => login,
     }
 }
 

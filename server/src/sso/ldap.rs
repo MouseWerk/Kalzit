@@ -146,6 +146,7 @@ impl LdapConfig {
         if self.flavor == Flavor::Ad
             && self.login_attribute.eq_ignore_ascii_case("sAMAccountName")
             && let Some((_, name)) = login.rsplit_once('\\')
+            && !name.contains('@')
         {
             login = name;
         }
@@ -799,6 +800,8 @@ mod tests {
             "(&(objectCategory=person)(objectClass=user)(sAMAccountName=e.schroeder))"
         );
         assert_eq!(ad.login_filter("ZENTRALE\\e.schroeder"), ad.login_filter("e.schroeder"));
+        // An address keeps its backslash, escaped.
+        assert!(ad.login_filter("a\\b@x.de").contains("(sAMAccountName=a\\5cb@x.de)"));
         assert_eq!(
             ad.login_filter("e.schroeder@zentrale.example"),
             "(&(objectCategory=person)(objectClass=user)(|(sAMAccountName=e.schroeder@zentrale.example)\
