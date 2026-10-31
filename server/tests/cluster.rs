@@ -42,36 +42,10 @@ where
     }
 }
 
-/// A throwaway schema on the test database, dropped by `drop_schema`.
-struct Schema {
-    admin: sqlx::AnyPool,
-    name: String,
-    url: String,
-}
-
-async fn schema() -> Option<Schema> {
-    let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
-        eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL cluster test not run");
-        return None;
-    };
-    sqlx::any::install_default_drivers();
-    let admin = sqlx::AnyPool::connect(&base).await.unwrap();
-    let name = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
-    // A fixed prefix plus hex digits: safe to splice in.
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {name}"))).execute(&admin).await.unwrap();
-    let sep = if base.contains('?') { '&' } else { '?' };
-    let url = format!("{base}{sep}options=-csearch_path%3D{name}");
-    Some(Schema { admin, name, url })
-}
-
-impl Schema {
-    async fn drop_schema(self) {
-        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {} CASCADE", self.name)))
-            .execute(&self.admin)
-            .await
-            .unwrap();
-        self.admin.close().await;
-    }
+/// A throwaway schema on the test database, dropped by `drop_now` (or with the guard).
+async fn schema() -> Option<common::PgSchema> {
+    let base = common::postgres_url("PostgreSQL cluster test")?;
+    Some(common::postgres_schema(&base).await)
 }
 
 /// One server: its state with the cluster loops started, and its data directory.
@@ -165,7 +139,7 @@ async fn postgres_one_leader_and_failover() {
     assert!(kalzit::cluster::view(&c.state).await.unwrap().leader_term > term);
     b.finish().await;
     c.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
 }
 
 /// A settings change on one server is seen on the other well before the settings cache's TTL
@@ -212,7 +186,7 @@ async fn postgres_changes_reach_the_other_server() {
 
     a.finish().await;
     b.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
 }
 
 /// A session ended on one server is refused on the other at once: sessions live in the database
@@ -236,7 +210,7 @@ async fn postgres_a_session_ended_on_one_server_is_refused_on_the_other() {
     assert_eq!(b.status("/api/me", &cookie).await, StatusCode::UNAUTHORIZED);
     a.finish().await;
     b.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
 }
 
 /// A job that must run once runs once across both servers per interval, even though each
@@ -268,7 +242,7 @@ async fn postgres_a_run_once_job_runs_once() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(runs.load(Ordering::SeqCst), 1);
     b.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
 }
 
 /// A server that restarts on its data directory after a crash (its old row never signed off,
@@ -297,7 +271,32 @@ async fn postgres_a_restarted_single_server_has_no_peers() {
     first.state.close().await;
     drop(first);
     again.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
+}
+
+/// A rights change whose event row the other server never reads (removed in its own transaction)
+/// empties that server's kept answers of every organization, as its organization is not known
+/// there, within two polls: one to give the row its chance, one to call it missed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_a_rights_change_without_its_event_empties_the_other_servers_cache() {
+    let Some(schema) = schema().await else { return };
+    let a = Server::start(&schema.url).await;
+    let b = Server::start(&schema.url).await;
+    let before = b.state.datasources.query_cache().stamp("org-2", "ds-2");
+    let mut tx = kalzit::db::begin(&a.state.db).await.unwrap();
+    kalzit::cluster::record(&mut tx, a.state.cluster.id(), &Change::Rights(Some("org-1".into()))).await.unwrap();
+    sqlx::query("DELETE FROM cluster_events").execute(&mut *tx).await.unwrap();
+    kalzit::db::commit(tx).await.unwrap();
+    let changed = Instant::now();
+    eventually("the other server empties its cache", Duration::from_secs(10), || async {
+        b.state.datasources.query_cache().stamp("org-2", "ds-2") != before
+    })
+    .await;
+    // Two polls of 300 ms, with room for a slow runner; the cache's own time is minutes.
+    assert!(changed.elapsed() < Duration::from_secs(5), "within polls, took {:?}", changed.elapsed());
+    a.finish().await;
+    b.finish().await;
+    schema.drop_now().await;
 }
 
 /// A change whose event row the other server never reads (here: removed in the writing
@@ -327,7 +326,7 @@ async fn postgres_a_change_without_its_event_is_taken_by_the_counters() {
     .await;
     a.finish().await;
     b.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
 }
 
 /// A server that starts while the leader's certificate order runs answers the HTTP-01 challenge
@@ -336,10 +335,13 @@ async fn postgres_a_change_without_its_event_is_taken_by_the_counters() {
 async fn postgres_a_server_started_during_an_order_answers_its_challenge() {
     let Some(schema) = schema().await else { return };
     let a = Server::start(&schema.url).await;
+    // Written now, as an order writes it: the leader's cleanup removes answers older than an hour
+    // at its first heartbeat, which could come before the second server has read them.
     sqlx::query(
         "INSERT INTO acme_challenges (kind, name, value, order_id, created_at) \
-         VALUES ('http', 'tok_en-1', 'tok_en-1.key-authorization', 'order-1', 0)",
+         VALUES ('http', 'tok_en-1', 'tok_en-1.key-authorization', 'order-1', $1)",
     )
+    .bind(SystemClock.now_ms())
     .execute(&a.state.db)
     .await
     .unwrap();
@@ -348,7 +350,7 @@ async fn postgres_a_server_started_during_an_order_answers_its_challenge() {
     assert_eq!(b.status("/.well-known/acme-challenge/unknown", "").await, StatusCode::NOT_FOUND);
     a.finish().await;
     b.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
 }
 
 /// A rights change in one organization reaches the other server with its organization: the
@@ -370,7 +372,7 @@ async fn postgres_a_rights_change_keeps_other_organizations_answers() {
     assert_eq!(b.state.datasources.query_cache().stamp("org-2", "ds-2"), other, "org-2 keeps its answers");
     a.finish().await;
     b.finish().await;
-    schema.drop_schema().await;
+    schema.drop_now().await;
 }
 /// A second server on the same SQLite database stops at its start with a clear error; once the
 /// first has stopped, it starts.

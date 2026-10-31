@@ -259,20 +259,12 @@ macro_rules! on_both_databases {
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn postgres_flows() {
-            let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
-                eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL flows not run");
-                return;
-            };
-            sqlx::any::install_default_drivers();
-            let admin = sqlx::AnyPool::connect(&base).await.unwrap();
+            let Some(base) = common::postgres_url("PostgreSQL flows") else { return };
             $(
-                let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
-                // The schema name is a fixed prefix plus UUID hex digits, so it is safe to splice in.
-                sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}"))).execute(&admin).await.unwrap();
-                let sep = if base.contains('?') { '&' } else { '?' };
-                let url = format!("{base}{sep}options=-csearch_path%3D{schema}");
+                let schema = common::postgres_schema(&base).await;
+                let url = schema.url.clone();
                 $flow(test_app(Some(url)).await).await;
-                sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
+                schema.drop_now().await;
             )*
         }
     };
@@ -337,7 +329,23 @@ async fn create_read_save_and_list(t: TestApp) {
     let folder = t.folder("Vertrieb", false).await;
     t.create("Öffnungszeiten", &source, Some(&folder), &t.owner).await;
     t.create("Abbrüche", &source, None, &t.owner).await;
-    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), ["Abbrüche", "Umsatz nach Land", "Öffnungszeiten"]);
+    // In the database's order of titles: SQLite compares bytes ("Ö" after "U"), PostgreSQL by its
+    // locale ("Ö" before "U" in en_US.UTF-8), so the expected order is asked of the database.
+    let by_title: Vec<(String,)> =
+        sqlx::query_as("SELECT title FROM analyses WHERE org_id = $1 AND deleted_at IS NULL ORDER BY title, id")
+            .bind(&t.org)
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    let by_title: Vec<String> = by_title.into_iter().map(|(title,)| title).collect();
+    let mut same = by_title.clone();
+    same.sort();
+    same.dedup();
+    assert_eq!(same, ["Abbrüche", "Umsatz nach Land", "Öffnungszeiten"], "the three analyses, nothing else");
+    if !t.state.config.database_url().starts_with("postgres") {
+        assert_eq!(by_title, same, "SQLite compares bytes");
+    }
+    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), by_title);
     assert_eq!(t.get("~/analyses?q=%C3%96FFNUNG", &t.owner).await.titles(), ["Öffnungszeiten"]);
     assert_eq!(t.get("~/analyses?q=land", &t.owner).await.titles(), ["Umsatz nach Land"]);
     assert_eq!(t.get(&format!("~/analyses?folderId={folder}"), &t.owner).await.titles(), ["Öffnungszeiten"]);
@@ -345,9 +353,9 @@ async fn create_read_save_and_list(t: TestApp) {
     assert!(t.get("~/analyses?q=%25", &t.owner).await.titles().is_empty());
     // Pages keep their order.
     let first = t.get("~/analyses?limit=2", &t.owner).await;
-    assert_eq!(first.titles(), ["Abbrüche", "Umsatz nach Land"]);
+    assert_eq!(first.titles(), by_title[..2]);
     let cursor = first.body["nextCursor"].as_str().unwrap().to_string();
-    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), ["Öffnungszeiten"]);
+    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), by_title[2..]);
     // A folder that does not exist is not found; an unknown parameter is refused.
     let missing = uuid::Uuid::now_v7();
     assert_eq!(t.get(&format!("~/analyses?folderId={missing}"), &t.owner).await.status, StatusCode::NOT_FOUND);

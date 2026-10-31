@@ -1,4 +1,5 @@
-//! Service accounts, their API tokens and the SCIM token through the real router (SQLite).
+//! Service accounts, their API tokens and the SCIM token through the real router (SQLite;
+//! PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set, each app in a throwaway schema).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -27,6 +28,8 @@ struct TestApp {
     dir: Arc<tempfile::TempDir>,
     org: String,
     owner: String,
+    /// Its PostgreSQL schema, dropped at `finish` (or with the app).
+    schema: Option<common::PgSchema>,
 }
 
 struct Reply {
@@ -55,12 +58,14 @@ impl TestApp {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
+        let schema = common::database().await;
+        config.database.url = schema.as_ref().map(|s| s.url.clone());
         let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
         let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let app = router(state.clone()).layer(MockConnectInfo(peer));
-        let mut t = TestApp { app, clock, state, dir: Arc::new(dir), org: String::new(), owner: String::new() };
+        let mut t = TestApp { app, clock, state, dir: Arc::new(dir), org: String::new(), owner: String::new(), schema };
         let r = t
             .send(
                 Method::POST,
@@ -76,8 +81,8 @@ impl TestApp {
         t
     }
 
-    async fn finish(self) {
-        let finish = common::Finish::new(self.state.clone(), self.dir.clone());
+    async fn finish(mut self) {
+        let finish = common::Finish::new(self.state.clone(), self.dir.clone()).with_schema(self.schema.take());
         drop(self);
         finish.finish().await;
     }
