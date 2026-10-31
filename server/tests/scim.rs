@@ -934,3 +934,57 @@ async fn scim_and_the_directory_sync_never_lift_each_others_locks() {
     assert_eq!(t.account(&ole).await.2, 0);
     t.finish().await;
 }
+
+#[tokio::test]
+async fn scim_never_rewrites_an_account_someone_signs_in_to_or_a_protected_one() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    t.mapping("x", &org, None, "viewer", false).await;
+    let (provider,): (String,) = sqlx::query_as("SELECT id FROM sso_providers").fetch_one(&t.state.db).await.unwrap();
+    let new_mail = |name: &str| {
+        patch(json!([
+            { "op": "replace", "path": "displayName", "value": name },
+            { "op": "replace", "path": "emails", "value": [{ "value": format!("{name}@evil.example"), "primary": true }] }
+        ]))
+    };
+
+    // An owner whose account has a linked identity: the email never changes.
+    let ida = t.scim(Method::POST, "/Users", Some(json!({ "userName": "ida@mueller.example" })), &token).await.id();
+    sqlx::query(
+        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, created_at, last_sign_in_at) \
+         VALUES ($1, 'sub-ida', 'https://idp.example', $2, 0, 0)",
+    )
+    .bind(&provider)
+    .bind(&ida)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let r = t.owner(Method::PATCH, &format!("/members/{ida}"), Some(json!({ "role": "owner" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.scim(Method::PATCH, &format!("/Users/{ida}"), Some(new_mail("mallory")), &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (email, name, _, _) = t.account(&ida).await;
+    assert_eq!((email.as_str(), name.as_str()), ("ida@mueller.example", "ida"));
+    // The identity alone ends the ownership for good, also once it is gone again.
+    sqlx::query("DELETE FROM sso_identities WHERE user_id = $1").bind(&ida).execute(&t.state.db).await.unwrap();
+    let r = t.owner(Method::PATCH, &format!("/members/{ida}"), Some(json!({ "role": "viewer" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.scim(Method::PATCH, &format!("/Users/{ida}"), Some(new_mail("mallory2")), &token).await;
+    assert_eq!(t.account(&ida).await.0, "ida@mueller.example");
+
+    // An owner without any sign-in method: protected, so the email never changes either.
+    let otto = t.scim(Method::POST, "/Users", Some(json!({ "userName": "otto@mueller.example" })), &token).await.id();
+    let r = t.owner(Method::PATCH, &format!("/members/{otto}"), Some(json!({ "role": "owner" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.scim(Method::PATCH, &format!("/Users/{otto}"), Some(new_mail("mallory3")), &token).await;
+    assert_eq!(t.account(&otto).await.0, "otto@mueller.example");
+
+    // A password set by an admin: the same.
+    let pit = t.scim(Method::POST, "/Users", Some(json!({ "userName": "pit@mueller.example" })), &token).await.id();
+    let r = t.admin(Method::PATCH, &format!("/api/admin/users/{pit}"), Some(json!({ "password": PASSWORD }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.scim(Method::PATCH, &format!("/Users/{pit}"), Some(new_mail("mallory4")), &token).await;
+    assert_eq!(t.account(&pit).await.0, "pit@mueller.example");
+    t.finish().await;
+}

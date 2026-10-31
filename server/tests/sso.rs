@@ -1331,3 +1331,46 @@ async fn scim_accounts_link_at_sign_in_and_stay_unconfirmed_for_everything_else(
     assert_eq!(outcome_of(&r), "email_taken", "{}", r.location());
     app.finish().await;
 }
+
+/// The cross-organization chain: once someone signs in to an account SCIM made, its SCIM can no
+/// longer give it another person's address, so that person's sign-in never lands in it.
+#[tokio::test]
+async fn a_signed_in_scim_account_never_takes_another_persons_address() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, org) = app.setup().await;
+    add_provider(&app, &issuer, &admin).await;
+    let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
+    let token = r.body["token"].as_str().unwrap().to_string();
+
+    let x = scim_user(&app, &org, &token, "x@example.de").await;
+    let who = Who { sub: "sub-x", email: "x@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    // SCIM tries to give X the victim's address.
+    let req = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/scim/v2/o/{org}/Users/{x}"))
+        .header(header::HOST, "kalzit.test")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/scim+json")
+        .body(Body::from(
+            json!({ "Operations": [{ "op": "replace", "path": "emails",
+                    "value": [{ "value": "victim@example.de", "primary": true }] }] })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let (email,): (String,) =
+        sqlx::query_as("SELECT email FROM users WHERE id = $1").bind(&x).fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(email, "x@example.de", "the account keeps its address");
+    // The victim's sign-in gets an account of its own.
+    let victim = Who { sub: "sub-victim", email: "victim@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &victim, |_| {}).await;
+    let session = session_of(&r);
+    let me = app.get("/api/me", &session).await;
+    assert_ne!(me.body["id"], json!(x), "{}", me.body);
+    app.finish().await;
+}

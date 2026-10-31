@@ -1027,13 +1027,19 @@ async fn accept(
     let mut tx = crate::db::begin(&state.db).await?;
     let user_id = match &claim {
         Some(id) => {
-            // Only while it is still unused: no password, unconfirmed, not disabled.
+            // Only while it is still unused, checked again in this transaction: no password, no
+            // provider identity, unconfirmed, not disabled, and still made by SCIM.
             let taken = sqlx::query(
                 "UPDATE users SET name = $1, password_hash = $2, email_confirmed = 1 \
-                 WHERE id = $3 AND password_hash IS NULL AND email_confirmed = 0 AND disabled = 0",
+                 WHERE id = $3 AND password_hash IS NULL AND email_confirmed = 0 AND disabled = 0 \
+                 AND is_server_admin = 0 AND service_account = 0 \
+                 AND NOT EXISTS (SELECT 1 FROM sso_identities i WHERE i.user_id = $4) \
+                 AND EXISTS (SELECT 1 FROM scim_users s WHERE s.user_id = $5 AND s.created_account = 1)",
             )
             .bind(&name)
             .bind(&hash)
+            .bind(id)
+            .bind(id)
             .bind(id)
             .execute(&mut *tx)
             .await?

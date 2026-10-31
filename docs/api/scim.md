@@ -147,16 +147,22 @@ mapping applies again.
 ### Accounts
 
 An account SCIM made stays in the hands of that organization's SCIM ("owned") only while all of
-these hold: its owner never confirmed the address themselves (by an invitation mail, a password
-link or the confirmation mail), it belongs to no other organization, and it is not a server admin,
-the break-glass admin or a service account. Once one of them no longer holds, the ownership ends
-for good, also if the account later leaves the other organization. Only while it owns the account
-does SCIM change its name and address, lock it on deactivation, and vouch for its address:
+these hold: nobody can sign in to it yet (it has no password and no provider identity), its owner
+never confirmed the address themselves (by an invitation mail, a password link or the confirmation
+mail), it belongs to no other organization, and it is not a server admin, the break-glass admin or
+a service account. Once one of them no longer holds, the ownership ends for good, also if the
+account later loses its password or identity or leaves the other organization; so the first
+sign-in method linked to the account ends it. Only while it owns the account does SCIM change its
+name and address, lock it on deactivation, and vouch for its address. Even then it never changes
+the name or address of a protected account (an owner, a role beyond an admin's, a server admin, the
+break-glass admin, a service account).
 
-- **Single sign-on into that account.** A provider's person whose verified address is the
-  account's links to it at the first sign-in, although the address is unconfirmed, while SCIM owns
-  the account and the SCIM user is active. So Entra ID SCIM with Entra ID OIDC on the same address
-  works at once (docs/api/sso.md, "Accounts").
+- **The first single sign-on into that account.** A provider's person whose verified address is
+  the account's links to it, although the address is unconfirmed, while SCIM owns the account (so
+  no identity and no password are linked yet) and the SCIM user is active. So Entra ID SCIM with
+  Entra ID OIDC on the same address works at once (docs/api/sso.md, "Accounts"). From then on SCIM
+  keeps the directory's name and address on the SCIM user only, so it can never give a signed-in
+  account another person's address.
 - Nothing else takes SCIM's word for the address: the account stays unconfirmed, it cannot be added
   to another organization by its address (`mail.email_unconfirmed`), and it is never linked by
   another organization's SCIM.

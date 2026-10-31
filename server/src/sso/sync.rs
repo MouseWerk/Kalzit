@@ -594,6 +594,10 @@ async fn update(
                 .bind(&account.user_id)
                 .execute(&mut *tx)
                 .await?;
+            if trusted {
+                // A confirmed address: no SCIM owns the account any more (docs/api/scim.md).
+                crate::scim::release(&mut tx, &account.user_id, None).await?;
+            }
             changed = true;
         }
     }

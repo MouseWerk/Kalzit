@@ -351,32 +351,41 @@ async fn sign_in(state: &AppState, info: &RequestInfo, headers: &HeaderMap, org_
     Ok(caller)
 }
 
-/// The organization whose SCIM still owns `user_id`, an account it made: only while the account's
-/// owner never confirmed its address themselves, it belongs to no other organization, and it is
-/// not a server admin, the break-glass admin or a service account. Only then may that SCIM change
-/// the account's name and address, lock it, and vouch for its address at a single sign-on
-/// (docs/api/scim.md, "Accounts"). Once one of these no longer holds, the ownership ends for good
-/// (`release`). Inside a write transaction.
+/// The organization whose SCIM still owns `user_id`, an account it made: only while nobody can sign
+/// in to it yet (no password and no provider identity linked), its owner never confirmed the
+/// address themselves, it belongs to no other organization, and it is not a server admin, the
+/// break-glass admin or a service account. Only then may that SCIM change the account's name and
+/// address, lock it, and vouch for its address at the first single sign-on (docs/api/scim.md,
+/// "Accounts"). Once one of these no longer holds, the ownership ends for good (`release`), so the
+/// first sign-in method linked to the account ends it. Inside a write transaction.
 pub async fn owner_org(
     conn: &mut sqlx::AnyConnection,
     user_id: &str,
     break_glass: Option<&str>,
 ) -> Result<Option<String>, sqlx::Error> {
-    let row: Option<(String, i64, i64, i64)> = sqlx::query_as(
-        "SELECT s.org_id, u.email_confirmed, u.is_server_admin, u.service_account FROM scim_users s \
+    let row: Option<(String, i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT s.org_id, u.email_confirmed, u.is_server_admin, u.service_account, \
+         CASE WHEN u.password_hash IS NULL THEN 0 ELSE 1 END, \
+         (SELECT COUNT(*) FROM sso_identities i WHERE i.user_id = u.id) FROM scim_users s \
          JOIN users u ON u.id = s.user_id WHERE s.user_id = $1 AND s.created_account = 1 \
          ORDER BY s.created_at LIMIT 1",
     )
     .bind(user_id)
     .fetch_optional(&mut *conn)
     .await?;
-    let Some((org_id, confirmed, server_admin, service)) = row else { return Ok(None) };
+    let Some((org_id, confirmed, server_admin, service, password, identities)) = row else { return Ok(None) };
     let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1 AND org_id <> $2")
         .bind(user_id)
         .bind(&org_id)
         .fetch_one(&mut *conn)
         .await?;
-    let owned = confirmed == 0 && server_admin == 0 && service == 0 && elsewhere == 0 && break_glass != Some(user_id);
+    let owned = confirmed == 0
+        && server_admin == 0
+        && service == 0
+        && password == 0
+        && identities == 0
+        && elsewhere == 0
+        && break_glass != Some(user_id);
     if !owned {
         release(conn, user_id, None).await?;
         return Ok(None);
@@ -385,8 +394,9 @@ pub async fn owner_org(
 }
 
 /// Whether a single sign-on may link a provider's person to the unconfirmed account `user_id` by
-/// its address: SCIM made it, still owns it (`owner_org`) and the SCIM user is active. This counts
-/// for that sign-in only; the address stays unconfirmed for everything else.
+/// its address: SCIM made it, still owns it (`owner_org`: so this is the first sign-in method linked to
+/// it, with no password and no identity) and the SCIM user is active. This counts for that sign-in
+/// only; the address stays unconfirmed for everything else.
 pub async fn vouches_for_sign_in(
     conn: &mut sqlx::AnyConnection,
     user_id: &str,

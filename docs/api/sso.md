@@ -99,8 +99,9 @@ Then the account:
    (`sso=email_taken`, or `sso=failed` for an identity linked to one). Server admins and the break-glass
    admin are never linked by email (`sso=email_taken`). An account whose email is not confirmed
    (`users.email_confirmed`: made from an invitation link an admin passed on) is never taken over:
-   `sso=email_taken`. One exception: an account an organization's SCIM made and still owns, whose
-   SCIM user is active, counts as confirmed for this step (docs/api/scim.md, "Accounts"), so a
+   `sso=email_taken`. One exception: an account an organization's SCIM made and still owns (no
+   password and no identity linked yet, so this is the first link), whose SCIM user is active,
+   counts as confirmed for this step (docs/api/scim.md, "Accounts"), so a
    directory's SCIM and its OIDC sign-in on the same address work together. It counts for nothing
    else, and never once the account's owner confirmed the address, it joined another organization,
    or it is a server admin, the break-glass admin or a service account.

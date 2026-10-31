@@ -741,7 +741,11 @@ async fn save(ctx: &Ctx<'_>, id: &str, change: impl FnOnce(&UserData) -> ScimRes
     if next.emails != current.emails {
         fields.push("emails");
     }
-    if super::owner_org(&mut tx, id, ctx.policy.break_glass()).await?.as_deref() == Some(ctx.org_id) {
+    // The account itself only while this SCIM owns it (nobody signs in to it yet) and it is not
+    // protected (owner, a role beyond an admin's, server admin, break-glass, service account).
+    if super::owner_org(&mut tx, id, ctx.policy.break_glass()).await?.as_deref() == Some(ctx.org_id)
+        && provision::protection(&mut tx, ctx, id).await?.is_none()
+    {
         update_account(&mut tx, id, &row, &current, &next).await?;
     }
     sqlx::query(
