@@ -47,44 +47,47 @@ export function AppearanceSection({
   const byKey = new Map(settings.map((setting) => [setting.key, setting]));
   const value = (key: string) => byKey.get(key)?.value;
   return (
-    <div className="settings-appearance">
-      <div className="settings-card">
-        {APPEARANCE_ROWS.map((row) => {
-          if (row === LOGO_ROW) {
-            return <LogoRow key={row} found={found === row} />;
-          }
-          if (row === SIGN_IN_ROW) {
-            const welcome = byKey.get("signin.welcome");
-            const notice = byKey.get("signin.notice");
-            return welcome === undefined || notice === undefined ? null : (
-              <SignInRow key={row} welcome={welcome} notice={notice} found={found === row} />
+    // The frame is the container the layout below asks for its width.
+    <div className="settings-appearance-frame">
+      <div className="settings-appearance">
+        <div className="settings-card">
+          {APPEARANCE_ROWS.map((row) => {
+            if (row === LOGO_ROW) {
+              return <LogoRow key={row} found={found === row} />;
+            }
+            if (row === SIGN_IN_ROW) {
+              const welcome = byKey.get("signin.welcome");
+              const notice = byKey.get("signin.notice");
+              return welcome === undefined || notice === undefined ? null : (
+                <SignInRow key={row} welcome={welcome} notice={notice} found={found === row} />
+              );
+            }
+            const setting = byKey.get(row);
+            return setting === undefined ? null : (
+              <SettingRow
+                key={row}
+                setting={setting}
+                note={row === "appearance.default_theme" ? <OwnThemeNote /> : undefined}
+                rowId={row}
+                changes={changes}
+                canWrite
+                inheritable={false}
+                found={found === row}
+              />
             );
-          }
-          const setting = byKey.get(row);
-          return setting === undefined ? null : (
-            <SettingRow
-              key={row}
-              setting={setting}
-              note={row === "appearance.default_theme" ? <OwnThemeNote /> : undefined}
-              rowId={row}
-              changes={changes}
-              canWrite
-              inheritable={false}
-              found={found === row}
-            />
-          );
-        })}
-        <ConflictDialog
-          conflict={changes.conflict}
-          onKeepStored={changes.keepStored}
-          onOverwrite={changes.overwrite}
+          })}
+          <ConflictDialog
+            conflict={changes.conflict}
+            onKeepStored={changes.keepStored}
+            onOverwrite={changes.overwrite}
+          />
+        </div>
+        <LookPreview
+          accent={value("appearance.accent")}
+          density={value("appearance.density")}
+          fontSize={value("appearance.font_size")}
         />
       </div>
-      <LookPreview
-        accent={value("appearance.accent")}
-        density={value("appearance.density")}
-        fontSize={value("appearance.font_size")}
-      />
     </div>
   );
 }

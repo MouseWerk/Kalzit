@@ -136,7 +136,12 @@
     overflow-wrap: anywhere;
   }
 
-  @media (width < 40rem) {
+  .source-query__param-list {
+    container-type: inline-size;
+  }
+
+  /* Narrow by the room the component has, not by the window (the sidebar and panes vary it). */
+  @container (width < 36rem) {
     .source-query__param {
       grid-template-columns: 1fr 1fr;
     }

@@ -222,6 +222,9 @@ async fn update(
             .bind(&user_id)
             .execute(&mut *tx)
             .await?;
+        // From now on the admin decides: the directory sync or a directory sign-in no longer
+        // enables an account it had disabled (docs/api/sso.md, "Sync").
+        sqlx::query("DELETE FROM ldap_deactivations WHERE user_id = $1").bind(&user_id).execute(&mut *tx).await?;
         let action = if disabled {
             // A disabled account is signed out everywhere at once, not only when its sessions expire.
             session::delete_for_user(&mut *tx, &user_id, None).await?;

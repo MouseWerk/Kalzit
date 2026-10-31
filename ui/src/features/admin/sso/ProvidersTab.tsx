@@ -14,23 +14,32 @@ import {
   setProviderOrder,
   ssoKeys,
 } from "./api";
+import { KindDialog, type ProviderKind } from "./KindDialog";
+import { LdapDialog } from "./LdapDialog";
+import { LdapSyncDialog } from "./LdapSyncDialog";
 import { ProviderDialog } from "./ProviderDialog";
 import { ssoErrorText } from "./texts";
 import "../../datasources/datasources.css";
 import "./sso.css";
 
 type Editing =
-  | { mode: "add" }
+  | { mode: "add"; kind: ProviderKind }
   | { mode: "edit"; provider: ProviderSummary; startTest: boolean }
+  | { mode: "sync"; provider: ProviderSummary }
   | null;
 
-/** The short mark of a provider kind, as on the board ("OI" for OpenID Connect). */
+/** The short mark of a provider kind, as on the board ("OI" for OpenID Connect, "LD" for LDAP). */
 function kindMark(kind: string): string {
-  return kind === "oidc" ? "OI" : kind.slice(0, 2).toUpperCase();
+  if (kind === "oidc") return "OI";
+  if (kind === "ldap") return "LD";
+  return kind.slice(0, 2).toUpperCase();
 }
 
-export function kindLabel(t: Translate, kind: string): string {
-  return kind === "oidc" ? t("sso.kind.oidc") : kind;
+/** "OpenID Connect", "LDAP · Active Directory" (the summary's `flavor`, when it says) or "LDAP". */
+export function kindLabel(t: Translate, kind: string, flavor?: string): string {
+  if (kind === "oidc") return t("sso.kind.oidc");
+  if (kind === "ldap") return t(flavor === "ad" ? "sso.kind.ldapAd" : "sso.kind.ldap");
+  return kind;
 }
 
 /** Status dot and word: active and checked, active but never checked, or paused. */
@@ -193,9 +202,35 @@ export function ProvidersTab({
 
   let place = 0;
   const editingProvider =
-    editing?.mode === "edit"
+    editing?.mode === "edit" && editing.provider.kind !== "ldap"
       ? { providerId: editing.provider.id, startTest: editing.startTest }
       : undefined;
+  const editingLdap = editing?.mode === "edit" && editing.provider.kind === "ldap";
+  const addingKind = editing?.mode === "add" ? editing.kind : null;
+
+  function closeForm() {
+    setEditing(null);
+    onAdded();
+  }
+
+  function saved(name: string, created: boolean) {
+    setEditing(null);
+    onAdded();
+    void refresh();
+    notice.show({
+      message: t(created ? "sso.providers.created" : "sso.providers.saved", { name }),
+    });
+  }
+
+  // A directory has no button: its accounts use the password form.
+  function savedLdap(name: string, created: boolean) {
+    setEditing(null);
+    onAdded();
+    void refresh();
+    notice.show({
+      message: t(created ? "sso.providers.createdLdap" : "sso.providers.saved", { name }),
+    });
+  }
 
   return (
     <>
@@ -228,14 +263,17 @@ export function ProvidersTab({
               <tbody>
                 {providers.map((provider) => {
                   const status = providerStatus(t, provider);
-                  if (provider.enabled) {
+                  // LDAP signs in through the password form, never with a button of its own,
+                  // so it has no place among the buttons and no handle (board frame 5A).
+                  const directory = provider.kind === "ldap";
+                  if (provider.enabled && !directory) {
                     place += 1;
                   }
                   return (
                     <tr
                       key={provider.id}
                       className={dragged === provider.id ? "sso-table__row--dragged" : undefined}
-                      draggable
+                      draggable={!directory}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = "move";
                         setDragged(provider.id);
@@ -245,16 +283,18 @@ export function ProvidersTab({
                       onDrop={(event) => onDrop(event, provider)}
                     >
                       <td className="sso-table__handle">
-                        <button
-                          type="button"
-                          className="button button--ghost icon-button"
-                          aria-label={t("sso.providers.moveNamed", { name: provider.name })}
-                          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-                          title={t("sso.providers.moveHint")}
-                          onKeyDown={(event) => onHandleKey(event, provider)}
-                        >
-                          <Icon name="chevronUpDown" />
-                        </button>
+                        {directory ? null : (
+                          <button
+                            type="button"
+                            className="button button--ghost icon-button"
+                            aria-label={t("sso.providers.moveNamed", { name: provider.name })}
+                            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                            title={t("sso.providers.moveHint")}
+                            onKeyDown={(event) => onHandleKey(event, provider)}
+                          >
+                            <Icon name="chevronUpDown" />
+                          </button>
+                        )}
                       </td>
                       <td>
                         <span className="sso-provider">
@@ -269,11 +309,17 @@ export function ProvidersTab({
                           </span>
                         </span>
                       </td>
-                      <td>{kindLabel(t, provider.kind)}</td>
                       <td>
-                        {provider.enabled
-                          ? t("sso.providers.placeButton", { place })
-                          : t("sso.providers.placeHidden")}
+                        <span className="sso-pill">
+                          {kindLabel(t, provider.kind, provider.flavor)}
+                        </span>
+                      </td>
+                      <td>
+                        {!provider.enabled
+                          ? t("sso.providers.placeHidden")
+                          : directory
+                            ? t("sso.providers.placeForm")
+                            : t("sso.providers.placeButton", { place })}
                       </td>
                       <td>
                         <span className="sso-status">
@@ -316,12 +362,18 @@ export function ProvidersTab({
                                   undo: false,
                                 }),
                             },
-                            {
-                              key: "test",
-                              label: t("sso.form.test"),
-                              onSelect: () =>
-                                setEditing({ mode: "edit", provider, startTest: true }),
-                            },
+                            directory
+                              ? {
+                                  key: "sync",
+                                  label: t("sso.sync.open"),
+                                  onSelect: () => setEditing({ mode: "sync", provider }),
+                                }
+                              : {
+                                  key: "test",
+                                  label: t("sso.form.test"),
+                                  onSelect: () =>
+                                    setEditing({ mode: "edit", provider, startTest: true }),
+                                },
                             { kind: "separator", key: "separator" },
                             {
                               key: "remove",
@@ -344,24 +396,32 @@ export function ProvidersTab({
         </div>
       )}
       <p className="settings-hint sso-note">{t("sso.providers.note")}</p>
-      {adding || editingProvider !== undefined ? (
+      {adding && addingKind === null && editing === null ? (
+        <KindDialog onClose={onAdded} onChoose={(kind) => setEditing({ mode: "add", kind })} />
+      ) : null}
+      {addingKind === "oidc" || editingProvider !== undefined ? (
         <ProviderDialog
           key={editingProvider?.providerId ?? "new"}
           redirectBase={overview.redirectBase}
           providerId={editingProvider?.providerId}
           startTest={editingProvider?.startTest ?? false}
-          onClose={() => {
-            setEditing(null);
-            onAdded();
-          }}
-          onSaved={(name, created) => {
-            setEditing(null);
-            onAdded();
-            void refresh();
-            notice.show({
-              message: t(created ? "sso.providers.created" : "sso.providers.saved", { name }),
-            });
-          }}
+          onClose={closeForm}
+          onSaved={saved}
+        />
+      ) : null}
+      {addingKind === "ldap" || editingLdap ? (
+        <LdapDialog
+          key={editing?.mode === "edit" ? editing.provider.id : "new-ldap"}
+          providerId={editing?.mode === "edit" ? editing.provider.id : undefined}
+          onClose={closeForm}
+          onSaved={savedLdap}
+        />
+      ) : null}
+      {editing?.mode === "sync" ? (
+        <LdapSyncDialog
+          providerId={editing.provider.id}
+          name={editing.provider.name}
+          onClose={() => setEditing(null)}
         />
       ) : null}
       <ConfirmDialog

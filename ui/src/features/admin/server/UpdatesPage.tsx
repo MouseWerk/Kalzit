@@ -488,19 +488,19 @@ function StatusStrip({
           {t("admin.updates.autoCheck")}
         </span>
         <div className="updates-strip__value">
-          <button
-            type="button"
+          {/* The shared switch (styles/components.css), with its sizes and states. */}
+          <input
+            type="checkbox"
             role="switch"
+            className="settings-switch"
+            checked={data.checkDaily}
             aria-checked={data.checkDaily}
             aria-labelledby={`${channelId}-daily`}
             aria-describedby={daily.shown ? daily.id : undefined}
-            className="updates-switch"
             data-found-control
             disabled={!known("updates.check_daily") || daily.lock !== undefined}
-            onClick={() => onDaily(!data.checkDaily)}
-          >
-            <span className="updates-switch__knob" />
-          </button>
+            onChange={() => onDaily(!data.checkDaily)}
+          />
           <span>
             {t(data.checkDaily ? "admin.updates.autoCheck.on" : "admin.updates.autoCheck.off")}
           </span>

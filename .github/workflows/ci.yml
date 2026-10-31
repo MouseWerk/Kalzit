@@ -192,6 +192,49 @@ jobs:
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
 
+  # LDAP sign-in and the directory sync (server/tests/ldap.rs) against a real OpenLDAP server in a
+  # throwaway container reachable only from this job.
+  ldap:
+    name: ldap
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    runs-on: ubuntu-latest
+    services:
+      openldap:
+        image: osixia/openldap:1.5.0
+        env:
+          LDAP_ORGANISATION: Kalzit
+          LDAP_DOMAIN: kalzit.test
+          LDAP_ADMIN_PASSWORD: kalzit-ci-ldap
+          LDAP_TLS: "false"
+        ports: ["3389:389"]
+    env:
+      KALZIT_TEST_REQUIRE_LDAP: "1"
+      KALZIT_TEST_LDAP_URL: ldap://127.0.0.1:3389
+      KALZIT_TEST_LDAP_BASE: dc=kalzit,dc=test
+      KALZIT_TEST_LDAP_ADMIN_DN: cn=admin,dc=kalzit,dc=test
+      KALZIT_TEST_LDAP_ADMIN_PASSWORD: kalzit-ci-ldap
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - run: cargo build --locked --tests
+      - name: Wait for OpenLDAP
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec "${{ job.services.openldap.id }}" ldapsearch -x -H ldap://localhost -b dc=kalzit,dc=test \
+                 -D cn=admin,dc=kalzit,dc=test -w kalzit-ci-ldap -s base "(objectClass=*)" > /dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "OpenLDAP did not become ready" >&2
+          exit 1
+      - run: cargo test --locked --test ldap -- --nocapture
+
   # The privilege switch of `kalzit update apply|rollback` (server/tests/update_rights.rs): run as
   # root on a data directory a service account owns, which needs sudo, so it is ignored elsewhere.
   update-rights:

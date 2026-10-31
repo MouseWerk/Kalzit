@@ -200,7 +200,10 @@
     color: var(--text-muted);
   }
 
-  /* Fields: taller inputs, a row for the label and its link, errors as a tinted fill. */
+  /*
+   * Fields: taller inputs, a row for the label and its link, errors as a tinted fill. The fill is
+   * for the sign-in pages only (`.access`); fields inside the app mark errors in their message.
+   */
   .access .input {
     min-height: calc(var(--control-height) + var(--space-1) + var(--space-half));
   }

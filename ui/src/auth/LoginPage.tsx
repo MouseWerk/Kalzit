@@ -36,7 +36,7 @@ import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
-import type { SsoOutcome } from "./ssoOutcome";
+import { SSO_OUTCOMES, type SsoOutcome } from "./ssoOutcome";
 import "./auth.css";
 import {
   type FieldErrors,
@@ -57,6 +57,14 @@ const PASSWORD_OPEN_KEY = "kalzit.signIn.passwordOpen";
 
 /** The reason of `POST /auth/login` when password sign-in is off for the account. */
 const PASSWORD_OFF = "sso.password_sign_in_off";
+/** A directory could not be reached and no local account matched (docs/api/sso.md, LDAP). */
+const DIRECTORY_UNREACHABLE = "ldap.directory_unreachable";
+/** The directory confirmed the person, but Kalzit refuses the sign-in; `outcome` says why. */
+const DIRECTORY_REFUSED = "ldap.sign_in_refused";
+
+function isSsoOutcome(value: string | undefined): value is SsoOutcome {
+  return (SSO_OUTCOMES as readonly (string | undefined)[]).includes(value);
+}
 
 function errorCode(error: unknown): ErrorCode {
   return isApiError(error) ? error.code : "internal";
@@ -97,7 +105,12 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const welcome = branding?.signIn.welcome.trim() ?? "";
   const notice = branding?.signIn.notice.trim() ?? "";
   const providersQuery = useQuery({ ...signInProvidersQuery, enabled: variant === "main" });
-  const providers = providersQuery.data?.providers ?? [];
+  const listed = providersQuery.data?.providers ?? [];
+  // LDAP directories sign people in through the password form, never with a button of their own
+  // (board frame 1B); the first field then takes an email or a directory user name.
+  const providers = listed.filter((provider) => provider.kind !== "ldap");
+  const directory =
+    variant === "main" ? listed.find((provider) => provider.kind === "ldap") : undefined;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -206,7 +219,13 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
 
   let mode: FormMode = "plain";
   if (variant === "main" && providers.length > 0 && providersQuery.data !== undefined) {
-    mode = providersQuery.data.localSignIn ? providersQuery.data.passwordForm : "hidden";
+    const form = providersQuery.data.passwordForm;
+    if (directory !== undefined) {
+      // Directory accounts always sign in with the form, whatever applies to local passwords.
+      mode = form === "hidden" ? "collapsed" : form;
+    } else {
+      mode = providersQuery.data.localSignIn ? form : "hidden";
+    }
   }
   const passwordOff = errorReason(signIn.error)?.reason === PASSWORD_OFF;
   // An answer about the password (it is off for the account) keeps the form where it was typed.
@@ -221,7 +240,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     if (signIn.isPending || waiting) {
       return;
     }
-    const found = validateLogin({ email, password });
+    const found = validateLogin({ email, password }, directory !== undefined);
     setErrors(found);
     const invalid = firstInvalid(FIELD_ORDER, found);
     if (invalid !== undefined) {
@@ -276,6 +295,8 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   // The form's notice: wrong credentials, the wait after too many failures, or another error.
   let alert: ReactNode = null;
   const code = signIn.error === null ? null : errorCode(signIn.error);
+  const reason = errorReason(signIn.error);
+  const refusedOutcome = reason?.reason === DIRECTORY_REFUSED ? reason.params?.outcome : undefined;
   if (waiting) {
     alert = (
       <AccessNotice
@@ -301,6 +322,24 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
             ? t("access.sso.passwordOffNoProvider")
             : t("access.sso.passwordOffDetail", { provider: first.name })
         }
+      />
+    );
+  } else if (reason?.reason === DIRECTORY_UNREACHABLE) {
+    alert = (
+      <AccessNotice
+        tone="danger"
+        icon="alert"
+        title={t("access.ldap.unreachable", { provider: directory?.name ?? "LDAP" })}
+        detail={t("access.ldap.unreachableDetail")}
+      />
+    );
+  } else if (reason?.reason === DIRECTORY_REFUSED) {
+    alert = (
+      <SsoOutcomeNotice
+        t={t}
+        outcome={isSsoOutcome(refusedOutcome) ? refusedOutcome : "failed"}
+        provider={directory?.name ?? "LDAP"}
+        reference={reason.params?.ref}
       />
     );
   } else if (code === "invalid_credentials") {
@@ -467,14 +506,19 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
           <>
             <TextField
               ref={refs.email}
-              label={t("access.login.email")}
-              type="email"
+              label={t(directory === undefined ? "access.login.email" : "access.ldap.login")}
+              type={directory === undefined ? "email" : "text"}
               name="email"
               autoComplete="username"
-              inputMode="email"
+              inputMode={directory === undefined ? "email" : "text"}
               autoCapitalize="none"
               spellCheck={false}
-              placeholder={t("access.login.emailPlaceholder")}
+              placeholder={directory === undefined ? t("access.login.emailPlaceholder") : undefined}
+              hint={
+                directory === undefined
+                  ? undefined
+                  : t("access.ldap.loginHint", { provider: directory.name })
+              }
               required
               readOnly={busy}
               value={email}

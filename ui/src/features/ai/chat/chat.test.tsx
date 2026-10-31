@@ -77,10 +77,15 @@ const TURN: Turn = {
   outcome: "ok",
 };
 
-function open(path: string, status: Record<string, unknown> | null, role = "owner") {
+function open(
+  path: string,
+  status: Record<string, unknown> | null,
+  role = "owner",
+  isServerAdmin = false,
+) {
   const server = installFakeServer({
     signedIn: true,
-    user: { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] },
+    user: { ...TEST_USER, isServerAdmin, orgs: [{ id: "o1", name: "Org", role }] },
   });
   if (status !== null) {
     server.areas.aiAdmin.status = status;
@@ -142,6 +147,83 @@ describe("Fragen", () => {
     expect((closed as HTMLInputElement).disabled).toBe(true);
     expect(within(pane).getByText("AI may not read")).toBeTruthy();
     expect(screen.getByText("Today 46 of 200 requests")).toBeTruthy();
+  });
+
+  it("links organization admins only to pages they can open", async () => {
+    // Under the server's provider: who chooses it, and the organization's own page.
+    open("/ask", USABLE, "admin");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      await within(pane).findByText(/Server administrators choose model and provider\. You can/),
+    ).toBeTruthy();
+    expect(
+      within(pane)
+        .getByRole("link", { name: "Settings > AI of the organization" })
+        .getAttribute("href"),
+    ).toBe("/settings/org-ai");
+    expect(within(pane).queryByRole("link", { name: "Settings > AI" })).toBeNull();
+  });
+
+  it("only names the server admins when organizations may not add a provider", async () => {
+    open("/ask", { ...USABLE, orgProvidersAllowed: false }, "admin");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      await within(pane).findByText("Server administrators choose model and provider."),
+    ).toBeTruthy();
+    expect(within(pane).queryByRole("link", { name: /^Settings > AI/ })).toBeNull();
+  });
+
+  it("links organization admins to the organization's page for its own provider", async () => {
+    const ownProvider = { ...USABLE, provider: { ...USABLE.provider, scope: "org" } };
+    open("/ask", ownProvider, "admin");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      (
+        await within(pane).findByRole("link", { name: "Settings > AI of the organization" })
+      ).getAttribute("href"),
+    ).toBe("/settings/org-ai");
+  });
+
+  it("links server admins to the server's AI page under the server's provider", async () => {
+    // Also without the right to change the organization's settings.
+    open("/ask", USABLE, "viewer", true);
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      (await within(pane).findByRole("link", { name: "Settings > AI" })).getAttribute("href"),
+    ).toBe("/settings/ai");
+    expect(
+      within(pane).queryByRole("link", { name: "Settings > AI of the organization" }),
+    ).toBeNull();
+  });
+
+  it("names the organization's admins to a server admin who cannot change its own provider", async () => {
+    const ownProvider = { ...USABLE, provider: { ...USABLE.provider, scope: "org" } };
+    open("/ask", ownProvider, "viewer", true);
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      await within(pane).findByText("This organization’s administrators choose its provider."),
+    ).toBeTruthy();
+    expect(within(pane).queryByRole("link", { name: /^Settings > AI/ })).toBeNull();
+  });
+
+  it("links a server admin who also administers the organization to its own provider's page", async () => {
+    const ownProvider = { ...USABLE, provider: { ...USABLE.provider, scope: "org" } };
+    open("/ask", ownProvider, "owner", true);
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      (
+        await within(pane).findByRole("link", { name: "Settings > AI of the organization" })
+      ).getAttribute("href"),
+    ).toBe("/settings/org-ai");
+    expect(within(pane).queryByRole("link", { name: "Settings > AI" })).toBeNull();
+  });
+
+  it("shows members who cannot change settings no settings link", async () => {
+    open("/ask", USABLE, "viewer");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    await within(pane).findByText("Lokal · modell-1");
+    expect(within(pane).queryByRole("link", { name: /^Settings > AI/ })).toBeNull();
+    expect(within(pane).queryByText(/choose model and provider/)).toBeNull();
   });
 
   it("asks for the notice, then streams every tool call and the answer, and keeps the chat", async () => {
