@@ -163,7 +163,8 @@ pub async fn finish_first_step(
     let Some(prompt) = plan else {
         let device = match (first, forget_browser) {
             (_, true) => DeviceCookie::Forget,
-            (FirstStep::Password { password_hash }, false) => DeviceCookie::Issue(password_hash),
+            // Bound to the password hash; an account without one (made by a provider) gets none.
+            (FirstStep::Password { password_hash: Some(hash) }, false) => DeviceCookie::Issue(Some(hash)),
             _ => DeviceCookie::Keep,
         };
         let (out, answer) = open_session(&mut tx, state, info, headers, user, None, device, now).await?;
@@ -225,7 +226,7 @@ async fn complete(
 ) -> ApiResult<(HeaderMap, Me)> {
     let device = if pending.forget_browser != 0 {
         DeviceCookie::Forget
-    } else if taken.first_step == "password" {
+    } else if taken.first_step == "password" && taken.password_hash.is_some() {
         DeviceCookie::Issue(taken.password_hash.as_deref())
     } else {
         DeviceCookie::Keep

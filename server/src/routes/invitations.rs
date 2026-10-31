@@ -727,21 +727,10 @@ async fn find(state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<Fo
     }
 }
 
-/// Whether two stored addresses are one: the same, or the same in the ASCII (IDNA) form of their
-/// domain (an account a provider made, `sso::oidc::matching_email`).
-fn same_address(a: &str, b: &str) -> bool {
-    a == b || crate::sso::oidc::matching_email(a).is_some_and(|x| Some(x) == crate::sso::oidc::matching_email(b))
-}
-
-/// The accounts with `email`, in the form it was typed or the ASCII form of its domain.
-async fn accounts_with(state: &AppState, email: &str) -> ApiResult<i64> {
-    let ascii = crate::sso::oidc::matching_email(email).unwrap_or_else(|| email.to_string());
-    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1 OR email = $2")
-        .bind(email)
-        .bind(&ascii)
-        .fetch_one(&state.db)
-        .await?;
-    Ok(n)
+/// The accounts with `email` in any of its forms (`routes::email_key`).
+async fn accounts_with(state: &AppState, email: &str) -> ApiResult<usize> {
+    let mut conn = state.db.acquire().await?;
+    Ok(super::accounts_with_email(&mut conn, email).await?.len())
 }
 
 /// The signed-in user of this browser, if any.
@@ -946,35 +935,41 @@ async fn accept(
     if let Some(user) = signed_in(&state, &info, &headers).await? {
         // Joining with the account this browser is signed in with: only the invited address (in
         // either form of its domain, as a provider's account may keep it).
-        if !same_address(&user.email, &found.email) {
+        if !super::same_email(&user.email, &found.email) {
             return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "signed in with another account")
                 .because("mail.invite_other_account"));
         }
+        // The new membership may require a second factor this account does not have: this
+        // session ends together with the redemption, and the account sets one up before it gets a
+        // session with the membership, as at a sign-in (`routes::second_factor`).
+        use crate::auth::second_factor as sf;
+        let server_admin = user.is_server_admin != 0;
+        let required =
+            sf::required_after_joining(&state, &user.id, server_admin, &found.org_id, &found.org_name, &found.role)
+                .await?;
+        let setup_needed = required.is_some() && !sf::methods(&state.db, &user.id).await?.any();
         let mut tx = crate::db::begin(&state.db).await?;
         redeem(&mut tx, &found, &user.id, now).await?;
         if mailed {
             sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&user.id).execute(&mut *tx).await?;
         }
+        if setup_needed && let Some(token) = session::read_cookie(&headers, info.https) {
+            session::delete(&mut *tx, &token).await?;
+        }
         let (summary, id) = audit_event(&user.id, false);
         let actor = Actor { user_id: &id, info: &info, at_ms: now };
         audit(&mut tx, &actor, Some(&found.org_id), "invitation.accepted", ("invitation", &found.id), summary).await?;
         crate::db::commit(tx).await?;
-        // The new membership may require a second factor this account does not have: this
-        // session ends, and the account sets one up before it gets one with the membership, as at
-        // a sign-in (`routes::second_factor`).
-        use crate::auth::second_factor as sf;
-        let required = sf::required_for(&state, &user.id, user.is_server_admin != 0).await?;
-        if required.is_some() && !sf::methods(&state.db, &user.id).await?.any() {
+        if setup_needed {
+            let required = sf::required_for(&state, &user.id, server_admin).await?.or(required);
             let prompt = super::second_factor::forced_setup(&state, &info, &user, required, now).await?;
             let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id = $1")
                 .bind(&user.id)
                 .fetch_one(&state.db)
                 .await?;
-            let mut tx = crate::db::begin(&state.db).await?;
-            if let Some(token) = session::read_cookie(&headers, info.https) {
-                session::delete(&mut *tx, &token).await?;
-            }
+            // An account without a password of its own (made by a provider) binds nothing to one.
             let first = sf::FirstStep::Password { password_hash: hash.as_deref() };
+            let tx = crate::db::begin(&state.db).await?;
             let mut answer = super::second_factor::finish_first_step(
                 tx,
                 &state,

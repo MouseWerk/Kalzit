@@ -118,6 +118,10 @@ async fn create(
     let id = super::new_id();
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    // The same address in another form of its domain (`routes::email_key`) is taken too.
+    if !super::accounts_with_email(&mut tx, &email).await?.is_empty() {
+        return Err(email_taken());
+    }
     sqlx::query(
         "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at) \
          VALUES ($1, $2, $3, $4, $5, 0, $6)",

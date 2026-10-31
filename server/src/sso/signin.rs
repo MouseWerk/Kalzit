@@ -110,14 +110,20 @@ pub async fn account(
             let Some(email) = person.email.clone() else {
                 return Ok(Err(Refusal::new("failed", "sso.email_missing", "the provider sent no usable email")));
             };
-            // The ASCII (IDNA) form and the form typed-in addresses keep: both name one address.
+            // The form typed-in addresses keep; accounts are found in any form of the address
+            // (`routes::email_key`), whichever form they were made with.
             let as_typed = person.email_as_typed.clone().unwrap_or_else(|| email.clone());
-            let mut found: Vec<Account> =
-                sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE email = $1 OR email = $2")))
-                    .bind(&email)
-                    .bind(&as_typed)
-                    .fetch_all(&mut *conn)
-                    .await?;
+            let ids = crate::routes::accounts_with_email(&mut *conn, &email).await?;
+            let mut found: Vec<Account> = Vec::with_capacity(ids.len());
+            for id in &ids {
+                found.push(
+                    sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE id = $1")))
+                        .bind(id)
+                        .fetch_one(&mut *conn)
+                        .await?,
+                );
+            }
+            // Two accounts made with two forms of one address before they were compared as one.
             if found.len() > 1 {
                 return Ok(Err(Refusal::new(
                     "email_taken",

@@ -153,6 +153,29 @@ pub async fn required_for(state: &AppState, user_id: &str, server_admin: bool) -
     Ok(resolve(server, server_admin, &memberships))
 }
 
+/// What would require a second factor of this person once they join `org_id` with `role`
+/// (a membership they already have stays as it is).
+pub async fn required_after_joining(
+    state: &AppState,
+    user_id: &str,
+    server_admin: bool,
+    org_id: &str,
+    org_name: &str,
+    role: &str,
+) -> ApiResult<Option<RequiredBy>> {
+    let server = server_requirement(state).await?;
+    let mut memberships = memberships(state, &state.db, user_id).await?;
+    if !memberships.iter().any(|m| m.org_id == org_id) {
+        memberships.push(MembershipRule {
+            org_id: org_id.to_string(),
+            org_name: org_name.to_string(),
+            requirement: org_requirement(state, org_id).await?,
+            admin: is_admin_role(&state.db, org_id, role).await?,
+        });
+    }
+    Ok(resolve(server, server_admin, &memberships))
+}
+
 /// Which methods people may set up (`security.two_factor_methods`). Recovery codes always come
 /// with them. A method turned off later keeps working for those who have it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

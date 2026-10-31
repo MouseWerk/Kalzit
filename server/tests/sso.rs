@@ -1095,3 +1095,82 @@ async fn invite(app: &TestApp, admin: &str, org: &str, email: &str) -> String {
     assert!(!token.is_empty(), "the invitation link: {text}");
     token
 }
+
+/// One address in two forms of its domain (Unicode, NFC or NFD, and ASCII/IDNA) names one
+/// account, whichever form the account was made with: an invitation finds it, a provider links
+/// it, and no second account is made with the other form. Two accounts left from before (made
+/// with both forms) make a sign-in by email ambiguous, and it is refused.
+#[tokio::test]
+async fn internationalized_addresses_name_one_account_in_both_directions() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, org) = app.setup().await;
+    add_provider(&app, &issuer, &admin).await;
+
+    // An account made with the Unicode form.
+    let r = app
+        .post(
+            "/api/admin/users",
+            json!({ "name": "Anna", "email": "anna@bücher.example", "password": PASSWORD }),
+            &admin,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let anna_id = r.body["id"].as_str().unwrap().to_string();
+    // The same address in its ASCII or NFD form is taken.
+    for other in ["anna@xn--bcher-kva.example", "anna@bu\u{308}cher.example"] {
+        let r =
+            app.post("/api/admin/users", json!({ "name": "Anna", "email": other, "password": PASSWORD }), &admin).await;
+        assert_eq!(r.status, StatusCode::CONFLICT, "{other}: {}", r.body);
+    }
+
+    // An invitation to the ASCII form names it, and makes no second account.
+    let token = invite(&app, &admin, &org, "anna@xn--bcher-kva.example").await;
+    let r = app.send(Method::POST, "/api/auth/invitation", Some(json!({ "token": token })), None).await;
+    assert_eq!(r.body["accountExists"], json!(true), "{}", r.body);
+    let accept = json!({ "token": token, "name": "Anna", "password": PASSWORD });
+    let r = app.send(Method::POST, "/api/auth/invitation/accept", Some(accept), None).await;
+    assert_eq!(r.reason(), "mail.invite_account_exists", "{}", r.body);
+
+    // A provider that sends the ASCII form signs in to it.
+    let anna = Who { sub: "sub-anna", email: "anna@xn--bcher-kva.example", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &anna, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    let (linked,): (String,) = sqlx::query_as("SELECT user_id FROM sso_identities WHERE subject = 'sub-anna'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(linked, anna_id);
+    let (accounts,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email LIKE 'anna@%'").fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(accounts, 1);
+    // Signed in that way, the ASCII invitation is joined with that account.
+    let r = app.post("/api/auth/invitation/accept", json!({ "token": token }), &session_of(&r)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["id"], json!(anna_id));
+
+    // Two accounts with both forms, left from before the forms were compared as one.
+    for (id, email) in [("bea-1", "bea@bücher.example"), ("bea-2", "bea@xn--bcher-kva.example")] {
+        sqlx::query("INSERT INTO users (id, email, name, created_at) VALUES ($1, $2, 'Bea', 0)")
+            .bind(id)
+            .bind(email)
+            .execute(&app.state.db)
+            .await
+            .unwrap();
+    }
+    let bea = Who { sub: "sub-bea", email: "bea@xn--bcher-kva.example", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &bea, |_| {}).await;
+    assert_eq!(outcome_of(&r), "email_taken", "{}", r.location());
+    let causes: Vec<(String,)> = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'auth.sso_failed'")
+        .fetch_all(&app.state.db)
+        .await
+        .unwrap();
+    assert!(causes.iter().any(|(s,)| s.contains("sso.email_ambiguous")), "{causes:?}");
+    let linked: Option<(String,)> = sqlx::query_as("SELECT user_id FROM sso_identities WHERE subject = 'sub-bea'")
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(linked.is_none());
+    app.finish().await;
+}
