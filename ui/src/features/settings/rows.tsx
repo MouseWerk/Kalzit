@@ -144,16 +144,27 @@ export function shownValue(
   return typeof value === "string" ? value : formatValue(value);
 }
 
-/** Why the row is read-only, as its badge; undefined when it can be changed. */
-export function lockedBadge(t: Translate, setting: Setting, canWrite: boolean): string | undefined {
+/** The sentence under a locked value that says where it is set; undefined when it is not locked. */
+export function lockHint(
+  t: Translate,
+  setting: Pick<Setting, "source" | "editable">,
+): string | undefined {
   if (setting.source === "file") {
-    return t("settings.locked.file");
+    return t("settings.lockHint.file");
   }
   if (setting.source === "env") {
-    return t("settings.locked.env");
+    return t("settings.lockHint.env");
   }
-  if (!setting.editable) {
-    return t("settings.locked.config");
+  return setting.editable ? undefined : t("settings.lockHint.config");
+}
+
+/**
+ * Why the row is read-only, as its badge; undefined when it can be changed. A locked value's badge
+ * stays one word: the lock line under it (lockHint) says where the value is set.
+ */
+export function lockedBadge(t: Translate, setting: Setting, canWrite: boolean): string | undefined {
+  if (lockHint(t, setting) !== undefined) {
+    return t("settings.locked.short");
   }
   return canWrite ? undefined : t("settings.locked.noWrite");
 }
@@ -165,6 +176,7 @@ export function RowFrame({
   description,
   note,
   badge,
+  lock,
   error,
   errorId,
   children,
@@ -177,6 +189,8 @@ export function RowFrame({
   /** A line below the description that is not part of the setting, e.g. who it does not reach. */
   note?: ReactNode;
   badge?: string | undefined;
+  /** Where a locked value is set (lockHint), with a lock icon. */
+  lock?: string | undefined;
   error?: string | undefined;
   errorId?: string;
   children: ReactNode;
@@ -199,6 +213,12 @@ export function RowFrame({
         )}
         {note === undefined ? null : <p className="settings-row__note">{note}</p>}
         {badge === undefined ? null : <span className="settings-badge">{badge}</span>}
+        {lock === undefined ? null : (
+          <p className="settings-lock" id={`${titleId}-lock`}>
+            <Icon name="lock" />
+            {lock}
+          </p>
+        )}
         {error === undefined ? null : (
           <p className="field__error" id={errorId}>
             {error}
@@ -239,16 +259,37 @@ export function SettingRow({
   const errorId = `${titleId}-error`;
   const text = settingText(t, setting);
   const badge = lockedBadge(t, setting, canWrite);
+  const lock = lockHint(t, setting);
   const error = changes.rejected?.key === setting.key ? changes.rejected.message : undefined;
   const commit = (value: unknown) => changes.apply(setting, value);
+  const described = [
+    error === undefined ? undefined : errorId,
+    `${titleId}-description`,
+    lock === undefined ? undefined : `${titleId}-lock`,
+  ];
   const labelled = {
     "aria-labelledby": titleId,
-    "aria-describedby":
-      error === undefined ? `${titleId}-description` : `${errorId} ${titleId}-description`,
+    "aria-describedby": described.filter((id) => id !== undefined).join(" "),
   };
 
   let control: ReactNode;
-  if (badge !== undefined) {
+  if (lock !== undefined) {
+    // Set in kalzit.toml or the environment: the control as it would be, turned off, so the value
+    // reads the same as everywhere else and nothing can be committed (so there is no undo either).
+    control = (
+      <LockedControl>
+        <Control
+          setting={setting}
+          inheritable={inheritable}
+          pending={false}
+          labelled={labelled}
+          invalid={false}
+          onCommit={() => undefined}
+          choices={choices}
+        />
+      </LockedControl>
+    );
+  } else if (badge !== undefined) {
     const shown = shownValue(t, setting.key, setting.value, { language, timeZone });
     // Addresses, paths and numbers in the code font; words ("not set", "On") in the text font.
     const raw =
@@ -282,6 +323,7 @@ export function SettingRow({
       description={description ?? text.description}
       note={note}
       badge={badge}
+      lock={lock}
       error={error}
       errorId={errorId}
       found={found}
@@ -289,6 +331,24 @@ export function SettingRow({
       {control}
     </RowFrame>
   );
+}
+
+/**
+ * Turns off every control inside at once (a disabled fieldset disables its inputs, selects and
+ * buttons natively, those of a picker included), for a value set in kalzit.toml or the
+ * environment.
+ */
+export function LockedControl({ children }: { children: ReactNode }) {
+  return (
+    <fieldset className="settings-locked" disabled>
+      {children}
+    </fieldset>
+  );
+}
+
+/** The label of the chosen option, as the select's title: a long value cut off stays readable. */
+export function choiceTitle(choices: readonly Choice[], value: unknown): string | undefined {
+  return choices.find((choice) => String(choice.value) === String(value))?.label;
 }
 
 interface ControlProps {
@@ -358,6 +418,13 @@ function Control(props: ControlProps) {
       <select
         className="select settings-select"
         value={current}
+        title={
+          current === INHERIT
+            ? t("settings.inherit")
+            : current === "browser"
+              ? t("settings.browserZone")
+              : current
+        }
         aria-disabled={pending}
         {...labelled}
         onChange={(event) => guard(event.currentTarget.value)}
@@ -382,6 +449,7 @@ function Control(props: ControlProps) {
       <select
         className="select settings-select"
         value={String(value)}
+        title={value === INHERIT ? t("settings.inherit") : choiceTitle(choices, value)}
         aria-disabled={pending}
         {...labelled}
         onChange={(event) => {
@@ -523,11 +591,14 @@ export function Segmented({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   labelled: { "aria-labelledby": string };
   value: string;
   options: { value: string; label: string }[];
   onChange: (value: string) => void;
+  /** A value that cannot be changed here (set in kalzit.toml): shown, but not chosen. */
+  disabled?: boolean;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const index = Math.max(
@@ -559,6 +630,7 @@ export function Segmented({
           role="radio"
           aria-checked={option.value === value}
           tabIndex={i === index ? 0 : -1}
+          disabled={disabled}
           className="settings-segmented__option"
           onClick={() => {
             if (option.value !== value) {

@@ -156,7 +156,12 @@ test("second factor: sign-in, account and policy", async ({ browser }) => {
   page = await openPage(browser, "light");
   await password(page, DEMO_OWNER.email, DEMO_OWNER.password);
   await expect(page.getByRole("navigation", { name: t("nav.label") })).toBeVisible();
-  await page.goto("/settings/signin");
+  // The policy is on the sign-in section's tab for local sign-in and 2FA (#local), not the first.
+  await page.goto("/settings/signin#local");
+  await expect(page.getByRole("tab", { name: t("sso.tab.local") })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByRole("heading", { name: t("security.policy.perOrg") })).toBeVisible();
   await shoot(page, "two-factor-policy");
   await page.context().close();

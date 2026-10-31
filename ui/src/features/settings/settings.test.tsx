@@ -143,9 +143,75 @@ describe("server settings rows", () => {
     await openAdmin("/settings/datasources", { isServerAdmin: true });
     await screen.findByRole("heading", { level: 2, name: "Data sources and targets" });
     const timeout = within(await row("datasources.query_timeout_secs"));
-    expect(timeout.getByText("from kalzit.toml · locked")).toBeTruthy();
-    expect(timeout.queryByRole("spinbutton")).toBeNull();
-    expect(within(await row("datasources.max_rows")).getByRole("spinbutton")).toBeTruthy();
+    // One short word as the badge; the lock line says where the value is set.
+    expect(timeout.getByText("locked")).toBeTruthy();
+    expect(timeout.queryByText(/from kalzit\.toml/)).toBeNull();
+    // The control stays, turned off, with the sentence that says where the value is set.
+    const field = timeout.getByRole("spinbutton") as HTMLInputElement;
+    expect(field.value).toBe("30");
+    expect(field.matches(":disabled")).toBe(true);
+    const hint = timeout.getByText(
+      "Set in kalzit.toml. Change it there; it cannot be changed here.",
+    );
+    expect(field.getAttribute("aria-describedby")?.split(" ")).toContain(hint.id);
+    const free = within(await row("datasources.max_rows")).getByRole("spinbutton");
+    expect(free.matches(":disabled")).toBe(false);
+  });
+
+  it("commits nothing from a locked value, so there is nothing to undo", async () => {
+    const { user, server } = await openAdmin("/settings/datasources", { isServerAdmin: true });
+    const timeout = within(await row("datasources.query_timeout_secs"));
+    const field = timeout.getByRole("spinbutton");
+    await user.click(field);
+    await user.keyboard("45{Enter}");
+    expect(sent(server, "PATCH")).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("names where a value from the environment or the configuration only is set", async () => {
+    await openAdmin("/settings/storage", { isServerAdmin: true });
+    const retention = within(await row("audit.retention_days"));
+    expect(
+      retention.getByText(/^Set by an environment variable \(KALZIT_\*\)\. Change it there/),
+    ).toBeTruthy();
+    expect(retention.getByRole("spinbutton").matches(":disabled")).toBe(true);
+  });
+
+  it("names a long choice in the select's title, so a cut value stays readable", async () => {
+    const long = "America/Argentina/ComodRivadavia";
+    await openAdmin("/settings/general", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        admin.serverSettings.push({
+          key: "appearance.time_zone",
+          scope: "server",
+          value: long,
+          default: "browser",
+          source: "database",
+          editable: true,
+          version: 1,
+          description: "",
+          updatedAt: null,
+          updatedBy: null,
+        });
+      },
+    });
+    const zone = (await screen.findByRole("combobox", {
+      name: "Time zone",
+    })) as HTMLSelectElement;
+    expect(zone.value).toBe(long);
+    expect(zone.title).toBe(long);
+    expect(zone.classList.contains("settings-select")).toBe(true);
+  });
+
+  it("keeps the update settings on the Updates page and links there", async () => {
+    await openAdmin("/settings/updates", { isServerAdmin: true });
+    await screen.findByRole("heading", { level: 2, name: "Updates" });
+    expect(screen.getByText(/^Channel, daily check and maintenance window are set/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Updates" }).getAttribute("href")).toBe(
+      "/admin/server/updates",
+    );
+    expect(document.getElementById("updates.channel")).toBeNull();
   });
 
   it("shows the query cache now and empties it", async () => {
@@ -166,9 +232,29 @@ describe("server settings rows", () => {
   it("names a value from the environment and one from the configuration only", async () => {
     await openAdmin("/settings/storage", { isServerAdmin: true });
     await screen.findByRole("heading", { level: 2, name: "Storage and retention" });
-    expect(
-      within(await row("audit.retention_days")).getByText("from the environment · locked"),
-    ).toBeTruthy();
+    const retention = within(await row("audit.retention_days"));
+    expect(retention.getByText("locked")).toBeTruthy();
+    expect(retention.getByText(/^Set by an environment variable/)).toBeTruthy();
+  });
+
+  it("focuses a locked row when a search jumps to it", async () => {
+    await openAdmin("/settings/datasources#datasources.query_timeout_secs", {
+      isServerAdmin: true,
+    });
+    const timeout = await row("datasources.query_timeout_secs");
+    // Its control is turned off and cannot take the focus, so the row does.
+    await waitFor(() => expect(document.activeElement).toBe(timeout));
+  });
+
+  it("puts the update settings found by search on the Updates page", () => {
+    const access = {
+      permissions: { has: () => true, isServerAdmin: true, loaded: true },
+      orgId: undefined,
+    };
+    const index = buildIndex(SECTIONS, access);
+    const found = search(index, "updates.window")[0];
+    expect(found).toMatchObject({ rowId: "updates.window", page: "/admin/server/updates" });
+    expect(search(index, "updates.keep_versions")[0]?.page).toBeUndefined();
   });
 
   it("applies the default theme at once, with undo", async () => {

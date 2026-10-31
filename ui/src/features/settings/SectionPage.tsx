@@ -35,7 +35,7 @@ import { MailSection } from "./MailSection";
 import { QueryCacheCard } from "./QueryCacheCard";
 import { type Changes, SettingRow } from "./rows";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
-import { findSection, rowId, SECTIONS, type SectionDef } from "./sections";
+import { findSection, rowId, SECTIONS, type SectionDef, UPDATES_PAGE_KEYS } from "./sections";
 import { TransferSection } from "./TransferSection";
 import "./settings.css";
 
@@ -60,8 +60,17 @@ export function useFoundRow(): string | null {
     const element = document.getElementById(found);
     if (element !== null) {
       element.scrollIntoView?.({ block: "center" });
+      // A locked value's control is turned off and cannot take the focus: then the row takes it
+      // (rows have tabIndex -1), so the jump still ends where the value is.
       const control = element.querySelector<HTMLElement>(
-        ".settings-row__control input, .settings-row__control select, .settings-row__control textarea, .settings-row__control button, .settings-row__control output",
+        [
+          ".settings-row__control input:not(:disabled)",
+          ".settings-row__control select:not(:disabled)",
+          ".settings-row__control textarea:not(:disabled)",
+          ".settings-row__control button:not(:disabled)",
+          ".settings-row__control output",
+          "[data-found-control]:not(:disabled)",
+        ].join(", "),
       );
       (control ?? element).focus({ preventScroll: true });
     }
@@ -162,7 +171,12 @@ function SectionBody({ section }: { section: SectionDef }) {
       return (
         <>
           <UpdatesPlaceholder />
-          <ServerSettings section={section} />
+          <ServerSettings
+            section={{
+              ...section,
+              keys: (section.keys ?? []).filter((key) => !UPDATES_PAGE_KEYS.includes(key)),
+            }}
+          />
         </>
       );
     case "profile":
@@ -202,7 +216,10 @@ function PlannedCard({ section }: { section: SectionDef }) {
   );
 }
 
-/** The way to the Updates page (`/admin/server/updates`), which has the update settings too. */
+/**
+ * The way to the Updates page (`/admin/server/updates`), where channel, daily check and window
+ * are set; a search for one of them goes straight there.
+ */
 function UpdatesPlaceholder() {
   const { t } = useI18n();
   return (
