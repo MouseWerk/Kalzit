@@ -9,7 +9,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { isComposingKey } from "../../../lib/ime";
 import { zoneOption } from "../../../lib/timeSettings";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
-import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
+import { type OrgPermissions, useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
 import { DASHBOARDS_KEY, fetchDashboard } from "../../dashboards/api";
 import { datasourcesQuery } from "../../datasources/api";
 import { KindMark } from "../../datasources/kindMarks";
@@ -628,6 +628,56 @@ function AskChat({
   );
 }
 
+/**
+ * Where model and provider are chosen, linked only where the person can go: the server's AI page
+ * for server admins, the organization's AI page for those who change its settings. An
+ * organization admin under the server's provider learns who chooses it instead.
+ */
+function ProviderSetBy({
+  scope,
+  orgProvidersAllowed,
+  permissions,
+}: {
+  scope: string;
+  orgProvidersAllowed: boolean;
+  permissions: OrgPermissions;
+}) {
+  const { t } = useI18n();
+  const orgAdmin = permissions.has("settings:write");
+  const orgLink = (
+    <Link to="/settings/$section" params={{ section: "org-ai" }} className="ask-context__link">
+      {t("ai.chat.orgAdminLink")}
+    </Link>
+  );
+  if (scope === "org" && orgAdmin) {
+    return (
+      <p className="ask-result__note">
+        {t("ai.chat.orgModelSetBy")} {orgLink}
+      </p>
+    );
+  }
+  if (permissions.isServerAdmin) {
+    return (
+      <p className="ask-result__note">
+        {t("ai.chat.modelSetBy")}{" "}
+        <Link to="/settings/$section" params={{ section: "ai" }} className="ask-context__link">
+          {t("ai.chat.adminLink")}
+        </Link>
+      </p>
+    );
+  }
+  if (!orgAdmin) {
+    return null;
+  }
+  return orgProvidersAllowed ? (
+    <p className="ask-result__note">
+      {t("ai.chat.serverModelOwnAllowed")} {orgLink}
+    </p>
+  ) : (
+    <p className="ask-result__note">{t("ai.chat.serverModelOnly")}</p>
+  );
+}
+
 function ContextPane({
   orgId,
   chatId,
@@ -711,18 +761,11 @@ function ContextPane({
                   : t("ai.chat.leavesNo")}
             </dd>
           </dl>
-          {permissions.isServerAdmin || permissions.has("settings:write") ? (
-            <p className="ask-result__note">
-              {t("ai.chat.modelSetBy")}{" "}
-              <Link
-                to="/settings/$section"
-                params={{ section: "ai" }}
-                className="ask-context__link"
-              >
-                {t("ai.chat.adminLink")}
-              </Link>
-            </p>
-          ) : null}
+          <ProviderSetBy
+            scope={provider.scope}
+            orgProvidersAllowed={status?.orgProvidersAllowed === true}
+            permissions={permissions}
+          />
         </section>
       )}
       <fieldset className="ask-context__section ask-context__sources">

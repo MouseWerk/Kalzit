@@ -124,7 +124,7 @@
     color: var(--text-muted);
   }
 
-  .settings-search__field:focus-within {
+  .settings-search__field:has(:focus-visible) {
     outline: var(--focus-outline);
     outline-offset: var(--focus-ring-offset);
   }
@@ -767,6 +767,11 @@
   }
 
   /* About: the crystal with the meaning of the name, then cards of facts, links and licenses. */
+  .about,
+  .settings-appearance-frame {
+    container-type: inline-size;
+  }
+
   .about {
     display: grid;
     gap: var(--space-cards);
@@ -938,7 +943,8 @@
     overflow-wrap: anywhere;
   }
 
-  @media (max-width: 75rem) {
+  /* Side by side only where the section has room for both, whatever the window and sidebar. */
+  @container (width < 44rem) {
     .about-hero {
       grid-template-columns: minmax(0, 1fr);
     }

@@ -205,3 +205,77 @@ test("a pin's menu opens beside it, whole and usable", async ({ page, world }) =
   await expect(menu).toBeHidden();
   await expect(more).toBeHidden();
 });
+
+test("signing out from a page that polls sends nothing with the ended session", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  // The instances page asks the server again every few seconds.
+  await page.goto("/admin/server/instances");
+  await expect(page.getByRole("heading", { name: t("admin.instances.title") })).toBeVisible();
+  const refused: string[] = [];
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (response.status() === 401 && path !== "/api/me") {
+      refused.push(`${response.request().method()} ${path}`);
+    }
+  });
+  await page.getByRole("button", { name: t("userMenu.label") }).click();
+  await page.getByRole("menuitem", { name: t("userMenu.signOut"), exact: true }).click();
+  // The shell changes while the sign-in page loads: nothing of it asks the server again.
+  await page.keyboard.press("ControlOrMeta+B");
+  await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
+  // Long enough for a poll or a refetch that was still on its way to arrive.
+  await page.waitForTimeout(1000);
+  expect(refused).toEqual([]);
+});
+
+test("a click into the plugin drop zone draws no focus ring, the keyboard does", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  await page.goto("/settings/plugins");
+  await page.getByRole("button", { name: t("plugins.install.open") }).click();
+  const dialog = page.getByRole("dialog", { name: t("plugins.install.title") });
+  const drop = dialog.locator(".plugin-drop");
+  const input = dialog.getByLabel(t("plugins.install.drop"));
+  const outline = () => drop.evaluate((element) => getComputedStyle(element).outlineStyle);
+  const chooser = page.waitForEvent("filechooser");
+  await drop.click();
+  await chooser;
+  await expect(input).toBeFocused();
+  expect(await outline()).toBe("none");
+  // Away and back with the keyboard: now the ring shows.
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(input).toBeFocused();
+  expect(await outline()).not.toBe("none");
+});
+
+test("the appearance preview sits beside the rows by the room of the section, not the window", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await signInOwner(page);
+  await page.goto("/settings/appearance");
+  const card = page.locator(".settings-appearance > .settings-card");
+  const preview = page.locator(".settings-preview");
+  await expect(preview).toBeVisible();
+  const shell = page.locator(".shell");
+  const beside = async () => {
+    const [a, b] = [await card.boundingBox(), await preview.boundingBox()];
+    return a !== null && b !== null && b.x >= a.x + a.width;
+  };
+  const below = async () => {
+    const [a, b] = [await card.boundingBox(), await preview.boundingBox()];
+    return a !== null && b !== null && b.y >= a.y + a.height;
+  };
+  // With the rail, a 1200 px window leaves the section room for both side by side.
+  await page.keyboard.press("ControlOrMeta+B");
+  await expect(shell).toHaveAttribute("data-sidebar", "collapsed");
+  await expect.poll(beside).toBe(true);
+  // The full sidebar takes that room: the preview goes below the rows, the window unchanged.
+  await page.keyboard.press("ControlOrMeta+B");
+  await expect(shell).toHaveAttribute("data-sidebar", "expanded");
+  await expect.poll(below).toBe(true);
+});

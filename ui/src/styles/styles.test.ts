@@ -187,6 +187,46 @@ describe("tokens only", () => {
       expect(/:focus(?![-\w])/.test(rule.selector), rule.selector).toBe(false);
     }
   });
+
+  it("rings a group only for keyboard focus inside it (:has(:focus-visible)), not :focus-within", () => {
+    // :focus-within also matches a click into a drop zone or a button inside it.
+    for (const rule of allRules()) {
+      if (!/:focus-within\b/.test(rule.selector)) {
+        continue;
+      }
+      for (const { property } of rule.declarations) {
+        expect(
+          /^(outline|box-shadow|border(-[\w-]+)?)$/.test(property),
+          where(rule, property),
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("tints invalid fields only on the sign-in pages", () => {
+    for (const rule of allRules({ exceptTokens: true })) {
+      if (!/\[aria-invalid/.test(rule.selector)) {
+        continue;
+      }
+      for (const { property, value } of rule.declarations) {
+        if (/^background(-color)?$/.test(property) && /--danger-bg\b/.test(value)) {
+          expect(rule.file, where(rule, property)).toBe("auth/auth.css");
+          expect(rule.selector.startsWith(".access "), where(rule, property)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("keeps a key nobody trusts out of the danger color", () => {
+    for (const rule of allRules()) {
+      if (!/data-trusted="false"/.test(rule.selector)) {
+        continue;
+      }
+      for (const { value } of rule.declarations) {
+        expect(/--danger\b|--danger-/.test(value), rule.selector).toBe(false);
+      }
+    }
+  });
 });
 
 describe("no accent frames for states", () => {

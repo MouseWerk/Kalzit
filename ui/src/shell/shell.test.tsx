@@ -6,6 +6,9 @@ import { stubMatchMedia } from "../test/matchMedia";
 import { renderApp } from "../test/renderApp";
 import { THEME_STORAGE_KEY } from "../theme/theme";
 
+/** What the sign-in page may ask without a session. */
+const PUBLIC_PATHS = new Set(["/api/me", "/api/setup", "/api/branding"]);
+
 async function openShell(path = "/", user = TEST_USER, rolePermissions?: Record<string, string[]>) {
   const server = installFakeServer({
     signedIn: true,
@@ -288,6 +291,29 @@ describe("user menu", () => {
     await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
     expect(location().pathname).toBe("/login");
+  });
+
+  it("sends no request that needs the ended session after signing out", async () => {
+    const { user, menuButton, server } = await openShell("/");
+    await screen.findByRole("heading", { level: 1 });
+    // The sign-in page waits for its answer, while the shell is still on screen and changes.
+    const release = server.holdNext("/api/me");
+    await user.click(menuButton);
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    await waitFor(() =>
+      expect(server.calls.some((call) => call.path.startsWith("/api/auth/logout"))).toBe(true),
+    );
+    await user.keyboard("{Control>}b{/Control}");
+    release();
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    const logoutAt = server.calls.findIndex((call) => call.path.startsWith("/api/auth/logout"));
+    expect(logoutAt).toBeGreaterThanOrEqual(0);
+    // The sign-in page asks who is signed in and how to sign in; nothing else may follow.
+    const after = server.calls
+      .slice(logoutAt + 1)
+      .map((call) => call.path)
+      .filter((path) => !PUBLIC_PATHS.has(path) && !path.startsWith("/api/auth/"));
+    expect(after).toEqual([]);
   });
 
   it("signs out and forgets this browser on request", async () => {

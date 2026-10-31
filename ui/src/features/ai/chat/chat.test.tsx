@@ -144,6 +144,49 @@ describe("Fragen", () => {
     expect(screen.getByText("Today 46 of 200 requests")).toBeTruthy();
   });
 
+  it("links organization admins only to pages they can open", async () => {
+    // Under the server's provider: who chooses it, and the organization's own page.
+    open("/ask", USABLE, "admin");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      await within(pane).findByText(/Server administrators choose model and provider\. You can/),
+    ).toBeTruthy();
+    expect(
+      within(pane)
+        .getByRole("link", { name: "Settings > AI of the organization" })
+        .getAttribute("href"),
+    ).toBe("/settings/org-ai");
+    expect(within(pane).queryByRole("link", { name: "Settings > AI" })).toBeNull();
+  });
+
+  it("only names the server admins when organizations may not add a provider", async () => {
+    open("/ask", { ...USABLE, orgProvidersAllowed: false }, "admin");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      await within(pane).findByText("Server administrators choose model and provider."),
+    ).toBeTruthy();
+    expect(within(pane).queryByRole("link", { name: /^Settings > AI/ })).toBeNull();
+  });
+
+  it("links the organization's provider to its own page and shows viewers no link", async () => {
+    const ownProvider = { ...USABLE, provider: { ...USABLE.provider, scope: "org" } };
+    open("/ask", ownProvider, "admin");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    expect(
+      (
+        await within(pane).findByRole("link", { name: "Settings > AI of the organization" })
+      ).getAttribute("href"),
+    ).toBe("/settings/org-ai");
+  });
+
+  it("shows members who cannot change settings no settings link", async () => {
+    open("/ask", USABLE, "viewer");
+    const pane = await screen.findByRole("complementary", { name: "Context and controls" });
+    await within(pane).findByText("Lokal · modell-1");
+    expect(within(pane).queryByRole("link", { name: /^Settings > AI/ })).toBeNull();
+    expect(within(pane).queryByText(/choose model and provider/)).toBeNull();
+  });
+
   it("asks for the notice, then streams every tool call and the answer, and keeps the chat", async () => {
     const { server, user, location } = open("/ask", { ...USABLE, noticeAcknowledged: false });
     server.areas.aiChat.answer = {

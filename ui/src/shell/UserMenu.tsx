@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
-import { logout, type Me, meQuery } from "../api/auth";
+import { flushSync } from "react-dom";
+import { forgetAccountData, logout, type Me, meQuery } from "../api/auth";
 import { isApiError } from "../api/client";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
@@ -32,8 +33,19 @@ export function initialsOf(name: string): string {
  * Account menu with theme, language and sign out, following the WAI-ARIA menu button pattern:
  * arrow keys move between items, Home and End jump, Escape and Tab close, and focus returns to the
  * button after a choice or Escape.
+ *
+ * Signing out takes the pages off screen first (`onLeaving`), so nothing they poll, stream or
+ * fetch on a re-render asks the server once the session has ended.
  */
-export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
+export function UserMenu({
+  me,
+  rail = false,
+  onLeaving,
+}: {
+  me: Me;
+  rail?: boolean;
+  onLeaving: (leaving: boolean) => void;
+}) {
   const { t, language } = useI18n();
   const theme = useTheme();
   const queryClient = useQueryClient();
@@ -55,14 +67,24 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
       await queryClient.cancelQueries();
       await logout(forgetBrowser);
     },
+    onError: () => onLeaving(false),
     onSuccess: async () => {
+      // The shell leaves before the cache is emptied: a component of it that renders again
+      // after the cache was emptied would fetch its data anew, with the session that ended.
+      await navigate({ to: "/login", search: { signedOut: true } });
       // Nothing chosen in this session passes to whoever signs in next in this browser.
       clearChoice();
-      queryClient.clear();
+      forgetAccountData(queryClient);
       queryClient.setQueryData(meQuery.queryKey, null);
-      await navigate({ to: "/login", search: { signedOut: true } });
     },
   });
+
+  function startSignOut(forgetBrowser: boolean) {
+    closeMenu(true);
+    // Synchronously, so the pages and their queries are gone before the request leaves.
+    flushSync(() => onLeaving(true));
+    signOut.mutate(forgetBrowser);
+  }
 
   function choose(action: () => void) {
     action();
@@ -161,10 +183,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
               role="menuitem"
               tabIndex={-1}
               className="menu__item"
-              onClick={() => {
-                closeMenu(true);
-                signOut.mutate(false);
-              }}
+              onClick={() => startSignOut(false)}
             >
               <Icon name="signOut" />
               {t("userMenu.signOut")}
@@ -175,10 +194,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
               role="menuitem"
               tabIndex={-1}
               className="menu__item"
-              onClick={() => {
-                closeMenu(true);
-                signOut.mutate(true);
-              }}
+              onClick={() => startSignOut(true)}
             >
               <Icon name="check" className="menu__check" />
               {t("userMenu.signOutForget")}

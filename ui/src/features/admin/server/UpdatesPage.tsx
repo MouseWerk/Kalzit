@@ -34,6 +34,7 @@ import {
   updateKeys,
   uploadPackage,
 } from "./updatesApi";
+import "../../settings/settings.css";
 import "./updates.css";
 
 /** Phases in which the status changes by itself; the page asks again every second. */
@@ -373,17 +374,17 @@ function StatusStrip({
           {t("admin.updates.autoCheck")}
         </span>
         <div className="updates-strip__value">
-          <button
-            type="button"
+          {/* The shared switch of the settings (settings.css), with its sizes and states. */}
+          <input
+            type="checkbox"
             role="switch"
+            className="settings-switch"
+            checked={data.checkDaily}
             aria-checked={data.checkDaily}
             aria-labelledby={`${channelId}-daily`}
-            className="updates-switch"
             disabled={locked("updates.check_daily")}
-            onClick={() => onDaily(!data.checkDaily)}
-          >
-            <span className="updates-switch__knob" />
-          </button>
+            onChange={() => onDaily(!data.checkDaily)}
+          />
           <span>
             {t(data.checkDaily ? "admin.updates.autoCheck.on" : "admin.updates.autoCheck.off")}
           </span>
