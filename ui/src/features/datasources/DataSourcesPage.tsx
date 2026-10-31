@@ -189,7 +189,7 @@ function DataSourceList({
       <>
         <PageActions>{toolbar}</PageActions>
         {trash ? (
-          <EmptyState icon="dataSources" title={t("datasources.trash.empty")}>
+          <EmptyState icon="trash" title={t("datasources.trash.empty")}>
             {t("datasources.trash.emptyText")}
           </EmptyState>
         ) : (
