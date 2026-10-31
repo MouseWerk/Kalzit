@@ -1129,8 +1129,10 @@ pub enum FirstStep<'a> {
     /// A local password; its hash binds the half-signed-in state, so a password changed meanwhile
     /// ends it.
     Password { password_hash: Option<&'a str> },
-    /// A directory password (LDAP): always Kalzit's second factor.
-    Directory,
+    /// A directory password (LDAP): always Kalzit's second factor. `sync_run` is the run of the
+    /// directory sync that disabled the account, when it did: the account is enabled only when the
+    /// second step succeeds and that very record still stands (`take_pending`).
+    Directory { sync_run: Option<&'a str> },
     /// An identity provider. `mfa_done` is the provider's claim (such as OIDC `amr`) and
     /// `provider_mfa_trusted` the provider's switch in Kalzit, off by default.
     Provider { provider_id: &'a str, mfa_done: bool, provider_mfa_trusted: bool },
@@ -1140,6 +1142,13 @@ impl FirstStep<'_> {
     /// Whether Kalzit asks for its own second factor after this first step.
     pub fn asks_second_factor(&self) -> bool {
         !matches!(self, FirstStep::Provider { mfa_done: true, provider_mfa_trusted: true, .. })
+    }
+
+    fn sync_run(&self) -> Option<&str> {
+        match self {
+            FirstStep::Directory { sync_run } => *sync_run,
+            _ => None,
+        }
     }
 
     fn password_hash(&self) -> Option<&str> {
@@ -1152,7 +1161,7 @@ impl FirstStep<'_> {
     pub fn label(&self) -> &'static str {
         match self {
             FirstStep::Password { .. } => "password",
-            FirstStep::Directory => "directory",
+            FirstStep::Directory { .. } => "directory",
             FirstStep::Provider { .. } => "provider",
         }
     }
@@ -1246,7 +1255,7 @@ pub async fn create_pending(
     let token = hex::encode(rand::random::<[u8; 32]>());
     sqlx::query(
         "INSERT INTO sign_in_challenges (token_hash, user_id, setup, forget_browser, first_step, password_fingerprint, \
-         created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+         created_at, expires_at, ldap_sync_run) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
     )
     .bind(session::hash_token(&token))
     .bind(user_id)
@@ -1256,6 +1265,7 @@ pub async fn create_pending(
     .bind(password_fingerprint(first.password_hash()))
     .bind(now)
     .bind(now + CHALLENGE_TTL_MS)
+    .bind(first.sync_run())
     .execute(conn)
     .await?;
     Ok(token)
@@ -1267,7 +1277,8 @@ pub async fn load_pending(db: &AnyPool, headers: &HeaderMap, secure: bool, now: 
     let pending: Option<Pending> = sqlx::query_as(
         "SELECT c.token_hash, c.user_id, u.email, u.name, u.is_server_admin, c.setup, c.forget_browser, \
          c.password_fingerprint, c.expires_at FROM sign_in_challenges c JOIN users u ON u.id = c.user_id \
-         WHERE c.token_hash = $1 AND u.disabled = 0",
+         WHERE c.token_hash = $1 AND (u.disabled = 0 OR (c.first_step = 'directory' AND EXISTS \
+         (SELECT 1 FROM ldap_deactivations d WHERE d.user_id = u.id AND d.run_id = c.ldap_sync_run)))",
     )
     .bind(session::hash_token(&token))
     .fetch_optional(db)
@@ -1286,19 +1297,20 @@ pub struct Taken {
 /// `None` when another request took it first or the account changed meanwhile (disabled, a new
 /// password).
 pub async fn take_pending(conn: &mut sqlx::AnyConnection, pending: &Pending, now: i64) -> ApiResult<Option<Taken>> {
-    let first: Option<(String,)> =
-        sqlx::query_as("SELECT first_step FROM sign_in_challenges WHERE token_hash = $1 AND expires_at > $2")
-            .bind(&pending.token_hash)
-            .bind(now)
-            .fetch_optional(&mut *conn)
-            .await?;
+    let first: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT first_step, ldap_sync_run FROM sign_in_challenges WHERE token_hash = $1 AND expires_at > $2",
+    )
+    .bind(&pending.token_hash)
+    .bind(now)
+    .fetch_optional(&mut *conn)
+    .await?;
     let taken = sqlx::query("DELETE FROM sign_in_challenges WHERE token_hash = $1 AND expires_at > $2")
         .bind(&pending.token_hash)
         .bind(now)
         .execute(&mut *conn)
         .await?
         .rows_affected();
-    let Some((first_step,)) = first.filter(|_| taken == 1) else { return Ok(None) };
+    let Some((first_step, sync_run)) = first.filter(|_| taken == 1) else { return Ok(None) };
     // Under the user row's lock, as a sign-in with a password takes it (`routes::auth::login`): a
     // password change or a disable that raced this either is seen here or ends the new session.
     sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1")
@@ -1309,11 +1321,23 @@ pub async fn take_pending(conn: &mut sqlx::AnyConnection, pending: &Pending, now
         .bind(&pending.user_id)
         .fetch_optional(&mut *conn)
         .await?;
-    let Some((password_hash, disabled)) = row else { return Ok(None) };
+    let Some((password_hash, mut disabled)) = row else { return Ok(None) };
     let same_password = match &pending.password_fingerprint {
         Some(fingerprint) => password_fingerprint(password_hash.as_deref()).as_deref() == Some(fingerprint.as_str()),
         None => true,
     };
+    // A directory confirmed an account its sync had disabled (`sso::directory::finish`): it is
+    // enabled now that the second step succeeded too, never before, and only when the sync's
+    // record the first step saw still stands. An account disabled after the first step (by the
+    // sync or an admin) stays disabled.
+    if disabled != 0
+        && first_step == "directory"
+        && same_password
+        && let Some(run) = &sync_run
+        && crate::sso::directory::enable_sync_disabled(conn, None, &pending.user_id, run, now).await?
+    {
+        disabled = 0;
+    }
     Ok((disabled == 0 && same_password).then_some(Taken { password_hash, first_step }))
 }
 
@@ -1456,7 +1480,7 @@ mod tests {
         };
         assert!(ask(false, false) && ask(true, false) && ask(false, true));
         assert!(!ask(true, true));
-        assert!(FirstStep::Directory.asks_second_factor());
+        assert!(FirstStep::Directory { sync_run: None }.asks_second_factor());
         assert!(FirstStep::Password { password_hash: None }.asks_second_factor());
     }
 

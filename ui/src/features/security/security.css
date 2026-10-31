@@ -236,6 +236,7 @@
   }
 
   .security-passkeys {
+    container-type: inline-size;
     display: grid;
     gap: var(--space-2);
     padding: var(--space-3) var(--space-4);
@@ -337,7 +338,8 @@
     }
   }
 
-  @media (width <= 40rem) {
+  /* Narrow by the room the component has, not by the window (the sidebar and panes vary it). */
+  @container (width < 36rem) {
     .security-passkeys__table thead {
       display: none;
     }

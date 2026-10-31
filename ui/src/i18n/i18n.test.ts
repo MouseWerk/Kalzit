@@ -216,6 +216,12 @@ describe("catalogs", () => {
       "PKCE",
       "Token",
       "Tokens",
+      // LDAP: protocol and product names.
+      "LDAP",
+      "LDAPS",
+      "StartTLS",
+      "Active Directory",
+      "LDAP · Active Directory",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

@@ -65,6 +65,11 @@
     font-variant-ligatures: none;
   }
 
+  .acme-status,
+  .acme-footer {
+    container-type: inline-size;
+  }
+
   .acme-footer {
     display: flex;
     flex-wrap: wrap;
@@ -120,7 +125,8 @@
     color: var(--warning-text);
   }
 
-  @media (width < 40rem) {
+  /* Narrow by the room the component has, not by the window (the sidebar and panes vary it). */
+  @container (width < 36rem) {
     .acme-facts {
       grid-template-columns: minmax(0, 1fr);
     }

@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import type { UserEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { leavePage } from "../../../lib/leavePage";
 import type { FakeServer } from "../../../test/fakeServer";
@@ -13,6 +14,13 @@ async function openSignIn(path: string, arrange: (server: FakeServer) => void = 
   const opened = await openAdmin(path, { isServerAdmin: true, setupServer: arrange });
   await screen.findByRole("heading", { level: 2, name: "Sign-in" });
   return opened;
+}
+
+/** The kind chooser of "Add provider" (board frame 5B). */
+async function chooseKind(user: UserEvent, kind: string) {
+  const chooser = await screen.findByRole("dialog", { name: "Add provider" });
+  await user.click(within(chooser).getByRole("radio", { name: new RegExp(`^${kind}`) }));
+  await user.click(within(chooser).getByRole("button", { name: "Continue" }));
 }
 
 function saveButton(dialog: HTMLElement) {
@@ -49,6 +57,7 @@ describe("sign-in administration, providers", () => {
   it("keeps Save off until the connection check passed for the values now entered", async () => {
     const { user, server } = await openSignIn("/settings/signin");
     await user.click(await screen.findByRole("button", { name: "Add provider…" }));
+    await chooseKind(user, "OpenID Connect");
     const dialog = await screen.findByRole("dialog", { name: "Add OpenID Connect" });
     await user.type(within(dialog).getByLabelText("Name on the button"), "Partner Portal");
     expect((within(dialog).getByLabelText("Slug") as HTMLInputElement).value).toBe(
@@ -98,6 +107,7 @@ describe("sign-in administration, providers", () => {
       params: { detail: "connection refused" },
     };
     await user.click(await screen.findByRole("button", { name: "Add provider…" }));
+    await chooseKind(user, "OpenID Connect");
     const dialog = await screen.findByRole("dialog", { name: "Add OpenID Connect" });
 
     // Empty fields are caught before any request, the first one gets focus.

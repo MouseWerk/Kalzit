@@ -218,13 +218,10 @@
     gap: var(--space-1);
   }
 
-  /* The provider form. */
-  .sso-form .input[aria-invalid="true"],
-  .sso-form .select[aria-invalid="true"],
-  .sso-local .select[aria-invalid="true"] {
-    background: var(--danger-bg);
-  }
-
+  /*
+   * The provider form. A field in error says so in its message, as everywhere in the app; the
+   * tinted fill belongs to the sign-in pages only (auth.css).
+   */
   .sso-form__pair {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
@@ -443,5 +440,84 @@
 
   .sso-check-line--open .icon {
     color: var(--danger-text);
+  }
+
+  /* LDAP: the kind chooser (frame 5B), the pill of the kind, segmented fields and the sync. */
+  .sso-kinds {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .sso-kind {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text);
+    text-align: start;
+  }
+
+  .sso-kind:hover {
+    background: var(--bg-hover);
+  }
+
+  .sso-kind[aria-checked="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .sso-kind__text {
+    display: grid;
+    flex: 1;
+    gap: var(--space-1);
+  }
+
+  .sso-kind__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .sso-pill {
+    display: inline-block;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  .sso-segment {
+    align-self: flex-start;
+    border-radius: var(--radius-md);
+  }
+
+  .sso-segment--invalid {
+    background: var(--danger-bg);
+  }
+
+  .sso-fieldset {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .sso-sync__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .sso-sync__head p {
+    margin: 0;
   }
 }

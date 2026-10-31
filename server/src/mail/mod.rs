@@ -240,6 +240,38 @@ pub fn notify_break_glass(state: &AppState, user_id: &str, address: std::net::Ip
     });
 }
 
+/// Tells every enabled server admin by mail that the sync of the LDAP provider `provider` halted
+/// before disabling `would` of `accounts` accounts (docs/api/sso.md, "Sync"): in the background,
+/// each in their language, when the server can send mail.
+pub fn notify_ldap_sync_halted(state: &AppState, provider: &str, would: usize, accounts: usize, threshold: u8) {
+    let background = state.clone();
+    let provider = provider.to_string();
+    state.mail.spawn(state, async move {
+        let run = async {
+            let effective = settings::effective(&background).await?;
+            if !effective.configured() {
+                return Ok(());
+            }
+            let admins: Vec<(String, String)> =
+                sqlx::query_as("SELECT id, email FROM users WHERE is_server_admin = 1 AND disabled = 0 ORDER BY id")
+                    .fetch_all(&background.db)
+                    .await?;
+            for (admin_id, email) in admins {
+                let lang = language(&background, Some(&admin_id)).await?;
+                let content =
+                    templates::ldap_sync_halted(lang, &provider, would, accounts, threshold, &host(&background));
+                if let Err(e) = send(&background, &effective, &email, &content).await {
+                    tracing::warn!(admin = %admin_id, "the sync notice was not sent: {}", e.message);
+                }
+            }
+            Ok::<(), ApiError>(())
+        };
+        if let Err(e) = run.await {
+            tracing::warn!("the sync notice was not sent: {}", e.message);
+        }
+    });
+}
+
 /// Sends `content` to `to` with the settings in force.
 pub async fn send(
     state: &AppState,

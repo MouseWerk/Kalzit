@@ -22,9 +22,13 @@ export function isOrgDetails(value: unknown): value is OrgDetails {
   );
 }
 
-export async function fetchOrg(orgId: string): Promise<OrgDetails> {
+export async function fetchOrg(orgId: string, signal?: AbortSignal): Promise<OrgDetails> {
   const path = `/api/orgs/${encodeURIComponent(orgId)}`;
-  return expectShape(await request("GET", path), isOrgDetails, "organization");
+  return expectShape(
+    await request("GET", path, undefined, { signal }),
+    isOrgDetails,
+    "organization",
+  );
 }
 
 export const ORG_QUERY_KEY = "org";
@@ -32,7 +36,7 @@ export const ORG_QUERY_KEY = "org";
 export function orgQuery(orgId: string) {
   return queryOptions({
     queryKey: [ORG_QUERY_KEY, orgId],
-    queryFn: () => fetchOrg(orgId),
+    queryFn: ({ signal }) => fetchOrg(orgId, signal),
     staleTime: 60_000,
   });
 }
