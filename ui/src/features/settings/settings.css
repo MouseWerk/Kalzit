@@ -197,29 +197,6 @@
     container: settings-main / inline-size;
   }
 
-  /*
-   * A narrow section (a small window, or the sidebar open beside it): every row puts its control
-   * under the text, a switch as well as a field, instead of keeping whatever happens to fit.
-   */
-  @container settings-main (width < 40rem) {
-    .settings-row__text {
-      flex-basis: 100%;
-    }
-
-    .settings-row__control {
-      justify-content: flex-start;
-    }
-
-    /* A field's hint and a value follow the control to the left edge. */
-    .settings-field {
-      justify-items: start;
-    }
-
-    .settings-value {
-      text-align: start;
-    }
-  }
-
   .settings-section {
     display: flex;
     flex-direction: column;
@@ -944,6 +921,29 @@
 
     .settings-preview {
       position: static;
+    }
+  }
+
+  /*
+   * A narrow section (a small window, or the sidebar open beside it): every row puts its control
+   * under the text, a switch as well as a field, instead of keeping whatever happens to fit.
+   */
+  @container settings-main (width < 40rem) {
+    .settings-row__text {
+      flex-basis: 100%;
+    }
+
+    .settings-row__control {
+      justify-content: flex-start;
+    }
+
+    /* A field's hint and a value follow the control to the left edge. */
+    .settings-field {
+      justify-items: start;
+    }
+
+    .settings-value {
+      text-align: start;
     }
   }
 

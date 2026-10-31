@@ -137,12 +137,14 @@
   }
 
   /*
-   * The type and its button stay on one line while there is room: the select gives up width
-   * first (a long German step name was pushing the button onto a line of its own).
+   * The type and its button stay on one line while there is room: the select starts from a small
+   * width and grows up to a field's (a long German step name was pushing the button onto a line
+   * of its own, since a row breaks by the items' starting widths).
    */
   .steps__add > .select {
-    flex: 0 1 auto;
-    min-width: min(10rem, 100%);
+    flex: 1 1 10rem;
+    min-width: 0;
+    max-width: var(--size-field);
   }
 
   .steps__add > .button {

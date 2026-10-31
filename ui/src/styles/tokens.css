@@ -119,6 +119,8 @@
      */
     --radius-sm: 4px;
     --radius-md: 7px;
+    /* The outer corners of a control inside a bordered group of medium radius. */
+    --radius-md-inner: calc(var(--radius-md) - var(--border-width));
     --radius-lg: 12px;
     --radius-pill: 999px;
 

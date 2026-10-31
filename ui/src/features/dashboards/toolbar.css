@@ -147,10 +147,23 @@
     background: var(--border);
   }
 
-  .dash-toolbar .time-controls .button,
-  .dash-toolbar .split-control .button {
-    border-radius: var(--radius-sm);
+  /*
+   * Square where two controls meet, so no corner of the divider color shows at the seams (it read
+   * as notches in dark mode); the outer corners follow the group's frame.
+   */
+  .dash-toolbar :where(.time-controls, .split-control) .button {
+    border-radius: 0;
     background: var(--bg-surface);
+  }
+
+  .dash-toolbar :where(.time-controls, .split-control) > :where(:first-child) .button,
+  .dash-toolbar :where(.time-controls, .split-control) > .button:where(:first-child) {
+    border-radius: var(--radius-md-inner) 0 0 var(--radius-md-inner);
+  }
+
+  .dash-toolbar :where(.time-controls, .split-control) > :where(:last-child) .button,
+  .dash-toolbar :where(.time-controls, .split-control) > .button:where(:last-child) {
+    border-radius: 0 var(--radius-md-inner) var(--radius-md-inner) 0;
   }
 
   .dash-toolbar .time-controls .button:hover,

@@ -50,15 +50,19 @@ export function SettingsLayout() {
   const listRef = useRef<HTMLUListElement>(null);
   const navRef = useRef<HTMLElement>(null);
 
+  const shown = visible.map((section) => section.id).join(" ");
+
   // A navigation taller than the window scrolls on its own; the current entry stays in view, also
-  // the footer entries (About, Export and import) far down the list.
+  // the footer entries (About, Export and import) far down the list. Again once the permissions
+  // have arrived, since they add the sections above it.
   useEffect(() => {
+    if (shown === "") return;
     const nav = navRef.current;
     const link = nav?.querySelector<HTMLElement>(`.settings-nav__list [data-section="${current}"]`);
     if (nav !== null && link !== null && link !== undefined) {
       revealInside(nav, link);
     }
-  }, [current]);
+  }, [current, shown]);
 
   function onListKey(event: KeyboardEvent<HTMLUListElement>) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {

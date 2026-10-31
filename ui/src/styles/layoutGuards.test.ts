@@ -16,7 +16,12 @@ function rules(file: string): StyleRule[] {
 
 function value(file: string, selector: string, property: string, context?: RegExp): string[] {
   return rules(file)
-    .filter((rule) => rule.selector === selector)
+    .filter((rule) =>
+      rule.selector
+        .split(/,(?![^()]*\))/)
+        .map((part) => part.trim().replace(/\s+/g, " "))
+        .includes(selector),
+    )
     .filter((rule) => context === undefined || rule.context.some((c) => context.test(c)))
     .flatMap((rule) => rule.declarations)
     .filter((declaration) => declaration.property === property)
@@ -57,7 +62,7 @@ describe("layout guards", () => {
   });
 
   it("lets the step type give up width before its button wraps", () => {
-    expect(value("analysis/analysis.css", ".steps__add > .select", "flex")).toContain("0 1 auto");
+    expect(value("analysis/analysis.css", ".steps__add > .select", "flex")).toContain("1 1 10rem");
     expect(value("analysis/analysis.css", ".steps__add > .button", "flex")).toContain("none");
   });
 
@@ -98,6 +103,20 @@ describe("layout guards", () => {
     expect(
       value("features/plugins/plugins.css", ".plugins-table .plugins-mono", "white-space"),
     ).toContain("nowrap");
+  });
+
+  it("squares the toolbar group's inner corners, so no seam shows between its controls", () => {
+    const css = "features/dashboards/toolbar.css";
+    expect(
+      value(css, ".dash-toolbar :where(.time-controls, .split-control) .button", "border-radius"),
+    ).toContain("0");
+    expect(
+      value(
+        css,
+        ".dash-toolbar :where(.time-controls, .split-control) > :where(:first-child) .button",
+        "border-radius",
+      ),
+    ).toContain("var(--radius-md-inner) 0 0 var(--radius-md-inner)");
   });
 
   it("drops the catalog status separators where the line wraps", () => {
