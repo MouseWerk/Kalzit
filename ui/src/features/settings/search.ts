@@ -1,6 +1,13 @@
 import { catalogs, LANGUAGES, type Language, type MessageKey } from "../../i18n/i18n";
 import { isKnownSetting, settingMessage } from "../admin/catalog";
-import { LOGO_ROW, rowId, type SectionDef, type SettingsAccess, SIGN_IN_ROW } from "./sections";
+import {
+  LOGO_ROW,
+  rowId,
+  type SectionDef,
+  type SettingsAccess,
+  SIGN_IN_ROW,
+  UPDATES_PAGE_KEYS,
+} from "./sections";
 
 /**
  * Search across every setting the user may open: its title and description in German and English,
@@ -19,6 +26,8 @@ export interface SearchEntry {
   haystack: string;
   /** Lower-case titles of both languages, for ranking. */
   titles: string;
+  /** Set for a setting kept on a page of its own: the result opens that page at the row. */
+  page?: "/admin/server/updates";
 }
 
 export function normalize(text: string): string {
@@ -94,6 +103,7 @@ export function buildIndex(sections: readonly SectionDef[], access: SettingsAcce
           `${inAll([row.label, row.description, section.keywords])} ${row.key} ${row.key.replaceAll(/[._]/g, " ")}`,
         ),
         titles: normalize(inAll([row.label])),
+        ...(UPDATES_PAGE_KEYS.includes(row.key) ? { page: "/admin/server/updates" as const } : {}),
       });
     }
   }

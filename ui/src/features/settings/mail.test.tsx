@@ -115,9 +115,17 @@ describe("mail server settings", () => {
     });
     const card = await form();
     expect(within(card).getByText("from kalzit.toml")).toBeTruthy();
-    expect(
-      (within(card).getByRole("textbox", { name: "Server" }) as HTMLInputElement).readOnly,
-    ).toBe(true);
+    const server = within(card).getByRole("textbox", { name: "Server" }) as HTMLInputElement;
+    expect(server.disabled).toBe(true);
+    // The section's notice says why, and every control points to it.
+    const notice = within(card).getByText(/^These values come from kalzit\.toml/);
+    expect(server.getAttribute("aria-describedby")?.split(" ")).toContain(notice.id);
+    const port = within(card).getByRole("textbox", { name: "Port" }) as HTMLInputElement;
+    expect(port.disabled).toBe(true);
+    expect(port.getAttribute("aria-describedby")).toBe(notice.id);
+    for (const option of within(card).getAllByRole("radio")) {
+      expect((option as HTMLButtonElement).disabled).toBe(true);
+    }
     expect(within(card).queryByRole("button", { name: "Save" })).toBeNull();
     expect(within(card).getByRole("button", { name: "Send test mail" })).toBeTruthy();
   });

@@ -4,7 +4,7 @@ import { isApiError } from "../../../api/client";
 import { useI18n } from "../../../i18n/i18n";
 import { rangeLabel } from "../../dashboards/TimeRangePicker";
 import type { TextRange } from "../../dashboards/timeRange";
-import { isSetting, type Setting } from "../api";
+import { isLockedSetting, isSetting, type Setting } from "../api";
 import { settingName } from "../catalog";
 import { errorText, SETTING_ERRORS } from "../errors";
 import { Dialog } from "./Dialog";
@@ -154,18 +154,21 @@ export function useSettingChanges({
       await queryClient.invalidateQueries({ queryKey });
       notice.show({
         message: t("admin.settings.saved", { name: settingName(t, saved.key) }),
-        undo: () =>
-          enqueue({
-            kind: "fixed",
-            input: {
-              key: saved.key,
-              value: previous,
-              previous: saved.value,
-              previousSource: saved.source,
-              version: saved.version,
-              reset: previousSource === "default",
-            },
-          }),
+        // A value that kalzit.toml or the environment sets in the meantime cannot be undone here.
+        undo: isLockedSetting(saved)
+          ? undefined
+          : () =>
+              enqueue({
+                kind: "fixed",
+                input: {
+                  key: saved.key,
+                  value: previous,
+                  previous: saved.value,
+                  previousSource: saved.source,
+                  version: saved.version,
+                  reset: previousSource === "default",
+                },
+              }),
       });
     },
     onError: (error, { key, value }) => {
