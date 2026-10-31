@@ -128,6 +128,12 @@ describe("mail server settings", () => {
     }
     expect(within(card).queryByRole("button", { name: "Save" })).toBeNull();
     expect(within(card).getByRole("button", { name: "Send test mail" })).toBeTruthy();
+    // The test recipient stays editable, so the lock notice does not describe it.
+    const recipient = within(card).getByRole("textbox", {
+      name: "Test mail to",
+    }) as HTMLInputElement;
+    expect(recipient.disabled).toBe(false);
+    expect(recipient.getAttribute("aria-describedby")?.split(" ")).not.toContain(notice.id);
   });
 
   it("warns when links have no public address", async () => {

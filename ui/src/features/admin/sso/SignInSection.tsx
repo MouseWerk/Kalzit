@@ -161,7 +161,13 @@ export function SignInSection({ twoFactor }: { twoFactor?: ReactNode }) {
           </button>
         ) : null}
       </div>
-      <div role="tabpanel" id={`${tabsId}-${tab}`} aria-labelledby={`${tabsId}-${tab}-tab`}>
+      {/* A stack, so a tab's cards and the note under them keep the gap between them. */}
+      <div
+        role="tabpanel"
+        className="sso-stack"
+        id={`${tabsId}-${tab}`}
+        aria-labelledby={`${tabsId}-${tab}-tab`}
+      >
         {tab === "providers" ? (
           <ProvidersTab
             overview={data}

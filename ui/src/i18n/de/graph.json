@@ -107,7 +107,7 @@
   "graph.explorer.more": "Weitere {count} laden",
   "graph.explorer.loadedOf": "{name} hat {total} Nachbarn, geladen sind {count}.",
   "graph.steps.title": "Schritte",
-  "graph.steps.base": "Abfrageergebnis, {count} Knoten",
+  "graph.steps.base": "Abfrageergebnis, {nodes}",
   "graph.steps.step": "{name} +{count}",
   "graph.steps.stepOf": "{name} +{count} von {total}",
   "graph.steps.loading": "{name} wird geladen…",

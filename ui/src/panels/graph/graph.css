@@ -215,10 +215,16 @@
   }
 
   /* The toolbar's layout choice: a label and a compact select on the buttons' line. */
+  /*
+   * The tool row is pulled left by a ghost button's inset; the layout choice has no inset of its
+   * own, so it takes one: at the start of a wrapped line its label stays whole and lines up with
+   * the buttons' text.
+   */
   .graph__layout {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
+    padding-inline-start: var(--space-ghost-inset);
     font-size: var(--font-size-xs);
   }
 
@@ -381,6 +387,8 @@
   /* The explorer's steps and the settings of the next one. */
   .graph-steps {
     display: grid;
+    /* One column no wider than the panel, so a compact row's step list scrolls instead of pushing the actions out. */
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
     padding: var(--space-2);
     border: var(--border-width) solid var(--border);

@@ -484,7 +484,8 @@
     margin: 0;
     color: var(--text);
     overflow-wrap: anywhere;
-    text-align: right;
+    /* A short value sits at the right edge; one that wraps reads as a paragraph, flush left. */
+    text-align: start;
   }
 
   /* A status as a dot of its color: a fill, never a frame. */
@@ -776,6 +777,42 @@
 
   .ask-history-page__actions {
     text-align: right;
+  }
+
+  /*
+   * Desktop: the page fills the window below the header, as on the board; the conversation and
+   * the side pane scroll on their own, so the composer always stays in view at the bottom.
+   */
+  @media not (max-width: 64rem) {
+    .shell__main:has(.ask) {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      padding-block-end: var(--space-4);
+    }
+
+    .shell__content:has(.ask) {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .ask {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .ask__main,
+    .ask-context {
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .ask__messages {
+      min-height: 0;
+      overflow-y: auto;
+    }
   }
 
   @media (max-width: 64rem) {

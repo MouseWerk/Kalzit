@@ -271,6 +271,15 @@
     overflow-wrap: anywhere;
   }
 
+  /*
+   * An id, a key or a version stays on one line in the table (broken anywhere, the name column
+   * shrank to a couple of letters per line); the table scrolls sideways when it is too narrow.
+   */
+  .plugins-table .plugins-mono {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+
   /* The letters of a plugin in a quiet tile, where a built-in kind has its logo. */
   .plugin-mark {
     display: grid;
@@ -696,8 +705,14 @@
       margin-inline-start: 0;
     }
 
+    /* One column: a label sits close to its value, and each pair is set apart from the next. */
     .plugin-defs {
       grid-template-columns: minmax(0, 1fr);
+      row-gap: var(--space-1);
+    }
+
+    .plugin-defs dd + dt {
+      margin-top: var(--space-2);
     }
 
     .plugin-log__line {

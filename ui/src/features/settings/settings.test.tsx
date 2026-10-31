@@ -61,6 +61,26 @@ describe("settings shell", () => {
     expect(within(sections).queryByRole("link", { name: "Export / import settings" })).toBeNull();
   });
 
+  it("scrolls the navigation to the current entry, also for an address with quotes", async () => {
+    const reveal = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    await openAdmin("/settings/transfer", { isServerAdmin: true });
+    const sections = await nav();
+    const current = within(sections).getByRole("link", { name: "Export / import settings" });
+    expect(current.getAttribute("aria-current")).toBe("page");
+    // The entry was measured to bring it into view.
+    await waitFor(() =>
+      expect(reveal.mock.contexts.some((element) => element === current)).toBe(true),
+    );
+    reveal.mockRestore();
+  });
+
+  it("does not break on a section address with a quote in it", async () => {
+    await openAdmin('/settings/a"b', { isServerAdmin: true });
+    const sections = await nav();
+    expect(within(sections).getByRole("link", { name: "General" })).toBeTruthy();
+    expect(within(sections).queryByRole("link", { current: "page" })).toBeNull();
+  });
+
   it("moves between sections with the arrow keys", async () => {
     const { user } = await openAdmin("/settings/appearance", { isServerAdmin: true });
     const sections = await nav();

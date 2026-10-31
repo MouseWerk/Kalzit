@@ -229,13 +229,20 @@
       grid-template-columns: minmax(0, 1fr);
     }
 
+    /* One line of categories with the check box, all on the same middle line. */
     .catalog-nav {
       display: flex;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     .catalog-nav__trusted {
       margin-top: 0;
+    }
+
+    /* The status line wraps here; a separator would be left hanging at a line's end. */
+    .catalog-status__sep {
+      display: none;
     }
   }
 }

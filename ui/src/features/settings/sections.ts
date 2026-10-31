@@ -378,7 +378,6 @@ export function findSection(id: string): SectionDef | undefined {
   return SECTIONS.find((section) => section.id === id);
 }
 
-/** The section a row lives in: its id and the row's element id. */
 /**
  * The update settings that have their one place on the Updates page (board Updates.dc.html, the
  * status strip): the section links there instead of a second set of controls, and a search for
@@ -390,6 +389,7 @@ export const UPDATES_PAGE_KEYS: readonly string[] = [
   "updates.window",
 ];
 
+/** The section a row lives in: its id and the row's element id. */
 export function rowId(section: SectionDef, key: string): string {
   if (section.kind === "appearance" && (key === "signin.welcome" || key === "signin.notice")) {
     return SIGN_IN_ROW;

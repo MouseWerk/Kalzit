@@ -107,7 +107,7 @@
   "graph.explorer.more": "Load {count} more",
   "graph.explorer.loadedOf": "{name} has {total} neighbours, {count} are loaded.",
   "graph.steps.title": "Steps",
-  "graph.steps.base": "Query result, {count} nodes",
+  "graph.steps.base": "Query result, {nodes}",
   "graph.steps.step": "{name} +{count}",
   "graph.steps.stepOf": "{name} +{count} of {total}",
   "graph.steps.loading": "Loading {name}…",
