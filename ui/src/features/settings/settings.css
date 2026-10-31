@@ -337,7 +337,8 @@
    */
   .settings-select {
     width: auto;
-    min-width: min(100%, var(--size-settings-select-min));
+    /* A fixed minimum: a percentage of the shrink-to-fit control column would resolve to nothing. */
+    min-width: var(--size-settings-select-min);
     max-width: min(100%, var(--size-settings-select-max));
     overflow: hidden;
     text-overflow: ellipsis;
