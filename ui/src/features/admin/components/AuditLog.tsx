@@ -233,7 +233,12 @@ function AuditRow({
   language: Language;
 }) {
   const { t, timeZone } = useI18n();
-  const actor = event.actorName ?? event.actorUserId ?? t("admin.audit.system");
+  const name = event.actorName ?? event.actorUserId ?? t("admin.audit.system");
+  const token = event.actorTokenPrefix;
+  const actor =
+    token === undefined || token === null
+      ? name
+      : t("admin.audit.actorWithToken", { name, token: `${token}…` });
   const resource =
     event.resourceType === null
       ? null

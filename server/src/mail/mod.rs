@@ -182,10 +182,12 @@ pub fn notify_second_factor(state: &AppState, user_id: &str, notice: crate::auth
             if !effective.configured() {
                 return Ok(());
             }
-            let row: Option<(String,)> = sqlx::query_as("SELECT email FROM users WHERE id = $1 AND disabled = 0")
-                .bind(&user_id)
-                .fetch_optional(&background.db)
-                .await?;
+            // A service account's address is made up; it gets no mail.
+            let row: Option<(String,)> =
+                sqlx::query_as("SELECT email FROM users WHERE id = $1 AND disabled = 0 AND service_account = 0")
+                    .bind(&user_id)
+                    .fetch_optional(&background.db)
+                    .await?;
             let Some((email,)) = row else { return Ok(()) };
             let lang = language(&background, Some(&user_id)).await?;
             let content = templates::second_factor_notice(lang, notice, &host(&background));

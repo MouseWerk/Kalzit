@@ -515,6 +515,22 @@ async fn handshakes_need_this_origin_and_a_session() {
     t.finish().await;
 }
 
+/// Live updates need a browser session; an API token opens no connection.
+#[tokio::test]
+async fn an_api_token_opens_no_live_connection() {
+    let t = T::new().await;
+    let account = t.post("/service-accounts", json!({ "name": "bot", "role": "admin" })).await;
+    let id = account["id"].as_str().unwrap();
+    let token = t.post(&format!("/service-accounts/{id}/tokens"), json!({ "name": "x" })).await;
+    let mut req = format!("ws://{}/api/orgs/{}/live", t.addr, t.org).into_client_request().unwrap();
+    let bearer = format!("Bearer {}", token["token"].as_str().unwrap());
+    req.headers_mut().insert("authorization", bearer.parse().unwrap());
+    let refused = tokio_tungstenite::connect_async(req).await.map(|_| ()).expect_err("refused");
+    let tokio_tungstenite::tungstenite::Error::Http(res) = refused else { panic!("{refused}") };
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn limits_close_connections_with_a_reason() {
     let t = T::new().await;

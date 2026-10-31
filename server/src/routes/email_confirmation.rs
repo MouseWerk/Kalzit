@@ -43,11 +43,12 @@ pub async fn confirmed_account_by_email<'c, E>(db: E, email: &str) -> ApiResult<
 where
     E: sqlx::Executor<'c, Database = sqlx::Any>,
 {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM users WHERE email = $1 AND email_confirmed = 1 AND disabled = 0")
-            .bind(email)
-            .fetch_optional(db)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM users WHERE email = $1 AND email_confirmed = 1 AND disabled = 0 AND service_account = 0",
+    )
+    .bind(email)
+    .fetch_optional(db)
+    .await?;
     Ok(row.map(|(id,)| id))
 }
 

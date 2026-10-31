@@ -765,6 +765,43 @@ async fn writes_are_rejected_and_each_query_answers_on_its_own() {
     t.finish().await;
 }
 
+/// An API token is no way around the read-only rule or the role of its service account.
+#[tokio::test]
+async fn api_tokens_query_read_only_with_their_role() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let id = t.create_sqlite("Umsätze", &file).await;
+    let r = t.post("/service-accounts", json!({ "name": "ci-dashboards", "role": "editor" })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let account = r.body["id"].as_str().unwrap().to_string();
+    let r = t.post(&format!("/service-accounts/{account}/tokens"), json!({ "name": "ci" })).await;
+    let bearer = format!("Bearer {}", r.body["token"].as_str().unwrap());
+    let auth = [("authorization", bearer.as_str())];
+    let body = |sql: &str| {
+        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }],
+                "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 } })
+    };
+    let r = t
+        .send_with(Method::POST, &t.path("/query"), Some(body("SELECT COUNT(*) AS n FROM verkauf")), None, &auth)
+        .await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["3"]), "{}", r.text);
+    let r = t.send_with(Method::POST, &t.path("/query"), Some(body("DELETE FROM verkauf")), None, &auth).await;
+    assert_eq!(r.body["results"]["A"]["error"]["code"], "query_rejected", "{}", r.text);
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "sql.not_select", "{}", r.text);
+    // An editor does not change data sources.
+    let r = t
+        .send_with(
+            Method::PATCH,
+            &t.path(&format!("/datasources/{id}")),
+            Some(json!({ "name": "Umbenannt" })),
+            None,
+            &auth,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn row_limits_truncate_with_a_notice() {
     let t = T::new().await;

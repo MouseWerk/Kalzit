@@ -1077,5 +1077,13 @@
   "datasources.reason.mail.invite_limit": "This organization sent {max} invitations in the last hour. Wait a while.",
   "datasources.reason.mail.email_unconfirmed": "This account has not confirmed its email address yet.",
   "datasources.reason.mail.email_confirmed_already": "The address is confirmed already.",
-  "datasources.reason.mail.confirm_invalid": "This link no longer works."
+  "datasources.reason.mail.confirm_invalid": "This link no longer works.",
+  "datasources.reason.serviceaccount.name_invalid": "Enter 1 to {max} lowercase letters, digits or hyphens, not starting with a hyphen.",
+  "datasources.reason.serviceaccount.name_taken": "A service account with this name exists already. Choose another name.",
+  "datasources.reason.serviceaccount.role_owner": "A service account cannot be an owner. Choose another role.",
+  "datasources.reason.token.expiry_out_of_range": "Choose an expiry in the future, at most {maxDays} days ahead.",
+  "datasources.reason.token.ip_invalid": "Line {line}: “{value}” is neither a valid address nor a valid range.",
+  "datasources.reason.token.ip_too_many": "Enter at most {max} addresses or ranges.",
+  "datasources.reason.token.not_for_this_route": "API tokens cannot manage service accounts or tokens.",
+  "datasources.reason.token.org_routes_only": "An API token works only in the organization of its service account."
 }

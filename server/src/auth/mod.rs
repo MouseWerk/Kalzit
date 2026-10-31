@@ -1,3 +1,4 @@
+pub mod api_token;
 pub mod device;
 pub mod passkeys;
 pub mod password;

@@ -48,6 +48,12 @@ const roleRoute = createRoute({
   component: lazyRouteComponent(() => import("./org/RoleEditorPage"), "RoleRoutePage"),
 });
 
+const serviceAccountsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/service-accounts",
+  component: lazyRouteComponent(() => import("./org/ServiceAccountsPage"), "ServiceAccountsPage"),
+});
+
 const orgSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/settings",
@@ -128,6 +134,7 @@ export const adminRoutes = [
     teamRoute,
     rolesRoute,
     roleRoute,
+    serviceAccountsRoute,
     orgSettingsRoute,
     auditRoute,
     usageRoute,

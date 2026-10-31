@@ -328,6 +328,15 @@ async fn create(
     clear_expired_links(&mut tx, now).await?;
     let mut issued = Vec::new();
     for email in &emails {
+        // A service account's made-up address is no mailbox and no person to invite.
+        let (service_accounts,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1 AND service_account = 1")
+                .bind(email)
+                .fetch_one(&mut *tx)
+                .await?;
+        if service_accounts > 0 {
+            return Err(email_problem("this address belongs to a service account", "mail.address_invalid", email));
+        }
         if is_member(&mut tx, &ctx.org_id, email).await? {
             return Err(email_problem("this address is already a member", "mail.invite_already_member", email));
         }

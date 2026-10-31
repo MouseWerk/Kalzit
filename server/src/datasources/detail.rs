@@ -101,6 +101,9 @@ mod tests {
         "mail",
         // The second factor of a sign-in (docs/api/access.md).
         "second_factor",
+        // Service accounts and API tokens (docs/api/access.md).
+        "serviceaccount",
+        "token",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
@@ -298,8 +301,8 @@ mod tests {
             assert!(code.remove(*not), "{not} is listed as a non-reason but no longer appears in the code");
         }
         let mut docs = BTreeSet::new();
-        // The AI and plugin routes document their own reasons; they share the target and request
-        // reasons.
+        // The AI, plugin, access and mail routes document their own reasons; they share the target
+        // and request reasons.
         for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md"] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));

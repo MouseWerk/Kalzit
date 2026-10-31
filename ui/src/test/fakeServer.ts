@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
+import { serviceAccountsFake } from "../features/admin/test/fakeServiceAccounts";
 import { aiChatFake } from "../features/ai/chat/test/fakeAiChat";
 import { aiAdminFake, handleAiAdminRoute } from "../features/ai/test/fakeAiAdmin";
 import { analysesFake } from "../features/analyses/test/fakeAnalyses";
@@ -128,6 +129,7 @@ const AREA_FAKES = {
   // Invitations and password links of an organization; the rest in handleMailRoute.
   mail: mailFake,
   usage: usageFake,
+  serviceAccounts: serviceAccountsFake,
 };
 
 export type FakeAreaStates = {

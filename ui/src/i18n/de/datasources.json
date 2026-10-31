@@ -1077,5 +1077,13 @@
   "datasources.reason.mail.invite_limit": "Diese Organisation hat in der letzten Stunde {max} Einladungen verschickt. Warte etwas.",
   "datasources.reason.mail.email_unconfirmed": "Dieses Konto hat seine E-Mail-Adresse noch nicht bestätigt.",
   "datasources.reason.mail.email_confirmed_already": "Die Adresse ist schon bestätigt.",
-  "datasources.reason.mail.confirm_invalid": "Dieser Link gilt nicht mehr."
+  "datasources.reason.mail.confirm_invalid": "Dieser Link gilt nicht mehr.",
+  "datasources.reason.serviceaccount.name_invalid": "Gib 1 bis {max} Kleinbuchstaben, Ziffern oder Bindestriche ein, nicht mit einem Bindestrich am Anfang.",
+  "datasources.reason.serviceaccount.name_taken": "Ein Dienstkonto mit diesem Namen gibt es schon. Wähle einen anderen Namen.",
+  "datasources.reason.serviceaccount.role_owner": "Ein Dienstkonto kann nicht Eigentümer sein. Wähle eine andere Rolle.",
+  "datasources.reason.token.expiry_out_of_range": "Wähle einen Ablauf in der Zukunft, höchstens {maxDays} Tage voraus.",
+  "datasources.reason.token.ip_invalid": "Zeile {line}: „{value}“ ist weder eine gültige Adresse noch ein gültiger Bereich.",
+  "datasources.reason.token.ip_too_many": "Gib höchstens {max} Adressen oder Bereiche an.",
+  "datasources.reason.token.not_for_this_route": "Mit einem API-Token lassen sich keine Dienstkonten oder Tokens verwalten.",
+  "datasources.reason.token.org_routes_only": "Ein API-Token gilt nur für die Organisation seines Dienstkontos."
 }
