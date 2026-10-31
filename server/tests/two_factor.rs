@@ -828,6 +828,15 @@ async fn check_passkeys_sign_in_and_a_cloned_authenticator_is_refused(t: TestApp
 
 async fn check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(t: TestApp) {
     let (owner, org) = t.setup().await;
+    // Setup signs the owner in; that session is the first sign-in on the list.
+    let r = t.get("/api/me/sign-ins", &owner).await;
+    let first = &r.body["items"][0];
+    assert_eq!(
+        (r.body["items"].as_array().unwrap().len(), &first["method"], &first["current"]),
+        (1, &json!("password"), &json!(true)),
+        "{}",
+        r.body
+    );
     let ana = t.member(&owner, &org, "ana@example.de", "viewer").await;
     let wrong = json!({ "email": "ana@example.de", "password": "not the password" });
     assert_eq!(t.post("/api/auth/login", wrong, &Browser::default()).await.status, StatusCode::UNAUTHORIZED);
@@ -877,7 +886,9 @@ async fn check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(t: T
     // Everyone sees only their own: the owner's list does not have Ana's.
     let (owner_again, _) = t.password("joerg@example.de").await;
     let r = t.get("/api/me/sign-ins", &owner_again).await;
-    assert_eq!(r.body["items"].as_array().unwrap().len(), 1, "{}", r.body);
+    let current: Vec<bool> =
+        r.body["items"].as_array().unwrap().iter().map(|i| i["current"].as_bool().unwrap()).collect();
+    assert_eq!(current, [true, false], "this sign-in and the one of setup: {}", r.body);
     // Server admins see a person's on the user page, never marked as their session; others not.
     let ana_id = member_id(&t, "ana@example.de").await;
     let owner_id = member_id(&t, "joerg@example.de").await;
