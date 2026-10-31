@@ -38,6 +38,7 @@ use std::sync::{LazyLock, Mutex};
 use axum::http::StatusCode;
 
 use crate::error::ApiError;
+use crate::locks::MutexExt;
 
 /// Why the host refused or failed something: a reason code in the `plugin.*` namespace
 /// (docs/api/plugins.md, "Reasons"), its parameters and an English text.
@@ -94,7 +95,7 @@ impl From<std::io::Error> for HostError {
 /// number and length) are interned, never texts a plugin process sends.
 pub fn intern(text: &str) -> &'static str {
     static NAMES: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(Mutex::default);
-    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut names = NAMES.lock_or_recover();
     if let Some(name) = names.get(text) {
         return name;
     }

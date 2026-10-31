@@ -22,6 +22,7 @@ use kalzit_plugin_api::manifest::{Manifest, WebBundle};
 use sha2::{Digest, Sha256};
 
 use super::HostError;
+use crate::locks::RwLockExt;
 
 /// The largest bundle Kalzit accepts and serves.
 pub const MAX_BUNDLE_BYTES: u64 = 8 * 1024 * 1024;
@@ -48,21 +49,21 @@ pub struct PanelRegistry {
 
 impl PanelRegistry {
     pub fn insert(&self, id: &str, panel: ActivePanel) {
-        self.active.write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), panel);
+        self.active.write_or_recover().insert(id.to_string(), panel);
     }
 
     pub fn remove(&self, id: &str) -> bool {
-        self.active.write().unwrap_or_else(|e| e.into_inner()).remove(id).is_some()
+        self.active.write_or_recover().remove(id).is_some()
     }
 
     pub fn get(&self, id: &str) -> Option<ActivePanel> {
-        self.active.read().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
+        self.active.read_or_recover().get(id).cloned()
     }
 
     /// Every active panel, by id.
     pub fn all(&self) -> Vec<(String, ActivePanel)> {
         let mut all: Vec<(String, ActivePanel)> =
-            self.active.read().unwrap_or_else(|e| e.into_inner()).iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            self.active.read_or_recover().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         all.sort_by(|a, b| a.0.cmp(&b.0));
         all
     }

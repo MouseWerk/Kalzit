@@ -81,7 +81,7 @@ qrcode = { version = "=0.14.1", default-features = false }
 webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = ["danger-allow-state-serialisation"] }
 tower = { version = "0.5.3", features = ["util"] }
 unicode-normalization = "0.1.26"
-tower-http = { version = "0.7.1", features = ["trace", "set-header"] }
+tower-http = { version = "0.7.1", features = ["trace", "set-header", "catch-panic"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 url = "2.5.8"

@@ -35,6 +35,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::frame::ResponseBudget;
+use crate::locks::MutexExt;
 use crate::shapes::{CacheInfo, CacheStatus, QueryResult, Shape, StepPlace, TimeRange};
 
 /// TTL of a source that caches without its own (`cacheTtlSecs`).
@@ -476,11 +477,11 @@ pub struct QueryCache {
 
 impl QueryCache {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+        self.inner.lock_or_recover()
     }
 
     fn generations(&self) -> std::sync::MutexGuard<'_, Generations> {
-        self.generations.lock().unwrap_or_else(|e| e.into_inner())
+        self.generations.lock_or_recover()
     }
 
     /// The current generations for an answer of `datasource_id` in `org_id`. Taken before a

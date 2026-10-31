@@ -32,6 +32,7 @@ use crate::auth::SessionUser;
 use crate::authz::OrgCtx;
 use crate::datasources::{Change, ChangeFeed, ResumeToken, SourceError, api_error_body, run_queries_with, watch_item};
 use crate::error::ApiError;
+use crate::locks::{MutexExt, RwLockExt};
 use crate::shapes::{ErrorBody, LiveMode, QueryItem, TimeRange};
 
 /// The bounds of live updates. Tests make the intervals short.
@@ -173,7 +174,7 @@ pub struct Slot {
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        let mut conns = self.live.conns.lock().expect("live connections lock");
+        let mut conns = self.live.conns.lock_or_recover();
         if let Some(n) = conns.per_user.get_mut(&self.user_id) {
             *n -= 1;
             if *n == 0 {
@@ -195,7 +196,7 @@ pub struct Hold {
 
 impl Drop for Hold {
     fn drop(&mut self) {
-        let mut feeds = self.live.feeds.lock().expect("live feeds lock");
+        let mut feeds = self.live.feeds.lock_or_recover();
         if let Some(mine) = feeds.holds.get_mut(&self.user_id) {
             if let Some(n) = mine.get_mut(&self.feed.id) {
                 *n -= 1;
@@ -212,7 +213,7 @@ impl Drop for Hold {
 
 impl Live {
     pub fn limits(&self) -> Limits {
-        self.limits.read().expect("live limits lock").clone()
+        self.limits.read_or_recover().clone()
     }
 
     /// A place for one more connection of `user_id`, within the limits; refused while the server
@@ -222,7 +223,7 @@ impl Live {
             return Err(shutting_down());
         }
         let limits = self.limits();
-        let mut conns = self.conns.lock().expect("live connections lock");
+        let mut conns = self.conns.lock_or_recover();
         let mine = conns.per_user.get(user_id).copied().unwrap_or(0);
         if mine >= limits.connections_per_user {
             let max = limits.connections_per_user;
@@ -244,7 +245,7 @@ impl Live {
 
     /// Open connections.
     pub fn connections(&self) -> usize {
-        self.conns.lock().expect("live connections lock").total
+        self.conns.lock_or_recover().total
     }
 
     /// Changes to `true` when the server stops.
@@ -277,7 +278,7 @@ impl Live {
     pub fn hold(self: &Arc<Self>, state: &AppState, user_id: &str, spec: Spec) -> Result<Hold, ApiError> {
         let limits = self.limits();
         let key = spec.key();
-        let mut feeds = self.feeds.lock().expect("live feeds lock");
+        let mut feeds = self.feeds.lock_or_recover();
         feeds.by_key.retain(|_, f| f.strong_count() > 0);
         let existing = feeds.by_key.get(&key).and_then(Weak::upgrade);
         let held = feeds.holds.get(user_id);
@@ -313,7 +314,7 @@ impl Live {
     /// Refuses a new feed of `user_id` in `org_id` when their feeds, the organization's or all
     /// together hold their share of the memory budget.
     fn budget_left(&self, user_id: &str, org_id: &str, limits: &Limits) -> Result<(), ApiError> {
-        let budget = self.held.lock().expect("live budget lock");
+        let budget = self.held.lock_or_recover();
         let full = [
             (budget.users.get(user_id).copied().unwrap_or(0), limits.held_bytes_per_user),
             (budget.orgs.get(org_id).copied().unwrap_or(0), limits.held_bytes_per_org),
@@ -348,7 +349,7 @@ impl Live {
 
     /// A feed that ended is no longer offered to new subscribers.
     fn forget(&self, feed: &FeedRef) {
-        let mut feeds = self.feeds.lock().expect("live feeds lock");
+        let mut feeds = self.feeds.lock_or_recover();
         let current = feeds.by_key.get(&feed.key).and_then(Weak::upgrade);
         if current.is_some_and(|f| f.id == feed.id) {
             feeds.by_key.remove(&feed.key);
@@ -358,7 +359,7 @@ impl Live {
     /// The run permits of the feeds `owner` started. Waiting runs queue there, so many feeds of
     /// one user cannot fill the organization's query slots ahead of everyone else's.
     fn run_permits(&self, owner: &str, limits: &Limits) -> Arc<Semaphore> {
-        let mut runs = self.runs.lock().expect("live runs lock");
+        let mut runs = self.runs.lock_or_recover();
         // Forget users without running feeds, so the map does not grow with every user seen.
         runs.retain(|_, s| Arc::strong_count(s) > 1);
         runs.entry(owner.to_string()).or_insert_with(|| Arc::new(Semaphore::new(limits.runs_per_user.max(1)))).clone()
@@ -366,12 +367,12 @@ impl Live {
 
     /// Feeds running now.
     pub fn feeds(&self) -> usize {
-        self.feeds.lock().expect("live feeds lock").by_key.values().filter(|f| f.strong_count() > 0).count()
+        self.feeds.lock_or_recover().by_key.values().filter(|f| f.strong_count() > 0).count()
     }
 
     /// Bytes the feeds' latest results hold.
     pub fn held_bytes(&self) -> usize {
-        self.held.lock().expect("live budget lock").total
+        self.held.lock_or_recover().total
     }
 }
 
@@ -445,7 +446,7 @@ impl HeldBytes {
         if bytes > limits.result_bytes {
             return Err(limits.result_bytes);
         }
-        let mut b = budget.lock().expect("live budget lock");
+        let mut b = budget.lock_or_recover();
         let mine = b.users.get(user).copied().unwrap_or(0);
         let ours = b.orgs.get(org).copied().unwrap_or(0);
         for (held, max) in
@@ -464,7 +465,7 @@ impl HeldBytes {
 
 impl Drop for HeldBytes {
     fn drop(&mut self) {
-        let mut guard = self.budget.lock().expect("live budget lock");
+        let mut guard = self.budget.lock_or_recover();
         let b = &mut *guard;
         b.total -= self.bytes;
         for (map, key) in [(&mut b.users, &self.user), (&mut b.orgs, &self.org)] {

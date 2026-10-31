@@ -17,6 +17,9 @@ use std::sync::Arc;
 use tokio::io::AsyncRead;
 use tokio::sync::watch;
 
+#[cfg(unix)]
+use crate::locks::MutexExt;
+
 /// What a plugin process may use. Enforced by the job object on Windows; on Linux the memory is
 /// a limit on the data segment (`RLIMIT_DATA`), processes and CPU are not limited there.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,7 +186,7 @@ impl Endpoint {
     /// process check is needed; a second connect finds it gone and fails.
     #[cfg(unix)]
     async fn connect(&self, _pid: u32) -> std::io::Result<tokio::net::UnixStream> {
-        let ours = self.ours.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let ours = self.ours.lock_or_recover().take();
         match ours {
             Some(stream) => tokio::net::UnixStream::from_std(stream),
             None => Err(std::io::Error::new(

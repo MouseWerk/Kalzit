@@ -46,6 +46,7 @@ use tokio::sync::Notify;
 
 use crate::app::AppState;
 use crate::db::{JobError, Schedule};
+use crate::locks::{MutexExt, RwLockExt};
 
 /// The NOTIFY channel; the payload is empty, the rows in `cluster_events` are what counts.
 pub const CHANNEL: &str = "kalzit_cluster";
@@ -245,10 +246,10 @@ pub async fn boot(cluster: &Cluster, db: &AnyPool, url: &str, data_dir: &std::pa
     if !is_postgres(url) {
         return Ok(());
     }
-    *cluster.node.lock().unwrap_or_else(|e| e.into_inner()) = node_id(data_dir)?;
+    *cluster.node.lock_or_recover() = node_id(data_dir)?;
     let mut snapshot = Snapshot::read(db, true).await?;
     snapshot.read_source_rows(db).await?;
-    *cluster.boot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot);
+    *cluster.boot.lock_or_recover() = Some(snapshot);
     Ok(())
 }
 
@@ -432,16 +433,16 @@ impl Cluster {
 
     /// The node id kept in the data directory (`node_id`); empty before `boot`.
     pub fn node(&self) -> String {
-        self.node.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.node.lock_or_recover().clone()
     }
 
     /// Changes the timings; before `start` (tests).
     pub fn set_options(&self, options: Options) {
-        *self.options.write().unwrap_or_else(|e| e.into_inner()) = options;
+        *self.options.write_or_recover() = options;
     }
 
     fn options(&self) -> Options {
-        self.options.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.options.read_or_recover().clone()
     }
 
     /// Other servers may share the database: run-once jobs claim their runs and changes are
@@ -457,7 +458,7 @@ impl Cluster {
         if !self.coordinated() {
             return true;
         }
-        self.leader_until.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|until| Instant::now() < until)
+        self.leader_until.lock_or_recover().is_some_and(|until| Instant::now() < until)
     }
 
     /// Other servers run on this database now: they count for the update mode and the view.
@@ -472,7 +473,7 @@ impl Cluster {
         if !self.coordinated() || self.stopped.load(Ordering::SeqCst) {
             return;
         }
-        self.pending.lock().unwrap_or_else(|e| e.into_inner()).push(change);
+        self.pending.lock_or_recover().push(change);
         self.pending_ready.notify_one();
     }
 
@@ -498,20 +499,20 @@ impl Cluster {
     }
 
     fn take_pending(&self) -> Vec<Change> {
-        let mut pending = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|e| e.into_inner()));
+        let mut pending = std::mem::take(&mut *self.pending.lock_or_recover());
         pending.dedup();
         pending
     }
 
     fn requeue(&self, mut changes: Vec<Change>) {
-        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pending = self.pending.lock_or_recover();
         changes.append(&mut pending);
         *pending = changes;
     }
 
     fn set_leader(&self, until: Option<Instant>, term: i64) {
         let was = self.is_leader();
-        *self.leader_until.lock().unwrap_or_else(|e| e.into_inner()) = until;
+        *self.leader_until.lock_or_recover() = until;
         self.term.store(term, Ordering::SeqCst);
         let is = self.is_leader();
         if is && !was {
@@ -602,7 +603,7 @@ pub async fn start(state: &AppState) -> Result<()> {
     spawn_heartbeat(state.clone(), true);
     spawn_writer(state.clone());
     // Replayed and compared from the moment before the start loaded anything.
-    let since = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(now, |b| b.at_ms);
+    let since = cluster.boot.lock_or_recover().as_ref().map_or(now, |b| b.at_ms);
     spawn_reader(state.clone(), since);
     spawn_reconciler(state.clone());
     spawn_listener(state.clone());
@@ -1005,7 +1006,7 @@ fn spawn_reconciler(state: AppState) {
     let background = state.background.clone();
     background.spawn(async move {
         let cluster = state.cluster.clone();
-        let boot = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let boot = cluster.boot.lock_or_recover().clone();
         let rights_rows = cluster.rights_rows.load(Ordering::SeqCst);
         let mut reconciler = Reconciler { last: boot, failures: 0, rights_rows };
         loop {
@@ -1177,7 +1178,7 @@ pub fn request_plugin_sync(state: &AppState) {
                     false
                 }
             };
-            let mut retry = sync.retry.lock().unwrap_or_else(|e| e.into_inner());
+            let mut retry = sync.retry.lock_or_recover();
             *retry = if complete {
                 None
             } else {
@@ -1191,13 +1192,7 @@ pub fn request_plugin_sync(state: &AppState) {
 
 /// Starts the retry of a failed plugin sync once its pause is over.
 fn retry_plugin_sync(state: &AppState) {
-    let due = state
-        .cluster
-        .plugin_sync
-        .retry
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_some_and(|(at, _)| Instant::now() >= at);
+    let due = state.cluster.plugin_sync.retry.lock_or_recover().is_some_and(|(at, _)| Instant::now() >= at);
     if due {
         request_plugin_sync(state);
     }

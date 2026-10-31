@@ -73,16 +73,16 @@ pub fn all() -> Vec<table::RouteDef> {
         folders::routes(),
         dashboards::routes(),
         analyses::routes(),
-        annotations::routes(),
+        long_running(annotations::routes()),
         library_panels::routes(),
         playlists::routes(),
-        datasources::routes(),
-        query::routes(),
+        long_running(datasources::routes()),
+        long_running(query::routes()),
         query_cache::routes(),
         instances::routes(),
         explore_history::routes(),
-        live::routes(),
-        export::routes(),
+        long_running(live::routes()),
+        long_running(export::routes()),
         members::routes(),
         service_accounts::routes(),
         teams::routes(),
@@ -96,11 +96,11 @@ pub fn all() -> Vec<table::RouteDef> {
         panel_state::routes(),
         panel_plugins::routes(),
         preferences::routes(),
-        updates::routes(),
+        long_running(updates::routes()),
         ai::routes(),
-        ai_calls::routes(),
-        ai_chat::routes(),
-        plugins::routes(),
+        long_running(ai_calls::routes()),
+        long_running(ai_chat::routes()),
+        long_running(plugins::routes()),
         // Mail, invitations and password reset (docs/api/mail.md).
         mail::routes(),
         invitations::routes(),
@@ -111,6 +111,13 @@ pub fn all() -> Vec<table::RouteDef> {
     .into_iter()
     .flatten()
     .collect()
+}
+
+/// Routes that bound their own work or stream (`RouteDef::long_running`): data source queries,
+/// tests and schemas (the query timeout, up to an hour), annotations from queries, live updates, exports,
+/// AI requests and chat answers, update downloads and backups, plugin installs.
+fn long_running(defs: Vec<table::RouteDef>) -> Vec<table::RouteDef> {
+    defs.into_iter().map(table::RouteDef::long_running).collect()
 }
 
 const MAX_NAME_CHARS: usize = 100;
@@ -243,6 +250,27 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Streaming and self-bounded routes are left out of the request timeout; normal routes get it.
+    #[test]
+    fn only_normal_routes_get_the_request_timeout() {
+        use axum::http::Method;
+        let timed = |method: Method, path: &str| {
+            let def = all().into_iter().find(|d| d.method == method && d.path == path);
+            def.unwrap_or_else(|| panic!("{method} {path} is declared")).request_timeout
+        };
+        for (method, path) in [
+            (Method::GET, "/orgs/{orgId}/live"),
+            (Method::POST, "/orgs/{orgId}/export"),
+            (Method::POST, "/orgs/{orgId}/ai/chats/{chatId}/messages"),
+            (Method::POST, "/orgs/{orgId}/query"),
+            (Method::POST, "/admin/updates/upload"),
+        ] {
+            assert!(!timed(method.clone(), path), "{method} {path} has no request timeout");
+        }
+        assert!(timed(Method::GET, "/orgs/{orgId}/dashboards"));
+        assert!(timed(Method::POST, "/orgs/{orgId}/dashboards"));
+    }
 
     #[test]
     fn email_forms_compare_as_one() {

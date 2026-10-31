@@ -35,6 +35,7 @@ use crate::app::AppState;
 use crate::authz::{Access, OrgCtx};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
+use crate::locks::MutexExt;
 use crate::net::RequestInfo;
 
 pub fn routes() -> Vec<RouteDef> {
@@ -63,7 +64,7 @@ struct RunningChat(String);
 
 impl RunningChat {
     fn take(id: &str) -> ApiResult<Self> {
-        let mut running = RUNNING.lock().expect("running chats lock");
+        let mut running = RUNNING.lock_or_recover();
         if !running.insert(id.to_string()) {
             return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "this chat is answering a question already")
                 .because("ai.chat_busy"));
@@ -74,7 +75,7 @@ impl RunningChat {
 
 impl Drop for RunningChat {
     fn drop(&mut self) {
-        RUNNING.lock().expect("running chats lock").remove(&self.0);
+        RUNNING.lock_or_recover().remove(&self.0);
     }
 }
 

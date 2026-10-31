@@ -20,6 +20,7 @@ use crate::auth::ratelimit::{Capacity, RateLimiter};
 use crate::config::Config;
 use crate::datasources::targets::TargetPolicy;
 use crate::error::ApiResult;
+use crate::locks::MutexExt;
 use crate::net::RequestInfo;
 use oidc::{Cached, Fetcher, OidcConfig, OidcError};
 
@@ -146,7 +147,7 @@ impl Sso {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Cached>> {
-        self.cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.cache.lock_or_recover()
     }
 }
 

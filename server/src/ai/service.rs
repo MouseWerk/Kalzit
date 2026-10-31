@@ -23,6 +23,7 @@ use super::{
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::error::{ApiError, ApiResult};
+use crate::locks::MutexExt;
 use crate::settings;
 
 /// Calls running now, on the whole server, per organization and per user, and the lock that
@@ -67,7 +68,7 @@ fn release(map: &mut HashMap<String, usize>, key: &str) {
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        let mut running = self.runtime.running.lock().expect("AI runtime lock");
+        let mut running = self.runtime.running.lock_or_recover();
         running.total = running.total.saturating_sub(1);
         release(&mut running.per_org, &self.org_id);
         release(&mut running.per_user, &self.user_id);
@@ -88,7 +89,7 @@ struct AtOnce {
 impl AiRuntime {
     /// A slot when every concurrency limit has room for one more call.
     fn acquire(self: &Arc<Self>, org_id: &str, user_id: &str, max: AtOnce) -> ApiResult<Slot> {
-        let mut running = self.running.lock().expect("AI runtime lock");
+        let mut running = self.running.lock_or_recover();
         if running.per_user.get(user_id).copied().unwrap_or(0) >= max.user {
             return Err(ApiError::rate_limited(format!("at most {} AI calls per user at once", max.user), BUSY_RETRY)
                 .because("ai.limit_user_concurrent")
@@ -115,7 +116,7 @@ impl AiRuntime {
 
     /// Calls running now.
     pub fn running(&self) -> usize {
-        self.running.lock().expect("AI runtime lock").total
+        self.running.lock_or_recover().total
     }
 }
 

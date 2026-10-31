@@ -88,6 +88,18 @@ pub async fn assign_request_id(req: axum::extract::Request, next: axum::middlewa
     res
 }
 
+/// The answer to a request whose handler panicked (`CatchPanicLayer`, inside `assign_request_id`):
+/// the panic is logged with the request's id, and the client gets the usual `internal` error with
+/// that id, nothing of the panic itself.
+pub fn panic_response(panic: Box<dyn std::any::Any + Send + 'static>) -> Response {
+    let message = match (panic.downcast_ref::<&str>(), panic.downcast_ref::<String>()) {
+        (Some(s), _) => s,
+        (_, Some(s)) => s.as_str(),
+        _ => "a panic without a message",
+    };
+    ApiError::internal("request handler panicked", message).into_response()
+}
+
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         debug_assert!(ERROR_CODES.contains(&code), "error code {code} is missing from ERROR_CODES");
@@ -363,6 +375,44 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["error"]["requestId"], header.as_str());
         assert_eq!(header.len(), 12);
+    }
+
+    /// A panicking handler answers like an internal error, with the request id in the body and the
+    /// header, and the server keeps serving.
+    #[expect(clippy::disallowed_methods, reason = "a small router that only carries the layers under test")]
+    #[tokio::test]
+    async fn a_panicking_handler_answers_internal_with_the_request_id() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        async fn literal() -> &'static str {
+            panic!("handler bug")
+        }
+        async fn owned() -> &'static str {
+            std::panic::panic_any(String::from("owned message"))
+        }
+        let app = Router::new()
+            .route("/panic", get(literal))
+            .route("/string-panic", get(owned))
+            .route("/fine", get(|| async { "ok" }))
+            .layer(tower_http::catch_panic::CatchPanicLayer::custom(panic_response))
+            .layer(axum::middleware::from_fn(assign_request_id));
+        for path in ["/panic", "/string-panic"] {
+            let res = app.clone().oneshot(Request::get(path).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR, "{path}");
+            let header = res.headers()["x-request-id"].to_str().unwrap().to_string();
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["error"]["code"], "internal");
+            assert_eq!(body["error"]["requestId"], header.as_str());
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains("handler bug") && !text.contains("owned"), "the panic text stays in the log");
+        }
+        let res = app.oneshot(Request::get("/fine").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]

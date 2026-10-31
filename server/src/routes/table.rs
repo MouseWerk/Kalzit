@@ -29,6 +29,8 @@ pub struct RouteDef {
     /// none of the organization's kept answers any more (none at all for a server route; a new
     /// generation, `datasources::cache::Stamp`).
     pub changes_rights: bool,
+    /// The route answers within `http_limits::REQUEST_TIMEOUT`; off for `long_running` routes.
+    pub request_timeout: bool,
     handler: MethodRouter<AppState>,
 }
 
@@ -40,7 +42,7 @@ where
     T: 'static,
 {
     let filter = MethodFilter::try_from(method.clone()).expect("route tables use standard HTTP methods");
-    RouteDef { method, path, access, changes_rights: false, handler: on(filter, handler) }
+    RouteDef { method, path, access, changes_rights: false, request_timeout: true, handler: on(filter, handler) }
 }
 
 impl RouteDef {
@@ -56,6 +58,13 @@ impl RouteDef {
         self.changes_rights = true;
         self
     }
+
+    /// Marks a route that bounds its own work (the query timeout, the AI request timeout, export and
+    /// update limits) or streams its answer, so the server-wide request timeout does not cut it short.
+    pub fn long_running(mut self) -> Self {
+        self.request_timeout = false;
+        self
+    }
 }
 
 /// Builds the API router. Several methods on one path may have different access rules, so each
@@ -64,8 +73,12 @@ impl RouteDef {
 pub fn build(defs: Vec<RouteDef>, state: &AppState) -> Router<AppState> {
     let mut by_path: BTreeMap<&'static str, MethodRouter<AppState>> = BTreeMap::new();
     for def in defs {
-        let layered =
+        let mut layered =
             def.handler.route_layer(from_fn_with_state((state.clone(), def.access, def.changes_rights), enforce));
+        if def.request_timeout {
+            let limit = crate::http_limits::REQUEST_TIMEOUT;
+            layered = layered.route_layer(from_fn_with_state(limit, crate::http_limits::request_timeout));
+        }
         let merged = match by_path.remove(def.path) {
             Some(existing) => existing.merge(layered),
             None => layered,

@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::{Detail, SourceError};
+use crate::locks::MutexExt;
 
 /// How long a pool may take to open a connection before the driver connects once on its own. A
 /// healthy server on the same network answers well within it, so the check rarely runs.
@@ -130,7 +131,7 @@ impl SetupErrors {
         step: Result<(), sqlx::Error>,
         failed: fn(sqlx::Error) -> SourceError,
     ) -> Result<(), sqlx::Error> {
-        let mut slot = self.0.lock().expect("setup error lock");
+        let mut slot = self.0.lock_or_recover();
         match step {
             Ok(()) => {
                 *slot = None;
@@ -146,7 +147,7 @@ impl SetupErrors {
 
     /// The error of a setup that failed since `since`, for every waiter that asks.
     fn since(&self, since: Instant) -> Option<SourceError> {
-        let slot = self.0.lock().expect("setup error lock");
+        let slot = self.0.lock_or_recover();
         slot.as_ref().filter(|(at, _)| *at >= since).map(|(_, e)| e.clone())
     }
 }
