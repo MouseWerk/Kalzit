@@ -334,6 +334,36 @@ describe("the list of saved analyses", () => {
     await waitFor(() => expect(free.deletedAt).not.toBeNull());
     expect(await screen.findByText("“Customers” moved to the trash")).toBeTruthy();
   });
+
+  it("leads from the trash and an analysis's versions back by breadcrumbs", async () => {
+    const server = setup();
+    const stored = addAnalysis(server.areas.analyses, {
+      title: "Customers",
+      datasourceId: PG_ID,
+      query: {},
+    });
+    for (const [path, trail] of [
+      ["/explore/saved/trash", ["Saved analyses", "Trash of analyses"]],
+      [
+        `/explore/saved/${stored.id}/versions`,
+        ["Saved analyses", "Customers", "Versions of the analysis"],
+      ],
+    ] as const) {
+      const { view } = renderApp(path);
+      const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+      await waitFor(() =>
+        expect(
+          within(crumbs)
+            .getAllByRole("listitem")
+            .map((item) => item.textContent),
+        ).toEqual([...trail]),
+      );
+      expect(
+        within(crumbs).getByRole("link", { name: "Saved analyses" }).getAttribute("href"),
+      ).toBe("/explore/saved");
+      view.unmount();
+    }
+  });
 });
 
 describe("a panel from a saved analysis", () => {

@@ -23,6 +23,7 @@ use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
     SourceQuery, SourceSchema,
 };
+use crate::locks::MutexExt;
 use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] = &[
@@ -98,7 +99,7 @@ impl Lease<'_> {
 
     fn release(mut self) {
         if let Some(c) = self.client.take() {
-            self.pool.idle.lock().expect("pool lock").push((c, Instant::now()));
+            self.pool.idle.lock_or_recover().push((c, Instant::now()));
         }
     }
 
@@ -106,7 +107,7 @@ impl Lease<'_> {
     /// down with the same server.
     fn discard(mut self) {
         self.client = None;
-        self.pool.idle.lock().expect("pool lock").clear();
+        self.pool.idle.lock_or_recover().clear();
     }
 }
 
@@ -166,7 +167,7 @@ async fn lease<'p>(conn: &Connection, pool: &'p Pool) -> Result<Lease<'p>, Sourc
     let permit =
         pool.slots.acquire().await.map_err(|_| SourceError::failed("server.shutting_down", "the pool is closed"))?;
     let idle = {
-        let mut idle = pool.idle.lock().expect("pool lock");
+        let mut idle = pool.idle.lock_or_recover();
         // Closed by dropping; an idle client has no statement to cancel.
         idle.retain(|(_, since)| since.elapsed() < IDLE_TIMEOUT);
         idle.pop().map(|(c, _)| c)

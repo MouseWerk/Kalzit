@@ -24,6 +24,7 @@
     font-size: var(--font-size-sm);
   }
 
+  /* Inside the form card only; a notice above the cards lines up with them instead. */
   .mail-notice {
     margin: var(--space-3) var(--space-4) 0;
   }

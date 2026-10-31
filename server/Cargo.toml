@@ -18,6 +18,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
 futures-util = "0.3.34"
+http-body = "1.1.0"
 hex = "0.4.3"
 # ACME (RFC 8555) for automatic certificates: the protocol client, with its requests going through
 # Kalzit's own HTTP client (`acme::transport`). rcgen makes the certificate requests and the
@@ -34,6 +35,14 @@ ipnet = { version = "2.12.2", features = ["serde"] }
 mime_guess = "2.0.5"
 mongodb = { version = "3.9.1", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls", "dns-resolver", "socks5-proxy"] }
 rand = "0.10.3"
+# SAML 2.0 sign-in (`sso::saml`): gamlastan's hardened XML parser and SAML bindings, and
+# bergshamra's XML signature checks (both pure Rust, no libxml2 or xmlsec), pinned exactly and at
+# the version gamlastan uses, so the parsed document is checked in place. Kalzit asks only for the
+# RustCrypto provider; gamlastan itself depends on bergshamra with its default features (legacy
+# algorithms, post-quantum, PKCS#11), so Cargo still builds those. Kalzit refuses SHA-1 and every
+# algorithm outside its own list before a signature is checked (`sso::saml`).
+gamlastan = "=0.9.1"
+bergshamra-dsig = { version = "=0.9.2", default-features = false, features = ["rustcrypto"] }
 # Signature checks of ID tokens from identity providers (`sso::jwt`): RSA, ECDSA and Ed25519, the
 # same library rustls uses.
 ring = "0.17.14"
@@ -84,7 +93,7 @@ qrcode = { version = "=0.14.1", default-features = false }
 webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = ["danger-allow-state-serialisation"] }
 tower = { version = "0.5.3", features = ["util"] }
 unicode-normalization = "0.1.26"
-tower-http = { version = "0.7.1", features = ["trace", "set-header"] }
+tower-http = { version = "0.7.1", features = ["trace", "set-header", "catch-panic"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 url = "2.5.8"

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -35,6 +36,12 @@ export function PlaylistsPage() {
   const org = useCurrentOrg();
   return (
     <Page title={t("playlists.title")} lead={t("playlists.lead")}>
+      <Breadcrumbs
+        crumbs={[
+          { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+          { label: t("playlists.title") },
+        ]}
+      />
       {org === undefined ? null : <PlaylistList orgId={org.id} />}
     </Page>
   );

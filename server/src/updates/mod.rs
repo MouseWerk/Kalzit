@@ -33,6 +33,7 @@ use serde_json::json;
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::error::{ApiError, ApiResult};
+use crate::locks::{MutexExt, RwLockExt};
 use install::{Layout, PlanKind};
 use platform::{Mode, Platform};
 use signing::{Channel, TrustedKeys};
@@ -1384,15 +1385,15 @@ pub struct RollbackTarget {
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|p| p.into_inner())
+    m.lock_or_recover()
 }
 
 fn read<T>(l: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
-    l.read().unwrap_or_else(|p| p.into_inner())
+    l.read_or_recover()
 }
 
 fn write<T>(l: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
-    l.write().unwrap_or_else(|p| p.into_inner())
+    l.write_or_recover()
 }
 
 #[cfg(test)]

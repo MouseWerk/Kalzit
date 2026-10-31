@@ -83,10 +83,19 @@
     background: var(--bg-hover);
   }
 
+  /*
+   * A heading keeps its words whole: `anywhere` lets the table squeeze a column below its
+   * heading's longest word ("Geänder|t"); `break-word` only breaks a word that fits nowhere, and
+   * a long word is hyphenated by the page's language instead (<html lang> follows the UI). On
+   * phones the stacking tables hide their heading row; the steps preview, which does not stack,
+   * scrolls inside its own frame.
+   */
   .data-table th {
     background: var(--bg-surface);
     color: var(--text-muted);
     font-weight: var(--font-weight-medium);
+    overflow-wrap: break-word;
+    hyphens: auto;
   }
 
   .data-table__muted {

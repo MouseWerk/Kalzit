@@ -743,7 +743,9 @@
 
   /*
    * Text disclosures (macros, a file's columns, where a library panel is used): a quiet chevron
-   * that turns when open, instead of the browser's filled triangle.
+   * that turns when open, instead of the browser's filled triangle. A summary with a class of
+   * its own takes `.disclosure` for the same chevron; the class adds no weight, so the area's own
+   * rules for the row still apply.
    */
   summary:not([class]) {
     display: inline-flex;
@@ -753,11 +755,22 @@
     cursor: pointer;
   }
 
-  summary:not([class])::-webkit-details-marker {
+  :where(summary.disclosure) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  summary:not([class])::-webkit-details-marker,
+  :where(summary.disclosure)::-webkit-details-marker {
     display: none;
   }
 
-  summary:not([class])::before {
+  summary:not([class])::before,
+  :where(summary.disclosure)::before {
+    flex: none;
     content: "";
     width: var(--size-chevron);
     height: var(--size-chevron);
@@ -768,7 +781,8 @@
     transition: transform var(--duration-fast) var(--easing);
   }
 
-  details[open] > summary:not([class])::before {
+  details[open] > summary:not([class])::before,
+  details[open] > :where(summary.disclosure)::before {
     transform: rotate(45deg);
   }
 

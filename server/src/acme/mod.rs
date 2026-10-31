@@ -31,6 +31,7 @@ use serde_json::json;
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::config::Config;
+use crate::locks::MutexExt;
 use crate::secrets::Keyring;
 pub use settings::{AcmeSettings, Challenge, Directory, FieldError};
 use store::StoredCertificate;
@@ -297,11 +298,11 @@ impl Acme {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Runtime> {
-        self.runtime.lock().unwrap_or_else(|p| p.into_inner())
+        self.runtime.lock_or_recover()
     }
 
     fn lock_http(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.http.lock().unwrap_or_else(|p| p.into_inner())
+        self.http.lock_or_recover()
     }
 
     pub fn add_http_challenge(&self, token: &str, key_authorization: &str) {
@@ -515,7 +516,7 @@ impl Acme {
         };
         let fingerprint = challenge_fingerprint(&rows);
         {
-            let mut tokens = self.shared_http.lock().unwrap_or_else(|p| p.into_inner());
+            let mut tokens = self.shared_http.lock_or_recover();
             let mut http = self.lock_http();
             let wanted: HashSet<&str> =
                 rows.iter().filter(|(kind, _, _)| kind == "http").map(|(_, token, _)| token.as_str()).collect();
@@ -531,7 +532,7 @@ impl Acme {
             }
         }
         {
-            let mut served = self.shared_alpn.lock().unwrap_or_else(|p| p.into_inner());
+            let mut served = self.shared_alpn.lock_or_recover();
             let wanted: HashSet<String> =
                 rows.iter().filter(|(kind, _, _)| kind == "alpn").map(|(_, domain, _)| domain.clone()).collect();
             for gone in served.difference(&wanted) {

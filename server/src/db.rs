@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+use crate::locks::MutexExt;
+
 use anyhow::{Context, Result};
 use sqlx::any::AnyPoolOptions;
 use sqlx::{Any, AnyPool, Transaction};
@@ -304,7 +306,7 @@ impl Background {
 
     fn lock_tasks(&self) -> MutexGuard<'_, Option<tokio::task::JoinSet<()>>> {
         // The set holds no invariant a panic could break.
-        self.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.tasks.lock_or_recover()
     }
 }
 

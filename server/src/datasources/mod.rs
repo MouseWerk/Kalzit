@@ -57,6 +57,7 @@ use crate::app::AppState;
 use crate::authz::OrgCtx;
 use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
+use crate::locks::{MutexExt, RwLockExt};
 use crate::secrets::Keyring;
 use crate::shapes::{
     CacheInfo, CacheStatus, ErrorBody, QueryItem, QueryOutcome, QueryResponse, QueryResult, Shape, TimeRange,
@@ -1150,22 +1151,22 @@ impl DataSources {
 
     /// Whether `org_id` blocked the plugin `kind`.
     pub fn is_blocked(&self, org_id: &str, kind: &str) -> bool {
-        let blocked = self.blocked.read().unwrap_or_else(|e| e.into_inner());
+        let blocked = self.blocked.read_or_recover();
         !blocked.is_empty() && blocked.contains(&(org_id.to_string(), kind.to_string()))
     }
 
     /// Every block now, as (organization, kind).
     pub fn blocks(&self) -> Vec<(String, String)> {
-        self.blocked.read().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+        self.blocked.read_or_recover().iter().cloned().collect()
     }
 
     /// Replaces every block (at start, and when another server changed them).
     pub fn set_blocks(&self, blocks: Vec<(String, String)>) {
-        *self.blocked.write().unwrap_or_else(|e| e.into_inner()) = blocks.into_iter().collect();
+        *self.blocked.write_or_recover() = blocks.into_iter().collect();
     }
 
     pub fn set_blocked(&self, org_id: &str, kind: &str, blocked: bool) {
-        let mut set = self.blocked.write().unwrap_or_else(|e| e.into_inner());
+        let mut set = self.blocked.write_or_recover();
         let key = (org_id.to_string(), kind.to_string());
         if blocked {
             set.insert(key);
@@ -1181,13 +1182,8 @@ impl DataSources {
     /// Closes and drops every cached connection (see `AppState::close`).
     pub async fn close(&self) {
         self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
-        let cached: Vec<Arc<Connection>> = self
-            .connections
-            .lock()
-            .expect("connection cache lock")
-            .drain()
-            .filter_map(|(_, c)| c.conn.get().cloned())
-            .collect();
+        let cached: Vec<Arc<Connection>> =
+            self.connections.lock_or_recover().drain().filter_map(|(_, c)| c.conn.get().cloned()).collect();
         for conn in cached {
             conn.close().await;
         }
@@ -1195,7 +1191,7 @@ impl DataSources {
 
     /// Calls `hook` with every data source `forget` drops.
     pub fn on_forget(&self, hook: ForgetHook) {
-        self.forget_hooks.write().unwrap_or_else(|e| e.into_inner()).push(hook);
+        self.forget_hooks.write_or_recover().push(hook);
     }
 
     /// The query cache.
@@ -1238,10 +1234,10 @@ impl DataSources {
     /// `forget` on this server only: another server reported the change.
     pub fn forget_here(&self, datasource_id: &str) {
         self.cache.forget_datasource(datasource_id);
-        for hook in self.forget_hooks.read().unwrap_or_else(|e| e.into_inner()).iter() {
+        for hook in self.forget_hooks.read_or_recover().iter() {
             hook(datasource_id);
         }
-        let removed = self.connections.lock().expect("connection cache lock").remove(datasource_id);
+        let removed = self.connections.lock_or_recover().remove(datasource_id);
         // A SQLite pool closes its file now, not whenever the last query holding it ends.
         if let (Some(conn), Ok(rt)) =
             (removed.and_then(|c| c.conn.get().cloned()), tokio::runtime::Handle::try_current())
@@ -1252,7 +1248,7 @@ impl DataSources {
 
     async fn setting(&self, state: &AppState, key: &str) -> ApiResult<Value> {
         #[cfg(test)]
-        if let Some(v) = self.test_settings.lock().expect("test settings lock").get(key) {
+        if let Some(v) = self.test_settings.lock_or_recover().get(key) {
             return Ok(v.clone());
         }
         crate::settings::get(state, key).await
@@ -1277,7 +1273,7 @@ impl DataSources {
         let dirs = self.setting_strings(state, "datasources.sqlite_dirs").await?;
         let allowed = self.setting_strings(state, "datasources.allowed_targets").await?;
         let file_dirs = self.setting_strings(state, "datasources.file_dirs").await?;
-        let mut cache = self.policy_cache.lock().expect("policy cache lock");
+        let mut cache = self.policy_cache.lock_or_recover();
         if let Some(c) = cache.as_ref()
             && c.dirs == dirs
             && c.allowed == allowed
@@ -1308,7 +1304,7 @@ impl DataSources {
             .map_err(|e| SourceError::failed("internal", e.message))?
             .max(1) as usize;
         let server = {
-            let mut running = self.running.lock().expect("running lock");
+            let mut running = self.running.lock_or_recover();
             if running.0 != limit {
                 *running = (limit, Arc::new(Semaphore::new(limit)));
             }
@@ -1322,7 +1318,7 @@ impl DataSources {
 
     #[cfg(test)]
     pub(crate) fn inflight_available(&self) -> usize {
-        self.inflight_bytes.lock().expect("inflight lock").1.load(std::sync::atomic::Ordering::SeqCst)
+        self.inflight_bytes.lock_or_recover().1.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The limits for one source: its own settings within the server-wide maxima.
@@ -1339,7 +1335,7 @@ impl DataSources {
         let max = self.setting_u64(state, "datasources.max_response_bytes").await? as usize;
         let limit = self.setting_u64(state, "datasources.max_inflight_bytes").await? as usize;
         let pool = {
-            let mut inflight = self.inflight_bytes.lock().expect("inflight lock");
+            let mut inflight = self.inflight_bytes.lock_or_recover();
             if inflight.0 != limit {
                 *inflight = (limit, Arc::new(std::sync::atomic::AtomicUsize::new(limit)));
             }
@@ -1354,7 +1350,7 @@ impl DataSources {
     pub async fn connection(&self, state: &AppState, ds: &Datasource) -> Result<Arc<Connection>, SourceError> {
         let policy = self.policy(state).await.map_err(|e| SourceError::failed("internal", e.message))?;
         let cell = {
-            let mut cache = self.connections.lock().expect("connection cache lock");
+            let mut cache = self.connections.lock_or_recover();
             match cache.get(&ds.id) {
                 Some(c)
                     if c.updated_at == ds.updated_at
@@ -1397,7 +1393,7 @@ impl DataSources {
     /// The cached connection of a data source, if any (tests).
     #[doc(hidden)]
     pub fn cached_connection(&self, datasource_id: &str) -> Option<Arc<Connection>> {
-        self.connections.lock().expect("connection cache lock").get(datasource_id).and_then(|c| c.conn.get().cloned())
+        self.connections.lock_or_recover().get(datasource_id).and_then(|c| c.conn.get().cloned())
     }
 
     /// A connection that is not cached, so "Test connection" never reuses an older pool.
@@ -1413,7 +1409,7 @@ impl DataSources {
     }
 
     fn user_slots(&self, user_id: &str) -> Arc<Semaphore> {
-        let mut slots = self.user_slots.lock().expect("user slots lock");
+        let mut slots = self.user_slots.lock_or_recover();
         // Forget idle users so the map does not grow with every user ever seen.
         slots.retain(|_, s| Arc::strong_count(s) > 1 || s.available_permits() < MAX_PARALLEL_QUERIES_PER_USER);
         slots
@@ -1624,7 +1620,7 @@ impl PushdownMemo {
 
     fn refused(&self, query: &Value) -> bool {
         let key = query.to_string();
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.0.lock_or_recover();
         match map.get(&key) {
             Some(at) if at.elapsed() < Self::FOR => true,
             Some(_) => {
@@ -1636,7 +1632,7 @@ impl PushdownMemo {
     }
 
     fn remember(&self, query: &Value) {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.0.lock_or_recover();
         if map.len() >= Self::MAX {
             map.clear();
         }

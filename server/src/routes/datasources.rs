@@ -45,14 +45,15 @@ pub fn routes() -> Vec<RouteDef> {
         // Settings not saved yet; no source id is involved, `test` is a path of its own.
         // Member, then the right to change: on the source when `datasourceId` names one (a grant is
         // enough there), else org-wide (as adding a source).
-        route(Method::POST, "/orgs/{orgId}/datasources/test", Access::OrgMember, test_unsaved),
+        route(Method::POST, "/orgs/{orgId}/datasources/test", Access::OrgMember, test_unsaved).long_running(),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, get_one),
         route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/restore", Access::OrgMember, restore),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}/purge", Access::OrgMember, purge),
-        route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health),
-        route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema),
+        route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health)
+            .long_running(),
+        route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema).long_running(),
     ]
 }
 

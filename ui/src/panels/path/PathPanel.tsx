@@ -164,7 +164,7 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
             <li key={p}>
               {/* The first path is open; the others show their chain until opened. */}
               <details className="paths__path" open={p === 0}>
-                <summary className="paths__summary">
+                <summary className="paths__summary disclosure">
                   <h3 className="paths__title">
                     {t("graph.path.title", {
                       number: number.format(p + 1),

@@ -33,7 +33,7 @@ use crate::shapes::{ErrorBody, LiveMessage, LiveSubscribe, LiveUnsubscribe};
 
 pub fn routes() -> Vec<RouteDef> {
     // Membership by the access layer; every subscription is authorized in the handler.
-    vec![route(Method::GET, "/orgs/{orgId}/live", Access::OrgMember, live)]
+    vec![route(Method::GET, "/orgs/{orgId}/live", Access::OrgMember, live).long_running()]
 }
 
 /// The largest message a client may send.

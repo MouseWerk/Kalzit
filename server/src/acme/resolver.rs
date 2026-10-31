@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::locks::{MutexExt, RwLockExt};
+
 use anyhow::{Context, Result};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -43,12 +45,12 @@ impl Certificates {
     /// Serves `chain_pem` with `key_pem` from the next handshake on.
     pub fn set(&self, chain_pem: &str, key_pem: &str) -> Result<()> {
         let key = from_pem(chain_pem, key_pem)?;
-        *self.current.write().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(key));
+        *self.current.write_or_recover() = Some(Arc::new(key));
         Ok(())
     }
 
     pub fn has_certificate(&self) -> bool {
-        self.current.read().unwrap_or_else(|p| p.into_inner()).is_some()
+        self.current.read_or_recover().is_some()
     }
 
     /// Answers TLS-ALPN-01 for `domain` with a certificate carrying `digest`, the SHA-256 of the
@@ -68,7 +70,7 @@ impl Certificates {
     }
 
     fn lock_challenges(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<CertifiedKey>>> {
-        self.challenges.lock().unwrap_or_else(|p| p.into_inner())
+        self.challenges.lock_or_recover()
     }
 }
 
@@ -80,7 +82,7 @@ impl ResolvesServerCert for Certificates {
             let name = hello.server_name()?.to_ascii_lowercase();
             return self.lock_challenges().get(&name).cloned();
         }
-        let current = self.current.read().unwrap_or_else(|p| p.into_inner()).clone();
+        let current = self.current.read_or_recover().clone();
         Some(current.unwrap_or_else(|| self.fallback.clone()))
     }
 }

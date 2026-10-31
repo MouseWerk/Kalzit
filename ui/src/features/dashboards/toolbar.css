@@ -687,6 +687,11 @@
     padding-inline-end: var(--space-3);
   }
 
+  /* The select keeps the room its chevron is drawn in, so a value never runs under it. */
+  .dash-filters .variables__item > .select {
+    padding-inline-end: var(--space-8);
+  }
+
   .dash-filters .variables__item > .variables__input {
     width: calc(var(--size-label) + var(--space-4));
   }

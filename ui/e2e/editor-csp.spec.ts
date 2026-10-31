@@ -17,10 +17,20 @@ test("the query editor is styled under the server's Content-Security-Policy", as
   await owner.dispose();
 
   await signInOwner(page);
-  const response = await page.goto("/explore");
-  const csp = response?.headers()["content-security-policy"] ?? "";
-  expect(csp).toContain("style-src 'self'");
-  expect(csp).not.toContain("unsafe-inline");
+  // The policy of the document the editor runs in (loaded at the sign-in) and of Explore's own
+  // address, which the server sends the same way.
+  for (const path of ["/login", "/explore"]) {
+    const csp = (await page.request.get(path)).headers()["content-security-policy"] ?? "";
+    expect(csp, path).toContain("style-src 'self'");
+    expect(csp, path).not.toContain("unsafe-inline");
+  }
+  // Within the app: a full page load here would cancel the start page's requests still under
+  // way, which WebKit reports as console errors ("... due to access control checks").
+  await page
+    .getByRole("navigation", { name: t("nav.label") })
+    .getByRole("link", { name: t("explore.nav"), exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/explore(\?|$)/);
 
   await page.getByLabel(t("explore.datasource")).selectOption({ label: name });
   const editor = page.locator(".cm-editor");

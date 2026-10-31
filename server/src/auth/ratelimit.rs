@@ -37,6 +37,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use crate::locks::MutexExt;
+
 use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -248,7 +250,7 @@ impl RateLimiter {
     }
 
     fn lock(&self, now_ms: i64) -> MutexGuard<'_, Table> {
-        let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        let mut table = self.table.lock_or_recover();
         table.drop_expired(now_ms, self.window_ms);
         table
     }
@@ -337,7 +339,7 @@ impl RateLimiter {
     /// Gives back the attempt `counted` for `key` (the sign-in succeeded), when its window is
     /// still the one it was counted in.
     pub fn refund(&self, key: &str, counted: &Counted) {
-        let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        let mut table = self.table.lock_or_recover();
         let d = digest(key);
         if let Some(e) = table.entries.get_mut(&d)
             && e.window_start == counted.window_start
@@ -350,7 +352,7 @@ impl RateLimiter {
 
     /// Forgets `key` entirely (the account proved its password).
     pub fn reset(&self, key: &str) {
-        self.table.lock().unwrap_or_else(|e| e.into_inner()).remove(&digest(key));
+        self.table.lock_or_recover().remove(&digest(key));
     }
 
     #[cfg(test)]
@@ -384,7 +386,7 @@ impl InFlight {
     pub async fn enter(&self, key: &str, slots: u32, wait: Duration) -> Option<InFlightGuard<'_>> {
         let key = digest(key);
         let slots = {
-            let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            let mut map = self.0.lock_or_recover();
             map.entry(key).or_insert_with(|| Arc::new(Semaphore::new(slots as usize))).clone()
         };
         // Made before waiting, so a timeout or a cancelled request removes an unused entry.
@@ -397,7 +399,7 @@ impl InFlight {
 impl Drop for InFlightGuard<'_> {
     fn drop(&mut self) {
         drop(self.permit.take());
-        let mut map = self.owner.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.owner.0.lock_or_recover();
         if map.get(&self.key).is_some_and(|slots| Arc::strong_count(slots) == 1) {
             map.remove(&self.key);
         }

@@ -451,7 +451,6 @@
     display: flex;
     width: 100%;
     justify-content: space-between;
-    padding: 0;
     margin-bottom: var(--space-2);
   }
 

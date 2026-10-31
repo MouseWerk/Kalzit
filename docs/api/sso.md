@@ -1,9 +1,9 @@
 # Single sign-on API: identity providers, group mapping, local sign-in
 
-How people sign in through an identity provider (OpenID Connect, LDAP and Active Directory in
-this version; SAML 2.0 follows on the same model), how the groups a provider sends become
-organizations, teams and roles, and the rules for the local password sign-in. Implemented in
-`server/src/sso/` and `server/src/routes/sso.rs`; the screens are on the board
+How people sign in through an identity provider (OpenID Connect, SAML 2.0, LDAP and Active
+Directory), how the groups a provider sends become organizations, teams and roles, and the rules
+for the local password sign-in. Implemented in `server/src/sso/` and `server/src/routes/sso.rs`
+(`routes/saml.rs` and `routes/ldap.rs` for their kinds); the screens are on the board
 `docs/design/blueprint/Identity.dc.html` (frames 1A to 1D, 5A to 5G, 9).
 
 The conventions of `docs/api/access.md` apply: paths under `/api`, JSON in `camelCase`, ids are
@@ -13,7 +13,7 @@ entry in its transaction.
 
 ## Model
 
-- A **provider** has a kind (`oidc` or `ldap`), a name (the button says "Mit <name> anmelden"), a `slug`
+- A **provider** has a kind (`oidc`, `saml` or `ldap`), a name (the button says "Mit <name> anmelden"), a `slug`
   (part of its redirect URI, fixed once created), a place among the buttons on the sign-in page
   (`position`) and can be paused (`enabled: false`): its people stay, but cannot sign in through
   it. Its client secret is stored encrypted with the server's secrets key and never sent back.
@@ -68,7 +68,8 @@ anything else becomes `/`.
 
 Starts are rate limited per address (30 per 10 minutes). An unknown or paused provider, or a
 provider whose discovery cannot be read, answers `303` to the sign-in page with
-`?sso=unavailable` (see below).
+`?sso=unavailable` (see below). For a SAML provider the start sends an AuthnRequest instead
+(see "SAML 2.0").
 
 ### Callback: `GET /auth/oidc/{slug}/callback`
 
@@ -216,7 +217,8 @@ Server admins only; organization admins cannot map groups to their organization 
   "providers": [ProviderSummary],
   "accounts": 231,
   "viaProviders": 225,
-  "redirectBase": "https://kalzit.mueller.internal"
+  "redirectBase": "https://kalzit.mueller.internal",
+  "samlBase": "https://kalzit.mueller.internal"
 }
 ```
 
@@ -224,7 +226,8 @@ Server admins only; organization admins cannot map groups to their organization 
 "lastSignInAt", "checkedAt", "createAccounts", "trustProviderMfa", "redirectUri"}`. `people`
 counts linked accounts, `accounts` all enabled accounts and `viaProviders` those with an identity
 at an enabled provider. `redirectBase` is the start of the redirect URI of a provider not saved
-yet.
+yet. `samlBase` is `server.public_url`, from which SAML addresses are built, or `null` while it is
+not set. For a SAML provider, `issuer` is its entity ID and `redirectUri` the ACS URL.
 
 ### One provider: `GET /admin/sign-in/providers/{providerId}`
 
@@ -567,6 +570,170 @@ Audit: `ldap.sync_finished`, `ldap.sync_halted`, `ldap.sync_failed`, `ldap.sync_
 the admin), and per account `user.disabled` / `user.enabled` with `"cause": "ldap_sync"` and the
 reason.
 
+## SAML 2.0
+
+Kalzit is the service provider of the SAML 2.0 Web Browser SSO profile. The AuthnRequest goes to
+the provider with the HTTP-Redirect binding, the answer comes back to the ACS with HTTP-POST.
+SAML providers share the model above: the buttons, the group mapping, accounts and the second
+factor work as for OpenID Connect. XML signatures are checked by bergshamra (pure Rust, no
+libxml2 or xmlsec), through gamlastan's hardened parser.
+
+All SAML addresses are built from `server.public_url` and never from the request's headers, so
+they stay the same behind a proxy or under a sub-path. Without it, the check, saving and sign-in
+answer `saml.public_url_missing`.
+
+| Address | |
+|---|---|
+| `<public URL>/auth/saml/<slug>` | Kalzit's entity ID for the provider (the audience it must name) |
+| `<public URL>/auth/saml/<slug>/acs` | the assertion consumer service (HTTP-POST) |
+| `<public URL>/auth/saml/<slug>/metadata` | Kalzit's metadata (`application/samlmetadata+xml`): the entity ID, the ACS and `WantAssertionsSigned`; public and stable, to give to the provider |
+
+### Signing in
+
+`GET /auth/sso/{slug}/start` sends `303` to the provider's sign-in URL with an unsigned
+AuthnRequest (Kalzit holds no SAML key; the answer is what is checked) whose ID is a fresh random
+value, kept as the single-use request of this sign-in (10 minutes), and sets the `kalzit_sso`
+cookie as for OpenID Connect.
+
+`POST /auth/saml/{slug}/acs` (outside `/api`, the provider's form post; exempt from the origin
+check, since it acts on no cookie) takes `SAMLResponse` and checks, in this order:
+
+1. The XML parses with DTDs, entities, comments, processing instructions and CDATA refused (so a
+   comment cannot split a NameID), and is at most 256 KiB.
+2. Its `InResponseTo` names an unexpired, unused request (taken once, so the same answer never
+   works twice). An answer without `InResponseTo` is an IdP-initiated sign-in, which Kalzit does
+   not accept (`saml.unsolicited`).
+3. The document holds exactly one `Assertion` anywhere (none in `Advice`, none encrypted), as a
+   child of the `Response`, and every ID in it is unique.
+4. `Status` is `Success`.
+5. Every signature sits on the `Response` or that `Assertion`, at most one on each (more are
+   refused before any signature is checked), references exactly that element
+   (`#ID`), uses enveloped-signature and exclusive or inclusive C14N without comments, RSA or
+   ECDSA with SHA-256 or stronger (SHA-1 is refused), carries no `Object`, and verifies with one
+   of the pinned certificates; keys in the message's `KeyInfo` are never used, and a pinned
+   certificate's dates are not checked. The signature check names the nodes it verified in the
+   same parsed document: the consumed `Assertion` must be one of them, or a child of the verified
+   `Response`. So the assertion that is read is the one that is signed (no signature wrapping).
+6. The `Response`'s `InResponseTo` is the request, its `Destination` the ACS, its `Issuer` (when
+   present) the provider's entity ID.
+7. The assertion's `Issuer` is the provider's entity ID; its subject has a `NameID` (not
+   `transient`) and a bearer `SubjectConfirmationData` with the ACS as `Recipient`, the request
+   as `InResponseTo`, no `NotBefore` and a `NotOnOrAfter` in the future; its `Conditions` have
+   `NotBefore` not in the future and `NotOnOrAfter` in the future (two minutes of clock skew
+   allowed) and every `AudienceRestriction` names Kalzit's entity ID; it has an
+   `AuthnStatement` whose `SessionNotOnOrAfter`, when present, is in the future.
+8. The assertion ID was not used before (replay): it is remembered, per entity ID, until its
+   earliest `NotOnOrAfter` plus the skew (`saml_assertions`).
+
+The ACS then keeps the checked assertion with the sign-in and answers `303` to
+`<public URL>/auth/saml/<slug>/finish?s=<id>`. A cross-site POST carries no `SameSite=Lax`
+cookie, so the session opens only in that same-site step, which needs the `kalzit_sso` cookie of
+the browser that started the sign-in: an answer posted from another browser ends there
+(`sso.state_unknown`). From there it goes on as the OIDC callback ("Then the account"), with the
+`NameID` as the subject and the provider's entity ID as its issuer. Failures answer as there, with
+the reasons of the table below in the audit entry.
+
+The person: the email from the email attribute (`mail` by default), else a `NameID` of the format
+`emailAddress`; the name from the name attribute (`displayName`); the groups are every value of the
+groups attribute (`memberOf`), kept whole (a DN has commas). Attributes match by `Name` or
+`FriendlyName`. SAML has no "email verified": an email counts as verified only with the
+provider's switch `trustEmail` (off by default). `trustProviderMfa` (off, "Kalzit fragt", by
+default) skips Kalzit's second factor when the assertion's `AuthnContextClassRef` says the
+provider checked several factors (REFEDS MFA, `multipleauthn` as AD FS sends it,
+`MobileTwoFactor*`, `TimeSyncToken`, `SmartcardPKI`). Attributes never count, Entra ID's
+`authnmethodsreferences` included: Entra ID reports MFA there and not in the context, so with
+Entra ID Kalzit asks for its own second factor.
+
+Single logout is not offered: signing out of Kalzit ends the Kalzit session only, and the
+provider's session stays. Encrypted assertions and signed AuthnRequests are not supported.
+
+### One provider
+
+`GET /admin/sign-in/providers/{providerId}` for a SAML provider:
+
+```json
+{
+  "id": "...", "slug": "partnerportal", "kind": "saml", "name": "Partnerportal", "enabled": true,
+  "position": 1, "version": 2, "createAccounts": true, "trustProviderMfa": false, "checkedAt": 1793000000000,
+  "spEntityId": "https://kalzit.mueller.internal/auth/saml/partnerportal",
+  "acsUrl": "https://kalzit.mueller.internal/auth/saml/partnerportal/acs",
+  "spMetadataUrl": "https://kalzit.mueller.internal/auth/saml/partnerportal/metadata",
+  "saml": {
+    "metadataUrl": "https://idp.partnerportal.example/saml/metadata.xml",
+    "idpEntityId": "https://idp.partnerportal.example/saml",
+    "ssoUrl": "https://idp.partnerportal.example/saml/sso",
+    "certificates": ["MIIC..."],
+    "certificateInfo": [{ "fingerprint": "3A:...:9F", "subject": "CN=idp.partnerportal.example",
+                          "notAfter": 1830000000000, "expired": false }],
+    "emailAttribute": "mail", "nameAttribute": "displayName", "groupsAttribute": "memberOf",
+    "trustEmail": false
+  }
+}
+```
+
+The three addresses are `null` while `server.public_url` is not set.
+
+### The form (`SamlInput`)
+
+```json
+{
+  "kind": "saml", "slug": "partnerportal", "name": "Partnerportal",
+  "createAccounts": true, "trustProviderMfa": false,
+  "saml": {
+    "metadataUrl": "https://idp.partnerportal.example/saml/metadata.xml",
+    "metadataXml": "<md:EntityDescriptor ...>",
+    "idpEntityId": "https://idp.partnerportal.example/saml",
+    "ssoUrl": "https://idp.partnerportal.example/saml/sso",
+    "certificates": ["-----BEGIN CERTIFICATE-----..."],
+    "emailAttribute": "mail", "nameAttribute": "displayName", "groupsAttribute": "memberOf",
+    "trustEmail": false
+  }
+}
+```
+
+The provider's entity ID, sign-in URL (its `SingleSignOnService` for HTTP-Redirect, `https://`
+or `http://` to loopback) and signing certificates are **pinned**: read once from the metadata or
+typed in, checked, and changed only by an admin, never by the provider. One certificate, or two
+during a rollover (both are accepted until the old one is removed); PEM or bare base64. Attribute
+names have 1 to 256 characters.
+
+### Check: `POST /admin/sign-in/saml/check`
+
+Takes the form. With `metadataXml` (an uploaded file, at most 1 MB) or `metadataUrl` (read with
+the same address rules as an OIDC discovery), the metadata names the provider's values: an
+`EntityDescriptor`, or an `EntitiesDescriptor` with exactly one identity provider; its signing
+`KeyDescriptor` certificates (at most two). Without either, the values as typed are checked.
+Answers what it found, ready to save, with a `checkToken` (30 minutes) for exactly these values:
+
+```json
+{
+  "checkToken": "...", "durationMs": 120,
+  "saml": { "metadataUrl": "...", "idpEntityId": "...", "ssoUrl": "...", "certificates": ["MIIC..."] },
+  "certificates": [{ "fingerprint": "3A:...:9F", "subject": "CN=...", "notAfter": 1830000000000, "expired": false }],
+  "spEntityId": "...", "acsUrl": "...", "spMetadataUrl": "..."
+}
+```
+
+Every problem is answered at its field (`metadataUrl`, `metadataXml`, `idpEntityId`, `ssoUrl`,
+`certificates`, an attribute).
+
+### Create, change and test
+
+`POST /admin/sign-in/saml` creates (`201`), `PUT /admin/sign-in/saml/{providerId}` changes (with
+`version`); both take the form with the provider's values the check found and its `checkToken`.
+A change keeps the stored trust without a new check as long as the entity ID, sign-in URL and
+certificates stay the same. A new entity ID removes the links of the people who signed in
+through the old one, after `confirmIssuerChange: true` (`sso.issuer_change_confirm` on
+`idpEntityId`), as a new OIDC issuer does. The metadata is never read again on its own; a new
+check reads it.
+
+`POST /admin/sign-in/saml/test-sign-ins` takes the form with its `checkToken` and answers
+`201 {"id", "url"}`: open `url` to sign in at the provider. The ACS and finish steps then keep the
+result instead of signing in; `GET /admin/sign-in/test-sign-ins/{testId}` answers it as for OIDC.
+A failed test names the reason of the table below, with its `params`.
+
+Pausing, ordering, removing and the group mapping are the routes of every provider.
+
 ## Reasons
 
 | Reason | Params | When |
@@ -604,7 +771,40 @@ reason.
 | `sso.outcome_cancelled` | | test sign-in: cancelled at the provider |
 | `sso.outcome_expired` | | test sign-in: took too long or was used already |
 | `sso.outcome_email_taken` | | test sign-in: the email belongs to an unconfirmed account, or the provider did not verify it |
-| `sso.kind_mismatch` | | `422`: the route is for another kind of provider (OpenID Connect or LDAP) |
+| `sso.kind_mismatch` | | `422`: the route is for another kind of provider (OpenID Connect, SAML or LDAP) |
+| `saml.public_url_missing` | | `422`: `server.public_url` is not set; SAML addresses are built from it (also an audit cause at sign-in) |
+| `saml.metadata_url_invalid` | | `422` on `metadataUrl`: not an `https://` URL (or `http://` for loopback) |
+| `saml.metadata_unreachable` | `detail` | `422` on `metadataUrl`: the metadata cannot be read |
+| `saml.metadata_invalid` | `detail` | `422` on `metadataUrl` or `metadataXml`: not SAML metadata of one identity provider with an HTTP-Redirect sign-in and one or two signing certificates |
+| `saml.entity_id_invalid` | | `422` on `idpEntityId`: empty, longer than 1024 or with control characters |
+| `saml.sso_url_invalid` | | `422` on `ssoUrl`: not an `https://` URL (or `http://` for loopback) |
+| `saml.certificate_required` | | `422` on `certificates`: none given |
+| `saml.certificate_invalid` | `detail` | `422` on `certificates`: not an X.509 certificate in PEM or base64, or more than two |
+| `saml.attribute_invalid` | | `422` on `emailAttribute`, `nameAttribute` or `groupsAttribute`: longer than 256 or with control characters |
+| `saml.check_required` | | `422` on `idpEntityId`: the values were not checked (or the check is older than 30 minutes) |
+| `saml.response_missing` | | sign-in or test: the provider posted no `SAMLResponse` |
+| `saml.xml_invalid` | | sign-in or test: not base64, UTF-8 or XML, too large, or with a DTD, entity, comment, processing instruction or CDATA |
+| `saml.not_response` | | sign-in or test: not a SAML 2.0 `Response` |
+| `saml.status` | | sign-in or test: the provider answered another status than `Success` (`detail` has its URI when it is one of SAML core's status codes, else `other`; `AuthnFailed` and `RequestDenied` read as cancelled) |
+| `saml.unsolicited` | | sign-in: no `InResponseTo` (an IdP-initiated sign-in) |
+| `saml.request_unknown` | | sign-in or test: no unexpired, unused request has this ID |
+| `saml.in_response_to` | | sign-in or test: the response or its confirmation answers another request |
+| `saml.destination` | | sign-in or test: the `Destination` is not the ACS, or the public address changed during the sign-in |
+| `saml.issuer` | | sign-in or test: the response or assertion comes from another entity ID |
+| `saml.assertion_count` | | sign-in or test: not exactly one assertion in the document |
+| `saml.encrypted_assertion` | | sign-in or test: an encrypted assertion or NameID |
+| `saml.unsigned` | | sign-in or test: no signature |
+| `saml.signature_invalid` | | sign-in or test: a signature does not verify with the pinned certificates |
+| `saml.signature_unsupported` | | sign-in or test: a signature uses another method, transform or form than listed above, or an element has more than one |
+| `saml.wrapping` | | sign-in or test: a signature is elsewhere or signs another element than the assertion that would be read, or IDs repeat |
+| `saml.subject_missing` | | sign-in or test: no NameID or no bearer confirmation |
+| `saml.name_id_transient` | | sign-in or test: a transient NameID, which names nobody twice |
+| `saml.recipient` | | sign-in or test: the confirmation's `Recipient` is not the ACS |
+| `saml.audience` | | sign-in or test: no audience restriction, or one without Kalzit's entity ID |
+| `saml.expired` | | sign-in or test: a `NotOnOrAfter` or `SessionNotOnOrAfter` passed (two minutes of skew allowed) |
+| `saml.not_yet_valid` | `minutes` | sign-in or test: `NotBefore` lies more than two minutes ahead; the provider's clock is `minutes` ahead |
+| `saml.authn_missing` | | sign-in or test: no `AuthnStatement` |
+| `saml.replay` | | sign-in or test: the assertion ID was used before |
 | `ldap.url_invalid` | | `422` on `url`: not an `ldap://` or `ldaps://` URL with a host, or with credentials, a path, query or fragment |
 | `ldap.plain_not_allowed` | | `422` on `url`: an unencrypted connection to a host that is not on this computer or in a private network |
 | `ldap.scheme_conflict` | | `422` on `encryption`: `ldaps://` with StartTLS, or `ldap://` with LDAPS |
@@ -637,8 +837,9 @@ reason.
 
 ## Causes in the audit log
 
-`auth.sso_failed` entries carry one of the reasons above or one of these as `reason`, with an
-English `detail`; the person only sees the outcome. They are not answered as API errors.
+`auth.sso_failed` entries carry one of the reasons above (the `saml.*` ones of a SAML sign-in
+among them) or one of these as `reason`, with an English `detail`; the person only sees the
+outcome. They are not answered as API errors.
 
 | Cause | When |
 |---|---|

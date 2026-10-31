@@ -558,7 +558,6 @@
 
   .setup-choice > legend {
     margin-block-end: var(--space-1);
-    padding: 0;
   }
 
   .setup-choice__select {

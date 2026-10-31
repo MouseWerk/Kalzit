@@ -138,6 +138,8 @@ struct TestApp {
     state: AppState,
     dir: Arc<tempfile::TempDir>,
     smtp: Option<FakeSmtp>,
+    /// Its PostgreSQL schema, dropped at `finish` (or with the app).
+    schema: Option<common::PgSchema>,
 }
 
 struct Reply {
@@ -178,7 +180,8 @@ async fn test_app(setup: Setup) -> TestApp {
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
-    config.database.url = std::env::var("KALZIT_TEST_POSTGRES_URL").ok().filter(|u| !u.is_empty());
+    let schema = common::database().await;
+    config.database.url = schema.as_ref().map(|s| s.url.clone());
     if setup != Setup::NoPublicUrl {
         config.server.public_url = Some(PUBLIC_URL.into());
     }
@@ -196,12 +199,12 @@ async fn test_app(setup: Setup) -> TestApp {
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir: Arc::new(dir), smtp }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir: Arc::new(dir), smtp, schema }
 }
 
 impl TestApp {
-    async fn finish(self) {
-        let finish = common::Finish::new(self.state.clone(), self.dir.clone());
+    async fn finish(mut self) {
+        let finish = common::Finish::new(self.state.clone(), self.dir.clone()).with_schema(self.schema.take());
         drop(self);
         finish.finish().await;
     }

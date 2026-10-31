@@ -25,7 +25,8 @@
 //!   queue the stop flushes (`publish`). Every server reads new rows when notified and at least
 //!   every `Options::poll`. `record` also raises a counter per area (`cluster_versions`) in the
 //!   same transaction, which every server compares on a timer of its own (`Reconciler`), so a
-//!   recorded change whose row a server missed is still taken within one poll. Not caught: a
+//!   recorded change whose row a server missed is still taken within one poll (a rights change
+//!   within two: its row may simply not have been read yet at the first comparison). Not caught: a
 //!   change announced after its commit (`announce`, `publish`) whose announcement is lost because
 //!   the process ends in between; for rights changes this only keeps cached answers up to their
 //!   cache time, since authorization runs on every request. Data sources are compared by count
@@ -46,6 +47,7 @@ use tokio::sync::Notify;
 
 use crate::app::AppState;
 use crate::db::{JobError, Schedule};
+use crate::locks::{MutexExt, RwLockExt};
 
 /// The NOTIFY channel; the payload is empty, the rows in `cluster_events` are what counts.
 pub const CHANNEL: &str = "kalzit_cluster";
@@ -245,10 +247,10 @@ pub async fn boot(cluster: &Cluster, db: &AnyPool, url: &str, data_dir: &std::pa
     if !is_postgres(url) {
         return Ok(());
     }
-    *cluster.node.lock().unwrap_or_else(|e| e.into_inner()) = node_id(data_dir)?;
+    *cluster.node.lock_or_recover() = node_id(data_dir)?;
     let mut snapshot = Snapshot::read(db, true).await?;
     snapshot.read_source_rows(db).await?;
-    *cluster.boot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot);
+    *cluster.boot.lock_or_recover() = Some(snapshot);
     Ok(())
 }
 
@@ -432,16 +434,16 @@ impl Cluster {
 
     /// The node id kept in the data directory (`node_id`); empty before `boot`.
     pub fn node(&self) -> String {
-        self.node.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.node.lock_or_recover().clone()
     }
 
     /// Changes the timings; before `start` (tests).
     pub fn set_options(&self, options: Options) {
-        *self.options.write().unwrap_or_else(|e| e.into_inner()) = options;
+        *self.options.write_or_recover() = options;
     }
 
     fn options(&self) -> Options {
-        self.options.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.options.read_or_recover().clone()
     }
 
     /// Other servers may share the database: run-once jobs claim their runs and changes are
@@ -457,7 +459,7 @@ impl Cluster {
         if !self.coordinated() {
             return true;
         }
-        self.leader_until.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|until| Instant::now() < until)
+        self.leader_until.lock_or_recover().is_some_and(|until| Instant::now() < until)
     }
 
     /// Other servers run on this database now: they count for the update mode and the view.
@@ -472,7 +474,7 @@ impl Cluster {
         if !self.coordinated() || self.stopped.load(Ordering::SeqCst) {
             return;
         }
-        self.pending.lock().unwrap_or_else(|e| e.into_inner()).push(change);
+        self.pending.lock_or_recover().push(change);
         self.pending_ready.notify_one();
     }
 
@@ -498,20 +500,20 @@ impl Cluster {
     }
 
     fn take_pending(&self) -> Vec<Change> {
-        let mut pending = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|e| e.into_inner()));
+        let mut pending = std::mem::take(&mut *self.pending.lock_or_recover());
         pending.dedup();
         pending
     }
 
     fn requeue(&self, mut changes: Vec<Change>) {
-        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pending = self.pending.lock_or_recover();
         changes.append(&mut pending);
         *pending = changes;
     }
 
     fn set_leader(&self, until: Option<Instant>, term: i64) {
         let was = self.is_leader();
-        *self.leader_until.lock().unwrap_or_else(|e| e.into_inner()) = until;
+        *self.leader_until.lock_or_recover() = until;
         self.term.store(term, Ordering::SeqCst);
         let is = self.is_leader();
         if is && !was {
@@ -602,7 +604,7 @@ pub async fn start(state: &AppState) -> Result<()> {
     spawn_heartbeat(state.clone(), true);
     spawn_writer(state.clone());
     // Replayed and compared from the moment before the start loaded anything.
-    let since = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(now, |b| b.at_ms);
+    let since = cluster.boot.lock_or_recover().as_ref().map_or(now, |b| b.at_ms);
     spawn_reader(state.clone(), since);
     spawn_reconciler(state.clone());
     spawn_listener(state.clone());
@@ -1005,9 +1007,9 @@ fn spawn_reconciler(state: AppState) {
     let background = state.background.clone();
     background.spawn(async move {
         let cluster = state.cluster.clone();
-        let boot = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let boot = cluster.boot.lock_or_recover().clone();
         let rights_rows = cluster.rights_rows.load(Ordering::SeqCst);
-        let mut reconciler = Reconciler { last: boot, failures: 0, rights_rows };
+        let mut reconciler = Reconciler { last: boot, failures: 0, rights_rows, unread_rights: 0 };
         loop {
             tokio::select! {
                 () = stopping.cancelled() => return,
@@ -1038,18 +1040,27 @@ const COMPARE_FAILURES_WARN: u32 = 3;
 /// Compares the counters every announced change raises in its transaction (`record`) and the data
 /// sources' cheap aggregates with what this server last took, starting from the moment before it
 /// loaded anything (`boot`): a change whose event row this server missed is taken within one poll
-/// anyway. Its own changes move the counters too; taking them again is harmless.
+/// anyway (a rights change within two, see `unread_rights`). Its own changes move the counters
+/// too; taking them again is harmless.
 struct Reconciler {
     last: Option<Snapshot>,
     failures: u32,
     /// `Cluster::rights_rows` at the last comparison.
     rights_rows: i64,
+    /// Rights changes the counter showed at the last comparison whose rows the reader had not read
+    /// yet. The counter and the row commit together, but the reader may read the row only after
+    /// the comparison saw the counter; such a change counts as missed only when its row is still
+    /// unread one comparison later.
+    unread_rights: i64,
 }
 
 /// What one comparison read; all of it is read before anything is taken (`Reconciler::gather`),
 /// so a read that fails leaves the last comparison as it was.
 struct Gathered {
     now: Snapshot,
+    /// `Cluster::rights_rows` before the counters were read, so no row is counted whose counter
+    /// the comparison has not seen.
+    rights_rows: i64,
     /// The data sources' rows were read again (their aggregates moved).
     sources_read: bool,
     /// Another server finished the first-run setup (`setup_lock` has its row).
@@ -1059,13 +1070,20 @@ struct Gathered {
 impl Reconciler {
     async fn compare(&mut self, state: &AppState) -> Result<(), sqlx::Error> {
         let setup_open = state.setup.is_open().await;
-        let gathered = self.gather(&state.db, true, setup_open).await?;
+        let rights_rows = state.cluster.rights_rows.load(Ordering::SeqCst);
+        let gathered = self.gather(&state.db, true, setup_open, rights_rows).await?;
         self.take(state, gathered).await;
         Ok(())
     }
 
     /// Reads everything a comparison needs; changes nothing.
-    async fn gather(&self, db: &AnyPool, postgres: bool, setup_open: bool) -> Result<Gathered, sqlx::Error> {
+    async fn gather(
+        &self,
+        db: &AnyPool,
+        postgres: bool,
+        setup_open: bool,
+        rights_rows: i64,
+    ) -> Result<Gathered, sqlx::Error> {
         let mut now = Snapshot::read(db, postgres).await?;
         let sources_read = match &self.last {
             None => true,
@@ -1082,13 +1100,12 @@ impl Reconciler {
         } else {
             false
         };
-        Ok(Gathered { now, sources_read, setup_done })
+        Ok(Gathered { now, rights_rows, sources_read, setup_done })
     }
 
     /// Acts on what moved since the last comparison and keeps `gathered` as the new baseline.
     async fn take(&mut self, state: &AppState, gathered: Gathered) {
-        let Gathered { mut now, sources_read, setup_done } = gathered;
-        let rights_rows = state.cluster.rights_rows.load(Ordering::SeqCst);
+        let Gathered { mut now, rights_rows, sources_read, setup_done } = gathered;
         let rows_seen = rights_rows - std::mem::replace(&mut self.rights_rows, rights_rows);
         if setup_done {
             state.setup.close().await;
@@ -1106,8 +1123,13 @@ impl Reconciler {
         // The reader applied each rights change it read with its organization; only changes it
         // did not read (fewer rows than the counter moved) need every kept answer to go, since
         // their organization is not known here.
-        if delta("rights") > rows_seen {
+        let (flush, unread) = rights_accounting(self.unread_rights, delta("rights"), rows_seen);
+        self.unread_rights = unread;
+        if flush {
             state.datasources.query_cache().rights_changed_here(None);
+        }
+        if unread > 0 {
+            state.cluster.wake.notify_one();
         }
         if moved("cache") {
             state.datasources.query_cache().clear();
@@ -1133,6 +1155,20 @@ impl Reconciler {
         }
         self.last = Some(now);
     }
+}
+
+/// One comparison's account of rights changes (`Reconciler::unread_rights`): from the changes
+/// still unread at the last comparison, how far the rights counter moved since and how many rights
+/// rows the reader read since, whether every kept answer must go and what stays unread.
+///
+/// A row the reader has not read yet at one comparison is given until the next (its commit and
+/// the counter's are one, but the reader may come to it later); rows read pay for the oldest
+/// unread changes first. A change still unread one comparison later was missed: everything kept
+/// goes, which covers every change up to now. The counter moves of this comparison stay owed
+/// even then, so a late row of the missed change pays for them and can never cancel out a change
+/// missed later; at worst that costs one more, harmless, emptying.
+fn rights_accounting(unread: i64, delta: i64, rows_seen: i64) -> (bool, i64) {
+    if unread - rows_seen > 0 { (true, delta.max(0)) } else { (false, (unread + delta - rows_seen).max(0)) }
 }
 
 /// Applies another server's change to what this one keeps.
@@ -1177,7 +1213,7 @@ pub fn request_plugin_sync(state: &AppState) {
                     false
                 }
             };
-            let mut retry = sync.retry.lock().unwrap_or_else(|e| e.into_inner());
+            let mut retry = sync.retry.lock_or_recover();
             *retry = if complete {
                 None
             } else {
@@ -1191,13 +1227,7 @@ pub fn request_plugin_sync(state: &AppState) {
 
 /// Starts the retry of a failed plugin sync once its pause is over.
 fn retry_plugin_sync(state: &AppState) {
-    let due = state
-        .cluster
-        .plugin_sync
-        .retry
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_some_and(|(at, _)| Instant::now() >= at);
+    let due = state.cluster.plugin_sync.retry.lock_or_recover().is_some_and(|(at, _)| Instant::now() >= at);
     if due {
         request_plugin_sync(state);
     }
@@ -1504,18 +1534,42 @@ mod tests {
         let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
         let mut baseline = Snapshot::read(&db, false).await.unwrap();
         baseline.read_source_rows(&db).await.unwrap();
-        let reconciler = Reconciler { last: Some(baseline.clone()), failures: 0, rights_rows: 0 };
-        let gathered = reconciler.gather(&db, false, true).await.unwrap();
+        let reconciler = Reconciler { last: Some(baseline.clone()), failures: 0, rights_rows: 0, unread_rights: 0 };
+        let gathered = reconciler.gather(&db, false, true, 0).await.unwrap();
         assert!(!gathered.sources_read && !gathered.setup_done, "nothing moved");
         sqlx::query("UPDATE cluster_versions SET version = version + 1 WHERE area = 'settings'")
             .execute(&db)
             .await
             .unwrap();
         sqlx::query("DROP TABLE setup_lock").execute(&db).await.unwrap();
-        assert!(reconciler.gather(&db, false, true).await.is_err());
+        assert!(reconciler.gather(&db, false, true, 0).await.is_err());
         assert_eq!(reconciler.last.as_ref(), Some(&baseline), "the baseline stays for the next comparison");
-        let gathered = reconciler.gather(&db, false, false).await.unwrap();
+        let gathered = reconciler.gather(&db, false, false, 0).await.unwrap();
         assert_ne!(gathered.now.versions.get("settings"), baseline.versions.get("settings"));
+    }
+
+    /// Each step is one comparison: (unread before, counter moved, rows read) to (empty all,
+    /// unread after).
+    #[test]
+    fn rights_rows_read_late_keep_the_cache_and_missed_ones_empty_it() {
+        // The counter is seen before the reader read the row; the row comes at the next one.
+        assert_eq!(rights_accounting(0, 1, 0), (false, 1));
+        assert_eq!(rights_accounting(1, 0, 1), (false, 0));
+        // Read in time: nothing owed.
+        assert_eq!(rights_accounting(0, 2, 2), (false, 0));
+        // A row that never comes (removed in its own transaction): emptied at the second.
+        assert_eq!(rights_accounting(0, 1, 0), (false, 1));
+        assert_eq!(rights_accounting(1, 0, 0), (true, 0));
+        // Emptied while new changes came in: those stay owed, and the missed change's late row
+        // pays for them instead of hiding a change missed after it.
+        assert_eq!(rights_accounting(1, 1, 0), (true, 1));
+        assert_eq!(rights_accounting(1, 1, 1), (false, 1), "the late row pays the older debt");
+        assert_eq!(rights_accounting(1, 0, 0), (true, 0), "the change missed later still empties");
+        // Rows read beyond what is owed (an old row replayed at the start) leave no credit.
+        assert_eq!(rights_accounting(0, 0, 3), (false, 0));
+        assert_eq!(rights_accounting(0, 1, 0), (false, 1));
+        // Of two unread changes, one row read: the other is missed.
+        assert_eq!(rights_accounting(2, 0, 1), (true, 0));
     }
 
     #[test]
