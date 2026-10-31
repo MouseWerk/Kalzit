@@ -56,6 +56,7 @@ use crate::datasources::detail::Detail;
 use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
+use crate::locks::{MutexExt, RwLockExt};
 use crate::net::RequestInfo;
 use crate::shapes::{
     ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse,
@@ -117,7 +118,7 @@ struct UserSlot {
 
 impl Drop for UserSlot {
     fn drop(&mut self) {
-        self.users.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+        self.users.lock_or_recover().remove(&self.id);
     }
 }
 
@@ -129,7 +130,7 @@ struct Slots {
 
 fn acquire(state: &AppState, ctx: &OrgCtx) -> ApiResult<Slots> {
     let user = {
-        let mut users = state.export_users.lock().unwrap_or_else(|e| e.into_inner());
+        let mut users = state.export_users.lock_or_recover();
         if !users.insert(ctx.user.id.clone()) {
             return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -157,14 +158,15 @@ impl Drop for CancelOnDrop {
 pub fn routes() -> Vec<RouteDef> {
     vec![
         // And `datasources:query` per data source (role or grant), checked in the handler.
-        route(Method::POST, "/orgs/{orgId}/export", Access::Org(Permission::DataExport), export_query),
+        route(Method::POST, "/orgs/{orgId}/export", Access::Org(Permission::DataExport), export_query).long_running(),
         // And `dashboards:read` on the dashboard, checked in the handler.
         route(
             Method::POST,
             "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export",
             Access::Org(Permission::DataExport),
             export_panel,
-        ),
+        )
+        .long_running(),
     ]
 }
 
@@ -466,7 +468,7 @@ async fn produce(
     let _cancel = CancelOnDrop(cancelled.clone());
     let control = Control::new(cancelled, timeout).with_calendar(wanted.calendar);
     let spool = state.config.paths.data_dir.join(SPOOL_DIR);
-    let limits = *state.export_limits.read().unwrap_or_else(|e| e.into_inner());
+    let limits = *state.export_limits.read_or_recover();
     let Slots { permit, user } = slots;
     // Steps and encoding take CPU time and disk; they run off the request threads.
     let work = move || -> Result<Spooled, ApiError> {
@@ -727,7 +729,7 @@ fn attachment(file: Spooled, pending: Pending, title: &str) -> Response {
     let name = export::file_name(title, file.kind.extension);
     let (tx, rx) = mpsc::channel::<Msg>(QUEUED_CHUNKS);
     let kind = file.kind;
-    let limits = *pending.state.export_limits.read().unwrap_or_else(|e| e.into_inner());
+    let limits = *pending.state.export_limits.read_or_recover();
     tokio::spawn(send_file(file, tx, pending, limits));
     let chunks = futures_util::stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {

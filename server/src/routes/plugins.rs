@@ -31,7 +31,7 @@ use crate::plugins::supervisor::{LogLine, Status};
 pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/admin/plugins", Access::ServerAdmin, list),
-        route(Method::POST, "/admin/plugins", Access::ServerAdmin, install),
+        route(Method::POST, "/admin/plugins", Access::ServerAdmin, install).long_running(),
         route(Method::GET, "/admin/plugins/{pluginId}", Access::ServerAdmin, get_one),
         route(Method::DELETE, "/admin/plugins/{pluginId}", Access::ServerAdmin, remove).changes_rights(),
         route(Method::POST, "/admin/plugins/{pluginId}/approve", Access::ServerAdmin, approve),
@@ -48,7 +48,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::PATCH, "/admin/plugin-host", Access::ServerAdmin, patch_host_settings),
         route(Method::GET, "/admin/plugin-catalog", Access::ServerAdmin, catalog_view),
         route(Method::POST, "/admin/plugin-catalog/refresh", Access::ServerAdmin, catalog_refresh),
-        route(Method::POST, "/admin/plugin-catalog/install", Access::ServerAdmin, catalog_install),
+        route(Method::POST, "/admin/plugin-catalog/install", Access::ServerAdmin, catalog_install).long_running(),
         route(Method::GET, "/orgs/{orgId}/plugins", Access::Org(Permission::PluginsConfigure), org_list),
         route(Method::PUT, "/orgs/{orgId}/plugins/{pluginId}/block", Access::Org(Permission::PluginsConfigure), block)
             .changes_rights(),

@@ -44,16 +44,17 @@ use crate::shapes::{QueryItem, QueryOutcome, QueryResponse, QueryResult, TimeRan
 pub fn routes() -> Vec<RouteDef> {
     vec![
         // `datasources:query` on the source (role or grant), checked in the handlers.
-        route(Method::POST, "/orgs/{orgId}/ai/explain", Access::OrgMember, explain),
-        route(Method::POST, "/orgs/{orgId}/ai/draft", Access::OrgMember, draft),
-        route(Method::POST, "/orgs/{orgId}/ai/summarize", Access::OrgMember, summarize),
+        route(Method::POST, "/orgs/{orgId}/ai/explain", Access::OrgMember, explain).long_running(),
+        route(Method::POST, "/orgs/{orgId}/ai/draft", Access::OrgMember, draft).long_running(),
+        route(Method::POST, "/orgs/{orgId}/ai/summarize", Access::OrgMember, summarize).long_running(),
         // `dashboards:read` on the dashboard, as its stored queries.
         route(
             Method::POST,
             "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/ai/summarize",
             Access::OrgMember,
             summarize_panel,
-        ),
+        )
+        .long_running(),
     ]
 }
 

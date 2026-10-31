@@ -50,6 +50,7 @@ use super::{
     SourceQuery, SourceSchema,
 };
 use crate::http::{HttpClient, HttpError, HttpOptions};
+use crate::locks::MutexExt;
 use crate::shapes::{Edge, FieldType, Node, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] = &[
@@ -295,9 +296,7 @@ impl Client {
         if let Some(t) = &self.basic_token {
             out = out.replace(t, "***");
         }
-        if let Ok(guard) = self.token.lock()
-            && let Some((t, _)) = guard.as_ref()
-        {
+        if let Some((t, _)) = self.token.lock_or_recover().as_ref() {
             out = out.replace(t, "***");
         }
         out
@@ -494,7 +493,7 @@ impl Client {
     /// without authentication.
     async fn token(&self, renew: bool) -> Result<Option<String>, SourceError> {
         if !renew
-            && let Some((t, until)) = self.token.lock().expect("token lock").as_ref()
+            && let Some((t, until)) = self.token.lock_or_recover().as_ref()
             && Instant::now() + TOKEN_MARGIN < *until
         {
             return Ok(Some(t.clone()));
@@ -526,14 +525,14 @@ impl Client {
             .ok_or_else(|| SourceError::failed("tigergraph.no_token", "TigerGraph answered without a token"))?
             .to_string();
         let until = Instant::now() + Duration::from_secs(TOKEN_LIFETIME_SECS);
-        *self.token.lock().expect("token lock") = Some((token.clone(), until));
+        *self.token.lock_or_recover() = Some((token.clone(), until));
         Ok(Some(token))
     }
 
     /// The names of the graph's queries (4.x; kept for a minute). `None` when they cannot be read
     /// (3.x, or no right to list them): the GSQL check then refuses every `TYPEDEF`.
     async fn query_names(&self) -> Option<Vec<String>> {
-        if let Some((at, names)) = self.query_names.lock().expect("names lock").as_ref()
+        if let Some((at, names)) = self.query_names.lock_or_recover().as_ref()
             && at.elapsed() < TEXT_CACHE
         {
             return names.clone();
@@ -542,7 +541,7 @@ impl Client {
             Api::V4 => self.list_queries().await.map(|qs| qs.into_iter().map(|q| q.name).collect()),
             Api::V3 => None,
         };
-        *self.query_names.lock().expect("names lock") = Some((Instant::now(), names.clone()));
+        *self.query_names.lock_or_recover() = Some((Instant::now(), names.clone()));
         names
     }
 
@@ -584,7 +583,7 @@ impl Client {
 
     /// The checked parameters of an installed query, or why it may not run.
     async fn installed_params(&self, name: &str) -> Result<Option<Vec<gsql::Param>>, SourceError> {
-        if let Some((at, checked)) = self.texts.lock().expect("text cache lock").get(name)
+        if let Some((at, checked)) = self.texts.lock_or_recover().get(name)
             && at.elapsed() < TEXT_CACHE
         {
             return checked.clone().map(Some).map_err(SourceError::Rejected);
@@ -628,10 +627,7 @@ impl Client {
                 // REST++ runs without authentication: then the info is the only guard, so it is
                 // read again for every run.
                 if checked.is_err() || !self.restpp_open {
-                    self.texts
-                        .lock()
-                        .expect("text cache lock")
-                        .insert(name.to_string(), (Instant::now(), checked.clone()));
+                    self.texts.lock_or_recover().insert(name.to_string(), (Instant::now(), checked.clone()));
                 }
                 return checked.map(Some).map_err(SourceError::Rejected);
             }
@@ -653,7 +649,7 @@ impl Client {
                 _ => Ok(c.params),
             }
         });
-        self.texts.lock().expect("text cache lock").insert(name.to_string(), (Instant::now(), checked.clone()));
+        self.texts.lock_or_recover().insert(name.to_string(), (Instant::now(), checked.clone()));
         checked.map(Some).map_err(SourceError::Rejected)
     }
 }

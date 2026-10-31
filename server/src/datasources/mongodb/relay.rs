@@ -18,6 +18,7 @@ use tokio::sync::Semaphore;
 
 use crate::datasources::Detail;
 use crate::datasources::targets::{ResolveError, TargetPolicy};
+use crate::locks::MutexExt;
 
 /// How long the driver has for the SOCKS handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -105,12 +106,12 @@ impl Relay {
     /// A mark to take before an operation; `refusal_since` then reports only what happened during
     /// it, not an older refusal of another operation or replica set member.
     pub fn mark(&self) -> u64 {
-        self.refusals.lock().expect("relay refusal lock").count
+        self.refusals.lock_or_recover().count
     }
 
     /// The last target the relay refused or could not reach after `mark`, if any.
     pub fn refusal_since(&self, mark: u64) -> Option<Refusal> {
-        let r = self.refusals.lock().expect("relay refusal lock");
+        let r = self.refusals.lock_or_recover();
         if r.count > mark { r.last.clone() } else { None }
     }
 
@@ -165,7 +166,7 @@ async fn tunnel(
                 other => (4, Refusal::Failed(other.detail())),
             };
             {
-                let mut r = refusals.lock().expect("relay refusal lock");
+                let mut r = refusals.lock_or_recover();
                 r.count += 1;
                 r.last = Some(kept);
             }

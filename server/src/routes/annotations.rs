@@ -44,7 +44,8 @@ pub fn routes() -> Vec<RouteDef> {
             "/orgs/{orgId}/dashboards/{dashboardId}/annotation-queries/{queryId}/query",
             OrgMember,
             run_annotation_query,
-        ),
+        )
+        .long_running(),
     ]
 }
 
