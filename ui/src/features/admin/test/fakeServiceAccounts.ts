@@ -1,5 +1,5 @@
 import { error, type FakeArea, type FakeRequest, json } from "../../../test/fakeServer";
-import type { ApiToken, ServiceAccount } from "../api";
+import type { ApiToken, ScimStats, ServiceAccount } from "../api";
 
 /**
  * The service account and SCIM token routes of docs/api/access.md, "Service accounts", for
@@ -17,6 +17,9 @@ export interface FakeAccount extends ServiceAccount {
 export interface FakeServiceAccountsState {
   accounts: FakeAccount[];
   scim: ApiToken | null;
+  /** The organization's SCIM switch, and what `/scim` reports besides the token. */
+  scimEnabled: boolean;
+  scimStats: ScimStats;
   /** How many tokens were made, for their made-up texts. */
   made: number;
 }
@@ -72,6 +75,15 @@ export function serviceAccountsFake(): FakeArea<FakeServiceAccountsState> {
       },
     ],
     scim: null,
+    scimEnabled: true,
+    scimStats: {
+      since: SA_AT - 9 * 3_600_000,
+      created: 3,
+      deactivated: 1,
+      groups: 7,
+      mappedGroups: 5,
+      lastError: null,
+    },
     made: 0,
   };
   return { state, handle: (request) => handle(state, request) };
@@ -94,6 +106,22 @@ function created(state: FakeServiceAccountsState, prefix: string, fields: Partia
 
 function handle(state: FakeServiceAccountsState, request: FakeRequest): Response | undefined {
   const parts = request.route.split("/").slice(4);
+  if (parts[0] === "scim") {
+    if (!request.permissions.has("serviceaccounts:write")) {
+      return error(403, "forbidden");
+    }
+    if (request.method === "PUT") {
+      state.scimEnabled = request.body.enabled === true;
+    } else if (request.method !== "GET") {
+      return undefined;
+    }
+    return json(200, {
+      enabled: state.scimEnabled,
+      endpoint: "https://kalzit.mueller.internal/scim/v2/o/o1",
+      token: state.scim,
+      stats: state.scimStats,
+    });
+  }
   if (parts[0] === "scim-token") {
     if (!request.permissions.has("serviceaccounts:write")) {
       return error(403, "forbidden");

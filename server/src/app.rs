@@ -246,6 +246,8 @@ pub fn router(state: AppState) -> Router {
         // The redirect URI of identity providers (docs/api/sso.md); outside `/api`, since it is a
         // page the browser is sent to.
         .route(routes::sso::CALLBACK_ROUTE, get(routes::sso::callback))
+        // SCIM provisioning (docs/api/scim.md); its requests sign in with the SCIM token.
+        .merge(crate::scim::router())
         .nest("/api", api)
         .fallback(web::static_files)
         // Each request gets its own "committed" flag, so errors after a commit are not "busy".

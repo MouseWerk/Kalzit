@@ -4,6 +4,7 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { TextField } from "../../../components/TextField";
 import { type Translate, useI18n } from "../../../i18n/i18n";
+import { zoneOption } from "../../../lib/timeSettings";
 import { relativeTime } from "../../../shell/startData";
 import { errorMessage } from "../../dashboards/ui/errors";
 import {
@@ -14,17 +15,19 @@ import {
   createScimToken,
   createServiceAccount,
   deleteServiceAccount,
-  fetchScimToken,
+  fetchScimStatus,
   fetchServiceAccount,
   listServiceAccounts,
   revokeApiToken,
   revokeScimToken,
+  type ScimLastError,
   type ServiceAccount,
+  setScimEnabled,
   updateServiceAccount,
 } from "../api";
 import { roleLabel } from "../catalog";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
-import { formatDateTime, startOfNextDay } from "../components/format";
+import { formatDateTime, startOfDay, startOfNextDay } from "../components/format";
 import { usePagedList } from "../components/lists";
 import { useNotice } from "../components/Notice";
 import { LoadState, Section } from "../components/Section";
@@ -42,6 +45,7 @@ import {
   validAccountName,
 } from "./serviceAccountRules";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
+import "../../settings/settings.css";
 
 /** "3 hours ago", in the short style of the lists. */
 function useAgo() {
@@ -890,20 +894,39 @@ function TokenShownDialog({ created, onClose }: { created: CreatedToken; onClose
   );
 }
 
-/** The organization's SCIM token: one at a time, a new one replaces the old one at once. */
+/** The start of today in the user's time zone, where the card's counts start. */
+function startOfToday(zone: string | null): number {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    ...zoneOption(zone),
+  }).format(new Date());
+  return startOfDay(today, zone) ?? Date.now() - DAY_MS;
+}
+
+/**
+ * The organization's SCIM (board Identity.dc.html, frame 8): the switch, the endpoint to copy, the
+ * one token (a new one replaces the old one at once), what SCIM did today, the groups and the
+ * last error.
+ */
 function ScimCard({ orgId }: { orgId: string }) {
   const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
+  const access = useAdminAccess();
   const { ago } = useAgo();
   const headingId = useId();
+  const switchId = useId();
+  const [since] = useState(() => startOfToday(timeZone));
   const current = useQuery({
-    queryKey: adminKeys.scimToken(orgId),
-    queryFn: () => fetchScimToken(orgId),
+    queryKey: [...adminKeys.scim(orgId), since],
+    queryFn: () => fetchScimStatus(orgId, since),
   });
   const [shown, setShown] = useState<CreatedToken | null>(null);
   const [asking, setAsking] = useState<"replace" | "revoke" | null>(null);
+  const [copied, setCopied] = useState(false);
   const notice = useNotice();
-  const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.scimToken(orgId) });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.scim(orgId) });
 
   const create = useMutation({
     mutationFn: () => createScimToken(orgId),
@@ -924,72 +947,184 @@ function ScimCard({ orgId }: { orgId: string }) {
       notice.show({ message: t("admin.serviceAccounts.scimRevoked") });
     },
   });
+  const toggle = useMutation({
+    mutationFn: ({ enabled }: { enabled: boolean; undo?: () => void }) =>
+      setScimEnabled(orgId, enabled),
+    onSuccess: async (_, { enabled, undo }) => {
+      await refresh();
+      notice.show({
+        message: t(
+          enabled ? "admin.serviceAccounts.scimTurnedOn" : "admin.serviceAccounts.scimTurnedOff",
+        ),
+        undo,
+      });
+    },
+    onError: (error) => notice.show({ message: errorMessage(t, error), error: true }),
+  });
 
-  const token = current.data;
+  async function copyEndpoint(endpoint: string) {
+    try {
+      await navigator.clipboard.writeText(endpoint);
+      setCopied(true);
+    } catch {
+      // Without clipboard access (an insecure origin) the address can still be selected by hand.
+      setCopied(false);
+    }
+  }
+
+  const status = current.data;
+  const token = status?.token ?? null;
   return (
     <section className="admin-sa-card" aria-labelledby={headingId}>
       <div className="admin-sa-card__head">
         <div className="admin-sa-card__title">
           <h2 id={headingId}>{t("admin.serviceAccounts.scimTitle")}</h2>
-          <p className="admin-sa-hint">{t("admin.serviceAccounts.scimLead")}</p>
+          <p className="admin-sa-hint" id={`${switchId}-lead`}>
+            {t("admin.serviceAccounts.scimLead")}
+          </p>
         </div>
+        {status === undefined ? null : (
+          <input
+            type="checkbox"
+            role="switch"
+            className="settings-switch"
+            checked={status.enabled}
+            aria-checked={status.enabled}
+            aria-label={t("admin.serviceAccounts.scimSwitch")}
+            aria-describedby={`${switchId}-lead`}
+            aria-disabled={toggle.isPending ? true : undefined}
+            onChange={(event) => {
+              if (!toggle.isPending) {
+                const enabled = event.currentTarget.checked;
+                toggle.mutate({ enabled, undo: () => toggle.mutate({ enabled: !enabled }) });
+              }
+            }}
+          />
+        )}
       </div>
       <div className="admin-sa-card__body">
-        {token === undefined ? (
+        {status === undefined ? (
           <LoadState error={current.error} onRetry={() => void current.refetch()} />
-        ) : token === null ? (
-          <div className="admin-sa-card__row admin-sa-card__row--plain">
-            <p className="admin-empty">{t("admin.serviceAccounts.scimNone")}</p>
-            <button
-              type="button"
-              className="button button--secondary button--small"
-              aria-disabled={create.isPending}
-              onClick={() => {
-                if (!create.isPending) {
-                  create.mutate();
-                }
-              }}
-            >
-              {t("admin.serviceAccounts.createToken")}
-            </button>
-          </div>
         ) : (
-          <div className="admin-sa-scim">
-            <div className="admin-table__inline">
-              <span className="admin-table__mono" translate="no">{`${token.prefix}…`}</span>
-              <span className="admin-badge">{t("admin.serviceAccounts.onlyToken")}</span>
+          <>
+            <div className="field">
+              <span className="field__label">{t("admin.serviceAccounts.scimEndpoint")}</span>
+              <div className="admin-sa-secret">
+                <span className="admin-sa-secret__text" translate="no">
+                  {status.endpoint}
+                </span>
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  aria-label={t("admin.serviceAccounts.scimCopyEndpoint")}
+                  onClick={() => void copyEndpoint(status.endpoint)}
+                >
+                  {t("admin.serviceAccounts.copy")}
+                </button>
+              </div>
+              <p className="visually-hidden" role="status">
+                {copied ? t("admin.serviceAccounts.copied") : ""}
+              </p>
             </div>
-            <p className="admin-sa-hint">
-              {t("admin.serviceAccounts.scimMeta", {
-                created: formatDateTime(token.createdAt, language, timeZone),
-                name: token.createdByName ?? "–",
-                expires: formatDateTime(token.expiresAt, language, timeZone),
-                used: ago(token.lastUsedAt),
-              })}
-            </p>
-            <div className="admin-row__actions">
-              <button
-                type="button"
-                className="button button--secondary button--small"
-                onClick={() => {
-                  create.reset();
-                  setAsking("replace");
-                }}
-              >
-                {t("admin.serviceAccounts.scimNew")}
-              </button>
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onClick={() => {
-                  revoke.reset();
-                  setAsking("revoke");
-                }}
-              >
-                {t("admin.serviceAccounts.revoke")}
-              </button>
-            </div>
-          </div>
+            {token === null ? (
+              <div className="admin-sa-card__row admin-sa-card__row--plain admin-sa-card__row--flush">
+                <p className="admin-empty">{t("admin.serviceAccounts.scimNone")}</p>
+                <button
+                  type="button"
+                  className="button button--secondary button--small"
+                  aria-disabled={create.isPending}
+                  onClick={() => {
+                    if (!create.isPending) {
+                      create.mutate();
+                    }
+                  }}
+                >
+                  {t("admin.serviceAccounts.createToken")}
+                </button>
+              </div>
+            ) : (
+              <div className="admin-sa-scim">
+                <div className="admin-table__inline">
+                  <span className="admin-table__mono" translate="no">{`${token.prefix}…`}</span>
+                  <span className="admin-badge">{t("admin.serviceAccounts.onlyToken")}</span>
+                </div>
+                <p className="admin-sa-hint">
+                  {t(
+                    token.lastUsedAt !== null && token.lastUsedAddress !== null
+                      ? "admin.serviceAccounts.scimMetaFrom"
+                      : "admin.serviceAccounts.scimMeta",
+                    {
+                      created: formatDateTime(token.createdAt, language, timeZone),
+                      name: token.createdByName ?? "–",
+                      expires: formatDateTime(token.expiresAt, language, timeZone),
+                      used: ago(token.lastUsedAt),
+                      address: token.lastUsedAddress ?? "",
+                    },
+                  )}
+                </p>
+                <div className="admin-row__actions">
+                  <button
+                    type="button"
+                    className="button button--secondary button--small"
+                    onClick={() => {
+                      create.reset();
+                      setAsking("replace");
+                    }}
+                  >
+                    {t("admin.serviceAccounts.scimNew")}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost button--small"
+                    onClick={() => {
+                      revoke.reset();
+                      setAsking("revoke");
+                    }}
+                  >
+                    {t("admin.serviceAccounts.revoke")}
+                  </button>
+                </div>
+              </div>
+            )}
+            <ul className="admin-sa-stats" aria-label={t("admin.serviceAccounts.scimActivity")}>
+              <li className="admin-sa-stat">
+                <span className="admin-sa-stat__label">{t("admin.serviceAccounts.scimToday")}</span>
+                <span className="admin-sa-stat__value">
+                  {t("admin.serviceAccounts.scimTodayValue", {
+                    created: status.stats.created,
+                    deactivated: status.stats.deactivated,
+                  })}
+                </span>
+                <span className="admin-sa-stat__note">
+                  {t("admin.serviceAccounts.scimTodayNote")}
+                </span>
+              </li>
+              <li className="admin-sa-stat">
+                <span className="admin-sa-stat__label">
+                  {t("admin.serviceAccounts.scimGroups")}
+                </span>
+                <span className="admin-sa-stat__value">{status.stats.groups}</span>
+                <span className="admin-sa-stat__note">
+                  {t("admin.serviceAccounts.scimGroupsMapped", {
+                    count: status.stats.mappedGroups,
+                  })}
+                </span>
+              </li>
+              <li className="admin-sa-stat">
+                <span className="admin-sa-stat__label">
+                  {t("admin.serviceAccounts.scimLastError")}
+                </span>
+                <span className="admin-sa-stat__value">
+                  {status.stats.lastError === null ? "–" : ago(status.stats.lastError.at)}
+                </span>
+                <span className="admin-sa-stat__note">
+                  {status.stats.lastError === null
+                    ? t("admin.serviceAccounts.scimNoError")
+                    : scimErrorText(t, status.stats.lastError)}
+                </span>
+              </li>
+            </ul>
+          </>
         )}
         {create.error === null || asking !== null ? null : (
           <p className="admin-error" role="alert">
@@ -998,6 +1133,13 @@ function ScimCard({ orgId }: { orgId: string }) {
         )}
         <p className="admin-sa-hint">{t("admin.serviceAccounts.scimHint")}</p>
       </div>
+      {access.has("audit:read") ? (
+        <div className="admin-sa-card__row">
+          <Link to="/admin/audit" className="button button--ghost button--small">
+            {t("admin.serviceAccounts.auditLink")}
+          </Link>
+        </div>
+      ) : null}
       {shown === null ? null : <TokenShownDialog created={shown} onClose={() => setShown(null)} />}
       <ConfirmDialog
         open={asking === "replace"}
@@ -1023,4 +1165,36 @@ function ScimCard({ orgId }: { orgId: string }) {
       </ConfirmDialog>
     </section>
   );
+}
+
+/** The reasons of refused SCIM requests the card names (docs/api/scim.md, "Reasons"). */
+const SCIM_REASONS = [
+  "scim.disabled",
+  "scim.body_invalid",
+  "scim.filter_unsupported",
+  "scim.path_invalid",
+  "scim.value_invalid",
+  "scim.read_only",
+  "scim.user_name_missing",
+  "scim.user_name_taken",
+  "scim.email_missing",
+  "scim.email_taken",
+  "scim.email_unconfirmed",
+  "scim.account_linked",
+  "scim.account_protected",
+  "scim.last_owner",
+  "scim.group_name_missing",
+  "scim.group_name_taken",
+  "scim.member_unknown",
+] as const;
+
+/** The last error in words: a refused token, or the reason of a refused change. */
+function scimErrorText(t: Translate, error: ScimLastError): string {
+  if (error.action === "api_token.refused") {
+    return t("admin.serviceAccounts.scimErrorToken");
+  }
+  const reason = SCIM_REASONS.find((known) => known === error.reason);
+  return reason === undefined
+    ? t("admin.serviceAccounts.scimErrorOther", { status: error.status ?? "–" })
+    : t(`admin.serviceAccounts.scimReason.${reason}`);
 }

@@ -124,15 +124,80 @@ where
     .await?)
 }
 
-/// Whether an "IdP entscheidet" mapping decides `user_id`'s role in `org_id`.
+/// The rules of every provider that give a role in `org_id`: the group mapping SCIM groups of that
+/// organization go through (docs/api/scim.md, "Groups and roles").
+pub async fn org_rules<'c, E>(db: E, org_id: &str) -> ApiResult<Vec<Rule>>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
+    Ok(sqlx::query_as(
+        "SELECT id, group_name, org_id, team_id, role, idp_decides FROM sso_group_mappings WHERE org_id = $1 \
+         ORDER BY created_at, id",
+    )
+    .bind(org_id)
+    .fetch_all(db)
+    .await?)
+}
+
+/// Whether an "IdP entscheidet" mapping (of a provider or of the organization's SCIM directory)
+/// decides `user_id`'s role in `org_id`.
 pub async fn is_managed(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str) -> ApiResult<bool> {
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM sso_managed WHERE org_id = $1 AND user_id = $2 AND team_id = '' LIMIT 1")
-            .bind(org_id)
-            .bind(user_id)
-            .fetch_optional(&mut *conn)
-            .await?;
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM sso_managed WHERE org_id = $1 AND user_id = $2 AND team_id = '' \
+         UNION ALL SELECT 1 FROM scim_managed WHERE org_id = $3 AND user_id = $4 AND team_id = ''",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await?;
     Ok(row.is_some())
+}
+
+/// Where the memberships an "IdP entscheidet" mapping gave are kept: per provider
+/// (`sso_managed`), or per organization for its SCIM directory (`scim_managed`).
+#[derive(Clone, Copy)]
+enum Managed<'a> {
+    Provider(&'a str),
+    Scim(&'a str),
+}
+
+impl Managed<'_> {
+    fn key(&self) -> &str {
+        match self {
+            Self::Provider(id) | Self::Scim(id) => id,
+        }
+    }
+
+    fn select(&self) -> &'static str {
+        match self {
+            Self::Provider(_) => "SELECT org_id, team_id FROM sso_managed WHERE user_id = $1 AND provider_id = $2",
+            Self::Scim(_) => "SELECT org_id, team_id FROM scim_managed WHERE user_id = $1 AND org_id = $2",
+        }
+    }
+
+    fn clear(&self) -> &'static str {
+        match self {
+            Self::Provider(_) => "DELETE FROM sso_managed WHERE user_id = $1 AND provider_id = $2",
+            Self::Scim(_) => "DELETE FROM scim_managed WHERE user_id = $1 AND org_id = $2",
+        }
+    }
+
+    /// `$1` the user, `$2` the key, `$3` the organization, `$4` the team; `$5` and `$6` the
+    /// organization and the user again.
+    fn insert(&self) -> &'static str {
+        match self {
+            Self::Provider(_) => {
+                "INSERT INTO sso_managed (user_id, provider_id, org_id, team_id) SELECT $1, $2, $3, $4 \
+                 WHERE EXISTS (SELECT 1 FROM org_members WHERE org_id = $5 AND user_id = $6)"
+            }
+            Self::Scim(_) => {
+                "INSERT INTO scim_managed (user_id, org_id, team_id) SELECT $1, $2, $4 \
+                 WHERE $3 = $2 AND EXISTS (SELECT 1 FROM org_members WHERE org_id = $5 AND user_id = $6)"
+            }
+        }
+    }
 }
 
 /// Writes `outcome` for `user_id` after a sign-in through `provider_id`, inside the sign-in's
@@ -145,14 +210,33 @@ pub async fn apply(
     outcome: &Outcome,
     now: i64,
 ) -> ApiResult<(Vec<Value>, BTreeSet<String>)> {
+    apply_to(conn, Managed::Provider(provider_id), user_id, outcome, now).await
+}
+
+/// `apply` for the SCIM directory of `org_id`: `outcome` names only that organization, and what
+/// "IdP entscheidet" gave is kept per organization (`scim_managed`).
+pub async fn apply_scim(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    user_id: &str,
+    outcome: &Outcome,
+    now: i64,
+) -> ApiResult<(Vec<Value>, BTreeSet<String>)> {
+    debug_assert!(outcome.orgs.iter().all(|o| o.org_id == org_id), "SCIM maps into its own organization only");
+    apply_to(conn, Managed::Scim(org_id), user_id, outcome, now).await
+}
+
+async fn apply_to(
+    conn: &mut sqlx::AnyConnection,
+    managed: Managed<'_>,
+    user_id: &str,
+    outcome: &Outcome,
+    now: i64,
+) -> ApiResult<(Vec<Value>, BTreeSet<String>)> {
     let mut changes = Vec::new();
     let mut touched = BTreeSet::new();
     let before: Vec<(String, String)> =
-        sqlx::query_as("SELECT org_id, team_id FROM sso_managed WHERE user_id = $1 AND provider_id = $2")
-            .bind(user_id)
-            .bind(provider_id)
-            .fetch_all(&mut *conn)
-            .await?;
+        sqlx::query_as(managed.select()).bind(user_id).bind(managed.key()).fetch_all(&mut *conn).await?;
     let mut managed_now: BTreeSet<(String, String)> = BTreeSet::new();
     for org in &outcome.orgs {
         // A role the provider decided before follows the groups now, also downwards.
@@ -265,25 +349,18 @@ pub async fn apply(
             }
         }
     }
-    sqlx::query("DELETE FROM sso_managed WHERE user_id = $1 AND provider_id = $2")
-        .bind(user_id)
-        .bind(provider_id)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query(managed.clear()).bind(user_id).bind(managed.key()).execute(&mut *conn).await?;
     for (org_id, team_id) in &managed_now {
         // A membership ended by hand meanwhile is not managed any more.
-        sqlx::query(
-            "INSERT INTO sso_managed (user_id, provider_id, org_id, team_id) SELECT $1, $2, $3, $4 \
-             WHERE EXISTS (SELECT 1 FROM org_members WHERE org_id = $5 AND user_id = $6)",
-        )
-        .bind(user_id)
-        .bind(provider_id)
-        .bind(org_id)
-        .bind(team_id)
-        .bind(org_id)
-        .bind(user_id)
-        .execute(&mut *conn)
-        .await?;
+        sqlx::query(managed.insert())
+            .bind(user_id)
+            .bind(managed.key())
+            .bind(org_id)
+            .bind(team_id)
+            .bind(org_id)
+            .bind(user_id)
+            .execute(&mut *conn)
+            .await?;
     }
     Ok((changes, touched))
 }

@@ -73,7 +73,9 @@ const MEMBER_COLUMNS: &str = "SELECT u.id AS user_id, u.email, u.name, m.role, m
      (SELECT COUNT(*) FROM user_passkeys p WHERE p.user_id = u.id) AS sf_passkeys, \
      (SELECT l.locked_until FROM second_factor_lockouts l WHERE l.user_id = u.id) AS sf_locked_until, \
      CASE WHEN EXISTS (SELECT 1 FROM sso_managed s WHERE s.user_id = m.user_id AND s.org_id = m.org_id \
-     AND s.team_id = '') THEN 1 ELSE 0 END AS idp_managed FROM org_members m JOIN users u ON u.id = m.user_id";
+     AND s.team_id = '') OR EXISTS (SELECT 1 FROM scim_managed c WHERE c.user_id = m.user_id \
+     AND c.org_id = m.org_id AND c.team_id = '') THEN 1 ELSE 0 END AS idp_managed \
+     FROM org_members m JOIN users u ON u.id = m.user_id";
 
 /// Fills in the members' second factor: whether the server or this organization requires one of
 /// them, what they have and a running lockout.
@@ -355,11 +357,12 @@ pub async fn remove_membership(conn: &mut sqlx::AnyConnection, org_id: &str, use
         .bind(user_id)
         .execute(&mut *conn)
         .await?;
-    sqlx::query("DELETE FROM sso_managed WHERE org_id = $1 AND user_id = $2")
-        .bind(org_id)
-        .bind(user_id)
-        .execute(&mut *conn)
-        .await?;
+    for sql in [
+        "DELETE FROM sso_managed WHERE org_id = $1 AND user_id = $2",
+        "DELETE FROM scim_managed WHERE org_id = $1 AND user_id = $2",
+    ] {
+        sqlx::query(sql).bind(org_id).bind(user_id).execute(&mut *conn).await?;
+    }
     sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(org_id)
         .bind(user_id)

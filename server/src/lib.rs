@@ -30,6 +30,7 @@ pub mod net;
 pub mod plugins;
 pub mod routes;
 pub mod saved_analyses;
+pub mod scim;
 pub mod secrets;
 pub mod server;
 pub mod service;

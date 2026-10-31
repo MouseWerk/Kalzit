@@ -40,6 +40,8 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/scim-token", scim, scim_token),
         route(Method::POST, "/orgs/{orgId}/scim-token", scim, create_scim_token),
         route(Method::DELETE, "/orgs/{orgId}/scim-token", scim, revoke_scim_token),
+        route(Method::GET, "/orgs/{orgId}/scim", scim, scim_status),
+        route(Method::PUT, "/orgs/{orgId}/scim", scim, set_scim),
     ]
 }
 
@@ -731,6 +733,162 @@ async fn revoke_scim_token(
     }
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// How far back "the last error" of SCIM looks.
+const LAST_ERROR_MS: i64 = 30 * 86_400_000;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScimStatus {
+    /// The organization's switch; off refuses every SCIM request (`scim.disabled`).
+    enabled: bool,
+    /// The base URL to enter in the directory.
+    endpoint: String,
+    token: Option<ApiToken>,
+    stats: ScimStats,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScimStats {
+    /// The start of the counted span (`since`).
+    since: i64,
+    created: i64,
+    deactivated: i64,
+    /// Active SCIM groups, and those of them a group mapping of this organization names.
+    groups: i64,
+    mapped_groups: i64,
+    /// The latest refused SCIM request or refused SCIM token of the last 30 days.
+    last_error: Option<ScimLastError>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScimLastError {
+    at: i64,
+    /// The audit action: `scim.request_refused` or `api_token.refused`.
+    action: String,
+    reason: Option<String>,
+    status: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScimStatusQuery {
+    /// Unix ms: count creations and deactivations from here (the start of the viewer's day);
+    /// within the last 31 days, 24 hours ago by default.
+    since: Option<i64>,
+}
+
+async fn load_scim_status(
+    state: &AppState,
+    info: &RequestInfo,
+    org_id: &str,
+    since: Option<i64>,
+) -> ApiResult<ScimStatus> {
+    let now = state.clock.now_ms();
+    let since = since.unwrap_or(now - 86_400_000).clamp(now - 31 * 86_400_000, now);
+    let db = &state.read_db;
+    let count = |action: &'static str| {
+        sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM audit_events WHERE org_id = $1 AND action = $2 AND created_at >= $3",
+        )
+        .bind(org_id)
+        .bind(action)
+        .bind(since)
+        .fetch_one(db)
+    };
+    let (created,) = count("scim.user_created").await?;
+    let (deactivated,) = count("scim.user_deactivated").await?;
+    let (groups,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM scim_groups WHERE org_id = $1 AND deactivated_at IS NULL")
+            .bind(org_id)
+            .fetch_one(db)
+            .await?;
+    let (mapped_groups,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM scim_groups g WHERE g.org_id = $1 AND g.deactivated_at IS NULL AND EXISTS \
+         (SELECT 1 FROM sso_group_mappings m WHERE m.org_id = $2 \
+          AND (m.group_name = g.display_name OR m.group_name = g.external_id))",
+    )
+    .bind(org_id)
+    .bind(org_id)
+    .fetch_one(db)
+    .await?;
+    let last: Option<(i64, String, String)> = sqlx::query_as(
+        "SELECT created_at, action, summary FROM audit_events WHERE org_id = $1 AND created_at >= $2 \
+         AND (action = 'scim.request_refused' OR (action = 'api_token.refused' AND resource_id IN \
+         (SELECT id FROM api_tokens WHERE org_id = $3 AND kind = 'scim'))) ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(org_id)
+    .bind(now - LAST_ERROR_MS)
+    .bind(org_id)
+    .fetch_optional(db)
+    .await?;
+    let last_error = last.map(|(at, action, summary)| {
+        let summary: serde_json::Value = serde_json::from_str(&summary).unwrap_or_default();
+        ScimLastError {
+            at,
+            action,
+            reason: summary["reason"].as_str().map(str::to_string),
+            status: summary["status"].as_i64(),
+        }
+    });
+    Ok(ScimStatus {
+        enabled: crate::scim::enabled(db, org_id).await?,
+        endpoint: crate::scim::base_url(state, info, org_id),
+        token: current_scim(db, org_id).await?,
+        stats: ScimStats { since, created, deactivated, groups, mapped_groups, last_error },
+    })
+}
+
+/// The organization's SCIM: switch, base URL, token and what it did lately.
+async fn scim_status(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
+    QueryParams(q): QueryParams<ScimStatusQuery>,
+) -> ApiResult<Json<ScimStatus>> {
+    ensure_scim_manager(&ctx, caller.as_deref())?;
+    Ok(Json(load_scim_status(&state, &info, &ctx.org_id, q.since).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScimSwitch {
+    enabled: bool,
+}
+
+/// Turns SCIM on or off for the organization; the token stays. Applies at once (undo turns it back).
+async fn set_scim(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
+    JsonBody(req): JsonBody<ScimSwitch>,
+) -> ApiResult<Json<ScimStatus>> {
+    ensure_scim_manager(&ctx, caller.as_deref())?;
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
+    let before = crate::scim::enabled(&mut *tx, &ctx.org_id).await?;
+    if before != req.enabled {
+        sqlx::query(
+            "INSERT INTO scim_orgs (org_id, enabled, updated_at) VALUES ($1, $2, $3) \
+             ON CONFLICT (org_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at",
+        )
+        .bind(&ctx.org_id)
+        .bind(i64::from(req.enabled))
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
+        let action = if req.enabled { "scim.turned_on" } else { "scim.turned_off" };
+        audit(&mut tx, &actor, Some(&ctx.org_id), action, ("org", &ctx.org_id), json!({ "orgId": ctx.org_id })).await?;
+    }
+    crate::db::commit(tx).await?;
+    Ok(Json(load_scim_status(&state, &info, &ctx.org_id, None).await?))
 }
 
 #[cfg(test)]
