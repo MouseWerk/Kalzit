@@ -1242,3 +1242,189 @@ async fn service_accounts_never_sign_in_or_link_through_a_provider() {
     assert_eq!(r.reason(), "mail.address_invalid", "{}", r.body);
     app.finish().await;
 }
+
+/// Creates a SCIM user in `org` with its SCIM token and answers its id.
+async fn scim_user(app: &TestApp, org: &str, token: &str, user_name: &str) -> String {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/scim/v2/o/{org}/Users"))
+        .header(header::HOST, "kalzit.test")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/scim+json")
+        .body(Body::from(json!({ "userName": user_name }).to_string()))
+        .unwrap();
+    let res = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice::<Value>(&bytes).unwrap()["id"].as_str().unwrap().to_string()
+}
+
+/// SCIM's word for an address counts for a single sign-on into the account it made, and for
+/// nothing else: the account stays unconfirmed, nobody adds it elsewhere by its address, and an
+/// unused one never blocks a mailed invitation of another organization (docs/api/scim.md,
+/// "Accounts").
+#[tokio::test]
+async fn scim_accounts_link_at_sign_in_and_stay_unconfirmed_for_everything_else() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, admin_id, org) = app.setup().await;
+    add_provider(&app, &issuer, &admin).await;
+    let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let token = r.body["token"].as_str().unwrap().to_string();
+
+    // Entra ID SCIM, then Entra ID OIDC with the same address: linked at once.
+    let sina = scim_user(&app, &org, &token, "sina@example.de").await;
+    let who = Who { sub: "sub-sina", email: "sina@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    let session = session_of(&r);
+    let me = app.get("/api/me", &session).await;
+    assert_eq!(me.body["id"], json!(sina), "{}", me.body);
+    assert_eq!(me.body["emailConfirmed"], json!(false), "the address stays unconfirmed");
+    // A provider that did not verify the address gets nothing.
+    let other = scim_user(&app, &org, &token, "olaf@example.de").await;
+    let who = Who { sub: "sub-olaf", email: "olaf@example.de", verified: false, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(outcome_of(&r), "email_taken", "{}", r.location());
+    let linked: Option<(String,)> = sqlx::query_as("SELECT user_id FROM sso_identities WHERE user_id = $1")
+        .bind(&other)
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(linked.is_none());
+
+    // Nobody adds the address to another organization.
+    let r = app.post("/api/admin/orgs", json!({ "name": "Werk Nord", "ownerUserId": admin_id }), &admin).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let nord = r.body["id"].as_str().unwrap().to_string();
+    let r = app
+        .post(&format!("/api/orgs/{nord}/members"), json!({ "email": "sina@example.de", "role": "viewer" }), &admin)
+        .await;
+    assert_eq!(r.reason(), "mail.email_unconfirmed", "{}", r.body);
+
+    // An unused account SCIM made never blocks a mailed invitation of another organization: the
+    // invited person takes it over, and SCIM's ownership ends.
+    let pia = scim_user(&app, &org, &token, "pia@example.de").await;
+    let invitation = invite(&app, &admin, &nord, "pia@example.de").await;
+    let r = app.send(Method::POST, "/api/auth/invitation", Some(json!({ "token": invitation })), None).await;
+    assert_eq!(r.body["accountExists"], json!(false), "{}", r.body);
+    let accept = json!({ "token": invitation, "name": "Pia Paulsen", "password": PASSWORD });
+    let r = app.send(Method::POST, "/api/auth/invitation/accept", Some(accept), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (confirmed, has_password, owned): (i64, i64, i64) = sqlx::query_as(
+        "SELECT u.email_confirmed, CASE WHEN u.password_hash IS NULL THEN 0 ELSE 1 END, s.created_account \
+         FROM users u JOIN scim_users s ON s.user_id = u.id WHERE u.id = $1",
+    )
+    .bind(&pia)
+    .fetch_one(&app.state.db)
+    .await
+    .unwrap();
+    assert_eq!((confirmed, has_password, owned), (1, 1, 0));
+    let (members,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
+        .bind(&nord)
+        .bind(&pia)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(members, 1);
+    // Owned no more: another identity is not linked to it by SCIM's word.
+    sqlx::query("UPDATE users SET email_confirmed = 0 WHERE id = $1").bind(&pia).execute(&app.state.db).await.unwrap();
+    let who = Who { sub: "sub-pia", email: "pia@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(outcome_of(&r), "email_taken", "{}", r.location());
+    app.finish().await;
+}
+
+/// The cross-organization chain: once someone signs in to an account SCIM made, its SCIM can no
+/// longer give it another person's address, so that person's sign-in never lands in it.
+#[tokio::test]
+async fn a_signed_in_scim_account_never_takes_another_persons_address() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, org) = app.setup().await;
+    add_provider(&app, &issuer, &admin).await;
+    let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
+    let token = r.body["token"].as_str().unwrap().to_string();
+
+    let x = scim_user(&app, &org, &token, "x@example.de").await;
+    let who = Who { sub: "sub-x", email: "x@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    // SCIM tries to give X the victim's address.
+    let req = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/scim/v2/o/{org}/Users/{x}"))
+        .header(header::HOST, "kalzit.test")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/scim+json")
+        .body(Body::from(
+            json!({ "Operations": [{ "op": "replace", "path": "emails",
+                    "value": [{ "value": "victim@example.de", "primary": true }] }] })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let (email,): (String,) =
+        sqlx::query_as("SELECT email FROM users WHERE id = $1").bind(&x).fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(email, "x@example.de", "the account keeps its address");
+    // The victim's sign-in gets an account of its own.
+    let victim = Who { sub: "sub-victim", email: "victim@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &victim, |_| {}).await;
+    let session = session_of(&r);
+    let me = app.get("/api/me", &session).await;
+    assert_ne!(me.body["id"], json!(x), "{}", me.body);
+    app.finish().await;
+}
+
+/// The first sign-in ends SCIM's ownership at once: when the provider and with it the identity are
+/// gone right after, with no SCIM write in between, SCIM still cannot change the account's address.
+#[tokio::test]
+async fn the_first_link_ends_scim_ownership_even_when_the_identity_goes() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, org) = app.setup().await;
+    let provider = add_provider(&app, &issuer, &admin).await;
+    let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
+    let token = r.body["token"].as_str().unwrap().to_string();
+
+    let rua = scim_user(&app, &org, &token, "rua@example.de").await;
+    let who = Who { sub: "sub-rua", email: "rua@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    let (owned,): (i64,) = sqlx::query_as("SELECT created_account FROM scim_users WHERE user_id = $1")
+        .bind(&rua)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(owned, 0, "the link ended the ownership");
+    sqlx::query("DELETE FROM sso_providers WHERE id = $1").bind(&provider).execute(&app.state.db).await.unwrap();
+    let (identities,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_identities WHERE user_id = $1")
+        .bind(&rua)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(identities, 0);
+    let req = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/scim/v2/o/{org}/Users/{rua}"))
+        .header(header::HOST, "kalzit.test")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/scim+json")
+        .body(Body::from(
+            json!({ "Operations": [{ "op": "replace", "path": "emails",
+                    "value": [{ "value": "other@example.de", "primary": true }] }] })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let (email,): (String,) =
+        sqlx::query_as("SELECT email FROM users WHERE id = $1").bind(&rua).fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(email, "rua@example.de");
+    app.finish().await;
+}

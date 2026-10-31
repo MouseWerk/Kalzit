@@ -129,6 +129,56 @@ describe("service accounts", () => {
     expect(sent(server, "POST").filter((path) => path.endsWith("/scim-token"))).toHaveLength(1);
   });
 
+  it("shows the SCIM endpoint, what SCIM did today and the groups, with the audit link", async () => {
+    await openAdmin("/admin/service-accounts");
+    const card = await screen.findByRole("region", { name: "SCIM provisioning" });
+    expect(
+      await within(card).findByText("https://kalzit.mueller.internal/scim/v2/o/o1"),
+    ).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Copy the endpoint" })).toBeTruthy();
+    const activity = within(card).getByRole("list", { name: "SCIM activity" });
+    expect(within(activity).getByText("3 / 1")).toBeTruthy();
+    expect(
+      within(activity).getByText("created / deactivated · 2 existing accounts linked"),
+    ).toBeTruthy();
+    expect(within(activity).getByText("7")).toBeTruthy();
+    expect(within(activity).getByText("5 of them mapped")).toBeTruthy();
+    expect(within(activity).getByText("none in 30 days")).toBeTruthy();
+    expect(
+      within(card).getByRole("link", { name: "View in the audit log" }).getAttribute("href"),
+    ).toBe("/admin/audit");
+  });
+
+  it("names the last refused SCIM request by its reason", async () => {
+    const { server } = await openAdmin("/admin/service-accounts", {
+      setupServer: (fake) => {
+        fake.areas.serviceAccounts.scimStats.lastError = {
+          at: Date.now() - 60_000,
+          action: "scim.request_refused",
+          reason: "scim.account_protected",
+          status: 409,
+        };
+      },
+    });
+    const card = await screen.findByRole("region", { name: "SCIM provisioning" });
+    expect(await within(card).findByText("A protected account")).toBeTruthy();
+    expect(server.calls.some((call) => /\/scim\?since=\d+$/.test(call.path))).toBe(true);
+  });
+
+  it("turns SCIM off at once and offers to undo it", async () => {
+    const { user, server } = await openAdmin("/admin/service-accounts");
+    const card = await screen.findByRole("region", { name: "SCIM provisioning" });
+    const toggle = await within(card).findByRole("switch", { name: "SCIM on" });
+    expect(toggle).toHaveProperty("checked", true);
+    await user.click(toggle);
+    expect(await screen.findByText(/SCIM is off/)).toBeTruthy();
+    expect(server.areas.serviceAccounts.scimEnabled).toBe(false);
+    expect(server.calls.find((call) => call.method === "PUT")?.body).toEqual({ enabled: false });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("SCIM is on.")).toBeTruthy();
+    expect(server.areas.serviceAccounts.scimEnabled).toBe(true);
+  });
+
   it("offers the SCIM token only to someone with an admin's permissions", async () => {
     await openAdmin("/admin/service-accounts", {
       permissions: ["serviceaccounts:write", "users:write", "dashboards:read"],

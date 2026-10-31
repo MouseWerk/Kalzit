@@ -786,6 +786,49 @@
     background: var(--bg-surface);
   }
 
+  .admin-sa-card__row--flush {
+    padding: 0;
+  }
+
+  /* What SCIM did: three quiet figures side by side, one under the other on a narrow card. */
+  .admin-sa-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .admin-sa-stat {
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+
+  .admin-sa-stat__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .admin-sa-stat__value {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-medium);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-sa-stat__note {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+
   .admin-sa-expiry {
     display: grid;
     gap: var(--space-2);

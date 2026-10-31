@@ -197,7 +197,19 @@ async fn update(
             .bind(&user_id)
             .execute(&mut *tx)
             .await?;
+        if is_admin {
+            // A server admin's account is out of SCIM's hands for good (docs/api/scim.md).
+            crate::scim::release(&mut tx, &user_id, None).await?;
+        }
         fields.push("isServerAdmin");
+    }
+    if req.disabled.is_some() {
+        // An admin decided whether the account is locked: a later SCIM reactivation must not undo
+        // that, so SCIM's own lock is forgotten.
+        sqlx::query("UPDATE scim_users SET locked_account = 0 WHERE user_id = $1")
+            .bind(&user_id)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(hash) = &hash {
         sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
@@ -205,6 +217,8 @@ async fn update(
             .bind(&user_id)
             .execute(&mut *tx)
             .await?;
+        // A password is a sign-in method: no SCIM owns the account any more.
+        crate::scim::release(&mut tx, &user_id, None).await?;
         // A new password ends the account's sessions, except the one of the admin setting their
         // own password here.
         let keep = session::read_cookie(&headers, info.https).filter(|_| user_id == admin.id);

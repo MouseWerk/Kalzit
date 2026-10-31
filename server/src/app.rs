@@ -244,6 +244,8 @@ pub fn router(state: AppState) -> Router {
         // The redirect URI of identity providers (docs/api/sso.md); outside `/api`, since it is a
         // page the browser is sent to.
         .route(routes::sso::CALLBACK_ROUTE, get(routes::sso::callback))
+        // SCIM provisioning (docs/api/scim.md); its requests sign in with the SCIM token.
+        .merge(crate::scim::router())
         // SAML: Kalzit's metadata per provider, the assertion consumer service (an HTTP-POST from
         // the provider) and the step back into the browser that started the sign-in.
         .route(routes::saml::METADATA_ROUTE, get(routes::saml::metadata))

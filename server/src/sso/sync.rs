@@ -594,6 +594,10 @@ async fn update(
                 .bind(&account.user_id)
                 .execute(&mut *tx)
                 .await?;
+            if trusted {
+                // A confirmed address: no SCIM owns the account any more (docs/api/scim.md).
+                crate::scim::release(&mut tx, &account.user_id, None).await?;
+            }
             changed = true;
         }
     }
@@ -631,15 +635,19 @@ async fn update(
             .await?;
     }
     if enable {
-        sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(&account.user_id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM ldap_deactivations WHERE user_id = $1 AND provider_id = $2")
             .bind(&account.user_id)
             .bind(&provider.id)
             .execute(&mut *tx)
             .await?;
-        let summary = json!({ "userId": account.user_id, "cause": "ldap_sync", "providerId": provider.id });
-        audit_system(&mut tx, None, "user.enabled", ("user", &account.user_id), summary, now).await?;
-        counts.reactivated += 1;
+        // The sync lifts its own lock only: an account SCIM deactivated stays locked
+        // (docs/api/scim.md, "Reactivating").
+        if !crate::scim::locked_by_scim(&mut tx, &account.user_id).await? {
+            sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(&account.user_id).execute(&mut *tx).await?;
+            let summary = json!({ "userId": account.user_id, "cause": "ldap_sync", "providerId": provider.id });
+            audit_system(&mut tx, None, "user.enabled", ("user", &account.user_id), summary, now).await?;
+            counts.reactivated += 1;
+        }
     }
     // The memberships follow the groups as at a sign-in (a refused outcome only takes away what
     // the provider decided), recorded as the sync's change.

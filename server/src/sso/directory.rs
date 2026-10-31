@@ -244,7 +244,8 @@ pub async fn enable_sync_disabled(
         .execute(&mut *conn)
         .await?
         .rows_affected();
-    if removed == 0 {
+    // An account SCIM deactivated stays locked; the sync's record of its own lock is gone all the same.
+    if removed == 0 || crate::scim::locked_by_scim(&mut *conn, user_id).await? {
         return Ok(false);
     }
     sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
