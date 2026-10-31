@@ -35,6 +35,7 @@
   "validation.orgNameRequired": "Gib einen Namen für die Organisation ein.",
   "validation.nameRequired": "Gib deinen Namen ein.",
   "validation.emailRequired": "Gib deine E-Mail-Adresse ein.",
+  "validation.loginRequired": "Gib deine E-Mail-Adresse oder deinen Benutzernamen ein.",
   "validation.emailInvalid": "Gib eine E-Mail-Adresse wie name@beispiel.de ein.",
   "validation.passwordRequired": "Gib dein Passwort ein.",
   "validation.passwordTooShort": "Das Passwort braucht mindestens {count} Zeichen.",

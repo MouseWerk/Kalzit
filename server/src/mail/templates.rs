@@ -302,6 +302,46 @@ pub fn break_glass_sign_in(lang: Lang, name: &str, address: &str, at: &str, host
     Content { text: text(&paragraphs, None, &footer), html: html(&paragraphs, None, &footer), subject }
 }
 
+/// To every server admin: the sync of an LDAP provider halted before locking more accounts than
+/// its threshold allows (docs/api/sso.md, "Sync"). Nothing changed; an admin decides.
+pub fn ldap_sync_halted(
+    lang: Lang,
+    provider: &str,
+    would: usize,
+    accounts: usize,
+    threshold: u8,
+    host: &str,
+) -> Content {
+    let percent = if accounts == 0 { 100 } else { (would * 100).div_ceil(accounts) };
+    let (subject, paragraphs, footer) = match lang {
+        Lang::De => (
+            format!("Abgleich von {provider} angehalten"),
+            vec![
+                format!(
+                    "Der Abgleich mit dem LDAP-Verzeichnis {provider} bei {host} hätte {would} von {accounts} Konten \
+                     gesperrt ({percent} %, Grenze {threshold} %). Er hat nichts geändert."
+                ),
+                "Prüf die Liste unter Verwaltung > Anmeldung beim Anbieter. Dort kannst du sie trotzdem anwenden."
+                    .to_string(),
+            ],
+            "Oft steckt ein falscher Filter oder ein leerer Basis-DN dahinter.".to_string(),
+        ),
+        Lang::En => (
+            format!("Sync of {provider} halted"),
+            vec![
+                format!(
+                    "The sync with the LDAP directory {provider} at {host} would have locked {would} of {accounts} \
+                     accounts ({percent} %, limit {threshold} %). It changed nothing."
+                ),
+                "Check the list under Administration > Sign-in at the provider. You can apply it anyway there."
+                    .to_string(),
+            ],
+            "A wrong filter or an empty base DN is often the cause.".to_string(),
+        ),
+    };
+    Content { text: text(&paragraphs, None, &footer), html: html(&paragraphs, None, &footer), subject }
+}
+
 /// The link that confirms an account's address (`routes::email_confirmation`).
 pub fn confirm_email(lang: Lang, link: &str, host: &str) -> Content {
     let (subject, paragraphs, button, footer) = match lang {

@@ -1,6 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sampleProvider } from "../features/admin/sso/test/fakeSso";
+import { sampleLdapProvider, sampleProvider } from "../features/admin/sso/test/fakeSso";
 import { leavePage } from "../lib/leavePage";
 import { type FakeServer, installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
@@ -153,5 +153,62 @@ describe("sign-in with identity providers", () => {
       await screen.findByText("Test sign-in finished. You can close this window."),
     ).toBeTruthy();
     expect(close).toHaveBeenCalled();
+  });
+});
+
+describe("sign-in with an LDAP directory", () => {
+  async function signInAs(login: string) {
+    const { user, location } = renderApp("/login");
+    const field = await screen.findByLabelText("Email or username");
+    expect(
+      screen.getByText("An account from the directory Verzeichnis Zentrale or a local account."),
+    ).toBeTruthy();
+    await user.click(field);
+    await user.paste(login);
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste(TEST_PASSWORD);
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    return { user, location };
+  }
+
+  it("asks for an email or user name in the open form, without a button for the directory", async () => {
+    const server = installFakeServer();
+    server.areas.sso.providers = [sampleLdapProvider()];
+    const { location } = await signInAs("l.hoffmann");
+    expect(screen.queryByRole("link", { name: /Verzeichnis Zentrale/ })).toBeNull();
+    await waitFor(() => expect(location().pathname).toBe("/"));
+    expect(server.state.signedIn).toBe(true);
+  });
+
+  it("keeps the form for directory accounts next to the provider buttons", async () => {
+    const server = installFakeServer();
+    server.areas.sso.providers = [sampleProvider(), sampleLdapProvider({ position: 1 })];
+    server.areas.sso.passwordForm = "hidden";
+    server.areas.sso.localPassword = "off";
+    const { user } = renderApp("/login");
+    await screen.findByRole("link", { name: "Sign in with Müller SSO" });
+    expect(screen.queryByRole("link", { name: /Verzeichnis Zentrale/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Sign in with password" }));
+    expect(screen.getByLabelText("Email or username")).toBeTruthy();
+  });
+
+  it("says when the directory is not answering", async () => {
+    const server = installFakeServer();
+    server.areas.sso.providers = [sampleLdapProvider()];
+    server.areas.sso.directoryAnswer = "unreachable";
+    await signInAs("l.hoffmann");
+    expect(
+      await screen.findByText("The directory Verzeichnis Zentrale is not answering right now."),
+    ).toBeTruthy();
+  });
+
+  it("says why the directory account is refused, with the error id", async () => {
+    const server = installFakeServer();
+    server.areas.sso.providers = [sampleLdapProvider()];
+    server.areas.sso.directoryAnswer = { outcome: "unmapped", ref: "7Q2K-91XD" };
+    await signInAs("l.hoffmann");
+    expect(await screen.findByText("There is no access here for your account.")).toBeTruthy();
+    expect(screen.getByText(/Error ID 7Q2K-91XD for your admins\.$/)).toBeTruthy();
+    expect(server.state.signedIn).toBe(false);
   });
 });
