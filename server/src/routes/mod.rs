@@ -73,16 +73,16 @@ pub fn all() -> Vec<table::RouteDef> {
         folders::routes(),
         dashboards::routes(),
         analyses::routes(),
-        long_running(annotations::routes()),
+        annotations::routes(),
         library_panels::routes(),
         playlists::routes(),
-        long_running(datasources::routes()),
-        long_running(query::routes()),
+        datasources::routes(),
+        query::routes(),
         query_cache::routes(),
         instances::routes(),
         explore_history::routes(),
-        long_running(live::routes()),
-        long_running(export::routes()),
+        live::routes(),
+        export::routes(),
         members::routes(),
         service_accounts::routes(),
         teams::routes(),
@@ -96,11 +96,11 @@ pub fn all() -> Vec<table::RouteDef> {
         panel_state::routes(),
         panel_plugins::routes(),
         preferences::routes(),
-        long_running(updates::routes()),
+        updates::routes(),
         ai::routes(),
-        long_running(ai_calls::routes()),
-        long_running(ai_chat::routes()),
-        long_running(plugins::routes()),
+        ai_calls::routes(),
+        ai_chat::routes(),
+        plugins::routes(),
         // Mail, invitations and password reset (docs/api/mail.md).
         mail::routes(),
         invitations::routes(),
@@ -111,13 +111,6 @@ pub fn all() -> Vec<table::RouteDef> {
     .into_iter()
     .flatten()
     .collect()
-}
-
-/// Routes that bound their own work or stream (`RouteDef::long_running`): data source queries,
-/// tests and schemas (the query timeout, up to an hour), annotations from queries, live updates, exports,
-/// AI requests and chat answers, update downloads and backups, plugin installs.
-fn long_running(defs: Vec<table::RouteDef>) -> Vec<table::RouteDef> {
-    defs.into_iter().map(table::RouteDef::long_running).collect()
 }
 
 const MAX_NAME_CHARS: usize = 100;
@@ -265,11 +258,24 @@ mod tests {
             (Method::POST, "/orgs/{orgId}/ai/chats/{chatId}/messages"),
             (Method::POST, "/orgs/{orgId}/query"),
             (Method::POST, "/admin/updates/upload"),
+            (Method::POST, "/admin/updates/backups"),
+            (Method::POST, "/admin/plugins"),
+            (Method::POST, "/admin/ai/providers/{providerId}/test"),
+            (Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema"),
         ] {
             assert!(!timed(method.clone(), path), "{method} {path} has no request timeout");
         }
         assert!(timed(Method::GET, "/orgs/{orgId}/dashboards"));
         assert!(timed(Method::POST, "/orgs/{orgId}/dashboards"));
+        // Plain reads and changes in the same modules keep it.
+        for (method, path) in [
+            (Method::GET, "/orgs/{orgId}/datasources"),
+            (Method::GET, "/orgs/{orgId}/ai/chats"),
+            (Method::PATCH, "/admin/plugin-host"),
+            (Method::PUT, "/admin/updates/schedule"),
+        ] {
+            assert!(timed(method.clone(), path), "{method} {path} has the request timeout");
+        }
     }
 
     #[test]

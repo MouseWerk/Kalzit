@@ -18,6 +18,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
 futures-util = "0.3.34"
+http-body = "1.1.0"
 hex = "0.4.3"
 # ACME (RFC 8555) for automatic certificates: the protocol client, with its requests going through
 # Kalzit's own HTTP client (`acme::transport`). rcgen makes the certificate requests and the
@@ -107,6 +108,8 @@ rcgen = "0.14.10"
 
 [dev-dependencies]
 http-body-util = "0.1.5"
+# An HTTP/2 client for the connection limit tests; the hyper the server already uses.
+hyper = { version = "1.12.0", features = ["client", "http1", "http2"] }
 # The software authenticator of the passkey tests: P-256 keys and ECDSA signatures (ES256).
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
 # Packages the example plugin in the plugin contract tests.

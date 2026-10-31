@@ -341,8 +341,13 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
 /// Binds the listeners of a started server; on an error the ones already bound are dropped.
 async fn listen(config: &Config, state: &AppState) -> Result<Running> {
     let app = router(state.clone());
-    // One cap for all listeners together (`http_limits`).
-    let limit = crate::http_limits::ConnectionLimit::new(crate::http_limits::MAX_CONNECTIONS);
+    // One cap for all listeners together and per client address, with the connection timeouts (`http_limits`).
+    let limit = crate::http_limits::ConnectionLimit::new(
+        crate::http_limits::MAX_CONNECTIONS,
+        crate::http_limits::MAX_CONNECTIONS_PER_ADDRESS,
+        &config.security.trusted_proxies,
+        crate::http_limits::Timeouts::default(),
+    );
     let mut running = Running {
         http_addr: None,
         https_addr: None,

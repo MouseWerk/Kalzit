@@ -46,7 +46,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::DELETE, "/orgs/{orgId}/ai/chats", OrgMember, delete_all),
         route(Method::GET, "/orgs/{orgId}/ai/chats/{chatId}", OrgMember, get_one),
         route(Method::DELETE, "/orgs/{orgId}/ai/chats/{chatId}", OrgMember, delete_one),
-        route(Method::POST, "/orgs/{orgId}/ai/chats/{chatId}/messages", OrgMember, ask),
+        route(Method::POST, "/orgs/{orgId}/ai/chats/{chatId}/messages", OrgMember, ask).long_running(),
     ]
 }
 

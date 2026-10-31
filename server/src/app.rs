@@ -237,9 +237,7 @@ pub(crate) async fn finish_test_app(state: AppState, dir: tempfile::TempDir) {
 pub fn router(state: AppState) -> Router {
     let api = routes::table::build(routes::all(), &state).fallback(|| async { ApiError::not_found() });
 
-    // Layers run outside-in from the last one added: trace, request info, security headers,
-    // origin check, then the route.
-    Router::new()
+    let routes = Router::new()
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
         .route(crate::acme::CHALLENGE_ROUTE, get(crate::acme::http_challenge))
@@ -247,7 +245,14 @@ pub fn router(state: AppState) -> Router {
         // page the browser is sent to.
         .route(routes::sso::CALLBACK_ROUTE, get(routes::sso::callback))
         .nest("/api", api)
-        .fallback(web::static_files)
+        .fallback(web::static_files);
+    with_layers(routes, state)
+}
+
+/// The layers every request passes. They run outside-in from the last one added: trace, request
+/// info, security headers, origin check, request id, panic catcher, commit flag, then the route.
+fn with_layers(routes: Router<AppState>, state: AppState) -> Router {
+    routes
         // Each request gets its own "committed" flag, so errors after a commit are not "busy".
         .layer(axum::middleware::from_fn(db::scope_requests))
         // A panicking handler answers `internal` with the request id instead of dropping the connection.
@@ -267,4 +272,47 @@ fn request_span(req: &axum::http::Request<axum::body::Body>) -> tracing::Span {
     let uri = req.uri();
     let shown = if uri.path().starts_with("/auth/oidc/") { uri.path().to_string() } else { uri.to_string() };
     tracing::debug_span!("request", method = %req.method(), uri = %shown, version = ?req.version())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::extract::connect_info::MockConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    /// A panic in a handler, behind the same layers as every route: the answer is `internal` with
+    /// the request id in body and header, and the outer layers (security headers) still ran.
+    #[expect(clippy::disallowed_methods, reason = "a panicking route behind the real layers")]
+    #[tokio::test]
+    async fn a_panicking_route_answers_internal_through_the_real_layers() {
+        async fn boom() -> &'static str {
+            panic!("handler bug")
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.paths.data_dir = dir.path().join("data");
+        std::fs::create_dir_all(&config.paths.data_dir).unwrap();
+        let pool = db::connect(&config.database_url(), 2).await.unwrap();
+        let state = AppState::new(config, pool, Arc::new(crate::clock::SystemClock), None).await.unwrap();
+        let routes = Router::new().route("/boom", get(boom)).route("/fine", get(|| async { "ok" }));
+        let peer = std::net::SocketAddr::from(([127, 0, 0, 1], 50000));
+        let app = with_layers(routes, state.clone()).layer(MockConnectInfo(peer));
+
+        let res = app.clone().oneshot(Request::get("/boom").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(res.headers()["x-content-type-options"], "nosniff");
+        let id = res.headers()["x-request-id"].to_str().unwrap().to_string();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "internal");
+        assert_eq!(body["error"]["requestId"], id.as_str());
+        assert!(!String::from_utf8_lossy(&bytes).contains("handler bug"));
+
+        let res = app.oneshot(Request::get("/fine").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        finish_test_app(state, dir).await;
+    }
 }

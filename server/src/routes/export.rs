@@ -158,14 +158,15 @@ impl Drop for CancelOnDrop {
 pub fn routes() -> Vec<RouteDef> {
     vec![
         // And `datasources:query` per data source (role or grant), checked in the handler.
-        route(Method::POST, "/orgs/{orgId}/export", Access::Org(Permission::DataExport), export_query),
+        route(Method::POST, "/orgs/{orgId}/export", Access::Org(Permission::DataExport), export_query).long_running(),
         // And `dashboards:read` on the dashboard, checked in the handler.
         route(
             Method::POST,
             "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export",
             Access::Org(Permission::DataExport),
             export_panel,
-        ),
+        )
+        .long_running(),
     ]
 }
 

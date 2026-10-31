@@ -59,8 +59,9 @@ impl RouteDef {
         self
     }
 
-    /// Marks a route that bounds its own work (the query timeout, the AI request timeout, export and
-    /// update limits) or streams its answer, so the server-wide request timeout does not cut it short.
+    /// Marks a route that bounds its own work (the query timeout, the AI request timeout), takes an
+    /// upload, makes a backup or streams its answer, so the server-wide request timeout does not cut it.
+    /// Plain reads, changes and settings keep the timeout.
     pub fn long_running(mut self) -> Self {
         self.request_timeout = false;
         self
