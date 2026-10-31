@@ -33,7 +33,6 @@
   "dashboardTools.variables.multiDefaultHint": "Trenne Werte durch Kommas.",
   "dashboardTools.tags.label": "Schlagwörter",
   "dashboardTools.tags.hint": "Trenne Schlagwörter durch Kommas. Links und Playlists finden Dashboards über Schlagwörter.",
-  "dashboardTools.panel.title": "Ort, Wiederholung, Zeit und Links",
   "dashboardTools.inspector.selected": "Ausgewählt",
   "dashboardTools.inspector.typeInRow": "{type} in {row}",
   "dashboardTools.inspector.noRow": "keiner Zeile",

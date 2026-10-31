@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
-import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg } from "../../org/useOrg";
@@ -37,6 +37,12 @@ export function LibraryPanelsPage() {
   const org = useCurrentOrg();
   return (
     <Page title={t("libraryPanels.title")} lead={t("libraryPanels.lead")}>
+      <Breadcrumbs
+        crumbs={[
+          { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+          { label: t("libraryPanels.title") },
+        ]}
+      />
       {org === undefined ? null : <LibraryList orgId={org.id} />}
     </Page>
   );
@@ -46,6 +52,7 @@ function LibraryList({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [q, setQ] = useState("");
+  const searchId = useId();
   // The search asks the server once typing pauses, not for every letter.
   const [searched, setSearched] = useState("");
   useEffect(() => {
@@ -77,12 +84,18 @@ function LibraryList({ orgId }: { orgId: string }) {
           <Icon name="back" />
           {t("dashboards.backToList")}
         </Link>
-        <div className="browser__search">
-          <TextField
-            label={t("libraryPanels.search")}
+        {/* In the row of the back link: labelled for screen readers, as the dashboards list's. */}
+        <div className="field browser__search">
+          <label className="visually-hidden" htmlFor={searchId}>
+            {t("libraryPanels.search")}
+          </label>
+          <input
+            id={searchId}
             type="search"
+            className="input"
+            placeholder={t("libraryPanels.search")}
             value={q}
-            onValueChange={setQ}
+            onChange={(event) => setQ(event.currentTarget.value)}
             autoComplete="off"
           />
         </div>

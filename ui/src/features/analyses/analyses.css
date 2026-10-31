@@ -159,6 +159,22 @@
 
   /* The list */
 
+  /*
+   * The list has six columns: beside the folders it only fits where the page has the room for
+   * both, whatever takes the rest of the window (the sidebar open or folded). With less room the
+   * folders go above it, instead of names and data sources wrapping over three lines and headings
+   * breaking letter by letter.
+   */
+  .analyses-layout {
+    container: analyses-layout / inline-size;
+  }
+
+  @container analyses-layout (max-width: 75rem) {
+    .browser.analyses-browser {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   /* A long data source name in a select must not widen the list column on a phone. */
   .analysis-filters {
     display: flex;

@@ -228,19 +228,12 @@ macro_rules! on_both_databases {
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn postgres_flows() {
-            let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
-                eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL flows not run");
-                return;
-            };
-            sqlx::any::install_default_drivers();
-            let admin = sqlx::AnyPool::connect(&base).await.unwrap();
+            let Some(base) = common::postgres_url("PostgreSQL flows") else { return };
             $(
-                let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
-                sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}"))).execute(&admin).await.unwrap();
-                let sep = if base.contains('?') { '&' } else { '?' };
-                let url = format!("{base}{sep}options=-csearch_path%3D{schema}");
+                let schema = common::postgres_schema(&base).await;
+                let url = schema.url.clone();
                 $flow(test_app(Some(url)).await).await;
-                sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
+                schema.drop_now().await;
             )*
         }
     };

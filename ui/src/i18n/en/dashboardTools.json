@@ -33,7 +33,6 @@
   "dashboardTools.variables.multiDefaultHint": "Separate values with commas.",
   "dashboardTools.tags.label": "Tags",
   "dashboardTools.tags.hint": "Separate tags with commas. Links and playlists find dashboards by tag.",
-  "dashboardTools.panel.title": "Place, repeat, time and links",
   "dashboardTools.inspector.selected": "Selected",
   "dashboardTools.inspector.typeInRow": "{type} in {row}",
   "dashboardTools.inspector.noRow": "no row",

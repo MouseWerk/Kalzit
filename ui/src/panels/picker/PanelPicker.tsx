@@ -32,7 +32,8 @@ export function PanelPicker({
   const shown = choices.filter((c) => c.accepts || showAll || c.panel.type === value);
   return (
     <fieldset className="picker">
-      <legend className="field__label">{t("dashboards.editor.visualization")}</legend>
+      {/* The option group around it shows the same name as its heading. */}
+      <legend className="visually-hidden">{t("dashboards.editor.visualization")}</legend>
       <div className="picker__grid">
         {shown.map(({ panel, accepts }) => {
           const Preview = panel.Preview ?? GenericPreview;

@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -33,6 +34,12 @@ export function AnalysesTrashPage() {
   }
   return (
     <Page title={t("analyses.trash.title")} lead={t("analyses.trash.lead")}>
+      <Breadcrumbs
+        crumbs={[
+          { label: t("analyses.list.title"), link: { to: "/explore/saved", search: {} } },
+          { label: t("analyses.trash.title") },
+        ]}
+      />
       {body}
     </Page>
   );
