@@ -150,128 +150,130 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
   const filtered = search.q !== undefined || search.source !== undefined || search.mine === true;
 
   return (
-    <div className="browser analyses-browser">
-      <aside className="browser__side">
-        {folders.isError ? (
-          <FormAlert>{errorMessage(t, folders.error)}</FormAlert>
-        ) : (
-          <FolderTree
-            folders={allFolders}
-            selected={search.folder}
-            onSelect={select}
-            storageKey={`kalzit.analysisTree.${me.id}`}
-            activeTeam={teams.scope}
-            allLabel={t("analyses.list.all")}
-          />
-        )}
-        <div className="browser__links">
-          <Link to="/explore/saved/trash" className="browser__link">
-            {t("analyses.trash.link")}
-          </Link>
-        </div>
-      </aside>
-      <section className="browser__main" aria-labelledby={`${searchId}-title`}>
-        <div className="browser__header">
-          <h2 className="section-title" id={`${searchId}-title`}>
-            {where}
-          </h2>
-          {permissions.has("datasources:query") ? (
-            <div className="dashboard__tools">
-              <Link to="/explore" search={{}} className="button button--secondary">
-                <Icon name="explore" />
-                {t("analyses.list.newInExplore")}
-              </Link>
-            </div>
-          ) : null}
-        </div>
-        <div className="analysis-filters">
-          <div className="field analysis-filters__search">
-            <label className="visually-hidden" htmlFor={searchId}>
-              {t("analyses.list.search")}
-            </label>
-            <input
-              ref={searchRef}
-              id={searchId}
-              type="search"
-              className="input"
-              placeholder={t("analyses.list.searchPlaceholder")}
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
+    <div className="analyses-layout">
+      <div className="browser analyses-browser">
+        <aside className="browser__side">
+          {folders.isError ? (
+            <FormAlert>{errorMessage(t, folders.error)}</FormAlert>
+          ) : (
+            <FolderTree
+              folders={allFolders}
+              selected={search.folder}
+              onSelect={select}
+              storageKey={`kalzit.analysisTree.${me.id}`}
+              activeTeam={teams.scope}
+              allLabel={t("analyses.list.all")}
             />
+          )}
+          <div className="browser__links">
+            <Link to="/explore/saved/trash" className="browser__link">
+              {t("analyses.trash.link")}
+            </Link>
           </div>
-          <div className="preference">
-            <label htmlFor={`${searchId}-source`}>{t("analyses.list.source")}</label>
-            <select
-              id={`${searchId}-source`}
-              className="select"
-              value={search.source ?? ""}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                void navigate({
-                  search: (prev) => ({ ...prev, source: value === "" ? undefined : value }),
-                  replace: true,
-                });
-              }}
-            >
-              <option value="">{t("analyses.list.any")}</option>
-              {(sources.data ?? []).map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.name}
-                </option>
-              ))}
-            </select>
+        </aside>
+        <section className="browser__main" aria-labelledby={`${searchId}-title`}>
+          <div className="browser__header">
+            <h2 className="section-title" id={`${searchId}-title`}>
+              {where}
+            </h2>
+            {permissions.has("datasources:query") ? (
+              <div className="dashboard__tools">
+                <Link to="/explore" search={{}} className="button button--secondary">
+                  <Icon name="explore" />
+                  {t("analyses.list.newInExplore")}
+                </Link>
+              </div>
+            ) : null}
           </div>
-          <div className="preference">
-            <label htmlFor={`${searchId}-owner`}>{t("analyses.list.creator")}</label>
-            <select
-              id={`${searchId}-owner`}
-              className="select"
-              value={search.mine === true ? "me" : ""}
-              onChange={(event) => {
-                const mine = event.currentTarget.value === "me" ? true : undefined;
-                void navigate({ search: (prev) => ({ ...prev, mine }), replace: true });
-              }}
-            >
-              <option value="">{t("analyses.list.any")}</option>
-              <option value="me">{t("analyses.list.me")}</option>
-            </select>
+          <div className="analysis-filters">
+            <div className="field analysis-filters__search">
+              <label className="visually-hidden" htmlFor={searchId}>
+                {t("analyses.list.search")}
+              </label>
+              <input
+                ref={searchRef}
+                id={searchId}
+                type="search"
+                className="input"
+                placeholder={t("analyses.list.searchPlaceholder")}
+                value={query}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+              />
+            </div>
+            <div className="preference">
+              <label htmlFor={`${searchId}-source`}>{t("analyses.list.source")}</label>
+              <select
+                id={`${searchId}-source`}
+                className="select"
+                value={search.source ?? ""}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  void navigate({
+                    search: (prev) => ({ ...prev, source: value === "" ? undefined : value }),
+                    replace: true,
+                  });
+                }}
+              >
+                <option value="">{t("analyses.list.any")}</option>
+                {(sources.data ?? []).map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="preference">
+              <label htmlFor={`${searchId}-owner`}>{t("analyses.list.creator")}</label>
+              <select
+                id={`${searchId}-owner`}
+                className="select"
+                value={search.mine === true ? "me" : ""}
+                onChange={(event) => {
+                  const mine = event.currentTarget.value === "me" ? true : undefined;
+                  void navigate({ search: (prev) => ({ ...prev, mine }), replace: true });
+                }}
+              >
+                <option value="">{t("analyses.list.any")}</option>
+                <option value="me">{t("analyses.list.me")}</option>
+              </select>
+            </div>
+            <div className="preference analysis-filters__sort">
+              <label htmlFor={`${searchId}-sort`}>{t("analyses.list.sort")}</label>
+              <select
+                id={`${searchId}-sort`}
+                className="select"
+                value={search.sort ?? "updated"}
+                onChange={(event) => {
+                  const sort = event.currentTarget.value === "title" ? "title" : undefined;
+                  void navigate({ search: (prev) => ({ ...prev, sort }), replace: true });
+                }}
+              >
+                <option value="updated">{t("analyses.list.sortUpdated")}</option>
+                <option value="title">{t("analyses.list.sortTitle")}</option>
+              </select>
+            </div>
           </div>
-          <div className="preference analysis-filters__sort">
-            <label htmlFor={`${searchId}-sort`}>{t("analyses.list.sort")}</label>
-            <select
-              id={`${searchId}-sort`}
-              className="select"
-              value={search.sort ?? "updated"}
-              onChange={(event) => {
-                const sort = event.currentTarget.value === "title" ? "title" : undefined;
-                void navigate({ search: (prev) => ({ ...prev, sort }), replace: true });
-              }}
-            >
-              <option value="updated">{t("analyses.list.sortUpdated")}</option>
-              <option value="title">{t("analyses.list.sortTitle")}</option>
-            </select>
-          </div>
-        </div>
-        <AnalysisList
-          orgId={orgId}
-          meId={me.id}
-          folders={allFolders}
-          folderId={search.folder}
-          where={where}
-          q={search.q}
-          source={search.source}
-          mine={search.mine === true}
-          sort={search.sort ?? "updated"}
-          team={teams.scope}
-          enabled={teams.settled}
-          filtered={filtered}
-          onSearchEverywhere={() => void select(undefined)}
-          onReset={() => {
-            setQuery("");
-            void navigate({ search: { folder: search.folder }, replace: true });
-          }}
-        />
-      </section>
+          <AnalysisList
+            orgId={orgId}
+            meId={me.id}
+            folders={allFolders}
+            folderId={search.folder}
+            where={where}
+            q={search.q}
+            source={search.source}
+            mine={search.mine === true}
+            sort={search.sort ?? "updated"}
+            team={teams.scope}
+            enabled={teams.settled}
+            filtered={filtered}
+            onSearchEverywhere={() => void select(undefined)}
+            onReset={() => {
+              setQuery("");
+              void navigate({ search: { folder: search.folder }, replace: true });
+            }}
+          />
+        </section>
+      </div>
     </div>
   );
 }

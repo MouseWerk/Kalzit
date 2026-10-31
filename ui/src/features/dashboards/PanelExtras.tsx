@@ -293,7 +293,7 @@ export function PanelExtras({
   return (
     <fieldset className="panel-editor__options panel-extras">
       {/* The panel editor's option group around it already shows a heading for these. */}
-      <legend className="visually-hidden">{t("dashboardTools.panel.title")}</legend>
+      <legend className="visually-hidden">{t("dashboards.editor.group.extras")}</legend>
       {content}
     </fieldset>
   );

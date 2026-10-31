@@ -160,10 +160,16 @@
   /* The list */
 
   /*
-   * The list has six columns: beside the folders it only fits on wide screens. Below that the
-   * folders go above it, instead of columns so narrow that headings break letter by letter.
+   * The list has six columns: beside the folders it only fits where the page has the room for
+   * both, whatever takes the rest of the window (the sidebar open or folded). With less room the
+   * folders go above it, instead of names and data sources wrapping over three lines and headings
+   * breaking letter by letter.
    */
-  @media (max-width: 80rem) {
+  .analyses-layout {
+    container: analyses-layout / inline-size;
+  }
+
+  @container analyses-layout (max-width: 75rem) {
     .browser.analyses-browser {
       grid-template-columns: minmax(0, 1fr);
     }

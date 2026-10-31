@@ -525,7 +525,7 @@ describe("dashboard page", () => {
       ["/dashboards/trash", ["Dashboards", "Trash"]],
       ["/dashboards/playlists", ["Dashboards", "Playlists"]],
       ["/dashboards/library", ["Dashboards", "Library panels"]],
-      ["/dashboards/d-sales/versions", ["Dashboards", "Sales overview", "History"]],
+      ["/dashboards/d-sales/versions", ["Dashboards", "Operations", "Sales overview", "History"]],
     ] as const) {
       renderApp(path);
       const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });

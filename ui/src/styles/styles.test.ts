@@ -727,32 +727,104 @@ describe("disclosures", () => {
   }
 
   /**
-   * Summaries that keep the browser's filled triangle: a summary with a class of its own takes
-   * `disclosure` for the shared chevron, or hides the marker in a rule of its class or of the
-   * class of its details.
+   * The opening `<details>` and `<summary>` tags of a module with their attributes, read up to
+   * the `>` that closes the tag: one inside an attribute (`onToggle={() => ...}`, a string) does
+   * not end it.
+   */
+  function openingTags(text: string): { tag: string; attributes: string }[] {
+    const tags: { tag: string; attributes: string }[] = [];
+    for (const match of text.matchAll(/<(details|summary)\b/g)) {
+      let depth = 0;
+      let quote = "";
+      let end = (match.index ?? 0) + match[0].length;
+      for (; end < text.length; end++) {
+        const char = text[end];
+        if (quote !== "") {
+          if (char === quote) quote = "";
+        } else if (char === '"' || char === "'" || char === "`") {
+          quote = char;
+        } else if (char === "{") {
+          depth++;
+        } else if (char === "}") {
+          depth--;
+        } else if (char === ">" && depth === 0) {
+          break;
+        }
+      }
+      tags.push({
+        tag: match[1] ?? "",
+        attributes: text.slice((match.index ?? 0) + match[0].length, end),
+      });
+    }
+    return tags;
+  }
+
+  /**
+   * The class names of a tag: every word of `className="..."`, or every word of the string
+   * literals in `className={...}` (a ternary or template names all its classes there). Undefined
+   * without a className.
+   */
+  function classNames(attributes: string): string[] | undefined {
+    const at = /\bclassName=/.exec(attributes);
+    if (at === null) return undefined;
+    const rest = attributes.slice(at.index + at[0].length);
+    let source = /^"([^"]*)"/.exec(rest)?.[1];
+    if (source === undefined) {
+      // The expression up to its closing brace, then the text of its string literals; the
+      // placeholders of a template are left out.
+      let depth = 0;
+      let end = 0;
+      for (; end < rest.length; end++) {
+        if (rest[end] === "{") depth++;
+        if (rest[end] === "}" && --depth === 0) break;
+      }
+      source = [...rest.slice(0, end).matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)]
+        .map((m) =>
+          m
+            .slice(1)
+            .join(" ")
+            .replace(/\$\{[^}]*\}/g, " "),
+        )
+        .join(" ");
+    }
+    return source.split(/\s+/).filter((word) => /^[a-zA-Z][\w-]*$/.test(word));
+  }
+
+  /**
+   * Summaries that keep the browser's triangle: a summary with a class of its own needs a rule of
+   * one of its classes, or of its details' class, that hides the WebKit marker, and one that sets
+   * `list-style: none`, which removes the `::marker` of Firefox. `disclosure` is such a class.
    */
   function bareMarkers(
     modules: readonly { name: string; text: string }[],
     rules: readonly StyleRule[],
   ): string[] {
-    const hiding = rules
+    const names = (rule: StyleRule) => rule.selector;
+    const markerRules = rules
       .filter((rule) => rule.selector.includes("::-webkit-details-marker"))
-      .map((rule) => rule.selector);
-    const hides = (name: string) =>
-      hiding.some((selector) => new RegExp(`\\.${name}(?![\\w-])`).test(selector));
+      .map(names);
+    const listStyleRules = rules
+      .filter((rule) =>
+        rule.declarations.some(
+          (d) => /^list-style(-type)?$/.test(d.property) && /\bnone\b/.test(d.value),
+        ),
+      )
+      .map(names);
+    const mentions = (selectors: string[], name: string) =>
+      selectors.some((selector) => new RegExp(`\\.${name}(?![\\w-])`).test(selector));
+    const hides = (classes: string[], kind: string[]) => classes.some((c) => mentions(kind, c));
     const found: string[] = [];
     for (const { name, text } of modules) {
       let details: string[] = [];
-      for (const match of text.matchAll(/<(details|summary)\b(?:[^>]*?className="([^"]*)")?/g)) {
-        const classes = (match[2] ?? "").split(/\s+/).filter((c) => c !== "");
-        if (match[1] === "details") {
-          details = classes;
-        } else if (
-          classes.length > 0 &&
-          !classes.includes("disclosure") &&
-          !classes.some(hides) &&
-          !details.some(hides)
-        ) {
+      for (const { tag, attributes } of openingTags(text)) {
+        const classes = classNames(attributes);
+        if (tag === "details") {
+          details = classes ?? [];
+          continue;
+        }
+        if (classes === undefined) continue;
+        const own = [...classes, ...details];
+        if (!hides(own, markerRules) || !hides(own, listStyleRules)) {
           found.push(`${name}: <summary className="${classes.join(" ")}">`);
         }
       }
@@ -766,7 +838,12 @@ describe("disclosures", () => {
 
   it("catches a classed summary that keeps the triangle", () => {
     const rules = parseCss(
-      ".menu > summary::-webkit-details-marker { display: none; } .tool::-webkit-details-marker { display: none; }",
+      [
+        ".menu > summary { list-style: none; } .menu > summary::-webkit-details-marker { display: none; }",
+        ".tool { list-style: none; } .tool::-webkit-details-marker { display: none; }",
+        ".disclosure { list-style: none; } .disclosure::-webkit-details-marker { display: none; }",
+        ".half::-webkit-details-marker { display: none; }",
+      ].join(" "),
     );
     const check = (text: string) => bareMarkers([{ name: "x.tsx", text }], rules);
     expect(check('<summary className="row">A</summary>')).toEqual([
@@ -776,6 +853,19 @@ describe("disclosures", () => {
     expect(check("<summary>A</summary>")).toEqual([]);
     expect(check('<summary className="tool">A</summary>')).toEqual([]);
     expect(check('<details className="menu"><summary className="b">A</summary>')).toEqual([]);
+    // Without list-style the Firefox marker stays.
+    expect(check('<summary className="half">A</summary>')).toEqual([
+      'x.tsx: <summary className="half">',
+    ]);
+    // A class from an expression, and a `>` inside an attribute before it.
+    expect(check("<summary className={open ? `row is-open` : 'row'}>A</summary>")).toEqual([
+      'x.tsx: <summary className="row is-open row">',
+    ]);
+    expect(check('<summary onClick={() => go(a > b)} className="row">A</summary>')).toEqual([
+      'x.tsx: <summary className="row">',
+    ]);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the JSX under test holds a template
+    expect(check("<summary className={`tool ${extra}`}>A</summary>")).toEqual([]);
   });
 });
 

@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { isApiError } from "../../api/client";
-import { Breadcrumbs } from "../../components/Breadcrumbs";
+import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -17,6 +17,7 @@ import {
   dashboardQuery,
   fetchVersionModel,
   fetchVersions,
+  foldersQuery,
   restoreVersion,
 } from "./api";
 import "./dashboards.css";
@@ -47,6 +48,11 @@ function VersionList({ orgId }: { orgId: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
+  // For the breadcrumbs, as on the dashboard; without folders:read the trail starts at the list.
+  const folders = useQuery({
+    ...foldersQuery(orgId),
+    enabled: permissions.has("folders:read"),
+  });
   const versions = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "versions", dashboardId],
     queryFn: ({ pageParam, signal }) => fetchVersions(orgId, dashboardId, pageParam, signal),
@@ -93,8 +99,12 @@ function VersionList({ orgId }: { orgId: string }) {
         <Breadcrumbs
           crumbs={[
             { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+            ...folderTrail(folders.data ?? [], dashboard.data.folderId).map((step) => ({
+              label: step.name,
+              link: { to: "/dashboards" as const, search: { folder: step.id } },
+            })),
             {
-              label: dashboard.data.title,
+              label: dashboard.data.title === "" ? t("dashboards.untitled") : dashboard.data.title,
               link: { to: "/dashboards/$dashboardId", params: { dashboardId }, search: {} },
             },
             { label: t("dashboards.history.title") },
