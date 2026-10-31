@@ -95,7 +95,8 @@ Then the account:
    `trustEmail`) and the account's own email is confirmed. Emails are compared in an ASCII form
    (lowercase local part, IDNA domain), whichever form the account was made with (Unicode, NFC or
    NFD, or ASCII); an email with a non-ASCII local part is not used, since Unicode case folding
-   makes different addresses look alike. Server admins and the break-glass
+   makes different addresses look alike. Service accounts are never signed in to or linked
+   (`sso=email_taken`, or `sso=failed` for an identity linked to one). Server admins and the break-glass
    admin are never linked by email (`sso=email_taken`). An account whose email is not confirmed
    (`users.email_confirmed`: made from an invitation link an admin passed on) is never taken over:
    `sso=email_taken`.
@@ -431,3 +432,4 @@ English `detail`; the person only sees the outcome. They are not answered as API
 | `sso.identity_issuer_mismatch` | the identity was linked through another issuer than the provider has now |
 | `sso.email_ambiguous` | two accounts have the address in two forms of its domain, left from before the forms were compared as one (new accounts with another form of a taken address are refused) |
 | `sso.email_link_admin` | the email belongs to a server admin or the break-glass admin, who are never linked by email |
+| `sso.service_account` | the identity is linked to a service account, or a service account has the email; service accounts never sign in through a provider |

@@ -3,6 +3,7 @@ import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { handleSsoRoute, ssoFake } from "../features/admin/sso/test/fakeSso";
 import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
+import { serviceAccountsFake } from "../features/admin/test/fakeServiceAccounts";
 import { aiChatFake } from "../features/ai/chat/test/fakeAiChat";
 import { aiAdminFake, handleAiAdminRoute } from "../features/ai/test/fakeAiAdmin";
 import { analysesFake } from "../features/analyses/test/fakeAnalyses";
@@ -130,6 +131,7 @@ const AREA_FAKES = {
   mail: mailFake,
   usage: usageFake,
   sso: ssoFake,
+  serviceAccounts: serviceAccountsFake,
 };
 
 export type FakeAreaStates = {

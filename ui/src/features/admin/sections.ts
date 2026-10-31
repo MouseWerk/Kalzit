@@ -73,6 +73,12 @@ export const ORG_SECTIONS: readonly AdminSectionLink[] = [
     visible: (access) => access.has("roles:read"),
   },
   {
+    to: "/admin/service-accounts",
+    label: "admin.serviceAccounts.title",
+    description: "admin.serviceAccounts.lead",
+    visible: (access) => access.has("serviceaccounts:write"),
+  },
+  {
     to: settingsSection("organization"),
     label: "admin.orgSettings.title",
     description: "admin.orgSettings.lead",

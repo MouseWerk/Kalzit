@@ -52,13 +52,15 @@ impl From<i64> for Flag {
     }
 }
 
-const USER_COLUMNS: &str = "SELECT id, email, name, is_server_admin, disabled, created_at FROM users";
+/// People only: service accounts are managed in their organization (`routes::service_accounts`).
+const USER_COLUMNS: &str =
+    "SELECT id, email, name, is_server_admin, disabled, created_at FROM users WHERE service_account = 0";
 
 async fn load<'c, E>(db: E, user_id: &str) -> ApiResult<AdminUser>
 where
     E: sqlx::Executor<'c, Database = sqlx::Any>,
 {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("{USER_COLUMNS} WHERE id = $1")))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("{USER_COLUMNS} AND id = $1")))
         .bind(user_id)
         .fetch_optional(db)
         .await?
@@ -71,7 +73,7 @@ async fn list(
 ) -> ApiResult<Json<Page<AdminUser>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     let mut rows: Vec<AdminUser> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{USER_COLUMNS} WHERE created_at < $1 OR (created_at = $1 AND id < $2) ORDER BY created_at DESC, id DESC LIMIT $3"
+        "{USER_COLUMNS} AND (created_at < $1 OR (created_at = $1 AND id < $2)) ORDER BY created_at DESC, id DESC LIMIT $3"
     )))
     .bind(paging.before_time())
     .bind(paging.before_id())
@@ -118,8 +120,9 @@ async fn create(
     let id = super::new_id();
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    // The same address in another form of its domain (`routes::email_key`) is taken too.
-    if !super::accounts_with_email(&mut tx, &email).await?.is_empty() {
+    // The same address in another form of its domain (`routes::email_key`) is taken too, also by
+    // a service account.
+    if !super::all_accounts_with_email(&mut tx, &email).await?.is_empty() {
         return Err(email_taken());
     }
     sqlx::query(

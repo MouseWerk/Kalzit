@@ -1167,3 +1167,37 @@ async fn second_factor_notices_go_by_mail() {
     assert!(mails[0].text().contains("zurückgesetzt"), "{}", mails[0].text());
     app.finish().await;
 }
+
+/// Service accounts get no mail: their made-up address cannot be invited, asked for a password
+/// link or sent one by an admin.
+#[tokio::test]
+async fn service_accounts_get_no_invitations_or_password_links() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    let r = app
+        .post(&format!("/api/orgs/{org}/service-accounts"), json!({ "name": "bot", "role": "viewer" }), &owner)
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let (email, confirmed): (String, i64) = sqlx::query_as("SELECT email, email_confirmed FROM users WHERE id = $1")
+        .bind(&id)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(confirmed, 0, "its address is no confirmed mailbox");
+
+    let r = app.invite(&org, &[email.as_str()], "viewer", &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "mail.address_invalid"), "{}", r.body);
+    let r = app.public("/api/auth/password-reset", json!({ "email": email })).await;
+    assert_eq!(r.status, StatusCode::ACCEPTED, "answers like any address");
+    let r = app.post(&format!("/api/orgs/{org}/members/{id}/password-link"), json!({}), &owner).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    app.state.mail.settle().await;
+    assert!(app.mails().is_empty(), "no mail at all");
+    let (links,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM password_resets").fetch_one(&app.state.db).await.unwrap();
+    let (invitations,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM invitations").fetch_one(&app.state.db).await.unwrap();
+    assert_eq!((links, invitations), (0, 0));
+    app.finish().await;
+}

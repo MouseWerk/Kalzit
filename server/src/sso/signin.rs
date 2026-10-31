@@ -58,9 +58,10 @@ struct Account {
     name: String,
     is_server_admin: i64,
     disabled: i64,
+    service_account: i64,
 }
 
-const ACCOUNT_COLUMNS: &str = "SELECT id, email, name, is_server_admin, disabled FROM users";
+const ACCOUNT_COLUMNS: &str = "SELECT id, email, name, is_server_admin, disabled, service_account FROM users";
 
 /// The account a provider's person signs in to.
 pub struct Linked {
@@ -113,9 +114,19 @@ pub async fn account(
             // The form typed-in addresses keep; accounts are found in any form of the address
             // (`routes::email_key`), whichever form they were made with.
             let as_typed = person.email_as_typed.clone().unwrap_or_else(|| email.clone());
-            let ids = crate::routes::accounts_with_email(&mut *conn, &email).await?;
-            let mut found: Vec<Account> = Vec::with_capacity(ids.len());
-            for id in &ids {
+            let matches = crate::routes::all_accounts_with_email(&mut *conn, &email).await?;
+            // A service account is never signed in to or linked through a provider, and its
+            // made-up address names no person.
+            if let Some((id, _)) = matches.iter().find(|(_, service)| *service) {
+                return Ok(Err(Refusal::new(
+                    "email_taken",
+                    "sso.service_account",
+                    "a service account has this address; service accounts never sign in through a provider",
+                )
+                .of(id)));
+            }
+            let mut found: Vec<Account> = Vec::with_capacity(matches.len());
+            for (id, _) in &matches {
                 found.push(
                     sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE id = $1")))
                         .bind(id)
@@ -180,7 +191,7 @@ pub async fn account(
                     .execute(&mut *conn)
                     .await?;
                     created = true;
-                    Account { id, email: as_typed.clone(), name, is_server_admin: 0, disabled: 0 }
+                    Account { id, email: as_typed.clone(), name, is_server_admin: 0, disabled: 0, service_account: 0 }
                 }
                 None => {
                     return Ok(Err(Refusal::new(
@@ -192,6 +203,14 @@ pub async fn account(
             }
         }
     };
+    if account.service_account != 0 {
+        return Ok(Err(Refusal::new(
+            "failed",
+            "sso.service_account",
+            "the identity is linked to a service account; service accounts never sign in through a provider",
+        )
+        .of(&account.id)));
+    }
     if account.disabled != 0 {
         return Ok(Err(Refusal::new("disabled", "sso.account_disabled", "the account is disabled").of(&account.id)));
     }

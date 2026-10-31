@@ -103,12 +103,14 @@ async fn load<'c, E>(db: E, org_id: &str, user_id: &str) -> ApiResult<Member>
 where
     E: sqlx::Executor<'c, Database = sqlx::Any>,
 {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("{MEMBER_COLUMNS} WHERE m.org_id = $1 AND m.user_id = $2")))
-        .bind(org_id)
-        .bind(user_id)
-        .fetch_optional(db)
-        .await?
-        .ok_or_else(ApiError::not_found)
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{MEMBER_COLUMNS} WHERE m.org_id = $1 AND m.user_id = $2 AND u.service_account = 0"
+    )))
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(ApiError::not_found)
 }
 
 async fn list(
@@ -118,7 +120,7 @@ async fn list(
 ) -> ApiResult<Json<Page<Member>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     let mut rows: Vec<Member> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{MEMBER_COLUMNS} WHERE m.org_id = $1 AND (m.created_at < $2 OR (m.created_at = $2 AND u.id < $3)) \
+        "{MEMBER_COLUMNS} WHERE m.org_id = $1 AND u.service_account = 0 AND (m.created_at < $2 OR (m.created_at = $2 AND u.id < $3)) \
          ORDER BY m.created_at DESC, u.id DESC LIMIT $4"
     )))
     .bind(&ctx.org_id)
@@ -150,10 +152,11 @@ async fn add(
     // finds the membership.
     lock_org(&mut tx, &ctx.org_id).await?;
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
-    let user: Option<(String, i64)> = sqlx::query_as("SELECT id, email_confirmed FROM users WHERE email = $1")
-        .bind(&email)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let user: Option<(String, i64)> =
+        sqlx::query_as("SELECT id, email_confirmed FROM users WHERE email = $1 AND service_account = 0")
+            .bind(&email)
+            .fetch_optional(&mut *tx)
+            .await?;
     // Adding works for existing accounts only; invitations by mail come with `users:invite`.
     let Some((user_id, confirmed)) = user else {
         return Err(ApiError::validation("no account has this email").with_field("email"));
@@ -252,11 +255,15 @@ async fn current_role_checked(
     new_role: Option<&str>,
 ) -> ApiResult<String> {
     let owners = lock_owners(tx, &ctx.org_id, user_id).await?;
-    let current: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
-        .bind(&ctx.org_id)
-        .bind(user_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    // Service accounts are changed in their own routes (`routes::service_accounts`).
+    let current: Option<(String,)> = sqlx::query_as(
+        "SELECT m.role FROM org_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.org_id = $1 AND m.user_id = $2 AND u.service_account = 0",
+    )
+    .bind(&ctx.org_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some((current,)) = current else { return Err(ApiError::not_found()) };
     let mut taken = resolve_role(&mut *tx, &ctx.org_id, &current).await?.map(|r| r.permissions).unwrap_or_default();
     if new_role.is_none() {

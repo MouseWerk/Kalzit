@@ -136,8 +136,11 @@ struct Account {
 /// After the answer: the account, its link and the mail.
 async fn process(state: &AppState, email: &str, client: std::net::IpAddr) -> ApiResult<()> {
     let account: Option<Account> =
-        sqlx::query_as("SELECT id, email, password_hash FROM users WHERE email = $1 AND disabled = 0")
-            .bind(email)
+        // Service accounts have no password and get no links.
+        sqlx::query_as(
+            "SELECT id, email, password_hash FROM users WHERE email = $1 AND disabled = 0 AND service_account = 0",
+        )
+        .bind(email)
             .fetch_optional(&state.db)
             .await?;
     let Some(account) = account else { return Ok(()) };
@@ -250,7 +253,7 @@ async fn find(state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<Pe
         sqlx::query_as(
             "SELECT r.user_id, r.email, r.password_fingerprint, r.expires_at, r.used_at, u.email AS current_email, \
              u.password_hash, u.disabled FROM password_resets r JOIN users u ON u.id = r.user_id \
-             WHERE r.token_hash = $1",
+             WHERE r.token_hash = $1 AND u.service_account = 0",
         )
         .bind(links::hash(token))
         .fetch_optional(&state.db)
@@ -383,11 +386,13 @@ async fn send_member_link(
         held.extend(super::members::held_through_membership(&mut conn, &ctx.org_id, &user_id).await?);
         ensure_holds(&ctx.permissions, &held)?;
     }
-    let account: Account = sqlx::query_as("SELECT id, email, password_hash FROM users WHERE id = $1 AND disabled = 0")
-        .bind(&user_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(ApiError::not_found)?;
+    let account: Account = sqlx::query_as(
+        "SELECT id, email, password_hash FROM users WHERE id = $1 AND disabled = 0 AND service_account = 0",
+    )
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(ApiError::not_found)?;
     // A server admin's password is a server matter: only another server admin sends its link.
     let (target_admin,): (i64,) =
         sqlx::query_as("SELECT is_server_admin FROM users WHERE id = $1").bind(&user_id).fetch_one(&state.db).await?;

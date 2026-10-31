@@ -41,6 +41,7 @@ pub mod query_cache;
 pub mod roles;
 pub mod second_factor;
 pub mod security;
+pub mod service_accounts;
 pub mod setup;
 pub mod sso;
 pub mod support;
@@ -83,6 +84,7 @@ pub fn all() -> Vec<table::RouteDef> {
         live::routes(),
         export::routes(),
         members::routes(),
+        service_accounts::routes(),
         teams::routes(),
         team_context::routes(),
         roles::routes(),
@@ -183,24 +185,38 @@ pub fn same_email(a: &str, b: &str) -> bool {
     a == b || email_key(a) == email_key(b)
 }
 
-/// The ids of the accounts whose address is `email` in any of its forms (`email_key`). Accounts
-/// keep the form they were made with, so the candidates are those with the same local part, and
-/// the domain is compared in Rust.
-pub async fn accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<String>> {
+/// The accounts whose address is `email` in any of its forms (`email_key`), service accounts
+/// included: `(id, service_account)`. Accounts keep the form they were made with, so the
+/// candidates are those with the same local part, and the domain is compared in Rust.
+pub async fn all_accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<(String, bool)>> {
     let key = email_key(email);
     let prefix = match key.rsplit_once('@') {
         Some((local, _)) => format!("{local}@"),
         None => key.clone(),
     };
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, email FROM users WHERE email = $1 OR email = $2 OR substr(email, 1, length($3)) = $3 ORDER BY id",
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT id, email, service_account FROM users          WHERE email = $1 OR email = $2 OR substr(email, 1, length($3)) = $3 ORDER BY id",
     )
     .bind(email)
     .bind(&key)
     .bind(&prefix)
     .fetch_all(conn)
     .await?;
-    Ok(rows.into_iter().filter(|(_, stored)| stored == email || email_key(stored) == key).map(|(id, _)| id).collect())
+    Ok(rows
+        .into_iter()
+        .filter(|(_, stored, _)| stored == email || email_key(stored) == key)
+        .map(|(id, _, service)| (id, service != 0))
+        .collect())
+}
+
+/// The people (no service accounts) whose address is `email` in any of its forms.
+pub async fn accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<String>> {
+    Ok(all_accounts_with_email(conn, email)
+        .await?
+        .into_iter()
+        .filter(|(_, service)| !service)
+        .map(|(id, _)| id)
+        .collect())
 }
 
 pub fn clean_name(raw: &str, what: &str) -> ApiResult<String> {

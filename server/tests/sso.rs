@@ -1174,3 +1174,66 @@ async fn internationalized_addresses_name_one_account_in_both_directions() {
     assert!(linked.is_none());
     app.finish().await;
 }
+
+/// A service account never signs in through a provider: not by its address (in any form), and
+/// not through an identity linked to it. An invitation never names it either.
+#[tokio::test]
+async fn service_accounts_never_sign_in_or_link_through_a_provider() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, org) = app.setup().await;
+    let provider_id = add_provider(&app, &issuer, &admin).await;
+    sqlx::query(
+        "INSERT INTO users (id, email, name, created_at, service_account, email_confirmed) \
+         VALUES ('svc', 'robot@bücher.example', 'Robot', 0, 1, 1)",
+    )
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+
+    // By its address, here in the ASCII form: refused, nothing linked, no account made.
+    let robot = Who { sub: "sub-robot", email: "robot@xn--bcher-kva.example", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &robot, |_| {}).await;
+    assert_eq!(outcome_of(&r), "email_taken", "{}", r.location());
+    assert!(r.cookie("kalzit_session").is_none());
+    let linked: Option<(String,)> = sqlx::query_as("SELECT user_id FROM sso_identities WHERE subject = 'sub-robot'")
+        .fetch_optional(&app.state.db)
+        .await
+        .unwrap();
+    assert!(linked.is_none());
+    let (accounts,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email LIKE 'robot@%'").fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(accounts, 1);
+
+    // Through an identity linked to it (made by hand or left from before): refused.
+    sqlx::query(
+        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, created_at, last_sign_in_at) \
+         VALUES ($1, 'sub-robot-linked', $2, 'svc', 0, 0)",
+    )
+    .bind(&provider_id)
+    .bind(&issuer)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let linked = Who { sub: "sub-robot-linked", email: "other@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &linked, |_| {}).await;
+    assert_eq!(outcome_of(&r), "failed", "{}", r.location());
+    assert!(r.cookie("kalzit_session").is_none());
+    let causes: Vec<(String,)> = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'auth.sso_failed'")
+        .fetch_all(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(causes.iter().filter(|(s,)| s.contains("sso.service_account")).count(), 2, "{causes:?}");
+
+    // An invitation to its address in the Unicode form is refused.
+    let r = app
+        .post(
+            &format!("/api/orgs/{org}/invitations"),
+            json!({ "emails": ["robot@bücher.example"], "role": "viewer" }),
+            &admin,
+        )
+        .await;
+    assert_eq!(r.reason(), "mail.address_invalid", "{}", r.body);
+    app.finish().await;
+}

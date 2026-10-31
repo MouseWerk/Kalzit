@@ -130,15 +130,19 @@ struct CreateRequest {
     level: String,
 }
 
-/// The subject exists in the organization: a member, a team or a role.
+/// The subject exists in the organization: a member, a team or a role. Service accounts act with
+/// their role only, so they are no subjects of grants.
 async fn ensure_subject(conn: &mut sqlx::AnyConnection, org_id: &str, kind: &str, id: &str) -> ApiResult<()> {
     let found = match kind {
-        "user" => sqlx::query_as::<_, (String,)>("SELECT user_id FROM org_members WHERE org_id = $1 AND user_id = $2")
-            .bind(org_id)
-            .bind(id)
-            .fetch_optional(&mut *conn)
-            .await?
-            .is_some(),
+        "user" => sqlx::query_as::<_, (String,)>(
+            "SELECT m.user_id FROM org_members m JOIN users u ON u.id = m.user_id \
+             WHERE m.org_id = $1 AND m.user_id = $2 AND u.service_account = 0",
+        )
+        .bind(org_id)
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .is_some(),
         "team" => sqlx::query_as::<_, (String,)>("SELECT id FROM teams WHERE org_id = $1 AND id = $2")
             .bind(org_id)
             .bind(id)

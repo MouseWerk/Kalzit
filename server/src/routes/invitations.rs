@@ -231,14 +231,18 @@ fn count_invitations(state: &AppState, org_id: &str, n: usize) -> ApiResult<()> 
 }
 
 async fn is_member(tx: &mut sqlx::AnyConnection, org_id: &str, email: &str) -> ApiResult<bool> {
-    let (n,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM org_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 AND u.email = $2",
-    )
-    .bind(org_id)
-    .bind(email)
-    .fetch_one(&mut *tx)
-    .await?;
-    Ok(n > 0)
+    // The person with the address in any of its forms (`routes::email_key`).
+    for user_id in super::accounts_with_email(&mut *tx, email).await? {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(org_id)
+            .bind(&user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if n > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn email_problem(message: &str, reason: &'static str, email: &str) -> ApiError {
@@ -328,6 +332,11 @@ async fn create(
     clear_expired_links(&mut tx, now).await?;
     let mut issued = Vec::new();
     for email in &emails {
+        // A service account's made-up address (in any form, `routes::email_key`) is no mailbox
+        // and no person to invite.
+        if super::all_accounts_with_email(&mut tx, email).await?.iter().any(|(_, service)| *service) {
+            return Err(email_problem("this address belongs to a service account", "mail.address_invalid", email));
+        }
         if is_member(&mut tx, &ctx.org_id, email).await? {
             return Err(email_problem("this address is already a member", "mail.invite_already_member", email));
         }
@@ -434,11 +443,12 @@ async fn send_all(
         let result = match &broken {
             Some(e) => Err(e.clone()),
             None => {
-                let recipient: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
-                    .bind(&item.email)
-                    .fetch_optional(&state.db)
-                    .await
-                    .unwrap_or(None);
+                let recipient: Option<(String,)> =
+                    sqlx::query_as("SELECT id FROM users WHERE email = $1 AND service_account = 0")
+                        .bind(&item.email)
+                        .fetch_optional(&state.db)
+                        .await
+                        .unwrap_or(None);
                 let lang = mail::language(state, recipient.as_ref().map(|(id,)| id.as_str()))
                     .await
                     .unwrap_or(templates::Lang::En);

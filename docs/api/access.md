@@ -471,6 +471,122 @@ its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such acco
 **`PATCH /admin/orgs/{orgId}`** `{ "name" }`. Errors: `404`, `validation` `name`. Audit
 `org.renamed`.
 
+## Service accounts
+
+Accounts for scripts and other systems (`server/src/routes/service_accounts.rs`,
+`server/src/auth/api_token.rs`). A service account belongs to one organization and holds one
+role there: `admin`, `editor`, `viewer` or a custom role, never `owner`. It acts through API
+tokens only; it has no password, never signs in, joins no team and receives no grants. Lists of
+people (members, server users, team member pickers, member counts) leave service accounts out,
+and the member routes answer `404` for them. They have no second factor: a required one never
+applies to them, the server's two-factor overview does not count them, and both resets answer
+`404`. A service account never becomes an organization's owner (`POST /admin/orgs` refuses it as
+`ownerUserId`). Its made-up address (`<id>@service-account.invalid`) gets no mail: inviting it is
+`422` (`mail.address_invalid`), a password link for it is neither sent on request nor by an admin
+(`404`), and it never counts as a confirmed address. There are no personal tokens for people.
+
+```ts
+interface ServiceAccount {
+  id: string;
+  name: string;            // lowercase letters, digits and hyphens; unique in the organization
+  description: string;
+  role: string;            // role key, never "owner"
+  disabled: boolean;       // its tokens are refused while disabled
+  activeTokens: number;    // neither revoked nor expired
+  nextExpiry: number | null;   // the soonest expiry of an active token
+  lastUsedAt: number | null;
+  createdByName: string | null;
+  createdAt: number;
+}
+
+interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;          // the visible start, "kz_sa_7f3a9c2e"; names the token in the audit log
+  expiresAt: number;
+  allowedIps: string[];    // canonical addresses and networks; empty for anywhere
+  createdAt: number;
+  createdByName: string | null;
+  lastUsedAt: number | null;      // after a use that passed every check; written at most once a minute
+  lastUsedAddress: string | null;
+  revokedAt: number | null;
+  revokedByName: string | null;
+}
+```
+
+| Method and path | Access | Answer |
+|---|---|---|
+| `GET /orgs/{orgId}/service-accounts` | `serviceaccounts:write` | `200 Page<ServiceAccount>`, by name |
+| `POST /orgs/{orgId}/service-accounts` | `serviceaccounts:write` | `201 ServiceAccount` |
+| `GET /orgs/{orgId}/service-accounts/{accountId}` | `serviceaccounts:write` | `200 ServiceAccount & { tokens: ApiToken[] }` |
+| `PATCH /orgs/{orgId}/service-accounts/{accountId}` | `serviceaccounts:write` | `200 ServiceAccount` |
+| `DELETE /orgs/{orgId}/service-accounts/{accountId}` | `serviceaccounts:write` | `204` |
+| `POST /orgs/{orgId}/service-accounts/{accountId}/tokens` | `serviceaccounts:write` | `201 ApiToken & { token: string }` |
+| `POST /orgs/{orgId}/service-accounts/{accountId}/tokens/{tokenId}/revoke` | `serviceaccounts:write` | `200 ApiToken` |
+| `GET /orgs/{orgId}/scim-token` | `serviceaccounts:write` and an admin's permissions | `200 { token: ApiToken \| null }` |
+| `POST /orgs/{orgId}/scim-token` | `serviceaccounts:write` and an admin's permissions | `201 ApiToken & { token: string }` |
+| `DELETE /orgs/{orgId}/scim-token` | `serviceaccounts:write` and an admin's permissions | `204` |
+
+The guards of members apply: giving a role, and acting on an account (changing, deleting, making
+or revoking its tokens), needs the caller to hold every permission of the account's role, so
+nobody makes a token stronger than themselves. None of these routes can be called with an API
+token (`403`, reason `token.not_for_this_route`).
+
+**`POST`** `{ "name", "description"?, "role" }`. Errors: `validation` `name`
+(`serviceaccount.name_invalid`), `validation` `role` (no such role, or
+`serviceaccount.role_owner`), `409 conflict` `name` (`serviceaccount.name_taken`), `403`. Audit
+`service_account.created`.
+
+**`PATCH`** `{ "description"?, "role"?, "disabled"? }`. Audit `service_account.updated`,
+`service_account.role_changed`, `service_account.disabled` or `service_account.enabled`, each only
+when something changed.
+
+**`DELETE`** deletes the account, its membership and its tokens; what it made stays. Audit
+`service_account.deleted`.
+
+**Tokens.** `POST .../tokens` `{ "name", "expiresInDays"?, "expiresAt"?, "allowedIps"? }`. A token
+expires after 90 days unless `expiresInDays` (1 to 365) or `expiresAt` (Unix ms, at most 365 days
+ahead) says otherwise; giving both is `validation`. `allowedIps` holds up to 50 addresses or
+networks (CIDR), IPv4 or IPv6; the client address is the one `security.trusted_proxies` resolves.
+The answer is the only one that holds the token itself (`kz_sa_` and 40 hex digits); Kalzit keeps
+its SHA-256 and the prefix. Revoking is final and answers the token as it is when it was revoked
+before. Revoked and expired tokens stay in `tokens` for 90 days after they ended (in the audit log
+for good). Audit `service_account.token_created` and `service_account.token_revoked` with the
+token's id and prefix, never the token.
+
+**Using a token.** `Authorization: Bearer kz_sa_...` on any `/orgs/{orgId}/...` route signs the
+request in as the service account: the same membership and permission checks run as for a
+person, with the account's role, and every other rule (read-only data sources, stored queries
+only for viewers) holds alike. Live updates (`/orgs/{orgId}/live`) need a browser session and
+answer a token with `401`. A token of another organization answers `404 not_found` like an
+organization the caller is not in; on other routes (`/me`, `/admin/...`) it is refused with `403`
+(`token.org_routes_only`). Other `Authorization` values are not read, so a proxy's own bearer
+token in front of Kalzit leaves the session cookie in charge. Unknown, revoked, expired and
+disabled tokens, tokens used from an address outside their list and the SCIM token all answer the
+same `401 unauthenticated`; each refusal writes `api_token.refused` with the reason (`unknown`,
+`revoked`, `expired`, `account_disabled`, `address_not_allowed`, `wrong_kind`, `other_org`), the
+address and the token's prefix when it is known. Only refusals count, per client address, with
+the budget of failed sign-ins (`security.login_max_failures` per `security.login_window_secs`), so
+working requests never use it up, however many arrive at once. Once it is used up, a token from
+that address that would be refused answers `429 rate_limited` until the window ends; a working
+token still works, so a few bad tokens behind a shared address cannot lock out the good ones.
+Such refusals are audited per address and window, not one entry each: the first writes
+`api_token.refused_rate_limited` (reason, `endsAt`, and the prefix when the token has our form,
+never the token), and when the window ends `api_token.rate_limit_ended` names that entry
+(`entryId`) and how many refusals followed it (`suppressed`). The closing entry is written when
+the window ends, or at the address's next token request after that, whichever comes first; a
+server that stops in between leaves the first entry without it.
+
+Every audit entry written by a request made with a token names the token next to its service
+account: `actorTokenId` and `actorTokenPrefix` in the audit API (`null` otherwise).
+
+**SCIM token.** One per organization, for the SCIM endpoints of a later version; the same rules
+(shown once, hashed, revocable, audited, 90 days by default, at most a year) without an IP list.
+It provisions people and roles, so its routes need `serviceaccounts:write` and every permission
+of the built-in admin role (`403` otherwise), and never an API token.
+`POST` `{ "expiresInDays"?, "expiresAt"? }` revokes the current one and answers the new one.
+`DELETE` revokes it (`404` without one). Audit `scim.token_created` and `scim.token_revoked`.
+
 ## Sign-in rate limits
 
 `POST /auth/login` (`server/src/routes/auth.rs`) counts every attempt before the password is
@@ -848,6 +964,12 @@ second step for any of them.
 
 ## Reasons
 
+Errors of the routes above carry `error.reason` and `error.params` like those of the data source
+routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request reasons
+(`request.name_length`, ...) are listed there.
+
+### Second factor
+
 | Reason | Code | When |
 |---|---|---|
 | `second_factor.pending_expired` | `401 unauthenticated` | the half-signed-in state is missing, expired, used or ended |
@@ -870,3 +992,16 @@ second step for any of them.
 
 `invalid_code` (`422`) is a wrong or used code; `confirmation_required` (`403`) a change that
 needs a fresh confirmation.
+
+### Service accounts and tokens
+
+| Reason | Params | When |
+|---|---|---|
+| `serviceaccount.name_invalid` | `max` | `422 validation` on `name`: not 1 to `max` lowercase letters, digits and hyphens, or starts with a hyphen |
+| `serviceaccount.name_taken` | | `409 conflict` on `name`: another service account of the organization has this name |
+| `serviceaccount.role_owner` | | `422 validation` on `role`: a service account cannot be an owner |
+| `token.expiry_out_of_range` | `maxDays` | `422 validation` on `expiresInDays` or `expiresAt`: not in the future, or more than `maxDays` days ahead |
+| `token.ip_invalid` | `line`, `value` | `422 validation` on `allowedIps`: entry `line` (from 1) is no address or network |
+| `token.ip_too_many` | `max` | `422 validation` on `allowedIps`: more than `max` entries |
+| `token.not_for_this_route` | | `403 forbidden`: API tokens cannot manage service accounts or tokens |
+| `token.org_routes_only` | | `403 forbidden`: an API token was sent to a route outside its organization |

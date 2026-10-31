@@ -56,6 +56,10 @@ pub struct AppState {
     pub sign_in_address_limiter: Arc<RateLimiter>,
     /// Checks of the current password per user (`POST /me/password`).
     pub password_limiter: Arc<RateLimiter>,
+    /// Refused API tokens per client address (`auth::api_token`), with the budget of sign-ins.
+    pub token_limiter: Arc<RateLimiter>,
+    /// Refused API tokens of addresses past that budget, for their audit entries.
+    pub limited_refusals: Arc<crate::auth::api_token::LimitedRefusals>,
     /// Password checks in flight per account (sign-ins and `POST /me/password`).
     pub password_checks: Arc<crate::auth::ratelimit::InFlight>,
     /// Setup code attempts per client address (`routes::setup`).
@@ -164,6 +168,8 @@ impl AppState {
                 Capacity::LARGE,
             )),
             password_limiter: Arc::new(login(Capacity::SMALL)),
+            token_limiter: Arc::new(login(Capacity::LARGE)),
+            limited_refusals: Arc::default(),
             password_checks: Arc::default(),
             setup_limiter: Arc::new(setup_limiter),
             setup_all_limiter: Arc::new(setup_all_limiter),
