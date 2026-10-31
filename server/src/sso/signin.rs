@@ -155,7 +155,11 @@ pub async fn account(
                     .of(&a.id)));
                 }
                 Some(a) => {
-                    if !person.email_verified || !email_confirmed(&mut *conn, &a.id).await? {
+                    // An account SCIM made and still owns counts as confirmed for this sign-in
+                    // only (docs/api/scim.md, "Accounts"); nothing else takes SCIM's word for it.
+                    let confirmed = email_confirmed(&mut *conn, &a.id).await?
+                        || crate::scim::vouches_for_sign_in(&mut *conn, &a.id, break_glass.as_deref()).await?;
+                    if !person.email_verified || !confirmed {
                         return Ok(Err(Refusal::new(
                             "email_taken",
                             "sso.email_unverified",

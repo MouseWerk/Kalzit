@@ -106,6 +106,8 @@ mod tests {
         // Service accounts and API tokens (docs/api/access.md).
         "serviceaccount",
         "token",
+        // SCIM provisioning (docs/api/scim.md).
+        "scim",
         // LDAP and Active Directory (docs/api/sso.md), with the causes it records in the audit log.
         "ldap",
     ];
@@ -189,6 +191,21 @@ mod tests {
         "sso.provider_updated",
         "sso.providers_reordered",
         "sso.unmapped_changed",
+        // Audit actions of SCIM.
+        "scim.group_created",
+        "scim.group_deactivated",
+        "scim.group_updated",
+        "scim.memberships_changed",
+        "scim.request_refused",
+        "scim.token_created",
+        "scim.token_revoked",
+        "scim.turned_off",
+        "scim.turned_on",
+        "scim.user_created",
+        "scim.user_deactivated",
+        "scim.user_linked",
+        "scim.user_reactivated",
+        "scim.user_updated",
     ];
 
     /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of
@@ -326,7 +343,7 @@ mod tests {
         let mut docs = BTreeSet::new();
         // The AI, plugin, access, mail and single sign-on routes document their own reasons; they
         // share the target and request reasons.
-        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md"] {
+        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md", "scim.md"] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }
@@ -334,7 +351,7 @@ mod tests {
         let unknown: Vec<_> = docs.difference(&code).collect();
         assert!(
             undocumented.is_empty() && unknown.is_empty(),
-            "in the code but not in docs/api/datasources.md, ai.md, plugins.md, access.md or sso.md: {undocumented:?}; documented but not in the code: {unknown:?}"
+            "in the code but not in docs/api/datasources.md, ai.md, plugins.md, access.md, sso.md or scim.md: {undocumented:?}; documented but not in the code: {unknown:?}"
         );
         assert!(code.len() > 100, "the scan found only {} reasons", code.len());
     }

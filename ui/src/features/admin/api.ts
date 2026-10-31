@@ -298,7 +298,56 @@ export interface CreatedToken extends ApiToken {
 
 const isCreatedToken = shape<CreatedToken>({ ...apiTokenFields, token: isString });
 
-const isScimTokenState = shape<{ token: ApiToken | null }>({ token: nullable(isApiToken) });
+/** The organization's SCIM (docs/api/scim.md, "Administration"). */
+export interface ScimStatus {
+  enabled: boolean;
+  /** The base URL to enter in the directory. */
+  endpoint: string;
+  token: ApiToken | null;
+  stats: ScimStats;
+}
+
+export interface ScimStats {
+  since: number;
+  created: number;
+  deactivated: number;
+  /** Existing accounts linked to new SCIM users. */
+  linked: number;
+  groups: number;
+  mappedGroups: number;
+  lastError: ScimLastError | null;
+}
+
+export interface ScimLastError {
+  at: number;
+  action: string;
+  reason: string | null;
+  status: number | null;
+}
+
+const isScimLastError = shape<ScimLastError>({
+  at: isNumber,
+  action: isString,
+  reason: nullable(isString),
+  status: nullable(isNumber),
+});
+
+const isScimStats = shape<ScimStats>({
+  since: isNumber,
+  created: isNumber,
+  deactivated: isNumber,
+  linked: isNumber,
+  groups: isNumber,
+  mappedGroups: isNumber,
+  lastError: nullable(isScimLastError),
+});
+
+const isScimStatus = shape<ScimStatus>({
+  enabled: isBoolean,
+  endpoint: isString,
+  token: nullable(isApiToken),
+  stats: isScimStats,
+});
 
 export interface TokenInput {
   name: string;
@@ -353,9 +402,14 @@ export function revokeApiToken(orgId: string, accountId: string, tokenId: string
   return send("POST", path, {}, isApiToken, "token");
 }
 
-export async function fetchScimToken(orgId: string) {
-  const answer = await request("GET", orgPath(orgId, "/scim-token"));
-  return expectShape(answer, isScimTokenState, "SCIM token").token;
+/** `since`: where today's counts start (the start of the viewer's day). */
+export async function fetchScimStatus(orgId: string, since: number) {
+  const answer = await request("GET", orgPath(orgId, `/scim${query({ since })}`));
+  return expectShape(answer, isScimStatus, "SCIM");
+}
+
+export function setScimEnabled(orgId: string, enabled: boolean) {
+  return send("PUT", orgPath(orgId, "/scim"), { enabled }, isScimStatus, "SCIM");
 }
 
 export function createScimToken(orgId: string) {
@@ -795,7 +849,7 @@ export const adminKeys = {
   serviceAccounts: (orgId: string) => ["admin", "org", orgId, "service-accounts"] as const,
   serviceAccount: (orgId: string, accountId: string) =>
     ["admin", "org", orgId, "service-accounts", accountId] as const,
-  scimToken: (orgId: string) => ["admin", "org", orgId, "scim-token"] as const,
+  scim: (orgId: string) => ["admin", "org", orgId, "scim"] as const,
   grants: (orgId: string, type: ResourceType, id: string) =>
     ["admin", "org", orgId, "grants", type, id] as const,
   explain: (orgId: string, permission: string, type?: ResourceType, id?: string) =>
