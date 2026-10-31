@@ -82,6 +82,20 @@ describe("invitation page", () => {
     await waitFor(() => expect(location().pathname).toBe("/login"));
   });
 
+  it("offers only the provider when password sign-in is off", async () => {
+    const server = installFakeServer();
+    server.areas.mail.links[TOKEN] = invitationInfo({
+      password: false,
+      sso: [{ id: "mueller-sso", name: "Müller SSO" }],
+    });
+    renderApp(`/invite#${TOKEN}`);
+    const button = await screen.findByRole("link", { name: "Continue with Müller SSO" });
+    expect(button.getAttribute("href")).toBe("/api/auth/sso/mueller-sso/start?returnTo=%2Finvite");
+    expect(screen.getByText(/you sign in through your provider/)).toBeTruthy();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept invitation" })).toBeNull();
+  });
+
   it("names the day an expired invitation ended and who to ask", async () => {
     const server = installFakeServer();
     server.areas.mail.links[TOKEN] = invitationInfo({ state: "expired" });
@@ -114,6 +128,37 @@ describe("invitation page", () => {
     await user.click(screen.getByRole("link", { name: "Sign in and join" }));
     await waitFor(() => expect(location().pathname).toBe("/login"));
     expect(window.sessionStorage.getItem("kalzit.link.invite")).toBe(TOKEN);
+  });
+
+  it("sets up the second factor the organization requires before a signed-in account joins", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.areas.mail.links[TOKEN] = invitationInfo({
+      signedInAs: { name: "Nora Becker", email: "nora@example.com" },
+    });
+    server.areas.mail.acceptSecondFactor = {
+      email: "nora@example.com",
+      setup: true,
+      methods: [],
+      lastUsed: null,
+      allowed: { passkey: false, totp: true },
+      requiredBy: { kind: "org", id: "o1", name: "Analytical Engines" },
+      lockedUntil: null,
+      expiresAt: Date.now() + 600_000,
+    };
+    const { user } = renderApp(`/invite#${TOKEN}`);
+    await user.click(await screen.findByRole("button", { name: "Accept and join" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Join" })).toBeNull());
+    expect(server.state.signedIn).toBe(false);
+    expect(screen.queryByRole("navigation", { name: "Main navigation" })).toBeNull();
+    expect(screen.getAllByText(/Analytical Engines/).length).toBeGreaterThan(0);
+  });
+
+  it("says whom to ask when neither a password nor a provider can be used", async () => {
+    const server = installFakeServer();
+    server.areas.mail.links[TOKEN] = invitationInfo({ password: false, sso: [] });
+    renderApp(`/invite#${TOKEN}`);
+    expect(await screen.findByText("There is no way to sign in here right now.")).toBeTruthy();
+    expect(screen.queryByLabelText("Password")).toBeNull();
   });
 
   it("refuses to join with another signed-in account until it signs out", async () => {

@@ -278,6 +278,30 @@ pub fn second_factor_notice(lang: Lang, notice: crate::auth::second_factor::Noti
     }
 }
 
+/// To every server admin: the break-glass admin signed in with a password while password
+/// sign-in is off (docs/api/sso.md). Names who and from where, never a secret.
+pub fn break_glass_sign_in(lang: Lang, name: &str, address: &str, at: &str, host: &str) -> Content {
+    let (subject, paragraphs, footer) = match lang {
+        Lang::De => (
+            "Anmeldung des Notfall-Admins".to_string(),
+            vec![
+                format!("{name} hat sich am {at} mit dem Passwort bei {host} angemeldet, über die Notfall-Anmeldung."),
+                format!("Die Anmeldung kam von {address}. Sie steht im Audit-Log."),
+            ],
+            "War das nicht abgesprochen? Prüf das Audit-Log und die Anmeldung über die Anbieter.".to_string(),
+        ),
+        Lang::En => (
+            "Break-glass admin signed in".to_string(),
+            vec![
+                format!("{name} signed in to {host} with a password at {at}, through the break-glass sign-in."),
+                format!("The sign-in came from {address}. It is in the audit log."),
+            ],
+            "Not agreed on? Check the audit log and the sign-in through providers.".to_string(),
+        ),
+    };
+    Content { text: text(&paragraphs, None, &footer), html: html(&paragraphs, None, &footer), subject }
+}
+
 /// The link that confirms an account's address (`routes::email_confirmation`).
 pub fn confirm_email(lang: Lang, link: &str, host: &str) -> Content {
     let (subject, paragraphs, button, footer) = match lang {

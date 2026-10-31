@@ -234,6 +234,7 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
   "annotation.": "admin.auditArea.annotation",
   "library_panel.": "admin.auditArea.library_panel",
   "playlist.": "admin.auditArea.playlist",
+  "sso.": "admin.auditArea.sso",
   "service_account.": "admin.auditArea.service_account",
   "api_token.": "admin.auditArea.api_token",
   "scim.": "admin.auditArea.scim",

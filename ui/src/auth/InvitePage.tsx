@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { forgetAccountData, logout, type Me, meQuery } from "../api/auth";
+import { forgetAccountData, logout, type Me, meQuery, ssoStartUrl } from "../api/auth";
 import { isApiError } from "../api/client";
 import { useBrand } from "../appearance/brand";
 import { TextField } from "../components/TextField";
@@ -228,13 +228,42 @@ function acceptError(t: ReturnType<typeof useI18n>["t"], error: unknown): string
 function Join({ token, summary }: { token: string; summary: ReactNode }) {
   const { t } = useI18n();
   const joined = useJoined();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  // The organization requires a second factor the account does not have: its session ended, and
+  // the account sets one up before it is signed in again with the membership.
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
   const join = useMutation({
     mutationFn: () => acceptInvitation(token),
     retry: false,
-    // Someone signed in already passed any second step.
-    onSuccess: (result) => ("secondFactor" in result ? undefined : joined(result)),
+    onSuccess: (result) => {
+      if ("secondFactor" in result) {
+        forgetToken("invite");
+        forgetAccountData(queryClient);
+        queryClient.setQueryData(meQuery.queryKey, null);
+        if (isPrompt(result.secondFactor)) {
+          setPrompt(result.secondFactor);
+        } else {
+          void navigate({ to: "/login" });
+        }
+        return;
+      }
+      return joined(result);
+    },
   });
   const failed = acceptError(t, join.error);
+  if (prompt !== null) {
+    return (
+      <SecondFactorSetup
+        prompt={prompt}
+        onSignedIn={(me) => void joined(me)}
+        onSignOut={() => {
+          void logout().finally(() => void navigate({ to: "/login" }));
+        }}
+        onExpired={() => void navigate({ to: "/login" })}
+      />
+    );
+  }
   return (
     <div className="access__card">
       {summary}
@@ -401,58 +430,92 @@ function NewAccount({
       onKeyDown={preventComposingSubmit}
     >
       {summary}
-      {/* Single sign-on adds "Continue with <provider>" above the password here once it exists
-          (`info.sso`, docs/api/mail.md, "Accepting"); board frame 3A. */}
+      {/* Single sign-on first (board frame 3A): signed in through a provider with the invited
+          address, the page comes back here and joins with the token alone. */}
+      {info.sso.length === 0 ? null : (
+        <div className="access__sso">
+          {info.sso.map((provider, index) => (
+            <a
+              key={provider.id}
+              href={ssoStartUrl(provider.id, "/invite")}
+              className={
+                index === 0 && !info.password
+                  ? "button button--primary button--block"
+                  : "button button--secondary button--block"
+              }
+            >
+              {t("access.invite.ssoContinue", { provider: provider.name })}
+            </a>
+          ))}
+        </div>
+      )}
       <AccessAlert>
         {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
       </AccessAlert>
-      <TextField
-        label={t("access.invite.email")}
-        hint={t("access.invite.emailHint")}
-        type="email"
-        name="email"
-        autoComplete="username"
-        readOnly
-        value={info.email}
-        onValueChange={() => {}}
-      />
-      <TextField
-        ref={refs.name}
-        label={t("access.invite.name")}
-        name="name"
-        autoComplete="name"
-        required
-        readOnly={accept.isPending}
-        value={name}
-        onValueChange={(value) => {
-          setName(value);
-          setErrors(({ name: _, ...rest }) => rest);
-        }}
-        error={fieldError("name")}
-      />
-      <PasswordField
-        ref={refs.password}
-        label={t("access.invite.password")}
-        name="new-password"
-        autoComplete="new-password"
-        showStrength
-        showRules
-        readOnly={accept.isPending}
-        value={password}
-        onValueChange={(value) => {
-          setPassword(value);
-          setErrors(({ password: _, ...rest }) => rest);
-        }}
-        error={fieldError("password")}
-      />
-      <button
-        type="submit"
-        className="button button--primary button--block access__submit"
-        aria-disabled={accept.isPending}
-      >
-        {accept.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
-        {t("access.invite.accept")}
-      </button>
+      {info.password ? null : info.sso.length === 0 ? (
+        <AccessNotice
+          tone="info"
+          icon="lock"
+          title={t("access.invite.noWayTitle")}
+          detail={t("access.invite.noWayText", { org: info.orgName })}
+        />
+      ) : (
+        <p className="access__lead">{t("access.invite.ssoOnly", { org: info.orgName })}</p>
+      )}
+      {info.password && info.sso.length > 0 ? (
+        <p className="access__or">{t("access.invite.orPassword")}</p>
+      ) : null}
+      {info.password ? (
+        <>
+          <TextField
+            label={t("access.invite.email")}
+            hint={t("access.invite.emailHint")}
+            type="email"
+            name="email"
+            autoComplete="username"
+            readOnly
+            value={info.email}
+            onValueChange={() => {}}
+          />
+          <TextField
+            ref={refs.name}
+            label={t("access.invite.name")}
+            name="name"
+            autoComplete="name"
+            required
+            readOnly={accept.isPending}
+            value={name}
+            onValueChange={(value) => {
+              setName(value);
+              setErrors(({ name: _, ...rest }) => rest);
+            }}
+            error={fieldError("name")}
+          />
+          <PasswordField
+            ref={refs.password}
+            label={t("access.invite.password")}
+            name="new-password"
+            autoComplete="new-password"
+            showStrength
+            showRules
+            readOnly={accept.isPending}
+            value={password}
+            onValueChange={(value) => {
+              setPassword(value);
+              setErrors(({ password: _, ...rest }) => rest);
+            }}
+            error={fieldError("password")}
+          />
+          <button
+            type="submit"
+            className="button button--primary button--block access__submit"
+            aria-disabled={accept.isPending}
+          >
+            {accept.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+            {t("access.invite.accept")}
+          </button>
+        </>
+      ) : null}
     </form>
   );
 }

@@ -54,6 +54,20 @@ export interface SectionDef {
 
 const serverAdmin = (access: SettingsAccess) => access.permissions.isServerAdmin;
 
+/**
+ * The sign-in settings, changed only through `PUT /admin/sign-in/local` and
+ * `PUT /admin/sign-in/unmapped` (docs/api/sso.md), so the page that changes them checks that
+ * nobody is locked out. Listed as plain strings: the generated registry keys follow the server.
+ */
+const SIGN_IN_KEYS: readonly string[] = [
+  "signin.local_password",
+  "signin.password_form",
+  "signin.break_glass_user",
+  "signin.unmapped",
+  "signin.default_org",
+  "signin.default_role",
+];
+
 /** Extra rows of the appearance section that are not one registry setting. */
 export const LOGO_ROW = "appearance.logo";
 export const SIGN_IN_ROW = "signin.page";
@@ -145,16 +159,19 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
-    // The board docs/design/blueprint/Identity.dc.html, frame 5G: the second factor's policy on
-    // the server and per organization. Providers (OIDC, LDAP) follow in their own package.
+    // The board docs/design/blueprint/Identity.dc.html, frames 5A to 5G: providers, group
+    // mapping, the local sign-in and the second factor's policy on the server.
     id: "signin",
     group: "server",
     kind: "signin",
     label: "settings.section.signin.label",
     lead: "settings.section.signin.lead",
     keywords: "settings.section.signin.keywords",
-    keys: ["security.two_factor_required", "security.two_factor_methods"],
-    planned: "settings.planned.signin",
+    keys: [
+      ...SIGN_IN_KEYS,
+      "security.two_factor_required",
+      "security.two_factor_methods",
+    ] as readonly SettingKey[],
     visible: serverAdmin,
   },
   {
@@ -276,6 +293,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.week_start",
       "dashboards.default_time_range",
       "dashboards.new_in_team_space",
+      // Organizations may only be stricter than the server: inherit, or off for their members.
+      "signin.local_password" as string as SettingKey,
       "security.two_factor_required",
     ],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),

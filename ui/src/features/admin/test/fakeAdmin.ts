@@ -21,6 +21,8 @@ interface WireMember {
   name: string;
   role: string;
   joinedAt: number;
+  /** An "IdP decides" group mapping sets the role (docs/api/sso.md). */
+  idpManaged?: boolean;
 }
 
 interface WireTeamMember {
@@ -798,6 +800,11 @@ function members(
   const member = state.members.find((candidate) => candidate.userId === id);
   if (member === undefined) {
     refuse("not_found");
+  }
+  if (member.idpManaged === true && (method === "PATCH" || method === "DELETE")) {
+    return json(409, {
+      error: { code: "conflict", message: "role managed", reason: "sso.role_managed" },
+    });
   }
   holds(state, roleKeyPermissions(state, member.role) ?? ALL_PERMISSIONS);
   const lastOwner = member.role === "owner" && owners(state) === 1;

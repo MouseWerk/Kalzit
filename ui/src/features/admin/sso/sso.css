@@ -1,0 +1,447 @@
+@layer components {
+  /*
+   * Verwaltung > Anmeldung after the board docs/design/blueprint/Identity.dc.html, frames 5A to
+   * 5G: a status strip, tabs, tables of providers and mappings inside settings cards, the provider
+   * form and the checks before password sign-in goes off. Tokens only; selection and state are a
+   * quiet tint and text weight, never an accent frame or bar.
+   */
+  .sso {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  .sso-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .sso-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-ai-tile), 100%), 1fr));
+    margin: 0;
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .sso-strip__cell {
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border-inline-end: var(--border-width) solid var(--border);
+  }
+
+  .sso-strip__cell:last-child {
+    border-inline-end: 0;
+  }
+
+  .sso-strip__label,
+  .sso-caps {
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .sso-strip__value {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .sso-strip__sub {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .sso__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .sso__bar .tabs {
+    flex: 1 1 auto;
+  }
+
+  .sso__count {
+    margin-inline-start: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .sso-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-muted {
+    color: var(--text-muted);
+  }
+
+  .sso-small {
+    font-size: var(--font-size-xs);
+  }
+
+  .sso-mono {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  /* Tables inside a settings card: the card draws the frame. */
+  .sso-table-wrap {
+    overflow-x: auto;
+  }
+
+  .sso-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-table th,
+  .sso-table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: middle;
+  }
+
+  .sso-table thead th {
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+  }
+
+  .sso-table thead th:first-child {
+    border-start-start-radius: var(--radius-lg);
+  }
+
+  .sso-table thead th:last-child {
+    border-start-end-radius: var(--radius-lg);
+  }
+
+  .sso-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .sso-table th.sso-table__number,
+  .sso-table td.sso-table__number {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  .sso-table__actions {
+    white-space: nowrap;
+    text-align: end;
+  }
+
+  .sso-table__actions > * {
+    display: inline-flex;
+    vertical-align: middle;
+  }
+
+  .sso-table__handle {
+    width: 1%;
+    cursor: grab;
+  }
+
+  /* The row being dragged: a quiet tint, no frame. */
+  .sso-table__row--dragged {
+    background: var(--bg-active);
+  }
+
+  .sso-provider {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .sso-provider__text {
+    display: grid;
+    gap: var(--space-half);
+    min-width: 0;
+  }
+
+  .sso-provider__name {
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* The kind's short mark ("OI"): a neutral tile. */
+  .sso-mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--size-kind-mark);
+    height: var(--size-kind-mark);
+    border-radius: var(--radius-md);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .sso-status {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .sso-decides {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .sso-decides .icon {
+    width: var(--font-size-md);
+    height: var(--font-size-md);
+    color: var(--text-muted);
+  }
+
+  .sso-empty {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  /* The provider form. */
+  .sso-form .input[aria-invalid="true"],
+  .sso-form .select[aria-invalid="true"],
+  .sso-local .select[aria-invalid="true"] {
+    background: var(--danger-bg);
+  }
+
+  .sso-form__pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
+    gap: var(--space-4);
+  }
+
+  .sso-alarm {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--danger-bg);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-alarm .icon {
+    flex: none;
+    color: var(--danger-text);
+  }
+
+  .sso-note-ok {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--success-bg);
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-note-ok .icon {
+    flex: none;
+    color: var(--success-text);
+  }
+
+  .sso-results {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .sso-results:empty {
+    display: none;
+  }
+
+  .sso-copy {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .sso-copy__value {
+    flex: 1 1 var(--size-field);
+    min-width: 0;
+  }
+
+  .sso-check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-check > span {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .sso-switch-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .sso-switch-row__text {
+    display: grid;
+    flex: 1 1 var(--size-field);
+    gap: var(--space-half);
+  }
+
+  .sso-switch-row__control {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-advanced {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .sso-advanced__toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: var(--space-1);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+  }
+
+  .sso-advanced__toggle:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .sso-advanced__body {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .sso-advanced__body[hidden] {
+    display: none;
+  }
+
+  .sso-dialog__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+  }
+
+  .sso-dialog__spacer {
+    flex: 1 1 auto;
+  }
+
+  /* Check mapping. */
+  .sso-preview {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .sso-preview__pick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+  }
+
+  .sso-preview__result {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-preview__result p {
+    margin: 0;
+  }
+
+  .sso-preview__orgs {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* Local sign-in: the settings on the left, the checks beside them where there is room. */
+  .sso-local {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-settings-preview), 100%), 1fr));
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  .sso-readonly {
+    margin: 0;
+  }
+
+  .sso-checks {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .sso-checks__list {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .sso-check-line {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .sso-check-line .icon {
+    flex: none;
+    color: var(--success-text);
+  }
+
+  /* A check not met: the line in the danger text, on its tint. */
+  .sso-check-line--open {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--danger-bg);
+  }
+
+  .sso-check-line--open .icon {
+    color: var(--danger-text);
+  }
+}

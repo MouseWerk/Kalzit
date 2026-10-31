@@ -218,7 +218,10 @@ fn last_method() -> ApiError {
 /// Refuses removing the account's last method while a second factor is required; answers whether
 /// one is required, for the check inside the transaction (`after_removal`).
 async fn guard_last(state: &AppState, user: &SessionUser, has: &Methods) -> ApiResult<bool> {
-    let required = sf::required_for(state, &user.id, user.is_server_admin != 0).await?.is_some();
+    // The break-glass admin keeps a factor always: a password alone never opens the server
+    // (docs/api/sso.md).
+    let break_glass = crate::sso::local_policy(state).await?.break_glass.as_deref() == Some(user.id.as_str());
+    let required = break_glass || sf::required_for(state, &user.id, user.is_server_admin != 0).await?.is_some();
     if has.count() <= 1 && required {
         return Err(last_method());
     }
@@ -469,6 +472,12 @@ async fn do_reset(
     now: i64,
 ) -> ApiResult<ResetDone> {
     let reason = reason.map(|r| clean_text(&r, "reason", 200).map_err(|e| e.with_field("reason"))).transpose()?;
+    if crate::sso::local_policy(state).await?.break_glass.as_deref() == Some(target) {
+        return Err(conflict(
+            "the break-glass admin's second factor cannot be reset; choose another break-glass admin first",
+        )
+        .because("sso.break_glass_protected"));
+    }
     let mut tx = crate::db::begin(&state.db).await?;
     let removed = sf::remove_all(&mut tx, target).await?;
     // Whoever holds a session of the account now signs in again, with the new factor.

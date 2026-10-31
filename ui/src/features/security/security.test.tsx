@@ -157,7 +157,7 @@ describe("account: sign-in and security", () => {
 describe("the second factor’s rule", () => {
   it("asks for a fresh confirmation before the change goes through", async () => {
     const path = "/api/admin/settings/security.two_factor_required";
-    const { user, server } = await openAdmin("/settings/signin", {
+    const { user, server } = await openAdmin("/settings/signin#local", {
       isServerAdmin: true,
       setup: (admin) => {
         admin.serverSettings.push({

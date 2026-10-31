@@ -119,6 +119,74 @@ export async function login(input: LoginInput): Promise<Me | { secondFactor: unk
   return expectShape(body, isMe, "login");
 }
 
+/**
+ * The fixed sign-in of `/anmelden/lokal` (docs/api/sso.md): the same body and answers as
+ * `login`; with password sign-in off only the break-glass admin gets in.
+ */
+export async function loginLocal(input: LoginInput): Promise<Me | { secondFactor: unknown }> {
+  const body = await request("POST", "/api/auth/login/local", input);
+  if (isRecord(body) && "secondFactor" in body) {
+    return { secondFactor: body.secondFactor };
+  }
+  return expectShape(body, isMe, "login");
+}
+
+/** Where the password form stands on the sign-in page while providers are set up. */
+export type PasswordForm = "expanded" | "collapsed" | "hidden";
+
+/** One button of the sign-in page: "Sign in with <name>". */
+export interface SignInProvider {
+  slug: string;
+  name: string;
+  kind: string;
+}
+
+/** `GET /api/auth/providers`: the enabled identity providers in their order. */
+export interface SignInProviders {
+  providers: SignInProvider[];
+  passwordForm: PasswordForm;
+  /** False when the server turned password sign-in off. */
+  localSignIn: boolean;
+}
+
+const PASSWORD_FORMS: readonly string[] = ["expanded", "collapsed", "hidden"];
+
+function isSignInProviders(value: unknown): value is SignInProviders {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.providers) &&
+    value.providers.every(
+      (provider) =>
+        isRecord(provider) &&
+        typeof provider.slug === "string" &&
+        typeof provider.name === "string" &&
+        typeof provider.kind === "string",
+    ) &&
+    typeof value.passwordForm === "string" &&
+    PASSWORD_FORMS.includes(value.passwordForm) &&
+    typeof value.localSignIn === "boolean"
+  );
+}
+
+export async function fetchSignInProviders(): Promise<SignInProviders> {
+  return expectShape(
+    await request("GET", "/api/auth/providers"),
+    isSignInProviders,
+    "sign-in providers",
+  );
+}
+
+export const signInProvidersQuery = queryOptions({
+  queryKey: ["signInProviders"],
+  queryFn: fetchSignInProviders,
+  staleTime: 60_000,
+});
+
+/** The address that starts a sign-in through a provider; the browser navigates there. */
+export function ssoStartUrl(slug: string, returnTo: string): string {
+  return `/api/auth/sso/${encodeURIComponent(slug)}/start?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 /** Signs out; with `forgetBrowser` the browser is no longer a known device of the account. */
 export async function logout(forgetBrowser = false): Promise<void> {
   await request("POST", forgetBrowser ? "/api/auth/logout?forgetBrowser=true" : "/api/auth/logout");

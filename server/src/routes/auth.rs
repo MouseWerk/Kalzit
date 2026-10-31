@@ -17,11 +17,11 @@ use crate::net::RequestInfo;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoginRequest {
-    email: String,
-    password: String,
+    pub email: String,
+    pub password: String,
     /// "This is not my browser": no device cookie is issued, and one the browser has is removed.
     #[serde(default, rename = "forgetBrowser")]
-    forget_browser: bool,
+    pub forget_browser: bool,
 }
 
 /// "Sign out and forget this browser" (`?forgetBrowser=true` or `=1`): the device cookie is
@@ -84,6 +84,18 @@ pub async fn login(
     headers: HeaderMap,
     JsonBody(req): JsonBody<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
+    login_with(state, info, headers, req, false).await
+}
+
+/// The password sign-in; `break_glass_form` for the break-glass form (`POST /auth/login/local`,
+/// docs/api/sso.md), the only one the break-glass admin may use while password sign-in is off.
+pub async fn login_with(
+    state: AppState,
+    info: RequestInfo,
+    headers: HeaderMap,
+    req: LoginRequest,
+    break_glass_form: bool,
+) -> ApiResult<axum::response::Response> {
     let now = state.clock.now_ms();
     // No account can have such an email or password, so these are refused before they cost a
     // hash or a rate-limit entry.
@@ -237,6 +249,14 @@ pub async fn login(
         limiter.refund(key, counted);
     }
 
+    // Password sign-in may be off for this account (docs/api/sso.md); said only after the right
+    // password, so nobody can probe accounts with it.
+    use crate::sso::PasswordSignIn;
+    let decision = crate::sso::password_sign_in(&state, &row.id, break_glass_form).await?;
+    if decision == PasswordSignIn::Off {
+        return Err(ApiError::forbidden("password sign-in is off for this account; sign in through a provider")
+            .because("sso.password_sign_in_off"));
+    }
     // Whether a second step follows (`second_factor`), read before the transaction so it holds
     // no second connection.
     let user = SessionUser {
@@ -246,7 +266,12 @@ pub async fn login(
         is_server_admin: row.is_server_admin,
     };
     let first = crate::auth::second_factor::FirstStep::Password { password_hash: row.password_hash.as_deref() };
-    let plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
+    let mut plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
+    // The break-glass admin never gets in with a password alone: without a second factor (it can
+    // only be gone through a database change), one is set up first.
+    if decision == PasswordSignIn::BreakGlass && plan.is_none() {
+        plan = Some(super::second_factor::forced_setup(&state, &info, &user, None, now).await?);
+    }
 
     let mut tx = crate::db::begin(&state.db).await?;
     // Lock the user row and confirm it still holds the hash we verified and is still enabled. A
@@ -263,11 +288,31 @@ pub async fn login(
     if still_valid == 0 {
         return Err(invalid_credentials());
     }
+    if decision == PasswordSignIn::BreakGlass {
+        let mut event = audit("auth.break_glass_signed_in", None);
+        event.actor_user_id = Some(&row.id);
+        event.resource_id = Some(&row.id);
+        crate::audit::record(&mut tx, &event).await?;
+    }
     // The session opens now, or the second step starts (`routes::second_factor`). Everything the
     // answer needs is read before the commit: once it is committed, nothing may fail as "busy,
     // nothing changed".
-    super::second_factor::finish_first_step(tx, &state, &info, &headers, user, first, req.forget_browser, plan, now)
-        .await
+    let answer = super::second_factor::finish_first_step(
+        tx,
+        &state,
+        &info,
+        &headers,
+        user,
+        first,
+        req.forget_browser,
+        plan,
+        now,
+    )
+    .await?;
+    if decision == PasswordSignIn::BreakGlass {
+        crate::sso::announce_break_glass(&state, &row.id, &info);
+    }
+    Ok(answer)
 }
 
 pub async fn logout(

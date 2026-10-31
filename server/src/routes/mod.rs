@@ -43,6 +43,7 @@ pub mod second_factor;
 pub mod security;
 pub mod service_accounts;
 pub mod setup;
+pub mod sso;
 pub mod support;
 pub mod table;
 pub mod team_context;
@@ -61,6 +62,7 @@ pub fn all() -> Vec<table::RouteDef> {
         setup::routes(),
         about::routes(),
         auth::routes(),
+        sso::routes(),
         second_factor::routes(),
         security::routes(),
         orgs::routes(),
@@ -170,6 +172,53 @@ pub fn normalize_email(raw: &str) -> ApiResult<String> {
     if valid { Ok(email) } else { Err(ApiError::validation("email is not a valid address")) }
 }
 
+/// The form two addresses are compared in: the local part lowercased and the domain mapped by
+/// IDNA (UTS #46, which also unifies NFC and NFD), so `anna@bücher.example` and
+/// `anna@xn--bcher-kva.example` are one address. An address IDNA cannot map (a local part outside
+/// ASCII) is compared as stored.
+pub fn email_key(email: &str) -> String {
+    crate::sso::oidc::matching_email(email).unwrap_or_else(|| email.to_string())
+}
+
+/// Whether two addresses are one (`email_key`).
+pub fn same_email(a: &str, b: &str) -> bool {
+    a == b || email_key(a) == email_key(b)
+}
+
+/// The accounts whose address is `email` in any of its forms (`email_key`), service accounts
+/// included: `(id, service_account)`. Accounts keep the form they were made with, so the
+/// candidates are those with the same local part, and the domain is compared in Rust.
+pub async fn all_accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<(String, bool)>> {
+    let key = email_key(email);
+    let prefix = match key.rsplit_once('@') {
+        Some((local, _)) => format!("{local}@"),
+        None => key.clone(),
+    };
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT id, email, service_account FROM users          WHERE email = $1 OR email = $2 OR substr(email, 1, length($3)) = $3 ORDER BY id",
+    )
+    .bind(email)
+    .bind(&key)
+    .bind(&prefix)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, stored, _)| stored == email || email_key(stored) == key)
+        .map(|(id, _, service)| (id, service != 0))
+        .collect())
+}
+
+/// The people (no service accounts) whose address is `email` in any of its forms.
+pub async fn accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<String>> {
+    Ok(all_accounts_with_email(conn, email)
+        .await?
+        .into_iter()
+        .filter(|(_, service)| !service)
+        .map(|(id, _)| id)
+        .collect())
+}
+
 pub fn clean_name(raw: &str, what: &str) -> ApiResult<String> {
     let name = raw.trim();
     let chars = name.chars().count();
@@ -194,6 +243,18 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn email_forms_compare_as_one() {
+        let nfc = "anna@b\u{fc}cher.example";
+        let nfd = "anna@bu\u{308}cher.example";
+        assert_eq!(email_key(nfc), "anna@xn--bcher-kva.example");
+        assert!(same_email(nfc, "anna@xn--bcher-kva.example"));
+        assert!(same_email("anna@xn--bcher-kva.example", nfc));
+        assert!(same_email(nfd, nfc));
+        assert!(!same_email("anna@bucher.example", nfc));
+        assert_eq!(email_key("j\u{f6}rg@example.de"), "j\u{f6}rg@example.de");
+    }
 
     #[test]
     fn email_is_normalized() {
@@ -226,6 +287,12 @@ mod access_guard {
         "POST /setup/check",
         "POST /auth/login",
         "POST /auth/logout",
+        // Single sign-on (docs/api/sso.md): the buttons of the sign-in page, the start of a sign-in
+        // through a provider (rate-limited per address) and the break-glass form (its own limit on
+        // top of the sign-in limits).
+        "GET /auth/providers",
+        "GET /auth/sso/{slug}/start",
+        "POST /auth/login/local",
         // The second step of a sign-in: each needs the half-signed-in state of its cookie
         // (`auth::second_factor`), and the codes count against the account's lockout.
         "GET /auth/second-factor",

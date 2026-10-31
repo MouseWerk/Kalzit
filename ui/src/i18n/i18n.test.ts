@@ -210,6 +210,10 @@ describe("catalogs", () => {
       "Sandbox",
       "Beta",
       "Let’s Encrypt",
+      // Single sign-on: terms of the OpenID Connect and OAuth specifications.
+      "Slug",
+      "Scopes",
+      "PKCE",
       "Token",
       "Tokens",
     ]);

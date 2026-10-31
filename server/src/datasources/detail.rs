@@ -101,6 +101,8 @@ mod tests {
         "mail",
         // The second factor of a sign-in (docs/api/access.md).
         "second_factor",
+        // Single sign-on (docs/api/sso.md), with the causes it records in the audit log.
+        "sso",
         // Service accounts and API tokens (docs/api/access.md).
         "serviceaccount",
         "token",
@@ -166,6 +168,20 @@ mod tests {
         "updates.health_timeout_secs",
         "updates.keep_versions",
         "updates.window",
+        // Audit actions of single sign-on.
+        "sso.local_changed",
+        "sso.mapping_created",
+        "sso.mapping_deleted",
+        "sso.mapping_updated",
+        "sso.memberships_changed",
+        "sso.provider_created",
+        "sso.provider_deleted",
+        "sso.provider_identities_removed",
+        "sso.provider_paused",
+        "sso.provider_resumed",
+        "sso.provider_updated",
+        "sso.providers_reordered",
+        "sso.unmapped_changed",
     ];
 
     /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of
@@ -301,9 +317,9 @@ mod tests {
             assert!(code.remove(*not), "{not} is listed as a non-reason but no longer appears in the code");
         }
         let mut docs = BTreeSet::new();
-        // The AI, plugin, access and mail routes document their own reasons; they share the target
-        // and request reasons.
-        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md"] {
+        // The AI, plugin, access, mail and single sign-on routes document their own reasons; they
+        // share the target and request reasons.
+        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md"] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }
@@ -311,7 +327,7 @@ mod tests {
         let unknown: Vec<_> = docs.difference(&code).collect();
         assert!(
             undocumented.is_empty() && unknown.is_empty(),
-            "in the code but not in docs/api/datasources.md, ai.md, plugins.md or access.md: {undocumented:?}; documented but not in the code: {unknown:?}"
+            "in the code but not in docs/api/datasources.md, ai.md, plugins.md, access.md or sso.md: {undocumented:?}; documented but not in the code: {unknown:?}"
         );
         assert!(code.len() > 100, "the scan found only {} reasons", code.len());
     }

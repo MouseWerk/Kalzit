@@ -795,6 +795,38 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
         .await?;
         count += 1;
     }
+    // The secrets of identity providers, bound to `sso-provider:<id>` (`sso::store`). The
+    // secrets of test sign-ins live ten minutes and are not carried over.
+    let rows: Vec<(String, String, String, String, String)> =
+        sqlx::query_as("SELECT provider_id, field, key_id, nonce, ciphertext FROM sso_provider_secrets")
+            .fetch_all(&mut *tx)
+            .await?;
+    for (provider_id, field, key_id, nonce, ciphertext) in rows {
+        if key_id == new.id {
+            continue;
+        }
+        let owner = crate::sso::store::secret_owner(&provider_id);
+        let blob = Blob { key_id, nonce, ciphertext };
+        let plain = match keyring.key(&blob.key_id) {
+            Some(key) => decrypt_with(key, &owner, &field, &blob),
+            None => Err(SecretError::UnknownKey(blob.key_id.clone())),
+        }
+        .with_context(|| format!("secret {field} of identity provider {provider_id}; nothing was changed"))?;
+        let fresh = encrypt_with(new, &owner, &field, &plain);
+        sqlx::query(
+            "UPDATE sso_provider_secrets SET key_id = $1, nonce = $2, ciphertext = $3 \
+             WHERE provider_id = $4 AND field = $5",
+        )
+        .bind(&fresh.key_id)
+        .bind(&fresh.nonce)
+        .bind(&fresh.ciphertext)
+        .bind(&provider_id)
+        .bind(&field)
+        .execute(&mut *tx)
+        .await?;
+        count += 1;
+    }
+    sqlx::query("DELETE FROM sso_sign_ins WHERE draft_secret IS NOT NULL").execute(&mut *tx).await?;
     // The keys of authenticator apps, bound to `user:<id>` / `totp` (`auth::second_factor`).
     let rows: Vec<(String, String, String, String)> =
         sqlx::query_as("SELECT user_id, key_id, nonce, ciphertext FROM user_totp").fetch_all(&mut *tx).await?;

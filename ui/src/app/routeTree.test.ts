@@ -2,13 +2,16 @@ import { QueryClient } from "@tanstack/react-query";
 import { type AnyRoute, createMemoryHistory, rootRouteId } from "@tanstack/react-router";
 import { describe, expect, it } from "vitest";
 import {
+  anmeldenRoute,
   appRoute,
   confirmEmailRoute,
   helpRoute,
   inviteRoute,
+  localLoginRoute,
   loginRoute,
   resetPasswordRoute,
   setupRoute,
+  ssoTestRoute,
 } from "./baseRoutes";
 import { createAppRouter } from "./router";
 
@@ -26,16 +29,20 @@ describe("route tree", () => {
   const router = createAppRouter(new QueryClient(), createMemoryHistory({ initialEntries: ["/"] }));
   const routes = Object.values(router.routesById as Record<string, AnyRoute>);
 
+  // The sign-in pages: `/login`, the German address the server sends people back to after a
+  // sign-in through a provider, the fixed local sign-in and the end of a test sign-in.
+  const signInRoutes = [loginRoute, anmeldenRoute, localLoginRoute, ssoTestRoute];
+
   it("puts every page except setup, sign-in, help and the mailed links under the guard", () => {
     // Route ids exist only once the router has built the tree, so this is read here. The pages
     // of invitation and password links open without a session: the link's token counts.
     const publicRoutes = new Set([
       setupRoute.id,
-      loginRoute.id,
       helpRoute.id,
       inviteRoute.id,
       resetPasswordRoute.id,
       confirmEmailRoute.id,
+      ...signInRoutes.map((route) => route.id),
     ]);
     const unguarded = routes
       .filter((route) => route.id !== rootRouteId && route.id !== appRoute.id)
@@ -53,7 +60,7 @@ describe("route tree", () => {
   });
 
   it("keeps setup, sign-in and help directly under the root", () => {
-    for (const route of [setupRoute, loginRoute, helpRoute, inviteRoute, resetPasswordRoute]) {
+    for (const route of [setupRoute, helpRoute, inviteRoute, resetPasswordRoute, ...signInRoutes]) {
       expect(route.parentRoute?.id).toBe(rootRouteId);
     }
   });

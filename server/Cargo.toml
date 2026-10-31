@@ -31,6 +31,9 @@ ipnet = { version = "2.12.2", features = ["serde"] }
 mime_guess = "2.0.5"
 mongodb = { version = "3.9.1", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls", "dns-resolver", "socks5-proxy"] }
 rand = "0.10.3"
+# Signature checks of ID tokens from identity providers (`sso::jwt`): RSA, ECDSA and Ed25519, the
+# same library rustls uses.
+ring = "0.17.14"
 regex = { version = "1.12.2", default-features = false, features = ["std", "unicode"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rust-embed = "8.13.0"

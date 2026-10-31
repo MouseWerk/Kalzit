@@ -445,6 +445,59 @@ pub const REGISTRY: &[SettingDef] = &[
         ui_editable: true,
         description: "First day of the week for users who have not chosen one.",
     },
+    // Single sign-on and the local password sign-in (docs/api/sso.md). The server's values could
+    // lock everyone out, so they change only through `PUT /admin/sign-in/local` and
+    // `PUT /admin/sign-in/unmapped`, which check that first, or in the environment.
+    SettingDef {
+        key: "signin.local_password",
+        scope: Scope::Server,
+        default: || json!("on"),
+        ui_editable: false,
+        description: "Password sign-in: on, or off for everyone except the break-glass admin.",
+    },
+    SettingDef {
+        key: "signin.password_form",
+        scope: Scope::Server,
+        default: || json!("collapsed"),
+        ui_editable: false,
+        description: "The password form on the sign-in page next to providers: expanded, collapsed or hidden.",
+    },
+    SettingDef {
+        key: "signin.break_glass_user",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: false,
+        description: "The id of the server admin who may still sign in with a password when it is off.",
+    },
+    SettingDef {
+        key: "signin.unmapped",
+        scope: Scope::Server,
+        default: || json!("default"),
+        ui_editable: false,
+        description: "People without a matching provider group: default (let in with the default role) or refuse.",
+    },
+    SettingDef {
+        key: "signin.default_org",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: false,
+        description: "The organization people without a matching provider group join; empty for none.",
+    },
+    SettingDef {
+        key: "signin.default_role",
+        scope: Scope::Server,
+        default: || json!("viewer"),
+        ui_editable: false,
+        description: "The role people without a matching provider group get there: viewer or editor.",
+    },
+    SettingDef {
+        key: "signin.local_password",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Password sign-in for the members of this organization: inherit (the server's rule) or off. \
+                      Never laxer than the server.",
+    },
     // The second factor (`auth::second_factor`): who must have one, server-wide and per
     // organization (only ever stricter than the server), and which methods may be set up.
     SettingDef {
@@ -724,6 +777,10 @@ fn rule_for(key: &str, scope: Scope) -> Option<Rule> {
     if scope == Scope::Org && (key.starts_with("appearance.") || (key.starts_with("ai.") && key != "ai.org_enabled")) {
         return Some(Rule::Inherit(Box::new(rule(key)?)));
     }
+    // An organization may turn password sign-in off for its members, never on.
+    if scope == Scope::Org && key == "signin.local_password" {
+        return Some(Rule::Inherit(Box::new(Rule::OneOf(&["off"]))));
+    }
     // An organization's second factor rule adds to the server's; it cannot turn it off.
     if scope == Scope::Org && key == "security.two_factor_required" {
         return Some(Rule::Inherit(Box::new(Rule::OneOf(&["admins", "everyone"]))));
@@ -779,6 +836,13 @@ fn rule(key: &str) -> Option<Rule> {
         "appearance.start_page" => Rule::OneOf(crate::appearance::START_PAGES),
         "appearance.time_zone" => Rule::TimeZone,
         "appearance.week_start" => Rule::OneOf(crate::routes::preferences::WEEK_STARTS),
+        "signin.local_password" => Rule::OneOf(&["on", "off"]),
+        "signin.password_form" => Rule::OneOf(&["expanded", "collapsed", "hidden"]),
+        "signin.break_glass_user" | "signin.default_org" => {
+            Rule::Text { max_chars: 64, multiline: false, required: false }
+        }
+        "signin.unmapped" => Rule::OneOf(&["default", "refuse"]),
+        "signin.default_role" => Rule::OneOf(crate::sso::mapping::DEFAULT_ROLES),
         "security.two_factor_required" => Rule::OneOf(&["off", "admins", "everyone"]),
         "security.two_factor_methods" => Rule::OneOf(&["all", "passkey", "totp"]),
         "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
@@ -1407,7 +1471,8 @@ mod tests {
                 assert!(
                     d.key.starts_with("appearance.")
                         || d.key.starts_with("ai.")
-                        || d.key == "security.two_factor_required",
+                        || d.key == "security.two_factor_required"
+                        || d.key == "signin.local_password",
                     "{} is in both scopes",
                     d.key
                 );

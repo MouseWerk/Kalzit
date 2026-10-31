@@ -102,6 +102,8 @@ pub struct AppState {
     pub cluster: Arc<crate::cluster::Cluster>,
     /// Usage counts waiting to be written (`usage`).
     pub usage: Arc<crate::usage::Usage>,
+    /// Single sign-on: what is kept of identity providers and the limits of its routes (`sso`).
+    pub sso: Arc<crate::sso::Sso>,
 }
 
 impl AppState {
@@ -142,6 +144,7 @@ impl AppState {
         let updates = Arc::new(crate::updates::Updates::new(&config.paths.data_dir, &config.database_url()));
         let read_db = db::read_pool(&db, &config.database_url(), db.options().get_max_connections())
             .unwrap_or_else(|| db.clone());
+        let sso = Arc::new(crate::sso::Sso::new(&config));
         let state = Self {
             db,
             read_db,
@@ -192,6 +195,7 @@ impl AppState {
             mail: Arc::default(),
             cluster,
             usage: Arc::default(),
+            sso,
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.
@@ -239,6 +243,9 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
         .route(crate::acme::CHALLENGE_ROUTE, get(crate::acme::http_challenge))
+        // The redirect URI of identity providers (docs/api/sso.md); outside `/api`, since it is a
+        // page the browser is sent to.
+        .route(routes::sso::CALLBACK_ROUTE, get(routes::sso::callback))
         .nest("/api", api)
         .fallback(web::static_files)
         // Each request gets its own "committed" flag, so errors after a commit are not "busy".
@@ -247,6 +254,15 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), net::origin_check))
         .layer(from_fn_with_state(state.clone(), net::security_headers))
         .layer(from_fn_with_state(state.clone(), net::request_info))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(request_span))
         .with_state(state)
+}
+
+/// The span of a request in the trace log, as tower-http makes it, except that the query of a
+/// provider's callback (`/auth/oidc/{slug}/callback`, which carries the authorization code and
+/// state) is left out.
+fn request_span(req: &axum::http::Request<axum::body::Body>) -> tracing::Span {
+    let uri = req.uri();
+    let shown = if uri.path().starts_with("/auth/oidc/") { uri.path().to_string() } else { uri.to_string() };
+    tracing::debug_span!("request", method = %req.method(), uri = %shown, version = ?req.version())
 }

@@ -120,6 +120,11 @@ async fn create(
     let id = super::new_id();
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    // The same address in another form of its domain (`routes::email_key`) is taken too, also by
+    // a service account.
+    if !super::all_accounts_with_email(&mut tx, &email).await?.is_empty() {
+        return Err(email_taken());
+    }
     sqlx::query(
         "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at) \
          VALUES ($1, $2, $3, $4, $5, 0, $6)",
@@ -173,6 +178,7 @@ async fn update(
     let current = load(&mut *tx, &user_id).await?;
     let disabled = req.disabled.unwrap_or(current.disabled.0);
     let is_admin = req.is_server_admin.unwrap_or(current.is_server_admin.0);
+    super::sso::ensure_break_glass_kept(&state, &user_id, disabled, is_admin).await?;
     ensure_admin_remains(current.is_server_admin.0 && !current.disabled.0, is_admin && !disabled, admins)?;
     if disabled && !current.disabled.0 && lock_orgs_left_without_owner(&mut tx, &user_id).await? > 0 {
         return Err(conflict(

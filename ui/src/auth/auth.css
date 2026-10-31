@@ -262,6 +262,33 @@
     min-height: calc(var(--control-height) + var(--space-2) + var(--space-half));
   }
 
+  /* Sign-in through a provider: the buttons in their order, the first one as the main button
+     unless the password form stands open below them. */
+  .access__sso {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .access__sso .button {
+    min-height: calc(var(--control-height) + var(--space-2) + var(--space-half));
+  }
+
+  /* "or" between the buttons and the password form: a hairline on both sides of the word. */
+  .access__or {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .access__or::before,
+  .access__or::after {
+    flex: 1;
+    border-block-start: var(--border-width) solid var(--border);
+    content: "";
+  }
+
   .access__next,
   .access__back {
     min-height: calc(var(--control-height) + var(--space-1) + var(--space-half));

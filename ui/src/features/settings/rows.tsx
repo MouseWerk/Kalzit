@@ -53,6 +53,12 @@ function choicesOf(t: Translate, key: string): Choice[] | undefined {
         { value: "stable", label: t("admin.updates.channel.stable") },
         { value: "preview", label: t("admin.updates.channel.preview") },
       ];
+    // The organization's own setting; it may only be stricter than the server's.
+    case "signin.local_password":
+      return [
+        { value: INHERIT, label: t("settings.inherit") },
+        { value: "off", label: t("settings.off") },
+      ];
     case "log.format":
       return [
         { value: "text", label: "Text" },

@@ -200,6 +200,46 @@ pub fn notify_second_factor(state: &AppState, user_id: &str, notice: crate::auth
     });
 }
 
+/// Tells every enabled server admin by mail that the break-glass admin `user_id` signed in with a
+/// password (docs/api/sso.md): in the background, each in their language, when the server can send
+/// mail. The audit log has the entry either way.
+pub fn notify_break_glass(state: &AppState, user_id: &str, address: std::net::IpAddr) {
+    let background = state.clone();
+    let user_id = user_id.to_string();
+    state.mail.spawn(state, async move {
+        let run = async {
+            let effective = settings::effective(&background).await?;
+            if !effective.configured() {
+                return Ok(());
+            }
+            let who: Option<(String,)> = sqlx::query_as("SELECT name FROM users WHERE id = $1")
+                .bind(&user_id)
+                .fetch_optional(&background.db)
+                .await?;
+            let Some((name,)) = who else { return Ok(()) };
+            let admins: Vec<(String, String)> =
+                sqlx::query_as("SELECT id, email FROM users WHERE is_server_admin = 1 AND disabled = 0 ORDER BY id")
+                    .fetch_all(&background.db)
+                    .await?;
+            let now = background.clock.now_ms();
+            let zone = time_zone(&background, None).await?;
+            for (admin_id, email) in admins {
+                let lang = language(&background, Some(&admin_id)).await?;
+                let at = templates::moment(now, zone.as_deref(), lang);
+                let content =
+                    templates::break_glass_sign_in(lang, &name, &address.to_string(), &at, &host(&background));
+                if let Err(e) = send(&background, &effective, &email, &content).await {
+                    tracing::warn!(admin = %admin_id, "the break-glass notice was not sent: {}", e.message);
+                }
+            }
+            Ok::<(), ApiError>(())
+        };
+        if let Err(e) = run.await {
+            tracing::warn!(user = %user_id, "the break-glass notice was not sent: {}", e.message);
+        }
+    });
+}
+
 /// Sends `content` to `to` with the settings in force.
 pub async fn send(
     state: &AppState,

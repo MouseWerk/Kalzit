@@ -19,6 +19,7 @@ import {
 } from "../admin/api";
 import { LoadState } from "../admin/components/Section";
 import { ConflictDialog, useSettingChanges } from "../admin/components/Settings";
+import { SignInSection } from "../admin/sso/SignInSection";
 import { AiOrgSection } from "../ai/admin/AiOrgSection";
 import { AiServerSection } from "../ai/admin/AiServerSection";
 import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
@@ -37,6 +38,9 @@ import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
 import { findSection, rowId, SECTIONS, type SectionDef } from "./sections";
 import { TransferSection } from "./TransferSection";
 import "./settings.css";
+
+/** The second factor's policy, on the local tab of the sign-in section. */
+const TWO_FACTOR_KEYS = ["security.two_factor_required", "security.two_factor_methods"] as const;
 
 /** The row the address names (`#appearance.accent`), marked for a moment after a jump. */
 export function useFoundRow(): string | null {
@@ -131,11 +135,14 @@ function SectionBody({ section }: { section: SectionDef }) {
       );
     case "signin":
       return (
-        <>
-          <ServerSettings section={section} />
-          <PolicyOverview />
-          <PlannedCard section={section} />
-        </>
+        <SignInSection
+          twoFactor={
+            <>
+              <ServerSettings section={{ ...section, keys: TWO_FACTOR_KEYS }} />
+              <PolicyOverview />
+            </>
+          }
+        />
       );
     case "mail":
       return <MailSection />;
@@ -189,16 +196,6 @@ function PlannedCard({ section }: { section: SectionDef }) {
           <p className="settings-row__description">
             {section.planned === undefined ? null : t(section.planned)}
           </p>
-          {section.id === "signin" ? (
-            <Link
-              to="/settings/$section"
-              params={{ section: "appearance" }}
-              hash="signin.page"
-              className="settings-planned__link"
-            >
-              {t("settings.planned.signinPage")}
-            </Link>
-          ) : null}
         </div>
       </div>
     </div>

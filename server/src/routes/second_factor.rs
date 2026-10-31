@@ -59,6 +59,28 @@ pub async fn plan(
     }))
 }
 
+/// The prompt that makes an account without a second factor set one up before it is signed in,
+/// whatever the policy says: for the break-glass admin, whom a password alone never lets in
+/// (docs/api/sso.md).
+pub async fn forced_setup(
+    state: &AppState,
+    info: &RequestInfo,
+    user: &SessionUser,
+    required_by: Option<sf::RequiredBy>,
+    now: i64,
+) -> ApiResult<Prompt> {
+    Ok(Prompt {
+        email: user.email.clone(),
+        setup: true,
+        methods: Vec::new(),
+        last_used: None,
+        allowed: sf::allowed(state, info).await?,
+        required_by,
+        locked_until: sf::locked_until(&state.db, &user.id, now).await?,
+        expires_at: now + sf::CHALLENGE_TTL_MS,
+    })
+}
+
 /// The device cookie a completed sign-in sets (`auth::device`).
 pub enum DeviceCookie<'a> {
     /// Issue (renew) it for the account's current password hash.
@@ -141,7 +163,8 @@ pub async fn finish_first_step(
     let Some(prompt) = plan else {
         let device = match (first, forget_browser) {
             (_, true) => DeviceCookie::Forget,
-            (FirstStep::Password { password_hash }, false) => DeviceCookie::Issue(password_hash),
+            // Bound to the password hash; an account without one (made by a provider) gets none.
+            (FirstStep::Password { password_hash: Some(hash) }, false) => DeviceCookie::Issue(Some(hash)),
             _ => DeviceCookie::Keep,
         };
         let (out, answer) = open_session(&mut tx, state, info, headers, user, None, device, now).await?;
@@ -203,14 +226,26 @@ async fn complete(
 ) -> ApiResult<(HeaderMap, Me)> {
     let device = if pending.forget_browser != 0 {
         DeviceCookie::Forget
-    } else if taken.first_step == "password" {
+    } else if taken.first_step == "password" && taken.password_hash.is_some() {
         DeviceCookie::Issue(taken.password_hash.as_deref())
     } else {
         DeviceCookie::Keep
     };
+    // After a provider, its group mapping applies now that the sign-in is complete (`sso::signin`);
+    // what an earlier, abandoned one kept goes with any other first step.
+    let touched = if taken.first_step == "provider" {
+        crate::sso::signin::apply_deferred(&mut tx, state, info, &pending.user_id, now).await?
+    } else {
+        sqlx::query("DELETE FROM sso_pending_mappings WHERE user_id = $1")
+            .bind(&pending.user_id)
+            .execute(&mut *tx)
+            .await?;
+        Default::default()
+    };
     let (mut out, answer) =
         open_session(&mut tx, state, info, headers, pending.user(), Some(method), device, now).await?;
     crate::db::commit(tx).await?;
+    crate::sso::rights_changed(state, &touched).await;
     out.append(header::SET_COOKIE, sf::clear_pending_cookie(info.https));
     Ok((out, answer))
 }

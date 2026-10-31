@@ -231,14 +231,18 @@ fn count_invitations(state: &AppState, org_id: &str, n: usize) -> ApiResult<()> 
 }
 
 async fn is_member(tx: &mut sqlx::AnyConnection, org_id: &str, email: &str) -> ApiResult<bool> {
-    let (n,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM org_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 AND u.email = $2",
-    )
-    .bind(org_id)
-    .bind(email)
-    .fetch_one(&mut *tx)
-    .await?;
-    Ok(n > 0)
+    // The person with the address in any of its forms (`routes::email_key`).
+    for user_id in super::accounts_with_email(&mut *tx, email).await? {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(org_id)
+            .bind(&user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if n > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn email_problem(message: &str, reason: &'static str, email: &str) -> ApiError {
@@ -328,13 +332,9 @@ async fn create(
     clear_expired_links(&mut tx, now).await?;
     let mut issued = Vec::new();
     for email in &emails {
-        // A service account's made-up address is no mailbox and no person to invite.
-        let (service_accounts,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1 AND service_account = 1")
-                .bind(email)
-                .fetch_one(&mut *tx)
-                .await?;
-        if service_accounts > 0 {
+        // A service account's made-up address (in any form, `routes::email_key`) is no mailbox
+        // and no person to invite.
+        if super::all_accounts_with_email(&mut tx, email).await?.iter().any(|(_, service)| *service) {
             return Err(email_problem("this address belongs to a service account", "mail.address_invalid", email));
         }
         if is_member(&mut tx, &ctx.org_id, email).await? {
@@ -443,11 +443,12 @@ async fn send_all(
         let result = match &broken {
             Some(e) => Err(e.clone()),
             None => {
-                let recipient: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
-                    .bind(&item.email)
-                    .fetch_optional(&state.db)
-                    .await
-                    .unwrap_or(None);
+                let recipient: Option<(String,)> =
+                    sqlx::query_as("SELECT id FROM users WHERE email = $1 AND service_account = 0")
+                        .bind(&item.email)
+                        .fetch_optional(&state.db)
+                        .await
+                        .unwrap_or(None);
                 let lang = mail::language(state, recipient.as_ref().map(|(id,)| id.as_str()))
                     .await
                     .unwrap_or(templates::Lang::En);
@@ -736,6 +737,12 @@ async fn find(state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<Fo
     }
 }
 
+/// The accounts with `email` in any of its forms (`routes::email_key`).
+async fn accounts_with(state: &AppState, email: &str) -> ApiResult<usize> {
+    let mut conn = state.db.acquire().await?;
+    Ok(super::accounts_with_email(&mut conn, email).await?.len())
+}
+
 /// The signed-in user of this browser, if any.
 async fn signed_in(state: &AppState, info: &RequestInfo, headers: &HeaderMap) -> ApiResult<Option<SessionUser>> {
     let Some(token) = session::read_cookie(headers, info.https) else { return Ok(None) };
@@ -750,11 +757,16 @@ pub struct SsoOption {
     pub name: String,
 }
 
-/// The single sign-on providers an invitation page offers. None yet: the package that brings
-/// single sign-on fills this in and accepts through `redeem` once the provider confirmed the
-/// invited address.
-pub async fn sso_options(_state: &AppState, _org_id: &str) -> ApiResult<Vec<SsoOption>> {
-    Ok(Vec::new())
+/// The single sign-on providers an invitation page offers (`id` is the provider's slug, for its
+/// start route): the enabled ones. Signed in through one with the invited address, the person
+/// joins with the token alone.
+pub async fn sso_options(state: &AppState, _org_id: &str) -> ApiResult<Vec<SsoOption>> {
+    Ok(crate::sso::store::all(&state.read_db)
+        .await?
+        .into_iter()
+        .filter(|p| p.enabled != 0)
+        .map(|p| SsoOption { id: p.slug, name: p.name })
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -810,8 +822,7 @@ async fn inspect(
     } else {
         "valid"
     };
-    let (accounts,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1").bind(&found.email).fetch_one(&state.db).await?;
+    let accounts = accounts_with(&state, &found.email).await?;
     let signed = signed_in(&state, &info, &headers).await?;
     Ok(Json(InvitationInfo {
         sso: sso_options(&state, &found.org_id).await?,
@@ -825,7 +836,7 @@ async fn inspect(
         state: state_name,
         account_exists: accounts > 0,
         signed_in_as: signed.map(|u| SignedInView { name: u.name, email: u.email }),
-        password: true,
+        password: crate::sso::password_sign_in_allowed_in(&state, &found.org_id).await?,
     }))
 }
 
@@ -932,27 +943,73 @@ async fn accept(
     // A link that went by mail proves the address reaches its owner.
     let mailed = found.delivery == "sent";
     if let Some(user) = signed_in(&state, &info, &headers).await? {
-        // Joining with the account this browser is signed in with: only the invited address.
-        if user.email != found.email {
+        // Joining with the account this browser is signed in with: only the invited address (in
+        // either form of its domain, as a provider's account may keep it).
+        if !super::same_email(&user.email, &found.email) {
             return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "signed in with another account")
                 .because("mail.invite_other_account"));
         }
+        // The new membership may require a second factor this account does not have: this
+        // session ends together with the redemption, and the account sets one up before it gets a
+        // session with the membership, as at a sign-in (`routes::second_factor`).
+        use crate::auth::second_factor as sf;
+        let server_admin = user.is_server_admin != 0;
+        let required =
+            sf::required_after_joining(&state, &user.id, server_admin, &found.org_id, &found.org_name, &found.role)
+                .await?;
+        let setup_needed = required.is_some() && !sf::methods(&state.db, &user.id).await?.any();
         let mut tx = crate::db::begin(&state.db).await?;
         redeem(&mut tx, &found, &user.id, now).await?;
         if mailed {
             sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&user.id).execute(&mut *tx).await?;
         }
+        if setup_needed && let Some(token) = session::read_cookie(&headers, info.https) {
+            session::delete(&mut *tx, &token).await?;
+        }
         let (summary, id) = audit_event(&user.id, false);
         let actor = Actor { user_id: &id, info: &info, at_ms: now };
         audit(&mut tx, &actor, Some(&found.org_id), "invitation.accepted", ("invitation", &found.id), summary).await?;
-        let answer = super::me(&mut tx, user).await?;
         crate::db::commit(tx).await?;
+        if setup_needed {
+            let required = sf::required_for(&state, &user.id, server_admin).await?.or(required);
+            let prompt = super::second_factor::forced_setup(&state, &info, &user, required, now).await?;
+            let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id = $1")
+                .bind(&user.id)
+                .fetch_one(&state.db)
+                .await?;
+            // An account without a password of its own (made by a provider) binds nothing to one.
+            let first = sf::FirstStep::Password { password_hash: hash.as_deref() };
+            let tx = crate::db::begin(&state.db).await?;
+            let mut answer = super::second_factor::finish_first_step(
+                tx,
+                &state,
+                &info,
+                &headers,
+                user,
+                first,
+                false,
+                Some(prompt),
+                now,
+            )
+            .await?;
+            answer.headers_mut().append(axum::http::header::SET_COOKIE, session::clear_cookie(info.https));
+            return Ok(answer);
+        }
+        let mut conn = state.db.acquire().await?;
+        let answer = super::me(&mut conn, user).await?;
         return Ok(Json(answer).into_response());
     }
-    let (accounts,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = $1").bind(&found.email).fetch_one(&state.db).await?;
-    if accounts > 0 {
+    if accounts_with(&state, &found.email).await? > 0 {
         return Err(account_exists());
+    }
+    // With password sign-in off for the server or the inviting organization (docs/api/sso.md), a
+    // new person gets no password: they sign in through an identity provider, then open the link
+    // again and join with that account (the branch above).
+    if !crate::sso::password_sign_in_allowed_in(&state, &found.org_id).await? {
+        return Err(ApiError::forbidden(
+            "password sign-in is off here; sign in through a provider, then open the link again",
+        )
+        .because("sso.password_sign_in_off"));
     }
     let name = super::clean_name(body.name.as_deref().unwrap_or_default(), "name").map_err(|e| e.with_field("name"))?;
     let new_password = body.password.unwrap_or_default();

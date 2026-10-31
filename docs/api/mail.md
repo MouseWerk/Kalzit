@@ -96,9 +96,11 @@ delivery, deliveryDetail, deliveredAt}`; `state` is `pending` or `expired`, `del
 `POST /auth/invitation` answers `{orgName, inviterName, email, role, roleName, teamName,
 expiresAt, state, accountExists, signedInAs, password, sso}`; `state` is `valid`, `expired` or
 `accepted`. A revoked or unknown token answers `404 not_found` with `mail.invite_invalid`, the
-same for both, so valid links cannot be guessed. `sso` lists single sign-on providers the page
-offers (empty until single sign-on exists; it accepts through `invitations::redeem` once the
-provider confirmed the invited address).
+same for both, so valid links cannot be guessed. `sso` lists the enabled single sign-on
+providers (`{id, name}`, `id` being the provider's slug for `/auth/sso/{slug}/start`); signed in
+through one with the invited address, the person accepts with the token alone. `password` is
+`false` while password sign-in is off for the server or the organization (docs/api/sso.md); then
+accepting with a password answers `403 forbidden` with `sso.password_sign_in_off`.
 
 Accepting:
 
@@ -110,8 +112,11 @@ Accepting:
   set up;
 - with an account for the address: `409 conflict` `mail.invite_account_exists`; sign in, then
   accept with the token alone;
-- signed in as the invited address: joins with the token alone; the session stays; a link that
-  went by mail also confirms the account's address;
+- signed in as the invited address (in any form of an internationalized domain: Unicode, NFC or
+  NFD, or ASCII; the same comparison finds an existing account): joins with the token alone; the session stays, unless the
+  organization requires a second factor the account does not have: then the session ends and the
+  answer is the second step (`{secondFactor}` with `setup: true`), the membership applying from the
+  next session; a link that went by mail also confirms the account's address;
 - an account made from a link that went by mail has its address confirmed; one made from a link
   an admin passed on starts unconfirmed (`emailConfirmed: false` in `GET /me`, see "Email
   confirmation"); `invitation.accepted` records `viaCopiedLink` and pairs with
