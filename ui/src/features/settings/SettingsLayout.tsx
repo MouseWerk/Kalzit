@@ -58,8 +58,12 @@ export function SettingsLayout() {
   useEffect(() => {
     if (shown === "") return;
     const nav = navRef.current;
-    const link = nav?.querySelector<HTMLElement>(`.settings-nav__list [data-section="${current}"]`);
-    if (nav !== null && link !== null && link !== undefined) {
+    if (nav === null) return;
+    // Compared, not put into a selector: the segment comes from the address and may hold quotes.
+    const link = [...nav.querySelectorAll<HTMLElement>(".settings-nav__list [data-section]")].find(
+      (entry) => entry.dataset.section === current,
+    );
+    if (link !== undefined) {
       revealInside(nav, link);
     }
   }, [current, shown]);

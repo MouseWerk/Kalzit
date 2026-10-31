@@ -925,11 +925,15 @@
   }
 
   /*
-   * A narrow section (a small window, or the sidebar open beside it): every row puts its control
-   * under the text, a switch as well as a field, instead of keeping whatever happens to fit.
+   * A narrow section (a small window with the sidebar open): a row whose control is a field, a
+   * select or a text area puts it under the text, always, rather than only when it happens not to
+   * fit; a switch or a button stays beside its text, as dense as on a wide screen.
    */
-  @container settings-main (width < 40rem) {
-    .settings-row__text {
+  @container settings-main (width < 32rem) {
+    .settings-row:has(
+        > .settings-row__control :is(input:not([type="checkbox"], [type="radio"]), select, textarea)
+      )
+      > .settings-row__text {
       flex-basis: 100%;
     }
 

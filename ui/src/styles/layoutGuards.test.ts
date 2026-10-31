@@ -64,20 +64,29 @@ describe("layout guards", () => {
   it("lets the step type give up width before its button wraps", () => {
     expect(value("analysis/analysis.css", ".steps__add > .select", "flex")).toContain("1 1 10rem");
     expect(value("analysis/analysis.css", ".steps__add > .button", "flex")).toContain("none");
+    // Wide enough for the longest step name while closed.
+    expect(value("analysis/analysis.css", ".steps__add > .select", "max-width")).toContain(
+      "var(--size-column)",
+    );
   });
 
-  it("stacks every settings row in a narrow section, switches as well as fields", () => {
+  it("stacks only fields in a narrow settings section; switches stay beside their text", () => {
     expect(value("features/settings/settings.css", ".settings-main", "container")).toContain(
       "settings-main / inline-size",
     );
-    expect(
-      value(
-        "features/settings/settings.css",
-        ".settings-row__text",
-        "flex-basis",
-        /@container settings-main/,
-      ),
-    ).toContain("100%");
+    const narrow = rules("features/settings/settings.css").filter((rule) =>
+      rule.context.some((c) => /@container settings-main \(width < 32rem\)/.test(c)),
+    );
+    const stacked = narrow.filter((rule) =>
+      rule.declarations.some((d) => d.property === "flex-basis" && d.value === "100%"),
+    );
+    expect(stacked.length).toBeGreaterThan(0);
+    for (const rule of stacked) {
+      const selector = rule.selector.replace(/\s+/g, " ");
+      // Never every row: only those whose control is a field, a select or a text area.
+      expect(selector).toMatch(/:has\(.*select.*textarea.*\) > \.settings-row__text$/);
+      expect(selector).toContain(':not([type="checkbox"], [type="radio"])');
+    }
   });
 
   it("fits Ask to the window on desktop, so the composer stays in view", () => {
