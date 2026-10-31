@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { Setting } from "./api";
 import { nextWindow } from "./server/UpdatesPage";
 import type { UpdateStatus } from "./server/updatesApi";
 import { openAdmin } from "./test/openAdmin";
@@ -121,6 +122,23 @@ function status(change: Partial<UpdateStatus> = {}): UpdateStatus {
       },
     ],
     ...change,
+  };
+}
+
+/** An update setting as GET /api/admin/settings lists it; stored nowhere yet unless `extra` says. */
+function updateSetting(key: string, value: unknown, extra: Partial<Setting> = {}): Setting {
+  return {
+    key,
+    scope: "server",
+    value,
+    default: value,
+    source: "default",
+    editable: true,
+    version: 0,
+    description: `The setting ${key}`,
+    updatedAt: null,
+    updatedBy: null,
+    ...extra,
   };
 }
 
@@ -382,6 +400,150 @@ describe("updates page", () => {
     expect(body.version).toBe("0.2.0");
     expect(body.until - body.at).toBe(2 * 3_600_000);
     expect(body.at).toBeGreaterThan(Date.now());
+  });
+
+  it("applies the channel at once, with undo", async () => {
+    const { user, admin } = await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        updatesRoutes(status());
+        admin.serverSettings.push(updateSetting("updates.channel", "stable"));
+      },
+    });
+    const channel = await screen.findByRole("combobox", { name: "Channel" });
+    await waitFor(() => expect((channel as HTMLSelectElement).disabled).toBe(false));
+    await user.selectOptions(channel, "preview");
+    expect(await screen.findByText("“Update channel” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "updates.channel");
+    expect(stored).toMatchObject({ value: "preview", version: 1 });
+    expect((channel as HTMLSelectElement).value).toBe("preview");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(stored).toMatchObject({ value: "stable", source: "default" }));
+  });
+
+  it("shows settings from kalzit.toml turned off, with where they are set", async () => {
+    const { user } = await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        updatesRoutes(status());
+        admin.serverSettings.push(
+          updateSetting("updates.channel", "stable", { source: "file", editable: false }),
+          updateSetting("updates.check_daily", false, { source: "env", editable: false }),
+          updateSetting("updates.window", "02:00-04:00"),
+        );
+      },
+    });
+    const channel = (await screen.findByRole("combobox", { name: "Channel" })) as HTMLSelectElement;
+    await waitFor(() => expect(channel.disabled).toBe(true));
+    const fileHint = "Set in kalzit.toml. Change it there; it cannot be changed here.";
+    expect(screen.getByText(fileHint)).toBeTruthy();
+    expect(channel.getAttribute("aria-describedby")).toBe(screen.getByText(fileHint).id);
+    const daily = screen.getByRole("switch", { name: "Check automatically" }) as HTMLButtonElement;
+    expect(daily.disabled).toBe(true);
+    expect(screen.getByText(/^Set by an environment variable \(KALZIT_\*\)/)).toBeTruthy();
+    // The window is stored in the database: it stays changeable.
+    const change = screen.getByRole("button", { name: "Change" }) as HTMLButtonElement;
+    expect(change.disabled).toBe(false);
+    await user.click(daily);
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("shows the conflict dialog when someone else changed the channel in the meantime", async () => {
+    const { user, admin } = await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        updatesRoutes(status());
+        admin.serverSettings.push(updateSetting("updates.channel", "stable"));
+      },
+    });
+    const channel = (await screen.findByRole("combobox", { name: "Channel" })) as HTMLSelectElement;
+    await waitFor(() => expect(channel.disabled).toBe(false));
+    // Saved elsewhere after the page loaded.
+    Object.assign(admin.serverSettings.find((s) => s.key === "updates.channel") ?? {}, {
+      value: "preview",
+      version: 3,
+      source: "database",
+    });
+    await user.selectOptions(channel, "preview");
+    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    await user.click(within(dialog).getByRole("button", { name: "Overwrite with mine" }));
+    await waitFor(() =>
+      expect(admin.serverSettings.find((s) => s.key === "updates.channel")).toMatchObject({
+        value: "preview",
+        version: 4,
+      }),
+    );
+  });
+
+  it("shows a refused value under its setting", async () => {
+    const { user } = await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        updatesRoutes(status());
+        admin.serverSettings.push(
+          updateSetting("updates.channel", "stable"),
+          updateSetting("updates.check_daily", false),
+          updateSetting("updates.window", "02:00-04:00"),
+        );
+      },
+    });
+    const refused = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "PATCH" && String(input).endsWith("/updates.window")
+        ? new Response(
+            JSON.stringify({
+              error: { code: "validation", field: "value", message: "invalid window" },
+            }),
+            { status: 422, headers: { "Content-Type": "application/json" } },
+          )
+        : refused(input, init),
+    );
+    const change = await screen.findByRole("button", { name: "Change" });
+    await waitFor(() => expect((change as HTMLButtonElement).disabled).toBe(false));
+    await user.click(change);
+    const dialog = screen.getByRole("dialog", { name: "Maintenance window" });
+    await user.click(within(dialog).getByRole("button", { name: "Save window" }));
+    const error = await waitFor(() => {
+      const note = document.querySelector<HTMLElement>(".updates-strip__note.field__error");
+      if (note === null) throw new Error("no refusal shown");
+      return note;
+    });
+    expect(error.textContent).not.toBe("");
+    expect(change.getAttribute("aria-describedby")).toBe(error.id);
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("says when a setting of the strip could not be loaded", async () => {
+    await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: () => updatesRoutes(status()),
+    });
+    const channel = (await screen.findByRole("combobox", { name: "Channel" })) as HTMLSelectElement;
+    const reason = await screen.findAllByText(
+      "This setting could not be loaded. Reload the page to change it.",
+    );
+    expect(reason).toHaveLength(3);
+    expect(channel.disabled).toBe(true);
+    expect(channel.getAttribute("aria-describedby")).toBe(reason[0]?.id);
+  });
+
+  it("opens at the setting a settings search found", async () => {
+    const { user } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        updatesRoutes(status());
+        admin.serverSettings.push(updateSetting("updates.channel", "stable"));
+      },
+    });
+    await user.type(await screen.findByRole("combobox", { name: "Search settings" }), "channel");
+    const results = await screen.findByRole("listbox", { name: "Matching settings" });
+    await user.click(within(results).getByRole("option", { name: /Update channel/ }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Updates" })).toBeTruthy();
+    const channel = await screen.findByRole("combobox", { name: "Channel" });
+    const cell = document.getElementById("updates.channel");
+    expect(cell?.contains(channel)).toBe(true);
+    expect(cell?.className).toContain("updates-strip__cell--found");
+    await waitFor(() => expect(document.activeElement).toBe(channel));
   });
 
   it("is closed to members who are not server admins", async () => {

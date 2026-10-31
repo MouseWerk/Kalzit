@@ -611,6 +611,7 @@
   "admin.updates.window.daily": "Daily {from} to {to}",
   "admin.updates.window.change": "Change",
   "admin.updates.window.zone": "Time zone {zone} · planned updates run only in this window",
+  "admin.updates.settingUnavailable": "This setting could not be loaded. Reload the page to change it.",
   "admin.updates.window.title": "Maintenance window",
   "admin.updates.window.text": "Planned updates start at the beginning of the window. If the server is not running then, the update waits until you plan it again.",
   "admin.updates.window.from": "From",
