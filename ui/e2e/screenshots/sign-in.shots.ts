@@ -331,6 +331,8 @@ test("service accounts and the SCIM card", async ({ browser }) => {
   expect(token.ok(), await token.text()).toBe(true);
   const scim = await owner.post(`/api/orgs/${org}/scim-token`, { data: { expiresInDays: 180 } });
   expect(scim.ok(), await scim.text()).toBe(true);
+  const on = await owner.put(`/api/orgs/${org}/scim`, { data: { enabled: true } });
+  expect(on.ok(), await on.text()).toBe(true);
   await owner.dispose();
 
   const page = await openPage(browser);
@@ -338,7 +340,7 @@ test("service accounts and the SCIM card", async ({ browser }) => {
   await page.goto("/admin/service-accounts");
   await expect(page.getByText("etl-nightly", { exact: true }).first()).toBeVisible();
   await shoot(page, "service-accounts");
-  const card = page.locator("section", { hasText: "SCIM" }).last();
+  const card = page.getByRole("region", { name: t("admin.serviceAccounts.scimTitle") });
   await card.scrollIntoViewIfNeeded();
   await expect(card).toBeVisible();
   await shoot(page, "scim");
