@@ -316,6 +316,18 @@ describe("user menu", () => {
     expect(after).toEqual([]);
   });
 
+  it("goes to sign in when the session had already ended, without bringing the page back", async () => {
+    const { user, menuButton, server, location } = await openShell("/dashboards");
+    // The session ended elsewhere: the server refuses the sign-out and no longer knows the user.
+    server.failNext("/api/auth/logout", 401, "unauthenticated");
+    server.failNext("/api/me", 401, "unauthenticated");
+    await user.click(menuButton);
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(location().pathname).toBe("/login");
+    expect(screen.queryByText(/Something went wrong/)).toBeNull();
+  });
+
   it("signs out and forgets this browser on request", async () => {
     const { user, menuButton, server, location } = await openShell("/dashboards");
     await user.click(menuButton);

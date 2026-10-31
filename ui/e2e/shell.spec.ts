@@ -279,3 +279,47 @@ test("the appearance preview sits beside the rows by the room of the section, no
   await expect(shell).toHaveAttribute("data-sidebar", "expanded");
   await expect.poll(below).toBe(true);
 });
+
+test("signing out of a dashboard with unsaved changes asks first", async ({ page, world }) => {
+  const owner = await Api.owner();
+  const id = await owner.createDashboard(regionDashboard(unique("Abmelden"), world.sourceId));
+  await owner.dispose();
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  // An unsaved change: a new title, applied in the settings but not saved.
+  const title = unique("Ungespeichert");
+  await page
+    .getByRole("button", { name: t("dashboards.edit") })
+    .first()
+    .click();
+  await page.getByRole("button", { name: t("dashboards.settings") }).click();
+  await page.getByLabel(t("dashboards.settings.dashboardTitle")).fill(title);
+  await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
+  await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+  const refused: string[] = [];
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (response.status() === 401 && path !== "/api/me") {
+      refused.push(`${response.request().method()} ${path}`);
+    }
+  });
+  const signOut = async () => {
+    await page.getByRole("button", { name: t("userMenu.label") }).click();
+    await page.getByRole("menuitem", { name: t("userMenu.signOut"), exact: true }).click();
+  };
+
+  // Cancel: still on the dashboard, the change still there, still signed in.
+  await signOut();
+  const ask = page.getByRole("dialog", { name: t("dashboards.leave.title") });
+  await ask.getByRole("button", { name: t("dashboards.dialog.cancel") }).click();
+  await expect(ask).toBeHidden();
+  await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+  await expect(page.getByRole("button", { name: t("dashboards.save") })).toBeVisible();
+
+  // Leave: signed out, and nothing asked the server with the ended session.
+  await signOut();
+  await ask.getByRole("button", { name: t("dashboards.leave.confirm") }).click();
+  await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
+  await page.waitForTimeout(1000);
+  expect(refused).toEqual([]);
+});

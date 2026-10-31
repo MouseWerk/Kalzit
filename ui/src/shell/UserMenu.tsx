@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
 import { flushSync } from "react-dom";
 import { forgetAccountData, logout, type Me, meQuery } from "../api/auth";
@@ -11,6 +11,7 @@ import { clearChoice } from "../lib/localChoice";
 import { showErrorToast } from "../lib/toasts";
 import { usePreferenceChange } from "../preferences/preferences";
 import { THEMES, useTheme } from "../theme/theme";
+import { mayLeave } from "./mayLeave";
 import { apiErrorText } from "./shellErrors";
 import { useMenuButton } from "./useMenuButton";
 
@@ -34,8 +35,9 @@ export function initialsOf(name: string): string {
  * arrow keys move between items, Home and End jump, Escape and Tab close, and focus returns to the
  * button after a choice or Escape.
  *
- * Signing out takes the pages off screen first (`onLeaving`), so nothing they poll, stream or
- * fetch on a re-render asks the server once the session has ended.
+ * Signing out asks the page's leave guards first, as leaving it would, and then takes the page off
+ * screen (`onLeaving`), so nothing it polls, streams or fetches on a re-render asks the server once
+ * the session has ended.
  */
 export function UserMenu({
   me,
@@ -50,6 +52,7 @@ export function UserMenu({
   const theme = useTheme();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const router = useRouter();
   const themeLabelId = useId();
   const languageLabelId = useId();
 
@@ -67,7 +70,12 @@ export function UserMenu({
       await queryClient.cancelQueries();
       await logout(forgetBrowser);
     },
-    onError: () => onLeaving(false),
+    onError: (error) => {
+      // An ended session is handled where every request is: the app goes to sign in itself.
+      if (!isApiError(error, "unauthenticated")) {
+        onLeaving(false);
+      }
+    },
     onSuccess: async () => {
       // The shell leaves before the cache is emptied: a component of it that renders again
       // after the cache was emptied would fetch its data anew, with the session that ended.
@@ -79,9 +87,13 @@ export function UserMenu({
     },
   });
 
-  function startSignOut(forgetBrowser: boolean) {
+  async function startSignOut(forgetBrowser: boolean) {
     closeMenu(true);
-    // Synchronously, so the pages and their queries are gone before the request leaves.
+    // Unsaved changes on the page: its own question first; cancelled, everything stays as it is.
+    if (!(await mayLeave(router, "/login"))) {
+      return;
+    }
+    // Synchronously, so the page and its queries are gone before the request leaves.
     flushSync(() => onLeaving(true));
     signOut.mutate(forgetBrowser);
   }
@@ -183,7 +195,7 @@ export function UserMenu({
               role="menuitem"
               tabIndex={-1}
               className="menu__item"
-              onClick={() => startSignOut(false)}
+              onClick={() => void startSignOut(false)}
             >
               <Icon name="signOut" />
               {t("userMenu.signOut")}
@@ -194,7 +206,7 @@ export function UserMenu({
               role="menuitem"
               tabIndex={-1}
               className="menu__item"
-              onClick={() => startSignOut(true)}
+              onClick={() => void startSignOut(true)}
             >
               <Icon name="check" className="menu__check" />
               {t("userMenu.signOutForget")}

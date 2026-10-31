@@ -34,7 +34,6 @@ import {
   updateKeys,
   uploadPackage,
 } from "./updatesApi";
-import "../../settings/settings.css";
 import "./updates.css";
 
 /** Phases in which the status changes by itself; the page asks again every second. */
@@ -374,7 +373,7 @@ function StatusStrip({
           {t("admin.updates.autoCheck")}
         </span>
         <div className="updates-strip__value">
-          {/* The shared switch of the settings (settings.css), with its sizes and states. */}
+          {/* The shared switch (styles/components.css), with its sizes and states. */}
           <input
             type="checkbox"
             role="switch"

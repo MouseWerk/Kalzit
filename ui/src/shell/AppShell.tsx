@@ -248,7 +248,14 @@ export function AppShell() {
         <div className="shell__content">
           <CrumbSlotContext value={crumbSlot}>
             <SidebarColumnContext value={wide && !rail}>
-              {leaving ? null : <Outlet />}
+              {leaving ? (
+                // Quietly in place of the page while the session ends.
+                <p className="loading" role="status">
+                  {t("userMenu.signingOut")}
+                </p>
+              ) : (
+                <Outlet />
+              )}
             </SidebarColumnContext>
           </CrumbSlotContext>
         </div>

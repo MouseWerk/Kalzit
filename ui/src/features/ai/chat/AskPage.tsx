@@ -630,8 +630,8 @@ function AskChat({
 
 /**
  * Where model and provider are chosen, linked only where the person can go: the server's AI page
- * for server admins, the organization's AI page for those who change its settings. An
- * organization admin under the server's provider learns who chooses it instead.
+ * for server admins under the server's provider, the organization's AI page for those who change
+ * its settings. Who cannot go there learns who chooses the provider instead.
  */
 function ProviderSetBy({
   scope,
@@ -649,12 +649,18 @@ function ProviderSetBy({
       {t("ai.chat.orgAdminLink")}
     </Link>
   );
-  if (scope === "org" && orgAdmin) {
-    return (
-      <p className="ask-result__note">
-        {t("ai.chat.orgModelSetBy")} {orgLink}
-      </p>
-    );
+  if (scope === "org") {
+    if (orgAdmin) {
+      return (
+        <p className="ask-result__note">
+          {t("ai.chat.orgModelSetBy")} {orgLink}
+        </p>
+      );
+    }
+    // The server's AI page does not choose the organization's own provider.
+    return permissions.isServerAdmin ? (
+      <p className="ask-result__note">{t("ai.chat.orgModelByOrgAdmins")}</p>
+    ) : null;
   }
   if (permissions.isServerAdmin) {
     return (

@@ -217,6 +217,18 @@ describe("tokens only", () => {
     }
   });
 
+  it("defines the one switch only in the shared stylesheet, and no second one", () => {
+    const switchRules = allRules().filter((rule) => /\.settings-switch\b/.test(rule.selector));
+    expect(switchRules.length).toBeGreaterThan(0);
+    for (const rule of switchRules) {
+      expect(rule.file, rule.selector).toBe("styles/components.css");
+    }
+    // A knob of its own is a second switch component with its own sizes.
+    for (const rule of allRules()) {
+      expect(/[\w-]+-switch__knob\b/.test(rule.selector), where(rule, "selector")).toBe(false);
+    }
+  });
+
   it("keeps a key nobody trusts out of the danger color", () => {
     for (const rule of allRules()) {
       if (!/data-trusted="false"/.test(rule.selector)) {

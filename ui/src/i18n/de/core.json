@@ -17,6 +17,7 @@
   "userMenu.label": "Konto",
   "userMenu.signOut": "Abmelden",
   "userMenu.signOutForget": "Abmelden und diesen Browser vergessen",
+  "userMenu.signingOut": "Du wirst abgemeldet…",
   "theme.label": "Darstellung",
   "theme.system": "System",
   "theme.light": "Hell",
