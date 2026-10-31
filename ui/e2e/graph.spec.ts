@@ -254,7 +254,10 @@ test.describe("Neo4j", () => {
         .click({ timeout: STEP_MS });
       await expect(nodeTable(around, PANELS.explorer, 2)).toBeVisible({ timeout: STEP_MS });
       await steps
-        .getByRole("button", { name: t("graph.steps.base", { count: 1 }), exact: true })
+        .getByRole("button", {
+          name: t("graph.steps.base", { nodes: t("graph.count.node.one", { count: 1 }) }),
+          exact: true,
+        })
         .click({ timeout: STEP_MS });
       await expect(nodeTable(around, PANELS.explorer, 1)).toBeVisible({ timeout: STEP_MS });
     });
