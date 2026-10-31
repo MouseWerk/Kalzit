@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { ssoErrorText } from "./texts";
 import "../../datasources/datasources.css";
+import "../../settings/settings.css";
 import "./sso.css";
 
 /** Status dot and word of a run; never colour alone. */
