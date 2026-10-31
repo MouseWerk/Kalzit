@@ -179,6 +179,10 @@ function SettingsSearch({
 
   function go(entry: SearchEntry) {
     setQuery("");
+    if (entry.page !== undefined) {
+      void navigate({ to: entry.page, hash: entry.rowId });
+      return;
+    }
     void navigate({
       to: "/settings/$section",
       params: { section: entry.sectionId },

@@ -643,6 +643,14 @@ export const isSetting = shape<Setting>({
   updatedBy: nullable(isString),
 });
 
+/**
+ * Set in kalzit.toml or the environment, or changeable only there: the page shows the value with
+ * a turned-off control and a lock hint, and offers no undo for it.
+ */
+export function isLockedSetting(setting: Pick<Setting, "source" | "editable">): boolean {
+  return setting.source === "file" || setting.source === "env" || !setting.editable;
+}
+
 export async function listOrgSettings(orgId: string): Promise<Setting[]> {
   return (await getPage(orgPath(orgId, "/settings"), isSetting, "settings")).items;
 }

@@ -794,6 +794,14 @@ mod tests {
             .await
             .unwrap();
         let read = read_pool(&pool, &url, 2).expect("a file database has a read pool");
+        // A dropped connection goes back to the pool in a spawned task that still holds its slot.
+        // Wait until every connection is back, so that below a full pool without idle connections
+        // means both writers hold one, not that the insert's connection is still on its way back.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while pool.num_idle() != pool.size() as usize {
+            assert!(std::time::Instant::now() < deadline, "the pool did not settle");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         // One writer holds the write lock, a second waits for it: the main pool is used up.
         let first = begin(&pool).await.unwrap();
         let waiting = tokio::spawn({
