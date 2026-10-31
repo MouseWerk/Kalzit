@@ -606,7 +606,8 @@ check, since it acts on no cookie) takes `SAMLResponse` and checks, in this orde
 3. The document holds exactly one `Assertion` anywhere (none in `Advice`, none encrypted), as a
    child of the `Response`, and every ID in it is unique.
 4. `Status` is `Success`.
-5. Every signature sits on the `Response` or that `Assertion`, references exactly that element
+5. Every signature sits on the `Response` or that `Assertion`, at most one on each (more are
+   refused before any signature is checked), references exactly that element
    (`#ID`), uses enveloped-signature and exclusive or inclusive C14N without comments, RSA or
    ECDSA with SHA-256 or stronger (SHA-1 is refused), carries no `Object`, and verifies with one
    of the pinned certificates; keys in the message's `KeyInfo` are never used, and a pinned
@@ -637,9 +638,11 @@ The person: the email from the email attribute (`mail` by default), else a `Name
 groups attribute (`memberOf`), kept whole (a DN has commas). Attributes match by `Name` or
 `FriendlyName`. SAML has no "email verified": an email counts as verified only with the
 provider's switch `trustEmail` (off by default). `trustProviderMfa` (off, "Kalzit fragt", by
-default) skips Kalzit's second factor when the `AuthnContextClassRef` (or Entra ID's
-`authnmethodsreferences` attribute) says the provider checked several factors (REFEDS MFA,
-`multipleauthn`, `MobileTwoFactor*`, `TimeSyncToken`, `SmartcardPKI`).
+default) skips Kalzit's second factor when the assertion's `AuthnContextClassRef` says the
+provider checked several factors (REFEDS MFA, `multipleauthn` as AD FS sends it,
+`MobileTwoFactor*`, `TimeSyncToken`, `SmartcardPKI`). Attributes never count, Entra ID's
+`authnmethodsreferences` included: Entra ID reports MFA there and not in the context, so with
+Entra ID Kalzit asks for its own second factor.
 
 Single logout is not offered: signing out of Kalzit ends the Kalzit session only, and the
 provider's session stays. Encrypted assertions and signed AuthnRequests are not supported.
@@ -782,7 +785,7 @@ Pausing, ordering, removing and the group mapping are the routes of every provid
 | `saml.response_missing` | | sign-in or test: the provider posted no `SAMLResponse` |
 | `saml.xml_invalid` | | sign-in or test: not base64, UTF-8 or XML, too large, or with a DTD, entity, comment, processing instruction or CDATA |
 | `saml.not_response` | | sign-in or test: not a SAML 2.0 `Response` |
-| `saml.status` | | sign-in or test: the provider answered another status than `Success` (`detail` has it; `AuthnFailed` and `RequestDenied` read as cancelled) |
+| `saml.status` | | sign-in or test: the provider answered another status than `Success` (`detail` has its URI when it is one of SAML core's status codes, else `other`; `AuthnFailed` and `RequestDenied` read as cancelled) |
 | `saml.unsolicited` | | sign-in: no `InResponseTo` (an IdP-initiated sign-in) |
 | `saml.request_unknown` | | sign-in or test: no unexpired, unused request has this ID |
 | `saml.in_response_to` | | sign-in or test: the response or its confirmation answers another request |
@@ -792,7 +795,7 @@ Pausing, ordering, removing and the group mapping are the routes of every provid
 | `saml.encrypted_assertion` | | sign-in or test: an encrypted assertion or NameID |
 | `saml.unsigned` | | sign-in or test: no signature |
 | `saml.signature_invalid` | | sign-in or test: a signature does not verify with the pinned certificates |
-| `saml.signature_unsupported` | | sign-in or test: a signature uses another method, transform or form than listed above |
+| `saml.signature_unsupported` | | sign-in or test: a signature uses another method, transform or form than listed above, or an element has more than one |
 | `saml.wrapping` | | sign-in or test: a signature is elsewhere or signs another element than the assertion that would be read, or IDs repeat |
 | `saml.subject_missing` | | sign-in or test: no NameID or no bearer confirmation |
 | `saml.name_id_transient` | | sign-in or test: a transient NameID, which names nobody twice |

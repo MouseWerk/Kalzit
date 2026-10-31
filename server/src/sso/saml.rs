@@ -71,8 +71,9 @@ const DIGEST_METHODS: [&str; 3] = [
     "http://www.w3.org/2001/04/xmlenc#sha512",
 ];
 
-/// `AuthnContextClassRef` values (and Entra ID's `authnmethodsreferences`) that say the provider
-/// checked more than one factor.
+/// `AuthnContextClassRef` values that say the provider checked more than one factor. Only the
+/// signed `AuthnContextClassRef` counts: an attribute such as Entra ID's `authnmethodsreferences`
+/// is any value the provider's claim rules put there, so it never skips Kalzit's second factor.
 const MFA_CONTEXTS: [&str; 6] = [
     "https://refeds.org/profile/mfa",
     "http://schemas.microsoft.com/claims/multipleauthn",
@@ -81,7 +82,43 @@ const MFA_CONTEXTS: [&str; 6] = [
     "urn:oasis:names:tc:SAML:2.0:ac:classes:TimeSyncToken",
     "urn:oasis:names:tc:SAML:2.0:ac:classes:SmartcardPKI",
 ];
-const AUTHN_METHODS_ATTRIBUTE: &str = "http://schemas.microsoft.com/claims/authnmethodsreferences";
+
+/// The status codes of SAML core 3.2.2.2. Another value in an unverified answer is reported as
+/// `other`, so nothing the sender made up reaches the audit log.
+const STATUS_CODES: [&str; 23] = [
+    "Success",
+    "Requester",
+    "Responder",
+    "VersionMismatch",
+    "AuthnFailed",
+    "InvalidAttrNameOrValue",
+    "InvalidNameIDPolicy",
+    "NoAuthnContext",
+    "NoAvailableIDP",
+    "NoPassive",
+    "NoSupportedIDP",
+    "PartialLogout",
+    "ProxyCountExceeded",
+    "RequestDenied",
+    "RequestUnsupported",
+    "RequestVersionDeprecated",
+    "RequestVersionTooHigh",
+    "RequestVersionTooLow",
+    "ResourceNotRecognized",
+    "TooManyResponses",
+    "UnknownAttrProfile",
+    "UnknownPrincipal",
+    "UnsupportedBinding",
+];
+
+/// A status code of an answer whose signature is not checked yet: one of `STATUS_CODES` as its
+/// URI, else `other`.
+fn known_status(raw: &str) -> String {
+    match raw.strip_prefix("urn:oasis:names:tc:SAML:2.0:status:") {
+        Some(name) if STATUS_CODES.contains(&name) => raw.to_string(),
+        _ => "other".to_string(),
+    }
+}
 
 /// The settings of a SAML provider, as stored (`sso_providers.config`) and edited. The provider's
 /// values (`idp_entity_id`, `sso_url`, `certificates`) are pinned: read from its metadata or
@@ -393,19 +430,29 @@ pub fn check_response(xml: &str, expected: &Expected<'_>) -> Result<Asserted, Sa
             .and_then(|c| child(&doc, c, PROTOCOL, "StatusCode"))
             .and_then(|c| attr(&doc, c, "Value"))
             .unwrap_or(status);
-        return Err(SamlError::Status(detail.chars().take(200).collect()));
+        return Err(SamlError::Status(known_status(detail)));
     }
 
-    // Signatures: only on the response or the assertion, each for its own element.
+    // Signatures: only on the response or the assertion, at most one each, each for its own
+    // element. All of this is decided before any cryptography, so an answer stuffed with
+    // signatures costs no more than two checks per pinned certificate.
     let signatures: Vec<NodeId> = all.iter().copied().filter(|&n| element_is(&doc, n, DSIG, "Signature")).collect();
     if signatures.is_empty() {
         return Err(SamlError::Unsigned);
     }
+    let mut parents = Vec::with_capacity(2);
     for &sig in &signatures {
         let parent = doc.parent(sig).ok_or(SamlError::Wrapping)?;
         if parent != root && parent != assertion {
             return Err(SamlError::Wrapping);
         }
+        if parents.contains(&parent) {
+            return Err(SamlError::SignatureUnsupported("more than one signature on an element".into()));
+        }
+        parents.push(parent);
+    }
+    for &sig in &signatures {
+        let parent = doc.parent(sig).ok_or(SamlError::Wrapping)?;
         check_signature_form(&doc, sig, attr(&doc, parent, "ID").unwrap_or_default())?;
     }
     let signed = verify_signatures(&doc, expected.certificates, signatures.len())?;
@@ -698,11 +745,7 @@ pub fn person(config: &SamlConfig, asserted: &Asserted) -> Person {
     groups.sort();
     groups.dedup();
     groups.truncate(500);
-    let mfa_done = asserted.authn_contexts.iter().any(|c| MFA_CONTEXTS.contains(&c.as_str()))
-        || asserted
-            .attributes
-            .get(AUTHN_METHODS_ATTRIBUTE)
-            .is_some_and(|v| v.iter().any(|m| MFA_CONTEXTS.contains(&m.as_str())));
+    let mfa_done = asserted.authn_contexts.iter().any(|c| MFA_CONTEXTS.contains(&c.as_str()));
     Person {
         subject: asserted.name_id.clone(),
         username: Some(asserted.name_id.chars().take(256).collect()),
@@ -936,7 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn several_factors_come_from_the_context_or_entra_attribute() {
+    fn several_factors_come_from_the_authn_context_only() {
         let config = SamlConfig {
             metadata_url: String::new(),
             idp_entity_id: "https://idp".into(),
@@ -962,9 +1005,21 @@ mod tests {
         assert_eq!(p.email.as_deref(), Some("lea@example.de"));
         assert!(!p.email_verified && !p.mfa_done);
         assert_eq!(p.groups, vec!["CN=Vertrieb,OU=Gruppen,DC=example"]);
-        asserted
-            .attributes
-            .insert(AUTHN_METHODS_ATTRIBUTE.into(), vec!["http://schemas.microsoft.com/claims/multipleauthn".into()]);
+        // Entra ID's attribute is not the signed context: it never counts.
+        asserted.attributes.insert(
+            "http://schemas.microsoft.com/claims/authnmethodsreferences".into(),
+            vec!["http://schemas.microsoft.com/claims/multipleauthn".into()],
+        );
+        assert!(!person(&config, &asserted).mfa_done);
+        asserted.authn_contexts.push("http://schemas.microsoft.com/claims/multipleauthn".into());
         assert!(person(&config, &asserted).mfa_done);
+    }
+
+    #[test]
+    fn only_known_status_codes_are_reported() {
+        let refused = "urn:oasis:names:tc:SAML:2.0:status:AuthnFailed";
+        assert_eq!(known_status(refused), refused);
+        assert_eq!(known_status("urn:oasis:names:tc:SAML:2.0:status:Made\nUp"), "other");
+        assert_eq!(known_status("evil\u{1b}[31m"), "other");
     }
 }

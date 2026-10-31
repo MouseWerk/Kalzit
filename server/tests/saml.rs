@@ -401,6 +401,13 @@ async fn deliver(app: &TestApp, started: &Started, xml: &str) -> Reply {
     app.get(path, &format!("kalzit_sso={}", started.binding)).await
 }
 
+/// The first `<ds:Signature>` element of `xml`, as text.
+fn signature_of(xml: &str) -> String {
+    let start = xml.find("<ds:Signature").expect("a signature");
+    let end = start + xml[start..].find("</ds:Signature>").unwrap() + "</ds:Signature>".len();
+    xml[start..end].to_string()
+}
+
 fn session_of(reply: &Reply) -> String {
     format!("kalzit_session={}", reply.cookie("kalzit_session").expect("a session cookie"))
 }
@@ -655,6 +662,92 @@ async fn saml_refuses_forged_wrapped_and_misaddressed_answers() {
             let k = k.clone();
             Box::new(move |a, now| a.signed(&k, now))
         }),
+        // Many signatures cost CPU: more than one on an element is refused before any is checked.
+        ("saml.signature_unsupported", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let signed = k.sign(&a.assertion(now), &a.assertion_id);
+                let sig = signature_of(&signed);
+                a.response(now, &signed.replacen(&sig, &sig.repeat(40), 1))
+            })
+        }),
+        // An ID repeated on another element, as `Id` or as `ID`.
+        ("saml.wrapping", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let decoy = format!(
+                    "<samlp:Extensions><x:Decoy xmlns:x=\"urn:x\" Id=\"{}\"/></samlp:Extensions>",
+                    a.assertion_id
+                );
+                a.response(now, &format!("{decoy}{}", k.sign(&a.assertion(now), &a.assertion_id)))
+            })
+        }),
+        ("saml.wrapping", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let decoy = format!(
+                    "<samlp:Extensions><x:Decoy xmlns:x=\"urn:x\" ID=\"{}\"/></samlp:Extensions>",
+                    a.assertion_id
+                );
+                a.response(now, &format!("{decoy}{}", k.sign(&a.assertion(now), &a.assertion_id)))
+            })
+        }),
+        // An assertion inside Advice, even inside the signed one.
+        ("saml.assertion_count", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let inner = "<saml:Advice><saml:Assertion ID=\"_inner\" Version=\"2.0\" \
+                             IssueInstant=\"2027-01-15T08:00:00Z\"><saml:Issuer>x</saml:Issuer></saml:Assertion></saml:Advice>";
+                let assertion =
+                    a.assertion(now).replacen("</saml:Conditions>", &format!("</saml:Conditions>{inner}"), 1);
+                a.response(now, &k.sign(&assertion, &a.assertion_id))
+            })
+        }),
+        // A signature on another element than the response or assertion.
+        ("saml.wrapping", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let signed = k.sign(&a.assertion(now), &a.assertion_id);
+                let sig = signature_of(&signed);
+                let moved =
+                    signed.replacen(&sig, "", 1).replacen("</saml:Subject>", &format!("{sig}</saml:Subject>"), 1);
+                a.response(now, &moved)
+            })
+        }),
+        // An XPath transform and SHA-1 are refused before the signature is checked.
+        ("saml.signature_unsupported", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let signed = k.sign(&a.assertion(now), &a.assertion_id);
+                let xpath = signed.replacen(
+                    "<ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>",
+                    "<ds:Transform Algorithm=\"http://www.w3.org/TR/1999/REC-xpath-19991116\"><ds:XPath>not(ancestor-or-self::saml:Subject)</ds:XPath></ds:Transform>",
+                    1,
+                );
+                assert_ne!(xpath, signed, "the template has an exclusive C14N transform");
+                a.response(now, &xpath)
+            })
+        }),
+        ("saml.signature_unsupported", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let signed = k.sign(&a.assertion(now), &a.assertion_id);
+                let sha1 = signed.replacen(
+                    "http://www.w3.org/2001/04/xmlenc#sha256",
+                    "http://www.w3.org/2000/09/xmldsig#sha1",
+                    1,
+                );
+                assert_ne!(sha1, signed, "the template digests with SHA-256");
+                a.response(now, &sha1)
+            })
+        }),
+        ("saml.signature_unsupported", Box::new(|_| {}), {
+            let k = k.clone();
+            Box::new(move |a, now| {
+                let signed = k.sign(&a.assertion(now), &a.assertion_id);
+                a.response(now, &signed.replacen(ECDSA_SHA256, "http://www.w3.org/2000/09/xmldsig#rsa-sha1", 1))
+            })
+        }),
     ];
     for (reason, tweak, make) in cases {
         let started = start(&app).await;
@@ -671,6 +764,29 @@ async fn saml_refuses_forged_wrapped_and_misaddressed_answers() {
     let r = app.post_answer(&unsolicited).await;
     assert!(r.location().starts_with("/anmelden?sso=failed"), "{}", r.location());
     assert_eq!(app.last_failure().await, "saml.unsolicited");
+
+    // A refused status names only SAML's own codes in the audit log.
+    let started = start(&app).await;
+    let made_up =
+        Answer { status: "urn:oasis:names:tc:SAML:2.0:status:MadeUp", ..Answer::new(&started.request_id, lea, &[]) };
+    let r = app.post_answer(&made_up.signed(&k, app.clock.now_ms())).await;
+    assert!(r.location().starts_with("/anmelden?sso=failed"), "{}", r.location());
+    let (summary,): (String,) = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'auth.sso_failed' ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(&app.state.db)
+    .await
+    .unwrap();
+    assert!(summary.contains("status other") && !summary.contains("MadeUp"), "{summary}");
+
+    // Both the response and its assertion signed: accepted.
+    let started = start(&app).await;
+    let answer = Answer::new(&started.request_id, lea, &[]);
+    let now = app.clock.now_ms();
+    let both =
+        k.sign(&answer.response(now, &k.sign(&answer.assertion(now), &answer.assertion_id)), &answer.response_id);
+    let r = deliver(&app, &started, &both).await;
+    assert_eq!(r.location(), "/dashboards", "{:?}", app.failures().await);
 
     // The second pinned certificate (a rollover) signs in; the clock may be a minute off.
     let started = start(&app).await;
@@ -722,5 +838,93 @@ async fn saml_never_signs_in_service_accounts() {
     let r = deliver(&app, &started, &answer.signed(&key, app.clock.now_ms())).await;
     assert_eq!(r.outcome(), "failed", "{}", r.location());
     assert_eq!(app.last_failure().await, "sso.service_account");
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn saml_second_factor_entity_change_and_own_address() {
+    let app = test_app(Some(PUBLIC)).await;
+    let (admin, _) = app.setup().await;
+    let key = IdpKey::new("idp.partnerportal.example");
+    let provider_id = add_provider(&app, &admin, &[&key.cert_b64]).await;
+    let lea = "lea.hoffmann@partnerportal.example";
+    const MFA: &str = "https://refeds.org/profile/mfa";
+
+    // The account exists after a first sign-in; then it gets a passkey.
+    let started = start(&app).await;
+    let r = deliver(&app, &started, &Answer::new(&started.request_id, lea, &[]).signed(&key, app.clock.now_ms())).await;
+    let me = app.get("/api/me", &session_of(&r)).await;
+    let user_id = me.body["id"].as_str().unwrap().to_string();
+    sqlx::query(
+        "INSERT INTO user_passkeys (id, user_id, credential_id, name, credential, created_at) \
+         VALUES ('pk-lea', $1, 'cred-lea', 'Schlüssel', '{}', 0)",
+    )
+    .bind(&user_id)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let sign_in_with = |context: &'static str| {
+        let app = &app;
+        let key = &key;
+        async move {
+            let started = start(app).await;
+            let answer = Answer { authn_context: context, ..Answer::new(&started.request_id, lea, &[]) };
+            deliver(app, &started, &answer.signed(key, app.clock.now_ms())).await
+        }
+    };
+    let asks = "/anmelden?secondFactor=1&redirect=%2Fdashboards";
+
+    // "Kalzit fragt" (the default): Kalzit asks, whatever the provider says.
+    assert_eq!(sign_in_with(MFA).await.location(), asks);
+
+    // Taking the provider's word: a context with several factors skips Kalzit's second factor.
+    let detail = app.get(&format!("/api/admin/sign-in/providers/{provider_id}"), &admin).await;
+    let mut saml = detail.body["saml"].clone();
+    saml.as_object_mut().unwrap().remove("certificateInfo");
+    let mut body = form(saml.clone());
+    body["trustProviderMfa"] = json!(true);
+    body["version"] = detail.body["version"].clone();
+    let r = app.put(&format!("/api/admin/sign-in/saml/{provider_id}"), body, &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(sign_in_with(MFA).await.location(), "/dashboards");
+    assert_eq!(
+        sign_in_with("urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport").await.location(),
+        asks
+    );
+
+    // Another entity ID: the people linked through the old one are unlinked after confirming.
+    let mut other = saml.clone();
+    other["idpEntityId"] = json!("https://idp.neu.example/saml");
+    other["metadataUrl"] = json!("");
+    let check = app.post("/api/admin/sign-in/saml/check", form(other.clone()), &admin).await;
+    assert_eq!(check.status, StatusCode::OK, "{}", check.body);
+    let version = r.body["version"].clone();
+    let mut body = form(check.body["saml"].clone());
+    body["checkToken"] = check.body["checkToken"].clone();
+    body["version"] = version;
+    let r = app.put(&format!("/api/admin/sign-in/saml/{provider_id}"), body.clone(), &admin).await;
+    assert_eq!(r.reason(), "sso.issuer_change_confirm", "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "idpEntityId");
+    body["confirmIssuerChange"] = json!(true);
+    let r = app.put(&format!("/api/admin/sign-in/saml/{provider_id}"), body, &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (links,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_identities WHERE provider_id = $1")
+        .bind(&provider_id)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(links, 0);
+    let (removed,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'sso.provider_identities_removed'")
+            .fetch_one(&app.state.db)
+            .await
+            .unwrap();
+    assert_eq!(removed, 1);
+
+    // Metadata at Kalzit's own address is never read.
+    let own = form(json!({ "metadataUrl": "http://127.0.0.1:3998/metadata.xml" }));
+    let r = app.post("/api/admin/sign-in/saml/check", own, &admin).await;
+    assert_eq!(r.reason(), "saml.metadata_unreachable", "{}", r.body);
+    assert!(r.body["error"]["params"]["detail"].as_str().unwrap_or_default().contains("Kalzit"), "{}", r.body);
     app.finish().await;
 }
