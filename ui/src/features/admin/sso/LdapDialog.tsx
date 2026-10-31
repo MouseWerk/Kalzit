@@ -727,7 +727,7 @@ function LdapForm({
             onClick={() => setAdvanced(!advanced)}
           >
             <Icon name={advanced ? "chevronDown" : "chevron"} />
-            {t("sso.form.advanced")}
+            {t("sso.ldap.advanced")}
           </button>
           <div id={`${ids}-advanced`} className="sso-advanced__body" hidden={!advanced}>
             {textInput("groupBaseDn", groupBaseDn, setGroupBaseDn, {

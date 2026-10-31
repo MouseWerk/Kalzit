@@ -222,6 +222,16 @@ export function ProvidersTab({
     });
   }
 
+  // A directory has no button: its accounts use the password form.
+  function savedLdap(name: string, created: boolean) {
+    setEditing(null);
+    onAdded();
+    void refresh();
+    notice.show({
+      message: t(created ? "sso.providers.createdLdap" : "sso.providers.saved", { name }),
+    });
+  }
+
   return (
     <>
       {providers.length === 0 ? (
@@ -404,7 +414,7 @@ export function ProvidersTab({
           key={editing?.mode === "edit" ? editing.provider.id : "new-ldap"}
           providerId={editing?.mode === "edit" ? editing.provider.id : undefined}
           onClose={closeForm}
-          onSaved={saved}
+          onSaved={savedLdap}
         />
       ) : null}
       {editing?.mode === "sync" ? (

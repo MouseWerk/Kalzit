@@ -408,6 +408,27 @@ fn clean(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(300).collect::<String>().trim().to_string()
 }
 
+/// The server's text for result code `rc`, or the code's name (RFC 4511, appendix A) when the
+/// server sent none, as OpenLDAP does for a wrong password.
+fn result_text(rc: u32, text: &str) -> String {
+    let text = clean(text);
+    if !text.is_empty() {
+        return text;
+    }
+    match rc {
+        8 => "strongerAuthRequired",
+        32 => "noSuchObject",
+        48 => "inappropriateAuthentication",
+        49 => "invalidCredentials",
+        50 => "insufficientAccessRights",
+        51 => "busy",
+        52 => "unavailable",
+        53 => "unwillingToPerform",
+        _ => "",
+    }
+    .to_string()
+}
+
 fn fail(e: LdapError) -> LdapFail {
     match e {
         LdapError::Timeout { .. } => LdapFail::Timeout,
@@ -415,7 +436,7 @@ fn fail(e: LdapError) -> LdapFail {
             if result.rc == RESULT_NO_SUCH_OBJECT {
                 LdapFail::NoSuchObject
             } else {
-                LdapFail::Search { code: result.rc, text: clean(&result.text) }
+                LdapFail::Search { code: result.rc, text: result_text(result.rc, &result.text) }
             }
         }
         other => {
@@ -589,7 +610,7 @@ impl Directory {
         }
         let result = self.ldap.with_timeout(OP_TIMEOUT).simple_bind(dn, password).await.map_err(fail)?;
         if result.rc != RESULT_SUCCESS {
-            return Err(LdapFail::Bind { code: result.rc, text: clean(&result.text) });
+            return Err(LdapFail::Bind { code: result.rc, text: result_text(result.rc, &result.text) });
         }
         Ok(())
     }
@@ -615,7 +636,7 @@ impl Directory {
         match res.rc {
             RESULT_SUCCESS | RESULT_SIZE_LIMIT => Ok(entries.into_iter().map(SearchEntry::construct).collect()),
             RESULT_NO_SUCH_OBJECT => Err(LdapFail::NoSuchObject),
-            code => Err(LdapFail::Search { code, text: clean(&res.text) }),
+            code => Err(LdapFail::Search { code, text: result_text(code, &res.text) }),
         }
     }
 
@@ -652,7 +673,7 @@ impl Directory {
         match res.rc {
             RESULT_SUCCESS => Ok(out),
             RESULT_NO_SUCH_OBJECT => Err(LdapFail::NoSuchObject),
-            code => Err(LdapFail::Search { code, text: clean(&res.text) }),
+            code => Err(LdapFail::Search { code, text: result_text(code, &res.text) }),
         }
     }
 
