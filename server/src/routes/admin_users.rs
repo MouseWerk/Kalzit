@@ -217,6 +217,8 @@ async fn update(
             .bind(&user_id)
             .execute(&mut *tx)
             .await?;
+        // A password is a sign-in method: no SCIM owns the account any more.
+        crate::scim::release(&mut tx, &user_id, None).await?;
         // A new password ends the account's sessions, except the one of the admin setting their
         // own password here.
         let keep = session::read_cookie(&headers, info.https).filter(|_| user_id == admin.id);

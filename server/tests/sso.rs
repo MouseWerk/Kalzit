@@ -1374,3 +1374,52 @@ async fn a_signed_in_scim_account_never_takes_another_persons_address() {
     assert_ne!(me.body["id"], json!(x), "{}", me.body);
     app.finish().await;
 }
+
+/// The first sign-in ends SCIM's ownership at once: when the provider and with it the identity are
+/// gone right after, with no SCIM write in between, SCIM still cannot change the account's address.
+#[tokio::test]
+async fn the_first_link_ends_scim_ownership_even_when_the_identity_goes() {
+    let app = test_app_with(Some("https://kalzit.example")).await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, org) = app.setup().await;
+    let provider = add_provider(&app, &issuer, &admin).await;
+    let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
+    let token = r.body["token"].as_str().unwrap().to_string();
+
+    let rua = scim_user(&app, &org, &token, "rua@example.de").await;
+    let who = Who { sub: "sub-rua", email: "rua@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    let (owned,): (i64,) = sqlx::query_as("SELECT created_account FROM scim_users WHERE user_id = $1")
+        .bind(&rua)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(owned, 0, "the link ended the ownership");
+    sqlx::query("DELETE FROM sso_providers WHERE id = $1").bind(&provider).execute(&app.state.db).await.unwrap();
+    let (identities,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_identities WHERE user_id = $1")
+        .bind(&rua)
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(identities, 0);
+    let req = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/scim/v2/o/{org}/Users/{rua}"))
+        .header(header::HOST, "kalzit.test")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/scim+json")
+        .body(Body::from(
+            json!({ "Operations": [{ "op": "replace", "path": "emails",
+                    "value": [{ "value": "other@example.de", "primary": true }] }] })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let (email,): (String,) =
+        sqlx::query_as("SELECT email FROM users WHERE id = $1").bind(&rua).fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(email, "rua@example.de");
+    app.finish().await;
+}
