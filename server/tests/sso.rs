@@ -1,7 +1,8 @@
 //! Single sign-on through the real router against a small in-process OpenID Connect provider:
 //! the connection check, the sign-in with state, nonce and PKCE, ID token validation with key
 //! rotation, accounts, the group mapping, test sign-ins, and the local sign-in with its
-//! break-glass admin (docs/api/sso.md).
+//! break-glass admin (docs/api/sso.md). SQLite; PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set,
+//! each app in a throwaway schema.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -264,6 +265,7 @@ async fn test_app_with(public_url: Option<&str>) -> TestApp {
     let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
+    config.database.url = common::database_url().await;
     config.server.http_addr = "127.0.0.1:3999".into();
     config.server.public_url = public_url.map(str::to_string);
     // An unencrypted relay on this machine, which only the file may set.

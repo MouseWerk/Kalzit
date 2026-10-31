@@ -1994,7 +1994,11 @@ through `settings::get`; new registry entries are requested from the orchestrato
 
 - Server: unit tests per module; API tests through the router (SQLite, and PostgreSQL in CI);
   data source tests against real databases in CI service containers (`KALZIT_TEST_<SOURCE>_URL`),
-  skipped with a printed notice when the variable is not set.
+  skipped with a printed notice when the variable is not set. Where a CI job provides the
+  database, a missing URL fails instead (`KALZIT_TEST_REQUIRE_POSTGRES=1`,
+  `KALZIT_TEST_REQUIRE_DATABASES=1`). The CI job `postgres` runs the PostgreSQL tests of the
+  areas that differ most between the databases; `.github/workflows/postgres-nightly.yml` runs
+  the whole server test suite on PostgreSQL every night.
 - UI: Vitest per feature; guard tests for design (every CSS file), i18n and the route tree;
   generated types current.
 - E2E: Playwright (`ui/e2e/`) against the server binary with the embedded UI, on Linux and
