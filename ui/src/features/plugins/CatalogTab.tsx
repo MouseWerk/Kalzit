@@ -230,7 +230,12 @@ function OffCard({
             />
             <span>{t("plugins.catalog.use")}</span>
           </label>
-          {enabled.editable ? null : <p className="plugins-hint">{t("plugins.catalog.locked")}</p>}
+          {enabled.editable ? null : (
+            <p className="plugins-hint plugins-lock">
+              <Icon name="lock" />
+              {t("plugins.catalog.locked")}
+            </p>
+          )}
           <p className="plugins-hint">{t("plugins.catalog.fileAlways")}</p>
           <div>
             <button type="button" className="button button--secondary" onClick={onInstallFile}>
@@ -399,7 +404,10 @@ function SettingsCard({
           </div>
         </div>
         {url.editable && refreshHours.editable ? null : (
-          <p className="plugins-hint">{t("plugins.catalog.locked")}</p>
+          <p className="plugins-hint plugins-lock">
+            <Icon name="lock" />
+            {t("plugins.catalog.locked")}
+          </p>
         )}
       </form>
     </section>
