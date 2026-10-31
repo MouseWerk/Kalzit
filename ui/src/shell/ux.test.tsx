@@ -530,9 +530,11 @@ describe("dashboard page", () => {
       renderApp(path);
       const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
       await waitFor(() =>
-        expect(within(crumbs).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-          ...trail,
-        ]),
+        expect(
+          within(crumbs)
+            .getAllByRole("listitem")
+            .map((item) => item.textContent),
+        ).toEqual([...trail]),
       );
       expect(within(crumbs).getByRole("link", { name: "Dashboards" }).getAttribute("href")).toBe(
         "/dashboards",
