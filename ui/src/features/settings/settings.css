@@ -124,7 +124,7 @@
     color: var(--text-muted);
   }
 
-  .settings-search__field:focus-within {
+  .settings-search__field:has(:focus-visible) {
     outline: var(--focus-outline);
     outline-offset: var(--focus-ring-offset);
   }
@@ -330,9 +330,43 @@
     font-size: var(--font-size-xs);
   }
 
+  /*
+   * As wide as its longest option between the two tokens, never wider than the row. A longer
+   * value (a time zone, a provider's model) ends in an ellipsis; the select's title names it in
+   * full, and the open list shows every option whole.
+   */
   .settings-select {
     width: auto;
-    max-width: 18rem;
+    /* A fixed minimum: a percentage of the shrink-to-fit control column would resolve to nothing. */
+    min-width: var(--size-settings-select-min);
+    max-width: min(100%, var(--size-settings-select-max));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A locked value's control (LockedControl): a fieldset only for turning it off, without a frame. */
+  .settings-locked {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  /* Where a locked value is set: muted text with a lock, no color. */
+  .settings-lock {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin: var(--space-1) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 
   .settings-field {
@@ -358,95 +392,6 @@
   .settings-textarea {
     width: 100%;
     resize: vertical;
-  }
-
-  /*
-   * On or off as a pill with a knob (board AI.dc.html, "KI verwenden"), not the system's
-   * checkbox: off a hover tint with a muted knob on the left, on the strong border color as fill with
-   * the knob in the text color on the right. Never the accent. The knob is a radial gradient,
-   * so the control stays one native checkbox for the keyboard and screen readers.
-   */
-  .settings-switch {
-    flex: none;
-    appearance: none;
-    width: var(--size-switch-width);
-    height: var(--size-switch-height);
-    margin: 0;
-    border: var(--border-width) solid var(--border-strong);
-    border-radius: var(--radius-pill);
-    background-color: var(--bg-hover);
-    background-image: radial-gradient(
-      circle,
-      var(--text-muted) var(--size-switch-knob),
-      transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
-    );
-    background-position: left center;
-    background-size: calc(var(--size-switch-height) - 2 * var(--border-width))
-      calc(var(--size-switch-height) - 2 * var(--border-width));
-    background-repeat: no-repeat;
-    cursor: pointer;
-    transition:
-      background-color var(--duration-fast) var(--easing),
-      background-position var(--duration-fast) var(--easing);
-  }
-
-  .settings-switch:checked {
-    border-color: var(--border-strong);
-    background-color: var(--border-strong);
-    background-image: radial-gradient(
-      circle,
-      var(--text) var(--size-switch-knob),
-      transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
-    );
-    background-position: right center;
-  }
-
-  .settings-switch:disabled {
-    border-color: var(--border);
-    background-color: var(--bg-surface);
-    cursor: not-allowed;
-  }
-
-  /* The contrast theme's strong border is close to its text: on, the knob takes the background. */
-  :root[data-theme="contrast"] .settings-switch:checked {
-    border-color: var(--text);
-    background-color: var(--text);
-    background-image: radial-gradient(
-      circle,
-      var(--bg) var(--size-switch-knob),
-      transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
-    );
-  }
-
-  /*
-   * Forced colors: system colors only, kept as they are so the knob and its side still show the
-   * state; on is filled with the selection color.
-   */
-  @media (forced-colors: active) {
-    .settings-switch {
-      forced-color-adjust: none;
-      border-color: CanvasText;
-      background-color: Canvas;
-      background-image: radial-gradient(
-        circle,
-        CanvasText var(--size-switch-knob),
-        transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
-      );
-    }
-
-    .settings-switch:checked {
-      border-color: Highlight;
-      background-color: Highlight;
-      background-image: radial-gradient(
-        circle,
-        HighlightText var(--size-switch-knob),
-        transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
-      );
-    }
-
-    .settings-switch:disabled {
-      border-color: GrayText;
-    }
   }
 
   /* Segmented choice (the theme): the chosen part carries a quiet fill and weight. */
@@ -486,6 +431,20 @@
   .settings-segmented__option:focus-visible {
     outline: var(--focus-outline);
     outline-offset: calc(-1 * var(--focus-ring-width));
+  }
+
+  /* A locked choice keeps showing which part is chosen, without hover or a pointer. */
+  .settings-segmented__option:disabled {
+    background: var(--bg-surface);
+    cursor: not-allowed;
+  }
+
+  .settings-segmented__option:disabled[aria-checked="true"] {
+    background: var(--bg-active);
+  }
+
+  .settings-swatch:disabled {
+    cursor: not-allowed;
   }
 
   /* Accent swatches: each draws its own accent (data-accent); the chosen one shows a check. */
@@ -767,6 +726,11 @@
   }
 
   /* About: the crystal with the meaning of the name, then cards of facts, links and licenses. */
+  .about,
+  .settings-appearance-frame {
+    container-type: inline-size;
+  }
+
   .about {
     display: grid;
     gap: var(--space-cards);
@@ -938,7 +902,8 @@
     overflow-wrap: anywhere;
   }
 
-  @media (max-width: 75rem) {
+  /* Side by side only where the section has room for both, whatever the window and sidebar. */
+  @container (width < 44rem) {
     .about-hero {
       grid-template-columns: minmax(0, 1fr);
     }

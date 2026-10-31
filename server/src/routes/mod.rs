@@ -22,6 +22,7 @@ pub mod health;
 pub mod home;
 pub mod instances;
 pub mod invitations;
+pub mod ldap;
 pub mod library_panels;
 pub mod live;
 #[cfg(test)]
@@ -63,6 +64,7 @@ pub fn all() -> Vec<table::RouteDef> {
         about::routes(),
         auth::routes(),
         sso::routes(),
+        ldap::routes(),
         second_factor::routes(),
         security::routes(),
         orgs::routes(),

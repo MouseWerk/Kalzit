@@ -91,6 +91,14 @@ export function LocalTab({ local }: { local: UseQueryResult<LocalSignIn> }) {
     !(checks.providerReady.ok && checks.breakGlassReady.ok && checks.selfViaProvider.ok);
   const switchLocked = data.readOnly || blocked || change.isPending;
   const admins = (users.items ?? []).filter((user) => user.isServerAdmin && !user.disabled);
+  // The chosen admin in full as the select's hover text: a long name and address end in "...".
+  const chosen = admins.find((user) => user.id === current.breakGlassUserId);
+  const breakGlassTitle =
+    current.breakGlassUserId === null
+      ? t("sso.local.noBreakGlass")
+      : chosen !== undefined
+        ? t("admin.common.nameAndEmail", { name: chosen.name, email: chosen.email })
+        : (data.breakGlass?.name ?? undefined);
   const breakGlassError =
     change.error !== null && isApiError(change.error) && change.error.field === "breakGlassUserId"
       ? ssoErrorText(t, change.error)
@@ -173,6 +181,7 @@ export function LocalTab({ local }: { local: UseQueryResult<LocalSignIn> }) {
                   id={`${ids}-breakglass`}
                   className="select settings-select"
                   value={current.breakGlassUserId ?? ""}
+                  title={breakGlassTitle}
                   disabled={data.readOnly}
                   aria-invalid={breakGlassError === undefined ? undefined : true}
                   aria-describedby={

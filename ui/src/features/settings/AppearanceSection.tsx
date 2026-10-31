@@ -24,7 +24,7 @@ import {
   undoChange,
   uploadLogo,
 } from "./api";
-import { type Changes, contrastText, RowFrame, SettingRow } from "./rows";
+import { type Changes, contrastText, lockHint, RowFrame, SettingRow } from "./rows";
 import { useFoundRow } from "./SectionPage";
 import { APPEARANCE_ROWS, LOGO_ROW, SIGN_IN_ROW } from "./sections";
 import "../../appearance/appearance.css";
@@ -47,44 +47,47 @@ export function AppearanceSection({
   const byKey = new Map(settings.map((setting) => [setting.key, setting]));
   const value = (key: string) => byKey.get(key)?.value;
   return (
-    <div className="settings-appearance">
-      <div className="settings-card">
-        {APPEARANCE_ROWS.map((row) => {
-          if (row === LOGO_ROW) {
-            return <LogoRow key={row} found={found === row} />;
-          }
-          if (row === SIGN_IN_ROW) {
-            const welcome = byKey.get("signin.welcome");
-            const notice = byKey.get("signin.notice");
-            return welcome === undefined || notice === undefined ? null : (
-              <SignInRow key={row} welcome={welcome} notice={notice} found={found === row} />
+    // The frame is the container the layout below asks for its width.
+    <div className="settings-appearance-frame">
+      <div className="settings-appearance">
+        <div className="settings-card">
+          {APPEARANCE_ROWS.map((row) => {
+            if (row === LOGO_ROW) {
+              return <LogoRow key={row} found={found === row} />;
+            }
+            if (row === SIGN_IN_ROW) {
+              const welcome = byKey.get("signin.welcome");
+              const notice = byKey.get("signin.notice");
+              return welcome === undefined || notice === undefined ? null : (
+                <SignInRow key={row} welcome={welcome} notice={notice} found={found === row} />
+              );
+            }
+            const setting = byKey.get(row);
+            return setting === undefined ? null : (
+              <SettingRow
+                key={row}
+                setting={setting}
+                note={row === "appearance.default_theme" ? <OwnThemeNote /> : undefined}
+                rowId={row}
+                changes={changes}
+                canWrite
+                inheritable={false}
+                found={found === row}
+              />
             );
-          }
-          const setting = byKey.get(row);
-          return setting === undefined ? null : (
-            <SettingRow
-              key={row}
-              setting={setting}
-              note={row === "appearance.default_theme" ? <OwnThemeNote /> : undefined}
-              rowId={row}
-              changes={changes}
-              canWrite
-              inheritable={false}
-              found={found === row}
-            />
-          );
-        })}
-        <ConflictDialog
-          conflict={changes.conflict}
-          onKeepStored={changes.keepStored}
-          onOverwrite={changes.overwrite}
+          })}
+          <ConflictDialog
+            conflict={changes.conflict}
+            onKeepStored={changes.keepStored}
+            onOverwrite={changes.overwrite}
+          />
+        </div>
+        <LookPreview
+          accent={value("appearance.accent")}
+          density={value("appearance.density")}
+          fontSize={value("appearance.font_size")}
         />
       </div>
-      <LookPreview
-        accent={value("appearance.accent")}
-        density={value("appearance.density")}
-        fontSize={value("appearance.font_size")}
-      />
     </div>
   );
 }
@@ -293,7 +296,8 @@ function SignInRow({
   const { t } = useI18n();
   const titleId = useId();
   const [open, setOpen] = useState(false);
-  const locked = !welcome.editable || !notice.editable;
+  const lock = lockHint(t, welcome) ?? lockHint(t, notice);
+  const locked = lock !== undefined;
   const summary = [welcome.value, notice.value].some((value) => String(value ?? "").trim() !== "")
     ? null
     : t("settings.signInPage.empty");
@@ -303,19 +307,17 @@ function SignInRow({
       title={t("settings.signInPage.label")}
       titleId={titleId}
       description={summary ?? t("settings.signInPage.description")}
-      badge={locked ? t("settings.locked.config") : undefined}
+      badge={locked ? t("settings.locked.short") : undefined}
+      lock={lock}
       found={found}
     >
+      {/* Texts set in kalzit.toml or the environment keep the button, turned off. */}
       <button
         type="button"
         className="button button--secondary"
-        aria-describedby={titleId}
-        aria-disabled={locked}
-        onClick={() => {
-          if (!locked) {
-            setOpen(true);
-          }
-        }}
+        aria-describedby={locked ? `${titleId} ${titleId}-lock` : titleId}
+        disabled={locked}
+        onClick={() => setOpen(true)}
       >
         {t("settings.signInPage.edit")}
       </button>

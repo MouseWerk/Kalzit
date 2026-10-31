@@ -74,7 +74,11 @@ function serverField(error: unknown): Field | undefined {
   return isField(field) ? field : undefined;
 }
 
-function describedBy(id: string, hint: boolean, error: string | undefined): string | undefined {
+export function describedBy(
+  id: string,
+  hint: boolean,
+  error: string | undefined,
+): string | undefined {
   const parts = [error === undefined ? null : `${id}-error`, hint ? `${id}-hint` : null].filter(
     (part) => part !== null,
   );
@@ -82,7 +86,7 @@ function describedBy(id: string, hint: boolean, error: string | undefined): stri
 }
 
 /** A labelled field with its hint and, when refused, the reason below it. */
-function FormField({
+export function FormField({
   id,
   label,
   hint,

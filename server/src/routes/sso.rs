@@ -59,7 +59,7 @@ const SECURE_BINDING_COOKIE: &str = "__Host-kalzit_sso";
 /// A connection check is good for saving this long.
 const CHECK_VALID_MS: i64 = 30 * 60 * 1000;
 
-fn hash(value: &str) -> String {
+pub(crate) fn hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
@@ -100,7 +100,7 @@ fn sign_in_page(outcome: &str, slug: &str, error_ref: Option<&str>) -> String {
 }
 
 /// Records a failed sign-in through a provider for admins and answers its error id.
-async fn record_failure(
+pub(crate) async fn record_failure(
     state: &AppState,
     info: &RequestInfo,
     provider: Option<(&str, &str)>,
@@ -595,7 +595,7 @@ async fn test_outcome(state: &AppState, target: &Target, person: &Person) -> Api
 }
 
 /// An outcome with the names of its organizations and teams.
-async fn outcome_json(state: &AppState, outcome: &Outcome) -> ApiResult<Value> {
+pub(crate) async fn outcome_json(state: &AppState, outcome: &Outcome) -> ApiResult<Value> {
     let mut orgs = Vec::new();
     for org in &outcome.orgs {
         let name: Option<(String,)> =
@@ -685,7 +685,7 @@ struct ProviderBody {
     confirm_issuer_change: Option<bool>,
 }
 
-fn field_error(field: &'static str, reason: &'static str, message: &str) -> ApiError {
+pub(crate) fn field_error(field: &'static str, reason: &'static str, message: &str) -> ApiError {
     ApiError::validation(message).with_field(field).because(reason)
 }
 
@@ -762,6 +762,11 @@ fn validate(body: ProviderBody) -> ApiResult<Valid> {
         confirm_issuer_change: body.confirm_issuer_change.unwrap_or(false),
     };
     Ok(valid)
+}
+
+/// A route for one kind of provider used with another.
+pub(crate) fn kind_mismatch() -> ApiError {
+    ApiError::validation("this route is for another kind of provider").because("sso.kind_mismatch")
 }
 
 /// The secret a form uses: the one typed, else the stored one of `provider_id`.
@@ -865,7 +870,10 @@ async fn check(
     })))
 }
 
-async fn provider_json(state: &AppState, info: &RequestInfo, row: &ProviderRow) -> ApiResult<Value> {
+pub(crate) async fn provider_json(state: &AppState, info: &RequestInfo, row: &ProviderRow) -> ApiResult<Value> {
+    if row.kind == "ldap" {
+        return super::ldap::provider_json(state, row).await;
+    }
     let config = row.oidc()?;
     let secret_set: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM sso_provider_secrets WHERE provider_id = $1 AND field = $2")
@@ -896,8 +904,15 @@ async fn overview(State(state): State<AppState>, Extension(info): Extension<Requ
     let base = crate::sso::public_base(&state, &info);
     let mut providers = Vec::new();
     for row in &rows {
-        let issuer = row.oidc().map(|c| c.issuer).unwrap_or_default();
+        let (issuer, flavor) = match row.kind.as_str() {
+            "ldap" => match row.ldap() {
+                Ok(c) => (c.url, Some(c.flavor)),
+                Err(_) => (String::new(), None),
+            },
+            _ => (row.oidc().map(|c| c.issuer).unwrap_or_default(), None),
+        };
         providers.push(json!({
+            "flavor": flavor,
             "id": row.id, "slug": row.slug, "kind": row.kind, "name": row.name, "issuer": issuer,
             "position": row.position, "enabled": row.enabled != 0, "people": people.get(&row.id).copied().unwrap_or(0),
             "lastSignInAt": row.last_sign_in_at, "checkedAt": row.checked_at,
@@ -992,6 +1007,9 @@ async fn update(
     let valid = validate(body)?;
     let (token, version) = (valid.check_token.clone(), valid.version);
     let current = load_provider(&state, &id).await?;
+    if current.kind != "oidc" {
+        return Err(kind_mismatch());
+    }
     if valid.slug != current.slug {
         return Err(field_error("slug", "sso.slug_invalid", "the slug of a provider cannot change"));
     }
@@ -1704,7 +1722,7 @@ struct Checks {
 
 async fn checks(state: &AppState, break_glass: Option<&str>, me: &str) -> ApiResult<Checks> {
     let provider: Option<(String,)> = sqlx::query_as(
-        "SELECT name FROM sso_providers WHERE enabled = 1 AND kind = 'oidc' AND checked_at IS NOT NULL \
+        "SELECT name FROM sso_providers WHERE enabled = 1 AND kind IN ('oidc', 'ldap') AND checked_at IS NOT NULL \
          ORDER BY position LIMIT 1",
     )
     .fetch_optional(&state.db)

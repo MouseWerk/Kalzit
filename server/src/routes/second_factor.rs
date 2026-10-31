@@ -233,7 +233,7 @@ async fn complete(
     };
     // After a provider, its group mapping applies now that the sign-in is complete (`sso::signin`);
     // what an earlier, abandoned one kept goes with any other first step.
-    let touched = if taken.first_step == "provider" {
+    let touched = if matches!(taken.first_step.as_str(), "provider" | "directory") {
         crate::sso::signin::apply_deferred(&mut tx, state, info, &pending.user_id, now).await?
     } else {
         sqlx::query("DELETE FROM sso_pending_mappings WHERE user_id = $1")

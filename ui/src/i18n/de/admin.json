@@ -611,6 +611,7 @@
   "admin.updates.window.daily": "Täglich {from} bis {to}",
   "admin.updates.window.change": "Ändern",
   "admin.updates.window.zone": "Zeitzone {zone} · geplante Updates laufen nur in diesem Fenster",
+  "admin.updates.settingUnavailable": "Diese Einstellung ließ sich nicht laden. Lade die Seite neu, um sie zu ändern.",
   "admin.updates.window.title": "Wartungsfenster",
   "admin.updates.window.text": "Geplante Updates beginnen am Anfang des Fensters. Läuft der Server dann nicht, wartet das Update, bis du es neu planst.",
   "admin.updates.window.from": "Von",

@@ -3,7 +3,7 @@ import { useI18n } from "../../../i18n/i18n";
 import type { Setting } from "../../admin/api";
 import { settingText } from "../../admin/catalog";
 import { Dialog } from "../../admin/components/Dialog";
-import { type Changes, lockedBadge, RowFrame } from "../../settings/rows";
+import { type Changes, lockedBadge, lockHint, RowFrame } from "../../settings/rows";
 import "./ai-admin.css";
 
 /** The longest addition the server takes (`ai.notice_text`). */
@@ -86,6 +86,7 @@ function NoticeTextRow({
   const [draft, setDraft] = useState(current);
   const text = settingText(t, setting);
   const badge = lockedBadge(t, setting, true);
+  const lock = lockHint(t, setting);
   const error = changes.rejected?.key === setting.key ? changes.rejected.message : undefined;
   const tooLong = Array.from(draft).length > MAX_NOTICE_CHARS;
   return (
@@ -96,23 +97,24 @@ function NoticeTextRow({
       description={text.description}
       note={current === "" ? t("ai.admin.privacy.noAddition") : current}
       badge={badge}
+      lock={lock}
       error={error}
       errorId={`${titleId}-error`}
       found={found}
     >
-      {badge === undefined ? (
-        <button
-          type="button"
-          className="button button--secondary button--small"
-          aria-describedby={titleId}
-          onClick={() => {
-            setDraft(current);
-            setOpen(true);
-          }}
-        >
-          {t("ai.admin.privacy.editAddition")}
-        </button>
-      ) : null}
+      {/* A text set in kalzit.toml or the environment keeps the button, turned off. */}
+      <button
+        type="button"
+        className="button button--secondary button--small"
+        aria-describedby={lock === undefined ? titleId : `${titleId} ${titleId}-lock`}
+        disabled={lock !== undefined}
+        onClick={() => {
+          setDraft(current);
+          setOpen(true);
+        }}
+      >
+        {t("ai.admin.privacy.editAddition")}
+      </button>
       <Dialog
         open={open}
         title={t("ai.admin.privacy.additionTitle")}
