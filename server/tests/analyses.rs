@@ -358,9 +358,9 @@ async fn create_read_save_and_list(t: TestApp) {
     assert!(t.get("~/analyses?q=%25", &t.owner).await.titles().is_empty());
     // Pages keep their order.
     let first = t.get("~/analyses?limit=2", &t.owner).await;
-    assert_eq!(first.titles(), ["Abbrüche", "Umsatz nach Land"]);
+    assert_eq!(first.titles(), by_title[..2]);
     let cursor = first.body["nextCursor"].as_str().unwrap().to_string();
-    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), ["Öffnungszeiten"]);
+    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), by_title[2..]);
     // A folder that does not exist is not found; an unknown parameter is refused.
     let missing = uuid::Uuid::now_v7();
     assert_eq!(t.get(&format!("~/analyses?folderId={missing}"), &t.owner).await.status, StatusCode::NOT_FOUND);
