@@ -356,8 +356,13 @@ async fn lists_follow_the_language_order_on_every_database(t: TestApp) {
     let source = t.source("shop").await;
     let german = t.folder("Deutsch", false).await;
     let english = t.folder("English", false).await;
+    let mut zebra = String::new();
     for title in ["Zebra", "ß", "Äpfel", "O", "Apfel", "Ö"] {
-        assert_eq!(t.create(title, &source, Some(&german), &t.owner).await.status, StatusCode::CREATED);
+        let r = t.create(title, &source, Some(&german), &t.owner).await;
+        assert_eq!(r.status, StatusCode::CREATED);
+        if title == "Zebra" {
+            zebra = id_of(r);
+        }
     }
     for title in ["cherry", "Éclair", "banana", "apple pie", "Apple", "Delta"] {
         assert_eq!(t.create(title, &source, Some(&english), &t.owner).await.status, StatusCode::CREATED);
@@ -385,6 +390,15 @@ async fn lists_follow_the_language_order_on_every_database(t: TestApp) {
         }
         assert_eq!(seen, expected);
     }
+    // A rename moves the analysis to its new place.
+    let renamed = t.save(&zebra, model("aal", &source, SQL), &t.owner).await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
+    assert_eq!(
+        t.get(&format!("~/analyses?folderId={german}"), &t.owner).await.titles(),
+        ["aal", "Apfel", "Äpfel", "O", "Ö", "ß"]
+    );
+    let back = t.save(&zebra, model("Zebra", &source, SQL), &t.owner).await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
 
     // Titles equal but for case keep a stable order by id, also across pages.
     let first = id_of(t.create("umsatz", &source, None, &t.owner).await);

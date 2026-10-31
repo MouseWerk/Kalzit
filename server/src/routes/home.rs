@@ -198,12 +198,12 @@ pub struct SearchHit {
     score: i64,
     /// The sort key of the title (`collation`).
     #[serde(skip)]
-    sort_title: String,
+    sort_title: Vec<u8>,
 }
 
 impl SearchHit {
     /// Best match first, then dashboards, folders, data sources, then by title and id.
-    fn key(&self) -> (Reverse<i64>, HitKind, &str, &str) {
+    fn key(&self) -> (Reverse<i64>, HitKind, &[u8], &str) {
         (Reverse(self.score), self.kind, &self.sort_title, &self.id)
     }
 }
@@ -344,7 +344,7 @@ async fn search(
     // The cursor names the last title; the comparison uses its sort key.
     if let Some((score, kind, title, id)) = &after {
         let title_key = collation::key(title);
-        let cursor = (Reverse(*score), *kind, title_key.as_str(), id.as_str());
+        let cursor = (Reverse(*score), *kind, title_key.as_slice(), id.as_str());
         hits.retain(|h| h.key() > cursor);
     }
     let more = hits.len() > limit;

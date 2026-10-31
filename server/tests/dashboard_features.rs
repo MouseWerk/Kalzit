@@ -259,6 +259,56 @@ on_both_databases! {
     pins_keep_their_order_limit_and_access,
     panel_view_state_is_personal_and_follows_the_dashboard_access,
     panel_descriptions_and_transparency_are_stored_and_checked,
+    name_lists_follow_the_language_order,
+}
+
+/// Every name of a list, read one per page.
+async fn names_page_by_page(t: &TestApp, list: &str) -> Vec<String> {
+    let mut seen = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let path = match &cursor {
+            Some(c) => format!("{list}?limit=1&cursor={c}"),
+            None => format!("{list}?limit=1"),
+        };
+        let page = t.get(&path, &t.owner).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        seen.extend(page.body["items"].as_array().unwrap().iter().map(|i| i["name"].as_str().unwrap().to_string()));
+        match page.body["nextCursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    seen
+}
+
+/// Library panels and playlists list by name in the language order on both databases, page by
+/// page across every umlaut boundary, and a rename moves the entry to its new place.
+async fn name_lists_follow_the_language_order(t: TestApp) {
+    let names = ["Zebra", "ß", "Äpfel", "O", "Apfel", "Ö"];
+    let order = ["Apfel", "Äpfel", "O", "Ö", "ß", "Zebra"];
+    let mut zebra = (String::new(), String::new());
+    for name in names {
+        let lib = t.post("~/library-panels", json!({ "name": name, "model": library_model(name) }), &t.owner).await;
+        assert_eq!(lib.status, StatusCode::CREATED, "{}", lib.body);
+        let list = t.post("~/playlists", json!({ "name": name, "intervalSeconds": 30 }), &t.owner).await;
+        assert_eq!(list.status, StatusCode::CREATED, "{}", list.body);
+        if name == "Zebra" {
+            zebra = (lib.id(), list.id());
+        }
+    }
+    assert_eq!(names_page_by_page(&t, "~/library-panels").await, order);
+    assert_eq!(names_page_by_page(&t, "~/playlists").await, order);
+
+    let renamed = json!({ "version": 1, "name": "aal", "model": library_model("Zebra") });
+    let saved = t.put(&format!("~/library-panels/{}", zebra.0), renamed, &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let renamed = json!({ "version": 1, "name": "aal", "intervalSeconds": 30, "items": [] });
+    let saved = t.put(&format!("~/playlists/{}", zebra.1), renamed, &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let order = ["aal", "Apfel", "Äpfel", "O", "Ö", "ß"];
+    assert_eq!(names_page_by_page(&t, "~/library-panels").await, order);
+    assert_eq!(names_page_by_page(&t, "~/playlists").await, order);
 }
 
 fn model(title: &str) -> Value {

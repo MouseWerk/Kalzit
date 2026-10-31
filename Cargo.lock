@@ -2923,6 +2923,7 @@ dependencies = [
  "http-body-util",
  "hyper-util",
  "icu_collator",
+ "icu_collator_data",
  "icu_locale_core",
  "instant-acme",
  "ipnet",

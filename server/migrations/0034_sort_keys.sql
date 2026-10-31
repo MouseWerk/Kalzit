@@ -1,14 +1,16 @@
 -- The list order of titles and names (server/src/collation.rs): each row keeps the sort key of its
 -- title or name, made by the server by the rules of the UI languages, and lists order and page by
--- that key and the id. The database never compares the text itself, so SQLite and PostgreSQL (in
--- whatever locale it was set up) order alike. The server fills the keys at startup after this
--- migration, and again whenever a new build orders differently (`sort_key_state`).
+-- that key and the id. The keys are bytes (`bytea` on PostgreSQL; SQLite stores them as BLOBs),
+-- which both databases compare byte by byte whatever their collation, so SQLite and PostgreSQL
+-- order alike. The database never compares the text itself. The server fills the keys at startup
+-- after this migration, repairs missing ones at every start and recomputes all of them when a new
+-- build orders differently (`sort_key_state`). Until then a key is empty and sorts first.
 
-ALTER TABLE dashboards ADD COLUMN sort_title TEXT NOT NULL DEFAULT '';
-ALTER TABLE analyses ADD COLUMN sort_title TEXT NOT NULL DEFAULT '';
-ALTER TABLE library_panels ADD COLUMN sort_name TEXT NOT NULL DEFAULT '';
-ALTER TABLE playlists ADD COLUMN sort_name TEXT NOT NULL DEFAULT '';
-ALTER TABLE service_accounts ADD COLUMN sort_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE dashboards ADD COLUMN sort_title BYTEA NOT NULL DEFAULT '';
+ALTER TABLE analyses ADD COLUMN sort_title BYTEA NOT NULL DEFAULT '';
+ALTER TABLE library_panels ADD COLUMN sort_name BYTEA NOT NULL DEFAULT '';
+ALTER TABLE playlists ADD COLUMN sort_name BYTEA NOT NULL DEFAULT '';
+ALTER TABLE service_accounts ADD COLUMN sort_name BYTEA NOT NULL DEFAULT '';
 
 DROP INDEX dashboards_org_title;
 DROP INDEX analyses_org_title;

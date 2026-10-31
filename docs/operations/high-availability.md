@@ -163,6 +163,12 @@ servers promptly. Verwaltung, Instanzen lists each server's version and warns wh
 
 `kalzit update apply` (the command line, with that server stopped) works per server as well.
 
+Lists sort by keys the server stores next to each title and name. A release with a new collator
+recomputes them at its first start, one server at a time (the others wait for it), in batches, so
+a large installation stays usable meanwhile. An older server would keep writing keys in its own
+order for what it saves, and a start repairs only keys that are missing, so the release notes of
+such a release say "stop every server": stop all servers, update one, start it, then the others.
+
 ## Adding and removing servers
 
 Start Kalzit with the same database URL and secrets key on another machine and add it to the
