@@ -54,8 +54,7 @@ pub const MAX_METADATA_BYTES: usize = 1024 * 1024;
 pub const MAX_CERTIFICATES: usize = 2;
 
 /// Canonicalization of the signed element: exclusive or inclusive C14N, never with comments.
-const C14N: [&str; 2] =
-    ["http://www.w3.org/2001/10/xml-exc-c14n#", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"];
+const C14N: [&str; 2] = ["http://www.w3.org/2001/10/xml-exc-c14n#", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"];
 const ENVELOPED: &str = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
 /// RSA and ECDSA with SHA-2. SHA-1 is refused.
 const SIGNATURE_METHODS: [&str; 6] = [
@@ -359,10 +358,14 @@ pub fn check_response(xml: &str, expected: &Expected<'_>) -> Result<Asserted, Sa
 
     // Structure first: one assertion, as a child of the response, unique IDs.
     let all = doc.descendants(root);
-    if all.iter().any(|&n| element_is(&doc, n, ASSERTION, "EncryptedAssertion") || element_is(&doc, n, XMLENC, "EncryptedData")) {
+    if all
+        .iter()
+        .any(|&n| element_is(&doc, n, ASSERTION, "EncryptedAssertion") || element_is(&doc, n, XMLENC, "EncryptedData"))
+    {
         return Err(SamlError::EncryptedAssertion);
     }
-    let assertions: Vec<NodeId> = all.iter().copied().filter(|&n| element_is(&doc, n, ASSERTION, "Assertion")).collect();
+    let assertions: Vec<NodeId> =
+        all.iter().copied().filter(|&n| element_is(&doc, n, ASSERTION, "Assertion")).collect();
     let [assertion] = assertions[..] else { return Err(SamlError::AssertionCount(assertions.len())) };
     if doc.parent(assertion) != Some(root) {
         return Err(SamlError::Wrapping);
@@ -371,7 +374,8 @@ pub fn check_response(xml: &str, expected: &Expected<'_>) -> Result<Asserted, Sa
     for &n in std::iter::once(&root).chain(all.iter()) {
         if let Some(e) = doc.element(n) {
             for a in &e.attributes {
-                if matches!(&*a.name.local_name, "ID" | "Id" | "id" | "AssertionID") && !ids.insert(a.value.to_string()) {
+                if matches!(&*a.name.local_name, "ID" | "Id" | "id" | "AssertionID") && !ids.insert(a.value.to_string())
+                {
                     return Err(SamlError::Wrapping);
                 }
             }
@@ -456,7 +460,8 @@ fn check_signature_form(doc: &Document<'_>, sig: NodeId, parent_id: &str) -> Res
     if !digest.is_some_and(|a| DIGEST_METHODS.contains(&a)) {
         return Err(bad("digest method (SHA-256 or stronger)"));
     }
-    let transforms = child(doc, reference, DSIG, "Transforms").map(|t| children(doc, t, DSIG, "Transform")).unwrap_or_default();
+    let transforms =
+        child(doc, reference, DSIG, "Transforms").map(|t| children(doc, t, DSIG, "Transform")).unwrap_or_default();
     let algorithms: Vec<&str> = transforms.iter().filter_map(|&t| attr(doc, t, "Algorithm")).collect();
     if algorithms.len() != transforms.len()
         || !algorithms.contains(&ENVELOPED)
@@ -501,8 +506,7 @@ fn verify_signatures(doc: &Document<'_>, certificates: &[Vec<u8>], count: usize)
 /// Verifies every signature of `doc` with one pinned certificate: per signature in document
 /// order, the nodes (indexes) it signs, or why it does not verify.
 fn verify_with(doc: &Document<'_>, der: &[u8], count: usize) -> Result<Vec<Result<BTreeSet<usize>, String>>, String> {
-    let mut key =
-        loader::load_x509_cert_der(der).map_err(|e| format!("a pinned certificate cannot be used: {e}"))?;
+    let mut key = loader::load_x509_cert_der(der).map_err(|e| format!("a pinned certificate cannot be used: {e}"))?;
     key.usage = KeyUsage::Verify;
     let mut keys = KeysManager::new();
     keys.add_key(key);
@@ -541,7 +545,8 @@ fn check_assertion(doc: &Document<'_>, assertion: NodeId, expected: &Expected<'_
     if attr(doc, assertion, "Version") != Some("2.0") {
         return Err(SamlError::XmlInvalid("the assertion is not SAML 2.0".into()));
     }
-    let assertion_id = attr(doc, assertion, "ID").filter(|v| !v.is_empty() && v.len() <= 256).ok_or(SamlError::Wrapping)?;
+    let assertion_id =
+        attr(doc, assertion, "ID").filter(|v| !v.is_empty() && v.len() <= 256).ok_or(SamlError::Wrapping)?;
     let issuer = child(doc, assertion, ASSERTION, "Issuer").and_then(|i| text(doc, i)).unwrap_or_default();
     if issuer != expected.idp_entity_id {
         return Err(SamlError::Issuer(issuer.chars().take(200).collect()));
@@ -615,7 +620,8 @@ fn check_assertion(doc: &Document<'_>, assertion: NodeId, expected: &Expected<'_
         return Err(SamlError::Audience);
     }
     for r in restrictions {
-        let audiences: Vec<String> = children(doc, r, ASSERTION, "Audience").into_iter().filter_map(|a| text(doc, a)).collect();
+        let audiences: Vec<String> =
+            children(doc, r, ASSERTION, "Audience").into_iter().filter_map(|a| text(doc, a)).collect();
         if !audiences.iter().any(|a| a == expected.sp_entity_id) {
             return Err(SamlError::Audience);
         }
@@ -675,9 +681,8 @@ pub fn person(config: &SamlConfig, asserted: &Asserted) -> Person {
             .map(|s| s.chars().take(256).collect::<String>())
     };
     // The email attribute, else a NameID that is an email address.
-    let raw_email = first(&config.email_attribute).or_else(|| {
-        (asserted.name_id_format.as_deref() == Some(NAME_ID_EMAIL)).then(|| asserted.name_id.clone())
-    });
+    let raw_email = first(&config.email_attribute)
+        .or_else(|| (asserted.name_id_format.as_deref() == Some(NAME_ID_EMAIL)).then(|| asserted.name_id.clone()));
     let email = raw_email.as_deref().and_then(matching_email);
     let email_as_typed = raw_email
         .as_deref()
@@ -740,7 +745,13 @@ fn xml_time(ms: i64) -> String {
 
 /// The URL that sends the browser to the provider with an AuthnRequest (HTTP-Redirect binding,
 /// unsigned: Kalzit has no signing key of its own; the answer is what is checked).
-pub fn redirect_url(config: &SamlConfig, sp_entity_id: &str, acs_url: &str, id: &str, now_ms: i64) -> Result<String, String> {
+pub fn redirect_url(
+    config: &SamlConfig,
+    sp_entity_id: &str,
+    acs_url: &str,
+    id: &str,
+    now_ms: i64,
+) -> Result<String, String> {
     let xml = format!(
         "<samlp:AuthnRequest xmlns:samlp=\"{PROTOCOL}\" xmlns:saml=\"{ASSERTION}\" ID=\"{}\" Version=\"2.0\" \
          IssueInstant=\"{}\" Destination=\"{}\" AssertionConsumerServiceURL=\"{}\" ProtocolBinding=\"{BINDING_POST}\">\
@@ -802,10 +813,8 @@ pub fn parse_metadata(xml: &str) -> Result<IdpMetadata, String> {
     } else {
         return Err("not SAML metadata (no EntityDescriptor)".into());
     };
-    let idps: Vec<(NodeId, NodeId)> = entities
-        .into_iter()
-        .filter_map(|e| child(&doc, e, METADATA, "IDPSSODescriptor").map(|d| (e, d)))
-        .collect();
+    let idps: Vec<(NodeId, NodeId)> =
+        entities.into_iter().filter_map(|e| child(&doc, e, METADATA, "IDPSSODescriptor").map(|d| (e, d))).collect();
     let [(entity, descriptor)] = idps[..] else {
         return Err(if idps.is_empty() {
             "the metadata describes no identity provider".into()
@@ -953,7 +962,9 @@ mod tests {
         assert_eq!(p.email.as_deref(), Some("lea@example.de"));
         assert!(!p.email_verified && !p.mfa_done);
         assert_eq!(p.groups, vec!["CN=Vertrieb,OU=Gruppen,DC=example"]);
-        asserted.attributes.insert(AUTHN_METHODS_ATTRIBUTE.into(), vec!["http://schemas.microsoft.com/claims/multipleauthn".into()]);
+        asserted
+            .attributes
+            .insert(AUTHN_METHODS_ATTRIBUTE.into(), vec!["http://schemas.microsoft.com/claims/multipleauthn".into()]);
         assert!(person(&config, &asserted).mfa_done);
     }
 }

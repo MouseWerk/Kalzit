@@ -120,9 +120,7 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
 
 /// `/auth/saml/<slug>/acs`, with a valid slug.
 fn is_saml_acs(path: &str) -> bool {
-    path.strip_prefix("/auth/saml/")
-        .and_then(|rest| rest.strip_suffix("/acs"))
-        .is_some_and(crate::sso::valid_slug)
+    path.strip_prefix("/auth/saml/").and_then(|rest| rest.strip_suffix("/acs")).is_some_and(crate::sso::valid_slug)
 }
 
 /// Refuses a request whose `Origin` is not this server; one without `Origin` passes (see
@@ -235,6 +233,21 @@ pub async fn security_headers(State(state): State<AppState>, req: Request, next:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_saml_acs_skips_the_origin_check() {
+        assert!(is_saml_acs("/auth/saml/partnerportal/acs"));
+        for other in [
+            "/auth/saml/partnerportal/finish",
+            "/auth/saml//acs",
+            "/auth/saml/a/b/acs",
+            "/api/auth/saml/p/acs",
+            "/auth/saml/Partner/acs",
+            "/auth/oidc/p/acs",
+        ] {
+            assert!(!is_saml_acs(other), "{other}");
+        }
+    }
 
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
         let mut h = HeaderMap::new();

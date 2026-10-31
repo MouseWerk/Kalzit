@@ -21,8 +21,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::sso::{
-    clear_binding, complete_sign_in, field_error, hash, kind_mismatch, record_failure, refuse_unconfirmed_issuer_change,
-    remove_links, see_other, set_binding, sign_in_page, test_outcome_for,
+    clear_binding, complete_sign_in, field_error, hash, kind_mismatch, record_failure,
+    refuse_unconfirmed_issuer_change, remove_links, see_other, set_binding, sign_in_page, test_outcome_for,
 };
 use super::support::{Actor, audit, conflict, is_unique_violation};
 use super::table::{RouteDef, route};
@@ -145,16 +145,26 @@ fn validate(body: SamlBody) -> ApiResult<Valid> {
     let name = super::clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
     let s = body.saml;
     let metadata_url = s.metadata_url.unwrap_or_default().trim().to_string();
-    if !metadata_url.is_empty() && (crate::sso::oidc::check_endpoint(&metadata_url).is_none() || metadata_url.len() > 2048)
+    if !metadata_url.is_empty()
+        && (crate::sso::oidc::check_endpoint(&metadata_url).is_none() || metadata_url.len() > 2048)
     {
-        return Err(field_error("metadataUrl", "saml.metadata_url_invalid", "the metadata URL must be an https:// address"));
+        return Err(field_error(
+            "metadataUrl",
+            "saml.metadata_url_invalid",
+            "the metadata URL must be an https:// address",
+        ));
     }
     let metadata_xml = s.metadata_xml.filter(|x| !x.trim().is_empty());
     if metadata_xml.as_ref().is_some_and(|x| x.len() > saml::MAX_METADATA_BYTES) {
         return Err(field_error("metadataXml", "saml.metadata_invalid", "the metadata file is larger than 1 MB"));
     }
-    let certificates: Vec<String> =
-        s.certificates.unwrap_or_default().into_iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+    let certificates: Vec<String> = s
+        .certificates
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
     Ok(Valid {
         slug,
         name,
@@ -265,17 +275,13 @@ async fn resolve(state: &AppState, valid: &Valid) -> ApiResult<SamlConfig> {
         field_error(field, "saml.metadata_invalid", &format!("the metadata cannot be used: {e}")).param("detail", e)
     })?;
     let metadata_url = if valid.metadata_xml.is_some() { "" } else { valid.metadata_url.as_str() };
-    config_from(valid, &found.entity_id, &found.sso_url, &found.certificates, metadata_url).map_err(|e| e.with_field(field))
+    config_from(valid, &found.entity_id, &found.sso_url, &found.certificates, metadata_url)
+        .map_err(|e| e.with_field(field))
 }
 
 fn check_material(config: &SamlConfig, at: i64) -> Vec<u8> {
-    format!(
-        "kalzit-saml-check\0{}\0{}\0{}\0{at}",
-        config.idp_entity_id,
-        config.sso_url,
-        config.certificates.join(",")
-    )
-    .into_bytes()
+    format!("kalzit-saml-check\0{}\0{}\0{}\0{at}", config.idp_entity_id, config.sso_url, config.certificates.join(","))
+        .into_bytes()
 }
 
 fn issue_check_token(state: &AppState, config: &SamlConfig, now: i64) -> String {
@@ -287,11 +293,7 @@ fn verify_check_token(state: &AppState, token: Option<&str>, config: &SamlConfig
         let (Ok(at), Ok(mac)) = (at.parse::<i64>(), hex::decode(mac)) else { return false };
         now - at <= CHECK_VALID_MS && at <= now && state.secrets.verify(&check_material(config, at), &mac)
     });
-    if ok {
-        Ok(())
-    } else {
-        Err(field_error("idpEntityId", "saml.check_required", "check these values first"))
-    }
+    if ok { Ok(()) } else { Err(field_error("idpEntityId", "saml.check_required", "check these values first")) }
 }
 
 fn certificate_infos(config: &SamlConfig, now: i64) -> Vec<saml::CertificateInfo> {
@@ -705,7 +707,11 @@ pub async fn acs(
 ) -> Response {
     use crate::auth::ratelimit::{address_key, network_key};
     let mono = state.clock.monotonic_ms();
-    if state.sso.start_limiter.try_acquire(&address_key("saml-acs", info.client_ip), &network_key(info.client_ip), mono).is_err()
+    if state
+        .sso
+        .start_limiter
+        .try_acquire(&address_key("saml-acs", info.client_ip), &network_key(info.client_ip), mono)
+        .is_err()
     {
         return see_other(&sign_in_page("unavailable", &slug, None), Vec::new());
     }
@@ -726,8 +732,17 @@ async fn acs_inner(
 ) -> ApiResult<Response> {
     let now = state.clock.now_ms();
     let Some(raw) = form.get("SAMLResponse") else {
-        return fail(state, info, slug, None, None, "failed", "saml.response_missing", "the provider sent no SAMLResponse")
-            .await;
+        return fail(
+            state,
+            info,
+            slug,
+            None,
+            None,
+            "failed",
+            "saml.response_missing",
+            "the provider sent no SAMLResponse",
+        )
+        .await;
     };
     let xml = match saml::decode_post(raw) {
         Ok(x) => x,
@@ -755,8 +770,17 @@ async fn acs_inner(
         None
     };
     let Some(row) = row else {
-        return fail(state, info, slug, None, None, "expired", "saml.request_unknown", "the request is unknown, used or expired")
-            .await;
+        return fail(
+            state,
+            info,
+            slug,
+            None,
+            None,
+            "expired",
+            "saml.request_unknown",
+            "the request is unknown, used or expired",
+        )
+        .await;
     };
     let Some(target) = load_target(state, &row, slug).await? else {
         let detail = "the provider is paused or gone";
@@ -765,8 +789,17 @@ async fn acs_inner(
     let ids = Some((target.provider.id.as_str(), target.provider.slug.as_str()));
     // The ACS this answer must name, from the public URL only; the one the request named.
     let Some(base) = crate::sso::saml_base(state) else {
-        return fail(state, info, slug, Some(&row), ids, "unavailable", "saml.public_url_missing", "server.public_url is not set")
-            .await;
+        return fail(
+            state,
+            info,
+            slug,
+            Some(&row),
+            ids,
+            "unavailable",
+            "saml.public_url_missing",
+            "server.public_url is not set",
+        )
+        .await;
     };
     let (sp, acs) = (saml::sp_entity_id(&base, slug), saml::acs_url(&base, slug));
     if acs != row.redirect_uri {
@@ -852,7 +885,10 @@ async fn finish_inner(
     .await?
     .rows_affected();
     let row: Option<SignInRow> = if taken == 1 && !binding.is_empty() {
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{ROW_COLUMNS} WHERE id = $1"))).bind(&id).fetch_optional(&state.db).await?
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{ROW_COLUMNS} WHERE id = $1")))
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await?
     } else {
         None
     };

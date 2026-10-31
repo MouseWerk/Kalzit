@@ -278,7 +278,9 @@ impl TestApp {
             req = req.header(header::COOKIE, c);
         }
         match body {
-            Some(b) => self.request(req.header(header::CONTENT_TYPE, "application/json"), Body::from(b.to_string())).await,
+            Some(b) => {
+                self.request(req.header(header::CONTENT_TYPE, "application/json"), Body::from(b.to_string())).await
+            }
             None => self.request(req, Body::empty()).await,
         }
     }
@@ -297,8 +299,9 @@ impl TestApp {
 
     /// The provider's browser POST to the ACS, from the provider's origin.
     async fn post_answer(&self, xml: &str) -> Reply {
-        let form: String =
-            url::form_urlencoded::Serializer::new(String::new()).append_pair("SAMLResponse", &STANDARD.encode(xml)).finish();
+        let form: String = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("SAMLResponse", &STANDARD.encode(xml))
+            .finish();
         let req = Request::builder()
             .method(Method::POST)
             .uri(format!("/auth/saml/{SLUG}/acs"))
@@ -357,6 +360,16 @@ async fn add_provider(app: &TestApp, admin: &str, certs: &[&str]) -> String {
     r.body["id"].as_str().unwrap().to_string()
 }
 
+/// Serves `xml` as the provider's metadata on this computer; answers its URL.
+#[expect(clippy::disallowed_methods, reason = "a fake identity provider, not an API route")]
+async fn serve_metadata(xml: String) -> String {
+    let idp = Router::new().route("/metadata.xml", get(move || async move { xml }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/metadata.xml", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, idp).await.unwrap() });
+    url
+}
+
 /// A started sign-in: the AuthnRequest's ID and the browser's binding cookie.
 struct Started {
     request_id: String,
@@ -404,16 +417,14 @@ async fn saml_sign_in_with_metadata_mapping_and_replay() {
     // Without the public address nothing can be built: refused at the check.
     let bare = test_app(None).await;
     let (bare_admin, _) = bare.setup().await;
-    let r = bare.post("/api/admin/sign-in/saml/check", form(json!({ "metadataXml": metadata(&[&key.cert_b64]) })), &bare_admin).await;
+    let r = bare
+        .post("/api/admin/sign-in/saml/check", form(json!({ "metadataXml": metadata(&[&key.cert_b64]) })), &bare_admin)
+        .await;
     assert_eq!(r.reason(), "saml.public_url_missing", "{}", r.body);
     bare.finish().await;
 
     // The metadata from a URL: the provider's values, ready to pin.
-    let served = metadata(&[&key.cert_b64]);
-    let idp = Router::new().route("/metadata.xml", get(move || async move { served }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let metadata_url = format!("http://{}/metadata.xml", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, idp).await.unwrap() });
+    let metadata_url = serve_metadata(metadata(&[&key.cert_b64])).await;
     let check = app.post("/api/admin/sign-in/saml/check", form(json!({ "metadataUrl": metadata_url })), &admin).await;
     assert_eq!(check.status, StatusCode::OK, "{}", check.body);
     assert_eq!(check.body["saml"]["idpEntityId"], IDP);
@@ -460,8 +471,11 @@ async fn saml_sign_in_with_metadata_mapping_and_replay() {
     // A valid answer: the account is made, the mapping applies, the session opens where the
     // person was headed.
     let started = start(&app).await;
-    let answer =
-        Answer::new(&started.request_id, "lea.hoffmann@partnerportal.example", &["CN=Vertrieb,OU=Gruppen,DC=partnerportal,DC=example"]);
+    let answer = Answer::new(
+        &started.request_id,
+        "lea.hoffmann@partnerportal.example",
+        &["CN=Vertrieb,OU=Gruppen,DC=partnerportal,DC=example"],
+    );
     let now = app.clock.now_ms();
     let xml = answer.signed(&key, now);
     let r = deliver(&app, &started, &xml).await;
@@ -478,7 +492,11 @@ async fn saml_sign_in_with_metadata_mapping_and_replay() {
         .unwrap();
     assert_eq!(role, "editor");
     let (subject, issuer): (String, String) =
-        sqlx::query_as("SELECT subject, issuer FROM sso_identities WHERE user_id = $1").bind(&user_id).fetch_one(&app.state.db).await.unwrap();
+        sqlx::query_as("SELECT subject, issuer FROM sso_identities WHERE user_id = $1")
+            .bind(&user_id)
+            .fetch_one(&app.state.db)
+            .await
+            .unwrap();
     assert_eq!((subject.as_str(), issuer.as_str()), ("pp-lea.hoffmann@partnerportal.example", IDP));
 
     // The same answer again: its request was used.
@@ -488,14 +506,22 @@ async fn saml_sign_in_with_metadata_mapping_and_replay() {
 
     // The same assertion in an answer to a new request: a replay.
     let again = start(&app).await;
-    let replay = Answer { in_response_to: again.request_id.clone(), confirmation_in_response_to: again.request_id.clone(), ..answer.clone() };
+    let replay = Answer {
+        in_response_to: again.request_id.clone(),
+        confirmation_in_response_to: again.request_id.clone(),
+        ..answer.clone()
+    };
     let r = deliver(&app, &again, &replay.signed(&key, app.clock.now_ms())).await;
     assert_eq!(r.outcome(), "failed", "{}", r.location());
     assert_eq!(app.last_failure().await, "saml.replay");
 
     // A signed response (not assertion) with exactly one assertion is accepted too.
     let started = start(&app).await;
-    let answer = Answer::new(&started.request_id, "lea.hoffmann@partnerportal.example", &["CN=Vertrieb,OU=Gruppen,DC=partnerportal,DC=example"]);
+    let answer = Answer::new(
+        &started.request_id,
+        "lea.hoffmann@partnerportal.example",
+        &["CN=Vertrieb,OU=Gruppen,DC=partnerportal,DC=example"],
+    );
     let now = app.clock.now_ms();
     let xml = key.sign(&answer.response(now, &answer.assertion(now)), &answer.response_id);
     let r = deliver(&app, &started, &xml).await;
@@ -539,14 +565,16 @@ async fn saml_refuses_forged_wrapped_and_misaddressed_answers() {
 
     // Each case: a fresh sign-in, the answer made by `make`, and the reason it is refused with.
     type Make = Box<dyn Fn(&Answer, i64) -> String>;
+    type Tweak = Box<dyn Fn(&mut Answer)>;
     let k = Arc::new(key);
-    let cases: Vec<(&str, Box<dyn Fn(&mut Answer)>, Make)> = vec![
+    let cases: Vec<(&str, Tweak, Make)> = vec![
         // Wrapping: the signed assertion hidden in Extensions, a forged one in its place.
         ("saml.assertion_count", Box::new(|_| {}), {
             let k = k.clone();
             Box::new(move |a, now| {
                 let signed = k.sign(&a.assertion(now), &a.assertion_id);
-                let forged = Answer { assertion_id: "_forged".into(), name_id: "admin".into(), ..a.clone() }.assertion(now);
+                let forged =
+                    Answer { assertion_id: "_forged".into(), name_id: "admin".into(), ..a.clone() }.assertion(now);
                 a.response(now, &format!("<samlp:Extensions>{signed}</samlp:Extensions>{forged}"))
             })
         }),
@@ -615,10 +643,14 @@ async fn saml_refuses_forged_wrapped_and_misaddressed_answers() {
             let k = k.clone();
             Box::new(move |a, now| a.signed(&k, now))
         }),
-        ("saml.name_id_transient", Box::new(|a| a.name_id_format = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"), {
-            let k = k.clone();
-            Box::new(move |a, now| a.signed(&k, now))
-        }),
+        (
+            "saml.name_id_transient",
+            Box::new(|a| a.name_id_format = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"),
+            {
+                let k = k.clone();
+                Box::new(move |a, now| a.signed(&k, now))
+            },
+        ),
         ("saml.status", Box::new(|a| a.status = "urn:oasis:names:tc:SAML:2.0:status:Responder"), {
             let k = k.clone();
             Box::new(move |a, now| a.signed(&k, now))
@@ -664,7 +696,12 @@ async fn saml_never_signs_in_service_accounts() {
 
     // By its address (the provider's addresses are trusted here): refused, nothing linked.
     let started = start(&app).await;
-    let r = deliver(&app, &started, &Answer::new(&started.request_id, "robot@partnerportal.example", &[]).signed(&key, app.clock.now_ms())).await;
+    let r = deliver(
+        &app,
+        &started,
+        &Answer::new(&started.request_id, "robot@partnerportal.example", &[]).signed(&key, app.clock.now_ms()),
+    )
+    .await;
     assert_eq!(r.outcome(), "email_taken", "{}", r.location());
     assert!(r.cookie("kalzit_session").is_none());
     assert_eq!(app.last_failure().await, "sso.service_account");
@@ -680,7 +717,8 @@ async fn saml_never_signs_in_service_accounts() {
     .await
     .unwrap();
     let started = start(&app).await;
-    let answer = Answer { name_id: "pp-robot".into(), ..Answer::new(&started.request_id, "other@partnerportal.example", &[]) };
+    let answer =
+        Answer { name_id: "pp-robot".into(), ..Answer::new(&started.request_id, "other@partnerportal.example", &[]) };
     let r = deliver(&app, &started, &answer.signed(&key, app.clock.now_ms())).await;
     assert_eq!(r.outcome(), "failed", "{}", r.location());
     assert_eq!(app.last_failure().await, "sso.service_account");

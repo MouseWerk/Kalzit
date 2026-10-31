@@ -172,8 +172,9 @@ async fn start(
     {
         return Ok(see_other(&sign_in_page("unavailable", &slug, None), Vec::new()));
     }
-    let provider =
-        store::by_slug(&state.read_db, &slug).await?.filter(|p| p.enabled != 0 && matches!(p.kind.as_str(), "oidc" | "saml"));
+    let provider = store::by_slug(&state.read_db, &slug)
+        .await?
+        .filter(|p| p.enabled != 0 && matches!(p.kind.as_str(), "oidc" | "saml"));
     let Some(provider) = provider else {
         return Ok(see_other(&sign_in_page("unavailable", &slug, None), Vec::new()));
     };
@@ -1177,8 +1178,11 @@ pub(crate) async fn remove_links(
                 .await?,
         );
     }
-    let removed =
-        sqlx::query("DELETE FROM sso_identities WHERE provider_id = $1").bind(id).execute(&mut *tx).await?.rows_affected();
+    let removed = sqlx::query("DELETE FROM sso_identities WHERE provider_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     for table in ["sso_identity_groups", "sso_managed", "sso_pending_mappings"] {
         sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE provider_id = $1")))
             .bind(id)
