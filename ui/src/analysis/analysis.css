@@ -136,6 +136,22 @@
     flex-basis: 100%;
   }
 
+  /*
+   * The type and its button stay on one line while there is room: the select starts from a small
+   * width and grows up to a column's (a long German step name was pushing the button onto a line
+   * of its own, since a row breaks by the items' starting widths).
+   */
+  .steps__add > .select {
+    flex: 1 1 10rem;
+    min-width: 0;
+    /* Room for the longest step name closed ("Compare with previous period", 238 px). */
+    max-width: var(--size-column);
+  }
+
+  .steps__add > .button {
+    flex: none;
+  }
+
   /* The chain of shapes over the steps of a graph query. */
   .steps__chain {
     display: grid;

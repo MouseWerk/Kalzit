@@ -194,6 +194,7 @@
   .settings-main {
     min-width: 0;
     max-width: var(--size-settings-main);
+    container: settings-main / inline-size;
   }
 
   .settings-section {
@@ -920,6 +921,33 @@
 
     .settings-preview {
       position: static;
+    }
+  }
+
+  /*
+   * A narrow section (a small window with the sidebar open): a row whose control is a field, a
+   * select or a text area puts it under the text, always, rather than only when it happens not to
+   * fit; a switch or a button stays beside its text, as dense as on a wide screen.
+   */
+  @container settings-main (width < 32rem) {
+    .settings-row:has(
+        > .settings-row__control :is(input:not([type="checkbox"], [type="radio"]), select, textarea)
+      )
+      > .settings-row__text {
+      flex-basis: 100%;
+    }
+
+    .settings-row__control {
+      justify-content: flex-start;
+    }
+
+    /* A field's hint and a value follow the control to the left edge. */
+    .settings-field {
+      justify-items: start;
+    }
+
+    .settings-value {
+      text-align: start;
     }
   }
 

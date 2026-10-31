@@ -683,6 +683,28 @@ describe("Plugins, details", () => {
     expect(calls(server, "DELETE", "/api/admin/plugins/nordlicht.snowflake")).toHaveLength(1);
   });
 
+  it("lists only what applies to a panel plugin among its granted permissions", async () => {
+    await openPlugins("/settings/plugins/x.panel", (s) => {
+      s.areas.plugins.plugins.push(
+        fakePlugin({
+          id: "x.panel",
+          name: "KPI tile",
+          kind: "panel",
+          running: false,
+          process: undefined,
+          platforms: [],
+        }),
+      );
+    });
+    expect(await screen.findByRole("heading", { level: 2, name: "KPI tile" })).toBeTruthy();
+    const grants = screen.getByRole("region", { name: "Granted permissions" });
+    expect(within(grants).getByText("Network")).toBeTruthy();
+    expect(within(grants).getByText("Result shapes")).toBeTruthy();
+    expect(within(grants).queryByText("Secrets")).toBeNull();
+    expect(within(grants).queryByText("Files")).toBeNull();
+    expect(within(grants).queryByText("Platforms")).toBeNull();
+  });
+
   it("shows the warnings of the plugin's process", async () => {
     await openPlugins("/settings/plugins/brueckner.hana", (s) => {
       s.areas.plugins.plugins.push(

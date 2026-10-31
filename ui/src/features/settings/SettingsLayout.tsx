@@ -1,8 +1,9 @@
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, useId, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
+import { revealInside } from "../../lib/revealInside";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { buildIndex, type SearchEntry, search } from "./search";
 import { SECTIONS, type SectionDef, type SettingsAccess, type SettingsGroup } from "./sections";
@@ -47,6 +48,25 @@ export function SettingsLayout() {
   // From the address, so the sections with addresses of their own (appearance, organization) count.
   const current = pathname.split("/")[2];
   const listRef = useRef<HTMLUListElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+
+  const shown = visible.map((section) => section.id).join(" ");
+
+  // A navigation taller than the window scrolls on its own; the current entry stays in view, also
+  // the footer entries (About, Export and import) far down the list. Again once the permissions
+  // have arrived, since they add the sections above it.
+  useEffect(() => {
+    if (shown === "") return;
+    const nav = navRef.current;
+    if (nav === null) return;
+    // Compared, not put into a selector: the segment comes from the address and may hold quotes.
+    const link = [...nav.querySelectorAll<HTMLElement>(".settings-nav__list [data-section]")].find(
+      (entry) => entry.dataset.section === current,
+    );
+    if (link !== undefined) {
+      revealInside(nav, link);
+    }
+  }, [current, shown]);
 
   function onListKey(event: KeyboardEvent<HTMLUListElement>) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
@@ -66,7 +86,7 @@ export function SettingsLayout() {
   const footer = visible.filter((section) => section.group === "footer");
   return (
     <div className="settings">
-      <nav className="settings-nav" aria-label={t("settings.navLabel")}>
+      <nav className="settings-nav" aria-label={t("settings.navLabel")} ref={navRef}>
         <h1 className="settings-nav__title">{t("settings.title")}</h1>
         <SettingsSearch access={access} orgName={org?.name} />
         <label className="settings-nav__select field">
@@ -118,6 +138,7 @@ export function SettingsLayout() {
                         to="/settings/$section"
                         params={{ section: section.id }}
                         className="settings-nav__link"
+                        data-section={section.id}
                         aria-current={section.id === current ? "page" : undefined}
                       >
                         <span className="truncate" title={sectionLabel(t, section, org?.name)}>
@@ -139,6 +160,7 @@ export function SettingsLayout() {
                       to="/settings/$section"
                       params={{ section: section.id }}
                       className="settings-nav__link settings-nav__link--quiet"
+                      data-section={section.id}
                       aria-current={section.id === current ? "page" : undefined}
                     >
                       {t(section.label)}

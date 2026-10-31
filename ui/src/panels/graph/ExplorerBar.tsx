@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { ConfirmDialog } from "../../features/dashboards/ui/Dialog";
 import { useI18n } from "../../i18n/i18n";
 import { type Direction, MAX_EXPAND_LIMIT } from "./adapter";
+import { countText } from "./plural";
 import type { Explorer, StepSettings } from "./useExplorer";
 import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
@@ -75,7 +76,7 @@ export function ExplorerBar({
               aria-current={steps.length === 0 && pending === null ? "step" : undefined}
               onClick={() => backTo(0)}
             >
-              {t("graph.steps.base", { count: number.format(baseNodes) })}
+              {t("graph.steps.base", { nodes: countText(t, language, "node", baseNodes) })}
             </button>
           </li>
           {steps.map((step, i) => (

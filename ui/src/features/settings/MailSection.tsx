@@ -419,40 +419,41 @@ function MailCards({ view }: { view: MailView }) {
               />
             )}
           </Row>
-          <Row
-            id="mail.test"
-            title={t("settings.mail.testTo")}
-            description={t("settings.mail.testHint")}
-            error={errorFor("to")}
-          >
-            {(labelled) => (
-              <div className="mail-pair">
-                <input
-                  className="input mail-field"
-                  type="email"
-                  autoComplete="email"
-                  spellCheck={false}
-                  value={to}
-                  {...labelled}
-                  onChange={(event) => {
-                    setTo(event.currentTarget.value);
-                    setProblem(null);
-                  }}
-                />
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  aria-disabled={busy}
-                  onClick={() => {
-                    if (!busy) test.mutate();
-                  }}
-                >
-                  {test.isPending ? t("settings.mail.testing") : t("settings.mail.test")}
-                </button>
-              </div>
-            )}
-          </Row>
         </LockNotice.Provider>
+        {/* The test recipient stays editable in a locked form, so the lock notice does not describe it. */}
+        <Row
+          id="mail.test"
+          title={t("settings.mail.testTo")}
+          description={t("settings.mail.testHint")}
+          error={errorFor("to")}
+        >
+          {(labelled) => (
+            <div className="mail-pair">
+              <input
+                className="input mail-field"
+                type="email"
+                autoComplete="email"
+                spellCheck={false}
+                value={to}
+                {...labelled}
+                onChange={(event) => {
+                  setTo(event.currentTarget.value);
+                  setProblem(null);
+                }}
+              />
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-disabled={busy}
+                onClick={() => {
+                  if (!busy) test.mutate();
+                }}
+              >
+                {test.isPending ? t("settings.mail.testing") : t("settings.mail.test")}
+              </button>
+            </div>
+          )}
+        </Row>
         <div className="mail-footer">
           <div className="mail-footer__result" aria-live="polite">
             {problem === null ? null : (

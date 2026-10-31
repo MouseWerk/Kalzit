@@ -410,14 +410,23 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
                 </span>
               )}
             </dd>
-            <dt>{t("plugins.details.secrets")}</dt>
-            <dd>{t("plugins.details.secretsText")}</dd>
-            <dt>{t("plugins.details.files")}</dt>
-            <dd>{t("plugins.details.filesText")}</dd>
+            {/* Secrets and files belong to a data source's process; a panel has neither. */}
+            {plugin.kind === "panel" ? null : (
+              <>
+                <dt>{t("plugins.details.secrets")}</dt>
+                <dd>{t("plugins.details.secretsText")}</dd>
+                <dt>{t("plugins.details.files")}</dt>
+                <dd>{t("plugins.details.filesText")}</dd>
+              </>
+            )}
             <dt>{t("plugins.details.shapes")}</dt>
             <dd>{plugin.shapes.join(", ")}</dd>
-            <dt>{t("plugins.details.platforms")}</dt>
-            <dd>{plugin.platforms.join(", ")}</dd>
+            {plugin.platforms.length === 0 ? null : (
+              <>
+                <dt>{t("plugins.details.platforms")}</dt>
+                <dd>{plugin.platforms.join(", ")}</dd>
+              </>
+            )}
           </dl>
           <p className="plugins-note">
             <Icon name="help" />
