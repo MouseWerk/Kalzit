@@ -700,13 +700,8 @@ async fn migrations_are_idempotent() {
 #[tokio::test]
 async fn postgres_setup_and_login() {
     let Some(base) = common::postgres_url("PostgreSQL test") else { return };
-    let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
-    sqlx::any::install_default_drivers();
-    let admin = sqlx::AnyPool::connect(&base).await.unwrap();
-    // The schema name is a fixed prefix plus UUID hex digits, so it is safe to splice in.
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}"))).execute(&admin).await.unwrap();
-    let sep = if base.contains('?') { '&' } else { '?' };
-    let url = format!("{base}{sep}options=-csearch_path%3D{schema}");
+    let schema = common::postgres_schema(&base).await;
+    let url = schema.url.clone();
 
     let t = test_app_on(Some(url), "127.0.0.1:50000", |c| c.sessions.idle_timeout_hours = 2).await;
     let setup = t.setup().await;
@@ -724,8 +719,7 @@ async fn postgres_setup_and_login() {
     assert!(ended.await.unwrap() >= 1);
     assert_eq!(t.get("/api/me", Some(&idle)).await.status, StatusCode::UNAUTHORIZED);
     t.finish().await;
-
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
+    schema.drop_now().await;
 }
 
 /// A rate-limited sign-in says how long to wait, as `Retry-After` and `retryAfterSecs`, and the

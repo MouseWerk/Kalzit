@@ -1205,13 +1205,8 @@ async fn guessing_the_current_password_is_rate_limited() {
 #[tokio::test]
 async fn postgres_access_model() {
     let Some(base) = common::postgres_url("PostgreSQL test") else { return };
-    let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
-    sqlx::any::install_default_drivers();
-    let admin_pool = sqlx::AnyPool::connect(&base).await.unwrap();
-    // The schema name is a fixed prefix plus UUID hex digits, so it is safe to splice in.
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}"))).execute(&admin_pool).await.unwrap();
-    let sep = if base.contains('?') { '&' } else { '?' };
-    let t = test_app(Some(format!("{base}{sep}options=-csearch_path%3D{schema}"))).await;
+    let schema = common::postgres_schema(&base).await;
+    let t = test_app(Some(schema.url.clone())).await;
 
     let (owner, org) = t.setup().await;
     let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
@@ -1239,6 +1234,5 @@ async fn postgres_access_model() {
     check_concurrent_owner_demotions(&t, &owner, &org).await;
     check_concurrent_admin_revocations(&t, &owner).await;
     t.finish().await;
-
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin_pool).await.unwrap();
+    schema.drop_now().await;
 }

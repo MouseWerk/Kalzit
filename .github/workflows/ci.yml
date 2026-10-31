@@ -894,11 +894,13 @@ jobs:
           db="$HOME/.cargo/advisory-db"
           for attempt in 1 2 3 4 5; do
             rm -rf "$db"
-            if git clone --quiet https://github.com/RustSec/advisory-db.git "$db"; then
+            if git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "$db"; then
               exit 0
             fi
             echo "Fetching the advisory database failed (attempt $attempt of 5)" >&2
-            sleep $((attempt * 10))
+            if [ "$attempt" -lt 5 ]; then
+              sleep $((attempt * 10))
+            fi
           done
           exit 1
       - run: cargo audit --no-fetch

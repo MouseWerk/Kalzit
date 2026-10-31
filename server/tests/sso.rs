@@ -225,6 +225,8 @@ struct TestApp {
     dir: Arc<tempfile::TempDir>,
     clock: Arc<ManualClock>,
     inbox: Inbox,
+    /// Its PostgreSQL schema, dropped at `finish` (or with the app).
+    schema: Option<common::PgSchema>,
 }
 
 struct Reply {
@@ -265,7 +267,8 @@ async fn test_app_with(public_url: Option<&str>) -> TestApp {
     let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
-    config.database.url = common::database_url().await;
+    let schema = common::database().await;
+    config.database.url = schema.as_ref().map(|s| s.url.clone());
     config.server.http_addr = "127.0.0.1:3999".into();
     config.server.public_url = public_url.map(str::to_string);
     // An unencrypted relay on this machine, which only the file may set.
@@ -280,12 +283,12 @@ async fn test_app_with(public_url: Option<&str>) -> TestApp {
     let clock = Arc::new(ManualClock::new(START_MS));
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), state, dir: Arc::new(dir), clock, inbox }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), state, dir: Arc::new(dir), clock, inbox, schema }
 }
 
 impl TestApp {
-    async fn finish(self) {
-        let finish = common::Finish::new(self.state.clone(), self.dir.clone());
+    async fn finish(mut self) {
+        let finish = common::Finish::new(self.state.clone(), self.dir.clone()).with_schema(self.schema.take());
         drop(self);
         finish.finish().await;
     }

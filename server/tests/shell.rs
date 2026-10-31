@@ -252,16 +252,11 @@ macro_rules! on_both_databases {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn postgres_flows() {
             let Some(base) = common::postgres_url("PostgreSQL flows") else { return };
-            sqlx::any::install_default_drivers();
-            let admin = sqlx::AnyPool::connect(&base).await.unwrap();
             $(
-                let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
-                // The schema name is a fixed prefix plus UUID hex digits, so it is safe to splice in.
-                sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}"))).execute(&admin).await.unwrap();
-                let sep = if base.contains('?') { '&' } else { '?' };
-                let url = format!("{base}{sep}options=-csearch_path%3D{schema}");
+                let schema = common::postgres_schema(&base).await;
+                let url = schema.url.clone();
                 $flow(test_app(Some(url)).await).await;
-                sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
+                schema.drop_now().await;
             )*
         }
     };

@@ -100,7 +100,7 @@ a change made during a start is not missed either. What this guarantees:
   answers, data sources and the setup, also when the event row was missed.
 - A rights change applies to its organization's kept answers. Only when a server missed its row and
   sees just the counter move, the organization is not known, and that server empties its whole
-  query cache once. It waits one more comparison (about 5 seconds) for the row before it does, so
+  query cache once. It waits one more comparison, one poll interval (5 s by default), for the row before it does, so
   a row that was merely not read yet does not empty the cache.
 - Not caught: a change announced after its commit (rights changes, a data source's pool, the
   query cache emptied) whose announcement is lost because the process ends in between. Data sources

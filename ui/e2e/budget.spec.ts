@@ -26,9 +26,11 @@ import { panelAction } from "./support/ui";
  * Both typing budgets are measured against the machine: right before each round a fixed piece of
  * script is timed at the same throttling, and its time over the reference machine's
  * (`REFERENCE_CALIBRATION_MS`, never less than 1) is the round's slowdown. The longest task is
- * divided by it. Of the Event Timing duration only the part above the wait for the next frame is
- * (`FRAME_WAIT_MS`), which does not grow on a slower CPU. So a slower or busier runner gets the
- * time it measurably needs, a faster one never less than the budget. An absolute budget failed on
+ * divided by the slowdown. The Event Timing duration is divided by it only above the wait for
+ * the next frame (`FRAME_WAIT_MS`), since that wait does not grow on a slower CPU. So a slower or
+ * busier runner gets the time it measurably needs, a faster one never less than the budget. A
+ * slowdown above `MAX_SLOWDOWN` fails the test as an implausible calibration rather than
+ * stretching the budget that far (CI runners measured 0.7 to 2.4). An absolute budget failed on
  * runners that timed the script at 170 ms, where the same page read 56 ms in every round; the
  * same reading there now counts as 47.6 ms, and two more Event Timing steps (72 ms) as 60.8.
  *
@@ -55,6 +57,8 @@ const TYPING_P95_MS = BUDGET_MS + (process.platform === "win32" ? EVENT_TIMING_S
 const TYPING_TASK_MS = 34;
 /** The calibration script's time at 4x on the reference machine. */
 const REFERENCE_CALIBRATION_MS = 140;
+/** The largest slowdown against the reference machine a round may be measured at. */
+const MAX_SLOWDOWN = 3;
 /**
  * The average wait for the next frame at 60 Hz (half a frame): the part of an Event Timing
  * duration that does not grow on a slower CPU.
@@ -304,6 +308,10 @@ test(`typing in a panel's query stays under ${TYPING_P95_MS} ms p95 at 4x CPU th
       await calibrate(page),
     );
     const slowdown = Math.max(1, calibration / REFERENCE_CALIBRATION_MS);
+    expect(
+      slowdown,
+      `the calibration took ${calibration.toFixed(1)} ms, over ${MAX_SLOWDOWN} times the reference machine's ${REFERENCE_CALIBRATION_MS} ms: the runner is too slow or too busy to measure the budget`,
+    ).toBeLessThanOrEqual(MAX_SLOWDOWN);
     await reset(page);
     await browser.startTracing(page, {
       categories: ["devtools.timeline", "disabled-by-default-devtools.timeline", "toplevel"],

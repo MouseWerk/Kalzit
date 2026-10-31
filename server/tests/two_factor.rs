@@ -30,6 +30,8 @@ struct TestApp {
     clock: Arc<ManualClock>,
     state: AppState,
     dir: Arc<tempfile::TempDir>,
+    /// Its PostgreSQL schema, dropped at `finish` (or with the app).
+    schema: Option<common::PgSchema>,
 }
 
 struct Reply {
@@ -77,32 +79,25 @@ async fn test_app() -> TestApp {
 
 /// An app on a schema of its own in the PostgreSQL database at `base`.
 async fn postgres_app(base: &str) -> TestApp {
-    let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
-    sqlx::any::install_default_drivers();
-    let admin_pool = sqlx::AnyPool::connect(base).await.unwrap();
-    // The schema name is a fixed prefix plus UUID hex digits, so it is safe to splice in.
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}"))).execute(&admin_pool).await.unwrap();
-    admin_pool.close().await;
-    let sep = if base.contains('?') { '&' } else { '?' };
-    test_app_on(Some(format!("{base}{sep}options=-csearch_path%3D{schema}"))).await
+    test_app_on(Some(common::postgres_schema(base).await)).await
 }
 
-async fn test_app_on(db_url: Option<String>) -> TestApp {
+async fn test_app_on(schema: Option<common::PgSchema>) -> TestApp {
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
-    config.database.url = db_url;
+    config.database.url = schema.as_ref().map(|s| s.url.clone());
     let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
     // A moment 15 seconds into a TOTP step, so a few requests stay within it.
     let clock = Arc::new(ManualClock::new(1_800_000_015_000));
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir: Arc::new(dir) }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir: Arc::new(dir), schema }
 }
 
 impl TestApp {
-    async fn finish(self) {
-        let finish = common::Finish::new(self.state.clone(), self.dir.clone());
+    async fn finish(mut self) {
+        let finish = common::Finish::new(self.state.clone(), self.dir.clone()).with_schema(self.schema.take());
         drop(self);
         finish.finish().await;
     }

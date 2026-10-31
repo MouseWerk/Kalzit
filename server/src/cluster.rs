@@ -1039,7 +1039,8 @@ const COMPARE_FAILURES_WARN: u32 = 3;
 /// Compares the counters every announced change raises in its transaction (`record`) and the data
 /// sources' cheap aggregates with what this server last took, starting from the moment before it
 /// loaded anything (`boot`): a change whose event row this server missed is taken within one poll
-/// anyway (a rights change within two, see `unread_rights`). Its own changes move the counters too; taking them again is harmless.
+/// anyway (a rights change within two, see `unread_rights`). Its own changes move the counters
+/// too; taking them again is harmless.
 struct Reconciler {
     last: Option<Snapshot>,
     failures: u32,
@@ -1120,18 +1121,14 @@ impl Reconciler {
         }
         // The reader applied each rights change it read with its organization; only changes it
         // did not read (fewer rows than the counter moved) need every kept answer to go, since
-        // their organization is not known here. A row the reader has not read yet at this
-        // comparison is given until the next one (the reader is woken for it); rows read pay for
-        // the oldest unread changes first.
-        let still_unread = self.unread_rights - rows_seen;
-        if still_unread > 0 {
+        // their organization is not known here.
+        let (flush, unread) = rights_accounting(self.unread_rights, delta("rights"), rows_seen);
+        self.unread_rights = unread;
+        if flush {
             state.datasources.query_cache().rights_changed_here(None);
-            self.unread_rights = 0;
-        } else {
-            self.unread_rights = (self.unread_rights + delta("rights") - rows_seen).max(0);
-            if self.unread_rights > 0 {
-                state.cluster.wake.notify_one();
-            }
+        }
+        if unread > 0 {
+            state.cluster.wake.notify_one();
         }
         if moved("cache") {
             state.datasources.query_cache().clear();
@@ -1157,6 +1154,20 @@ impl Reconciler {
         }
         self.last = Some(now);
     }
+}
+
+/// One comparison's account of rights changes (`Reconciler::unread_rights`): from the changes
+/// still unread at the last comparison, how far the rights counter moved since and how many rights
+/// rows the reader read since, whether every kept answer must go and what stays unread.
+///
+/// A row the reader has not read yet at one comparison is given until the next (its commit and
+/// the counter's are one, but the reader may come to it later); rows read pay for the oldest
+/// unread changes first. A change still unread one comparison later was missed: everything kept
+/// goes, which covers every change up to now. The counter moves of this comparison stay owed
+/// even then, so a late row of the missed change pays for them and can never cancel out a change
+/// missed later; at worst that costs one more, harmless, emptying.
+fn rights_accounting(unread: i64, delta: i64, rows_seen: i64) -> (bool, i64) {
+    if unread - rows_seen > 0 { (true, delta.max(0)) } else { (false, (unread + delta - rows_seen).max(0)) }
 }
 
 /// Applies another server's change to what this one keeps.
@@ -1540,6 +1551,30 @@ mod tests {
         assert_eq!(reconciler.last.as_ref(), Some(&baseline), "the baseline stays for the next comparison");
         let gathered = reconciler.gather(&db, false, false, 0).await.unwrap();
         assert_ne!(gathered.now.versions.get("settings"), baseline.versions.get("settings"));
+    }
+
+    /// Each step is one comparison: (unread before, counter moved, rows read) to (empty all,
+    /// unread after).
+    #[test]
+    fn rights_rows_read_late_keep_the_cache_and_missed_ones_empty_it() {
+        // The counter is seen before the reader read the row; the row comes at the next one.
+        assert_eq!(rights_accounting(0, 1, 0), (false, 1));
+        assert_eq!(rights_accounting(1, 0, 1), (false, 0));
+        // Read in time: nothing owed.
+        assert_eq!(rights_accounting(0, 2, 2), (false, 0));
+        // A row that never comes (removed in its own transaction): emptied at the second.
+        assert_eq!(rights_accounting(0, 1, 0), (false, 1));
+        assert_eq!(rights_accounting(1, 0, 0), (true, 0));
+        // Emptied while new changes came in: those stay owed, and the missed change's late row
+        // pays for them instead of hiding a change missed after it.
+        assert_eq!(rights_accounting(1, 1, 0), (true, 1));
+        assert_eq!(rights_accounting(1, 1, 1), (false, 1), "the late row pays the older debt");
+        assert_eq!(rights_accounting(1, 0, 0), (true, 0), "the change missed later still empties");
+        // Rows read beyond what is owed (an old row replayed at the start) leave no credit.
+        assert_eq!(rights_accounting(0, 0, 3), (false, 0));
+        assert_eq!(rights_accounting(0, 1, 0), (false, 1));
+        // Of two unread changes, one row read: the other is missed.
+        assert_eq!(rights_accounting(2, 0, 1), (true, 0));
     }
 
     #[test]
