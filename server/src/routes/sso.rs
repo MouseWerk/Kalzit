@@ -63,20 +63,20 @@ pub(crate) fn hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-fn binding_cookie(secure: bool) -> &'static str {
+pub(crate) fn binding_cookie(secure: bool) -> &'static str {
     if secure { SECURE_BINDING_COOKIE } else { BINDING_COOKIE }
 }
 
-fn set_binding(value: &str, secure: bool) -> HeaderValue {
+pub(crate) fn set_binding(value: &str, secure: bool) -> HeaderValue {
     let max_age = crate::sso::SIGN_IN_TTL_MS / 1000;
     session::cookie_header(&format!("{}={value}; Max-Age={max_age}", binding_cookie(secure)), secure)
 }
 
-fn clear_binding(secure: bool) -> HeaderValue {
+pub(crate) fn clear_binding(secure: bool) -> HeaderValue {
     session::cookie_header(&format!("{}=; Max-Age=0", binding_cookie(secure)), secure)
 }
 
-fn see_other(location: &str, cookies: Vec<HeaderValue>) -> Response {
+pub(crate) fn see_other(location: &str, cookies: Vec<HeaderValue>) -> Response {
     let mut headers = HeaderMap::new();
     if let Ok(value) = HeaderValue::from_str(location) {
         headers.insert(header::LOCATION, value);
@@ -88,7 +88,7 @@ fn see_other(location: &str, cookies: Vec<HeaderValue>) -> Response {
     (StatusCode::SEE_OTHER, headers).into_response()
 }
 
-fn sign_in_page(outcome: &str, slug: &str, error_ref: Option<&str>) -> String {
+pub(crate) fn sign_in_page(outcome: &str, slug: &str, error_ref: Option<&str>) -> String {
     let mut url = format!("/anmelden?sso={outcome}");
     if crate::sso::valid_slug(slug) {
         url.push_str(&format!("&provider={slug}"));
@@ -172,10 +172,14 @@ async fn start(
     {
         return Ok(see_other(&sign_in_page("unavailable", &slug, None), Vec::new()));
     }
-    let provider = store::by_slug(&state.read_db, &slug).await?.filter(|p| p.enabled != 0 && p.kind == "oidc");
+    let provider =
+        store::by_slug(&state.read_db, &slug).await?.filter(|p| p.enabled != 0 && matches!(p.kind.as_str(), "oidc" | "saml"));
     let Some(provider) = provider else {
         return Ok(see_other(&sign_in_page("unavailable", &slug, None), Vec::new()));
     };
+    if provider.kind == "saml" {
+        return super::saml::start(&state, &info, &provider, query.get("returnTo").map(String::as_str)).await;
+    }
     let config = provider.oidc()?;
     let return_to = crate::sso::safe_return_to(query.get("returnTo").map(String::as_str));
     let redirect_uri = crate::sso::redirect_uri(&crate::sso::public_base(&state, &info), &provider.slug);
@@ -358,6 +362,27 @@ async fn callback_inner(
         return Ok(see_other("/anmelden/sso-test", clear()));
     }
     sqlx::query("DELETE FROM sso_sign_ins WHERE id = $1").bind(&row.id).execute(&state.db).await?;
+    let issuer = target.config.issuer.clone();
+    complete_sign_in(state, info, headers, &target.provider, &issuer, &person, slug, &row.return_to).await
+}
+
+/// The end of a sign-in through a provider of any kind, once the person is known: the account,
+/// the group mapping and Kalzit's second factor or the session (`sso::signin`, which also
+/// explains the order). `issuer` is the provider's issuer (OIDC) or entity ID (SAML).
+#[expect(clippy::too_many_arguments, reason = "the parts of one sign-in, passed on as they are")]
+pub(crate) async fn complete_sign_in(
+    state: &AppState,
+    info: &RequestInfo,
+    headers: &HeaderMap,
+    provider: &ProviderRow,
+    issuer: &str,
+    person: &Person,
+    slug: &str,
+    return_to: &str,
+) -> ApiResult<Response> {
+    let now = state.clock.now_ms();
+    let clear = || vec![clear_binding(info.https)];
+    let ids = (provider.id.as_str(), provider.slug.as_str());
     use crate::sso::signin;
     let refuse = |refusal: signin::Refusal| async move {
         let r =
@@ -366,15 +391,14 @@ async fn callback_inner(
     };
     // The account and its identity (`sso::signin`, which also explains the order below).
     let mut tx = crate::db::begin(&state.db).await?;
-    let issuer = target.config.issuer.as_str();
-    let linked = match signin::account(&mut tx, state, info, &target.provider, issuer, &person, now).await? {
+    let linked = match signin::account(&mut tx, state, info, provider, issuer, person, now).await? {
         Ok(l) => l,
         Err(refusal) => {
             drop(tx);
             return Ok(refuse(refusal).await);
         }
     };
-    let outcome = signin::decide(&mut tx, state, &target.provider.id, &linked, &person.groups).await?;
+    let outcome = signin::decide(&mut tx, state, &provider.id, &linked, &person.groups).await?;
     if let Some(o) = outcome.as_ref().filter(|o| o.refused) {
         // Refused, or a server admin without a mapped group: what the provider decided goes now
         // (that only takes rights away); nothing is given.
@@ -391,9 +415,9 @@ async fn callback_inner(
     // Kalzit's own second factor, unless the provider's switch says to take its word for one
     // (`trust_provider_mfa` and the token's `amr`).
     let first = FirstStep::Provider {
-        provider_id: &target.provider.id,
+        provider_id: &provider.id,
         mfa_done: person.mfa_done,
-        provider_mfa_trusted: target.provider.trust_provider_mfa != 0,
+        provider_mfa_trusted: provider.trust_provider_mfa != 0,
     };
     let plan = super::second_factor::plan(state, info, &linked.user, first, now).await?;
     let mut cookies = clear();
@@ -402,7 +426,7 @@ async fn callback_inner(
         // The half-signed-in state starts; the mapping waits for it to end well. The sign-in page
         // asks for the second factor and then goes on to where the person was headed.
         if outcome.as_ref().is_some_and(|o| !o.refused) {
-            signin::defer(&mut tx, &linked.user.id, &target.provider.id, now).await?;
+            signin::defer(&mut tx, &linked.user.id, &provider.id, now).await?;
         }
         let answer =
             super::second_factor::finish_first_step(tx, state, info, headers, linked.user, first, false, plan, now)
@@ -410,7 +434,7 @@ async fn callback_inner(
         cookies.extend(answer.headers().get_all(header::SET_COOKIE).iter().cloned());
         let page = format!(
             "/anmelden?secondFactor=1&redirect={}",
-            url::form_urlencoded::byte_serialize(row.return_to.as_bytes()).collect::<String>()
+            url::form_urlencoded::byte_serialize(return_to.as_bytes()).collect::<String>()
         );
         return Ok(see_other(&page, cookies));
     }
@@ -418,10 +442,10 @@ async fn callback_inner(
         Some(o) => signin::apply(&mut tx, info, ids, &linked.user.id, o, None, now).await?,
         None => Default::default(),
     };
-    cookies.extend(open_session(&mut tx, state, info, headers, &linked.user, &target.provider, &person, now).await?);
+    cookies.extend(open_session(&mut tx, state, info, headers, &linked.user, provider, person, now).await?);
     crate::db::commit(tx).await?;
     crate::sso::rights_changed(state, &touched).await;
-    Ok(see_other(&row.return_to, cookies))
+    Ok(see_other(return_to, cookies))
 }
 
 /// Opens the session after a sign-in through a provider that needs no second step, inside `tx`
@@ -588,9 +612,14 @@ async fn person(state: &AppState, target: &Target, row: &SignInRow, code: &str, 
 }
 
 async fn test_outcome(state: &AppState, target: &Target, person: &Person) -> ApiResult<Value> {
-    let rules =
-        if target.provider.id.is_empty() { Vec::new() } else { mapping::rules(&state.db, &target.provider.id).await? };
-    let outcome = mapping::resolve(&rules, &person.groups, &crate::sso::unmapped(state).await?);
+    test_outcome_for(state, &target.provider.id, &person.groups).await
+}
+
+/// What the group mapping of a stored provider (none for a new one, `provider_id` empty) would
+/// give a test sign-in's groups.
+pub(crate) async fn test_outcome_for(state: &AppState, provider_id: &str, groups: &[String]) -> ApiResult<Value> {
+    let rules = if provider_id.is_empty() { Vec::new() } else { mapping::rules(&state.db, provider_id).await? };
+    let outcome = mapping::resolve(&rules, groups, &crate::sso::unmapped(state).await?);
     outcome_json(state, &outcome).await
 }
 
@@ -874,6 +903,9 @@ pub(crate) async fn provider_json(state: &AppState, info: &RequestInfo, row: &Pr
     if row.kind == "ldap" {
         return super::ldap::provider_json(state, row).await;
     }
+    if row.kind == "saml" {
+        return super::saml::provider_json(state, row).await;
+    }
     let config = row.oidc()?;
     let secret_set: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM sso_provider_secrets WHERE provider_id = $1 AND field = $2")
@@ -909,6 +941,7 @@ async fn overview(State(state): State<AppState>, Extension(info): Extension<Requ
                 Ok(c) => (c.url, Some(c.flavor)),
                 Err(_) => (String::new(), None),
             },
+            "saml" => (row.saml().map(|c| c.idp_entity_id).unwrap_or_default(), None),
             _ => (row.oidc().map(|c| c.issuer).unwrap_or_default(), None),
         };
         providers.push(json!({
@@ -917,7 +950,11 @@ async fn overview(State(state): State<AppState>, Extension(info): Extension<Requ
             "position": row.position, "enabled": row.enabled != 0, "people": people.get(&row.id).copied().unwrap_or(0),
             "lastSignInAt": row.last_sign_in_at, "checkedAt": row.checked_at,
             "createAccounts": row.create_accounts != 0, "trustProviderMfa": row.trust_provider_mfa != 0,
-            "redirectUri": crate::sso::redirect_uri(&base, &row.slug),
+            "redirectUri": if row.kind == "saml" {
+                crate::sso::saml_base(&state).map(|b| crate::sso::saml::acs_url(&b, &row.slug)).unwrap_or_default()
+            } else {
+                crate::sso::redirect_uri(&base, &row.slug)
+            },
         }));
     }
     let (accounts,): (i64,) =
@@ -928,7 +965,10 @@ async fn overview(State(state): State<AppState>, Extension(info): Extension<Requ
     )
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(json!({ "providers": providers, "accounts": accounts, "viaProviders": via, "redirectBase": base })))
+    Ok(Json(json!({
+        "providers": providers, "accounts": accounts, "viaProviders": via, "redirectBase": base,
+        "samlBase": crate::sso::saml_base(&state),
+    })))
 }
 
 async fn load_provider(state: &AppState, id: &str) -> ApiResult<ProviderRow> {
@@ -1029,16 +1069,7 @@ async fn update(
     // the admin confirmed it.
     let issuer_changed = old.issuer != valid.config.issuer;
     if issuer_changed && !valid.confirm_issuer_change {
-        let (people,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_identities WHERE provider_id = $1")
-            .bind(&id)
-            .fetch_one(&state.db)
-            .await?;
-        if people > 0 {
-            return Err(conflict("changing the issuer removes the links of the people who sign in through it")
-                .with_field("issuer")
-                .because("sso.issuer_change_confirm")
-                .param("people", people));
-        }
+        refuse_unconfirmed_issuer_change(&state, &id, "issuer").await?;
     }
     let mut fields = Vec::new();
     if valid.name != current.name {
@@ -1086,43 +1117,7 @@ async fn update(
     let actor = Actor { user_id: &admin.id, info: &info, at_ms: now };
     let mut touched = BTreeSet::new();
     if issuer_changed {
-        // What the provider decided under "IdP entscheidet" goes with the links (the memberships
-        // and teams it gave), recorded per person as at a sign-in.
-        let managed: Vec<(String,)> =
-            sqlx::query_as("SELECT DISTINCT user_id FROM sso_managed WHERE provider_id = $1 ORDER BY user_id")
-                .bind(&id)
-                .fetch_all(&mut *tx)
-                .await?;
-        let revoke = crate::sso::mapping::Outcome { refused: true, orgs: Vec::new() };
-        for (user_id,) in managed {
-            touched.extend(
-                crate::sso::signin::apply(
-                    &mut tx,
-                    &info,
-                    (&id, &current.slug),
-                    &user_id,
-                    &revoke,
-                    Some(&admin.id),
-                    now,
-                )
-                .await?,
-            );
-        }
-        let removed = sqlx::query("DELETE FROM sso_identities WHERE provider_id = $1")
-            .bind(&id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        for table in ["sso_identity_groups", "sso_managed", "sso_pending_mappings"] {
-            sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE provider_id = $1")))
-                .bind(&id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        if removed > 0 {
-            let summary = json!({ "providerId": id, "identities": removed });
-            audit(&mut tx, &actor, None, "sso.provider_identities_removed", ("sso_provider", &id), summary).await?;
-        }
+        touched = remove_links(&mut tx, &info, &actor, &id, &current.slug).await?;
     }
     audit(
         &mut tx,
@@ -1139,6 +1134,62 @@ async fn update(
     state.sso.forget(&valid.config.issuer);
     let row = load_provider(&state, &id).await?;
     Ok(Json(provider_json(&state, &info, &row).await?))
+}
+
+/// Refuses a change of the issuer (OIDC) or entity ID (SAML) of a provider people sign in
+/// through until the admin confirms it: their links go with it.
+pub(crate) async fn refuse_unconfirmed_issuer_change(state: &AppState, id: &str, field: &'static str) -> ApiResult<()> {
+    let (people,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sso_identities WHERE provider_id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?;
+    if people > 0 {
+        return Err(conflict("changing the issuer removes the links of the people who sign in through it")
+            .with_field(field)
+            .because("sso.issuer_change_confirm")
+            .param("people", people));
+    }
+    Ok(())
+}
+
+/// After a changed issuer or entity ID: subjects are only unique per issuer, so the people linked
+/// through the old one are not the same people. Their links and what the provider decided for
+/// them go, inside `tx`; answers the organizations whose rights changed.
+pub(crate) async fn remove_links(
+    tx: &mut sqlx::AnyConnection,
+    info: &RequestInfo,
+    actor: &Actor<'_>,
+    id: &str,
+    slug: &str,
+) -> ApiResult<BTreeSet<String>> {
+    let mut touched = BTreeSet::new();
+    // What the provider decided under "IdP entscheidet" goes with the links (the memberships and
+    // teams it gave), recorded per person as at a sign-in.
+    let managed: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT user_id FROM sso_managed WHERE provider_id = $1 ORDER BY user_id")
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let revoke = crate::sso::mapping::Outcome { refused: true, orgs: Vec::new() };
+    for (user_id,) in managed {
+        touched.extend(
+            crate::sso::signin::apply(&mut *tx, info, (id, slug), &user_id, &revoke, Some(actor.user_id), actor.at_ms)
+                .await?,
+        );
+    }
+    let removed =
+        sqlx::query("DELETE FROM sso_identities WHERE provider_id = $1").bind(id).execute(&mut *tx).await?.rows_affected();
+    for table in ["sso_identity_groups", "sso_managed", "sso_pending_mappings"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE provider_id = $1")))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if removed > 0 {
+        let summary = json!({ "providerId": id, "identities": removed });
+        audit(&mut *tx, actor, None, "sso.provider_identities_removed", ("sso_provider", id), summary).await?;
+    }
+    Ok(touched)
 }
 
 #[derive(Deserialize)]
@@ -1310,6 +1361,7 @@ async fn test_result(
         "done" => json!({ "status": "done", "result": result }),
         "failed" => json!({ "status": "failed", "error": {
             "reason": result["reason"], "message": format!("the test sign-in ended: {}", result["outcome"].as_str().unwrap_or("failed")),
+            "params": if result["params"].is_object() { result["params"].clone() } else { json!({}) },
         } }),
         _ if expires_at <= now => json!({ "status": "failed", "error": {
             "reason": "sso.outcome_expired", "message": "the test sign-in took too long",
@@ -1722,7 +1774,7 @@ struct Checks {
 
 async fn checks(state: &AppState, break_glass: Option<&str>, me: &str) -> ApiResult<Checks> {
     let provider: Option<(String,)> = sqlx::query_as(
-        "SELECT name FROM sso_providers WHERE enabled = 1 AND kind IN ('oidc', 'ldap') AND checked_at IS NOT NULL \
+        "SELECT name FROM sso_providers WHERE enabled = 1 AND kind IN ('oidc', 'saml', 'ldap') AND checked_at IS NOT NULL \
          ORDER BY position LIMIT 1",
     )
     .fetch_optional(&state.db)

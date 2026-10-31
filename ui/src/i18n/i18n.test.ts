@@ -222,6 +222,8 @@ describe("catalogs", () => {
       "StartTLS",
       "Active Directory",
       "LDAP · Active Directory",
+      // SAML: the protocol's name.
+      "SAML 2.0",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

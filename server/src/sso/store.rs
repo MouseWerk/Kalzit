@@ -7,6 +7,7 @@ use std::sync::Arc;
 use zeroize::Zeroizing;
 
 use super::oidc::OidcConfig;
+use super::saml::SamlConfig;
 use crate::error::{ApiError, ApiResult};
 use crate::secrets::{Blob, Keyring};
 
@@ -44,6 +45,13 @@ pub const PROVIDER_COLUMNS: &str = "SELECT id, slug, kind, name, position, enabl
 
 impl ProviderRow {
     pub fn oidc(&self) -> ApiResult<OidcConfig> {
+        serde_json::from_str(&self.config)
+            .map_err(|e| ApiError::internal("sso", format!("the settings of provider {} cannot be read: {e}", self.id)))
+    }
+}
+
+impl ProviderRow {
+    pub fn saml(&self) -> ApiResult<SamlConfig> {
         serde_json::from_str(&self.config)
             .map_err(|e| ApiError::internal("sso", format!("the settings of provider {} cannot be read: {e}", self.id)))
     }

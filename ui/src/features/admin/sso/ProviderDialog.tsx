@@ -46,7 +46,7 @@ const ADVANCED: readonly Field[] = ["emailClaim", "nameClaim"];
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /** How often a running test sign-in is asked for its result. */
-const TEST_POLL_MS = 2000;
+export const TEST_POLL_MS = 2000;
 
 /** A slug from a provider's name: "Müller SSO" becomes "mueller-sso". */
 export function slugFrom(name: string): string {
@@ -733,8 +733,8 @@ function checkText(t: Translate, check: ProviderCheck): string {
   });
 }
 
-/** The state of a running or finished test sign-in. */
-function TestLine({
+/** The state of a running or finished test sign-in (OIDC and SAML). */
+export function TestLine({
   t,
   url,
   blocked,

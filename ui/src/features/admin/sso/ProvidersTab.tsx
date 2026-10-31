@@ -18,6 +18,7 @@ import { KindDialog, type ProviderKind } from "./KindDialog";
 import { LdapDialog } from "./LdapDialog";
 import { LdapSyncDialog } from "./LdapSyncDialog";
 import { ProviderDialog } from "./ProviderDialog";
+import { SamlDialog } from "./SamlDialog";
 import { ssoErrorText } from "./texts";
 import "../../datasources/datasources.css";
 import "./sso.css";
@@ -31,6 +32,7 @@ type Editing =
 /** The short mark of a provider kind, as on the board ("OI" for OpenID Connect, "LD" for LDAP). */
 function kindMark(kind: string): string {
   if (kind === "oidc") return "OI";
+  if (kind === "saml") return "SA";
   if (kind === "ldap") return "LD";
   return kind.slice(0, 2).toUpperCase();
 }
@@ -38,6 +40,7 @@ function kindMark(kind: string): string {
 /** "OpenID Connect", "LDAP · Active Directory" (the summary's `flavor`, when it says) or "LDAP". */
 export function kindLabel(t: Translate, kind: string, flavor?: string): string {
   if (kind === "oidc") return t("sso.kind.oidc");
+  if (kind === "saml") return t("sso.kind.saml");
   if (kind === "ldap") return t(flavor === "ad" ? "sso.kind.ldapAd" : "sso.kind.ldap");
   return kind;
 }
@@ -202,7 +205,11 @@ export function ProvidersTab({
 
   let place = 0;
   const editingProvider =
-    editing?.mode === "edit" && editing.provider.kind !== "ldap"
+    editing?.mode === "edit" && editing.provider.kind === "oidc"
+      ? { providerId: editing.provider.id, startTest: editing.startTest }
+      : undefined;
+  const editingSaml =
+    editing?.mode === "edit" && editing.provider.kind === "saml"
       ? { providerId: editing.provider.id, startTest: editing.startTest }
       : undefined;
   const editingLdap = editing?.mode === "edit" && editing.provider.kind === "ldap";
@@ -405,6 +412,16 @@ export function ProvidersTab({
           redirectBase={overview.redirectBase}
           providerId={editingProvider?.providerId}
           startTest={editingProvider?.startTest ?? false}
+          onClose={closeForm}
+          onSaved={saved}
+        />
+      ) : null}
+      {addingKind === "saml" || editingSaml !== undefined ? (
+        <SamlDialog
+          key={editingSaml?.providerId ?? "new-saml"}
+          providerId={editingSaml?.providerId}
+          samlBase={overview.samlBase ?? null}
+          startTest={editingSaml?.startTest ?? false}
           onClose={closeForm}
           onSaved={saved}
         />
