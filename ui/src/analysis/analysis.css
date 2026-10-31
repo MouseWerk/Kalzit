@@ -136,6 +136,19 @@
     flex-basis: 100%;
   }
 
+  /*
+   * The type and its button stay on one line while there is room: the select gives up width
+   * first (a long German step name was pushing the button onto a line of its own).
+   */
+  .steps__add > .select {
+    flex: 0 1 auto;
+    min-width: min(10rem, 100%);
+  }
+
+  .steps__add > .button {
+    flex: none;
+  }
+
   /* The chain of shapes over the steps of a graph query. */
   .steps__chain {
     display: grid;

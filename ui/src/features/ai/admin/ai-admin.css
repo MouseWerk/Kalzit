@@ -133,6 +133,11 @@
     overflow-x: auto;
   }
 
+  /* A row under a table is set apart like the rows under each other. */
+  .ai-table-wrap + .settings-row {
+    border-top: var(--border-width) solid var(--border);
+  }
+
   .ai-table {
     width: 100%;
     border-collapse: collapse;
@@ -149,6 +154,15 @@
     border-bottom: var(--border-width) solid var(--border);
     text-align: start;
     vertical-align: middle;
+  }
+
+  /* The outer cells line up with the card's head and rows, which sit at the card inset. */
+  .ai-table :is(th, td):first-child {
+    padding-inline-start: var(--space-4);
+  }
+
+  .ai-table :is(th, td):last-child {
+    padding-inline-end: var(--space-4);
   }
 
   .ai-table thead th {

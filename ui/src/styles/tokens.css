@@ -152,8 +152,9 @@
     --space-page-top: var(--space-5);
     --space-page-bottom: var(--space-10);
     --space-grid: var(--space-2);
-    /* Pulls a row of small ghost buttons back by their padding, so their text lines up. */
-    --space-ghost-pull: calc(-1 * (var(--space-2) + var(--border-width)));
+    /* A small ghost button's inset; the pull takes a row of them back by it, so text lines up. */
+    --space-ghost-inset: calc(var(--space-2) + var(--border-width));
+    --space-ghost-pull: calc(-1 * var(--space-ghost-inset));
     /* Where the value of a stacked list row starts on a phone: after its column label. */
     --space-stack-label: calc(var(--size-label) + var(--space-2));
     --space-panel: var(--space-2);
