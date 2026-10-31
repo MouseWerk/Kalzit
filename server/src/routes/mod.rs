@@ -146,13 +146,13 @@ pub struct OrgMembership {
 pub async fn me(db: &mut sqlx::AnyConnection, user: SessionUser) -> ApiResult<Me> {
     let (confirmed,): (i64,) =
         sqlx::query_as("SELECT email_confirmed FROM users WHERE id = $1").bind(&user.id).fetch_one(&mut *db).await?;
-    let orgs: Vec<OrgMembership> = sqlx::query_as(
-        "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id \
-         WHERE m.user_id = $1 ORDER BY o.name",
+    let mut orgs: Vec<OrgMembership> = sqlx::query_as(
+        "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = $1",
     )
     .bind(&user.id)
     .fetch_all(&mut *db)
     .await?;
+    orgs.sort_by(|a, b| crate::collation::compare(&a.name, &b.name).then_with(|| a.id.cmp(&b.id)));
     Ok(Me {
         id: user.id,
         email: user.email,

@@ -190,7 +190,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
-      - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
+      - run: cargo test --locked --test api --test access --test analyses --test dashboard_features --test settings_dashboards --test shell --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
 
   # LDAP sign-in and the directory sync (server/tests/ldap.rs) against a real OpenLDAP server in a
   # throwaway container reachable only from this job.

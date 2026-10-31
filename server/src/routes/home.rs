@@ -17,6 +17,7 @@ use super::support::{Paging, QueryParams, conflict, decode_cursor, encode_cursor
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
+use crate::collation;
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders;
@@ -195,6 +196,7 @@ pub struct SearchHit {
     datasource_kind: Option<String>,
     /// Higher is a better match (see `fuzzy_score`); results are ordered by it.
     score: i64,
+    /// The sort key of the title (`collation`).
     #[serde(skip)]
     sort_title: String,
 }
@@ -278,12 +280,12 @@ async fn search(
             hits.push(SearchHit {
                 kind: HitKind::Dashboard,
                 id,
+                sort_title: collation::key(&title),
                 title,
                 folder_id,
                 path,
                 datasource_kind: None,
                 score,
-                sort_title: lower,
             });
         }
     }
@@ -307,7 +309,7 @@ async fn search(
                 path,
                 datasource_kind: None,
                 score,
-                sort_title: lower,
+                sort_title: collation::key(name),
             });
         }
     }
@@ -328,25 +330,27 @@ async fn search(
             hits.push(SearchHit {
                 kind: HitKind::Datasource,
                 id,
+                sort_title: collation::key(&name),
                 title: name,
                 folder_id: None,
                 path: Vec::new(),
                 datasource_kind: Some(kind),
                 score,
-                sort_title: lower,
             });
         }
     }
 
     hits.sort_by(|a, b| a.key().cmp(&b.key()));
+    // The cursor names the last title; the comparison uses its sort key.
     if let Some((score, kind, title, id)) = &after {
-        let cursor = (Reverse(*score), *kind, title.as_str(), id.as_str());
+        let title_key = collation::key(title);
+        let cursor = (Reverse(*score), *kind, title_key.as_str(), id.as_str());
         hits.retain(|h| h.key() > cursor);
     }
     let more = hits.len() > limit;
     hits.truncate(limit);
     let next_cursor = match hits.last() {
-        Some(last) if more => Some(encode_cursor(&(last.score, last.kind, &last.sort_title, &last.id))),
+        Some(last) if more => Some(encode_cursor(&(last.score, last.kind, &last.title, &last.id))),
         _ => None,
     };
     Ok(Json(Page { items: hits, next_cursor }))
@@ -511,24 +515,25 @@ async fn list_stars(
     let rows: Vec<(String, Option<String>, String, i64)> = sqlx::query_as(
         "SELECT d.id, d.folder_id, d.title, s.created_at FROM dashboard_stars s \
          JOIN dashboards d ON d.id = s.dashboard_id AND d.org_id = s.org_id \
-         WHERE s.user_id = $1 AND s.org_id = $2 AND d.deleted_at IS NULL ORDER BY d.search_title, d.id",
+         WHERE s.user_id = $1 AND s.org_id = $2 AND d.deleted_at IS NULL ORDER BY d.sort_title, d.id",
     )
     .bind(&ctx.user.id)
     .bind(&ctx.org_id)
     .fetch_all(&mut *conn)
     .await?;
     let mut items = entries(rows, &index, &folders, scope.as_ref());
-    let sort_key = |e: &DashboardEntry| (e.title.to_lowercase(), e.id.clone());
-    // Ordered here, by the same key the cursor compares: the database's collation may order
-    // punctuation differently (PostgreSQL follows the locale), which would repeat or skip items.
-    items.sort_by_key(sort_key);
-    if let Some(after) = after {
-        items.retain(|e| sort_key(e) > after);
+    // Ordered here, by the same key the cursor compares (`collation`), so a page never repeats
+    // or skips a star. The cursor names the last title and id.
+    let sort_key = |title: &str, id: &str| (collation::key(title), id.to_string());
+    items.sort_by_cached_key(|e| sort_key(&e.title, &e.id));
+    if let Some((title, id)) = after {
+        let after = sort_key(&title, &id);
+        items.retain(|e| sort_key(&e.title, &e.id) > after);
     }
     let more = items.len() > limit;
     items.truncate(limit);
     let next_cursor = match items.last() {
-        Some(last) if more => Some(encode_cursor(&sort_key(last))),
+        Some(last) if more => Some(encode_cursor(&(&last.title, &last.id))),
         _ => None,
     };
     Ok(Json(Page { items, next_cursor }))

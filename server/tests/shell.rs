@@ -480,8 +480,8 @@ async fn stars_are_personal_and_follow_access(t: TestApp) {
     assert_eq!(t.delete(&star("no-such-dashboard"), &viewer).await.status, StatusCode::NO_CONTENT);
 }
 
-/// The cursor compares titles as the server does, so the database's collation (PostgreSQL sorts
-/// punctuation by locale rules) can neither repeat nor skip a star across pages.
+/// The cursor compares titles by the same sort key the list is ordered by (`collation`), so
+/// punctuation can neither repeat nor skip a star across pages.
 async fn stars_page_through_titles_that_differ_in_punctuation(t: TestApp) {
     let titles = ["Lager-A", "Lager A", "Lager_A", "LagerA", "lager a2", "Lager.A", "Lager/A"];
     for title in titles {
@@ -490,7 +490,7 @@ async fn stars_page_through_titles_that_differ_in_punctuation(t: TestApp) {
     }
     let all: Vec<String> = t.get("~/stars", &t.owner).await.titles().iter().map(|s| s.to_string()).collect();
     let mut expected: Vec<String> = titles.iter().map(|s| s.to_string()).collect();
-    expected.sort_by_key(|s| s.to_lowercase());
+    expected.sort_by_key(|s| kalzit::collation::key(s));
     assert_eq!(all, expected);
     let mut paged = Vec::new();
     let mut cursor: Option<String> = None;

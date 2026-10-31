@@ -1431,10 +1431,11 @@ async fn mappings(State(state): State<AppState>) -> ApiResult<Json<Value>> {
             .fetch_all(&state.db)
             .await?;
     // Organizations and their teams to choose from: server admins need not be members.
-    let orgs: Vec<(String, String)> =
-        sqlx::query_as("SELECT id, name FROM orgs ORDER BY name").fetch_all(&state.db).await?;
-    let teams: Vec<(String, String, String)> =
-        sqlx::query_as("SELECT org_id, id, name FROM teams ORDER BY name").fetch_all(&state.db).await?;
+    let mut orgs: Vec<(String, String)> = sqlx::query_as("SELECT id, name FROM orgs").fetch_all(&state.db).await?;
+    orgs.sort_by(|a, b| crate::collation::compare(&a.1, &b.1).then_with(|| a.0.cmp(&b.0)));
+    let mut teams: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT org_id, id, name FROM teams").fetch_all(&state.db).await?;
+    teams.sort_by(|a, b| crate::collation::compare(&a.2, &b.2).then_with(|| a.1.cmp(&b.1)));
     let mut by_org: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for (org, id, name) in teams {
         by_org.entry(org).or_default().push(json!({ "id": id, "name": name }));

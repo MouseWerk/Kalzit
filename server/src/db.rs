@@ -82,6 +82,7 @@ pub async fn connect_with(url: &str, max_connections: u32, busy_timeout: Duratio
         return Err(e);
     }
     MIGRATOR.run(&pool).await.context("running database migrations")?;
+    crate::collation::refresh(&pool).await?;
     Ok(pool)
 }
 

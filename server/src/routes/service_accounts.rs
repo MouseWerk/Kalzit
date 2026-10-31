@@ -19,6 +19,7 @@ use crate::auth::api_token::{self, Kind, TokenCaller, refuse_tokens};
 use crate::authz::{
     Access, BuiltinRole, OrgCtx, Permission, RoleInfo, ensure_holds, lock_org, lock_role, resolve_role,
 };
+use crate::collation;
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -189,7 +190,8 @@ struct ListQuery {
     cursor: Option<String>,
 }
 
-/// Ordered by name; the cursor is the last name of the page.
+/// Ordered by name (`collation`); the cursor is the last name of the page. Names are unique and
+/// differ in more than case, so their sort keys are unique too.
 async fn list(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -199,14 +201,15 @@ async fn list(
     refuse_tokens(caller.as_deref())?;
     let limit = page_limit(q.limit)?;
     let after: String = decode_cursor(q.cursor.as_deref())?.unwrap_or_default();
-    let mut rows: Vec<AccountRow> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} AND a.name > $3 ORDER BY a.name LIMIT $4")))
-            .bind(&ctx.org_id)
-            .bind(state.clock.now_ms())
-            .bind(&after)
-            .bind(i64::from(limit) + 1)
-            .fetch_all(&state.read_db)
-            .await?;
+    let mut rows: Vec<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{ACCOUNT_COLUMNS} AND a.sort_name > $3 ORDER BY a.sort_name, a.id LIMIT $4"
+    )))
+    .bind(&ctx.org_id)
+    .bind(state.clock.now_ms())
+    .bind(collation::key(&after))
+    .bind(i64::from(limit) + 1)
+    .fetch_all(&state.read_db)
+    .await?;
     let more = rows.len() > limit as usize;
     rows.truncate(limit as usize);
     let next_cursor = rows.last().filter(|_| more).map(|r| encode_cursor(&r.name));
@@ -356,8 +359,8 @@ async fn create(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO service_accounts (id, org_id, name, description, disabled, created_by, created_at) \
-         VALUES ($1, $2, $3, $4, 0, $5, $6)",
+        "INSERT INTO service_accounts (id, org_id, name, description, disabled, created_by, created_at, sort_name) \
+         VALUES ($1, $2, $3, $4, 0, $5, $6, $7)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
@@ -365,6 +368,7 @@ async fn create(
     .bind(&description)
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(collation::key(&name))
     .execute(&mut *tx)
     .await?;
     sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)")

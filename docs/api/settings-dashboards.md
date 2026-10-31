@@ -434,6 +434,16 @@ Actions written by these routes: `settings.updated`, `branding.logo_updated`, `b
 `dashboard.version_restored`, `dashboard.trashed`, `dashboard.restored`, `dashboard.purged`,
 `audit.expired`.
 
+## List order
+
+Lists ordered by title or name (dashboards, saved analyses, folders, playlists, library panels,
+service accounts, organizations, roles, teams, stars and search hits of equal score) follow the
+rules of the UI languages: the Unicode Collation Algorithm with CLDR's root order, which German
+and English share. "Ä" and "Ö" sort next to "A" and "O", "ß" like "ss"; case does not count, and
+titles that differ only in case are ordered by id. The server computes the order itself
+(`server/src/collation.rs`), so SQLite and PostgreSQL, in whatever locale it runs, answer the same
+order, and cursors page through it without repeating or skipping entries.
+
 ## Folders
 
 ```ts
@@ -458,7 +468,7 @@ Folders nest at most 10 levels deep.
 ### `GET /orgs/{orgId}/folders`
 
 Permission `folders:read`. Answers `Page<FolderNode>` (`nextCursor` always `null`): the tree of
-folders not in the trash that the caller sees, each level sorted by name (case-insensitive).
+folders not in the trash that the caller sees, each level sorted by name (language order, see "List order").
 `?team=<teamId>` scopes it to a team context (`docs/api/access.md`, "Team context").
 
 `?trashed=true` answers the trash instead: one `FolderNode` (with empty `children`) per trashed
@@ -658,7 +668,7 @@ line breaks (`422 validation` field `message`).
 
 ### `GET /orgs/{orgId}/dashboards`
 
-Permission `dashboards:read`. `Page<DashboardSummary>` ordered by title (the database's collation),
+Permission `dashboards:read`. `Page<DashboardSummary>` ordered by title (language order, see "List order"),
 then id. Query: `folderId` (only that folder; `404 not_found` if not visible), `q` (part of the
 title, any case), `trashed=true` (the trash instead), `team` (a team context, `docs/api/access.md`),
 `limit`, `cursor`. Dashboards the caller does not see are left out. Summaries carry

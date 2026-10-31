@@ -1467,11 +1467,10 @@ async fn dashboard_lists_search_move_and_page(t: TestApp) {
         t.post("~/dashboards", json!({ "model": model(title) }), &t.owner).await;
     }
     let search = t.get("~/dashboards?q=umsatz", &t.owner).await;
-    let mut titles: Vec<&str> =
+    let titles: Vec<&str> =
         search.body["items"].as_array().unwrap().iter().map(|d| d["title"].as_str().unwrap()).collect();
-    // Where "Ü" sorts depends on the database's collation, so only the set is compared here.
-    titles.sort();
-    assert_eq!(titles, ["Umsatz je Region", "Übersicht Umsatz"]);
+    // "Ü" sorts next to "U" on every database.
+    assert_eq!(titles, ["Übersicht Umsatz", "Umsatz je Region"]);
     let umlaut = t.get("~/dashboards?q=%C3%BCBERSICHT", &t.owner).await;
     assert_eq!(umlaut.body["items"].as_array().unwrap().len(), 1, "{}", umlaut.body);
 
@@ -1489,9 +1488,7 @@ async fn dashboard_lists_search_move_and_page(t: TestApp) {
             None => break,
         }
     }
-    assert_eq!(&seen[..2], ["Kosten", "Lager"]);
-    seen.sort();
-    assert_eq!(seen, ["Kosten", "Lager", "Umsatz je Region", "Übersicht Umsatz"], "every dashboard once");
+    assert_eq!(seen, ["Kosten", "Lager", "Übersicht Umsatz", "Umsatz je Region"], "every dashboard once, in order");
 
     // Saving with a folder moves the dashboard.
     let id = t.get("~/dashboards?q=Lager", &t.owner).await.body["items"][0]["id"].as_str().unwrap().to_string();

@@ -280,6 +280,7 @@ macro_rules! on_both_databases {
 
 on_both_databases! {
     create_read_save_and_list,
+    lists_follow_the_language_order_on_every_database,
     saves_check_the_version,
     invalid_models_are_refused_with_their_place,
     trash_restore_and_purge,
@@ -333,11 +334,12 @@ async fn create_read_save_and_list(t: TestApp) {
     assert_eq!(saved.body["updatedAt"], T0 + 1000);
     assert_eq!(saved.body["model"]["visualization"]["type"], "bar");
 
-    // Listing: by title, searchable in any case (also beyond ASCII), filtered by folder.
+    // Listing: by title in the language order ("Ö" next to "O"), searchable in any case (also
+    // beyond ASCII), filtered by folder.
     let folder = t.folder("Vertrieb", false).await;
     t.create("Öffnungszeiten", &source, Some(&folder), &t.owner).await;
     t.create("Abbrüche", &source, None, &t.owner).await;
-    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), ["Abbrüche", "Umsatz nach Land", "Öffnungszeiten"]);
+    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), ["Abbrüche", "Öffnungszeiten", "Umsatz nach Land"]);
     assert_eq!(t.get("~/analyses?q=%C3%96FFNUNG", &t.owner).await.titles(), ["Öffnungszeiten"]);
     assert_eq!(t.get("~/analyses?q=land", &t.owner).await.titles(), ["Umsatz nach Land"]);
     assert_eq!(t.get(&format!("~/analyses?folderId={folder}"), &t.owner).await.titles(), ["Öffnungszeiten"]);
@@ -345,13 +347,78 @@ async fn create_read_save_and_list(t: TestApp) {
     assert!(t.get("~/analyses?q=%25", &t.owner).await.titles().is_empty());
     // Pages keep their order.
     let first = t.get("~/analyses?limit=2", &t.owner).await;
-    assert_eq!(first.titles(), ["Abbrüche", "Umsatz nach Land"]);
+    assert_eq!(first.titles(), ["Abbrüche", "Öffnungszeiten"]);
     let cursor = first.body["nextCursor"].as_str().unwrap().to_string();
-    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), ["Öffnungszeiten"]);
+    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), ["Umsatz nach Land"]);
     // A folder that does not exist is not found; an unknown parameter is refused.
     let missing = uuid::Uuid::now_v7();
     assert_eq!(t.get(&format!("~/analyses?folderId={missing}"), &t.owner).await.status, StatusCode::NOT_FOUND);
     assert_eq!(t.get("~/analyses?tag=x", &t.owner).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Lists order by the rules of the UI languages, not by the database's collation: German puts
+/// "Ä" and "Ö" next to "A" and "O" and sorts "ß" like "ss"; English follows the Unicode collation;
+/// case does not count. SQLite and PostgreSQL answer the same order, and pages keep it across
+/// every umlaut boundary.
+async fn lists_follow_the_language_order_on_every_database(t: TestApp) {
+    let source = t.source("shop").await;
+    let german = t.folder("Deutsch", false).await;
+    let english = t.folder("English", false).await;
+    for title in ["Zebra", "ß", "Äpfel", "O", "Apfel", "Ö"] {
+        assert_eq!(t.create(title, &source, Some(&german), &t.owner).await.status, StatusCode::CREATED);
+    }
+    for title in ["cherry", "Éclair", "banana", "apple pie", "Apple", "Delta"] {
+        assert_eq!(t.create(title, &source, Some(&english), &t.owner).await.status, StatusCode::CREATED);
+    }
+    let german_order = ["Apfel", "Äpfel", "O", "Ö", "ß", "Zebra"];
+    let english_order = ["Apple", "apple pie", "banana", "cherry", "Delta", "Éclair"];
+    assert_eq!(t.get(&format!("~/analyses?folderId={german}"), &t.owner).await.titles(), german_order);
+    assert_eq!(t.get(&format!("~/analyses?folderId={english}"), &t.owner).await.titles(), english_order);
+
+    // One title per page: every step crosses a boundary (A/Ä, O/Ö, ß/Z), none repeats or skips.
+    for (folder, expected) in [(&german, &german_order[..]), (&english, &english_order[..])] {
+        let mut seen = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let path = match &cursor {
+                Some(c) => format!("~/analyses?folderId={folder}&limit=1&cursor={c}"),
+                None => format!("~/analyses?folderId={folder}&limit=1"),
+            };
+            let page = t.get(&path, &t.owner).await;
+            seen.extend(page.titles());
+            match page.body["nextCursor"].as_str() {
+                Some(c) => cursor = Some(c.to_string()),
+                None => break,
+            }
+        }
+        assert_eq!(seen, expected);
+    }
+
+    // Titles equal but for case keep a stable order by id, also across pages.
+    let first = id_of(t.create("umsatz", &source, None, &t.owner).await);
+    let second = id_of(t.create("UMSATZ", &source, None, &t.owner).await);
+    let ids = |r: &Reply| -> Vec<String> {
+        r.body["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap().to_string()).collect()
+    };
+    let mut by_id = [first, second];
+    by_id.sort();
+    let page = t.get("~/analyses?q=umsatz&limit=1", &t.owner).await;
+    assert_eq!(ids(&page), [by_id[0].clone()]);
+    let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
+    let rest = t.get(&format!("~/analyses?q=umsatz&limit=1&cursor={cursor}"), &t.owner).await;
+    assert_eq!(ids(&rest), [by_id[1].clone()]);
+
+    // Dashboards follow the same order.
+    for title in ["Zebra", "ß", "Äpfel", "O", "Apfel", "Ö"] {
+        let body = json!({ "model": { "schemaVersion": 1, "title": title, "panels": [] } });
+        let r = t.post("~/dashboards", body, &t.owner).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    }
+    assert_eq!(t.get("~/dashboards", &t.owner).await.titles(), german_order);
+    let page = t.get("~/dashboards?limit=3", &t.owner).await;
+    assert_eq!(page.titles(), ["Apfel", "Äpfel", "O"]);
+    let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
+    assert_eq!(t.get(&format!("~/dashboards?limit=3&cursor={cursor}"), &t.owner).await.titles(), ["Ö", "ß", "Zebra"]);
 }
 
 async fn saves_check_the_version(t: TestApp) {
