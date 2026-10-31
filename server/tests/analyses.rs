@@ -334,7 +334,23 @@ async fn create_read_save_and_list(t: TestApp) {
     let folder = t.folder("Vertrieb", false).await;
     t.create("Öffnungszeiten", &source, Some(&folder), &t.owner).await;
     t.create("Abbrüche", &source, None, &t.owner).await;
-    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), ["Abbrüche", "Umsatz nach Land", "Öffnungszeiten"]);
+    // In the database's order of titles: SQLite compares bytes ("Ö" after "U"), PostgreSQL by its
+    // locale ("Ö" before "U" in en_US.UTF-8), so the expected order is asked of the database.
+    let by_title: Vec<(String,)> =
+        sqlx::query_as("SELECT title FROM analyses WHERE org_id = $1 AND deleted_at IS NULL ORDER BY title, id")
+            .bind(&t.org)
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    let by_title: Vec<String> = by_title.into_iter().map(|(title,)| title).collect();
+    let mut same = by_title.clone();
+    same.sort();
+    same.dedup();
+    assert_eq!(same, ["Abbrüche", "Umsatz nach Land", "Öffnungszeiten"], "the three analyses, nothing else");
+    if !t.state.config.database_url().starts_with("postgres") {
+        assert_eq!(by_title, same, "SQLite compares bytes");
+    }
+    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), by_title);
     assert_eq!(t.get("~/analyses?q=%C3%96FFNUNG", &t.owner).await.titles(), ["Öffnungszeiten"]);
     assert_eq!(t.get("~/analyses?q=land", &t.owner).await.titles(), ["Umsatz nach Land"]);
     assert_eq!(t.get(&format!("~/analyses?folderId={folder}"), &t.owner).await.titles(), ["Öffnungszeiten"]);
