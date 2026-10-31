@@ -273,10 +273,30 @@ export function labelRanks(view: GraphView): Int32Array {
  * Whether a node's label may show at a camera ratio (1 is the whole graph, 0.5 twice as close):
  * the LABEL_BUDGET best connected first, more as one zooms in. Clusters always carry their label.
  */
-export function labelAllowed(rank: number, cameraRatio: number, isCluster: boolean): boolean {
+export function labelAllowed(
+  rank: number,
+  cameraRatio: number,
+  isCluster: boolean,
+  budget: number = LABEL_BUDGET,
+): boolean {
   if (isCluster) {
     return true;
   }
   const ratio = Math.max(cameraRatio, 1e-3);
-  return rank < LABEL_BUDGET / (ratio * ratio);
+  return rank < budget / (ratio * ratio);
+}
+
+/** Panel area in px² per label at the fitted zoom: a panel of 800 x 400 px carries the full budget. */
+const AREA_PER_LABEL = 8_000;
+/** Labels a panel shows at the fitted zoom however small it is. */
+const LABEL_BUDGET_MIN = 6;
+
+/**
+ * The label budget of a panel of this size (px): LABEL_BUDGET for a large panel, fewer for a
+ * small one, so a short panel does not try to fit as many names as a tall one.
+ */
+export function labelBudgetFor(width: number, height: number): number {
+  if (!(width > 0 && height > 0)) return LABEL_BUDGET;
+  const fits = Math.floor((width * height) / AREA_PER_LABEL);
+  return Math.max(LABEL_BUDGET_MIN, Math.min(LABEL_BUDGET, fits));
 }

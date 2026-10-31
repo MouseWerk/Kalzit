@@ -4,6 +4,7 @@
 //! edit one that is to show it), never while it is disabled or blocked for the organization, and
 //! never with a bundle that differs from its manifest.
 
+use std::collections::BTreeSet;
 use std::io::{Cursor, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -216,6 +217,17 @@ async fn a_panel_frame_is_served_sandboxed_from_the_checked_package_to_those_who
     let r = t.admin(Method::POST, &format!("/admin/plugins/{ID}/enable"), None).await;
     assert_eq!(r.body["running"], true, "{}", r.text);
 
+    // A panel runs no process: a restart is refused with its reason and nothing is recorded.
+    let r = t.admin(Method::POST, &format!("/admin/plugins/{ID}/restart"), None).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "plugin.panel_has_no_process"), "{}", r.text);
+    let r = t.admin(Method::GET, &format!("/admin/plugins/{ID}"), None).await;
+    assert_eq!(r.body["running"], true, "{}", r.text);
+    assert!(r.body.get("process").is_none_or(Value::is_null), "{}", r.text);
+    // "Used in" lists the dashboards that show it, not data sources.
+    let used: Vec<&str> = r.body["usedIn"].as_array().unwrap().iter().map(|u| u["id"].as_str().unwrap()).collect();
+    assert_eq!(used, [shown.as_str()], "{}", r.text);
+    assert_eq!(r.body["usedIn"][0]["name"], format!("Tafel {ID}"));
+
     // Offered with its options, to every member.
     let viewer = t.member("Vera", "vera@example.de", "viewer").await;
     let items = t.listed(&viewer).await;
@@ -284,6 +296,9 @@ async fn a_panel_frame_is_served_sandboxed_from_the_checked_package_to_those_who
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
     let linked = r.body["id"].as_str().unwrap().to_string();
     assert_eq!(t.frame(Some(&linked), &viewer).await.status, StatusCode::OK);
+    let r = t.admin(Method::GET, &format!("/admin/plugins/{ID}"), None).await;
+    let used: BTreeSet<&str> = r.body["usedIn"].as_array().unwrap().iter().map(|u| u["id"].as_str().unwrap()).collect();
+    assert_eq!(used, BTreeSet::from([shown.as_str(), linked.as_str()]), "{}", r.text);
 
     // Options the manifest does not allow are refused when a dashboard is saved.
     let bad = json!({ "schemaVersion": 1, "title": "Falsch", "timeRange": { "from": "now-6h", "to": "now" },

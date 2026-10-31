@@ -1033,6 +1033,14 @@ impl PluginHost {
     pub async fn restart(&self, state: &AppState, id: &str, actor: &Actor<'_>) -> ApiResult<()> {
         let _changes = self.changes.lock().await;
         let row = self.row(state, id).await?;
+        if row.kind == "panel" {
+            // A panel is drawn in the browser; there is no process to start again.
+            return Err(HostError::new(
+                "plugin.panel_has_no_process",
+                "a panel plugin runs no process on the server, so there is nothing to restart",
+            )
+            .api());
+        }
         let Some(supervisor) = self.supervisor(id) else {
             return Err(HostError::new("plugin.not_running", "the plugin is not enabled or cannot run").api());
         };

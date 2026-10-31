@@ -678,6 +678,7 @@
   "datasources.reason.plugin.nothing_to_approve": "This version is approved already, and no update waits.",
   "datasources.reason.plugin.version_mismatch": "Version {version} is neither installed nor waiting for approval.",
   "datasources.reason.plugin.not_running": "Only a plugin that is turned on and can run here can be restarted.",
+  "datasources.reason.plugin.panel_has_no_process": "A panel plugin runs no process on the server, so there is nothing to restart.",
   "datasources.reason.plugin.untrusted": "The key that signed the plugin is no longer trusted, so it does not run.",
   "datasources.reason.plugin.key_invalid": "This is not an Ed25519 public key.",
   "datasources.reason.plugin.key_exists": "This key is trusted already.",

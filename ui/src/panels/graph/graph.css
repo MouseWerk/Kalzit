@@ -855,11 +855,14 @@
 
   /* Path panel: each path as node, edge, node. */
 
+  /* It takes the room under the toolbar and scrolls there; 100% of the panel would push its
+     last chips below the panel's edge. */
   .paths {
     display: grid;
+    flex: 1 1 0;
     align-content: start;
     gap: var(--space-3);
-    height: 100%;
+    min-height: 0;
     margin: 0;
     padding: 0;
     overflow: auto;

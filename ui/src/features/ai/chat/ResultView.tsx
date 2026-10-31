@@ -177,7 +177,7 @@ function FrameResult({
                 <tr>
                   {fields.map((field, index) => (
                     // biome-ignore lint/suspicious/noArrayIndexKey: columns may share a name.
-                    <th key={index} scope="col">
+                    <th key={index} scope="col" data-numeric={NUMERIC.has(field.type) || undefined}>
                       {field.name}
                     </th>
                   ))}
@@ -188,7 +188,9 @@ function FrameResult({
                   <tr key={row}>
                     {fields.map((field, index) => (
                       // biome-ignore lint/suspicious/noArrayIndexKey: columns may share a name.
-                      <td key={index}>{cell(field.values[row])}</td>
+                      <td key={index} data-numeric={NUMERIC.has(field.type) || undefined}>
+                        {cell(field.values[row])}
+                      </td>
                     ))}
                   </tr>
                 ))}

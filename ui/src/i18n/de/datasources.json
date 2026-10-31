@@ -678,6 +678,7 @@
   "datasources.reason.plugin.nothing_to_approve": "Diese Version ist schon freigegeben, und keine Aktualisierung wartet.",
   "datasources.reason.plugin.version_mismatch": "Version {version} ist weder installiert noch wartet sie auf Freigabe.",
   "datasources.reason.plugin.not_running": "Nur ein eingeschaltetes Plugin, das hier laufen kann, lässt sich neu starten.",
+  "datasources.reason.plugin.panel_has_no_process": "Ein Panel-Plugin startet keinen Prozess auf dem Server, darum gibt es nichts neu zu starten.",
   "datasources.reason.plugin.untrusted": "Dem Schlüssel, der das Plugin signiert hat, wird nicht mehr vertraut; es läuft deshalb nicht.",
   "datasources.reason.plugin.key_invalid": "Das ist kein öffentlicher Ed25519-Schlüssel.",
   "datasources.reason.plugin.key_exists": "Diesem Schlüssel wird schon vertraut.",
