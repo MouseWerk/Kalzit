@@ -977,7 +977,6 @@
   "admin.serviceAccounts.scimReason.scim.email_unconfirmed": "Ein Konto mit unbestätigter Adresse",
   "admin.serviceAccounts.scimReason.scim.account_linked": "Ein Konto, das schon verknüpft ist",
   "admin.serviceAccounts.scimReason.scim.account_protected": "Ein geschütztes Konto",
-  "admin.serviceAccounts.scimReason.scim.last_owner": "Die letzte Inhaberin oder der letzte Inhaber der Organisation",
   "admin.serviceAccounts.scimReason.scim.group_name_missing": "Eine Gruppe ohne Namen",
   "admin.serviceAccounts.scimReason.scim.group_name_taken": "Ein Gruppenname, der schon vergeben ist",
   "admin.serviceAccounts.scimReason.scim.member_unknown": "Ein Mitglied, das Kalzit nicht kennt",
@@ -991,5 +990,8 @@
   "admin.auditAction.scim.group_deactivated": "Gruppe per SCIM deaktiviert",
   "admin.auditAction.scim.request_refused": "SCIM-Anfrage abgelehnt",
   "admin.auditAction.scim.turned_on": "SCIM angeschaltet",
-  "admin.auditAction.scim.turned_off": "SCIM ausgeschaltet"
+  "admin.auditAction.scim.turned_off": "SCIM ausgeschaltet",
+  "admin.serviceAccounts.scimReason.scim.too_many": "Eine Anfrage mit zu vielen Mitgliedern",
+  "admin.serviceAccounts.scimTodayNoteLinked": "angelegt / deaktiviert · {count} bestehende Konten verknüpft",
+  "admin.auditAction.scim.user_linked": "Bestehendes Konto per SCIM verknüpft"
 }

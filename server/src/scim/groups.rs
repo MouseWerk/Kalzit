@@ -18,6 +18,36 @@ use super::{Ctx, ListQuery, ScimError, ScimResult, date_time, field, filter, lis
 const MAX_TEXT: usize = 256;
 /// At most this many members in one group.
 const MAX_MEMBERS: usize = 50_000;
+/// At most this many members named in one request (all operations of a PATCH together).
+pub const MAX_MEMBERS_PER_REQUEST: usize = 10_000;
+/// Member ids checked per query.
+const CHUNK: usize = 500;
+
+fn too_many(detail: String) -> ScimError {
+    ScimError::bad("tooMany", detail).because("scim.too_many")
+}
+
+/// Refuses a request that names more than `MAX_MEMBERS_PER_REQUEST` members.
+fn ensure_request_size(named: usize) -> ScimResult<()> {
+    if named > MAX_MEMBERS_PER_REQUEST {
+        return Err(too_many(format!("a request names at most {MAX_MEMBERS_PER_REQUEST} members")));
+    }
+    Ok(())
+}
+
+/// The members a PATCH names, over all its operations.
+fn members_named(ops: &[Op]) -> usize {
+    ops.iter()
+        .map(|op| {
+            let value = match &op.path {
+                Some(path) if path.attr == "members" => op.value.as_ref(),
+                Some(_) => None,
+                None => op.value.as_ref().and_then(|v| field(v, "members")),
+            };
+            value.map_or(0, |v| values(v).len())
+        })
+        .sum()
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct GroupData {
@@ -61,7 +91,10 @@ impl GroupData {
         })?)?;
         let external_id = field(body, "externalId").map(|v| text(v, "externalId", MAX_TEXT)).transpose()?.flatten();
         let members = match field(body, "members").filter(|v| !v.is_null()) {
-            Some(m) => member_ids(m)?,
+            Some(m) => {
+                ensure_request_size(values(m).len())?;
+                member_ids(m)?
+            }
             None => Vec::new(),
         };
         Ok(Self { display_name, external_id, members })
@@ -284,19 +317,21 @@ async fn ensure_name_free(
 /// (service accounts, people of other organizations) to a group.
 async fn ensure_members_known(conn: &mut sqlx::AnyConnection, org_id: &str, ids: &[String]) -> ScimResult<()> {
     if ids.len() > MAX_MEMBERS {
-        return Err(ScimError::bad("tooMany", format!("a group has at most {MAX_MEMBERS} members"))
-            .because("scim.value_invalid"));
+        return Err(too_many(format!("a group has at most {MAX_MEMBERS} members")));
     }
-    for id in ids {
-        let known: Option<(i64,)> = sqlx::query_as(
-            "SELECT 1 FROM scim_users s JOIN users u ON u.id = s.user_id \
-             WHERE s.org_id = $1 AND s.user_id = $2 AND u.service_account = 0",
-        )
-        .bind(org_id)
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?;
-        if known.is_none() {
+    for chunk in ids.chunks(CHUNK) {
+        let marks: Vec<String> = (0..chunk.len()).map(|i| format!("${}", i + 2)).collect();
+        let sql = format!(
+            "SELECT s.user_id FROM scim_users s JOIN users u ON u.id = s.user_id \
+             WHERE s.org_id = $1 AND u.service_account = 0 AND s.user_id IN ({})",
+            marks.join(", ")
+        );
+        let mut query = sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(sql)).bind(org_id);
+        for id in chunk {
+            query = query.bind(id);
+        }
+        let known: BTreeSet<String> = query.fetch_all(&mut *conn).await?.into_iter().map(|(id,)| id).collect();
+        if let Some(id) = chunk.iter().find(|id| !known.contains(*id)) {
             return Err(ScimError::bad("invalidValue", format!("{id} is not a user of this organization's directory"))
                 .because("scim.member_unknown"));
         }
@@ -382,6 +417,7 @@ pub async fn replace(ctx: &Ctx<'_>, id: &str, body: Value) -> ScimResult<Respons
 /// Answers the group as it is after the operations (RFC 7644 allows `200` with it or `204`).
 pub async fn patch(ctx: &Ctx<'_>, id: &str, body: Value) -> ScimResult<Response> {
     let ops = operations(&body)?;
+    ensure_request_size(members_named(&ops))?;
     let body = save(ctx, id, |current| {
         let mut next = current.clone();
         for op in &ops {

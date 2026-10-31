@@ -211,6 +211,15 @@ impl TestApp {
         r.body["id"].as_str().unwrap().to_string()
     }
 
+    /// Signs in `email` (with the test password) and answers the session cookie.
+    async fn login(&mut self, email: &str) -> String {
+        let body = json!({ "email": email, "password": PASSWORD });
+        let r = self.request(Method::POST, "/api/auth/login", Some(body), None, "application/json").await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let set = r.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+        set.split(';').next().unwrap().to_string()
+    }
+
     /// A confirmed account made by a server admin, with a password.
     async fn person(&mut self, name: &str, email: &str) -> String {
         let r = self
@@ -595,21 +604,38 @@ async fn service_accounts_admins_and_the_last_owner_are_protected() {
     let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "neu@mueller.example" })), &token).await;
     assert_eq!((r.status, r.scim_type()), (StatusCode::CONFLICT, "uniqueness"), "{}", r.body);
 
-    // The last owner is never deactivated.
+    // No owner is ever deactivated, also not one of several, and also not with a token an admin
+    // (not an owner) made.
+    let ada = t.person("Ada Admin", "ada@mueller.example").await;
+    let r = t.owner(Method::POST, "/members", Some(json!({ "email": "ada@mueller.example", "role": "admin" }))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let ada_cookie = t.login("ada@mueller.example").await;
+    let r = t
+        .request(
+            Method::POST,
+            &format!("/api/orgs/{org}/scim-token"),
+            Some(json!({})),
+            Some(("cookie", &ada_cookie)),
+            "application/json",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let token = r.body["token"].as_str().unwrap().to_string();
     let lea = t.person("Lea Hoffmann", "lea@mueller.example").await;
     let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "lea@mueller.example" })), &token).await;
     assert_eq!(r.id(), lea);
-    let me = t.admin(Method::GET, "/api/me", None).await;
-    let joerg = me.body["id"].as_str().unwrap().to_string();
     assert_eq!(
         t.owner(Method::PATCH, &format!("/members/{lea}"), Some(json!({ "role": "owner" }))).await.status,
         StatusCode::OK
     );
-    let r = t.owner(Method::PATCH, &format!("/members/{joerg}"), Some(json!({ "role": "admin" }))).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = t.scim(Method::DELETE, &format!("/Users/{lea}"), None, &token).await;
-    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.body);
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
     assert_eq!(t.role_of(&org, &lea).await.as_deref(), Some("owner"));
+    let r = t.scim(Method::GET, &format!("/Users/{lea}"), None, &token).await;
+    assert_eq!(r.body["active"], true, "nothing changed: {}", r.body);
+    // Ada herself is an admin: SCIM holds what she holds and may end her membership here.
+    let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "ada@mueller.example" })), &token).await;
+    assert_eq!(r.id(), ada);
     // A mapping never demotes an owner either.
     t.mapping("leser", &org, None, "viewer", true).await;
     let r = t
@@ -632,7 +658,7 @@ async fn service_accounts_admins_and_the_last_owner_are_protected() {
             json!("scim.member_unknown"),
             json!("scim.account_protected"),
             json!("scim.email_unconfirmed"),
-            json!("scim.last_owner"),
+            json!("scim.account_protected"),
         ]
     );
     t.finish().await;
@@ -712,5 +738,161 @@ async fn the_token_is_checked_on_every_request_and_revocation_ends_it() {
     assert!(r.headers.contains_key(header::RETRY_AFTER));
     let summaries: Vec<String> = t.audit_actions().await.into_iter().map(|(_, s)| s.to_string()).collect();
     assert!(summaries.iter().all(|s| !s.contains(&token)), "the token is never in the audit log");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn scim_owns_an_account_only_until_it_joins_elsewhere_is_confirmed_or_becomes_an_admin() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    let create = |name: &str| json!({ "userName": format!("{name}@mueller.example"), "displayName": name });
+    let rename = |name: &str| {
+        patch(json!([
+            { "op": "replace", "path": "displayName", "value": name },
+            { "op": "replace", "path": "emails", "value": [{ "value": format!("{name}@neu.example"), "primary": true }] }
+        ]))
+    };
+
+    // Owned: the directory renames the account.
+    let kim = t.scim(Method::POST, "/Users", Some(create("kim")), &token).await.id();
+    let r = t.scim(Method::PATCH, &format!("/Users/{kim}"), Some(rename("kimberly")), &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.account(&kim).await.0, "kimberly@neu.example");
+    // Nobody adds the unconfirmed address to another organization.
+    let other = t.other_org().await;
+    let cookie = t.owner.clone();
+    let r = t
+        .request(
+            Method::POST,
+            &format!("/api/orgs/{other}/members"),
+            Some(json!({ "email": "kimberly@neu.example", "role": "viewer" })),
+            Some(("cookie", &cookie)),
+            "application/json",
+        )
+        .await;
+    assert_eq!(r.body["error"]["reason"], "mail.email_unconfirmed", "{}", r.body);
+    // Kim owns another organization now: SCIM no longer changes or locks the account, also after
+    // Kim leaves it again.
+    let r = t.admin(Method::POST, "/api/admin/orgs", Some(json!({ "name": "Kims Firma", "ownerUserId": kim }))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let kims = r.body["id"].as_str().unwrap().to_string();
+    sqlx::query("DELETE FROM org_members WHERE org_id = $1").bind(&kims).execute(&t.state.db).await.unwrap();
+    let r = t.scim(Method::PATCH, &format!("/Users/{kim}"), Some(rename("mallory")), &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["displayName"], "mallory", "kept on the SCIM user");
+    let (email, name, _, _) = t.account(&kim).await;
+    assert_eq!((email.as_str(), name.as_str()), ("kimberly@neu.example", "kimberly"));
+    assert_eq!(t.scim(Method::DELETE, &format!("/Users/{kim}"), None, &token).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.account(&kim).await.2, 0, "not locked: only the membership here ended");
+
+    // Confirmed by its owner: the same, also if the flag were cleared again.
+    let lou = t.scim(Method::POST, "/Users", Some(create("lou")), &token).await.id();
+    sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&lou).execute(&t.state.db).await.unwrap();
+    t.scim(Method::PATCH, &format!("/Users/{lou}"), Some(rename("mallory2")), &token).await;
+    sqlx::query("UPDATE users SET email_confirmed = 0 WHERE id = $1").bind(&lou).execute(&t.state.db).await.unwrap();
+    t.scim(Method::PATCH, &format!("/Users/{lou}"), Some(rename("mallory3")), &token).await;
+    let (email, name, _, _) = t.account(&lou).await;
+    assert_eq!((email.as_str(), name.as_str()), ("lou@mueller.example", "lou"));
+
+    // A server admin: never renamed, never deactivated.
+    let max = t.scim(Method::POST, "/Users", Some(create("max")), &token).await.id();
+    let r = t.admin(Method::PATCH, &format!("/api/admin/users/{max}"), Some(json!({ "isServerAdmin": true }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.scim(Method::PATCH, &format!("/Users/{max}"), Some(rename("mallory4")), &token).await;
+    assert_eq!(t.account(&max).await.0, "max@mueller.example");
+    let r = t.scim(Method::DELETE, &format!("/Users/{max}"), None, &token).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert_eq!(t.role_of(&org, &max).await.as_deref(), Some("viewer"));
+    let (owned,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scim_users WHERE created_account = 1")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(owned, 0, "every ownership ended for good");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn reactivating_never_undoes_an_admins_lock() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    let nora = t.scim(Method::POST, "/Users", Some(json!({ "userName": "nora@mueller.example" })), &token).await.id();
+    let off = patch(json!([{ "op": "replace", "path": "active", "value": false }]));
+    let on = patch(json!([{ "op": "replace", "path": "active", "value": true }]));
+    t.scim(Method::PATCH, &format!("/Users/{nora}"), Some(off.clone()), &token).await;
+    assert_eq!(t.account(&nora).await.2, 1);
+    // An admin confirms the lock: SCIM's reactivation leaves the account locked.
+    let r = t.admin(Method::PATCH, &format!("/api/admin/users/{nora}"), Some(json!({ "disabled": true }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.scim(Method::PATCH, &format!("/Users/{nora}"), Some(on.clone()), &token).await;
+    assert_eq!(r.body["active"], true, "{}", r.body);
+    assert_eq!(t.account(&nora).await.2, 1, "the admin's lock stays");
+    // An admin unlocks, SCIM locks again and an admin locks too: the same.
+    t.admin(Method::PATCH, &format!("/api/admin/users/{nora}"), Some(json!({ "disabled": false }))).await;
+    t.scim(Method::PATCH, &format!("/Users/{nora}"), Some(off), &token).await;
+    t.admin(Method::PATCH, &format!("/api/admin/users/{nora}"), Some(json!({ "disabled": true }))).await;
+    t.scim(Method::PATCH, &format!("/Users/{nora}"), Some(on), &token).await;
+    assert_eq!(t.account(&nora).await.2, 1);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn editors_filters_body_size_and_member_counts_are_checked() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    // An editor never reads or switches SCIM.
+    t.person("Eddi Editor", "eddi@mueller.example").await;
+    let r = t.owner(Method::POST, "/members", Some(json!({ "email": "eddi@mueller.example", "role": "editor" }))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let eddi = t.login("eddi@mueller.example").await;
+    let path = format!("/api/orgs/{org}/scim");
+    let r = t.request(Method::GET, &path, None, Some(("cookie", &eddi)), "application/json").await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t
+        .request(Method::PUT, &path, Some(json!({ "enabled": false })), Some(("cookie", &eddi)), "application/json")
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert!(kalzit::scim::enabled(&t.state.db, &org).await.unwrap());
+
+    // Filters over HTTP.
+    t.scim(Method::POST, "/Users", Some(json!({ "userName": "a@mueller.example" })), &token).await;
+    let r = t.scim(Method::GET, "/Users?filter=active+eq+true", None, &token).await;
+    assert_eq!(r.body["totalResults"], 1, "{}", r.body);
+    let r = t.scim(Method::GET, "/Users?filter=active+eq+false", None, &token).await;
+    assert_eq!(r.body["totalResults"], 0, "{}", r.body);
+    for bad in ["userName+eq+%22a%22+or+userName+eq+%22b%22", "userName+co+%22a%22", "displayName+eq+%22a%22"] {
+        let r = t.scim(Method::GET, &format!("/Users?filter={bad}"), None, &token).await;
+        assert_eq!((r.status, r.scim_type()), (StatusCode::BAD_REQUEST, "invalidFilter"), "{bad}");
+    }
+
+    // A body over 1 MiB.
+    let big = json!({ "userName": "big@mueller.example", "displayName": "x".repeat(1024 * 1024 + 10) });
+    let r = t.scim(Method::POST, "/Users", Some(big), &token).await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", r.body);
+    assert_eq!(r.headers[header::CONTENT_TYPE], SCIM);
+
+    // More than 10,000 members in one PATCH.
+    let group = t.scim(Method::POST, "/Groups", Some(json!({ "displayName": "Alle" })), &token).await.id();
+    let members: Vec<Value> = (0..10_001).map(|i| json!({ "value": format!("u{i}") })).collect();
+    let add = patch(json!([{ "op": "add", "path": "members", "value": members }]));
+    let r = t.scim(Method::PATCH, &format!("/Groups/{group}"), Some(add), &token).await;
+    assert_eq!((r.status, r.scim_type()), (StatusCode::BAD_REQUEST, "tooMany"), "{}", r.body);
+    // Many known members at once are checked in chunks.
+    let mut ids = Vec::new();
+    for i in 0..600 {
+        let u = json!({ "userName": format!("m{i}@mueller.example") });
+        ids.push(t.scim(Method::POST, "/Users", Some(u), &token).await.id());
+    }
+    let mut members: Vec<Value> = ids.iter().map(|id| json!({ "value": id })).collect();
+    let add = patch(json!([{ "op": "add", "path": "members", "value": members.clone() }]));
+    let r = t.scim(Method::PATCH, &format!("/Groups/{group}"), Some(add), &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["members"].as_array().unwrap().len(), 600);
+    members.push(json!({ "value": "unbekannt" }));
+    let put = json!({ "displayName": "Alle", "members": members });
+    let r = t.scim(Method::PUT, &format!("/Groups/{group}"), Some(put), &token).await;
+    assert_eq!((r.status, r.scim_type()), (StatusCode::BAD_REQUEST, "invalidValue"), "{}", r.body);
     t.finish().await;
 }

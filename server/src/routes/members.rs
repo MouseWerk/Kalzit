@@ -186,6 +186,7 @@ async fn add(
         .bind(now)
         .execute(&mut *tx)
         .await?;
+    crate::scim::release(&mut tx, &user_id, Some(&ctx.org_id)).await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user_id, "role": role.key });
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.added", ("user", &user_id), summary).await?;

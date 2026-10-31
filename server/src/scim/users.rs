@@ -4,9 +4,10 @@
 //! A new SCIM user is linked to the account with its address when there is exactly one, it is a
 //! person's (never a service account), its address is confirmed and it is not a server admin or
 //! the break-glass admin; otherwise a new account is made. A new account's address is unconfirmed,
-//! like any account whose owner never showed they read the mailbox (docs/api/mail.md), so single
-//! sign-on never links to it by address until it is confirmed. SCIM changes the name and address of
-//! accounts it made only; for a linked account it keeps what the directory sends next to it.
+//! like any account whose owner never showed they read the mailbox (docs/api/mail.md); only a
+//! single sign-on into that same account takes SCIM's word for it (`super::vouches_for_sign_in`).
+//! SCIM changes the name and address only of an account it still owns (`super::owner_org`); for any
+//! other account it keeps what the directory sends next to it.
 
 use std::collections::BTreeSet;
 
@@ -375,7 +376,6 @@ struct Row {
     external_id: Option<String>,
     attributes: String,
     active: i64,
-    created_account: i64,
     version: i64,
     created_at: i64,
     updated_at: i64,
@@ -383,7 +383,7 @@ struct Row {
 }
 
 /// `$1` is the organization. Service accounts are never SCIM users; the join keeps it that way.
-const COLUMNS: &str = "SELECT s.user_id, s.user_name, s.external_id, s.attributes, s.active, s.created_account, \
+const COLUMNS: &str = "SELECT s.user_id, s.user_name, s.external_id, s.attributes, s.active, \
      s.version, s.created_at, s.updated_at, u.email FROM scim_users s JOIN users u ON u.id = s.user_id \
      WHERE s.org_id = $1 AND u.service_account = 0";
 
@@ -582,7 +582,7 @@ async fn existing_account(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, email: 
         .bind(&id)
         .fetch_one(&mut *conn)
         .await?;
-    if account.is_server_admin != 0 || provision::protection(ctx, &account.id).is_some() {
+    if account.is_server_admin != 0 || ctx.policy.break_glass() == Some(account.id.as_str()) {
         return Err(ScimError::protected("a server admin's account is never linked through SCIM")
             .because("scim.account_protected"));
     }
@@ -656,6 +656,12 @@ pub async fn create(ctx: &Ctx<'_>, body: Value) -> ScimResult<Response> {
         "active": data.active,
     });
     super::audit(&mut tx, ctx, "scim.user_created", ("user", &user_id), summary).await?;
+    if !made {
+        // Linking an existing person's account puts it in this organization: recorded on its own,
+        // with the token and the organization, and counted on the SCIM card.
+        let summary = json!({ "userId": user_id, "userName": data.user_name, "orgId": ctx.org_id });
+        super::audit(&mut tx, ctx, "scim.user_linked", ("user", &user_id), summary).await?;
+    }
     let touched = provision::sync(&mut tx, ctx, &user_id).await?;
     let body = answer(&mut tx, ctx, &user_id).await?;
     crate::db::commit(tx).await?;
@@ -696,7 +702,7 @@ pub async fn delete(ctx: &Ctx<'_>, id: &str) -> ScimResult<Response> {
 }
 
 /// Changes the SCIM user `id` to what `change` makes of it: its attributes, the account's name and
-/// address when SCIM made the account, and deactivating or reactivating. Answers the resource.
+/// address while SCIM owns the account, and deactivating or reactivating. Answers the resource.
 async fn save(ctx: &Ctx<'_>, id: &str, change: impl FnOnce(&UserData) -> ScimResult<UserData>) -> ScimResult<Value> {
     let now = ctx.state.clock.now_ms();
     let mut tx = crate::db::begin(&ctx.state.db).await?;
@@ -707,11 +713,15 @@ async fn save(ctx: &Ctx<'_>, id: &str, change: impl FnOnce(&UserData) -> ScimRes
         .await?;
     crate::authz::lock_org(&mut tx, ctx.org_id).await?;
     let row = load(&mut tx, ctx.org_id, id).await?;
-    if let Some(e) = provision::protection(ctx, id) {
-        return Err(e);
-    }
     let current = UserData::from_row(&row);
     let next = change(&current)?;
+    // Deactivating and reactivating change the account or its membership: never for protected
+    // accounts and roles. Attributes alone only change what SCIM keeps of them.
+    if next.active != current.active
+        && let Some(e) = provision::protection(&mut tx, ctx, id).await?
+    {
+        return Err(e);
+    }
     if next == current {
         let body = answer(&mut tx, ctx, id).await?;
         crate::db::commit(tx).await?;
@@ -731,7 +741,7 @@ async fn save(ctx: &Ctx<'_>, id: &str, change: impl FnOnce(&UserData) -> ScimRes
     if next.emails != current.emails {
         fields.push("emails");
     }
-    if row.created_account != 0 {
+    if super::owner_org(&mut tx, id, ctx.policy.break_glass()).await?.as_deref() == Some(ctx.org_id) {
         update_account(&mut tx, id, &row, &current, &next).await?;
     }
     sqlx::query(
@@ -767,7 +777,8 @@ async fn save(ctx: &Ctx<'_>, id: &str, change: impl FnOnce(&UserData) -> ScimRes
     Ok(body)
 }
 
-/// The name and address of an account SCIM made, after the directory changed them. A new address
+/// The name and address of an account this organization's SCIM still owns, after the directory
+/// changed them. A new address
 /// must not belong to another account, and it is unconfirmed again.
 async fn update_account(
     conn: &mut sqlx::AnyConnection,
@@ -882,7 +893,6 @@ mod tests {
             external_id: None,
             attributes: a.attributes().to_string(),
             active: 1,
-            created_account: 1,
             version: 1,
             created_at: 0,
             updated_at: 0,

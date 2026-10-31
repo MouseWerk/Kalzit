@@ -822,7 +822,9 @@ async fn inspect(
     } else {
         "valid"
     };
-    let accounts = accounts_with(&state, &found.email).await?;
+    // An unused account SCIM made is taken over by a mailed invitation (`scim_claimable`), like a new one.
+    let claimable = found.delivery == "sent" && scim_claimable(&state, &found.email).await?.is_some();
+    let accounts = if claimable { 0 } else { accounts_with(&state, &found.email).await? };
     let signed = signed_in(&state, &info, &headers).await?;
     Ok(Json(InvitationInfo {
         sso: sso_options(&state, &found.org_id).await?,
@@ -897,6 +899,8 @@ pub async fn redeem(tx: &mut sqlx::AnyConnection, found: &Found, user_id: &str, 
             .bind(now)
             .execute(&mut *tx)
             .await?;
+        // In another organization now: no other organization's SCIM owns the account any more.
+        crate::scim::release(&mut *tx, user_id, Some(&found.org_id)).await?;
     }
     if let Some(team_id) = &found.team_id {
         let (in_team,): (i64,) =
@@ -962,6 +966,7 @@ async fn accept(
         redeem(&mut tx, &found, &user.id, now).await?;
         if mailed {
             sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&user.id).execute(&mut *tx).await?;
+            crate::scim::release(&mut tx, &user.id, None).await?;
         }
         if setup_needed && let Some(token) = session::read_cookie(&headers, info.https) {
             session::delete(&mut *tx, &token).await?;
@@ -999,7 +1004,11 @@ async fn accept(
         let answer = super::me(&mut conn, user).await?;
         return Ok(Json(answer).into_response());
     }
-    if accounts_with(&state, &found.email).await? > 0 {
+    // An account SCIM of another organization made for this address, which nobody ever used, never
+    // blocks or captures the invitation: a mailed link proves the mailbox, so its owner takes the
+    // account over (docs/api/scim.md, "Accounts").
+    let claim = if mailed { scim_claimable(&state, &found.email).await? } else { None };
+    if claim.is_none() && accounts_with(&state, &found.email).await? > 0 {
         return Err(account_exists());
     }
     // With password sign-in off for the server or the inviting organization (docs/api/sso.md), a
@@ -1015,24 +1024,50 @@ async fn accept(
     let new_password = body.password.unwrap_or_default();
     password::check_policy(&new_password).map_err(|e| ApiError::validation(e).with_field("password"))?;
     let hash = password::hash(new_password).await?;
-    let user_id = super::new_id();
     let mut tx = crate::db::begin(&state.db).await?;
-    sqlx::query(
-        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, email_confirmed) \
-         VALUES ($1, $2, $3, $4, 0, 0, $5, $6)",
-    )
-    .bind(&user_id)
-    .bind(&found.email)
-    .bind(&name)
-    .bind(&hash)
-    .bind(now)
-    // Only a link that reached the address by mail confirms it.
-    .bind(i64::from(mailed))
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| if is_unique_violation(&e) { account_exists() } else { e.into() })?;
+    let user_id = match &claim {
+        Some(id) => {
+            // Only while it is still unused: no password, unconfirmed, not disabled.
+            let taken = sqlx::query(
+                "UPDATE users SET name = $1, password_hash = $2, email_confirmed = 1 \
+                 WHERE id = $3 AND password_hash IS NULL AND email_confirmed = 0 AND disabled = 0",
+            )
+            .bind(&name)
+            .bind(&hash)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if taken == 0 {
+                return Err(account_exists());
+            }
+            crate::scim::release(&mut tx, id, None).await?;
+            id.clone()
+        }
+        None => {
+            let user_id = super::new_id();
+            sqlx::query(
+                "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, \
+                 email_confirmed) VALUES ($1, $2, $3, $4, 0, 0, $5, $6)",
+            )
+            .bind(&user_id)
+            .bind(&found.email)
+            .bind(&name)
+            .bind(&hash)
+            .bind(now)
+            // Only a link that reached the address by mail confirms it.
+            .bind(i64::from(mailed))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| if is_unique_violation(&e) { account_exists() } else { e.into() })?;
+            user_id
+        }
+    };
     redeem(&mut tx, &found, &user_id, now).await?;
-    let (summary, id) = audit_event(&user_id, true);
+    let (mut summary, id) = audit_event(&user_id, claim.is_none());
+    if claim.is_some() {
+        summary["claimedScimAccount"] = json!(true);
+    }
     let actor = Actor { user_id: &id, info: &info, at_ms: now };
     audit(&mut tx, &actor, Some(&found.org_id), "invitation.accepted", ("invitation", &found.id), summary).await?;
     // The account and its membership first: the sign-in rules below read them, so a second factor
@@ -1070,6 +1105,25 @@ pub async fn clear_expired_links(conn: &mut sqlx::AnyConnection, now: i64) -> Ap
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// The account with `email` when SCIM of an organization made it and nobody ever used it: no
+/// password, no provider identity, unconfirmed, not a server admin or service account. Its address
+/// was only the directory's word, so a mailed invitation's owner may take it over.
+async fn scim_claimable(state: &AppState, email: &str) -> ApiResult<Option<String>> {
+    let mut conn = state.db.acquire().await?;
+    let ids = super::accounts_with_email(&mut conn, email).await?;
+    let [id] = ids.as_slice() else { return Ok(None) };
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM users u WHERE u.id = $1 AND u.password_hash IS NULL AND u.email_confirmed = 0 \
+         AND u.disabled = 0 AND u.is_server_admin = 0 AND u.service_account = 0 \
+         AND NOT EXISTS (SELECT 1 FROM sso_identities i WHERE i.user_id = u.id) \
+         AND EXISTS (SELECT 1 FROM scim_users s WHERE s.user_id = u.id AND s.created_account = 1)",
+    )
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(|_| id.clone()))
 }
 
 fn account_exists() -> ApiError {

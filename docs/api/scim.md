@@ -111,32 +111,58 @@ person's account, its address is confirmed and it is not a server admin or the b
 it then joins the organization through the group mapping. An account that is already a SCIM user
 of this organization answers `409` (`scim.account_linked`), one with an unconfirmed address `409`
 (`scim.email_unconfirmed`), a server admin's `403` (`scim.account_protected`). Without such an
-account a new one is made without a password and with its address unconfirmed (the rules of
-docs/api/mail.md, "Email confirmation"): the person signs in through a provider or sets a password
-with a reset link, which also confirms the address. Single sign-on never links a provider's person
-to an unconfirmed account by address (docs/api/sso.md), so until then such a person signs in with
-the reset link. Service accounts are never linked, listed or changed through SCIM.
+account a new one is made without a password and with its address unconfirmed (see "Accounts"
+below). Service accounts are never linked, listed or changed through SCIM. Linking an existing
+account is recorded as `scim.user_linked` (with the token and the organization) and counted on the
+SCIM card.
 
 **Changing a user.** `PUT` replaces the attributes (an `active` it leaves out stays as it is).
 `PATCH` takes `add`, `replace` and `remove` with or without a path, as Entra ID and Okta send them:
 `op` in any case (`"Replace"`), booleans as JSON or as the strings `"True"` and `"False"`, paths such
 as `active`, `name.givenName`, `emails[type eq "work"].value` and
 `urn:ietf:params:scim:schemas:core:2.0:User:userName`, and an object of attributes without a path
-(`{"op": "replace", "value": {"active": false}}`). SCIM changes the name and address of accounts
-it made; a new address must not belong to another account (`409`, `scim.email_taken`) and is
-unconfirmed again. For a linked account, the directory's name and emails are kept on the SCIM user
-only.
+(`{"op": "replace", "value": {"active": false}}`). SCIM changes the name and address of an
+account only while it owns it (see "Accounts"); a new address must not belong to another account
+(`409`, `scim.email_taken`). For any other account, the directory's name and emails are kept on the
+SCIM user only.
 
-**Deactivating** (`active: false` or `DELETE`): an account SCIM of this organization made, that is
-in no other organization and is not a server admin, is locked: disabled and signed out
-everywhere; its membership stays, so reactivating brings it back as it was. Any other account keeps
-its access elsewhere: its membership in this organization ends (with its teams and grants there;
-what it made stays). The organization's last owner is never deactivated (`409`,
-`scim.last_owner`), and the break-glass admin is never changed through SCIM (`403`,
-`scim.account_protected`). The user stays in SCIM with `active: false`.
+**Deactivating** (`active: false` or `DELETE`): an account this organization's SCIM owns is
+locked: disabled and signed out everywhere; its membership stays, so reactivating brings it back as
+it was. Any other account keeps its access elsewhere: its membership in this organization ends
+(with its teams and grants there; what it made stays). The user stays in SCIM with
+`active: false`.
 
-**Reactivating** (`active: true`) unlocks an account deactivating locked (never one an admin
-disabled) and applies the group mapping again.
+**Protected accounts.** SCIM acts with an admin's permissions, and like the members API it never
+takes away more than it holds: it never deactivates, removes or changes the role of an owner (any
+owner, not only the last), of a member whose custom role holds more than the admin role, of a server
+admin or of the break-glass admin (`403`, `scim.account_protected`). Their attributes may still
+change on the SCIM user.
+
+**Reactivating** (`active: true`) unlocks the account only when SCIM's deactivation locked it and
+nothing changed that since: an admin enabling or disabling the account (Verwaltung > Benutzer)
+takes the lock over, and a later reactivation leaves it as the admin set it. Then the group mapping
+applies again.
+
+### Accounts
+
+An account SCIM made stays in the hands of that organization's SCIM ("owned") only while all of
+these hold: its owner never confirmed the address themselves (by an invitation mail, a password
+link or the confirmation mail), it belongs to no other organization, and it is not a server admin,
+the break-glass admin or a service account. Once one of them no longer holds, the ownership ends
+for good, also if the account later leaves the other organization. Only while it owns the account
+does SCIM change its name and address, lock it on deactivation, and vouch for its address:
+
+- **Single sign-on into that account.** A provider's person whose verified address is the
+  account's links to it at the first sign-in, although the address is unconfirmed, while SCIM owns
+  the account and the SCIM user is active. So Entra ID SCIM with Entra ID OIDC on the same address
+  works at once (docs/api/sso.md, "Accounts").
+- Nothing else takes SCIM's word for the address: the account stays unconfirmed, it cannot be added
+  to another organization by its address (`mail.email_unconfirmed`), and it is never linked by
+  another organization's SCIM.
+- **No squatting.** An account SCIM made that nobody ever used (no password, no provider identity,
+  unconfirmed) never blocks a mailed invitation of another organization: the invited person takes
+  it over, sets name and password, the address counts as confirmed, and SCIM's ownership ends.
+  Signing in through a provider that puts the person into another organization ends it too.
 
 ### Groups
 
@@ -173,8 +199,8 @@ user:
 - "Kalzit ergänzt": the group gives a minimum role; admins may give more.
 - A user without a mapped group gets the server's default role (Verwaltung > Anmeldung, "Personen
   ohne passende Gruppe") in this organization, or no membership when that rule refuses.
-- Owners are never changed, so the organization never loses its last owner; the break-glass admin
-  is never changed.
+- Owners, members whose role holds more than an admin's, server admins and the break-glass admin
+  are never changed.
 
 A SCIM directory only ever changes memberships in its own organization; a group mapping rule for
 another organization never applies to it.
@@ -198,6 +224,7 @@ interface ScimStatus {
     since: number;           // the start of the counted span: `since` (the viewer's start of day), within 31 days; 24 hours ago by default
     created: number;         // users created since then
     deactivated: number;     // users deactivated since then
+    linked: number;          // existing accounts linked to new SCIM users since then
     groups: number;          // active SCIM groups
     mappedGroups: number;    // of them, named by a group mapping rule of this organization
     lastError: { at: number; action: string; reason: string | null; status: number | null } | null;  // last 30 days
@@ -215,6 +242,7 @@ Entries of SCIM changes name the SCIM token (`actorTokenId`, `actorTokenPrefix`)
 | Action | When |
 |---|---|
 | `scim.user_created` | a user was created (`accountCreated`: a new account was made, else an account was linked) |
+| `scim.user_linked` | a new user was linked to an existing account (`userId`, `orgId`) |
 | `scim.user_updated` | a user's attributes changed (`fields`) |
 | `scim.user_deactivated` | `active: false` or `DELETE` (`scope`: `account` locked, or `organization` membership ended) |
 | `scim.user_reactivated` | `active: true` again |
@@ -231,10 +259,11 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | Reason | Status | When |
 |---|---|---|
 | `scim.disabled` | `403` | SCIM is turned off for the organization |
-| `scim.body_invalid` | `400 invalidSyntax` | the body is not a JSON object, not JSON, or a PATCH without valid `Operations` |
+| `scim.body_invalid` | `400 invalidSyntax`, `413` | the body is not a JSON object, not JSON, larger than 1 MiB, or a PATCH without valid `Operations` |
 | `scim.filter_unsupported` | `400 invalidFilter` | a filter other than `eq` comparisons of the supported attributes joined with `and` |
 | `scim.path_invalid` | `400 invalidPath`, `noTarget` | a PATCH path Kalzit cannot read, or `remove` without a path |
-| `scim.value_invalid` | `400 invalidValue`, `tooMany` | a value of the wrong type, too long (256 characters, 254 for addresses), with control characters, or too many emails or members |
+| `scim.value_invalid` | `400 invalidValue`, `tooMany` | a value of the wrong type, too long (256 characters, 254 for addresses), with control characters, or more than 20 emails |
+| `scim.too_many` | `400 tooMany` | a request names more than 10,000 members (all operations of a PATCH together), or a group would have more than 50,000 |
 | `scim.read_only` | `400 mutability` | a change of a user's `groups` |
 | `scim.user_name_missing` | `400 invalidValue`, `mutability` | a user without `userName`, or removing it |
 | `scim.user_name_taken` | `409 uniqueness` | another user of the organization has this `userName` |
@@ -242,8 +271,7 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | `scim.email_taken` | `409 uniqueness` | another account (or several, or a service account) has the address |
 | `scim.email_unconfirmed` | `409 uniqueness` | the account with the address has not confirmed it |
 | `scim.account_linked` | `409 uniqueness` | the account with the address is already a SCIM user of this organization |
-| `scim.account_protected` | `403` | a server admin's account (linking) or the break-glass admin (any change) |
-| `scim.last_owner` | `409` | deactivating the organization's last owner |
+| `scim.account_protected` | `403` | linking a server admin's account, or deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |
 | `scim.group_name_missing` | `400 invalidValue`, `mutability` | a group without `displayName`, or removing it |
 | `scim.group_name_taken` | `409 uniqueness` | another active group of the organization has this `displayName` |
 | `scim.member_unknown` | `400 invalidValue` | a member that is not a SCIM user of this organization |

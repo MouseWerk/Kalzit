@@ -1,15 +1,16 @@
 //! What a SCIM change does to accounts and memberships: the group mapping of the organization,
 //! deactivating and reactivating, and the accounts SCIM never touches.
 //!
-//! Deactivating (`active: false` or a DELETE) never deletes. An account SCIM of this organization
-//! made, that belongs to no other organization and is not a server admin, is locked (disabled and
-//! signed out everywhere); its membership stays, so it comes back as it was. Any other account
-//! keeps its access elsewhere: only its membership in this organization ends. The last owner of
-//! the organization is never deactivated, and the break-glass admin is never changed at all.
+//! Deactivating (`active: false` or a DELETE) never deletes. An account this organization's SCIM
+//! still owns (`super::owner_org`) is locked (disabled and signed out everywhere); its membership
+//! stays, so it comes back as it was. Any other account keeps its access elsewhere: only its
+//! membership in this organization ends. SCIM never deactivates, removes or changes the role of an
+//! owner, a member whose role holds more than an admin's, a server admin or the break-glass admin
+//! (the members API's rule: nobody takes away more than they hold, and the token holds an admin's
+//! permissions).
 
 use std::collections::BTreeSet;
 
-use axum::http::StatusCode;
 use serde_json::json;
 
 use super::{Ctx, ScimError, ScimResult};
@@ -39,14 +40,55 @@ impl Policy {
     pub fn none() -> Self {
         Self { break_glass: None, unmapped: Unmapped { refuse: true, org_id: None, role: String::new() } }
     }
+
+    /// The break-glass admin's id, if one is set.
+    pub fn break_glass(&self) -> Option<&str> {
+        self.break_glass.as_deref()
+    }
 }
 
-/// Why SCIM may not change an account, or `None`. Service accounts are never SCIM users at all
-/// (`users`), so they are not asked about here.
-pub fn protection(ctx: &Ctx<'_>, user_id: &str) -> Option<ScimError> {
-    (ctx.policy.break_glass.as_deref() == Some(user_id)).then(|| {
-        ScimError::protected("the break-glass admin is never changed through SCIM").because("scim.account_protected")
-    })
+fn protected(detail: &str) -> ScimError {
+    ScimError::protected(detail.to_string()).because("scim.account_protected")
+}
+
+/// Why SCIM may not change `user_id`'s account or role, or `None`: the break-glass admin, a server
+/// admin, a service account, or a member of this organization whose role holds more than an
+/// admin's (owners always). Read inside the change's transaction.
+pub async fn protection(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, user_id: &str) -> ScimResult<Option<ScimError>> {
+    if ctx.policy.break_glass.as_deref() == Some(user_id) {
+        return Ok(Some(protected("the break-glass admin is never changed through SCIM")));
+    }
+    let account: Option<(i64, i64)> =
+        sqlx::query_as("SELECT is_server_admin, service_account FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    match account {
+        Some((admin, _)) if admin != 0 => {
+            return Ok(Some(protected("a server admin's account and roles are never changed through SCIM")));
+        }
+        Some((_, service)) if service != 0 => {
+            return Ok(Some(protected("service accounts are never changed through SCIM")));
+        }
+        _ => {}
+    }
+    let role: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
+        .bind(ctx.org_id)
+        .bind(user_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if let Some((role,)) = role {
+        let held = crate::authz::resolve_role(&mut *conn, ctx.org_id, &role).await?.map(|r| r.permissions);
+        let admin = crate::authz::BuiltinRole::Admin.permissions();
+        let beyond = role == crate::authz::BuiltinRole::Owner.as_str()
+            || held.is_none_or(|held| crate::authz::ensure_holds(&admin, &held).is_err());
+        if beyond {
+            return Ok(Some(protected(
+                "this member's role holds more than an admin's; SCIM never removes or changes it",
+            )));
+        }
+    }
+    Ok(None)
 }
 
 /// The group names of `user_id` in this organization: the `displayName` and `externalId` of each
@@ -81,7 +123,7 @@ pub async fn sync(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, user_id: &str) 
     .bind(user_id)
     .fetch_optional(&mut *conn)
     .await?;
-    if active.is_none_or(|(a,)| a == 0) || protection(ctx, user_id).is_some() {
+    if active.is_none_or(|(a,)| a == 0) || protection(&mut *conn, ctx, user_id).await?.is_some() {
         return Ok(BTreeSet::new());
     }
     let groups = group_names(&mut *conn, ctx.org_id, user_id).await?;
@@ -104,15 +146,13 @@ pub async fn sync(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, user_id: &str) 
 /// The row of a SCIM user as deactivating and reactivating need it.
 #[derive(sqlx::FromRow)]
 struct Link {
-    created_account: i64,
     locked_account: i64,
     disabled: i64,
-    is_server_admin: i64,
 }
 
 async fn link(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str) -> ScimResult<Link> {
     sqlx::query_as(
-        "SELECT s.created_account, s.locked_account, u.disabled, u.is_server_admin FROM scim_users s \
+        "SELECT s.locked_account, u.disabled FROM scim_users s \
          JOIN users u ON u.id = s.user_id WHERE s.org_id = $1 AND s.user_id = $2",
     )
     .bind(org_id)
@@ -130,33 +170,19 @@ pub async fn deactivate(
     ctx: &Ctx<'_>,
     user_id: &str,
 ) -> ScimResult<(&'static str, BTreeSet<String>)> {
-    if let Some(e) = protection(ctx, user_id) {
+    if let Some(e) = protection(&mut *conn, ctx, user_id).await? {
         return Err(e);
     }
     let link = link(&mut *conn, ctx.org_id, user_id).await?;
-    let role: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
+    let member: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(ctx.org_id)
         .bind(user_id)
         .fetch_optional(&mut *conn)
         .await?;
-    if role.as_ref().is_some_and(|(r,)| r == "owner") {
-        let others = crate::authz::lock_owners(&mut *conn, ctx.org_id, user_id).await?;
-        if others == 0 {
-            return Err(ScimError::new(
-                StatusCode::CONFLICT,
-                "this person is the organization's last owner; make someone else owner first",
-            )
-            .because("scim.last_owner"));
-        }
-    }
-    let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1 AND org_id <> $2")
-        .bind(user_id)
-        .bind(ctx.org_id)
-        .fetch_one(&mut *conn)
-        .await?;
+    let owned = super::owner_org(&mut *conn, user_id, ctx.policy.break_glass()).await?.as_deref() == Some(ctx.org_id);
     let now = ctx.state.clock.now_ms();
     let mut touched = BTreeSet::new();
-    let scope = if link.created_account != 0 && elsewhere == 0 && link.is_server_admin == 0 {
+    let scope = if owned {
         if link.disabled == 0 {
             sqlx::query("UPDATE users SET disabled = 1 WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
             // Signed out everywhere at once, like an account an admin disables.
@@ -170,7 +196,7 @@ pub async fn deactivate(
         }
         "account"
     } else {
-        if role.is_some() {
+        if member.is_some() {
             crate::routes::members::remove_membership(&mut *conn, ctx.org_id, user_id).await?;
             touched.insert(ctx.org_id.to_string());
         }
@@ -185,12 +211,10 @@ pub async fn deactivate(
     Ok((scope, touched))
 }
 
-/// Reactivates `user_id`: unlocks the account when deactivating locked it (never one an admin
-/// disabled), then applies the group mapping again.
+/// Reactivates `user_id`: unlocks the account when deactivating locked it and nothing else locked
+/// it since (an admin's enable or disable clears SCIM's lock, `routes::admin_users`), then applies
+/// the group mapping again.
 pub async fn reactivate(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, user_id: &str) -> ScimResult<BTreeSet<String>> {
-    if let Some(e) = protection(ctx, user_id) {
-        return Err(e);
-    }
     let link = link(&mut *conn, ctx.org_id, user_id).await?;
     if link.locked_account != 0 {
         sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(user_id).execute(&mut *conn).await?;

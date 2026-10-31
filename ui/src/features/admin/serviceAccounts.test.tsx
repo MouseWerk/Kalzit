@@ -138,7 +138,9 @@ describe("service accounts", () => {
     expect(within(card).getByRole("button", { name: "Copy the endpoint" })).toBeTruthy();
     const activity = within(card).getByRole("list", { name: "SCIM activity" });
     expect(within(activity).getByText("3 / 1")).toBeTruthy();
-    expect(within(activity).getByText("created / deactivated")).toBeTruthy();
+    expect(
+      within(activity).getByText("created / deactivated · 2 existing accounts linked"),
+    ).toBeTruthy();
     expect(within(activity).getByText("7")).toBeTruthy();
     expect(within(activity).getByText("5 of them mapped")).toBeTruthy();
     expect(within(activity).getByText("none in 30 days")).toBeTruthy();
@@ -153,13 +155,13 @@ describe("service accounts", () => {
         fake.areas.serviceAccounts.scimStats.lastError = {
           at: Date.now() - 60_000,
           action: "scim.request_refused",
-          reason: "scim.last_owner",
+          reason: "scim.account_protected",
           status: 409,
         };
       },
     });
     const card = await screen.findByRole("region", { name: "SCIM provisioning" });
-    expect(await within(card).findByText("The last owner of the organization")).toBeTruthy();
+    expect(await within(card).findByText("A protected account")).toBeTruthy();
     expect(server.calls.some((call) => /\/scim\?since=\d+$/.test(call.path))).toBe(true);
   });
 

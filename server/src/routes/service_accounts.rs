@@ -756,6 +756,8 @@ pub struct ScimStats {
     since: i64,
     created: i64,
     deactivated: i64,
+    /// Existing accounts linked to new SCIM users (`scim.user_linked`).
+    linked: i64,
     /// Active SCIM groups, and those of them a group mapping of this organization names.
     groups: i64,
     mapped_groups: i64,
@@ -801,6 +803,7 @@ async fn load_scim_status(
     };
     let (created,) = count("scim.user_created").await?;
     let (deactivated,) = count("scim.user_deactivated").await?;
+    let (linked,) = count("scim.user_linked").await?;
     let (groups,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM scim_groups WHERE org_id = $1 AND deactivated_at IS NULL")
             .bind(org_id)
@@ -838,7 +841,7 @@ async fn load_scim_status(
         enabled: crate::scim::enabled(db, org_id).await?,
         endpoint: crate::scim::base_url(state, info, org_id),
         token: current_scim(db, org_id).await?,
-        stats: ScimStats { since, created, deactivated, groups, mapped_groups, last_error },
+        stats: ScimStats { since, created, deactivated, linked, groups, mapped_groups, last_error },
     })
 }
 

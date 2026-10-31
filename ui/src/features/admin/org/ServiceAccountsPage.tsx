@@ -1096,7 +1096,9 @@ function ScimCard({ orgId }: { orgId: string }) {
                   })}
                 </span>
                 <span className="admin-sa-stat__note">
-                  {t("admin.serviceAccounts.scimTodayNote")}
+                  {status.stats.linked > 0
+                    ? t("admin.serviceAccounts.scimTodayNoteLinked", { count: status.stats.linked })
+                    : t("admin.serviceAccounts.scimTodayNote")}
                 </span>
               </li>
               <li className="admin-sa-stat">
@@ -1182,7 +1184,7 @@ const SCIM_REASONS = [
   "scim.email_unconfirmed",
   "scim.account_linked",
   "scim.account_protected",
-  "scim.last_owner",
+  "scim.too_many",
   "scim.group_name_missing",
   "scim.group_name_taken",
   "scim.member_unknown",

@@ -50,7 +50,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route(&format!("{PREFIX}/{{*rest}}"), axum::routing::any(handle))
         .route(PREFIX, axum::routing::any(|| async { ScimError::not_found().into_response() }))
-        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
 /// The organization's base URL for directories: `server.public_url` (or the request's host) with
@@ -265,7 +264,7 @@ async fn handle(
     Query(query): Query<Vec<(String, String)>>,
     method: Method,
     headers: HeaderMap,
-    body: Bytes,
+    body: axum::body::Body,
 ) -> Response {
     let segments: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
     let (org_id, resource) = match segments.as_slice() {
@@ -275,6 +274,12 @@ async fn handle(
     let caller = match sign_in(&state, &info, &headers, &org_id).await {
         Ok(caller) => caller,
         Err(e) => return e.into_response(),
+    };
+    // Read with its limit here, so a body that is too large is answered as a SCIM message.
+    let Ok(body) = axum::body::to_bytes(body, MAX_BODY_BYTES).await else {
+        return ScimError::new(StatusCode::PAYLOAD_TOO_LARGE, "the body is larger than 1 MiB")
+            .because("scim.body_invalid")
+            .into_response();
     };
     let writes = !matches!(method, Method::GET | Method::HEAD);
     let policy = if writes {
@@ -344,6 +349,78 @@ async fn sign_in(state: &AppState, info: &RequestInfo, headers: &HeaderMap, org_
     }
     caller.record_use(state, info);
     Ok(caller)
+}
+
+/// The organization whose SCIM still owns `user_id`, an account it made: only while the account's
+/// owner never confirmed its address themselves, it belongs to no other organization, and it is
+/// not a server admin, the break-glass admin or a service account. Only then may that SCIM change
+/// the account's name and address, lock it, and vouch for its address at a single sign-on
+/// (docs/api/scim.md, "Accounts"). Once one of these no longer holds, the ownership ends for good
+/// (`release`). Inside a write transaction.
+pub async fn owner_org(
+    conn: &mut sqlx::AnyConnection,
+    user_id: &str,
+    break_glass: Option<&str>,
+) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT s.org_id, u.email_confirmed, u.is_server_admin, u.service_account FROM scim_users s \
+         JOIN users u ON u.id = s.user_id WHERE s.user_id = $1 AND s.created_account = 1 \
+         ORDER BY s.created_at LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((org_id, confirmed, server_admin, service)) = row else { return Ok(None) };
+    let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1 AND org_id <> $2")
+        .bind(user_id)
+        .bind(&org_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    let owned = confirmed == 0 && server_admin == 0 && service == 0 && elsewhere == 0 && break_glass != Some(user_id);
+    if !owned {
+        release(conn, user_id, None).await?;
+        return Ok(None);
+    }
+    Ok(Some(org_id))
+}
+
+/// Whether a single sign-on may link a provider's person to the unconfirmed account `user_id` by
+/// its address: SCIM made it, still owns it (`owner_org`) and the SCIM user is active. This counts
+/// for that sign-in only; the address stays unconfirmed for everything else.
+pub async fn vouches_for_sign_in(
+    conn: &mut sqlx::AnyConnection,
+    user_id: &str,
+    break_glass: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let Some(org_id) = owner_org(&mut *conn, user_id, break_glass).await? else { return Ok(false) };
+    let active: Option<(i64,)> = sqlx::query_as("SELECT active FROM scim_users WHERE org_id = $1 AND user_id = $2")
+        .bind(&org_id)
+        .bind(user_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(active.is_some_and(|(a,)| a != 0))
+}
+
+/// Ends SCIM's ownership of `user_id` for good (see `owner_org`): its owner confirmed the address,
+/// it joined another organization than `keep_org`, or it became a server admin. The SCIM user
+/// stays; only the account is out of SCIM's hands.
+pub async fn release(conn: &mut sqlx::AnyConnection, user_id: &str, keep_org: Option<&str>) -> Result<(), sqlx::Error> {
+    match keep_org {
+        Some(org_id) => {
+            sqlx::query("UPDATE scim_users SET created_account = 0 WHERE user_id = $1 AND org_id <> $2")
+                .bind(user_id)
+                .bind(org_id)
+                .execute(conn)
+                .await?;
+        }
+        None => {
+            sqlx::query("UPDATE scim_users SET created_account = 0 WHERE user_id = $1")
+                .bind(user_id)
+                .execute(conn)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether the organization's SCIM switch is on (no row: on).

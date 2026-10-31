@@ -163,6 +163,8 @@ async fn confirm(
         return Err(invalid());
     }
     sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&user_id).execute(&mut *tx).await?;
+    // The owner confirmed the address themselves: SCIM no longer owns the account.
+    crate::scim::release(&mut tx, &user_id, None).await?;
     let event = crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: Some(&user_id),

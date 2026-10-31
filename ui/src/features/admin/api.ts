@@ -311,6 +311,8 @@ export interface ScimStats {
   since: number;
   created: number;
   deactivated: number;
+  /** Existing accounts linked to new SCIM users. */
+  linked: number;
   groups: number;
   mappedGroups: number;
   lastError: ScimLastError | null;
@@ -334,6 +336,7 @@ const isScimStats = shape<ScimStats>({
   since: isNumber,
   created: isNumber,
   deactivated: isNumber,
+  linked: isNumber,
   groups: isNumber,
   mappedGroups: isNumber,
   lastError: nullable(isScimLastError),

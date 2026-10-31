@@ -80,6 +80,7 @@ export function serviceAccountsFake(): FakeArea<FakeServiceAccountsState> {
       since: SA_AT - 9 * 3_600_000,
       created: 3,
       deactivated: 1,
+      linked: 2,
       groups: 7,
       mappedGroups: 5,
       lastError: null,

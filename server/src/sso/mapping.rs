@@ -262,6 +262,8 @@ async fn apply_to(
                     .bind(now)
                     .execute(&mut *conn)
                     .await?;
+                // In another organization now: no other organization's SCIM owns the account.
+                crate::scim::release(&mut *conn, user_id, Some(&org.org_id)).await?;
                 changes.push(json!({ "orgId": org.org_id, "added": org.role }));
                 touched.insert(org.org_id.clone());
             }

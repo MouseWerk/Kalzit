@@ -196,6 +196,7 @@ mod tests {
         "scim.turned_on",
         "scim.user_created",
         "scim.user_deactivated",
+        "scim.user_linked",
         "scim.user_reactivated",
         "scim.user_updated",
     ];
