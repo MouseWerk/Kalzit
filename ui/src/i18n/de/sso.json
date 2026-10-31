@@ -64,7 +64,7 @@
   "sso.ldap.emailAttribute": "E-Mail-Attribut",
   "sso.ldap.nameAttribute": "Name-Attribut",
   "sso.ldap.trustEmail": "E-Mail-Adressen des Verzeichnisses vertrauen",
-  "sso.ldap.trustEmailHint": "Ein vorhandenes Konto mit derselben, bestätigten Adresse wird bei der ersten Anmeldung verknüpft.",
+  "sso.ldap.trustEmailHint": "Verknüpft Personen aus dem LDAP-Verzeichnis mit einem vorhandenen lokalen Konto, das dieselbe bestätigte Adresse hat. Nur sicher, wenn niemand sein E-Mail-Attribut im LDAP-Verzeichnis selbst ändern kann.",
   "sso.ldap.certificate": "Zertifikat",
   "sso.ldap.certificate.system": "Zertifikatspeicher des Systems",
   "sso.ldap.certificate.custom": "Eigene CA (PEM)",

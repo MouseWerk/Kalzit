@@ -161,7 +161,7 @@ async fn read_directory(state: &AppState, provider: &ProviderRow, config: &LdapC
         .await
         .map_err(|e| LdapFail::Other(e.message))?
         .ok_or_else(|| LdapFail::Other("the provider has no bind password".into()))?;
-    let connector = state.sso.ldap(state);
+    let connector = state.sso.ldap_sync(state);
     let mut dir = ldap::service(&connector, config, &secret).await?;
     let outcome = read_with(&mut dir, state, provider, config).await;
     dir.close().await;
@@ -316,7 +316,7 @@ pub async fn run(state: &AppState, provider: &ProviderRow, trigger: Trigger) -> 
         .bind(&provider.id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query(
+    let inserted = sqlx::query(
         "INSERT INTO ldap_sync_runs (id, provider_id, trigger_kind, status, started_at, threshold) \
          VALUES ($1, $2, $3, 'running', $4, $5)",
     )
@@ -326,7 +326,12 @@ pub async fn run(state: &AppState, provider: &ProviderRow, trigger: Trigger) -> 
     .bind(now)
     .bind(i64::from(config.sync_threshold))
     .execute(&mut *tx)
-    .await?;
+    .await;
+    // Another server started one at the same moment (`ldap_sync_runs_one_running`).
+    match inserted {
+        Err(e) if crate::routes::support::is_unique_violation(&e) => return Err(running()),
+        other => other?,
+    };
     crate::db::commit(tx).await?;
     let outcome = sync_now(state, provider, &config, &run_id, &trigger).await;
     if let Err(e) = outcome {
@@ -575,14 +580,17 @@ async fn update(
             .await?;
         changed = true;
     }
-    // A new address only when it is valid and no other account has it.
+    // A new address only when it is valid and no other account has it; it counts as confirmed only
+    // when the provider trusts the directory's addresses (`trustEmail`), as for a new account.
     if let Some(email) = entry.email.as_deref().and_then(|e| crate::routes::normalize_email(e).ok())
         && !crate::routes::same_email(&email, &account.email)
     {
+        let trusted = provider.ldap().is_ok_and(|c| c.trust_email);
         let others = crate::routes::all_accounts_with_email(&mut tx, &email).await?;
         if others.iter().all(|(id, _)| id == &account.user_id) {
-            sqlx::query("UPDATE users SET email = $1 WHERE id = $2")
+            sqlx::query("UPDATE users SET email = $1, email_confirmed = $2 WHERE id = $3")
                 .bind(&email)
+                .bind(i64::from(trusted))
                 .bind(&account.user_id)
                 .execute(&mut *tx)
                 .await?;

@@ -48,6 +48,8 @@ pub struct Sso {
     policy: Arc<TargetPolicy>,
     /// Connections to directories at once (`ldap::MAX_CONNECTIONS`).
     ldap_limit: Arc<tokio::sync::Semaphore>,
+    /// Connections of syncs (`ldap::MAX_SYNC_CONNECTIONS`), apart from those of sign-ins.
+    ldap_sync_limit: Arc<tokio::sync::Semaphore>,
     /// Providers whose sync runs on this server now.
     pub syncing: Mutex<std::collections::HashSet<String>>,
 }
@@ -63,6 +65,7 @@ impl Sso {
             local_limiter: RateLimiter::new(LOCAL_ATTEMPTS, LOCAL_WINDOW_SECS, Capacity::SMALL),
             policy: Arc::new(TargetPolicy::new(&config.paths.data_dir, &config.database_url(), &[], &[])),
             ldap_limit: Arc::new(tokio::sync::Semaphore::new(ldap::MAX_CONNECTIONS)),
+            ldap_sync_limit: Arc::new(tokio::sync::Semaphore::new(ldap::MAX_SYNC_CONNECTIONS)),
             syncing: Mutex::default(),
         }
     }
@@ -86,6 +89,16 @@ impl Sso {
     }
 
     /// Connections to directories (`ldap::Connector`), under the same target rules.
+    /// Connections of the directory sync, with a budget of their own so a sync never keeps people
+    /// from signing in.
+    pub fn ldap_sync(&self, state: &AppState) -> ldap::Connector {
+        ldap::Connector {
+            policy: self.policy.clone(),
+            own_ports: Self::own_ports(state),
+            limit: self.ldap_sync_limit.clone(),
+        }
+    }
+
     pub fn ldap(&self, state: &AppState) -> ldap::Connector {
         ldap::Connector {
             policy: self.policy.clone(),

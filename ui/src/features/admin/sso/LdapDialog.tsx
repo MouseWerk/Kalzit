@@ -142,7 +142,7 @@ function LdapForm({
   const [nestedGroups, setNestedGroups] = useState(ldap?.nestedGroups ?? false);
   const [emailAttribute, setEmailAttribute] = useState(ldap?.emailAttribute ?? "mail");
   const [nameAttribute, setNameAttribute] = useState(ldap?.nameAttribute ?? "displayName");
-  const [trustEmail, setTrustEmail] = useState(ldap?.trustEmail ?? true);
+  const [trustEmail, setTrustEmail] = useState(ldap?.trustEmail ?? false);
   const [createAccounts, setCreateAccounts] = useState(provider?.createAccounts ?? true);
   const [syncSchedule, setSyncSchedule] = useState<LdapSchedule>(ldap?.syncSchedule ?? "daily");
   const [syncHour, setSyncHour] = useState(String(ldap?.syncHour ?? 2));

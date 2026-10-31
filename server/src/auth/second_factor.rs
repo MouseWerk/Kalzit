@@ -1267,7 +1267,8 @@ pub async fn load_pending(db: &AnyPool, headers: &HeaderMap, secure: bool, now: 
     let pending: Option<Pending> = sqlx::query_as(
         "SELECT c.token_hash, c.user_id, u.email, u.name, u.is_server_admin, c.setup, c.forget_browser, \
          c.password_fingerprint, c.expires_at FROM sign_in_challenges c JOIN users u ON u.id = c.user_id \
-         WHERE c.token_hash = $1 AND u.disabled = 0",
+         WHERE c.token_hash = $1 AND (u.disabled = 0 OR (c.first_step = 'directory' AND EXISTS \
+         (SELECT 1 FROM ldap_deactivations d WHERE d.user_id = u.id)))",
     )
     .bind(session::hash_token(&token))
     .fetch_optional(db)
@@ -1309,11 +1310,23 @@ pub async fn take_pending(conn: &mut sqlx::AnyConnection, pending: &Pending, now
         .bind(&pending.user_id)
         .fetch_optional(&mut *conn)
         .await?;
-    let Some((password_hash, disabled)) = row else { return Ok(None) };
+    let Some((password_hash, mut disabled)) = row else { return Ok(None) };
     let same_password = match &pending.password_fingerprint {
         Some(fingerprint) => password_fingerprint(password_hash.as_deref()).as_deref() == Some(fingerprint.as_str()),
         None => true,
     };
+    // A directory confirmed an account its sync had disabled (`sso::directory::finish`): it is
+    // enabled now that the second step succeeded too, never before.
+    if disabled != 0 && first_step == "directory" && same_password {
+        let synced: Option<(String,)> = sqlx::query_as("SELECT provider_id FROM ldap_deactivations WHERE user_id = $1")
+            .bind(&pending.user_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if let Some((provider_id,)) = synced {
+            crate::sso::directory::enable_sync_disabled(conn, None, &pending.user_id, &provider_id, now).await?;
+            disabled = 0;
+        }
+    }
     Ok((disabled == 0 && same_password).then_some(Taken { password_hash, first_step }))
 }
 

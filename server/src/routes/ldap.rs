@@ -225,7 +225,7 @@ fn validate(body: LdapBody) -> ApiResult<Valid> {
         nested_groups: flavor == Flavor::Ad && l.nested_groups.unwrap_or(false),
         email_attribute: attribute(l.email_attribute, "mail", "emailAttribute")?,
         name_attribute: attribute(l.name_attribute, default_name, "nameAttribute")?,
-        trust_email: l.trust_email.unwrap_or(true),
+        trust_email: l.trust_email.unwrap_or(false),
         sync_schedule,
         sync_hour: sync_hour as u8,
         sync_threshold: sync_threshold as u8,
@@ -266,7 +266,7 @@ async fn form_password(
     Err(field_error(
         "bindPassword",
         "ldap.bind_password_required",
-        "enter the bind password: a new provider, or a changed URL or bind DN, needs it",
+        "enter the bind password: a new provider, or a changed URL, bind DN, encryption or certificate, needs it",
     ))
 }
 

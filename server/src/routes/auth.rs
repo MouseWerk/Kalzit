@@ -87,6 +87,17 @@ pub async fn login(
     login_with(state, info, headers, req, false).await
 }
 
+/// The form a typed login is counted and looked up in: trimmed and lowercased, and a Windows
+/// `DOMAIN\name` as `name` (as the directory search reads it, `sso::ldap::LdapConfig::login_filter`),
+/// so every spelling of one login shares its budgets. No email address has a backslash.
+pub fn login_key(typed: &str) -> String {
+    let login = typed.trim().to_lowercase();
+    match login.rsplit_once('\\') {
+        Some((_, name)) => name.to_string(),
+        None => login,
+    }
+}
+
 /// The password sign-in; `break_glass_form` for the break-glass form (`POST /auth/login/local`,
 /// docs/api/sso.md), the only one the break-glass admin may use while password sign-in is off.
 pub async fn login_with(
@@ -99,7 +110,7 @@ pub async fn login_with(
     let now = state.clock.now_ms();
     // No account can have such an email or password, so these are refused before they cost a
     // hash or a rate-limit entry.
-    let email = req.email.trim().to_lowercase();
+    let email = login_key(&req.email);
     if email.chars().count() > MAX_EMAIL_CHARS || req.password.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(invalid_credentials());
     }
@@ -208,7 +219,21 @@ pub async fn login_with(
     let mut directory_unreachable = false;
     if !break_glass_form {
         use crate::sso::directory::{self, Attempt};
-        match directory::attempt(&state, &info, req.email.trim(), &req.password).await? {
+        // The directory entry the login names has a budget of its own as well, shared by every
+        // spelling of the login that finds it (name, address, UPN).
+        let entry_counted: std::sync::Mutex<Vec<(String, crate::auth::ratelimit::Counted)>> = Default::default();
+        let charge = |key: &str| match state.account_limiter.try_count(key, &network, mono) {
+            Ok(Some(counted)) => {
+                entry_counted
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((key.to_string(), counted));
+                true
+            }
+            Ok(None) => true,
+            Err(_) => false,
+        };
+        match directory::attempt(&state, &info, req.email.trim(), &req.password, &charge).await? {
             Attempt::Confirmed { provider, person } => {
                 state.pair_limiter.reset(&pair_key);
                 state.login_limiter.refund(&ip_key, &ip_counted);
@@ -218,8 +243,12 @@ pub async fn login_with(
                 if let Some((limiter, key, counted)) = &counted_in {
                     limiter.refund(key, counted);
                 }
+                for (key, counted) in entry_counted.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter() {
+                    state.account_limiter.refund(key, counted);
+                }
                 return directory::finish(&state, &info, &headers, &provider, &person, req.forget_browser).await;
             }
+            Attempt::Limited => return Err(refuse(window)),
             Attempt::NotConfirmed { unreachable } => directory_unreachable = unreachable,
         }
     }
@@ -241,7 +270,6 @@ pub async fn login_with(
         at_ms: now,
     };
     let known_id = row.as_ref().map(|r| r.id.clone());
-    let local_account = known_id.is_some();
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
         // The id of an existing account is recorded, never the email that was typed.
@@ -255,12 +283,12 @@ pub async fn login_with(
         if let Err(e) = recorded {
             tracing::warn!(client = %info.client_ip, "recording a failed sign-in in the audit log failed: {e}");
         }
-        // No local account matched either: say that a directory was not reachable rather than
-        // blaming the password.
-        if directory_unreachable && !local_account {
+        // A directory could not be asked: said whether or not a local account has this login, so
+        // the answer tells nothing about local accounts.
+        if directory_unreachable {
             return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "directory_unreachable",
+                "busy",
                 "the directory cannot be reached, try again in a moment",
             )
             .because("ldap.directory_unreachable"));

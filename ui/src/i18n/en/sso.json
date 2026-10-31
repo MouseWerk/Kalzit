@@ -64,7 +64,7 @@
   "sso.ldap.emailAttribute": "Email attribute",
   "sso.ldap.nameAttribute": "Name attribute",
   "sso.ldap.trustEmail": "Trust the directory’s email addresses",
-  "sso.ldap.trustEmailHint": "An existing account with the same, confirmed address is linked at the first sign-in.",
+  "sso.ldap.trustEmailHint": "Links people from the LDAP directory to an existing local account with the same confirmed address. Only safe when nobody can change their own mail attribute in the LDAP directory.",
   "sso.ldap.certificate": "Certificate",
   "sso.ldap.certificate.system": "System certificate store",
   "sso.ldap.certificate.custom": "Own CA (PEM)",

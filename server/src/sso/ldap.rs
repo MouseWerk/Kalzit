@@ -22,6 +22,10 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const OP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Connections to all directories at once; more wait `CONNECTION_WAIT`, then fail as busy.
 pub const MAX_CONNECTIONS: usize = 16;
+/// Connections of syncs at once, apart from `MAX_CONNECTIONS`.
+pub const MAX_SYNC_CONNECTIONS: usize = 4;
+/// Reading every entry of a sync (`Directory::search_all`) may take this long in all.
+pub const SEARCH_ALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const CONNECTION_WAIT: Duration = Duration::from_secs(5);
 /// The field of the bind password among a provider's secrets.
 pub const BIND_PASSWORD: &str = "bind_password";
@@ -194,7 +198,13 @@ impl LdapConfig {
 
     /// Whether `other` connects in the same way, so a stored bind password may go with it.
     pub fn same_connection(&self, other: &LdapConfig) -> bool {
-        self.url == other.url && self.bind_dn == other.bind_dn
+        // Also the encryption and the certificates trusted: a weaker connection must bring the
+        // password again, so it never goes out over a connection it was not given for.
+        self.url == other.url
+            && self.bind_dn == other.bind_dn
+            && self.encryption == other.encryption
+            && self.certificate == other.certificate
+            && self.ca_pem == other.ca_pem
     }
 }
 
@@ -212,26 +222,6 @@ pub fn escape_filter(value: &str) -> String {
             '(' => out.push_str("\\28"),
             ')' => out.push_str("\\29"),
             '\\' => out.push_str("\\5c"),
-            '\0' => out.push_str("\\00"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-/// Escapes an attribute value for a DN (RFC 4514, section 2.4): `"`, `+`, `,`, `;`, `<`, `>`, `\`
-/// and `=` with a backslash, a leading `#` or space and a trailing space likewise, NUL as `\00`.
-pub fn escape_dn_value(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let last = value.chars().count().saturating_sub(1);
-    for (i, c) in value.chars().enumerate() {
-        match c {
-            '"' | '+' | ',' | ';' | '<' | '>' | '\\' | '=' => {
-                out.push('\\');
-                out.push(c);
-            }
-            '#' if i == 0 => out.push_str("\\#"),
-            ' ' if i == 0 || i == last => out.push_str("\\ "),
             '\0' => out.push_str("\\00"),
             c => out.push(c),
         }
@@ -567,10 +557,17 @@ impl Connector {
         if addrs.iter().any(|a| own_endpoint(a, &self.own_ports)) {
             return Err(LdapFail::Refused(format!("{host}:{port} is Kalzit itself")));
         }
+        // One deadline for all addresses of the name, so a name with many addresses that never
+        // answer cannot hold the sign-in longer than one connection would.
+        let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
         let mut last = LdapFail::Unreachable(format!("{host}:{port} cannot be reached"));
         let mut stream = None;
         for addr in &addrs {
-            match tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr)).await {
+            if tokio::time::Instant::now() >= deadline {
+                last = LdapFail::Timeout;
+                break;
+            }
+            match tokio::time::timeout_at(deadline, tokio::net::TcpStream::connect(addr)).await {
                 Ok(Ok(s)) => {
                     stream = Some(s);
                     break;
@@ -656,8 +653,10 @@ impl Directory {
             .await
             .map_err(fail)?;
         let mut out = Vec::new();
+        let deadline = tokio::time::Instant::now() + SEARCH_ALL_TIMEOUT;
         loop {
-            let next = tokio::time::timeout(OP_TIMEOUT, stream.next()).await.map_err(|_| LdapFail::Timeout)?;
+            let wait = deadline.min(tokio::time::Instant::now() + OP_TIMEOUT);
+            let next = tokio::time::timeout_at(wait, stream.next()).await.map_err(|_| LdapFail::Timeout)?;
             match next.map_err(fail)? {
                 Some(entry) => {
                     if out.len() >= MAX_SYNC_ENTRIES {
@@ -790,15 +789,6 @@ mod tests {
         let escaped = escape_filter(hostile);
         assert!(!escaped.contains(['(', ')', '*']), "{escaped}");
         assert!(ldap3::parse_filter(format!("(uid={escaped})")).is_ok());
-    }
-
-    #[test]
-    fn dn_values_are_escaped() {
-        assert_eq!(escape_dn_value("Müller, Jörg"), "Müller\\, Jörg");
-        assert_eq!(escape_dn_value("#1 a+b"), "\\#1 a\\+b");
-        assert_eq!(escape_dn_value(" lead trail "), "\\ lead trail\\ ");
-        assert_eq!(escape_dn_value("a=b;c<d>\"e\\"), "a\\=b\\;c\\<d\\>\\\"e\\\\");
-        assert!(valid_dn(&format!("CN={},OU=People,DC=example", escape_dn_value("Müller, Jörg"))));
     }
 
     #[test]

@@ -31,6 +31,9 @@ CREATE TABLE ldap_sync_runs (
 
 CREATE INDEX ldap_sync_runs_provider ON ldap_sync_runs (provider_id, started_at);
 
+-- At most one running sync per provider, across every server that shares the database.
+CREATE UNIQUE INDEX ldap_sync_runs_one_running ON ldap_sync_runs (provider_id) WHERE status = 'running';
+
 -- An account the sync disabled, and why (`not_in_directory`, `disabled_in_directory`,
 -- `no_mapped_group`). Only these accounts are enabled again by the sync or a directory sign-in;
 -- an account an admin disabled stays disabled. The row goes when the account is enabled.

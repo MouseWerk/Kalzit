@@ -228,8 +228,14 @@ impl Reply {
 }
 
 async fn test_app() -> TestApp {
+    test_app_with(10).await
+}
+
+/// The app, with `failures` wrong sign-ins allowed per budget.
+async fn test_app_with(failures: u32) -> TestApp {
     let dir = common::private_tempdir();
     let mut config = Config::default();
+    config.security.login_max_failures = failures;
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:3999".into();
     let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
@@ -247,6 +253,26 @@ impl TestApp {
     }
 
     async fn send(&self, method: Method, path: &str, body: Option<Value>, cookie: Option<&str>) -> Reply {
+        self.send_with(self.app.clone(), method, path, body, cookie).await
+    }
+
+    /// A sign-in from the client address `ip`, so the budgets of an address and its network start
+    /// fresh and only those of the login and the directory entry carry over.
+    async fn login_from(&self, ip: &str, login: &str, password: &str) -> Reply {
+        let peer: SocketAddr = format!("{ip}:50000").parse().unwrap();
+        let app = router(self.state.clone()).layer(MockConnectInfo(peer));
+        let body = json!({ "email": login, "password": password });
+        self.send_with(app, Method::POST, "/api/auth/login", Some(body), None).await
+    }
+
+    async fn send_with(
+        &self,
+        app: Router,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        cookie: Option<&str>,
+    ) -> Reply {
         let mut req = Request::builder().method(method).uri(path).header(header::HOST, "kalzit.test");
         if let Some(c) = cookie {
             req = req.header(header::COOKIE, c);
@@ -256,7 +282,7 @@ impl TestApp {
             None => req.body(Body::empty()),
         }
         .unwrap();
-        let res = self.app.clone().oneshot(req).await.unwrap();
+        let res = app.oneshot(req).await.unwrap();
         let status = res.status();
         let headers = res.headers().clone();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
@@ -535,4 +561,180 @@ async fn ldap_sign_in_sync_and_threshold() {
     }
     app.finish().await;
     dir.clean().await;
+}
+
+/// Creates the provider of `form` (checked first) and answers its id.
+async fn create_provider(app: &TestApp, admin: &str, mut body: Value) -> String {
+    let r = app.post("/api/admin/sign-in/ldap/check", body.clone(), admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    body["checkToken"] = r.body["checkToken"].clone();
+    let r = app.post("/api/admin/sign-in/ldap", body, admin).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    r.body["id"].as_str().unwrap().to_string()
+}
+
+/// Adds a local account straight to the database: `(id, email, admin, confirmed, service)`.
+async fn local_account(app: &TestApp, email: &str, admin: bool, confirmed: bool, service: bool) -> String {
+    let id = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, email_confirmed, \
+         service_account) VALUES ($1, $2, 'Lokal', 'x', $3, 0, 0, $4, $5)",
+    )
+    .bind(&id)
+    .bind(email)
+    .bind(i64::from(admin))
+    .bind(i64::from(confirmed))
+    .bind(i64::from(service))
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn ldap_budgets_email_links_and_admin_decisions() {
+    let Some(env) = env() else { return };
+    let mut dir = Dir::open(&env).await;
+    for uid in ["conf", "unconf", "adm", "bg", "svc", "gina", "hans", "ida"] {
+        dir.person(uid, &format!("Person {uid}"), &format!("{uid}-geheim-1")).await;
+    }
+    // Three wrong sign-ins per budget.
+    let app = test_app_with(3).await;
+    let (admin, admin_id, org) = app.setup().await;
+    let mut body = form(&env, &dir, Some(&env.admin_password));
+    body["ldap"]["syncThreshold"] = json!(100);
+    let provider = create_provider(&app, &admin, body).await;
+    let r = app
+        .put(
+            "/api/admin/sign-in/unmapped",
+            json!({ "rule": "default", "defaultOrgId": org,
+        "defaultRole": "viewer" }),
+            &admin,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    // Linking by email: off by default, and even on never to an unconfirmed account, a server
+    // admin, the break-glass admin or a service account.
+    let conf = local_account(&app, "conf@kalzit.test", false, true, false).await;
+    local_account(&app, "unconf@kalzit.test", false, false, false).await;
+    local_account(&app, "adm@kalzit.test", true, true, false).await;
+    let bg = local_account(&app, "bg@kalzit.test", true, true, false).await;
+    local_account(&app, "svc@kalzit.test", false, true, true).await;
+    let r = app
+        .put(
+            "/api/admin/sign-in/local",
+            json!({ "localPassword": "on", "passwordForm": "collapsed",
+             "breakGlassUserId": bg }),
+            &admin,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let refused = |r: &Reply| (r.status, r.reason().to_string(), r.body["error"]["params"]["outcome"].clone());
+    let taken = (StatusCode::FORBIDDEN, "ldap.sign_in_refused".to_string(), json!("email_taken"));
+    assert_eq!(refused(&app.login("conf", "conf-geheim-1").await), taken, "trustEmail is off by default");
+    let r = app.get(&format!("/api/admin/sign-in/providers/{provider}"), &admin).await;
+    assert_eq!(r.body["ldap"]["trustEmail"], false);
+    let mut body = form(&env, &dir, None);
+    body["ldap"]["syncThreshold"] = json!(100);
+    body["ldap"]["trustEmail"] = json!(true);
+    body["version"] = r.body["version"].clone();
+    let r = app.put(&format!("/api/admin/sign-in/ldap/{provider}"), body, &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.login("conf", "conf-geheim-1").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["id"], conf.as_str(), "linked to the confirmed local account");
+    for uid in ["unconf", "adm", "bg", "svc"] {
+        assert_eq!(refused(&app.login(uid, &format!("{uid}-geheim-1")).await), taken, "{uid}");
+    }
+
+    // A changed password connection needs the password again: a stored one never goes out over a
+    // weaker connection.
+    let r = app.get(&format!("/api/admin/sign-in/providers/{provider}"), &admin).await;
+    let mut weaker = form(&env, &dir, None);
+    weaker["ldap"]["encryption"] = json!("starttls");
+    weaker["providerId"] = json!(provider);
+    weaker["version"] = r.body["version"].clone();
+    let r = app.post("/api/admin/sign-in/ldap/check", weaker, &admin).await;
+    assert_eq!((r.field(), r.reason()), ("bindPassword", "ldap.bind_password_required"), "{}", r.body);
+
+    // An admin's decision wins over the sync: disabled by the sync, enabled and disabled again by
+    // an admin, the account stays disabled when the directory says it is fine.
+    assert_eq!(app.login("gina", "gina-geheim-1").await.status, StatusCode::OK);
+    let (people, gone) = (dir.people(), dir.gone());
+    dir.move_person("gina", &people, &gone).await;
+    let sync = format!("/api/admin/sign-in/providers/{provider}/sync");
+    let r = app.post(&sync, json!({}), &admin).await;
+    assert_eq!((r.body["status"].as_str(), r.body["deactivated"].as_i64()), (Some("done"), Some(1)), "{}", r.body);
+    let (gina,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'gina@kalzit.test'").fetch_one(&app.state.db).await.unwrap();
+    let user = format!("/api/admin/users/{gina}");
+    for disabled in [false, true] {
+        let r = app.send(Method::PATCH, &user, Some(json!({ "disabled": disabled })), Some(&admin)).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+    dir.move_person("gina", &gone, &people).await;
+    let r = app.post(&sync, json!({}), &admin).await;
+    assert_eq!((r.body["status"].as_str(), r.body["reactivated"].as_i64()), (Some("done"), Some(0)), "{}", r.body);
+    assert!(app.disabled("gina@kalzit.test").await);
+    let r = app.login("gina", "gina-geheim-1").await;
+    assert_eq!(r.body["error"]["params"]["outcome"], "disabled", "{}", r.body);
+    assert!(app.disabled("gina@kalzit.test").await);
+
+    // With a second factor, a sign-in enables an account the sync disabled only after that step.
+    let r = app.login("hans", "hans-geheim-1").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let hans = r.body["id"].as_str().unwrap().to_string();
+    sqlx::query(
+        "INSERT INTO user_totp (user_id, key_id, nonce, ciphertext, last_step, created_at) VALUES ($1, 'k', 'n', 'c', 0, 0)",
+    )
+    .bind(&hans)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    dir.move_person("hans", &people, &gone).await;
+    assert_eq!(app.post(&sync, json!({}), &admin).await.body["deactivated"], 1);
+    dir.move_person("hans", &gone, &people).await;
+    let r = app.login("hans", "hans-geheim-1").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body["secondFactor"].is_object(), "{}", r.body);
+    assert!(app.disabled("hans@kalzit.test").await, "enabled only after the second factor");
+
+    // One budget for every spelling of a login: after three wrong passwords for the address
+    // (each from another network, so only the login's and the entry's budgets carry over), the
+    // name with the right password is refused too, since it names the same directory entry.
+    for (i, typed) in ["ida@kalzit.test", "IDA@kalzit.test", "ida@kalzit.test"].iter().enumerate() {
+        let r = app.login_from(&format!("10.{i}.1.1"), typed, "falsch").await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    }
+    let r = app.login_from("10.9.1.1", "ida", "ida-geheim-1").await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.body);
+    let r = app.login_from("10.10.1.1", "IDA", "ida-geheim-1").await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.body);
+
+    // A directory that cannot be reached answers the same whether or not a local account has the
+    // login, so the answer never tells which local accounts exist.
+    let port = env.url.rsplit(':').next().unwrap().to_string();
+    sqlx::query("UPDATE sso_providers SET config = replace(config, $1, ':9\"') WHERE id = $2")
+        .bind(format!(":{port}\""))
+        .bind(&provider)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let local = app.login_from("10.20.1.1", "joerg@example.de", "falsch").await;
+    let unknown = app.login_from("10.21.1.1", "niemand@example.de", "falsch").await;
+    assert_eq!((local.status, local.reason()), (StatusCode::SERVICE_UNAVAILABLE, "ldap.directory_unreachable"));
+    assert_eq!((unknown.status, unknown.reason()), (local.status, local.reason()));
+    // The owner still signs in with the right password.
+    assert_eq!(app.login_from("10.22.1.1", "joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    let _ = admin_id;
+    app.finish().await;
+    dir.clean().await;
+}
+
+#[test]
+fn logins_count_without_domain_and_case() {
+    assert_eq!(kalzit::routes::auth::login_key(" ZENTRALE\\Anna "), "anna");
+    assert_eq!(kalzit::routes::auth::login_key("Anna@Example.DE"), "anna@example.de");
+    assert_eq!(kalzit::routes::auth::login_key("a\\b\\C"), "c");
 }
