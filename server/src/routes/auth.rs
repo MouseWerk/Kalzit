@@ -257,28 +257,42 @@ pub async fn login_with(
     let Some(ok) = password::verify(req.password, stored, lane).await else {
         return Err(refuse(std::time::Duration::from_secs(1)));
     };
-    let audit = |action: &'static str, user_id: Option<String>| crate::audit::AuditEvent {
-        org_id: None,
-        actor_user_id: None,
-        actor_address: Some(info.client_ip.to_string()),
-        action,
-        resource_type: Some("user"),
-        resource_id: None,
-        summary: match user_id {
-            Some(id) => serde_json::json!({ "userId": id }),
-            None => serde_json::json!({}),
-        },
-        at_ms: now,
-    };
+    fn event<'a>(
+        info: &RequestInfo,
+        now: i64,
+        action: &'a str,
+        user_id: Option<&'a str>,
+        reason: Option<&str>,
+    ) -> crate::audit::AuditEvent<'a> {
+        crate::audit::AuditEvent {
+            org_id: None,
+            actor_user_id: None,
+            actor_address: Some(info.client_ip.to_string()),
+            action,
+            resource_type: Some("user"),
+            // The account's own recent sign-ins list its refused attempts (`auth::sign_ins`).
+            resource_id: user_id,
+            summary: match (user_id, reason) {
+                (Some(id), Some(reason)) => serde_json::json!({ "userId": id, "reason": reason, "method": "password" }),
+                (Some(id), None) => serde_json::json!({ "userId": id }),
+                _ => serde_json::json!({}),
+            },
+            at_ms: now,
+        }
+    }
+    let audit = |action, user_id, reason| event(&info, now, action, user_id, reason);
     let known_id = row.as_ref().map(|r| r.id.clone());
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
-        // The id of an existing account is recorded, never the email that was typed.
+        // The id of an existing account is recorded, never the email that was typed. Whether the
+        // password was right for a disabled account is recorded only for the account itself.
         // A failed sign-in answers the same whatever happens to its audit entry: a busy database
         // must not turn it into "try again", which would invite repeated password guesses past
         // the point where the attempt was already counted.
+        let reason = if ok { "disabled" } else { "credentials" };
+        let event = audit("auth.sign_in_failed", known_id.as_deref(), known_id.as_ref().map(|_| reason));
         let recorded = match state.db.acquire().await {
-            Ok(mut conn) => crate::audit::record(&mut conn, &audit("auth.sign_in_failed", known_id)).await,
+            Ok(mut conn) => crate::audit::record(&mut conn, &event).await,
             Err(e) => Err(e),
         };
         if let Err(e) = recorded {
@@ -314,6 +328,15 @@ pub async fn login_with(
     use crate::sso::PasswordSignIn;
     let decision = crate::sso::password_sign_in(&state, &row.id, break_glass_form).await?;
     if decision == PasswordSignIn::Off {
+        // Recorded for the account's recent sign-ins; the answer stays the same if that fails.
+        let event = audit("auth.sign_in_failed", Some(&row.id), Some("password_off"));
+        let recorded = match state.db.acquire().await {
+            Ok(mut conn) => crate::audit::record(&mut conn, &event).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = recorded {
+            tracing::warn!(client = %info.client_ip, "recording a refused sign-in in the audit log failed: {e}");
+        }
         return Err(ApiError::forbidden("password sign-in is off for this account; sign in through a provider")
             .because("sso.password_sign_in_off"));
     }
@@ -325,7 +348,10 @@ pub async fn login_with(
         name: row.name.clone(),
         is_server_admin: row.is_server_admin,
     };
-    let first = crate::auth::second_factor::FirstStep::Password { password_hash: row.password_hash.as_deref() };
+    let first = crate::auth::second_factor::FirstStep::Password {
+        password_hash: row.password_hash.as_deref(),
+        break_glass: decision == PasswordSignIn::BreakGlass,
+    };
     let mut plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
     // The break-glass admin never gets in with a password alone: without a second factor (it can
     // only be gone through a database change), one is set up first.
@@ -349,7 +375,7 @@ pub async fn login_with(
         return Err(invalid_credentials());
     }
     if decision == PasswordSignIn::BreakGlass {
-        let mut event = audit("auth.break_glass_signed_in", None);
+        let mut event = audit("auth.break_glass_signed_in", None, None);
         event.actor_user_id = Some(&row.id);
         event.resource_id = Some(&row.id);
         crate::audit::record(&mut tx, &event).await?;

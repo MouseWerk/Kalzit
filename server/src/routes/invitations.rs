@@ -983,7 +983,7 @@ async fn accept(
                 .fetch_one(&state.db)
                 .await?;
             // An account without a password of its own (made by a provider) binds nothing to one.
-            let first = sf::FirstStep::Password { password_hash: hash.as_deref() };
+            let first = sf::FirstStep::Password { password_hash: hash.as_deref(), break_glass: false };
             let tx = crate::db::begin(&state.db).await?;
             let mut answer = super::second_factor::finish_first_step(
                 tx,
@@ -1081,7 +1081,7 @@ async fn accept(
     // fail after this, the person signs in with the password just set.
     crate::db::commit(tx).await?;
     let user = SessionUser { id: user_id, email: found.email.clone(), name, is_server_admin: 0 };
-    let first = crate::auth::second_factor::FirstStep::Password { password_hash: Some(&hash) };
+    let first = crate::auth::second_factor::FirstStep::Password { password_hash: Some(&hash), break_glass: false };
     let plan = super::second_factor::plan(&state, &info, &user, first, now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
     // The sign-in's lock, as in `auth::login`: the account must still be enabled and hold the

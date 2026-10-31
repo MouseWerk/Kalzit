@@ -510,7 +510,7 @@ pub async fn complete(
             serde_json::to_value(me(&mut tx, user).await?).map_err(|e| ApiError::internal("setup", e))?
         }
         Some(prompt) => {
-            let first = sf::FirstStep::Password { password_hash: Some(&hash) };
+            let first = sf::FirstStep::Password { password_hash: Some(&hash), break_glass: false };
             let token = sf::create_pending(&mut tx, &user_id, true, false, first, now).await?;
             headers.insert(header::SET_COOKIE, sf::set_pending_cookie(&token, info.https));
             json!({ "secondFactor": prompt })
