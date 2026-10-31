@@ -144,8 +144,72 @@ describe("server settings rows", () => {
     await screen.findByRole("heading", { level: 2, name: "Data sources and targets" });
     const timeout = within(await row("datasources.query_timeout_secs"));
     expect(timeout.getByText("from kalzit.toml · locked")).toBeTruthy();
-    expect(timeout.queryByRole("spinbutton")).toBeNull();
-    expect(within(await row("datasources.max_rows")).getByRole("spinbutton")).toBeTruthy();
+    // The control stays, turned off, with the sentence that says where the value is set.
+    const field = timeout.getByRole("spinbutton") as HTMLInputElement;
+    expect(field.value).toBe("30");
+    expect(field.matches(":disabled")).toBe(true);
+    const hint = timeout.getByText(
+      "Set in kalzit.toml. Change it there; it cannot be changed here.",
+    );
+    expect(field.getAttribute("aria-describedby")?.split(" ")).toContain(hint.id);
+    const free = within(await row("datasources.max_rows")).getByRole("spinbutton");
+    expect(free.matches(":disabled")).toBe(false);
+  });
+
+  it("commits nothing from a locked value, so there is nothing to undo", async () => {
+    const { user, server } = await openAdmin("/settings/datasources", { isServerAdmin: true });
+    const timeout = within(await row("datasources.query_timeout_secs"));
+    const field = timeout.getByRole("spinbutton");
+    await user.click(field);
+    await user.keyboard("45{Enter}");
+    expect(sent(server, "PATCH")).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("names where a value from the environment or the configuration only is set", async () => {
+    await openAdmin("/settings/storage", { isServerAdmin: true });
+    const retention = within(await row("audit.retention_days"));
+    expect(
+      retention.getByText(/^Set by an environment variable \(KALZIT_\*\)\. Change it there/),
+    ).toBeTruthy();
+    expect(retention.getByRole("spinbutton").matches(":disabled")).toBe(true);
+  });
+
+  it("names a long choice in the select's title, so a cut value stays readable", async () => {
+    const long = "America/Argentina/ComodRivadavia";
+    await openAdmin("/settings/general", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        admin.serverSettings.push({
+          key: "appearance.time_zone",
+          scope: "server",
+          value: long,
+          default: "browser",
+          source: "database",
+          editable: true,
+          version: 1,
+          description: "",
+          updatedAt: null,
+          updatedBy: null,
+        });
+      },
+    });
+    const zone = (await screen.findByRole("combobox", {
+      name: "Time zone",
+    })) as HTMLSelectElement;
+    expect(zone.value).toBe(long);
+    expect(zone.title).toBe(long);
+    expect(zone.classList.contains("settings-select")).toBe(true);
+  });
+
+  it("keeps the update settings on the Updates page and links there", async () => {
+    await openAdmin("/settings/updates", { isServerAdmin: true });
+    await screen.findByRole("heading", { level: 2, name: "Updates" });
+    expect(screen.getByText(/^Channel, daily check and maintenance window are set/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Updates" }).getAttribute("href")).toBe(
+      "/admin/server/updates",
+    );
+    expect(document.getElementById("updates.channel")).toBeNull();
   });
 
   it("shows the query cache now and empties it", async () => {

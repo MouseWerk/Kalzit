@@ -16,7 +16,14 @@ import { ConflictDialog, useSettingChanges } from "../../admin/components/Settin
 import { datasourcesQuery } from "../../datasources/api";
 import { KindMark } from "../../datasources/kindMarks";
 import { resetSetting } from "../../settings/api";
-import { type Changes, lockedBadge, RowFrame, SettingRow } from "../../settings/rows";
+import {
+  type Changes,
+  LockedControl,
+  lockedBadge,
+  lockHint,
+  RowFrame,
+  SettingRow,
+} from "../../settings/rows";
 import { useFoundRow } from "../../settings/SectionPage";
 import { useSettingsAccess } from "../../settings/SettingsLayout";
 import { rowId, type SectionDef } from "../../settings/sections";
@@ -166,6 +173,7 @@ function InheritNumberRow({
   const inputRef = useRef<HTMLInputElement>(null);
   const text = settingText(t, setting);
   const badge = lockedBadge(t, setting, canWrite);
+  const lock = lockHint(t, setting);
   const inherits = setting.value === INHERIT || typeof setting.value !== "number";
   const [own, setOwn] = useState(!inherits);
   const [draft, setDraft] = useState(inherits ? "" : String(setting.value));
@@ -198,7 +206,7 @@ function InheritNumberRow({
   }
 
   let control: ReactNode;
-  if (badge !== undefined) {
+  if (badge !== undefined && lock === undefined) {
     control = (
       <output className="settings-value" aria-labelledby={titleId}>
         {inherits
@@ -212,6 +220,7 @@ function InheritNumberRow({
         <select
           className="select settings-select"
           value={own ? "own" : INHERIT}
+          title={own ? t("ai.org.limits.own") : t("settings.inherit")}
           {...labelled}
           onChange={(event) => {
             if (event.currentTarget.value === INHERIT) {
@@ -252,6 +261,10 @@ function InheritNumberRow({
         ) : null}
       </>
     );
+    if (lock !== undefined) {
+      // Set in kalzit.toml or the environment: shown as it is, turned off, without undo.
+      control = <LockedControl>{control}</LockedControl>;
+    }
   }
   return (
     <RowFrame
@@ -260,6 +273,7 @@ function InheritNumberRow({
       titleId={titleId}
       description={text.description}
       badge={badge}
+      lock={lock}
       error={error}
       errorId={errorId}
       found={found}

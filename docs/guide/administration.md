@@ -157,9 +157,12 @@ and **Personal**, with a **Search settings** box that finds a setting by its Ger
 name, description or key and jumps to it; every section and setting has its own address.
 
 - Changes apply at once and can be undone.
-- Values from `kalzit.toml` or the environment show as **locked** with their source. Network, TLS,
-  proxy, session, security and log settings are read-only here: they are set in `kalzit.toml` or
-  the environment only, so a wrong value can never lock you out.
+- Values from `kalzit.toml` or the environment show as **locked** with their source: the control
+  is turned off, a line with a lock says where the value is set, and there is nothing to undo.
+  Network, TLS, proxy, session, security and log settings are read-only here: they are set in
+  `kalzit.toml` or the environment only, so a wrong value can never lock you out.
+- A long value in a list (a time zone, for example) ends in "..." when the list is closed; point
+  at it to read it whole.
 - Sections: Appearance and brand, General, Network HTTPS and proxy, Sessions and security,
   Sign-in (OIDC, LDAP, planned for M5), Email, Data sources and targets, Plugins
   ([Plugins](plugins.md)), AI ([AI](ai.md)), Storage and retention, Updates, This organization,
@@ -237,7 +240,10 @@ full operator guide, including the release key, command line and recovery, is
 ### Online
 
 1. **Check now** (or **Check automatically**, daily, off by default; **Channel** Stable or
-   Preview). A new version shows with its release notes, size and verified signature.
+   Preview). A new version shows with its release notes, size and verified signature. Channel,
+   daily check and maintenance window are set only here, apply at once and can be undone;
+   **Settings** > **Updates** links here and keeps the number of kept versions and the health
+   timeout.
 2. **Download**, then **Install now**, or plan it: **Plan for today ...** or **Plan for tomorrow
    ...** starts in the **Maintenance window** (02:00 to 04:00 unless you change it).
 3. Kalzit backs up its database, replaces itself, restarts and checks that it is healthy. If it

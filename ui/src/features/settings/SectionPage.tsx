@@ -42,6 +42,16 @@ import "./settings.css";
 /** The second factor's policy, on the local tab of the sign-in section. */
 const TWO_FACTOR_KEYS = ["security.two_factor_required", "security.two_factor_methods"] as const;
 
+/**
+ * The update settings that have their one place on the Updates page (board Updates.dc.html, the
+ * status strip); the section names them in its link instead of a second set of controls.
+ */
+export const UPDATES_PAGE_KEYS: readonly string[] = [
+  "updates.channel",
+  "updates.check_daily",
+  "updates.window",
+];
+
 /** The row the address names (`#appearance.accent`), marked for a moment after a jump. */
 export function useFoundRow(): string | null {
   const { hash } = useLocation();
@@ -162,7 +172,12 @@ function SectionBody({ section }: { section: SectionDef }) {
       return (
         <>
           <UpdatesPlaceholder />
-          <ServerSettings section={section} />
+          <ServerSettings
+            section={{
+              ...section,
+              keys: (section.keys ?? []).filter((key) => !UPDATES_PAGE_KEYS.includes(key)),
+            }}
+          />
         </>
       );
     case "profile":
@@ -202,7 +217,10 @@ function PlannedCard({ section }: { section: SectionDef }) {
   );
 }
 
-/** The way to the Updates page (`/admin/server/updates`), which has the update settings too. */
+/**
+ * The way to the Updates page (`/admin/server/updates`), where channel, daily check and window
+ * are set; a search for one of them lands on this section, with this card on top.
+ */
 function UpdatesPlaceholder() {
   const { t } = useI18n();
   return (

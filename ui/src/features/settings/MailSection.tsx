@@ -310,6 +310,7 @@ function MailCards({ view }: { view: MailView }) {
                   { value: "starttls", label: "STARTTLS" },
                   { value: "tls", label: "TLS" },
                 ]}
+                disabled={locked}
                 onChange={(value) => {
                   if (!locked) change({ security: value as MailSecurity });
                 }}

@@ -330,9 +330,42 @@
     font-size: var(--font-size-xs);
   }
 
+  /*
+   * As wide as its longest option between the two tokens, never wider than the row. A longer
+   * value (a time zone, a provider's model) ends in an ellipsis; the select's title names it in
+   * full, and the open list shows every option whole.
+   */
   .settings-select {
     width: auto;
-    max-width: 18rem;
+    min-width: min(100%, var(--size-settings-select-min));
+    max-width: min(100%, var(--size-settings-select-max));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A locked value's control (LockedControl): a fieldset only for turning it off, without a frame. */
+  .settings-locked {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  /* Where a locked value is set: muted text with a lock, no color. */
+  .settings-lock {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin: var(--space-1) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 
   .settings-field {
@@ -486,6 +519,20 @@
   .settings-segmented__option:focus-visible {
     outline: var(--focus-outline);
     outline-offset: calc(-1 * var(--focus-ring-width));
+  }
+
+  /* A locked choice keeps showing which part is chosen, without hover or a pointer. */
+  .settings-segmented__option:disabled {
+    background: var(--bg-surface);
+    cursor: not-allowed;
+  }
+
+  .settings-segmented__option:disabled[aria-checked="true"] {
+    background: var(--bg-active);
+  }
+
+  .settings-swatch:disabled {
+    cursor: not-allowed;
   }
 
   /* Accent swatches: each draws its own accent (data-accent); the chosen one shows a check. */

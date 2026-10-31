@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { Setting } from "./api";
 import { nextWindow } from "./server/UpdatesPage";
 import type { UpdateStatus } from "./server/updatesApi";
 import { openAdmin } from "./test/openAdmin";
@@ -121,6 +122,23 @@ function status(change: Partial<UpdateStatus> = {}): UpdateStatus {
       },
     ],
     ...change,
+  };
+}
+
+/** An update setting as GET /api/admin/settings lists it; stored nowhere yet unless `extra` says. */
+function updateSetting(key: string, value: unknown, extra: Partial<Setting> = {}): Setting {
+  return {
+    key,
+    scope: "server",
+    value,
+    default: value,
+    source: "default",
+    editable: true,
+    version: 0,
+    description: `The setting ${key}`,
+    updatedAt: null,
+    updatedBy: null,
+    ...extra,
   };
 }
 
@@ -381,6 +399,52 @@ describe("updates page", () => {
     expect(body.version).toBe("0.2.0");
     expect(body.until - body.at).toBe(2 * 3_600_000);
     expect(body.at).toBeGreaterThan(Date.now());
+  });
+
+  it("applies the channel at once, with undo", async () => {
+    const { user, admin } = await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        updatesRoutes(status());
+        admin.serverSettings.push(updateSetting("updates.channel", "stable"));
+      },
+    });
+    const channel = await screen.findByRole("combobox", { name: "Channel" });
+    await waitFor(() => expect((channel as HTMLSelectElement).disabled).toBe(false));
+    await user.selectOptions(channel, "preview");
+    expect(await screen.findByText("“Update channel” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "updates.channel");
+    expect(stored).toMatchObject({ value: "preview", version: 1 });
+    expect((channel as HTMLSelectElement).value).toBe("preview");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(stored).toMatchObject({ value: "stable", source: "default" }));
+  });
+
+  it("shows settings from kalzit.toml turned off, with where they are set", async () => {
+    const { user } = await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        updatesRoutes(status());
+        admin.serverSettings.push(
+          updateSetting("updates.channel", "stable", { source: "file", editable: false }),
+          updateSetting("updates.check_daily", false, { source: "env", editable: false }),
+          updateSetting("updates.window", "02:00-04:00"),
+        );
+      },
+    });
+    const channel = (await screen.findByRole("combobox", { name: "Channel" })) as HTMLSelectElement;
+    await waitFor(() => expect(channel.disabled).toBe(true));
+    const fileHint = "Set in kalzit.toml. Change it there; it cannot be changed here.";
+    expect(screen.getByText(fileHint)).toBeTruthy();
+    expect(channel.getAttribute("aria-describedby")).toBe(screen.getByText(fileHint).id);
+    const daily = screen.getByRole("switch", { name: "Check automatically" }) as HTMLButtonElement;
+    expect(daily.disabled).toBe(true);
+    expect(screen.getByText(/^Set by an environment variable \(KALZIT_\*\)/)).toBeTruthy();
+    // The window is stored in the database: it stays changeable.
+    const change = screen.getByRole("button", { name: "Change" }) as HTMLButtonElement;
+    expect(change.disabled).toBe(false);
+    await user.click(daily);
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
   it("is closed to members who are not server admins", async () => {

@@ -125,6 +125,19 @@
     max-inline-size: 12.5rem;
   }
 
+  .updates-strip__note {
+    margin: 0;
+    font-size: var(--font-size-xs);
+  }
+
+  /* Where a locked setting is set (kalzit.toml, environment): muted text with a lock, no color. */
+  .updates-lock {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-muted);
+  }
+
   .updates-switch {
     position: relative;
     flex: none;
@@ -139,6 +152,11 @@
 
   .updates-switch[aria-checked="true"] {
     background: var(--bg-active);
+  }
+
+  .updates-switch:disabled {
+    border-color: var(--border);
+    cursor: not-allowed;
   }
 
   .updates-switch__knob {

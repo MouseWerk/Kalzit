@@ -6,11 +6,20 @@ import { type Language, type MessageKey, type Translate, useI18n } from "../../.
 import { formatBytes } from "../../../lib/bytes";
 import { fromWall, wallOf } from "../../../lib/zonedTime";
 import { errorReason, reasonText } from "../../datasources/reasons";
-import { adminKeys, listServerSettings, updateServerSetting } from "../api";
+import { resetSetting } from "../../settings/api";
+import { lockHint } from "../../settings/rows";
+import {
+  adminKeys,
+  isLockedSetting,
+  listServerSettings,
+  type Setting,
+  updateServerSetting,
+} from "../api";
 import { Dialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
 import { useNotice } from "../components/Notice";
 import { LoadState, Section } from "../components/Section";
+import { ConflictDialog, useSettingChanges } from "../components/Settings";
 import { errorText } from "../errors";
 import { allowedWhen, useAdminAccess } from "../sections";
 import {
@@ -181,19 +190,33 @@ export function UpdatesPage() {
       onSuccess: () => (done === undefined ? undefined : notice.show({ message: done })),
     });
 
-  const setSetting = useMutation({
-    mutationFn: async ({ key, value }: { key: string; value: unknown }) => {
-      const current = settings.data?.find((s) => s.key === key);
-      return updateServerSetting(key, value, current?.version ?? 0);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: adminKeys.serverSettings });
-      await queryClient.invalidateQueries({ queryKey: updateKeys.status });
-    },
-    onError: (error) => notice.showError(failure(t, error)),
+  // Channel, daily check and window have their one place here (the settings section links to
+  // this page). They apply at once with undo, like every other setting; the status follows.
+  const refreshStatus = (saved: Setting) => {
+    void queryClient.invalidateQueries({ queryKey: updateKeys.status });
+    return saved;
+  };
+  const changes = useSettingChanges({
+    queryKey: adminKeys.serverSettings,
+    patch: async (key, value, version) =>
+      refreshStatus(await updateServerSetting(key, value, version)),
+    reset: async (key, version) =>
+      refreshStatus(await resetSetting({ kind: "server" }, key, version)),
   });
-  const lockedSetting = (key: string) =>
-    settings.data?.find((s) => s.key === key)?.editable === false;
+  const settingOf = (key: string) => settings.data?.find((s) => s.key === key);
+  const change = (key: string, value: unknown) => {
+    const setting = settingOf(key);
+    if (setting !== undefined && !isLockedSetting(setting)) {
+      changes.apply(setting, value);
+    }
+  };
+  /** Where a locked setting is set; undefined while it can be changed (or is still loading). */
+  const lockOf = (key: string) => {
+    const setting = settingOf(key);
+    return setting === undefined ? undefined : lockHint(t, setting);
+  };
+  const rejectedOf = (key: string) =>
+    changes.rejected?.key === key ? changes.rejected.message : undefined;
 
   const data = status.data;
   return (
@@ -234,11 +257,18 @@ export function UpdatesPage() {
             </p>
           ) : null}
           <StatusStrip
-            data={data}
-            onChannel={(value) => setSetting.mutate({ key: "updates.channel", value })}
-            onDaily={(value) => setSetting.mutate({ key: "updates.check_daily", value })}
-            onWindow={(value) => setSetting.mutate({ key: "updates.window", value })}
-            locked={lockedSetting}
+            data={{
+              ...data,
+              channel: storedOr(settingOf("updates.channel"), data.channel),
+              checkDaily: storedOr(settingOf("updates.check_daily"), data.checkDaily),
+              window: storedOr(settingOf("updates.window"), data.window),
+            }}
+            known={(key) => settingOf(key) !== undefined}
+            onChannel={(value) => change("updates.channel", value)}
+            onDaily={(value) => change("updates.check_daily", value)}
+            onWindow={(value) => change("updates.window", value)}
+            lockOf={lockOf}
+            rejectedOf={rejectedOf}
           />
           <div className="updates__row">
             <ReleaseCard
@@ -296,25 +326,83 @@ export function UpdatesPage() {
           }
         }}
       />
+      <ConflictDialog
+        conflict={changes.conflict}
+        onKeepStored={changes.keepStored}
+        onOverwrite={changes.overwrite}
+      />
     </Section>
+  );
+}
+
+/** The stored setting's value when it has the status's type, else the status's own. */
+function storedOr<T>(setting: Setting | undefined, fallback: T): T {
+  return setting !== undefined && typeof setting.value === typeof fallback
+    ? (setting.value as T)
+    : fallback;
+}
+
+/** Under a setting of the strip: why it is locked, or why the server refused the new value. */
+function CellNote({
+  id,
+  lock,
+  error,
+}: {
+  id: string;
+  lock: string | undefined;
+  error: string | undefined;
+}) {
+  if (error !== undefined) {
+    return (
+      <p className="field__error updates-strip__note" id={id}>
+        {error}
+      </p>
+    );
+  }
+  if (lock === undefined) {
+    return null;
+  }
+  return (
+    <p className="updates-lock updates-strip__note" id={id}>
+      <Icon name="lock" />
+      {lock}
+    </p>
   );
 }
 
 function StatusStrip({
   data,
+  known,
   onChannel,
   onDaily,
   onWindow,
-  locked,
+  lockOf,
+  rejectedOf,
 }: {
   data: UpdateStatus;
+  /** The setting is loaded, so a change can name its version. */
+  known: (key: string) => boolean;
   onChannel: (channel: string) => void;
   onDaily: (on: boolean) => void;
   onWindow: (window: string) => void;
-  locked: (key: string) => boolean;
+  lockOf: (key: string) => string | undefined;
+  rejectedOf: (key: string) => string | undefined;
 }) {
   const { t, language, timeZone } = useI18n();
   const channelId = useId();
+  const note = (key: string) => {
+    const lock = lockOf(key);
+    const error = rejectedOf(key);
+    return {
+      lock,
+      error,
+      shown: lock !== undefined || error !== undefined,
+      id: `${channelId}-${key.replace(".", "-")}-note`,
+    };
+  };
+  const channel = note("updates.channel");
+  const daily = note("updates.check_daily");
+  const windowNote = note("updates.window");
   const [editing, setEditing] = useState(false);
   const zoneName = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const window = parseWindow(data.window);
@@ -354,7 +442,9 @@ function StatusStrip({
           id={channelId}
           className="select updates-strip__select"
           value={data.channel}
-          disabled={locked("updates.channel")}
+          disabled={!known("updates.channel") || channel.lock !== undefined}
+          aria-invalid={channel.error === undefined ? undefined : true}
+          aria-describedby={channel.shown ? channel.id : undefined}
           onChange={(event) => onChannel(event.target.value)}
         >
           <option value="stable">{t("admin.updates.channel.stable")}</option>
@@ -367,6 +457,7 @@ function StatusStrip({
               : "admin.updates.channel.previewHint",
           )}
         </div>
+        <CellNote id={channel.id} lock={channel.lock} error={channel.error} />
       </div>
       <div className="updates-strip__cell">
         <span className="updates-caps" id={`${channelId}-daily`}>
@@ -378,8 +469,9 @@ function StatusStrip({
             role="switch"
             aria-checked={data.checkDaily}
             aria-labelledby={`${channelId}-daily`}
+            aria-describedby={daily.shown ? daily.id : undefined}
             className="updates-switch"
-            disabled={locked("updates.check_daily")}
+            disabled={!known("updates.check_daily") || daily.lock !== undefined}
             onClick={() => onDaily(!data.checkDaily)}
           >
             <span className="updates-switch__knob" />
@@ -397,6 +489,7 @@ function StatusStrip({
                 })
               : t("admin.updates.checkFailed", { reason: reasonOf(t, data.lastCheck.error) })}
         </div>
+        <CellNote id={daily.id} lock={daily.lock} error={daily.error} />
       </div>
       <div className="updates-strip__cell">
         <span className="updates-caps">{t("admin.updates.window")}</span>
@@ -405,7 +498,8 @@ function StatusStrip({
           <button
             type="button"
             className="button button--secondary button--small"
-            disabled={locked("updates.window")}
+            disabled={!known("updates.window") || windowNote.lock !== undefined}
+            aria-describedby={windowNote.shown ? windowNote.id : undefined}
             onClick={() => setEditing(true)}
           >
             {t("admin.updates.window.change")}
@@ -414,6 +508,7 @@ function StatusStrip({
         <div className="updates-muted updates-strip__meta">
           {t("admin.updates.window.zone", { zone: zoneName })}
         </div>
+        <CellNote id={windowNote.id} lock={windowNote.lock} error={windowNote.error} />
       </div>
       <WindowDialog
         open={editing}
