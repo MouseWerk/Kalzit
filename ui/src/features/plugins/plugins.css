@@ -176,6 +176,13 @@
     font-size: var(--font-size-sm);
   }
 
+  /* A value set in kalzit.toml or the environment: the same lock line as the settings rows. */
+  .plugins-lock {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
   .plugins-table-wrap {
     overflow-x: auto;
   }

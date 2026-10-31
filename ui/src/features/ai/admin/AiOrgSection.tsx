@@ -187,11 +187,20 @@ function InheritNumberRow({
   }
   const rejected = changes.rejected?.key === setting.key ? changes.rejected.message : undefined;
   const error = local ?? rejected;
+  const lockId = lock === undefined ? undefined : `${titleId}-lock`;
   const labelled = {
     "aria-labelledby": titleId,
-    "aria-describedby":
-      error === undefined ? `${titleId}-description` : `${errorId} ${titleId}-description`,
+    "aria-describedby": [
+      error === undefined ? undefined : errorId,
+      `${titleId}-description`,
+      lockId,
+    ]
+      .filter((id) => id !== undefined)
+      .join(" "),
   };
+  const ownDescribed = [error === undefined ? undefined : errorId, lockId]
+    .filter((id) => id !== undefined)
+    .join(" ");
 
   function commit() {
     const value = Number(draft);
@@ -248,7 +257,7 @@ function InheritNumberRow({
             value={draft}
             aria-label={t("ai.org.limits.valueFor", { name: text.label ?? setting.key })}
             aria-invalid={error === undefined ? undefined : true}
-            aria-describedby={error === undefined ? undefined : errorId}
+            aria-describedby={ownDescribed === "" ? undefined : ownDescribed}
             onChange={(event) => setDraft(event.currentTarget.value)}
             onBlur={commit}
             onKeyDown={(event) => {

@@ -125,6 +125,17 @@
     max-inline-size: 12.5rem;
   }
 
+  /* The cell a settings search jumped to, marked for a moment with the quiet active tint. */
+  .updates-strip__cell--found {
+    background: var(--bg-active);
+    transition: background-color var(--duration-normal) var(--easing);
+  }
+
+  .updates-strip__cell:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(-1 * var(--focus-ring-width));
+  }
+
   .updates-strip__note {
     margin: 0;
     font-size: var(--font-size-xs);

@@ -8,6 +8,7 @@ import { fromWall, wallOf } from "../../../lib/zonedTime";
 import { errorReason, reasonText } from "../../datasources/reasons";
 import { resetSetting } from "../../settings/api";
 import { lockHint } from "../../settings/rows";
+import { useFoundRow } from "../../settings/SectionPage";
 import {
   adminKeys,
   isLockedSetting,
@@ -215,8 +216,19 @@ export function UpdatesPage() {
     const setting = settingOf(key);
     return setting === undefined ? undefined : lockHint(t, setting);
   };
-  const rejectedOf = (key: string) =>
-    changes.rejected?.key === key ? changes.rejected.message : undefined;
+  /**
+   * Why a setting of the strip cannot be changed right now, other than a lock: the server refused
+   * the new value, or the setting could not be loaded (its version is needed for a change).
+   */
+  const problemOf = (key: string) => {
+    if (changes.rejected?.key === key) {
+      return changes.rejected.message;
+    }
+    const loaded = settings.data !== undefined || settings.isError;
+    return loaded && settingOf(key) === undefined
+      ? t("admin.updates.settingUnavailable")
+      : undefined;
+  };
 
   const data = status.data;
   return (
@@ -268,7 +280,7 @@ export function UpdatesPage() {
             onDaily={(value) => change("updates.check_daily", value)}
             onWindow={(value) => change("updates.window", value)}
             lockOf={lockOf}
-            rejectedOf={rejectedOf}
+            problemOf={problemOf}
           />
           <div className="updates__row">
             <ReleaseCard
@@ -342,7 +354,10 @@ function storedOr<T>(setting: Setting | undefined, fallback: T): T {
     : fallback;
 }
 
-/** Under a setting of the strip: why it is locked, or why the server refused the new value. */
+/**
+ * Under a setting of the strip: why it is locked, why the server refused the new value, or that it
+ * could not be loaded.
+ */
 function CellNote({
   id,
   lock,
@@ -377,7 +392,7 @@ function StatusStrip({
   onDaily,
   onWindow,
   lockOf,
-  rejectedOf,
+  problemOf,
 }: {
   data: UpdateStatus;
   /** The setting is loaded, so a change can name its version. */
@@ -386,13 +401,21 @@ function StatusStrip({
   onDaily: (on: boolean) => void;
   onWindow: (window: string) => void;
   lockOf: (key: string) => string | undefined;
-  rejectedOf: (key: string) => string | undefined;
+  problemOf: (key: string) => string | undefined;
 }) {
   const { t, language, timeZone } = useI18n();
   const channelId = useId();
+  // A search result for one of these settings opens the page at its cell (#updates.channel).
+  const found = useFoundRow();
+  const cell = (key: string) => ({
+    id: key,
+    tabIndex: -1,
+    className:
+      found === key ? "updates-strip__cell updates-strip__cell--found" : "updates-strip__cell",
+  });
   const note = (key: string) => {
     const lock = lockOf(key);
-    const error = rejectedOf(key);
+    const error = problemOf(key);
     return {
       lock,
       error,
@@ -434,7 +457,7 @@ function StatusStrip({
           })}
         </div>
       </div>
-      <div className="updates-strip__cell">
+      <div {...cell("updates.channel")}>
         <label htmlFor={channelId} className="updates-caps">
           {t("admin.updates.channel")}
         </label>
@@ -442,6 +465,7 @@ function StatusStrip({
           id={channelId}
           className="select updates-strip__select"
           value={data.channel}
+          data-found-control
           disabled={!known("updates.channel") || channel.lock !== undefined}
           aria-invalid={channel.error === undefined ? undefined : true}
           aria-describedby={channel.shown ? channel.id : undefined}
@@ -459,7 +483,7 @@ function StatusStrip({
         </div>
         <CellNote id={channel.id} lock={channel.lock} error={channel.error} />
       </div>
-      <div className="updates-strip__cell">
+      <div {...cell("updates.check_daily")}>
         <span className="updates-caps" id={`${channelId}-daily`}>
           {t("admin.updates.autoCheck")}
         </span>
@@ -471,6 +495,7 @@ function StatusStrip({
             aria-labelledby={`${channelId}-daily`}
             aria-describedby={daily.shown ? daily.id : undefined}
             className="updates-switch"
+            data-found-control
             disabled={!known("updates.check_daily") || daily.lock !== undefined}
             onClick={() => onDaily(!data.checkDaily)}
           >
@@ -491,13 +516,14 @@ function StatusStrip({
         </div>
         <CellNote id={daily.id} lock={daily.lock} error={daily.error} />
       </div>
-      <div className="updates-strip__cell">
+      <div {...cell("updates.window")}>
         <span className="updates-caps">{t("admin.updates.window")}</span>
         <div className="updates-strip__value">
           <span className="updates-strong">{windowText}</span>
           <button
             type="button"
             className="button button--secondary button--small"
+            data-found-control
             disabled={!known("updates.window") || windowNote.lock !== undefined}
             aria-describedby={windowNote.shown ? windowNote.id : undefined}
             onClick={() => setEditing(true)}

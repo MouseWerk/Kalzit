@@ -143,7 +143,9 @@ describe("server settings rows", () => {
     await openAdmin("/settings/datasources", { isServerAdmin: true });
     await screen.findByRole("heading", { level: 2, name: "Data sources and targets" });
     const timeout = within(await row("datasources.query_timeout_secs"));
-    expect(timeout.getByText("from kalzit.toml · locked")).toBeTruthy();
+    // One short word as the badge; the lock line says where the value is set.
+    expect(timeout.getByText("locked")).toBeTruthy();
+    expect(timeout.queryByText(/from kalzit\.toml/)).toBeNull();
     // The control stays, turned off, with the sentence that says where the value is set.
     const field = timeout.getByRole("spinbutton") as HTMLInputElement;
     expect(field.value).toBe("30");
@@ -230,9 +232,29 @@ describe("server settings rows", () => {
   it("names a value from the environment and one from the configuration only", async () => {
     await openAdmin("/settings/storage", { isServerAdmin: true });
     await screen.findByRole("heading", { level: 2, name: "Storage and retention" });
-    expect(
-      within(await row("audit.retention_days")).getByText("from the environment · locked"),
-    ).toBeTruthy();
+    const retention = within(await row("audit.retention_days"));
+    expect(retention.getByText("locked")).toBeTruthy();
+    expect(retention.getByText(/^Set by an environment variable/)).toBeTruthy();
+  });
+
+  it("focuses a locked row when a search jumps to it", async () => {
+    await openAdmin("/settings/datasources#datasources.query_timeout_secs", {
+      isServerAdmin: true,
+    });
+    const timeout = await row("datasources.query_timeout_secs");
+    // Its control is turned off and cannot take the focus, so the row does.
+    await waitFor(() => expect(document.activeElement).toBe(timeout));
+  });
+
+  it("puts the update settings found by search on the Updates page", () => {
+    const access = {
+      permissions: { has: () => true, isServerAdmin: true, loaded: true },
+      orgId: undefined,
+    };
+    const index = buildIndex(SECTIONS, access);
+    const found = search(index, "updates.window")[0];
+    expect(found).toMatchObject({ rowId: "updates.window", page: "/admin/server/updates" });
+    expect(search(index, "updates.keep_versions")[0]?.page).toBeUndefined();
   });
 
   it("applies the default theme at once, with undo", async () => {

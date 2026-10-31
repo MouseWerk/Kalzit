@@ -158,16 +158,13 @@ export function lockHint(
   return setting.editable ? undefined : t("settings.lockHint.config");
 }
 
-/** Why the row is read-only, as its badge; undefined when it can be changed. */
+/**
+ * Why the row is read-only, as its badge; undefined when it can be changed. A locked value's badge
+ * stays one word: the lock line under it (lockHint) says where the value is set.
+ */
 export function lockedBadge(t: Translate, setting: Setting, canWrite: boolean): string | undefined {
-  if (setting.source === "file") {
-    return t("settings.locked.file");
-  }
-  if (setting.source === "env") {
-    return t("settings.locked.env");
-  }
-  if (!setting.editable) {
-    return t("settings.locked.config");
+  if (lockHint(t, setting) !== undefined) {
+    return t("settings.locked.short");
   }
   return canWrite ? undefined : t("settings.locked.noWrite");
 }

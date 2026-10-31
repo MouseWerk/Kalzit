@@ -24,7 +24,7 @@ import {
   undoChange,
   uploadLogo,
 } from "./api";
-import { type Changes, contrastText, RowFrame, SettingRow } from "./rows";
+import { type Changes, contrastText, lockHint, RowFrame, SettingRow } from "./rows";
 import { useFoundRow } from "./SectionPage";
 import { APPEARANCE_ROWS, LOGO_ROW, SIGN_IN_ROW } from "./sections";
 import "../../appearance/appearance.css";
@@ -293,7 +293,8 @@ function SignInRow({
   const { t } = useI18n();
   const titleId = useId();
   const [open, setOpen] = useState(false);
-  const locked = !welcome.editable || !notice.editable;
+  const lock = lockHint(t, welcome) ?? lockHint(t, notice);
+  const locked = lock !== undefined;
   const summary = [welcome.value, notice.value].some((value) => String(value ?? "").trim() !== "")
     ? null
     : t("settings.signInPage.empty");
@@ -303,19 +304,17 @@ function SignInRow({
       title={t("settings.signInPage.label")}
       titleId={titleId}
       description={summary ?? t("settings.signInPage.description")}
-      badge={locked ? t("settings.locked.config") : undefined}
+      badge={locked ? t("settings.locked.short") : undefined}
+      lock={lock}
       found={found}
     >
+      {/* Texts set in kalzit.toml or the environment keep the button, turned off. */}
       <button
         type="button"
         className="button button--secondary"
-        aria-describedby={titleId}
-        aria-disabled={locked}
-        onClick={() => {
-          if (!locked) {
-            setOpen(true);
-          }
-        }}
+        aria-describedby={locked ? `${titleId} ${titleId}-lock` : titleId}
+        disabled={locked}
+        onClick={() => setOpen(true)}
       >
         {t("settings.signInPage.edit")}
       </button>

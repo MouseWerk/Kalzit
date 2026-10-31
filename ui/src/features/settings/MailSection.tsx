@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useId, useState } from "react";
+import { createContext, type ReactNode, useContext, useId, useState } from "react";
 import { meQuery } from "../../api/auth";
 import { isApiError } from "../../api/client";
 import { Icon } from "../../components/Icon";
@@ -149,6 +149,7 @@ function MailCards({ view }: { view: MailView }) {
   const key = JSON.stringify({ ...current, password: draft.password });
   const testedNow = tested !== null && tested.settings === key;
   const locked = !view.editable;
+  const lockNoticeId = useId();
   const password = passwordChanged ? draft.password : undefined;
 
   const save = useMutation({
@@ -248,205 +249,210 @@ function MailCards({ view }: { view: MailView }) {
           ) : null}
         </div>
         {locked ? (
-          <p className="notice mail-notice">
+          <p className="notice mail-notice" id={lockNoticeId}>
             <Icon name="lock" />
             {t("settings.mail.locked")}
           </p>
         ) : null}
-        <Row
-          id="mail.host"
-          title={t("settings.mail.server")}
-          description={t("settings.mail.serverHint")}
-          error={errorFor("host") ?? errorFor("port")}
-        >
-          {(labelled) => (
-            <div className="mail-pair">
-              <input
-                className="input input--mono mail-field"
-                spellCheck={false}
-                autoComplete="off"
-                placeholder="smtp.example.com"
-                readOnly={locked}
-                value={draft.host}
-                {...labelled}
-                onChange={(event) => change({ host: event.currentTarget.value })}
-              />
-              <input
-                className="input input--mono mail-port"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder={draft.security === "tls" ? "465" : "587"}
-                readOnly={locked}
-                value={draft.port}
-                aria-label={t("settings.mail.port")}
-                aria-invalid={errorFor("port") === undefined ? undefined : true}
-                onChange={(event) => change({ port: event.currentTarget.value })}
-              />
-            </div>
-          )}
-        </Row>
-        <Row
-          id="mail.security"
-          title={t("settings.mail.security")}
-          description={t(
-            draft.security === "tls"
-              ? "settings.mail.tlsHint"
-              : draft.security === "none"
-                ? "settings.mail.noneHint"
-                : "settings.mail.starttlsHint",
-          )}
-          error={errorFor("security")}
-        >
-          {(labelled) =>
-            draft.security === "none" ? (
-              <span className="mail-fixed" {...labelled}>
-                {t("settings.mail.unencrypted")}
-              </span>
-            ) : (
-              <Segmented
-                labelled={labelled}
-                value={draft.security}
-                options={[
-                  { value: "starttls", label: "STARTTLS" },
-                  { value: "tls", label: "TLS" },
-                ]}
-                disabled={locked}
-                onChange={(value) => {
-                  if (!locked) change({ security: value as MailSecurity });
-                }}
-              />
-            )
-          }
-        </Row>
-        <Row
-          id="mail.username"
-          title={t("settings.mail.username")}
-          description={t("settings.mail.usernameHint")}
-          error={errorFor("username")}
-        >
-          {(labelled) => (
-            <input
-              className="input mail-field"
-              autoComplete="off"
-              spellCheck={false}
-              readOnly={locked}
-              value={draft.username}
-              {...labelled}
-              onChange={(event) => change({ username: event.currentTarget.value })}
-            />
-          )}
-        </Row>
-        {locked ? null : (
+        <LockNotice.Provider value={locked ? lockNoticeId : undefined}>
           <Row
-            id="mail.password"
-            title={t("settings.mail.password")}
-            description={
-              view.hasPassword ? t("settings.mail.passwordStored") : t("settings.mail.passwordHint")
+            id="mail.host"
+            title={t("settings.mail.server")}
+            description={t("settings.mail.serverHint")}
+            error={errorFor("host") ?? errorFor("port")}
+          >
+            {(labelled) => (
+              <div className="mail-pair">
+                <input
+                  className="input input--mono mail-field"
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="smtp.example.com"
+                  disabled={locked}
+                  value={draft.host}
+                  {...labelled}
+                  onChange={(event) => change({ host: event.currentTarget.value })}
+                />
+                <input
+                  className="input input--mono mail-port"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder={draft.security === "tls" ? "465" : "587"}
+                  disabled={locked}
+                  value={draft.port}
+                  aria-label={t("settings.mail.port")}
+                  aria-describedby={locked ? lockNoticeId : undefined}
+                  aria-invalid={errorFor("port") === undefined ? undefined : true}
+                  onChange={(event) => change({ port: event.currentTarget.value })}
+                />
+              </div>
+            )}
+          </Row>
+          <Row
+            id="mail.security"
+            title={t("settings.mail.security")}
+            description={t(
+              draft.security === "tls"
+                ? "settings.mail.tlsHint"
+                : draft.security === "none"
+                  ? "settings.mail.noneHint"
+                  : "settings.mail.starttlsHint",
+            )}
+            error={errorFor("security")}
+          >
+            {(labelled) =>
+              draft.security === "none" ? (
+                <span className="mail-fixed" {...labelled}>
+                  {t("settings.mail.unencrypted")}
+                </span>
+              ) : (
+                <Segmented
+                  labelled={labelled}
+                  value={draft.security}
+                  options={[
+                    { value: "starttls", label: "STARTTLS" },
+                    { value: "tls", label: "TLS" },
+                  ]}
+                  disabled={locked}
+                  onChange={(value) => {
+                    if (!locked) change({ security: value as MailSecurity });
+                  }}
+                />
+              )
             }
-            error={errorFor("password")}
+          </Row>
+          <Row
+            id="mail.username"
+            title={t("settings.mail.username")}
+            description={t("settings.mail.usernameHint")}
+            error={errorFor("username")}
           >
             {(labelled) => (
               <input
                 className="input mail-field"
-                type="password"
-                autoComplete="new-password"
-                placeholder={view.hasPassword ? "••••••••••••" : ""}
-                value={draft.password}
+                autoComplete="off"
+                spellCheck={false}
+                disabled={locked}
+                value={draft.username}
                 {...labelled}
-                onChange={(event) => change({ password: event.currentTarget.value })}
+                onChange={(event) => change({ username: event.currentTarget.value })}
               />
             )}
           </Row>
-        )}
-        <Row
-          id="mail.fromName"
-          title={t("settings.mail.fromName")}
-          description={t("settings.mail.fromNameHint")}
-          error={errorFor("fromName")}
-        >
-          {(labelled) => (
-            <input
-              className="input mail-field"
-              autoComplete="off"
-              readOnly={locked}
-              value={draft.fromName}
-              {...labelled}
-              onChange={(event) => change({ fromName: event.currentTarget.value })}
-            />
+          {locked ? null : (
+            <Row
+              id="mail.password"
+              title={t("settings.mail.password")}
+              description={
+                view.hasPassword
+                  ? t("settings.mail.passwordStored")
+                  : t("settings.mail.passwordHint")
+              }
+              error={errorFor("password")}
+            >
+              {(labelled) => (
+                <input
+                  className="input mail-field"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={view.hasPassword ? "••••••••••••" : ""}
+                  value={draft.password}
+                  {...labelled}
+                  onChange={(event) => change({ password: event.currentTarget.value })}
+                />
+              )}
+            </Row>
           )}
-        </Row>
-        <Row
-          id="mail.fromAddress"
-          title={t("settings.mail.fromAddress")}
-          description={t("settings.mail.fromAddressHint")}
-          error={errorFor("fromAddress")}
-        >
-          {(labelled) => (
-            <input
-              className="input mail-field"
-              type="email"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="kalzit@example.com"
-              readOnly={locked}
-              value={draft.fromAddress}
-              {...labelled}
-              onChange={(event) => change({ fromAddress: event.currentTarget.value })}
-            />
-          )}
-        </Row>
-        <Row
-          id="mail.replyTo"
-          title={t("settings.mail.replyTo")}
-          description={t("settings.mail.replyToHint")}
-          error={errorFor("replyTo")}
-        >
-          {(labelled) => (
-            <input
-              className="input mail-field"
-              type="email"
-              autoComplete="off"
-              spellCheck={false}
-              readOnly={locked}
-              value={draft.replyTo}
-              {...labelled}
-              onChange={(event) => change({ replyTo: event.currentTarget.value })}
-            />
-          )}
-        </Row>
-        <Row
-          id="mail.test"
-          title={t("settings.mail.testTo")}
-          description={t("settings.mail.testHint")}
-          error={errorFor("to")}
-        >
-          {(labelled) => (
-            <div className="mail-pair">
+          <Row
+            id="mail.fromName"
+            title={t("settings.mail.fromName")}
+            description={t("settings.mail.fromNameHint")}
+            error={errorFor("fromName")}
+          >
+            {(labelled) => (
+              <input
+                className="input mail-field"
+                autoComplete="off"
+                disabled={locked}
+                value={draft.fromName}
+                {...labelled}
+                onChange={(event) => change({ fromName: event.currentTarget.value })}
+              />
+            )}
+          </Row>
+          <Row
+            id="mail.fromAddress"
+            title={t("settings.mail.fromAddress")}
+            description={t("settings.mail.fromAddressHint")}
+            error={errorFor("fromAddress")}
+          >
+            {(labelled) => (
               <input
                 className="input mail-field"
                 type="email"
-                autoComplete="email"
+                autoComplete="off"
                 spellCheck={false}
-                value={to}
+                placeholder="kalzit@example.com"
+                disabled={locked}
+                value={draft.fromAddress}
                 {...labelled}
-                onChange={(event) => {
-                  setTo(event.currentTarget.value);
-                  setProblem(null);
-                }}
+                onChange={(event) => change({ fromAddress: event.currentTarget.value })}
               />
-              <button
-                type="button"
-                className="button button--secondary"
-                aria-disabled={busy}
-                onClick={() => {
-                  if (!busy) test.mutate();
-                }}
-              >
-                {test.isPending ? t("settings.mail.testing") : t("settings.mail.test")}
-              </button>
-            </div>
-          )}
-        </Row>
+            )}
+          </Row>
+          <Row
+            id="mail.replyTo"
+            title={t("settings.mail.replyTo")}
+            description={t("settings.mail.replyToHint")}
+            error={errorFor("replyTo")}
+          >
+            {(labelled) => (
+              <input
+                className="input mail-field"
+                type="email"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={locked}
+                value={draft.replyTo}
+                {...labelled}
+                onChange={(event) => change({ replyTo: event.currentTarget.value })}
+              />
+            )}
+          </Row>
+          <Row
+            id="mail.test"
+            title={t("settings.mail.testTo")}
+            description={t("settings.mail.testHint")}
+            error={errorFor("to")}
+          >
+            {(labelled) => (
+              <div className="mail-pair">
+                <input
+                  className="input mail-field"
+                  type="email"
+                  autoComplete="email"
+                  spellCheck={false}
+                  value={to}
+                  {...labelled}
+                  onChange={(event) => {
+                    setTo(event.currentTarget.value);
+                    setProblem(null);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  aria-disabled={busy}
+                  onClick={() => {
+                    if (!busy) test.mutate();
+                  }}
+                >
+                  {test.isPending ? t("settings.mail.testing") : t("settings.mail.test")}
+                </button>
+              </div>
+            )}
+          </Row>
+        </LockNotice.Provider>
         <div className="mail-footer">
           <div className="mail-footer__result" aria-live="polite">
             {problem === null ? null : (
@@ -589,7 +595,13 @@ function WhatIsSent() {
   );
 }
 
-/** One field: its own ids for the label, description and error, handed to the control. */
+/** The id of the section's lock notice while the values come from kalzit.toml or the environment. */
+const LockNotice = createContext<string | undefined>(undefined);
+
+/**
+ * One field: its own ids for the label, description and error, handed to the control; a locked
+ * form's notice describes every control too.
+ */
 function Row({
   id,
   title,
@@ -609,10 +621,16 @@ function Row({
 }) {
   const titleId = useId();
   const errorId = `${titleId}-error`;
+  const lockId = useContext(LockNotice);
   const labelled = {
     "aria-labelledby": titleId,
-    "aria-describedby":
-      error === undefined ? `${titleId}-description` : `${errorId} ${titleId}-description`,
+    "aria-describedby": [
+      error === undefined ? undefined : errorId,
+      `${titleId}-description`,
+      lockId,
+    ]
+      .filter((id) => id !== undefined)
+      .join(" "),
     ...(error === undefined ? {} : { "aria-invalid": true as const }),
   };
   return (

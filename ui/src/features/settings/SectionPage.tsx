@@ -35,22 +35,12 @@ import { MailSection } from "./MailSection";
 import { QueryCacheCard } from "./QueryCacheCard";
 import { type Changes, SettingRow } from "./rows";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
-import { findSection, rowId, SECTIONS, type SectionDef } from "./sections";
+import { findSection, rowId, SECTIONS, type SectionDef, UPDATES_PAGE_KEYS } from "./sections";
 import { TransferSection } from "./TransferSection";
 import "./settings.css";
 
 /** The second factor's policy, on the local tab of the sign-in section. */
 const TWO_FACTOR_KEYS = ["security.two_factor_required", "security.two_factor_methods"] as const;
-
-/**
- * The update settings that have their one place on the Updates page (board Updates.dc.html, the
- * status strip); the section names them in its link instead of a second set of controls.
- */
-export const UPDATES_PAGE_KEYS: readonly string[] = [
-  "updates.channel",
-  "updates.check_daily",
-  "updates.window",
-];
 
 /** The row the address names (`#appearance.accent`), marked for a moment after a jump. */
 export function useFoundRow(): string | null {
@@ -70,8 +60,17 @@ export function useFoundRow(): string | null {
     const element = document.getElementById(found);
     if (element !== null) {
       element.scrollIntoView?.({ block: "center" });
+      // A locked value's control is turned off and cannot take the focus: then the row takes it
+      // (rows have tabIndex -1), so the jump still ends where the value is.
       const control = element.querySelector<HTMLElement>(
-        ".settings-row__control input, .settings-row__control select, .settings-row__control textarea, .settings-row__control button, .settings-row__control output",
+        [
+          ".settings-row__control input:not(:disabled)",
+          ".settings-row__control select:not(:disabled)",
+          ".settings-row__control textarea:not(:disabled)",
+          ".settings-row__control button:not(:disabled)",
+          ".settings-row__control output",
+          "[data-found-control]:not(:disabled)",
+        ].join(", "),
       );
       (control ?? element).focus({ preventScroll: true });
     }
@@ -219,7 +218,7 @@ function PlannedCard({ section }: { section: SectionDef }) {
 
 /**
  * The way to the Updates page (`/admin/server/updates`), where channel, daily check and window
- * are set; a search for one of them lands on this section, with this card on top.
+ * are set; a search for one of them goes straight there.
  */
 function UpdatesPlaceholder() {
   const { t } = useI18n();
