@@ -1,13 +1,16 @@
-//! Single sign-on (docs/api/sso.md): identity providers (OpenID Connect now; SAML and LDAP use
-//! the same providers, identities and group mapping later), the mapping of their groups to
+//! Single sign-on (docs/api/sso.md): identity providers (OpenID Connect, LDAP and Active
+//! Directory; SAML uses the same providers, identities and group mapping later), the mapping of their groups to
 //! organizations, teams and roles, and the rules for the local password sign-in with its
 //! break-glass admin.
 
+pub mod directory;
 pub mod jwt;
+pub mod ldap;
 pub mod mapping;
 pub mod oidc;
 pub mod signin;
 pub mod store;
+pub mod sync;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -43,6 +46,10 @@ pub struct Sso {
     /// Attempts at the break-glass form per client address.
     pub local_limiter: RateLimiter,
     policy: Arc<TargetPolicy>,
+    /// Connections to directories at once (`ldap::MAX_CONNECTIONS`).
+    ldap_limit: Arc<tokio::sync::Semaphore>,
+    /// Providers whose sync runs on this server now.
+    pub syncing: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Sso {
@@ -55,11 +62,13 @@ impl Sso {
             start_limiter: RateLimiter::new(STARTS_PER_ADDRESS, START_WINDOW_SECS, Capacity::SMALL),
             local_limiter: RateLimiter::new(LOCAL_ATTEMPTS, LOCAL_WINDOW_SECS, Capacity::SMALL),
             policy: Arc::new(TargetPolicy::new(&config.paths.data_dir, &config.database_url(), &[], &[])),
+            ldap_limit: Arc::new(tokio::sync::Semaphore::new(ldap::MAX_CONNECTIONS)),
+            syncing: Mutex::default(),
         }
     }
 
-    /// The requests to a provider; none of them reaches Kalzit itself (`oidc::Fetcher`).
-    pub fn client(&self, state: &AppState) -> Fetcher {
+    /// Kalzit's own ports, which no provider may be.
+    fn own_ports(state: &AppState) -> Vec<u16> {
         let own = [state.config.http_addr(), state.config.https_addr()];
         let mut ports: Vec<u16> = own.iter().flatten().map(|l| l.port()).collect();
         // Behind a proxy on this computer, the public port reaches Kalzit too.
@@ -73,7 +82,21 @@ impl Sso {
         {
             ports.push(port);
         }
-        Fetcher::new(self.policy.clone(), ports, PROVIDER_TIMEOUT)
+        ports
+    }
+
+    /// Connections to directories (`ldap::Connector`), under the same target rules.
+    pub fn ldap(&self, state: &AppState) -> ldap::Connector {
+        ldap::Connector {
+            policy: self.policy.clone(),
+            own_ports: Self::own_ports(state),
+            limit: self.ldap_limit.clone(),
+        }
+    }
+
+    /// The requests to a provider; none of them reaches Kalzit itself (`oidc::Fetcher`).
+    pub fn client(&self, state: &AppState) -> Fetcher {
+        Fetcher::new(self.policy.clone(), Self::own_ports(state), PROVIDER_TIMEOUT)
     }
 
     /// The discovery document and keys of `config`'s issuer, from the cache unless older than

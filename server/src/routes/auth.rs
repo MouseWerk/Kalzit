@@ -203,6 +203,26 @@ pub async fn login_with(
     let Some(_checking) = state.password_checks.enter(&slot_key, slots, CHECK_SLOT_WAIT).await else {
         return Err(refuse(std::time::Duration::from_secs(1)));
     };
+    // Directory accounts first, then local ones (docs/api/sso.md, "LDAP and Active Directory"),
+    // inside the same budgets; never on the break-glass form, which is for local accounts only.
+    let mut directory_unreachable = false;
+    if !break_glass_form {
+        use crate::sso::directory::{self, Attempt};
+        match directory::attempt(&state, &info, req.email.trim(), &req.password).await? {
+            Attempt::Confirmed { provider, person } => {
+                state.pair_limiter.reset(&pair_key);
+                state.login_limiter.refund(&ip_key, &ip_counted);
+                if let Some(counted) = &site_counted {
+                    state.network_limiter.refund(&network, counted);
+                }
+                if let Some((limiter, key, counted)) = &counted_in {
+                    limiter.refund(key, counted);
+                }
+                return directory::finish(&state, &info, &headers, &provider, &person, req.forget_browser).await;
+            }
+            Attempt::NotConfirmed { unreachable } => directory_unreachable = unreachable,
+        }
+    }
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
     let Some(ok) = password::verify(req.password, stored, lane).await else {
         return Err(refuse(std::time::Duration::from_secs(1)));
@@ -221,6 +241,7 @@ pub async fn login_with(
         at_ms: now,
     };
     let known_id = row.as_ref().map(|r| r.id.clone());
+    let local_account = known_id.is_some();
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
         // The id of an existing account is recorded, never the email that was typed.
@@ -233,6 +254,16 @@ pub async fn login_with(
         };
         if let Err(e) = recorded {
             tracing::warn!(client = %info.client_ip, "recording a failed sign-in in the audit log failed: {e}");
+        }
+        // No local account matched either: say that a directory was not reachable rather than
+        // blaming the password.
+        if directory_unreachable && !local_account {
+            return Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "directory_unreachable",
+                "the directory cannot be reached, try again in a moment",
+            )
+            .because("ldap.directory_unreachable"));
         }
         return Err(invalid_credentials());
     };

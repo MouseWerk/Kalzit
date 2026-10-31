@@ -459,7 +459,7 @@ export interface LdapTestPerson {
 export interface LdapCheck {
   checkToken: string;
   durationMs: number;
-  /** "TLS 1.3"; null for an unencrypted connection. */
+  /** "LDAPS" or "StartTLS"; null for an unencrypted connection. */
   tls: string | null;
   sample: { users: string[]; groups: string[] };
   test: LdapTestPerson | null;

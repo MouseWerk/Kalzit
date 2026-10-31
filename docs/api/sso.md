@@ -467,7 +467,8 @@ or against the CAs in `caPem` (`certificate: "custom"`).
 
 `GET /admin/sign-in/providers/{providerId}` answers an LDAP provider with `"kind": "ldap"` and
 `"ldap": {…}` (the form's fields without `bindPassword`, with `bindPasswordSet`) instead of
-`oidc`; `ProviderSummary.issuer` is its `url`.
+`oidc`; `ProviderSummary.issuer` is its `url`, and `ProviderSummary.flavor` is `ad` or `ldap`
+(`null` for other kinds).
 
 ### Check: `POST /admin/sign-in/ldap/check`
 
@@ -479,14 +480,14 @@ what the mapping would give them. Answers
 
 ```json
 {
-  "checkToken": "...", "durationMs": 180, "tls": "TLS 1.3",
+  "checkToken": "...", "durationMs": 180, "tls": "LDAPS",
   "sample": { "users": ["e.schroeder", "g.vogel"], "groups": ["CN=Kalzit-Leser,OU=Gruppen,…"] },
   "test": { "dn": "CN=Lea Hoffmann,…", "login": "l.hoffmann", "email": "lea@…", "name": "Lea Hoffmann",
             "disabled": false, "bound": true, "groups": ["CN=Kalzit-Leser,OU=Gruppen,…"], "outcome": Outcome }
 }
 ```
 
-`tls` is `null` for an unencrypted connection, `test` is `null` without `testLogin`. Failures are
+`tls` is `LDAPS`, `StartTLS` or `null` for an unencrypted connection, `test` is `null` without `testLogin`. Failures are
 `422 validation` with `field` (`url`, `encryption`, `caPem`, `bindDn`, `bindPassword`,
 `userBaseDn`, `groupBaseDn`, `userFilter`, `testLogin`, `testPassword`) and a reason below; the
 check stops at the first failing step. The `checkToken` is valid for 30 minutes and only for this

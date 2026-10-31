@@ -14,7 +14,7 @@ axum = { version = "0.8.9", features = ["macros", "multipart", "ws"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
 base64 = "0.23.1"
 bson = { version = "3.1.0", features = ["serde", "serde_json-1"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
 futures-util = "0.3.34"
@@ -26,6 +26,9 @@ instant-acme = { version = "0.8.5", default-features = false, features = ["ring"
 rcgen = "0.14.10"
 x509-parser = "0.18.1"
 kalzit-plugin-api = { path = "../plugin-api" }
+# LDAP and Active Directory sign-in (`sso::ldap`): the protocol client with rustls and ring, like
+# every other TLS connection of Kalzit (no OpenSSL or native TLS).
+ldap3 = { version = "0.12.1", default-features = false, features = ["tls-rustls-ring"] }
 kalzit-release = { path = "../release" }
 ipnet = { version = "2.12.2", features = ["serde"] }
 mime_guess = "2.0.5"
