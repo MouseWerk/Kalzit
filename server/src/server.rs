@@ -19,6 +19,7 @@ use tower::ServiceExt;
 use crate::app::{AppState, router};
 use crate::clock::SystemClock;
 use crate::config::Config;
+use crate::locks::MutexExt;
 use crate::net::{self, ListenerTls, RequestInfo};
 use crate::routes::health;
 use crate::updates::Handover;
@@ -50,7 +51,7 @@ pub fn request_stop(shutdown: bool) {
     let grace = if shutdown { (WINDOWS_CLOSE_GRACE, true) } else { (SHUTDOWN_GRACE, false) };
     #[cfg(not(windows))]
     let grace = (SHUTDOWN_GRACE, shutdown);
-    *STOP_GRACE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(grace);
+    *STOP_GRACE.lock_or_recover() = Some(grace);
     STOP.notify_one();
 }
 
@@ -105,7 +106,7 @@ impl Running {
                 break;
             }
         }
-        let deadline = *self.hard_deadline.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let deadline = *self.hard_deadline.lock_or_recover();
         let budget = close_budget(deadline, Instant::now());
         let state = self.state.clone();
         let mut closing = tokio::spawn(async move { state.close().await });
@@ -188,7 +189,7 @@ pub async fn run(config: Config, trial: Option<Trial>) -> Result<Outcome> {
         tracing::info!("stop signal received, finishing open requests");
         live.begin_shutdown();
         if hard {
-            *hard_deadline.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now() + grace);
+            *hard_deadline.lock_or_recover() = Some(Instant::now() + grace);
         }
         for handle in handles {
             handle.graceful_shutdown(Some(grace));
@@ -341,6 +342,13 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
 /// Binds the listeners of a started server; on an error the ones already bound are dropped.
 async fn listen(config: &Config, state: &AppState) -> Result<Running> {
     let app = router(state.clone());
+    // One cap for all listeners together and per client address, with the connection timeouts (`http_limits`).
+    let limit = crate::http_limits::ConnectionLimit::new(
+        crate::http_limits::MAX_CONNECTIONS,
+        crate::http_limits::MAX_CONNECTIONS_PER_ADDRESS,
+        &config.security.trusted_proxies,
+        crate::http_limits::Timeouts::default(),
+    );
     let mut running = Running {
         http_addr: None,
         https_addr: None,
@@ -376,7 +384,9 @@ async fn listen(config: &Config, state: &AppState) -> Result<Running> {
         let service =
             app.clone().layer(Extension(ListenerTls(true))).into_make_service_with_connect_info::<SocketAddr>();
         let handle = Handle::new();
-        let server = axum_server::bind_rustls(addr, rustls).handle(handle.clone());
+        let mut server =
+            axum_server::bind_rustls(addr, rustls).map(|tls| tls.acceptor(limit.clone())).handle(handle.clone());
+        crate::http_limits::configure(server.http_builder());
         running.listeners.spawn(async move { server.serve(service).await.with_context(|| format!("HTTPS on {addr}")) });
         let bound = listening(&mut running, &handle).await?;
         tracing::info!("listening on https://{bound}");
@@ -392,7 +402,8 @@ async fn listen(config: &Config, state: &AppState) -> Result<Running> {
         };
         let service = http_app.layer(Extension(ListenerTls(false))).into_make_service_with_connect_info::<SocketAddr>();
         let handle = Handle::new();
-        let server = axum_server::bind(addr).handle(handle.clone());
+        let mut server = axum_server::bind(addr).acceptor(limit.clone()).handle(handle.clone());
+        crate::http_limits::configure(server.http_builder());
         running.listeners.spawn(async move { server.serve(service).await.with_context(|| format!("HTTP on {addr}")) });
         let bound = listening(&mut running, &handle).await?;
         tracing::info!("listening on http://{bound}");
@@ -512,7 +523,7 @@ async fn wait_for_stop_signal() -> (Duration, bool) {
     let terminate = std::future::pending::<(Duration, bool)>();
     let requested = async {
         STOP.notified().await;
-        STOP_GRACE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().unwrap_or((SHUTDOWN_GRACE, false))
+        STOP_GRACE.lock_or_recover().take().unwrap_or((SHUTDOWN_GRACE, false))
     };
     tokio::select! {
         () = ctrl_c => (SHUTDOWN_GRACE, false),

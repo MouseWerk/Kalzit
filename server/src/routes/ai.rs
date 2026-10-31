@@ -35,7 +35,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/admin/ai/providers", Access::ServerAdmin, create_server),
         route(Method::PATCH, "/admin/ai/providers/{providerId}", Access::ServerAdmin, update_server),
         route(Method::DELETE, "/admin/ai/providers/{providerId}", Access::ServerAdmin, delete_server),
-        route(Method::POST, "/admin/ai/providers/{providerId}/test", Access::ServerAdmin, test_server),
+        route(Method::POST, "/admin/ai/providers/{providerId}/test", Access::ServerAdmin, test_server).long_running(),
         route(Method::GET, "/admin/ai/usage", Access::ServerAdmin, usage_server),
         route(Method::GET, "/orgs/{orgId}/ai/providers", Access::Org(Permission::SettingsRead), list_org),
         route(Method::POST, "/orgs/{orgId}/ai/providers", Access::Org(Permission::SettingsWrite), create_org),

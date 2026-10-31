@@ -18,6 +18,13 @@ and restart: HTTPS starts with the stored certificate.
 Behind a reverse proxy that terminates TLS (nginx, Caddy, Traefik, IIS), Kalzit needs neither: the
 proxy holds the certificate.
 
+Kalzit closes a connection without a request in progress after 75 seconds. A proxy that keeps
+connections to Kalzit open for reuse should close idle ones sooner, or it may send a request into a
+connection Kalzit is just closing and answer 502. The defaults of nginx (`keepalive_timeout 60s`
+in an `upstream` block) and Caddy fit; for others, set the upstream idle or keep-alive timeout
+below 75 seconds. Add the proxy's address to `security.trusted_proxies`: it is then exempt from the
+limit of 256 connections per client address, which otherwise all its connections would share.
+
 ## Before you turn ACME on
 
 1. **Names in DNS.** Every name the certificate is for must resolve to this server from the

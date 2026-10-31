@@ -80,28 +80,31 @@ pub(crate) fn answer(response: QueryResponse) -> Answer {
 pub fn routes() -> Vec<RouteDef> {
     vec![
         // `datasources:query` per data source (role or grant), checked in the handler.
-        route(Method::POST, "/orgs/{orgId}/query", Access::OrgMember, query),
+        route(Method::POST, "/orgs/{orgId}/query", Access::OrgMember, query).long_running(),
         // Dashboard routes: `dashboards:read` on the dashboard decides, checked in the handler.
         route(
             Method::POST,
             "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query",
             Access::OrgMember,
             panel_query,
-        ),
+        )
+        .long_running(),
         route(
             Method::POST,
             "/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options",
             Access::OrgMember,
             variable_options,
-        ),
+        )
+        .long_running(),
         // Field distributions: the same rights as running the query they describe.
-        route(Method::POST, "/orgs/{orgId}/query/distribution", Access::OrgMember, distribution),
+        route(Method::POST, "/orgs/{orgId}/query/distribution", Access::OrgMember, distribution).long_running(),
         route(
             Method::POST,
             "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution",
             Access::OrgMember,
             panel_distribution,
-        ),
+        )
+        .long_running(),
     ]
 }
 

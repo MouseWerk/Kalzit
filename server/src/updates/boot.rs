@@ -24,6 +24,7 @@ use super::install::{self, HistoryEntry, Layout, Outcome, Plan, PlanState};
 use super::{Actor, Handover};
 use crate::app::AppState;
 use crate::config::Config;
+use crate::locks::MutexExt;
 
 /// The longest and shortest trial, whatever the plan says.
 const MIN_TRIAL: u64 = 15;
@@ -357,7 +358,7 @@ pub fn handover(h: &Handover) -> std::process::ExitCode {
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|p| p.into_inner())
+    m.lock_or_recover()
 }
 
 #[cfg(test)]

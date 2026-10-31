@@ -299,6 +299,7 @@ mod windows_impl {
     use super::{ACCOUNT, FAILURE_EXIT, FIREWALL_RULE, Https, RESTART_EXIT, SERVICE_NAME, Settings};
     use crate::config::Config;
     use crate::data_dir::acl;
+    use crate::locks::MutexExt;
 
     const ADMINISTRATORS: &str = "S-1-5-32-544";
     /// `NT SERVICE\TrustedInstaller`, which owns and may change `C:\Program Files`.
@@ -475,7 +476,7 @@ mod windows_impl {
         }
 
         fn lock(&self) -> std::sync::MutexGuard<'_, LogInner> {
-            self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+            self.0.lock_or_recover()
         }
     }
 

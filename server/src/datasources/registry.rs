@@ -6,6 +6,7 @@
 use std::sync::{Arc, RwLock};
 
 use super::Kind;
+use crate::locks::RwLockExt;
 
 /// Where a kind comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,7 +67,7 @@ impl KindRegistry {
 
     /// Adds a kind under its plugin's name (`DataSourcePlugin::kind`).
     pub fn register(&self, kind: Kind, origin: Origin) -> Result<Arc<Kind>, RegistryError> {
-        let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
+        let mut entries = self.entries.write_or_recover();
         let name = kind.kind();
         if entries.iter().any(|e| e.kind.kind() == name) {
             return Err(RegistryError::Taken(name.to_string()));
@@ -80,7 +81,7 @@ impl KindRegistry {
     /// `datasource.kind_unavailable` until it is registered again; queries already running keep
     /// their `Arc<Kind>` and finish.
     pub fn unregister(&self, name: &str) -> Result<Arc<Kind>, RegistryError> {
-        let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
+        let mut entries = self.entries.write_or_recover();
         let at =
             entries.iter().position(|e| e.kind.kind() == name).ok_or_else(|| RegistryError::Unknown(name.into()))?;
         if entries[at].origin == Origin::BuiltIn {
@@ -90,18 +91,18 @@ impl KindRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<Kind>> {
-        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
+        let entries = self.entries.read_or_recover();
         entries.iter().find(|e| e.kind.kind() == name).map(|e| e.kind.clone())
     }
 
     pub fn origin(&self, name: &str) -> Option<Origin> {
-        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
+        let entries = self.entries.read_or_recover();
         entries.iter().find(|e| e.kind.kind() == name).map(|e| e.origin.clone())
     }
 
     /// Every kind, in registration order.
     pub fn all(&self) -> Vec<Arc<Kind>> {
-        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
+        let entries = self.entries.read_or_recover();
         entries.iter().map(|e| e.kind.clone()).collect()
     }
 }

@@ -27,6 +27,7 @@ use std::time::Duration;
 use sqlx::AnyPool;
 
 use crate::app::AppState;
+use crate::locks::MutexExt;
 use crate::shapes::{CacheStatus, QueryOutcome, QueryResponse, QueryResult};
 
 pub const HOUR_MS: i64 = 3_600_000;
@@ -302,7 +303,7 @@ impl Usage {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<Key, Counts>> {
         // The map holds counts only; one a panic left half-updated is still usable.
-        self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.pending.lock_or_recover()
     }
 
     /// Adds an event to its bucket; drops it, counted, when the map is full and the bucket new.

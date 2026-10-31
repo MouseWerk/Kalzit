@@ -23,6 +23,7 @@ use crate::datasources::{
     Capability, Connection, Health, Kind, Limits, MAX_HEALTH_TIMEOUT, OwnDatabase, ResumeToken, SourceError,
     SourceQuery,
 };
+use crate::locks::MutexExt;
 use crate::shapes::TimeRange;
 
 /// Rows, documents or graph elements per result part.
@@ -59,7 +60,7 @@ impl InProcess {
     /// The connection of `c`, kept while its revision stays the same.
     fn connection(&self, c: Option<pb::Connection>) -> Result<Arc<Connection>, Status> {
         let c = c.ok_or_else(|| Status::invalid_argument("the connection is missing"))?;
-        let mut connections = self.connections.lock().unwrap_or_else(|e| e.into_inner());
+        let mut connections = self.connections.lock_or_recover();
         if let Some((revision, conn)) = connections.get(&c.datasource_id)
             && *revision == c.revision
         {
@@ -76,7 +77,7 @@ impl InProcess {
 
     /// The position behind `id`, only for the data source whose feed handed it out.
     fn resume(&self, datasource_id: &str, id: Option<&[u8]>) -> Option<ResumeToken> {
-        let tokens = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
+        let tokens = self.tokens.lock_or_recover();
         let id = id?;
         tokens.iter().find(|(ds, t, _)| ds == datasource_id && t == id).map(|(_, _, token)| token.clone())
     }
@@ -85,7 +86,7 @@ impl InProcess {
 /// Keeps a feed position and answers the opaque token for it; the oldest go first.
 fn remember(tokens: &Tokens, datasource_id: &str, token: ResumeToken) -> Vec<u8> {
     let id = uuid::Uuid::now_v7().as_bytes().to_vec();
-    let mut tokens = tokens.lock().unwrap_or_else(|e| e.into_inner());
+    let mut tokens = tokens.lock_or_recover();
     if tokens.len() == MAX_TOKENS {
         tokens.pop_front();
     }
@@ -283,7 +284,7 @@ impl DataSource for InProcess {
 
     async fn release(&self, request: Request<pb::ReleaseRequest>) -> Result<Response<pb::ReleaseResponse>, Status> {
         let id = request.into_inner().datasource_id;
-        self.connections.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        self.connections.lock_or_recover().remove(&id);
         Ok(Response::new(pb::ReleaseResponse {}))
     }
 }
