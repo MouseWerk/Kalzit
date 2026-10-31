@@ -897,10 +897,7 @@ async fn the_rule_changes_only_with_a_fresh_confirmation() {
 
 #[tokio::test]
 async fn postgres_two_factor() {
-    let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
-        eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL test not run");
-        return;
-    };
+    let Some(base) = common::postgres_url("PostgreSQL test") else { return };
     check_totp_sign_in_and_the_half_signed_in_state_reaches_no_api(postgres_app(&base).await).await;
     check_recovery_codes_work_once_and_regenerating_needs_a_fresh_confirmation(postgres_app(&base).await).await;
     check_five_wrong_codes_lock_the_second_step_for_fifteen_minutes(postgres_app(&base).await).await;

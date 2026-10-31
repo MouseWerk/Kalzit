@@ -437,10 +437,7 @@ macro_rules! on_both_databases {
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn postgres_flows() {
-            let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
-                eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL flows not run");
-                return;
-            };
+            let Some(base) = common::postgres_url("PostgreSQL flows") else { return };
             sqlx::any::install_default_drivers();
             let admin = sqlx::AnyPool::connect(&base).await.unwrap();
             $(

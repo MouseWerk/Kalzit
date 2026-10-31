@@ -12,7 +12,8 @@ import { panelAction } from "./support/ui";
  * Timing per key (58 ms on Windows runners, see `TYPING_P95_MS`), and its longest main-thread
  * task stays under 34 ms (the modal editor's were 38 to 45 ms, this page's 27 to 30 ms, on the
  * machine the numbers were taken on); dragging a panel across the grid makes no long task over
- * 50 ms.
+ * 50 ms. Both typing budgets hold on the reference machine and grow with the runner's measured
+ * speed (see below).
  *
  * While these run, a file named by KALZIT_E2E_QUIET_FILE exists (when the variable is set): the
  * CI's TCP watch on Windows pauses meanwhile, so it takes no CPU from the measurements.
@@ -20,9 +21,16 @@ import { panelAction } from "./support/ui";
  * Event Timing comes in 8 ms steps and includes waiting for the next frame, so it hardly tells
  * the two editors apart. Two checks do: the number of components React draws per key (counted
  * through React's hook for developer tools, so it does not depend on the machine: 11 here, 36 in
- * the modal editor), and the longest task, read from a Chrome trace, measured against the
- * machine: a fixed piece of script is timed first, and the 34 ms grow with it on a slower
- * machine (a CI runner), never shrink on a faster one.
+ * the modal editor), and the longest task, read from a Chrome trace.
+ *
+ * Both typing budgets are measured against the machine: right before each round a fixed piece of
+ * script is timed at the same throttling, and its time over the reference machine's
+ * (`REFERENCE_CALIBRATION_MS`, never less than 1) is the round's slowdown. The longest task is
+ * divided by it. Of the Event Timing duration only the part above the wait for the next frame is
+ * (`FRAME_WAIT_MS`), which does not grow on a slower CPU. So a slower or busier runner gets the
+ * time it measurably needs, a faster one never less than the budget. An absolute budget failed on
+ * runners that timed the script at 170 ms, where the same page read 56 ms in every round; the
+ * same reading there now counts as 47.6 ms, and two more Event Timing steps (72 ms) as 60.8.
  *
  * Each budget is measured in three rounds and the best round counts: other work on the machine
  * only ever adds time, so the best round is the closest to what the page itself costs. Every
@@ -47,6 +55,16 @@ const TYPING_P95_MS = BUDGET_MS + (process.platform === "win32" ? EVENT_TIMING_S
 const TYPING_TASK_MS = 34;
 /** The calibration script's time at 4x on the reference machine. */
 const REFERENCE_CALIBRATION_MS = 140;
+/**
+ * The average wait for the next frame at 60 Hz (half a frame): the part of an Event Timing
+ * duration that does not grow on a slower CPU.
+ */
+const FRAME_WAIT_MS = 1000 / 120;
+
+/** An Event Timing duration measured at `slowdown`, in reference-machine milliseconds. */
+function atReference(duration: number, slowdown: number): number {
+  return Math.min(duration, FRAME_WAIT_MS + Math.max(0, duration - FRAME_WAIT_MS) / slowdown);
+}
 
 /** Times a fixed piece of script in the page (sorting numbers), at the current throttling. */
 async function calibrate(page: Page): Promise<number> {
@@ -273,15 +291,19 @@ test(`typing in a panel's query stays under ${TYPING_P95_MS} ms p95 at 4x CPU th
   const throttle = await cpu(page);
   // Spaces and comparisons at the end of the query: no completion list takes the keys.
   const text = " AND amount >= 0 ".repeat(3).slice(0, KEYS);
-  // The machine's speed at the same throttling: the best of three timings.
-  await throttle(THROTTLE);
-  const calibration = Math.min(await calibrate(page), await calibrate(page), await calibrate(page));
-  await throttle(1);
-  const taskBudget = TYPING_TASK_MS * Math.max(1, calibration / REFERENCE_CALIBRATION_MS);
+  // Each round's numbers over the machine's slowdown against the reference machine, measured
+  // right before the round.
   const rounds: number[] = [];
   const tasks: number[] = [];
   for (let round = 0; round < ROUNDS; round++) {
     await throttle(THROTTLE);
+    // The machine's speed at the same throttling: the best of three timings.
+    const calibration = Math.min(
+      await calibrate(page),
+      await calibrate(page),
+      await calibrate(page),
+    );
+    const slowdown = Math.max(1, calibration / REFERENCE_CALIBRATION_MS);
     await reset(page);
     await browser.startTracing(page, {
       categories: ["devtools.timeline", "disabled-by-default-devtools.timeline", "toplevel"],
@@ -293,10 +315,10 @@ test(`typing in a panel's query stays under ${TYPING_P95_MS} ms p95 at 4x CPU th
     const task = longestTask(await browser.stopTracing());
     await throttle(1);
     const result = p95(interactions, KEYS);
-    rounds.push(result);
-    tasks.push(task);
+    rounds.push(atReference(result, slowdown));
+    tasks.push(task / slowdown);
     process.stdout.write(
-      `budget: typing ${KEYS} keys at ${THROTTLE}x, round ${round + 1}: p95 ${result} ms, max ${Math.max(0, ...interactions)} ms, longest task ${task.toFixed(1)} ms (budget ${taskBudget.toFixed(1)} ms, calibration ${calibration.toFixed(1)} ms)\n`,
+      `budget: typing ${KEYS} keys at ${THROTTLE}x, round ${round + 1}: p95 ${result} ms (${atReference(result, slowdown).toFixed(1)} ms at reference, budget ${TYPING_P95_MS} ms), max ${Math.max(0, ...interactions)} ms, longest task ${task.toFixed(1)} ms (budget ${(TYPING_TASK_MS * slowdown).toFixed(1)} ms), calibration ${calibration.toFixed(1)} ms\n`,
     );
   }
   // A round without throttling or tracing, counting what React draws per key.
@@ -317,8 +339,9 @@ test(`typing in a panel's query stays under ${TYPING_P95_MS} ms p95 at 4x CPU th
     })) / KEYS;
   process.stdout.write(`budget: typing draws ${perKey.toFixed(1)} components per key\n`);
   await expect(query).toContainText(SQL.byRegion.slice(0, 20));
+  // Both in reference-machine milliseconds.
   expect(Math.min(...rounds)).toBeLessThan(TYPING_P95_MS);
-  expect(Math.min(...tasks)).toBeLessThan(taskBudget);
+  expect(Math.min(...tasks)).toBeLessThan(TYPING_TASK_MS);
   expect(perKey).toBeLessThan(RENDERS_PER_KEY);
 });
 

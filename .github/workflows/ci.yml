@@ -184,6 +184,8 @@ jobs:
           --health-cmd "pg_isready -U kalzit" --health-interval 2s --health-timeout 5s --health-retries 20
     env:
       KALZIT_TEST_POSTGRES_URL: postgres://kalzit@localhost:5432/kalzit
+      # A PostgreSQL test without the URL fails here instead of skipping.
+      KALZIT_TEST_REQUIRE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -191,6 +193,8 @@ jobs:
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
+      # Every test of these files runs on PostgreSQL when the URL is set, each in its own schema.
+      - run: cargo test --locked --test sso --test mail_invitations --test service_accounts -- --nocapture
 
   # LDAP sign-in and the directory sync (server/tests/ldap.rs) against a real OpenLDAP server in a
   # throwaway container reachable only from this job.
@@ -882,7 +886,22 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - run: cargo audit
+      # The advisory database is fetched with retries, so a network failure does not read as a
+      # finding; `cargo audit` then checks against it without fetching again.
+      - name: Fetch the advisory database
+        shell: bash
+        run: |
+          db="$HOME/.cargo/advisory-db"
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$db"
+            if git clone --quiet https://github.com/RustSec/advisory-db.git "$db"; then
+              exit 0
+            fi
+            echo "Fetching the advisory database failed (attempt $attempt of 5)" >&2
+            sleep $((attempt * 10))
+          done
+          exit 1
+      - run: cargo audit --no-fetch
       - name: npm audit
         shell: bash
         run: |

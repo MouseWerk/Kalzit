@@ -25,7 +25,8 @@
 //!   queue the stop flushes (`publish`). Every server reads new rows when notified and at least
 //!   every `Options::poll`. `record` also raises a counter per area (`cluster_versions`) in the
 //!   same transaction, which every server compares on a timer of its own (`Reconciler`), so a
-//!   recorded change whose row a server missed is still taken within one poll. Not caught: a
+//!   recorded change whose row a server missed is still taken within one poll (a rights change
+//!   within two: its row may simply not have been read yet at the first comparison). Not caught: a
 //!   change announced after its commit (`announce`, `publish`) whose announcement is lost because
 //!   the process ends in between; for rights changes this only keeps cached answers up to their
 //!   cache time, since authorization runs on every request. Data sources are compared by count
@@ -1007,7 +1008,7 @@ fn spawn_reconciler(state: AppState) {
         let cluster = state.cluster.clone();
         let boot = cluster.boot.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let rights_rows = cluster.rights_rows.load(Ordering::SeqCst);
-        let mut reconciler = Reconciler { last: boot, failures: 0, rights_rows };
+        let mut reconciler = Reconciler { last: boot, failures: 0, rights_rows, unread_rights: 0 };
         loop {
             tokio::select! {
                 () = stopping.cancelled() => return,
@@ -1038,18 +1039,26 @@ const COMPARE_FAILURES_WARN: u32 = 3;
 /// Compares the counters every announced change raises in its transaction (`record`) and the data
 /// sources' cheap aggregates with what this server last took, starting from the moment before it
 /// loaded anything (`boot`): a change whose event row this server missed is taken within one poll
-/// anyway. Its own changes move the counters too; taking them again is harmless.
+/// anyway (a rights change within two, see `unread_rights`). Its own changes move the counters too; taking them again is harmless.
 struct Reconciler {
     last: Option<Snapshot>,
     failures: u32,
     /// `Cluster::rights_rows` at the last comparison.
     rights_rows: i64,
+    /// Rights changes the counter showed at the last comparison whose rows the reader had not read
+    /// yet. The counter and the row commit together, but the reader may read the row only after
+    /// the comparison saw the counter; such a change counts as missed only when its row is still
+    /// unread one comparison later.
+    unread_rights: i64,
 }
 
 /// What one comparison read; all of it is read before anything is taken (`Reconciler::gather`),
 /// so a read that fails leaves the last comparison as it was.
 struct Gathered {
     now: Snapshot,
+    /// `Cluster::rights_rows` before the counters were read, so no row is counted whose counter
+    /// the comparison has not seen.
+    rights_rows: i64,
     /// The data sources' rows were read again (their aggregates moved).
     sources_read: bool,
     /// Another server finished the first-run setup (`setup_lock` has its row).
@@ -1059,13 +1068,20 @@ struct Gathered {
 impl Reconciler {
     async fn compare(&mut self, state: &AppState) -> Result<(), sqlx::Error> {
         let setup_open = state.setup.is_open().await;
-        let gathered = self.gather(&state.db, true, setup_open).await?;
+        let rights_rows = state.cluster.rights_rows.load(Ordering::SeqCst);
+        let gathered = self.gather(&state.db, true, setup_open, rights_rows).await?;
         self.take(state, gathered).await;
         Ok(())
     }
 
     /// Reads everything a comparison needs; changes nothing.
-    async fn gather(&self, db: &AnyPool, postgres: bool, setup_open: bool) -> Result<Gathered, sqlx::Error> {
+    async fn gather(
+        &self,
+        db: &AnyPool,
+        postgres: bool,
+        setup_open: bool,
+        rights_rows: i64,
+    ) -> Result<Gathered, sqlx::Error> {
         let mut now = Snapshot::read(db, postgres).await?;
         let sources_read = match &self.last {
             None => true,
@@ -1082,13 +1098,12 @@ impl Reconciler {
         } else {
             false
         };
-        Ok(Gathered { now, sources_read, setup_done })
+        Ok(Gathered { now, rights_rows, sources_read, setup_done })
     }
 
     /// Acts on what moved since the last comparison and keeps `gathered` as the new baseline.
     async fn take(&mut self, state: &AppState, gathered: Gathered) {
-        let Gathered { mut now, sources_read, setup_done } = gathered;
-        let rights_rows = state.cluster.rights_rows.load(Ordering::SeqCst);
+        let Gathered { mut now, rights_rows, sources_read, setup_done } = gathered;
         let rows_seen = rights_rows - std::mem::replace(&mut self.rights_rows, rights_rows);
         if setup_done {
             state.setup.close().await;
@@ -1105,9 +1120,18 @@ impl Reconciler {
         }
         // The reader applied each rights change it read with its organization; only changes it
         // did not read (fewer rows than the counter moved) need every kept answer to go, since
-        // their organization is not known here.
-        if delta("rights") > rows_seen {
+        // their organization is not known here. A row the reader has not read yet at this
+        // comparison is given until the next one (the reader is woken for it); rows read pay for
+        // the oldest unread changes first.
+        let still_unread = self.unread_rights - rows_seen;
+        if still_unread > 0 {
             state.datasources.query_cache().rights_changed_here(None);
+            self.unread_rights = 0;
+        } else {
+            self.unread_rights = (self.unread_rights + delta("rights") - rows_seen).max(0);
+            if self.unread_rights > 0 {
+                state.cluster.wake.notify_one();
+            }
         }
         if moved("cache") {
             state.datasources.query_cache().clear();
@@ -1504,17 +1528,17 @@ mod tests {
         let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
         let mut baseline = Snapshot::read(&db, false).await.unwrap();
         baseline.read_source_rows(&db).await.unwrap();
-        let reconciler = Reconciler { last: Some(baseline.clone()), failures: 0, rights_rows: 0 };
-        let gathered = reconciler.gather(&db, false, true).await.unwrap();
+        let reconciler = Reconciler { last: Some(baseline.clone()), failures: 0, rights_rows: 0, unread_rights: 0 };
+        let gathered = reconciler.gather(&db, false, true, 0).await.unwrap();
         assert!(!gathered.sources_read && !gathered.setup_done, "nothing moved");
         sqlx::query("UPDATE cluster_versions SET version = version + 1 WHERE area = 'settings'")
             .execute(&db)
             .await
             .unwrap();
         sqlx::query("DROP TABLE setup_lock").execute(&db).await.unwrap();
-        assert!(reconciler.gather(&db, false, true).await.is_err());
+        assert!(reconciler.gather(&db, false, true, 0).await.is_err());
         assert_eq!(reconciler.last.as_ref(), Some(&baseline), "the baseline stays for the next comparison");
-        let gathered = reconciler.gather(&db, false, false).await.unwrap();
+        let gathered = reconciler.gather(&db, false, false, 0).await.unwrap();
         assert_ne!(gathered.now.versions.get("settings"), baseline.versions.get("settings"));
     }
 

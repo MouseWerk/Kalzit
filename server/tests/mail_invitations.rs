@@ -178,7 +178,7 @@ async fn test_app(setup: Setup) -> TestApp {
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
-    config.database.url = std::env::var("KALZIT_TEST_POSTGRES_URL").ok().filter(|u| !u.is_empty());
+    config.database.url = common::database_url().await;
     if setup != Setup::NoPublicUrl {
         config.server.public_url = Some(PUBLIC_URL.into());
     }

@@ -1,4 +1,5 @@
-//! Service accounts, their API tokens and the SCIM token through the real router (SQLite).
+//! Service accounts, their API tokens and the SCIM token through the real router (SQLite;
+//! PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set, each app in a throwaway schema).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -55,6 +56,7 @@ impl TestApp {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
+        config.database.url = common::database_url().await;
         let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();

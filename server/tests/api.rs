@@ -699,10 +699,7 @@ async fn migrations_are_idempotent() {
 /// The same flow on PostgreSQL, in a throwaway schema so the test database is left as it was.
 #[tokio::test]
 async fn postgres_setup_and_login() {
-    let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
-        eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL test not run");
-        return;
-    };
+    let Some(base) = common::postgres_url("PostgreSQL test") else { return };
     let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
     sqlx::any::install_default_drivers();
     let admin = sqlx::AnyPool::connect(&base).await.unwrap();

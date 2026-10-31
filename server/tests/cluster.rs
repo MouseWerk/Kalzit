@@ -50,10 +50,7 @@ struct Schema {
 }
 
 async fn schema() -> Option<Schema> {
-    let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
-        eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL cluster test not run");
-        return None;
-    };
+    let base = common::postgres_url("PostgreSQL cluster test")?;
     sqlx::any::install_default_drivers();
     let admin = sqlx::AnyPool::connect(&base).await.unwrap();
     let name = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
@@ -336,10 +333,13 @@ async fn postgres_a_change_without_its_event_is_taken_by_the_counters() {
 async fn postgres_a_server_started_during_an_order_answers_its_challenge() {
     let Some(schema) = schema().await else { return };
     let a = Server::start(&schema.url).await;
+    // Written now, as an order writes it: the leader's cleanup removes answers older than an hour
+    // at its first heartbeat, which could come before the second server has read them.
     sqlx::query(
         "INSERT INTO acme_challenges (kind, name, value, order_id, created_at) \
-         VALUES ('http', 'tok_en-1', 'tok_en-1.key-authorization', 'order-1', 0)",
+         VALUES ('http', 'tok_en-1', 'tok_en-1.key-authorization', 'order-1', $1)",
     )
+    .bind(SystemClock.now_ms())
     .execute(&a.state.db)
     .await
     .unwrap();
