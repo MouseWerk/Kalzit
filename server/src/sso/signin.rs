@@ -155,7 +155,17 @@ pub async fn account(
                     .of(&a.id)));
                 }
                 Some(a) => {
-                    if !person.email_verified || !email_confirmed(&mut *conn, &a.id).await? {
+                    // An account SCIM made and still owns counts as confirmed for this sign-in
+                    // only (docs/api/scim.md, "Accounts"); nothing else takes SCIM's word for it.
+                    // The account's row first, so a SCIM change of its address cannot commit
+                    // next to this link (SCIM's changes lock the same row).
+                    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1")
+                        .bind(&a.id)
+                        .execute(&mut *conn)
+                        .await?;
+                    let confirmed = email_confirmed(&mut *conn, &a.id).await?
+                        || crate::scim::vouches_for_sign_in(&mut *conn, &a.id, break_glass.as_deref()).await?;
+                    if !person.email_verified || !confirmed {
                         return Ok(Err(Refusal::new(
                             "email_taken",
                             "sso.email_unverified",
@@ -230,6 +240,9 @@ pub async fn account(
     .bind(now)
     .execute(&mut *conn)
     .await?;
+    // A sign-in method is linked: SCIM's ownership ends now, for good, also if the identity goes
+    // later (docs/api/scim.md, "Accounts").
+    crate::scim::release(&mut *conn, &account.id, None).await?;
     sqlx::query("DELETE FROM sso_identity_groups WHERE provider_id = $1 AND subject = $2")
         .bind(&provider.id)
         .bind(&person.subject)

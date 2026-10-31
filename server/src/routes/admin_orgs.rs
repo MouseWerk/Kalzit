@@ -111,6 +111,8 @@ async fn create(
         .bind(now)
         .execute(&mut *tx)
         .await?;
+    // Owner of another organization now: no SCIM owns the account any more.
+    crate::scim::release(&mut tx, &req.owner_user_id, Some(&id)).await?;
     let actor = Actor { user_id: &admin.id, info: &info, at_ms: now };
     let summary = json!({ "orgId": id, "ownerUserId": req.owner_user_id });
     audit(&mut tx, &actor, Some(&id), "org.created", ("org", &id), summary).await?;

@@ -231,16 +231,17 @@ struct TokenRow {
 }
 
 impl TokenRow {
-    /// Why the token cannot be used for this request, or `None`.
-    fn refusal(&self, now_ms: i64, ip: IpAddr, org_id: &str) -> Option<&'static str> {
-        if self.kind != Kind::ServiceAccount.as_str() {
-            // The SCIM token is for the SCIM endpoints only.
+    /// Why the token cannot be used for this request (one that needs a token of `kind`), or
+    /// `None`.
+    fn refusal(&self, now_ms: i64, ip: IpAddr, org_id: &str, kind: Kind) -> Option<&'static str> {
+        if self.kind != kind.as_str() {
+            // The SCIM token is for the SCIM endpoints only, and only it is.
             Some("wrong_kind")
         } else if self.revoked_at.is_some() {
             Some("revoked")
         } else if now_ms >= self.expires_at {
             Some("expired")
-        } else if self.account_disabled != Some(0) || self.user_disabled != Some(0) {
+        } else if kind == Kind::ServiceAccount && (self.account_disabled != Some(0) || self.user_disabled != Some(0)) {
             Some("account_disabled")
         } else if !ip_allowed(&self.allowed_ips, ip) {
             Some("address_not_allowed")
@@ -260,6 +261,62 @@ pub async fn authenticate(
     token: &str,
     org_id: &str,
 ) -> ApiResult<(SessionUser, TokenCaller)> {
+    let row = check(state, info, token, org_id, Kind::ServiceAccount).await?;
+    let (Some(account_id), Some(email), Some(name)) =
+        (row.service_account_id.clone(), row.user_email.clone(), row.user_name.clone())
+    else {
+        return Err(refused());
+    };
+    let user = SessionUser { id: account_id.clone(), email, name, is_server_admin: 0 };
+    let caller = TokenCaller {
+        token_id: row.id.clone(),
+        prefix: row.prefix.clone(),
+        service_account_id: account_id,
+        last_used_at: row.last_used_at,
+    };
+    Ok((user, caller))
+}
+
+/// A request signed in with an organization's SCIM token (`scim`): the token and its
+/// organization.
+#[derive(Clone, Debug)]
+pub struct ScimCaller {
+    pub token_id: String,
+    pub prefix: String,
+    pub org_id: String,
+    last_used_at: Option<i64>,
+}
+
+impl ScimCaller {
+    /// The token as the audit log names it.
+    pub fn acting(&self) -> crate::audit::ActingToken {
+        crate::audit::ActingToken { id: self.token_id.clone(), prefix: self.prefix.clone() }
+    }
+
+    /// Records that the token was used, like `record_use`.
+    pub fn record_use(&self, state: &AppState, info: &RequestInfo) {
+        let now = state.clock.now_ms();
+        if self.last_used_at.is_none_or(|at| now - at >= USE_INTERVAL_MS) {
+            state.touches.token_used(self.token_id.clone(), now, info.client_ip.to_string());
+        }
+    }
+}
+
+/// Signs a SCIM request in with `token` for the organization `org_id`. Refusals are counted,
+/// rate-limited and audited like those of service account tokens.
+pub async fn authenticate_scim(
+    state: &AppState,
+    info: &RequestInfo,
+    token: &str,
+    org_id: &str,
+) -> ApiResult<ScimCaller> {
+    let row = check(state, info, token, org_id, Kind::Scim).await?;
+    Ok(ScimCaller { token_id: row.id, prefix: row.prefix, org_id: row.org_id, last_used_at: row.last_used_at })
+}
+
+/// The stored token `token` when it may be used for a request needing `kind` in `org_id`; every
+/// refusal is counted per address and audited.
+async fn check(state: &AppState, info: &RequestInfo, token: &str, org_id: &str, kind: Kind) -> ApiResult<TokenRow> {
     let mono = state.clock.monotonic_ms();
     let key = address_key("token", info.client_ip);
     let network = network_key(info.client_ip);
@@ -283,7 +340,7 @@ pub async fn authenticate(
     let now = state.clock.now_ms();
     let refusal = match &row {
         None => Some("unknown"),
-        Some(r) => r.refusal(now, info.client_ip, org_id),
+        Some(r) => r.refusal(now, info.client_ip, org_id, kind),
     };
     if let Some(reason) = refusal {
         if let Some(wait) = blocked {
@@ -297,22 +354,7 @@ pub async fn authenticate(
         // A token of another organization answers like an organization the caller is not in.
         return Err(if reason == "other_org" { ApiError::not_found() } else { refused() });
     }
-    let (Some(row), Some(account_id), Some(email), Some(name)) = (
-        row.as_ref(),
-        row.as_ref().and_then(|r| r.service_account_id.clone()),
-        row.as_ref().and_then(|r| r.user_email.clone()),
-        row.as_ref().and_then(|r| r.user_name.clone()),
-    ) else {
-        return Err(refused());
-    };
-    let user = SessionUser { id: account_id.clone(), email, name, is_server_admin: 0 };
-    let caller = TokenCaller {
-        token_id: row.id.clone(),
-        prefix: row.prefix.clone(),
-        service_account_id: account_id,
-        last_used_at: row.last_used_at,
-    };
-    Ok((user, caller))
+    row.ok_or_else(refused)
 }
 
 /// Refused tokens of addresses whose budget is used up. Each such address writes one audit entry

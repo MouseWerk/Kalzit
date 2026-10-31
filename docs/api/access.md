@@ -580,7 +580,7 @@ server that stops in between leaves the first entry without it.
 Every audit entry written by a request made with a token names the token next to its service
 account: `actorTokenId` and `actorTokenPrefix` in the audit API (`null` otherwise).
 
-**SCIM token.** One per organization, for the SCIM endpoints of a later version; the same rules
+**SCIM token.** One per organization, for the SCIM endpoints (docs/api/scim.md); the same rules
 (shown once, hashed, revocable, audited, 90 days by default, at most a year) without an IP list.
 It provisions people and roles, so its routes need `serviceaccounts:write` and every permission
 of the built-in admin role (`403` otherwise), and never an API token.

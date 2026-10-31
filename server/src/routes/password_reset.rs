@@ -342,6 +342,7 @@ async fn complete(
         .await?;
     // The link came by mail, so the address reaches the account's owner.
     sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&found.user_id).execute(&mut *tx).await?;
+    crate::scim::release(&mut tx, &found.user_id, None).await?;
     // Whoever knew the old password, or took over a session, is signed out: always.
     let ended = session::delete_for_user(&mut *tx, &found.user_id, None).await?;
     let event = crate::audit::AuditEvent {
