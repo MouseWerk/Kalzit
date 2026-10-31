@@ -183,16 +183,22 @@ pub async fn deactivate(
     let now = ctx.state.clock.now_ms();
     let mut touched = BTreeSet::new();
     let scope = if owned {
-        if link.disabled == 0 {
-            sqlx::query("UPDATE users SET disabled = 1 WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
-            // Signed out everywhere at once, like an account an admin disables.
-            crate::auth::session::delete_for_user(&mut *conn, user_id, None).await?;
+        // SCIM's lock is recorded when SCIM locks the account, or when only the directory sync locked
+        // it (so the sync's enabling it again does not unlock it, `sso::sync`); never on top of an
+        // admin's lock, which a later reactivation must not undo.
+        let ldap = ldap_locked(&mut *conn, user_id).await?;
+        if link.disabled == 0 || ldap {
+            if link.disabled == 0 {
+                sqlx::query("UPDATE users SET disabled = 1 WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
+                // Signed out everywhere at once, like an account an admin disables.
+                crate::auth::session::delete_for_user(&mut *conn, user_id, None).await?;
+                touched.insert(ctx.org_id.to_string());
+            }
             sqlx::query("UPDATE scim_users SET locked_account = 1 WHERE org_id = $1 AND user_id = $2")
                 .bind(ctx.org_id)
                 .bind(user_id)
                 .execute(&mut *conn)
                 .await?;
-            touched.insert(ctx.org_id.to_string());
         }
         "account"
     } else {
@@ -211,12 +217,21 @@ pub async fn deactivate(
     Ok((scope, touched))
 }
 
-/// Reactivates `user_id`: unlocks the account when deactivating locked it and nothing else locked
-/// it since (an admin's enable or disable clears SCIM's lock, `routes::admin_users`), then applies
-/// the group mapping again.
+/// Whether the directory sync's lock of `user_id` is in force (`ldap_deactivations`).
+async fn ldap_locked(conn: &mut sqlx::AnyConnection, user_id: &str) -> ScimResult<bool> {
+    let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM ldap_deactivations WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(row.is_some())
+}
+
+/// Reactivates `user_id`: unlocks the account only when SCIM's lock is the only one (an admin's
+/// enable or disable clears SCIM's lock, `routes::admin_users`; the directory sync's lock stays
+/// until the sync lifts it), then applies the group mapping again.
 pub async fn reactivate(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, user_id: &str) -> ScimResult<BTreeSet<String>> {
     let link = link(&mut *conn, ctx.org_id, user_id).await?;
-    if link.locked_account != 0 {
+    if link.locked_account != 0 && !ldap_locked(&mut *conn, user_id).await? {
         sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
     }
     sqlx::query(

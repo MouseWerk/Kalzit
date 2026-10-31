@@ -423,6 +423,16 @@ pub async fn release(conn: &mut sqlx::AnyConnection, user_id: &str, keep_org: Op
     Ok(())
 }
 
+/// Whether SCIM deactivated and locked `user_id` (`scim_users.locked_account`): the directory
+/// sync's enabling an account again must leave such an account locked (`sso::sync`).
+pub async fn locked_by_scim(conn: &mut sqlx::AnyConnection, user_id: &str) -> Result<bool, sqlx::Error> {
+    let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM scim_users WHERE user_id = $1 AND locked_account = 1")
+        .bind(user_id)
+        .fetch_optional(conn)
+        .await?;
+    Ok(row.is_some())
+}
+
 /// Whether the organization's SCIM switch is on (no row: on).
 pub async fn enabled<'c, E>(db: E, org_id: &str) -> Result<bool, sqlx::Error>
 where

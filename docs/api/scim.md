@@ -140,8 +140,9 @@ change on the SCIM user.
 
 **Reactivating** (`active: true`) unlocks the account only when SCIM's deactivation locked it and
 nothing changed that since: an admin enabling or disabling the account (Verwaltung > Benutzer)
-takes the lock over, and a later reactivation leaves it as the admin set it. Then the group mapping
-applies again.
+takes the lock over, and a later reactivation leaves it as the admin set it. A lock of the LDAP
+directory sync stays until the sync lifts it, and the sync never lifts SCIM's lock. Then the group
+mapping applies again.
 
 ### Accounts
 

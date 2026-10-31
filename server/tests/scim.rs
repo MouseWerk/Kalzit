@@ -896,3 +896,41 @@ async fn editors_filters_body_size_and_member_counts_are_checked() {
     assert_eq!((r.status, r.scim_type()), (StatusCode::BAD_REQUEST, "invalidValue"), "{}", r.body);
     t.finish().await;
 }
+
+#[tokio::test]
+async fn scim_and_the_directory_sync_never_lift_each_others_locks() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    let off = patch(json!([{ "op": "replace", "path": "active", "value": false }]));
+    let on = patch(json!([{ "op": "replace", "path": "active", "value": true }]));
+    t.mapping("x", &org, None, "viewer", false).await;
+    let (provider,): (String,) = sqlx::query_as("SELECT id FROM sso_providers").fetch_one(&t.state.db).await.unwrap();
+
+    // The sync locked the account, then SCIM deactivates it: SCIM's reactivation leaves the sync's
+    // lock, and the sync's enabling it leaves SCIM's.
+    let ole = t.scim(Method::POST, "/Users", Some(json!({ "userName": "ole@mueller.example" })), &token).await.id();
+    sqlx::query("UPDATE users SET disabled = 1 WHERE id = $1").bind(&ole).execute(&t.state.db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO ldap_deactivations (user_id, provider_id, run_id, reason, at) \
+         VALUES ($1, $2, 'run-1', 'not_in_directory', 0)",
+    )
+    .bind(&ole)
+    .bind(&provider)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    t.scim(Method::PATCH, &format!("/Users/{ole}"), Some(off.clone()), &token).await;
+    t.scim(Method::PATCH, &format!("/Users/{ole}"), Some(on.clone()), &token).await;
+    assert_eq!(t.account(&ole).await.2, 1, "the sync's lock stays");
+    t.scim(Method::PATCH, &format!("/Users/{ole}"), Some(off), &token).await;
+    let mut conn = t.state.db.acquire().await.unwrap();
+    let enabled = kalzit::sso::directory::enable_sync_disabled(&mut conn, None, &ole, "run-1", 0).await.unwrap();
+    drop(conn);
+    assert!(!enabled);
+    assert_eq!(t.account(&ole).await.2, 1, "SCIM's lock stays");
+    // With the sync's lock gone, SCIM's reactivation unlocks.
+    t.scim(Method::PATCH, &format!("/Users/{ole}"), Some(on), &token).await;
+    assert_eq!(t.account(&ole).await.2, 0);
+    t.finish().await;
+}
