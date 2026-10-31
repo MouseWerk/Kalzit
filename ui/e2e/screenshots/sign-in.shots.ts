@@ -210,6 +210,26 @@ async function openPage(browser: Browser, colorScheme: "light" | "dark" = "light
   return page;
 }
 
+/** The second factor of the account in the recent sign-ins: the app and one passkey. */
+const SECURITY = {
+  required: false,
+  requiredBy: null,
+  allowed: { passkey: true, totp: true },
+  totp: { createdAt: SCREENSHOT_NOW - 52 * DAY, lastUsedAt: SCREENSHOT_NOW - 6 * DAY },
+  passkeys: [
+    {
+      id: "shot-passkey",
+      name: "Laptop office",
+      createdAt: SCREENSHOT_NOW - 50 * DAY,
+      lastUsedAt: SCREENSHOT_NOW - 18 * MINUTE,
+    },
+  ],
+  recoveryCodes: { remaining: 9, total: 10, createdAt: SCREENSHOT_NOW - 52 * DAY },
+  confirmedUntil: null,
+  lockedUntil: null,
+  hasPassword: true,
+};
+
 /** Answers the providers and their dialogs from the fixtures; everything else is the server's. */
 async function stubProviders(page: Page): Promise<void> {
   await page.context().route(/\/api\/admin\/sign-in(\?|$)/, async (route) => {
@@ -355,8 +375,13 @@ test("recent sign-ins", async ({ browser }) => {
       .route(/\/api\/me\/sign-ins(\?|$)/, (route) =>
         route.fulfill({ json: { items: signIns(true), nextCursor: null } }),
       );
+    // The account the list belongs to has the app and a passkey, as its sign-ins show.
+    await page
+      .context()
+      .route(/\/api\/me\/security(\?|$)/, (route) => route.fulfill({ json: SECURITY }));
     await signIn(page);
     await page.goto("/settings/account-security");
+    await expect(page.getByText("Laptop office", { exact: true })).toBeVisible();
     const list = page.getByRole("list", { name: t("security.signIns.title") });
     await expect(list.getByRole("listitem")).toHaveCount(5);
     await shoot(page, `recent-sign-ins-${colorScheme}`);
