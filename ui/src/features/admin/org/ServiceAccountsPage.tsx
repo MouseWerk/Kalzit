@@ -45,7 +45,6 @@ import {
   validAccountName,
 } from "./serviceAccountRules";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
-import "../../settings/settings.css";
 
 /** "3 hours ago", in the short style of the lists. */
 function useAgo() {
