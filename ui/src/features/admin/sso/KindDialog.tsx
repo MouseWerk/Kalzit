@@ -3,10 +3,11 @@ import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { Dialog } from "../components/Dialog";
 import "./sso.css";
 
-export type ProviderKind = "oidc" | "ldap";
+export type ProviderKind = "oidc" | "saml" | "ldap";
 
 const KINDS: { kind: ProviderKind; mark: string; label: MessageKey; hint: MessageKey }[] = [
   { kind: "oidc", mark: "OI", label: "sso.kind.oidc", hint: "sso.kindChoice.oidcHint" },
+  { kind: "saml", mark: "SA", label: "sso.kind.saml", hint: "sso.kindChoice.samlHint" },
   { kind: "ldap", mark: "LD", label: "sso.kindChoice.ldap", hint: "sso.kindChoice.ldapHint" },
 ];
 
