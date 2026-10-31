@@ -122,17 +122,21 @@ function withoutEmpty<Field extends string>(
 
 // Sign-in only catches an obvious slip: the server checks no shape at login, and a stricter UI
 // could lock out someone whose address an older rule accepted.
-function loginEmailError(email: string): FieldMessage | undefined {
+function loginEmailError(email: string, username: boolean): FieldMessage | undefined {
   const trimmed = trimWhitespace(email);
   if (trimmed === "") {
-    return message("validation.emailRequired");
+    return message(username ? "validation.loginRequired" : "validation.emailRequired");
   }
-  return trimmed.includes("@") ? undefined : message("validation.emailInvalid");
+  return username || trimmed.includes("@") ? undefined : message("validation.emailInvalid");
 }
 
-export function validateLogin(values: LoginValues): FieldErrors<LoginField> {
+/**
+ * The password sign-in. `username`: an LDAP directory is set up, so the first field takes an email
+ * or a directory user name (docs/api/sso.md, "LDAP and Active Directory").
+ */
+export function validateLogin(values: LoginValues, username = false): FieldErrors<LoginField> {
   return withoutEmpty<LoginField>({
-    email: loginEmailError(values.email),
+    email: loginEmailError(values.email, username),
     // No length rule here: an existing password is whatever the server accepted back then.
     password: values.password === "" ? message("validation.passwordRequired") : undefined,
   });
@@ -166,7 +170,7 @@ export function validateNewPassword(password: string): FieldErrors<"password"> {
 
 /** An address to send a password link to: the same rough shape sign-in checks. */
 export function validateResetEmail(email: string): FieldErrors<"email"> {
-  return withoutEmpty<"email">({ email: loginEmailError(email) });
+  return withoutEmpty<"email">({ email: loginEmailError(email, false) });
 }
 
 export type PasswordStrengthLevel = "empty" | "short" | "fair" | "strong";

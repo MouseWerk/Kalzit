@@ -204,14 +204,21 @@
     height: var(--icon-size);
   }
 
-  /* State colors last: a key nobody here trusts, a withdrawn version. Text and icons only. */
-  .catalog-key[data-trusted="false"] .icon,
+  /*
+   * State colors last, text and icons only. A key nobody here trusts is a caution, not an error:
+   * the warning color on its icon. A withdrawn version is an error.
+   */
+  .catalog-key[data-trusted="false"] .icon {
+    color: var(--warning-text);
+  }
+
   .catalog-card__state[data-state="revoked"],
   .catalog-card__revoked {
     color: var(--danger-text);
   }
 
-  @media (width < 40rem) {
+  /* Narrow by the room the component has, not by the window (the sidebar and panes vary it). */
+  @container (width < 36rem) {
     .catalog-actions {
       display: flex;
       flex-wrap: wrap;

@@ -108,10 +108,17 @@ mod tests {
         "token",
         // SCIM provisioning (docs/api/scim.md).
         "scim",
+        // LDAP and Active Directory (docs/api/sso.md), with the causes it records in the audit log.
+        "ldap",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // Audit actions of the directory sync.
+        "ldap.sync_applied",
+        "ldap.sync_failed",
+        "ldap.sync_finished",
+        "ldap.sync_halted",
         // AI settings keys and audit actions.
         "ai.allow_org_providers",
         "ai.called",

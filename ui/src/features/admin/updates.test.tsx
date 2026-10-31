@@ -183,9 +183,10 @@ describe("updates page", () => {
     const checks = screen.getByRole("region", { name: "Before the update" });
     expect(within(checks).getByText("Ready")).toBeTruthy();
     expect(within(checks).getByText("Active users in the last 30 minutes: 3")).toBeTruthy();
-    expect(
-      screen.getByRole("switch", { name: "Check automatically" }).getAttribute("aria-checked"),
-    ).toBe("false");
+    const daily = screen.getByRole("switch", { name: "Check automatically" });
+    expect(daily.getAttribute("aria-checked")).toBe("false");
+    // The shared switch of the settings, not one with its own sizes.
+    expect(daily.classList.contains("settings-switch")).toBe(true);
   });
 
   it("installs after a confirmation", async () => {
