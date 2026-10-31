@@ -702,6 +702,81 @@ describe("motion and typography", () => {
       });
     }
   });
+
+  it("sets a legend flush with the labels of single fields", () => {
+    const rules = rulesByFile.find(({ name }) => name === "styles/reset.css")?.rules ?? [];
+    const legend = rules.find((rule) =>
+      rule.selector.split(",").some((part) => part.trim() === "legend"),
+    );
+    expect(legend?.declarations).toContainEqual({ property: "padding", value: "0" });
+  });
+});
+
+describe("disclosures", () => {
+  // The components the stylesheets style: every module under src except tests.
+  function components(dir: string): { name: string; text: string }[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        return entry.name === "test" ? [] : components(path);
+      }
+      return /\.tsx$/.test(entry.name) && !/\.test\.tsx$/.test(entry.name)
+        ? [{ name: basename(path), text: readFileSync(path, "utf8") }]
+        : [];
+    });
+  }
+
+  /**
+   * Summaries that keep the browser's filled triangle: a summary with a class of its own takes
+   * `disclosure` for the shared chevron, or hides the marker in a rule of its class or of the
+   * class of its details.
+   */
+  function bareMarkers(
+    modules: readonly { name: string; text: string }[],
+    rules: readonly StyleRule[],
+  ): string[] {
+    const hiding = rules
+      .filter((rule) => rule.selector.includes("::-webkit-details-marker"))
+      .map((rule) => rule.selector);
+    const hides = (name: string) =>
+      hiding.some((selector) => new RegExp(`\\.${name}(?![\\w-])`).test(selector));
+    const found: string[] = [];
+    for (const { name, text } of modules) {
+      let details: string[] = [];
+      for (const match of text.matchAll(/<(details|summary)\b(?:[^>]*?className="([^"]*)")?/g)) {
+        const classes = (match[2] ?? "").split(/\s+/).filter((c) => c !== "");
+        if (match[1] === "details") {
+          details = classes;
+        } else if (
+          classes.length > 0 &&
+          !classes.includes("disclosure") &&
+          !classes.some(hides) &&
+          !details.some(hides)
+        ) {
+          found.push(`${name}: <summary className="${classes.join(" ")}">`);
+        }
+      }
+    }
+    return found;
+  }
+
+  it("draws no browser triangle on a summary with a class of its own", () => {
+    expect(bareMarkers(components(SRC_DIR), allRules())).toEqual([]);
+  });
+
+  it("catches a classed summary that keeps the triangle", () => {
+    const rules = parseCss(
+      ".menu > summary::-webkit-details-marker { display: none; } .tool::-webkit-details-marker { display: none; }",
+    );
+    const check = (text: string) => bareMarkers([{ name: "x.tsx", text }], rules);
+    expect(check('<summary className="row">A</summary>')).toEqual([
+      'x.tsx: <summary className="row">',
+    ]);
+    expect(check('<summary className="row disclosure">A</summary>')).toEqual([]);
+    expect(check("<summary>A</summary>")).toEqual([]);
+    expect(check('<summary className="tool">A</summary>')).toEqual([]);
+    expect(check('<details className="menu"><summary className="b">A</summary>')).toEqual([]);
+  });
 });
 
 /** Every url() or @import of a stylesheet that reaches another host (a scheme or `//`). */

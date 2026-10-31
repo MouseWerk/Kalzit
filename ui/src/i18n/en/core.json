@@ -75,7 +75,7 @@
   "errorPage.title": "Kalzit could not load",
   "notFound.title": "Page not found",
   "notFound.text": "This address does not exist. It may have moved or been mistyped.",
-  "notFound.home": "Go to home",
+  "notFound.home": "Go to Home",
   "home.title": "Home",
   "home.welcome": "Welcome, {name}"
 }

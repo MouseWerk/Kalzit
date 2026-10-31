@@ -159,6 +159,16 @@
 
   /* The list */
 
+  /*
+   * The list has six columns: beside the folders it only fits on wide screens. Below that the
+   * folders go above it, instead of columns so narrow that headings break letter by letter.
+   */
+  @media (max-width: 80rem) {
+    .browser.analyses-browser {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   /* A long data source name in a select must not widen the list column on a phone. */
   .analysis-filters {
     display: flex;

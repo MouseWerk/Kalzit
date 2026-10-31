@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -88,6 +89,18 @@ function VersionList({ orgId }: { orgId: string }) {
   const currentVersion = dashboard.data?.version;
   return (
     <div className="versions">
+      {dashboard.data === undefined ? null : (
+        <Breadcrumbs
+          crumbs={[
+            { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+            {
+              label: dashboard.data.title,
+              link: { to: "/dashboards/$dashboardId", params: { dashboardId }, search: {} },
+            },
+            { label: t("dashboards.history.title") },
+          ]}
+        />
+      )}
       <Link
         to="/dashboards/$dashboardId"
         params={{ dashboardId }}
@@ -98,7 +111,7 @@ function VersionList({ orgId }: { orgId: string }) {
         {t("dashboards.history.back", { title: dashboard.data?.title ?? "" })}
       </Link>
       {items.length === 0 ? (
-        <EmptyState icon="dashboards" title={t("dashboards.history.empty")}>
+        <EmptyState icon="history" title={t("dashboards.history.empty")}>
           {t("dashboards.history.emptyText")}
         </EmptyState>
       ) : (

@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -42,6 +43,12 @@ export function TrashPage() {
   }
   return (
     <Page title={t("dashboards.trash.title")} lead={t("dashboards.trash.lead")}>
+      <Breadcrumbs
+        crumbs={[
+          { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+          { label: t("dashboards.trash.title") },
+        ]}
+      />
       {body}
     </Page>
   );
@@ -144,7 +151,7 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
     return (
       <>
         {back}
-        <EmptyState icon="dashboards" title={t("dashboards.trash.empty")}>
+        <EmptyState icon="trash" title={t("dashboards.trash.empty")}>
           {t("dashboards.trash.emptyText")}
         </EmptyState>
       </>

@@ -150,7 +150,7 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
   const filtered = search.q !== undefined || search.source !== undefined || search.mine === true;
 
   return (
-    <div className="browser">
+    <div className="browser analyses-browser">
       <aside className="browser__side">
         {folders.isError ? (
           <FormAlert>{errorMessage(t, folders.error)}</FormAlert>

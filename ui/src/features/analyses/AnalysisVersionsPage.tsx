@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -83,6 +84,18 @@ function VersionList({ orgId }: { orgId: string }) {
   const items = versions.data.pages.flatMap((page) => page.items);
   return (
     <div className="versions">
+      {analysis.data === undefined ? null : (
+        <Breadcrumbs
+          crumbs={[
+            { label: t("analyses.list.title"), link: { to: "/explore/saved", search: {} } },
+            {
+              label: analysis.data.title,
+              link: { to: "/explore/saved/$analysisId", params: { analysisId } },
+            },
+            { label: t("analyses.versions.title") },
+          ]}
+        />
+      )}
       <Link
         to={analysis.data?.mayQuery === true ? "/explore" : "/explore/saved"}
         search={analysis.data?.mayQuery === true ? { analysis: analysisId } : {}}

@@ -66,7 +66,7 @@ function set<K extends keyof FieldOptions>(
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <details className="viz-editor__section">
-      <summary className="viz-editor__summary">{title}</summary>
+      <summary className="viz-editor__summary disclosure">{title}</summary>
       <div className="viz-editor__body">{children}</div>
     </details>
   );

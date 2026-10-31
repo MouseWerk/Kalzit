@@ -83,10 +83,15 @@
     background: var(--bg-hover);
   }
 
+  /*
+   * A heading keeps its words whole: `anywhere` lets the table squeeze a column below its
+   * heading's longest word ("Geänder|t"); `break-word` only breaks a word that fits nowhere.
+   */
   .data-table th {
     background: var(--bg-surface);
     color: var(--text-muted);
     font-weight: var(--font-weight-medium);
+    overflow-wrap: break-word;
   }
 
   .data-table__muted {

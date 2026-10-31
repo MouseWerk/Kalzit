@@ -29,6 +29,11 @@
     padding: 0;
   }
 
+  /* The browser pads a legend by 2 px, which set group labels off the labels of single fields. */
+  legend {
+    padding: 0;
+  }
+
   img,
   picture,
   svg,

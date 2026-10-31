@@ -527,7 +527,7 @@ function PublicUrlNotice({ view }: { view: MailView }) {
     return null;
   }
   return (
-    <p className="notice mail-notice">
+    <p className="notice">
       <Icon name="alert" />
       {t("settings.mail.publicUrlMissing")}
     </p>

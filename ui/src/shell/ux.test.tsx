@@ -519,6 +519,28 @@ describe("dashboard page", () => {
     await waitFor(() => expect(server.areas.shell.stars).toEqual([]));
   });
 
+  it("leads from the trash, playlists, library panels and history back by breadcrumbs", async () => {
+    setup();
+    for (const [path, trail] of [
+      ["/dashboards/trash", ["Dashboards", "Trash"]],
+      ["/dashboards/playlists", ["Dashboards", "Playlists"]],
+      ["/dashboards/library", ["Dashboards", "Library panels"]],
+      ["/dashboards/d-sales/versions", ["Dashboards", "Sales overview", "History"]],
+    ] as const) {
+      renderApp(path);
+      const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+      await waitFor(() =>
+        expect(within(crumbs).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+          ...trail,
+        ]),
+      );
+      expect(within(crumbs).getByRole("link", { name: "Dashboards" }).getAttribute("href")).toBe(
+        "/dashboards",
+      );
+      cleanup();
+    }
+  });
+
   it("takes a failed star back and says so", async () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
