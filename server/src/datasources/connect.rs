@@ -82,6 +82,17 @@ pub fn refused(address: &str) -> Detail {
         .with("address", address)
 }
 
+/// The server refused the login: a wrong user name or password, or a login that may not sign in.
+/// Drivers decide by the server's error code (SQLSTATE `28P01`, MySQL 1045, SQL Server 18456,
+/// HTTP 401, ...), never by its text; `detail` is the server's own words.
+pub fn auth_failed(detail: impl ToString) -> SourceError {
+    let detail = detail.to_string();
+    SourceError::Failed(
+        Detail::new("source.auth_failed", format!("the data source refused the login: {detail}"))
+            .with("detail", detail),
+    )
+}
+
 /// No connection to `address` within `timeout`.
 pub fn timed_out(address: &str, timeout: Duration) -> Detail {
     let seconds = timeout.as_secs().max(1);

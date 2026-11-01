@@ -213,6 +213,9 @@ fn failed(e: sqlx::Error) -> SourceError {
         sqlx::Error::Database(db) => {
             if db.code().as_deref() == Some("57014") {
                 SourceError::failed("query.statement_timeout", "the query was cancelled by the statement timeout")
+            } else if matches!(db.code().as_deref(), Some("28P01" | "28000")) {
+                // invalid_password, invalid_authorization_specification (no such user, pg_hba).
+                connect::auth_failed(db.message())
             } else if db.code().as_deref() == Some("25006") {
                 SourceError::rejected("query.write_refused", format!("the query tried to write: {}", db.message()))
                     .with("detail", db.message())

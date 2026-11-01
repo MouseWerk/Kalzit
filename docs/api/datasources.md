@@ -378,8 +378,9 @@ Body: none or `{}`. Always `200`, also when the source fails:
 ```json
 { "ok": true, "reason": "health.connected", "params": { "engine": "PostgreSQL", "version": "17.2" },
   "message": "PostgreSQL 17.2", "latencyMs": 12 }
-{ "ok": false, "reason": "source.error", "params": { "detail": "password authentication failed for user \"leser\"" },
-  "message": "password authentication failed for user \"leser\"", "latencyMs": 40, "code": "datasource_error" }
+{ "ok": false, "reason": "source.auth_failed", "params": { "detail": "password authentication failed for user \"leser\"" },
+  "message": "the data source refused the login: password authentication failed for user \"leser\"", "latencyMs": 40,
+  "code": "datasource_error" }
 ```
 
 - `reason` and `params` are what the UI shows (see [Reasons](#reasons)); `message` is the English
@@ -2001,6 +2002,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `source.connect_timeout` | `address`, `seconds` | no connection to `address` within `seconds` (the server does not answer) |
 | `source.pool_timeout` | `seconds` | the server takes connections, but none of the source's pool was free within `seconds` (every connection busy, or logging in takes that long); a refused connection setup answers its own reason instead |
 | `source.connect_failed` | `address`, `detail` | the connection to `address` failed for another reason; `detail` is the system's text |
+| `source.auth_failed` | `detail` | the server refused the login (wrong user name, password or token, or a login that may not sign in), told by the server's error code: PostgreSQL SQLSTATE `28P01`/`28000`, MySQL and MariaDB 1045/1698, SQL Server 18456, ClickHouse 516/192/193/194, Neo4j `Neo.ClientError.Security.Unauthorized`, MongoDB `AuthenticationFailed`, and HTTP `401` from Prometheus, Loki, InfluxDB, Elasticsearch, OpenSearch and HTTP JSON; `detail` is the server's text without secrets, shown only as the secondary detail |
 | `source.connection_lost` | `detail` | the connection broke while in use (closed or reset by the server, for example after a restart); `detail` is the driver's text (such as `early eof`), shown only as the secondary detail. A read-only query on a pooled connection that breaks before any result arrived is run once more on a fresh connection first |
 | `sqlite.open_failed` | `detail` | the SQLite file cannot be opened |
 | `mysql.no_time_limit` | | the server supports neither `max_execution_time` nor `max_statement_time` |
@@ -2036,7 +2038,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `http_json.status` | `status`, `detail` | the server answered an error status |
 | `http_json.not_json` | `status`, `detail` | the answer is not JSON |
 | `http_json.path_missing` | `path` | the answer has nothing at `documentsPath` |
-| `http_json.redirect_refused` | `path` | the server redirected outside the source's URL |
+| `http_json.redirect_refused` | `path` | `query_rejected`: the server redirected outside the source's URL |
 | `http_json.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `bolt.protocol` | `detail` | the server broke the Bolt protocol (or speaks no version Kalzit does) |
 | `bolt.tls` | `detail` (when known) | TLS could not be set up or failed |
@@ -2051,7 +2053,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `tigergraph.error` | `status`, `detail` | TigerGraph answered an error |
 | `tigergraph.no_token` | | the token endpoint answered without a token |
 | `tigergraph.auth_disabled` | | a warning of a passed Test connection (`warnings`), not a failure: REST++ answers without a token |
-| `tigergraph.redirect_refused` | `path` | TigerGraph answered a request with a redirect |
+| `tigergraph.redirect_refused` | `path` | `query_rejected`: TigerGraph answered a request with a redirect |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |
 | `http.failed` | `detail` | the HTTP request failed |
