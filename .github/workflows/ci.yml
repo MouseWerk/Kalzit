@@ -198,7 +198,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
-      - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
+      - run: cargo test --locked --test api --test access --test analyses --test dashboard_features --test settings_dashboards --test shell --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
       # Every test of these files runs on PostgreSQL when the URL is set, each in its own schema.
       - run: cargo test --locked --test sso --test mail_invitations --test service_accounts -- --nocapture
 

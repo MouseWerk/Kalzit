@@ -21,6 +21,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
+use crate::collation;
 use crate::dashboards::{check_dashboard_sources, library, model};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -454,7 +455,7 @@ pub(super) fn like_contains(needle: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// Ordered by title, then id. Dashboards the caller does not see (in a restricted folder without
+/// Ordered by title (`collation`), then id. Dashboards the caller does not see (in a restricted folder without
 /// access, and no grant on the dashboard itself) are left out by the query itself, so every page
 /// is full.
 async fn list(
@@ -475,7 +476,9 @@ async fn list(
     super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
     // Lower case by Unicode rules on both sides: `search_title` is written by the server.
     let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
+    // The cursor names the last title; the database compares its sort key (`collation`).
     let (after_title, after_id) = after.unzip();
+    let after_key = after_title.as_deref().map(collation::key);
     // A team context (`$12`) leaves out other teams' spaces in the query itself, so pages stay full.
     let sql = format!(
         "{}{} SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
@@ -483,12 +486,12 @@ async fn list(
          AND (CAST($6 AS TEXT) IS NULL OR folder_id = $6) \
          AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\') \
          AND {} \
-         AND (CAST($8 AS TEXT) IS NULL OR title > $8 OR (title = $8 AND id > $9)) \
+         AND (CAST($8 AS TEXT) IS NULL OR sort_title > $8 OR (sort_title = $8 AND id > $9)) \
          AND (CAST($11 AS TEXT) IS NULL OR id IN \
               (SELECT dashboard_id FROM dashboard_tags WHERE org_id = $1 AND tag_key = $11)) \
          AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM scope_out) \
               OR id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'dashboard')) \
-         ORDER BY title, id LIMIT $10",
+         ORDER BY sort_title, id LIMIT $10",
         folders::VISIBILITY_CTE,
         folders::scope_cte(12),
         folders::dashboard_visible("dashboards"),
@@ -502,7 +505,7 @@ async fn list(
         .bind(q.trashed.unwrap_or(false) as i64)
         .bind(q.folder_id.as_deref())
         .bind(pattern.as_deref())
-        .bind(after_title.as_deref())
+        .bind(after_key.as_deref())
         .bind(after_id.as_deref())
         .bind(limit as i64 + 1)
         .bind(q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase))
@@ -558,7 +561,7 @@ async fn create(
     lock_place(&mut tx, &ctx.org_id, body.folder_id.as_deref()).await?;
     sqlx::query(
         "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_by, created_at, \
-         updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, $7)",
+         updated_by, updated_at, sort_title) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, $7, $8)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
@@ -567,6 +570,7 @@ async fn create(
     .bind(model.title.to_lowercase())
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(collation::key(&model.title))
     .execute(&mut *tx)
     .await?;
     // `lock_place` took the organization's lock; a library panel deleted since the check above
@@ -666,7 +670,7 @@ async fn write_version(
     }
     let updated = sqlx::query(
         "UPDATE dashboards SET title = $1, search_title = $2, folder_id = $3, version = $4, updated_by = $5, \
-         updated_at = $6 WHERE org_id = $7 AND id = $8 AND version = $9 AND deleted_at IS NULL",
+         updated_at = $6, sort_title = $10 WHERE org_id = $7 AND id = $8 AND version = $9 AND deleted_at IS NULL",
     )
     .bind(&new.model.title)
     .bind(new.model.title.to_lowercase())
@@ -677,6 +681,7 @@ async fn write_version(
     .bind(&ctx.org_id)
     .bind(&row.id)
     .bind(row.version)
+    .bind(collation::key(&new.model.title))
     .execute(&mut *tx)
     .await?
     .rows_affected();

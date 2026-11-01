@@ -579,8 +579,8 @@ struct Overview {
 
 async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
     let server = sf::server_requirement(&state).await?;
-    let orgs: Vec<(String, String)> =
-        sqlx::query_as("SELECT id, name FROM orgs ORDER BY name, id").fetch_all(&state.db).await?;
+    let mut orgs: Vec<(String, String)> = sqlx::query_as("SELECT id, name FROM orgs").fetch_all(&state.db).await?;
+    orgs.sort_by(|a, b| crate::collation::compare(&a.1, &b.1).then_with(|| a.0.cmp(&b.0)));
     // Members without any method, per organization.
     let without: Vec<(String, String, String, i64)> = sqlx::query_as(
         "SELECT m.org_id, m.user_id, m.role, u.is_server_admin FROM org_members m JOIN users u ON u.id = m.user_id \

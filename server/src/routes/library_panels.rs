@@ -14,6 +14,7 @@ use super::table::{RouteDef, route};
 use super::{clean_name, new_id};
 use crate::app::AppState;
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
+use crate::collation;
 use crate::dashboards::library::{self, LIBRARY_COLUMNS, LibraryRow, check_place};
 use crate::dashboards::{check_dashboard_sources, model};
 use crate::error::{ApiError, ApiResult};
@@ -211,7 +212,7 @@ pub struct ListQuery {
     cursor: Option<String>,
 }
 
-/// Ordered by name, then id; library panels in folders the caller cannot see, or in the trash,
+/// Ordered by name (`collation`), then id; library panels in folders the caller cannot see, or in the trash,
 /// are left out.
 async fn list(
     State(state): State<AppState>,
@@ -238,8 +239,8 @@ async fn list(
               AND folder_id IN (SELECT id FROM folders WHERE org_id = $1 AND deleted_at IS NULL))) \
          AND (CAST($5 AS TEXT) IS NULL OR folder_id = $5) \
          AND (CAST($6 AS TEXT) IS NULL OR search_name LIKE $6 ESCAPE '\\') \
-         AND (CAST($7 AS TEXT) IS NULL OR name > $7 OR (name = $7 AND id > $8)) \
-         ORDER BY name, id LIMIT $9",
+         AND (CAST($7 AS TEXT) IS NULL OR sort_name > $7 OR (sort_name = $7 AND id > $8)) \
+         ORDER BY sort_name, id LIMIT $9",
         folders::VISIBILITY_CTE
     )))
     .bind(&ctx.org_id)
@@ -248,7 +249,8 @@ async fn list(
     .bind(folders::sees_every_folder(&ctx))
     .bind(q.folder_id.as_deref())
     .bind(pattern.as_deref())
-    .bind(after_name.as_deref())
+    // The cursor names the last name; the database compares its sort key (`collation`).
+    .bind(after_name.as_deref().map(collation::key))
     .bind(after_id.as_deref())
     .bind(limit as i64 + 1)
     .fetch_all(&mut *conn)
@@ -297,7 +299,7 @@ async fn create(
     lock_folder(&mut tx, &ctx.org_id, body.folder_id.as_deref()).await?;
     sqlx::query(
         "INSERT INTO library_panels (id, org_id, folder_id, name, search_name, model, version, created_by, \
-         created_at, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $7, $8)",
+         created_at, updated_by, updated_at, sort_name) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $7, $8, $9)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
@@ -307,6 +309,7 @@ async fn create(
     .bind(&text)
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(collation::key(&name))
     .execute(&mut *tx)
     .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
@@ -392,7 +395,7 @@ async fn save(
     }
     let updated = sqlx::query(
         "UPDATE library_panels SET name = $1, search_name = $2, model = $3, folder_id = $4, version = version + 1, \
-         updated_by = $5, updated_at = $6 WHERE org_id = $7 AND id = $8 AND version = $9",
+         updated_by = $5, updated_at = $6, sort_name = $10 WHERE org_id = $7 AND id = $8 AND version = $9",
     )
     .bind(&name)
     .bind(name.to_lowercase())
@@ -403,6 +406,7 @@ async fn save(
     .bind(&ctx.org_id)
     .bind(&id)
     .bind(row.version)
+    .bind(collation::key(&name))
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -524,7 +528,7 @@ async fn uses(
     let rows: Vec<(String, Option<String>, String, Option<i64>)> = sqlx::query_as(
         "SELECT d.id, d.folder_id, d.title, d.deleted_at FROM library_panel_uses u \
          JOIN dashboards d ON d.id = u.dashboard_id WHERE u.library_panel_id = $1 AND d.org_id = $2 \
-         ORDER BY d.title, d.id",
+         ORDER BY d.sort_title, d.id",
     )
     .bind(&id)
     .bind(&ctx.org_id)

@@ -270,8 +270,36 @@ macro_rules! on_both_databases {
     };
 }
 
+/// The sort key refresh at startup holds its advisory lock and does its work on one connection,
+/// so a server with `database.max_connections = 1` still starts on PostgreSQL, and fills keys
+/// that are missing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_sort_key_refresh_needs_one_connection() {
+    let Some(base) = common::postgres_url("the sort key refresh on one connection") else { return };
+    let schema = common::postgres_schema(&base).await;
+    let connect = kalzit::db::connect(&schema.url, 1);
+    let db = tokio::time::timeout(std::time::Duration::from_secs(60), connect).await.expect("starts").unwrap();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)").execute(&db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO dashboards (id, org_id, title, search_title, version, created_at, updated_at) \
+         VALUES ('d', 'o', 'Äpfel', 'äpfel', 1, 0, 0)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(60), kalzit::collation::refresh(&db))
+        .await
+        .expect("refreshes")
+        .unwrap();
+    let (stored,): (Vec<u8>,) = sqlx::query_as("SELECT sort_title FROM dashboards").fetch_one(&db).await.unwrap();
+    assert_eq!(stored, kalzit::collation::key("Äpfel"));
+    db.close().await;
+    schema.drop_now().await;
+}
+
 on_both_databases! {
     create_read_save_and_list,
+    lists_follow_the_language_order_on_every_database,
     saves_check_the_version,
     invalid_models_are_refused_with_their_place,
     trash_restore_and_purge,
@@ -325,27 +353,12 @@ async fn create_read_save_and_list(t: TestApp) {
     assert_eq!(saved.body["updatedAt"], T0 + 1000);
     assert_eq!(saved.body["model"]["visualization"]["type"], "bar");
 
-    // Listing: by title, searchable in any case (also beyond ASCII), filtered by folder.
+    // Listing: by title in the language order ("Ö" next to "O"), searchable in any case (also
+    // beyond ASCII), filtered by folder.
     let folder = t.folder("Vertrieb", false).await;
     t.create("Öffnungszeiten", &source, Some(&folder), &t.owner).await;
     t.create("Abbrüche", &source, None, &t.owner).await;
-    // In the database's order of titles: SQLite compares bytes ("Ö" after "U"), PostgreSQL by its
-    // locale ("Ö" before "U" in en_US.UTF-8), so the expected order is asked of the database.
-    let by_title: Vec<(String,)> =
-        sqlx::query_as("SELECT title FROM analyses WHERE org_id = $1 AND deleted_at IS NULL ORDER BY title, id")
-            .bind(&t.org)
-            .fetch_all(&t.state.db)
-            .await
-            .unwrap();
-    let by_title: Vec<String> = by_title.into_iter().map(|(title,)| title).collect();
-    let mut same = by_title.clone();
-    same.sort();
-    same.dedup();
-    assert_eq!(same, ["Abbrüche", "Umsatz nach Land", "Öffnungszeiten"], "the three analyses, nothing else");
-    if !t.state.config.database_url().starts_with("postgres") {
-        assert_eq!(by_title, same, "SQLite compares bytes");
-    }
-    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), by_title);
+    assert_eq!(t.get("~/analyses", &t.owner).await.titles(), ["Abbrüche", "Öffnungszeiten", "Umsatz nach Land"]);
     assert_eq!(t.get("~/analyses?q=%C3%96FFNUNG", &t.owner).await.titles(), ["Öffnungszeiten"]);
     assert_eq!(t.get("~/analyses?q=land", &t.owner).await.titles(), ["Umsatz nach Land"]);
     assert_eq!(t.get(&format!("~/analyses?folderId={folder}"), &t.owner).await.titles(), ["Öffnungszeiten"]);
@@ -353,13 +366,92 @@ async fn create_read_save_and_list(t: TestApp) {
     assert!(t.get("~/analyses?q=%25", &t.owner).await.titles().is_empty());
     // Pages keep their order.
     let first = t.get("~/analyses?limit=2", &t.owner).await;
-    assert_eq!(first.titles(), by_title[..2]);
+    assert_eq!(first.titles(), ["Abbrüche", "Öffnungszeiten"]);
     let cursor = first.body["nextCursor"].as_str().unwrap().to_string();
-    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), by_title[2..]);
+    assert_eq!(t.get(&format!("~/analyses?limit=2&cursor={cursor}"), &t.owner).await.titles(), ["Umsatz nach Land"]);
     // A folder that does not exist is not found; an unknown parameter is refused.
     let missing = uuid::Uuid::now_v7();
     assert_eq!(t.get(&format!("~/analyses?folderId={missing}"), &t.owner).await.status, StatusCode::NOT_FOUND);
     assert_eq!(t.get("~/analyses?tag=x", &t.owner).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Lists order by the rules of the UI languages, not by the database's collation: German puts
+/// "Ä" and "Ö" next to "A" and "O" and sorts "ß" like "ss"; English follows the Unicode collation;
+/// case does not count. SQLite and PostgreSQL answer the same order, and pages keep it across
+/// every umlaut boundary.
+async fn lists_follow_the_language_order_on_every_database(t: TestApp) {
+    let source = t.source("shop").await;
+    let german = t.folder("Deutsch", false).await;
+    let english = t.folder("English", false).await;
+    let mut zebra = String::new();
+    for title in ["Zebra", "ß", "Äpfel", "O", "Apfel", "Ö"] {
+        let r = t.create(title, &source, Some(&german), &t.owner).await;
+        assert_eq!(r.status, StatusCode::CREATED);
+        if title == "Zebra" {
+            zebra = id_of(r);
+        }
+    }
+    for title in ["cherry", "Éclair", "banana", "apple pie", "Apple", "Delta"] {
+        assert_eq!(t.create(title, &source, Some(&english), &t.owner).await.status, StatusCode::CREATED);
+    }
+    let german_order = ["Apfel", "Äpfel", "O", "Ö", "ß", "Zebra"];
+    let english_order = ["Apple", "apple pie", "banana", "cherry", "Delta", "Éclair"];
+    assert_eq!(t.get(&format!("~/analyses?folderId={german}"), &t.owner).await.titles(), german_order);
+    assert_eq!(t.get(&format!("~/analyses?folderId={english}"), &t.owner).await.titles(), english_order);
+
+    // One title per page: every step crosses a boundary (A/Ä, O/Ö, ß/Z), none repeats or skips.
+    for (folder, expected) in [(&german, &german_order[..]), (&english, &english_order[..])] {
+        let mut seen = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let path = match &cursor {
+                Some(c) => format!("~/analyses?folderId={folder}&limit=1&cursor={c}"),
+                None => format!("~/analyses?folderId={folder}&limit=1"),
+            };
+            let page = t.get(&path, &t.owner).await;
+            seen.extend(page.titles());
+            match page.body["nextCursor"].as_str() {
+                Some(c) => cursor = Some(c.to_string()),
+                None => break,
+            }
+        }
+        assert_eq!(seen, expected);
+    }
+    // A rename moves the analysis to its new place.
+    let renamed = t.save(&zebra, model("aal", &source, SQL), &t.owner).await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
+    assert_eq!(
+        t.get(&format!("~/analyses?folderId={german}"), &t.owner).await.titles(),
+        ["aal", "Apfel", "Äpfel", "O", "Ö", "ß"]
+    );
+    let back = t.save(&zebra, model("Zebra", &source, SQL), &t.owner).await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+
+    // Titles equal but for case keep a stable order by id, also across pages.
+    let first = id_of(t.create("umsatz", &source, None, &t.owner).await);
+    let second = id_of(t.create("UMSATZ", &source, None, &t.owner).await);
+    let ids = |r: &Reply| -> Vec<String> {
+        r.body["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap().to_string()).collect()
+    };
+    let mut by_id = [first, second];
+    by_id.sort();
+    let page = t.get("~/analyses?q=umsatz&limit=1", &t.owner).await;
+    assert_eq!(ids(&page), [by_id[0].clone()]);
+    let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
+    let rest = t.get(&format!("~/analyses?q=umsatz&limit=1&cursor={cursor}"), &t.owner).await;
+    assert_eq!(ids(&rest), [by_id[1].clone()]);
+
+    // Dashboards follow the same order.
+    for title in ["Zebra", "ß", "Äpfel", "O", "Apfel", "Ö"] {
+        let body = json!({ "model": { "schemaVersion": 1, "title": title, "panels": [] } });
+        let r = t.post("~/dashboards", body, &t.owner).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    }
+    assert_eq!(t.get("~/dashboards", &t.owner).await.titles(), german_order);
+    let page = t.get("~/dashboards?limit=3", &t.owner).await;
+    assert_eq!(page.titles(), ["Apfel", "Äpfel", "O"]);
+    let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
+    assert_eq!(t.get(&format!("~/dashboards?limit=3&cursor={cursor}"), &t.owner).await.titles(), ["Ö", "ß", "Zebra"]);
 }
 
 async fn saves_check_the_version(t: TestApp) {

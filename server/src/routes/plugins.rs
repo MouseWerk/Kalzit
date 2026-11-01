@@ -258,15 +258,20 @@ struct PluginDetail {
 async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) -> ApiResult<Json<PluginDetail>> {
     let row = store::get(&state.db, &path.plugin_id).await?.ok_or_else(ApiError::not_found)?;
     let manifest = row.manifest.clone();
-    let used_in: Vec<UsedIn> = sqlx::query_as(
+    let mut used_in: Vec<UsedIn> = sqlx::query_as(
         "SELECT d.id, d.name, d.org_id, o.name AS org_name \
          FROM datasources d JOIN orgs o ON o.id = d.org_id \
-         WHERE d.kind = $1 AND d.deleted_at IS NULL \
-         ORDER BY o.name, d.name, d.id",
+         WHERE d.kind = $1 AND d.deleted_at IS NULL",
     )
     .bind(&row.id)
     .fetch_all(&state.db)
     .await?;
+    used_in.sort_by(|a, b| {
+        crate::collation::compare(&a.org_name, &b.org_name)
+            .then_with(|| a.org_id.cmp(&b.org_id))
+            .then_with(|| crate::collation::compare(&a.name, &b.name))
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
 }
 
