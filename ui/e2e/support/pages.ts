@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { SQL } from "./api";
 import { type Language, t } from "./i18n";
+import { aiInUse, installedPlugin, loadedCatalog, MOCK_PLUGIN } from "./mocks";
 import { expect, type World } from "./test";
 import { fillQuery, panelAction, startEditing, toolbarButton } from "./ui";
 
@@ -8,8 +9,22 @@ import { fillQuery, panelAction, startEditing, toolbarButton } from "./ui";
 export interface MainPage {
   name: string;
   path: (world: World) => string;
+  /** Prepares the page before it opens, such as server answers a fresh server cannot give. */
+  prepare?: (page: Page) => Promise<void>;
   /** Brings the page into the state to check and waits until it shows its content. */
   ready: (page: Page, world: World, language: Language) => Promise<void>;
+}
+
+/** Opens a main page and brings it into the state to check. */
+export async function openMainPage(
+  page: Page,
+  main: MainPage,
+  world: World,
+  language: Language,
+): Promise<void> {
+  await main.prepare?.(page);
+  await page.goto(main.path(world));
+  await main.ready(page, world, language);
 }
 
 const heading =
@@ -24,6 +39,20 @@ const heading =
 async function settingsRows(page: Page): Promise<void> {
   await expect(page.locator("#settings-section-title")).toBeVisible();
   await expect(page.locator(".settings-row").first()).toBeVisible();
+}
+
+/** A settings section that shows a heading of its own once its content arrived. */
+const sectionWith =
+  (key: string, params: Record<string, string> = {}) =>
+  async (page: Page, world: World, language: Language) => {
+    await expect(page.locator("#settings-section-title")).toBeVisible();
+    await heading(key, params)(page, world, language);
+  };
+
+/** The plugins section with its tabs. */
+async function pluginTabs(page: Page, language: Language): Promise<void> {
+  await expect(page.locator("#settings-section-title")).toBeVisible();
+  await expect(page.getByRole("tablist", { name: t("plugins.tabs", {}, language) })).toBeVisible();
 }
 
 const dialog = (page: Page, key: string, language: Language) =>
@@ -109,6 +138,33 @@ export const MAIN_PAGES: readonly MainPage[] = [
     path: () => "/dashboards/trash",
     ready: heading("dashboards.trash.title"),
   },
+  { name: "playlists", path: () => "/dashboards/playlists", ready: heading("playlists.title") },
+  {
+    name: "library panels",
+    path: () => "/dashboards/library",
+    ready: heading("libraryPanels.title"),
+  },
+  {
+    name: "analyses trash",
+    path: () => "/explore/saved/trash",
+    ready: heading("analyses.trash.title"),
+  },
+  // Fragen: AI in use, as the server answers once a provider is set up and AI is on.
+  {
+    name: "ask",
+    path: () => "/ask",
+    prepare: aiInUse,
+    ready: async (page, world, language) => {
+      await heading("ai.chat.empty.title")(page, world, language);
+      await expect(page.getByLabel(t("ai.chat.question", {}, language))).toBeVisible();
+    },
+  },
+  {
+    name: "chat history",
+    path: () => "/ask/history",
+    prepare: aiInUse,
+    ready: heading("ai.chat.history"),
+  },
   { name: "explore", path: () => "/explore", ready: heading("explore.title") },
   {
     name: "explore result",
@@ -155,7 +211,81 @@ export const MAIN_PAGES: readonly MainPage[] = [
     path: () => "/settings/organization",
     ready: settingsRows,
   },
+  {
+    name: "service accounts",
+    path: () => "/admin/service-accounts",
+    ready: heading("admin.serviceAccounts.title"),
+  },
   { name: "audit log", path: () => "/admin/audit", ready: heading("admin.audit.title") },
+  {
+    name: "server audit log",
+    path: () => "/admin/server/audit",
+    ready: heading("admin.serverAudit.title"),
+  },
+  {
+    name: "instances",
+    path: () => "/admin/server/instances",
+    ready: heading("admin.instances.title"),
+  },
+  {
+    name: "plugins",
+    path: () => "/settings/plugins",
+    ready: (page, _world, language) => pluginTabs(page, language),
+  },
+  // The catalog once a signed index loaded, which needs HTTPS the run cannot give.
+  {
+    name: "plugin catalog",
+    path: () => "/settings/plugins#catalog",
+    prepare: loadedCatalog,
+    ready: async (page, _world, language) => {
+      await pluginTabs(page, language);
+      await expect(page.getByText("Redfish BMC").first()).toBeVisible();
+    },
+  },
+  {
+    name: "plugin trust",
+    path: () => "/settings/plugins#trust",
+    ready: sectionWith("plugins.trust.keys.title"),
+  },
+  {
+    name: "plugin page",
+    path: () => `/settings/plugins/${MOCK_PLUGIN.id}`,
+    prepare: installedPlugin,
+    ready: async (page) => {
+      await expect(
+        page.getByRole("heading", { level: 2, name: MOCK_PLUGIN.name, exact: true }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: "AI administration",
+    path: () => "/settings/ai",
+    ready: sectionWith("ai.admin.providers.title"),
+  },
+  {
+    name: "organization AI",
+    path: () => "/settings/org-ai",
+    ready: sectionWith("ai.admin.providers.title"),
+  },
+  {
+    name: "organization plugins",
+    path: () => "/settings/org-plugins",
+    ready: sectionWith("plugins.org.title"),
+  },
+  { name: "general settings", path: () => "/settings/general", ready: settingsRows },
+  { name: "network settings", path: () => "/settings/network", ready: settingsRows },
+  { name: "security settings", path: () => "/settings/security", ready: settingsRows },
+  {
+    name: "sign-in settings",
+    path: () => "/settings/signin",
+    ready: async (page, _world, language) => {
+      await expect(page.getByRole("tablist", { name: t("sso.tabs", {}, language) })).toBeVisible();
+      // The providers: none yet, or the ones other tests added.
+      const panel = page.getByRole("tabpanel");
+      await expect(panel.getByRole("heading").or(panel.getByRole("table")).first()).toBeVisible();
+    },
+  },
+  { name: "storage settings", path: () => "/settings/storage", ready: settingsRows },
   // The usage page once its counts and the unused dashboards arrived.
   {
     name: "usage",
