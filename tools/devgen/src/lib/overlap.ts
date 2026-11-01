@@ -74,6 +74,7 @@ const HINTS: [RegExp, string, boolean][] = [
     false,
   ],
   [/^\.github\//, "CI or workflow changes on both sides; review them together", false],
+  [/^\.mcp\.json$/, "both register MCP servers; keep every server entry", true],
   [/^README\.md$|^docs\/screenshots\//, "screenshots and README: the later PR retakes them", false],
 ];
 
