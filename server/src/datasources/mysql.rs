@@ -31,8 +31,8 @@ const SETTINGS: &[SettingField] = &[
     SettingField::new("password", "datasources.settings.password", SettingType::String).secret(),
     SettingField::new("sslMode", "datasources.settings.sslMode", SettingType::Select)
         .target()
-        .options(&["disabled", "preferred", "required", "verify_ca", "verify_identity"])
-        .default(DefaultValue::Text("preferred")),
+        .options(&["auto", "disabled", "preferred", "required", "verify_ca", "verify_identity"])
+        .default(DefaultValue::Text(connect::AUTO_TLS)),
     SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text).target(),
 ];
 const POOL_SIZE: u32 = 4;
@@ -59,12 +59,15 @@ struct Settings {
     ca_cert: Option<String>,
 }
 
-fn ssl_mode(s: Option<&str>) -> MySqlSslMode {
+/// The driver's mode for the setting and the address the connection goes to; `auto` and a
+/// missing mode as for PostgreSQL (`postgres::ssl_mode`).
+fn ssl_mode(s: Option<&str>, addr: std::net::IpAddr) -> MySqlSslMode {
     match s {
         Some("disabled") => MySqlSslMode::Disabled,
         Some("required") => MySqlSslMode::Required,
         Some("verify_ca") => MySqlSslMode::VerifyCa,
         Some("verify_identity") => MySqlSslMode::VerifyIdentity,
+        Some(connect::AUTO_TLS) if connect::tls_required(addr) => MySqlSslMode::Required,
         _ => MySqlSslMode::Preferred,
     }
 }
@@ -75,8 +78,8 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::MySql>>, SourceErro
     conn.shared(|| async {
         let s: Settings = conn.settings_as()?;
         let port = s.port.unwrap_or(3306) as u16;
-        let mode = ssl_mode(s.ssl_mode.as_deref());
         let addr = conn.policy().pick_address(&s.host, port, CONNECT_TIMEOUT).await?;
+        let mode = ssl_mode(s.ssl_mode.as_deref(), addr.ip());
         let address = connect::address(&s.host, port);
         // As for PostgreSQL: the checked address, except where the certificate must match the name.
         let host = if matches!(mode, MySqlSslMode::VerifyIdentity) { s.host.clone() } else { addr.ip().to_string() };
@@ -458,6 +461,19 @@ mod tests {
     use crate::datasources::targets::TargetPolicy;
 
     const CLIENT_LOCAL_FILES: u32 = 0x80;
+
+    #[test]
+    fn auto_requires_tls_towards_public_addresses_only() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        assert!(matches!(ssl_mode(Some("auto"), ip("8.8.8.8")), MySqlSslMode::Required));
+        assert!(matches!(ssl_mode(Some("auto"), ip("2a00:1450::1")), MySqlSslMode::Required));
+        for private in ["127.0.0.1", "10.1.2.3", "192.168.0.5", "::1", "fd00::5"] {
+            assert!(matches!(ssl_mode(Some("auto"), ip(private)), MySqlSslMode::Preferred), "{private}");
+        }
+        assert!(matches!(ssl_mode(None, ip("8.8.8.8")), MySqlSslMode::Preferred));
+        assert!(matches!(ssl_mode(Some("disabled"), ip("8.8.8.8")), MySqlSslMode::Disabled));
+        assert!(matches!(ssl_mode(Some("verify_identity"), ip("10.0.0.1")), MySqlSslMode::VerifyIdentity));
+    }
 
     async fn write_packet(s: &mut tokio::net::TcpStream, seq: u8, payload: &[u8]) {
         let len = payload.len() as u32;

@@ -26,8 +26,8 @@ const POSTGRES = [
   spec("user", "string", { required: true }),
   spec("password", "string", { secret: true }),
   spec("sslMode", "select", {
-    options: ["disable", "prefer", "require", "verify-ca", "verify-full"],
-    default: "prefer",
+    options: ["auto", "disable", "prefer", "require", "verify-ca", "verify-full"],
+    default: "auto",
   }),
   spec("caCert", "text"),
   spec("maxRows", "number"),
@@ -36,8 +36,8 @@ const POSTGRES = [
 const MYSQL = POSTGRES.map((s) =>
   s.name === "sslMode"
     ? spec("sslMode", "select", {
-        options: ["disabled", "preferred", "required", "verify_ca", "verify_identity"],
-        default: "preferred",
+        options: ["auto", "disabled", "preferred", "required", "verify_ca", "verify_identity"],
+        default: "auto",
       })
     : s.name === "port"
       ? spec("port", "number", { default: 3306 })
@@ -224,6 +224,15 @@ describe("connection strings", () => {
         undefined,
       ),
     ).toBe("mongodb+srv://a,b/o");
+  });
+
+  it("leave out the auto TLS mode, which no driver knows, and keep it when read back", () => {
+    const values = { host: "h", port: "1", database: "d", user: "u", sslMode: "auto" };
+    const text = toConnectionString("postgres", values, POSTGRES, undefined);
+    expect(text).toBe("postgres://u@h:1/d");
+    expect(toConnectionString("mysql", values, MYSQL, undefined)).toBe("mysql://u@h:1/d");
+    const read = parseConnectionString("postgres", text, POSTGRES);
+    expect(read.ok && "sslMode" in read.values).toBe(false);
   });
 
   it("read back what they write", () => {

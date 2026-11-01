@@ -391,22 +391,14 @@ async fn play(
     let mut conn = state.db.acquire().await?;
     let row = fetch(&mut conn, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     let readable = Readable::load(&mut conn, &ctx).await?;
+    let stored = stored_items(&row.items)?;
+    let tagged = tagged_dashboards(&mut conn, &ctx.org_id, &stored).await?;
     let mut seen = BTreeSet::new();
     let mut items = Vec::new();
-    for item in stored_items(&row.items)? {
+    for item in stored {
         let ids: Vec<String> = match item {
             Item::Dashboard { dashboard_id } => vec![dashboard_id],
-            Item::Tag { tag } => {
-                let tagged: Vec<(String,)> = sqlx::query_as(
-                    "SELECT d.id FROM dashboard_tags t JOIN dashboards d ON d.id = t.dashboard_id \
-                     WHERE t.org_id = $1 AND t.tag_key = $2 ORDER BY d.title, d.id",
-                )
-                .bind(&ctx.org_id)
-                .bind(tag.to_lowercase())
-                .fetch_all(&mut *conn)
-                .await?;
-                tagged.into_iter().map(|(id,)| id).collect()
-            }
+            Item::Tag { tag } => tagged.get(&tag.to_lowercase()).cloned().unwrap_or_default(),
         };
         for dashboard in ids {
             if let Some(title) = readable.dashboards.get(&dashboard)
@@ -417,6 +409,41 @@ async fn play(
         }
     }
     Ok(Json(PlayOrder { interval_seconds: row.interval_seconds, items }))
+}
+
+/// Per tag (in lower case) of the tag entries in `items`, the dashboards with that tag by title,
+/// then id, read in one query for all tags. Whether the caller may read them is decided after.
+async fn tagged_dashboards(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    items: &[Item],
+) -> ApiResult<std::collections::HashMap<String, Vec<String>>> {
+    let tags: BTreeSet<String> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Tag { tag } => Some(tag.to_lowercase()),
+            Item::Dashboard { .. } => None,
+        })
+        .collect();
+    let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    if tags.is_empty() {
+        return Ok(out);
+    }
+    // A playlist holds at most MAX_ITEMS entries, well within every database's parameter limit.
+    let marks: Vec<String> = (0..tags.len()).map(|i| format!("${}", i + 2)).collect();
+    let sql = format!(
+        "SELECT t.tag_key, d.id FROM dashboard_tags t JOIN dashboards d ON d.id = t.dashboard_id \
+         WHERE t.org_id = $1 AND t.tag_key IN ({}) ORDER BY d.title, d.id",
+        marks.join(", ")
+    );
+    let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql)).bind(org_id);
+    for tag in &tags {
+        query = query.bind(tag.as_str());
+    }
+    for (tag, id) in query.fetch_all(&mut *conn).await? {
+        out.entry(tag).or_default().push(id);
+    }
+    Ok(out)
 }
 
 #[derive(Deserialize)]

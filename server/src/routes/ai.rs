@@ -22,7 +22,7 @@ use crate::ai::{ChatRequest, Message, ProviderKind, TokenLimitField};
 use crate::app::AppState;
 use crate::audit::{AuditEvent, record};
 use crate::auth::SessionUser;
-use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{Access, DatasourceAccess, OrgCtx, Permission, Resource, check_resource};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -822,12 +822,13 @@ async fn readable_datasources(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
 ) -> ApiResult<Json<Page<ReadableItem>>> {
-    let mut items = Vec::new();
-    for id in store::readable_datasources(&state.db, &ctx.org_id).await? {
-        if check_resource(&state.db, &ctx, Permission::DatasourcesRead, Resource::Datasource(&id)).await.is_ok() {
-            items.push(ReadableItem { datasource_id: id });
-        }
-    }
+    let access = DatasourceAccess::load(&state.db, &ctx).await?;
+    let items = store::readable_datasources(&state.db, &ctx.org_id)
+        .await?
+        .into_iter()
+        .filter(|id| access.allows(Permission::DatasourcesRead, id))
+        .map(|datasource_id| ReadableItem { datasource_id })
+        .collect();
     Ok(Json(Page { items, next_cursor: None }))
 }
 

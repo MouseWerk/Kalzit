@@ -388,7 +388,7 @@ async fn create(
             .because("datasource.kind_unknown")
             .param("kind", &body.kind)
     })?;
-    let settings = kind.validate_settings(&body.settings).map_err(field_error)?;
+    let settings = kind.fill_tls_default(kind.validate_settings(&body.settings).map_err(field_error)?, None);
     check_remote(&kind, &settings).await?;
     // A secret that is null on create is simply not set.
     let secrets: SecretPatch = body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect();
@@ -637,7 +637,7 @@ async fn update(
     };
     let settings = match &body.settings {
         Some(s) => {
-            let new = kind.validate_settings(s).map_err(field_error)?;
+            let new = kind.fill_tls_default(kind.validate_settings(s).map_err(field_error)?, Some(&ds.settings));
             check_remote(&kind, &new).await?;
             let keys = |v: &Value| v.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
             let mut all = keys(&new);
@@ -824,10 +824,12 @@ async fn test_unsaved(
             .with_field("kind")
             .because("datasource.kind_changed"));
     }
+    // Tested as it would be saved, with the TLS mode a save fills in.
     let settings = match (&body.settings, &stored) {
-        (Some(s), _) => kind.validate_settings(s).map_err(field_error)?,
+        (Some(s), _) => kind
+            .fill_tls_default(kind.validate_settings(s).map_err(field_error)?, stored.as_ref().map(|ds| &ds.settings)),
         (None, Some(ds)) => ds.settings.clone(),
-        (None, None) => kind.validate_settings(&empty_object()).map_err(field_error)?,
+        (None, None) => kind.fill_tls_default(kind.validate_settings(&empty_object()).map_err(field_error)?, None),
     };
     check_remote(&kind, &settings).await?;
     // A secret that is null for a new source is simply not set.

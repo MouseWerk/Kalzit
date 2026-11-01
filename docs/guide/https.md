@@ -3,8 +3,10 @@
 Kalzit serves HTTPS itself (TLS 1.2 and 1.3, HTTP/2) when `server.https_addr` is set in
 `kalzit.toml` or `KALZIT_SERVER_HTTPS_ADDR`. The certificate comes from one of two places:
 
-- **your own files**: `tls.cert_file` and `tls.key_file` (PEM). Kalzit reloads them when they
-  change, without a restart (`tls.reload_interval_secs`);
+- **your own files**: `tls.cert_file` and `tls.key_file` (PEM). Kalzit reloads them when their
+  content changes, without a restart (`tls.reload_interval_secs`). It compares the content, not
+  the modification time, so a renewed file that keeps the old time or a copy with an older time is
+  picked up, and a file rewritten with the same content is not loaded again;
 - **ACME**: without certificate files, Kalzit orders the certificate itself from Let's Encrypt or
   any other certificate authority that offers ACME, and renews it. Until the first one is issued,
   HTTPS serves a temporary self-signed certificate, which browsers warn about.
@@ -24,6 +26,27 @@ connection Kalzit is just closing and answer 502. The defaults of nginx (`keepal
 in an `upstream` block) and Caddy fit; for others, set the upstream idle or keep-alive timeout
 below 75 seconds. Add the proxy's address to `security.trusted_proxies`: it is then exempt from the
 limit of 256 connections per client address, which otherwise all its connections would share.
+
+### Client address, scheme and host behind a proxy
+
+Kalzit reads what a proxy says about the original request only when the connection comes from an
+address in `security.trusted_proxies`; from anyone else these headers are ignored. It understands
+the standard `Forwarded` header (RFC 7239) and the older `X-Forwarded-For`, `X-Forwarded-Proto` and
+`X-Forwarded-Host`:
+
+- **`Forwarded` wins.** When a trusted proxy sends `Forwarded`, Kalzit takes the client address,
+  the scheme (`proto`) and the host from it alone and ignores the `X-Forwarded-*` headers of the
+  same request. Without `Forwarded`, the `X-Forwarded-*` headers are used.
+- **Several proxies.** Kalzit reads the list from the right: each entry counts while the proxy
+  that wrote it is trusted. The client is the first address that is not in
+  `security.trusted_proxies`. Scheme and host come from the entry the outermost trusted proxy
+  wrote, so a client cannot claim HTTPS or another host by sending the header itself. List every
+  proxy of yours in the chain.
+- **Values.** Quoted values, ports (`for="203.0.113.5:4711"`, `for="[2001:db8::7]:443"`) and
+  several header lines are understood. An entry that is not an address (`for=unknown`, an
+  obfuscated name such as `for=_proxy1`), lacks `for` or does not parse ends the list there.
+
+Example for nginx: `proxy_set_header Forwarded "for=\"$remote_addr\";proto=$scheme;host=$host";`.
 
 ## Before you turn ACME on
 

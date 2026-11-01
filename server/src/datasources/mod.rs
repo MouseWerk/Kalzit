@@ -884,6 +884,24 @@ impl Kind {
         Ok(clean)
     }
 
+    /// Validated settings with the TLS mode filled in where it is left out, on the kinds that offer
+    /// `auto`: a new source (`stored` is `None`) gets `auto`, and so does a change of a source that
+    /// stores `auto`, so a client that never names the mode keeps the default. A stored source
+    /// without a mode (from before `auto`) keeps the old fallback, TLS preferred, until someone
+    /// sets one.
+    pub fn fill_tls_default(&self, mut settings: Value, stored: Option<&Value>) -> Value {
+        let offers_auto = self.field("sslMode").is_some_and(|f| f.options.contains(&connect::AUTO_TLS));
+        let keeps_auto = stored.is_none_or(|s| s.get("sslMode").and_then(Value::as_str) == Some(connect::AUTO_TLS));
+        if let Value::Object(map) = &mut settings
+            && offers_auto
+            && keeps_auto
+            && !map.contains_key("sslMode")
+        {
+            map.insert("sslMode".into(), Value::String(connect::AUTO_TLS.into()));
+        }
+        settings
+    }
+
     /// Secret names must be secret fields of this kind.
     pub fn validate_secrets(&self, secrets: &crate::secrets::SecretPatch) -> Result<(), FieldError> {
         for (key, value) in secrets {
@@ -2628,6 +2646,32 @@ mod tests {
         );
         let long = "ä".repeat(MAX_ERROR_CHARS + 10);
         assert_eq!(scrub(&long, []).chars().count(), MAX_ERROR_CHARS + 3);
+    }
+
+    #[test]
+    fn the_tls_mode_left_out_becomes_auto_for_new_sources_only() {
+        use serde_json::json;
+        let base = json!({ "host": "db.example.com", "database": "d", "user": "u" });
+        for kind in [postgres::kind(), mysql::kind()] {
+            let filled = kind.fill_tls_default(base.clone(), None);
+            assert_eq!(filled["sslMode"], "auto", "{}", kind.name);
+            // A chosen mode stays, on a new and on a stored source.
+            let chosen = kind.validate_settings(&kind.fill_tls_default(base.clone(), None)).unwrap();
+            assert_eq!(chosen["sslMode"], "auto");
+            let mut explicit = base.clone();
+            explicit["sslMode"] = kind.field("sslMode").unwrap().options[1].into();
+            assert_eq!(kind.fill_tls_default(explicit.clone(), None), explicit);
+            // A stored source that keeps `auto` keeps it when a change leaves the mode out; one
+            // stored without a mode (from before) or with another mode is left as sent.
+            let stored_auto = json!({ "host": "db.example.com", "database": "d", "user": "u", "sslMode": "auto" });
+            assert_eq!(kind.fill_tls_default(base.clone(), Some(&stored_auto))["sslMode"], "auto");
+            assert_eq!(kind.fill_tls_default(base.clone(), Some(&base)), base);
+            assert_eq!(kind.fill_tls_default(base.clone(), Some(&explicit)), base);
+        }
+        // Kinds without the mode are untouched.
+        let sqlite = sqlite::kind();
+        let path = json!({ "path": "x.db" });
+        assert_eq!(sqlite.fill_tls_default(path.clone(), None), path);
     }
 
     #[test]

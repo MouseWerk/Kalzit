@@ -51,7 +51,7 @@ use crate::analysis::steps::{self, Control, Input};
 use crate::analysis::{Step, check_steps, export};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
-use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{Access, DatasourceAccess, OrgCtx, Permission};
 use crate::datasources::detail::Detail;
 use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
 use crate::error::{ApiError, ApiResult};
@@ -273,8 +273,9 @@ async fn make_query(state: &AppState, ctx: &OrgCtx, req: ExportRequest, wanted: 
         .map_err(|e| ApiError::validation(e.clone()).with_field("steps").because("steps.invalid").param("detail", e))?;
     // The file holds what running the queries would show, so the same right decides: each data
     // source must be one the caller may query. Unlike a run, one refusal refuses the file.
+    let access = DatasourceAccess::load(&state.db, ctx).await?;
     for item in &req.queries {
-        check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id)).await?;
+        access.check(Permission::DatasourcesQuery, &item.datasource_id)?;
     }
     let slots = acquire(state, ctx)?;
     let order: Vec<String> = req.queries.iter().map(|q| q.ref_id.clone()).collect();

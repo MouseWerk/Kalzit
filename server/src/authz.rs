@@ -652,20 +652,36 @@ async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>
     }
 
     let subjects = Subjects::load(&mut *db.acquire().await?, ctx).await?;
-    let mut grants = Vec::new();
-    for link in &chain {
-        let rows: Vec<GrantRow> = sqlx::query_as(
-            "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
-             WHERE org_id = $1 AND resource_type = $2 AND resource_id = $3 ORDER BY id",
-        )
-        .bind(org_id)
-        .bind(link.resource_type.as_str())
-        .bind(&link.id)
-        .fetch_all(db)
-        .await?;
-        grants.extend(rows.into_iter().filter(|g| subjects.is_caller(g)));
-    }
+    let grants = chain_grants(db, org_id, &chain).await?.into_iter().filter(|g| subjects.is_caller(g)).collect();
     Ok(narrow(&chain, grants, &subjects))
+}
+
+/// The grants on the links of `chain`, read in one query: nearest link first, by id within a link
+/// (the order one query per link would give).
+async fn chain_grants(db: &sqlx::AnyPool, org_id: &str, chain: &[ChainLink]) -> ApiResult<Vec<GrantRow>> {
+    if chain.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: BTreeSet<&str> = chain.iter().map(|l| l.id.as_str()).collect();
+    let marks: Vec<String> = (0..ids.len()).map(|i| format!("${}", i + 2)).collect();
+    let sql = format!(
+        "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
+         WHERE org_id = $1 AND resource_id IN ({}) ORDER BY id",
+        marks.join(", ")
+    );
+    let mut query = sqlx::query_as::<_, GrantRow>(sqlx::AssertSqlSafe(sql)).bind(org_id);
+    for id in &ids {
+        query = query.bind(*id);
+    }
+    let rows = query.fetch_all(db).await?;
+    // A grant counts on the link with its type and id only (a folder and a dashboard may share an
+    // id); the link's place in the chain orders it.
+    let position =
+        |g: &GrantRow| chain.iter().position(|l| l.resource_type.as_str() == g.resource_type && l.id == g.resource_id);
+    let mut placed: Vec<(usize, GrantRow)> = rows.into_iter().filter_map(|g| position(&g).map(|p| (p, g))).collect();
+    // Stable: within a link the rows keep the database's order by id.
+    placed.sort_by_key(|(p, _)| *p);
+    Ok(placed.into_iter().map(|(_, g)| g).collect())
 }
 
 /// What decides access to many folders and dashboards at once, read in a few queries, so lists
@@ -856,6 +872,57 @@ impl AccessIndex {
     /// Whether the caller maintains the team.
     pub fn is_maintainer(&self, team_id: &str) -> bool {
         self.subjects.maintains.contains(team_id)
+    }
+}
+
+/// What the caller may do on any number of data sources, read in a fixed number of queries,
+/// for routes that would otherwise run `check_resource` once per source. Data sources sit in no
+/// folder and no team owns them, so only the org-wide permissions and the grants on the source
+/// decide, and an admin's access to one never rests on their reach into team content (nothing is
+/// audited); the answers are those of `check_resource`, which a test keeps in step.
+pub struct DatasourceAccess {
+    org: BTreeSet<Permission>,
+    /// The caller's grants on data sources.
+    grants: Vec<GrantRow>,
+}
+
+impl DatasourceAccess {
+    pub async fn load(db: &sqlx::AnyPool, ctx: &OrgCtx) -> ApiResult<Self> {
+        let mut conn = db.acquire().await?;
+        let subjects = Subjects::load(&mut conn, ctx).await?;
+        let grants: Vec<GrantRow> = sqlx::query_as(
+            "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
+             WHERE org_id = $1 AND resource_type = 'datasource' ORDER BY id",
+        )
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let grants = grants.into_iter().filter(|g| subjects.is_caller(g)).collect();
+        Ok(Self { org: ctx.permissions.clone(), grants })
+    }
+
+    /// What the caller may do on the data source, or `None` when they may not see it.
+    pub fn permissions(&self, datasource_id: &str) -> Option<BTreeSet<Permission>> {
+        let facts = ResourceFacts {
+            grants: self.grants.iter().filter(|g| g.resource_id == datasource_id).cloned().collect(),
+            ..ResourceFacts::default()
+        };
+        permissions_on(&self.org, ResourceType::Datasource, &facts)
+    }
+
+    /// Whether the caller holds `permission` on the data source.
+    pub fn allows(&self, permission: Permission, datasource_id: &str) -> bool {
+        self.permissions(datasource_id).is_some_and(|held| held.contains(&permission))
+    }
+
+    /// `check_resource` for one data source: `not_found` when the caller may not see it,
+    /// `forbidden` when they see it but lack `permission`.
+    pub fn check(&self, permission: Permission, datasource_id: &str) -> ApiResult<()> {
+        match self.permissions(datasource_id) {
+            None => Err(ApiError::not_found()),
+            Some(held) if held.contains(&permission) => Ok(()),
+            Some(_) => Err(ApiError::forbidden(format!("missing permission {}", permission.as_str()))),
+        }
     }
 }
 
@@ -1637,6 +1704,137 @@ mod resource_tests {
         assert!(viewer.dashboard("own_grant", Some("secret")).unwrap().contains(&Permission::DashboardsWrite));
         assert!(viewer.dashboard("hidden", Some("secret")).is_none());
         assert!(viewer.folder("secret").is_none());
+    }
+
+    /// Grants to the user, a team and a role, someone else's grant and another organization's
+    /// grant on data sources: `DatasourceAccess` answers as `check_resource` does, per role and
+    /// permission, errors included.
+    async fn datasource_grants(db: &sqlx::AnyPool) {
+        exec(
+            db,
+            "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('t1', 'o', 'Betrieb', 'betrieb', 0)",
+        )
+        .await;
+        exec(db, "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('t1', 'u', 'member', 0)").await;
+        exec(
+            db,
+            "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+             VALUES ('g1', 'o', 'user', 'u', 'datasource', 's1', 'query', 0), \
+             ('g2', 'o', 'team', 't1', 'datasource', 's2', 'edit', 0), \
+             ('g3', 'o', 'role', 'viewer', 'datasource', 's3', 'admin', 0), \
+             ('g4', 'o', 'user', 'x', 'datasource', 's4', 'admin', 0), \
+             ('g5', 'other', 'user', 'u', 'datasource', 's4', 'admin', 0), \
+             ('g6', 'o', 'user', 'u', 'dashboard', 's5', 'admin', 0)",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn datasource_access_agrees_with_check_resource() {
+        let db = db().await;
+        datasource_grants(&db).await;
+        let custom = ctx_with("custom", [Permission::DatasourcesQuery].into_iter().collect());
+        let contexts = [ctx(BuiltinRole::Viewer), ctx(BuiltinRole::Editor), ctx(BuiltinRole::Admin), custom];
+        for ctx in &contexts {
+            let access = DatasourceAccess::load(&db, ctx).await.unwrap();
+            for id in ["s1", "s2", "s3", "s4", "s5", "none"] {
+                let held = resource_permissions(&db, ctx, Resource::Datasource(id)).await.unwrap();
+                assert_eq!(access.permissions(id), held, "{} {id}", ctx.role);
+                for permission in Permission::ALL.iter().copied() {
+                    let one = check_resource(&db, ctx, permission, Resource::Datasource(id)).await;
+                    let batched = access.check(permission, id);
+                    assert_eq!(
+                        one.as_ref().map_err(|e| (e.code, e.message.clone())),
+                        batched.as_ref().map_err(|e| (e.code, e.message.clone())),
+                        "{} {id} {permission:?}",
+                        ctx.role
+                    );
+                    assert_eq!(access.allows(permission, id), one.is_ok());
+                }
+            }
+        }
+        // The cases that matter for a viewer: the own, the team's and the role's grants open their
+        // sources, nothing else is seen.
+        let viewer = DatasourceAccess::load(&db, &ctx(BuiltinRole::Viewer)).await.unwrap();
+        assert!(viewer.allows(Permission::DatasourcesQuery, "s1"));
+        assert!(viewer.allows(Permission::DatasourcesWrite, "s2"));
+        assert!(viewer.allows(Permission::DatasourcesPermissions, "s3"));
+        assert!(viewer.permissions("s4").is_none());
+        assert!(viewer.permissions("s5").is_none());
+    }
+
+    /// Counts the statements the database runs inside the span `query_count_probe`, also on the
+    /// SQLite driver's worker thread (it enters the caller's span), across the whole test binary.
+    mod statements {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use tracing_subscriber::layer::{Context, SubscriberExt};
+        use tracing_subscriber::registry::LookupSpan;
+
+        pub static COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct Counter;
+
+        impl<S: tracing::Subscriber + for<'a> LookupSpan<'a>> tracing_subscriber::Layer<S> for Counter {
+            fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {
+                if event.metadata().target() != "sqlx::query" {
+                    return;
+                }
+                let probed =
+                    ctx.event_scope(event).is_some_and(|mut s| s.any(|span| span.name() == "query_count_probe"));
+                if probed {
+                    COUNT.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+
+        /// Installs the counter as the process's default subscriber once; tests that capture logs
+        /// set their own per thread and are not affected.
+        pub fn install() {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            ONCE.call_once(|| {
+                let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Counter));
+            });
+        }
+    }
+
+    /// How many statements `work` runs: those inside the probe span, which only this test opens.
+    async fn statements_run<F: std::future::Future<Output = ()>>(work: F) -> usize {
+        use tracing::Instrument;
+        let before = statements::COUNT.load(std::sync::atomic::Ordering::SeqCst);
+        work.instrument(tracing::info_span!("query_count_probe")).await;
+        statements::COUNT.load(std::sync::atomic::Ordering::SeqCst) - before
+    }
+
+    /// Deciding many data sources costs as many statements as deciding one, where one check per
+    /// source grew with their number.
+    #[tokio::test]
+    async fn datasource_access_reads_a_fixed_number_of_statements() {
+        statements::install();
+        let db = db().await;
+        datasource_grants(&db).await;
+        let viewer = ctx(BuiltinRole::Viewer);
+        let ids: Vec<String> = (0..40).map(|i| format!("s{i}")).collect();
+        let decide = |n: usize| {
+            let (db, viewer, ids) = (&db, &viewer, &ids);
+            async move {
+                let access = DatasourceAccess::load(db, viewer).await.unwrap();
+                let open = ids[..n].iter().filter(|id| access.allows(Permission::DatasourcesQuery, id)).count();
+                assert!(open <= n);
+            }
+        };
+        let one = statements_run(decide(1)).await;
+        let many = statements_run(decide(ids.len())).await;
+        assert!(one > 0, "the probe saw no statement");
+        assert_eq!(one, many);
+        // One check per source, as before, for comparison: it grows with the sources.
+        let per_source = statements_run(async {
+            for id in &ids {
+                let _ = check_resource(&db, &viewer, Permission::DatasourcesQuery, Resource::Datasource(id)).await;
+            }
+        })
+        .await;
+        assert!(per_source >= ids.len() * 2, "{per_source}");
     }
 
     /// Team spaces, team-owned folders and dashboards in shared folders, and team-only dashboards:

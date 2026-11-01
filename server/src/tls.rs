@@ -1,10 +1,9 @@
 //! TLS with rustls (no OpenSSL, same code on Windows and Linux). Certificates are PEM files and
-//! are reloaded when they change, so a renewed certificate needs no restart. Without files, the
-//! certificates come from ACME (`acme::resolver`), which swaps them itself.
+//! are reloaded when their content changes, so a renewed certificate needs no restart. Without
+//! files, the certificates come from ACME (`acme::resolver`), which swaps them itself.
 
-use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum_server::tls_rustls::RustlsConfig;
@@ -12,6 +11,7 @@ use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCert;
+use sha2::{Digest, Sha256};
 
 use crate::config::TlsConfig;
 
@@ -55,22 +55,20 @@ fn builder(cfg: &TlsConfig) -> Result<rustls::ConfigBuilder<ServerConfig, rustls
 }
 
 /// Checks the certificate files every `reload_interval_secs` and swaps the configuration when
-/// they changed. A broken new file keeps the old certificate in use and logs why.
+/// their content changed. A broken new file keeps the old certificate in use and logs why.
 pub fn spawn_reload(rustls: RustlsConfig, cfg: TlsConfig) {
     if cfg.reload_interval_secs == 0 {
         return;
     }
     tokio::spawn(async move {
-        let mut last = modified(&cfg);
+        let mut watch = Watch::new(&cfg);
         let mut tick = tokio::time::interval(Duration::from_secs(cfg.reload_interval_secs));
         tick.tick().await;
         loop {
             tick.tick().await;
-            let now = modified(&cfg);
-            if now == last {
+            if !watch.changed(&cfg) {
                 continue;
             }
-            last = now;
             match server_config(&cfg) {
                 Ok(new) => {
                     rustls.reload_from_config(new);
@@ -82,7 +80,115 @@ pub fn spawn_reload(rustls: RustlsConfig, cfg: TlsConfig) {
     });
 }
 
-fn modified(cfg: &TlsConfig) -> (Option<SystemTime>, Option<SystemTime>) {
-    let m = |p: &Option<std::path::PathBuf>| p.as_deref().and_then(|p: &Path| p.metadata().ok()?.modified().ok());
-    (m(&cfg.cert_file), m(&cfg.key_file))
+/// Tells a change of the certificate and key files by their content, not their modification
+/// time: a renewal that keeps the time, a copied file with an older time or a clock that went
+/// back still count as a change, and rewriting a file with the same bytes does not.
+struct Watch {
+    last: Option<[u8; 32]>,
+}
+
+impl Watch {
+    fn new(cfg: &TlsConfig) -> Self {
+        Self { last: content_hash(cfg) }
+    }
+
+    /// Whether the content differs from the last check. Files that cannot be read count as a
+    /// content of their own, so the reload is tried, and fails with a log line, once.
+    fn changed(&mut self, cfg: &TlsConfig) -> bool {
+        let now = content_hash(cfg);
+        if now == self.last {
+            return false;
+        }
+        self.last = now;
+        true
+    }
+}
+
+/// SHA-256 over both files, each after its length, so bytes moved from one file to the other
+/// change it too; `None` when either cannot be read.
+fn content_hash(cfg: &TlsConfig) -> Option<[u8; 32]> {
+    let mut hash = Sha256::new();
+    for path in [&cfg.cert_file, &cfg.key_file] {
+        let bytes = std::fs::read(path.as_deref()?).ok()?;
+        hash.update((bytes.len() as u64).to_le_bytes());
+        hash.update(&bytes);
+    }
+    Some(hash.finalize().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::time::SystemTime;
+
+    use super::*;
+
+    fn config(dir: &Path) -> TlsConfig {
+        TlsConfig { cert_file: Some(dir.join("cert.pem")), key_file: Some(dir.join("key.pem")), ..TlsConfig::default() }
+    }
+
+    fn write(dir: &Path, cert: &str, key: &str) {
+        std::fs::write(dir.join("cert.pem"), cert).unwrap();
+        std::fs::write(dir.join("key.pem"), key).unwrap();
+    }
+
+    fn set_mtime(path: &Path, at: SystemTime) {
+        std::fs::File::options().write(true).open(path).unwrap().set_modified(at).unwrap();
+    }
+
+    #[test]
+    fn a_new_certificate_with_the_old_modification_time_is_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        write(dir.path(), "cert one", "key one");
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        set_mtime(&dir.path().join("cert.pem"), at);
+        set_mtime(&dir.path().join("key.pem"), at);
+        let mut watch = Watch::new(&cfg);
+        assert!(!watch.changed(&cfg));
+
+        // Renewed in place with the time kept, then a key copied in with an older time.
+        std::fs::write(dir.path().join("cert.pem"), "cert two").unwrap();
+        set_mtime(&dir.path().join("cert.pem"), at);
+        assert!(watch.changed(&cfg));
+        assert!(!watch.changed(&cfg), "the same content is loaded once");
+        std::fs::write(dir.path().join("key.pem"), "key two").unwrap();
+        set_mtime(&dir.path().join("key.pem"), at - Duration::from_secs(3600));
+        assert!(watch.changed(&cfg));
+    }
+
+    #[test]
+    fn an_unchanged_file_with_a_new_time_is_no_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        write(dir.path(), "cert", "key");
+        let mut watch = Watch::new(&cfg);
+        // Rewritten with the same bytes, as by a renewal that found nothing to renew.
+        write(dir.path(), "cert", "key");
+        set_mtime(&dir.path().join("cert.pem"), SystemTime::now() + Duration::from_secs(60));
+        assert!(!watch.changed(&cfg));
+    }
+
+    #[test]
+    fn a_missing_file_counts_once_and_its_return_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        write(dir.path(), "cert", "key");
+        let mut watch = Watch::new(&cfg);
+        std::fs::remove_file(dir.path().join("key.pem")).unwrap();
+        assert!(watch.changed(&cfg));
+        assert!(!watch.changed(&cfg));
+        std::fs::write(dir.path().join("key.pem"), "key").unwrap();
+        assert!(watch.changed(&cfg));
+    }
+
+    #[test]
+    fn bytes_moved_between_the_files_are_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        write(dir.path(), "ab", "c");
+        let mut watch = Watch::new(&cfg);
+        write(dir.path(), "a", "bc");
+        assert!(watch.changed(&cfg));
+    }
 }

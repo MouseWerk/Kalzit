@@ -260,7 +260,7 @@ async fn kinds_describe_their_settings_forms() {
     let password = pg["settings"].as_array().unwrap().iter().find(|f| f["name"] == "password").unwrap();
     assert_eq!((password["secret"].as_bool(), password["type"].as_str()), (Some(true), Some("string")));
     let ssl = pg["settings"].as_array().unwrap().iter().find(|f| f["name"] == "sslMode").unwrap();
-    assert_eq!(ssl["default"], "prefer");
+    assert_eq!(ssl["default"], "auto");
     assert!(ssl["options"].as_array().unwrap().contains(&json!("verify-full")));
     assert!(pg["settings"].as_array().unwrap().iter().any(|f| f["name"] == "maxRows"));
     assert!(r.body["nextCursor"].is_null());
@@ -359,6 +359,43 @@ async fn pages_are_bounded_and_continue_with_the_cursor() {
     for bad in ["?limit=201", "?limit=0", "?limit=viele", "?cursor=nein", "?trash=vielleicht", "?sort=name"] {
         let r = t.get(&format!("/datasources{bad}")).await;
         assert_eq!(r.code(), "validation", "{bad}: {}", r.text);
+    }
+    t.finish().await;
+}
+
+/// New PostgreSQL and MySQL sources get the TLS mode `auto` when they leave it out; a change that
+/// leaves it out keeps `auto`, and a source stored without a mode (from before) stays without.
+#[tokio::test]
+async fn new_sources_get_the_auto_tls_mode_and_old_ones_keep_theirs() {
+    let t = T::new().await;
+    for (kind, name) in [("postgres", "P"), ("mysql", "M")] {
+        let r = t
+            .post(
+                "/datasources",
+                json!({ "name": name, "kind": kind, "settings": { "host": "db.intern", "database": "d", "user": "u" },
+                        "secrets": { "password": "Geheim-1" } }),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+        assert_eq!(r.body["settings"]["sslMode"], "auto", "{kind}");
+        let id = r.body["id"].as_str().unwrap().to_string();
+        let path = t.path(&format!("/datasources/{id}"));
+        // Leaving the mode out again changes no target, so no secret is needed.
+        let settings = json!({ "host": "db.intern", "database": "d", "user": "u", "maxRows": 10 });
+        let r = t.send(Method::PATCH, &path, Some(json!({ "settings": settings.clone() })), Some(&t.owner)).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+        assert_eq!(r.body["settings"]["sslMode"], "auto", "{kind}");
+
+        // As stored before `auto` existed: no mode. A change that leaves it out keeps none.
+        sqlx::query("UPDATE datasources SET settings = $1 WHERE id = $2")
+            .bind(json!({ "host": "db.intern", "database": "d", "user": "u" }).to_string())
+            .bind(&id)
+            .execute(&t.state.db)
+            .await
+            .unwrap();
+        let r = t.send(Method::PATCH, &path, Some(json!({ "settings": settings })), Some(&t.owner)).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+        assert!(r.body["settings"].get("sslMode").is_none(), "{kind}: {}", r.text);
     }
     t.finish().await;
 }

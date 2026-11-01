@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use sqlx::AnyPool;
 
-use crate::authz::{self, OrgCtx, Permission, Resource};
+use crate::authz::{self, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
 use model::DashboardModel;
 
@@ -103,19 +103,40 @@ pub async fn check_dashboard_sources(
         .filter(|q| !unchanged.contains(q))
         .map(|(id, _)| id)
         .collect();
+    if changed.is_empty() {
+        return Ok(());
+    }
+    // Which ids exist and what the caller may do on them, read once for all of them.
+    let existing = existing_datasources(db, &ctx.org_id, &changed).await?;
+    let access = authz::DatasourceAccess::load(db, ctx).await?;
     for id in changed.iter().map(String::as_str) {
-        if !authz::resource_exists(db, &ctx.org_id, Resource::Datasource(id)).await? {
+        if !existing.contains(id) {
             return Err(ApiError::validation(format!("data source {id} does not exist")).with_field("model"));
         }
-        match authz::check_resource(db, ctx, Permission::DatasourcesQuery, Resource::Datasource(id)).await {
-            Ok(()) => {}
-            Err(e) if e.code == "not_found" || e.code == "forbidden" => {
-                return Err(ApiError::forbidden(format!("you may not query data source {id}")));
-            }
-            Err(e) => return Err(e),
+        if !access.allows(Permission::DatasourcesQuery, id) {
+            return Err(ApiError::forbidden(format!("you may not query data source {id}")));
         }
     }
     Ok(())
+}
+
+/// The ids among `ids` that name a data source of the organization (trashed ones count, as in
+/// `authz::resource_exists`).
+async fn existing_datasources(db: &AnyPool, org_id: &str, ids: &BTreeSet<String>) -> ApiResult<BTreeSet<String>> {
+    let mut found = BTreeSet::new();
+    // In chunks, so a dashboard with very many sources stays within every database's limit on
+    // parameters.
+    let ids: Vec<&String> = ids.iter().collect();
+    for chunk in ids.chunks(500) {
+        let marks: Vec<String> = (0..chunk.len()).map(|i| format!("${}", i + 2)).collect();
+        let sql = format!("SELECT id FROM datasources WHERE org_id = $1 AND id IN ({})", marks.join(", "));
+        let mut query = sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(sql)).bind(org_id);
+        for id in chunk {
+            query = query.bind(id.as_str());
+        }
+        found.extend(query.fetch_all(db).await?.into_iter().map(|(id,)| id));
+    }
+    Ok(found)
 }
 
 /// What a panel slot shows when it links content: a library panel's or a saved analysis's
