@@ -101,6 +101,8 @@ mod tests {
         "mail",
         // The second factor of a sign-in (docs/api/access.md).
         "second_factor",
+        // Members joining and leaving organizations (docs/api/access.md).
+        "members",
         // Single sign-on (docs/api/sso.md), with the causes it records in the audit log.
         "sso",
         // Service accounts and API tokens (docs/api/access.md).
@@ -121,6 +123,8 @@ mod tests {
         "ldap.sync_failed",
         "ldap.sync_finished",
         "ldap.sync_halted",
+        // A SCIM attribute path named in its error messages.
+        "members.value",
         // AI settings keys and audit actions.
         "ai.allow_org_providers",
         "ai.called",

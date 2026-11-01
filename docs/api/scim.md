@@ -110,7 +110,13 @@ extension, ...) are accepted and not kept, so a directory's full attribute mappi
 person's account, its address is confirmed and it is not a server admin or the break-glass admin;
 it then joins the organization through the group mapping. An account that is already a SCIM user
 of this organization answers `409` (`scim.account_linked`), one with an unconfirmed address `409`
-(`scim.email_unconfirmed`), a server admin's `403` (`scim.account_protected`). Without such an
+(`scim.email_unconfirmed`), a server admin's `403` (`scim.account_protected`), and an account
+that belongs to another organization `409` (`scim.account_in_other_org`): a person who is already
+in an organization joins another one only by accepting an invitation, since the new
+organization's sign-in rules (password sign-in off, a required second factor) would bind their
+account. SCIM refuses instead of inviting, so a directory sync never sends mail on its own; an
+admin invites the person (docs/api/mail.md, "Invitations"), and once they accepted, SCIM links
+the account on its next attempt. Without such an
 account a new one is made without a password and with its address unconfirmed (see "Accounts"
 below). Service accounts are never linked, listed or changed through SCIM. Linking an existing
 account is recorded as `scim.user_linked` (with the token and the organization) and counted on the
@@ -278,6 +284,7 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | `scim.email_taken` | `409 uniqueness` | another account (or several, or a service account) has the address |
 | `scim.email_unconfirmed` | `409 uniqueness` | the account with the address has not confirmed it |
 | `scim.account_linked` | `409 uniqueness` | the account with the address is already a SCIM user of this organization |
+| `scim.account_in_other_org` | `409 uniqueness` | the account with the address belongs to another organization; invite the person instead |
 | `scim.account_protected` | `403` | linking a server admin's account, or deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |
 | `scim.group_name_missing` | `400 invalidValue`, `mutability` | a group without `displayName`, or removing it |
 | `scim.group_name_taken` | `409 uniqueness` | another active group of the organization has this `displayName` |

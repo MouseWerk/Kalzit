@@ -632,8 +632,34 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(outcome_of(&r), "email_taken");
     // `email_verified` counts only for the `email` claim; an email claim of another name does not
     // prove it (the claim here is still `email`, so this checks the plain case).
+    // A verified email links the account, but Nora's account has a password: her first sign-in
+    // through the provider proves it once, and the provider's word for a second factor does not
+    // count in it, even with the switch on.
+    sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 1").execute(&app.state.db).await.unwrap();
+    let (r, _) = sign_in(&app, &idp, &Who { verified: true, ..nora }, |c| c["amr"] = json!(["pwd", "mfa"])).await;
+    assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards", "{:?}", r.headers);
+    assert!(r.cookie("kalzit_session").is_none());
+    // Left unfinished, the link stays unconfirmed: the next sign-in asks again.
+    let (r, _) = sign_in(&app, &idp, &Who { verified: true, ..nora }, |c| c["amr"] = json!(["pwd", "mfa"])).await;
+    assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards");
+    sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 0").execute(&app.state.db).await.unwrap();
+    let pending = format!("kalzit_pending={}", r.cookie("kalzit_pending").expect("the half-signed-in state"));
+    let prompt = app.get("/api/auth/second-factor", &pending).await;
+    assert_eq!((prompt.body["linkPassword"].clone(), prompt.body["setup"].clone()), (json!(true), json!(false)));
+    let r = app.post("/api/auth/second-factor/setup/totp", json!({}), &pending).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "no new factor in place of the password: {}", r.body);
+    let r = app.post("/api/auth/second-factor/password", json!({ "password": "falsch-falsch" }), &pending).await;
+    assert_eq!(r.body["error"]["code"], json!("invalid_credentials"), "{}", r.body);
+    let r = app.post("/api/auth/second-factor/password", json!({ "password": PASSWORD }), &pending).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["me"]["email"], json!("nora@example.de"));
+    let (confirmed,): (i64,) = sqlx::query_as("SELECT confirmed FROM sso_identities WHERE subject = 'sub-nora'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(confirmed, 1);
     let (r, _) = sign_in(&app, &idp, &Who { verified: true, ..nora }, |_| {}).await;
-    assert_eq!(r.location(), "/dashboards", "a verified email links the account");
+    assert_eq!(r.location(), "/dashboards", "a confirmed link signs her in");
     // An account whose email was never confirmed (made from a link an admin passed on) is never
     // taken over by email, even when the provider verified it.
     let r = app
@@ -785,8 +811,16 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let r = app.send(Method::PATCH, &path, Some(json!({ "value": "off", "version": version })), Some(&admin)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let login = |email: &str, password: &str| json!({ "email": email, "password": password });
+    // The right password answers like a wrong one, so it cannot be tested while it signs in nobody;
+    // only the account's own recent sign-ins say why.
     let r = app.send(Method::POST, "/api/auth/login", Some(login("nora@example.de", PASSWORD)), None).await;
-    assert_eq!(r.reason(), "sso.password_sign_in_off", "a member of the organization");
+    assert_eq!(
+        (r.status, r.body["error"]["code"].clone()),
+        (StatusCode::UNAUTHORIZED, json!("invalid_credentials")),
+        "a member of the organization: {}",
+        r.body
+    );
+    assert!(r.body["error"].get("reason").is_none(), "{}", r.body);
     let r = app.send(Method::POST, "/api/auth/login", Some(login("joerg@example.de", PASSWORD)), None).await;
     assert_eq!(r.status, StatusCode::OK, "a server admin in the organization: {}", r.body);
     let r =
@@ -820,6 +854,27 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let code = |now: i64| kalzit::auth::totp::code_at(&secret, kalzit::auth::totp::step_at(now));
     let r = app.post("/api/me/security/totp", json!({ "code": code(app.clock.now_ms()) }), &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // A provider that takes the provider's word for addresses is changed only with a fresh
+    // confirmation of the admin's second factor, turning it off again too.
+    app.clock.advance_ms(kalzit::auth::second_factor::CONFIRMATION_TTL_MS + 60_000);
+    let provider_path = format!("/api/admin/sign-in/providers/{provider_id}");
+    let trusting = |trust: bool, version: &Value| {
+        let mut body = form(&issuer, None);
+        body["oidc"]["trustEmail"] = json!(trust);
+        body["version"] = version.clone();
+        body
+    };
+    let version = app.get(&provider_path, &admin).await.body["version"].clone();
+    let r = app.put(&provider_path, trusting(true, &version), &admin).await;
+    assert_eq!((r.status, r.body["error"]["code"].clone()), (StatusCode::FORBIDDEN, json!("confirmation_required")));
+    let r = app
+        .post("/api/me/security/confirm", json!({ "method": "totp", "code": code(app.clock.now_ms()) }), &admin)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.put(&provider_path, trusting(true, &version), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.put(&provider_path, trusting(false, &r.body["version"]), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = app.put("/api/admin/sign-in/local", off, &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.body["localPassword"], json!("off"));
@@ -828,14 +883,14 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
 
     // Nora still has a password, but it no longer signs her in; a wrong one says nothing more.
     let r = app.send(Method::POST, "/api/auth/login", Some(login("nora@example.de", PASSWORD)), None).await;
-    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "sso.password_sign_in_off"));
+    assert_eq!((r.status, r.body["error"]["code"].clone()), (StatusCode::UNAUTHORIZED, json!("invalid_credentials")));
     let r = app.send(Method::POST, "/api/auth/login", Some(login("nora@example.de", "falsch-falsch")), None).await;
     assert_eq!(r.body["error"]["code"], json!("invalid_credentials"));
     let r = app.send(Method::POST, "/api/auth/login/local", Some(login("nora@example.de", PASSWORD)), None).await;
-    assert_eq!(r.reason(), "sso.password_sign_in_off");
+    assert_eq!(r.body["error"]["code"], json!("invalid_credentials"));
     // The break-glass admin: not through the normal form, through the fixed one.
     let r = app.send(Method::POST, "/api/auth/login", Some(login("joerg@example.de", PASSWORD)), None).await;
-    assert_eq!(r.reason(), "sso.password_sign_in_off");
+    assert_eq!(r.body["error"]["code"], json!("invalid_credentials"));
     let r = app.send(Method::POST, "/api/auth/login/local", Some(login("joerg@example.de", PASSWORD)), None).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(r.body.get("secondFactor").is_some(), "the second factor follows: {}", r.body);
@@ -1167,8 +1222,12 @@ async fn internationalized_addresses_name_one_account_in_both_directions() {
 
     // A provider that sends the ASCII form signs in to it.
     let anna = Who { sub: "sub-anna", email: "anna@xn--bcher-kva.example", verified: true, groups: &[] };
+    // Her account has a password: the first sign-in through the provider asks for it once.
     let (r, _) = sign_in(&app, &idp, &anna, |_| {}).await;
-    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    assert_eq!(r.location(), "/anmelden?secondFactor=1&redirect=%2Fdashboards", "{}", r.location());
+    let pending = format!("kalzit_pending={}", r.cookie("kalzit_pending").expect("the half-signed-in state"));
+    let r = app.post("/api/auth/second-factor/password", json!({ "password": PASSWORD }), &pending).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let (linked,): (String,) = sqlx::query_as("SELECT user_id FROM sso_identities WHERE subject = 'sub-anna'")
         .fetch_one(&app.state.db)
         .await

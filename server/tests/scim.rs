@@ -472,8 +472,8 @@ async fn delete_deactivates_and_never_deletes() {
     assert_eq!((r.status, r.body["active"].clone()), (StatusCode::OK, json!(false)), "the user stays in SCIM");
     assert_eq!(t.scim(Method::DELETE, &format!("/Users/{eva}"), None, &token).await.status, StatusCode::NO_CONTENT);
 
-    // An existing account, also in another organization: it is linked, and DELETE ends only its
-    // membership here; the account and its other membership stay.
+    // An existing account in another organization: linked only once it joined here by invitation,
+    // and DELETE ends only its membership here; the account and its other membership stay.
     let lea = t.person("Lea Hoffmann", "lea@mueller.example").await;
     let other = t.other_org().await;
     let cookie = t.owner.clone();
@@ -487,6 +487,14 @@ async fn delete_deactivates_and_never_deletes() {
         )
         .await;
     assert!(r.status.is_success(), "{}", r.body);
+    let r = t.scim(Method::POST, "/Users", Some(entra_user("lea@mueller.example", "Lea", "H")), &token).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.body);
+    sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, 'viewer', 0)")
+        .bind(&org)
+        .bind(&lea)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
     let r = t.scim(Method::POST, "/Users", Some(entra_user("lea@mueller.example", "Lea", "H")), &token).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     assert_eq!(r.id(), lea, "linked to the confirmed account with the address");
@@ -563,6 +571,52 @@ async fn organizations_stay_apart() {
         t.audit_actions().await.into_iter().filter(|(a, _)| a == "api_token.refused").map(|(_, s)| s).collect();
     assert_eq!(refusal.len(), 1);
     assert_eq!((refusal[0]["reason"].clone(), refusal[0]["kind"].clone()), (json!("other_org"), json!("scim")));
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn an_account_in_another_organization_is_linked_only_after_it_joined() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let other = t.other_org().await;
+    let token = t.scim_token(&org).await;
+    // Pia belongs to the other organization.
+    let pia = t.person("Pia Klein", "pia@mueller.example").await;
+    let cookie = t.owner.clone();
+    let r = t
+        .request(
+            Method::POST,
+            &format!("/api/orgs/{other}/members"),
+            Some(json!({ "email": "pia@mueller.example", "role": "viewer" })),
+            Some(("cookie", &cookie)),
+            "application/json",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    // The directory's word does not bind her account to this organization's sign-in rules.
+    let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "pia@mueller.example" })), &token).await;
+    assert_eq!((r.status, r.scim_type()), (StatusCode::CONFLICT, "uniqueness"), "{}", r.body);
+    assert_eq!(t.role_of(&org, &pia).await, None);
+    let reasons: Vec<Value> = t
+        .audit_actions()
+        .await
+        .into_iter()
+        .filter(|(a, _)| a == "scim.request_refused")
+        .map(|(_, s)| s["reason"].clone())
+        .collect();
+    assert_eq!(reasons, [json!("scim.account_in_other_org")]);
+
+    // Once she accepted an invitation here, the directory links her account.
+    sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, 'viewer', 0)")
+        .bind(&org)
+        .bind(&pia)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "pia@mueller.example" })), &token).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.id(), pia);
     t.finish().await;
 }
 

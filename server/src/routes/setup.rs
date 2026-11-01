@@ -436,6 +436,7 @@ pub async fn complete(
             required_by: Some(sf::RequiredBy::Server),
             locked_until: None,
             expires_at: now + sf::CHALLENGE_TTL_MS,
+            link_password: false,
         })
     };
 
@@ -525,7 +526,7 @@ pub async fn complete(
         }
         Some(prompt) => {
             let first = sf::FirstStep::Password { password_hash: Some(&hash), break_glass: false };
-            let token = sf::create_pending(&mut tx, &user_id, true, false, first, now).await?;
+            let token = sf::create_pending(&mut tx, &user_id, true, false, false, first, now).await?;
             headers.insert(header::SET_COOKIE, sf::set_pending_cookie(&token, info.https));
             json!({ "secondFactor": prompt })
         }

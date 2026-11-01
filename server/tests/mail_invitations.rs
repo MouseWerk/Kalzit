@@ -520,6 +520,37 @@ async fn existing_accounts_sign_in_to_join_and_other_sessions_are_refused() {
 }
 
 #[tokio::test]
+async fn people_in_another_organization_are_invited_not_added() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    // Paul owns an organization of his own.
+    let paul = app.user(&owner, "Paul Weber", "paul@example.com").await;
+    let paul_id = app.get("/api/me", &paul).await.body["id"].as_str().unwrap().to_string();
+    let r = app.post("/api/admin/orgs", json!({ "name": "Weber", "ownerUserId": paul_id }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    // Adding him directly is refused: this organization's sign-in rules would bind his account.
+    let members = format!("/api/orgs/{org}/members");
+    let r = app.post(&members, json!({ "email": "paul@example.com", "role": "viewer" }), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "members.invite_instead"), "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "email");
+    // An account in no organization yet is still added directly.
+    app.user(&owner, "Nora Neu", "nora@example.com").await;
+    let r = app.post(&members, json!({ "email": "nora@example.com", "role": "viewer" }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    // Paul joins by accepting an invitation, signed in with his account.
+    let r = app.invite(&org, &["paul@example.com"], "editor", &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let token = app.mails()[0].token("invite");
+    let r = app.send(Method::POST, "/api/auth/invitation/accept", Some(json!({ "token": token })), Some(&paul)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let orgs: Vec<&str> = r.body["orgs"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap()).collect();
+    assert!(orgs.contains(&org.as_str()) && orgs.len() == 2, "{}", r.body);
+    app.finish().await;
+}
+
+#[tokio::test]
 async fn without_a_mail_server_the_admin_copies_the_link() {
     let app = test_app(Setup::NoMail).await;
     let (owner, org) = app.setup().await;

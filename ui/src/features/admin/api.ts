@@ -839,6 +839,11 @@ export async function revokeSession(sessionId: string) {
   await request("DELETE", `/api/me/sessions/${enc(sessionId)}`);
 }
 
+/** Leaves one of the user's own organizations (docs/api/access.md, "Leaving an organization"). */
+export async function leaveOrg(orgId: string) {
+  await request("DELETE", `/api/me/orgs/${enc(orgId)}`);
+}
+
 export async function revokeOtherSessions(): Promise<number> {
   const body = await request("POST", "/api/me/sessions/revoke-others");
   const revoked = isRecord(body) ? body.revoked : undefined;

@@ -178,6 +178,19 @@ async fn add(
     if existing > 0 {
         return Err(conflict("this account is already a member").with_field("email"));
     }
+    // A person who already belongs to an organization joins another one only by accepting an
+    // invitation: this organization's sign-in rules (password sign-in off, a required second
+    // factor) would bind their account everywhere, so they decide themselves. Accounts in no
+    // organization yet are still added directly.
+    let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1")
+        .bind(&user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if elsewhere > 0 {
+        return Err(conflict("this account belongs to another organization; invite it instead")
+            .with_field("email")
+            .because("members.invite_instead"));
+    }
     let now = state.clock.now_ms();
     sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)")
         .bind(&ctx.org_id)

@@ -25,6 +25,9 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/me/sessions", Authenticated, list_sessions),
         route(Method::DELETE, "/me/sessions/{sessionId}", Authenticated, end_session),
         route(Method::POST, "/me/sessions/revoke-others", Authenticated, end_other_sessions),
+        // Not an organization route: leaving works with any session of the person, also one that
+        // organization's rules would not give them now (password sign-in off, docs/api/access.md).
+        route(Method::DELETE, "/me/orgs/{orgId}", Authenticated, leave_org).changes_rights(),
     ]
 }
 
@@ -223,4 +226,39 @@ async fn end_other_sessions(
     audit(&mut tx, &actor, None, "auth.sessions_revoked", ("user", &user.id), json!({ "revoked": revoked })).await?;
     crate::db::commit(tx).await?;
     Ok(Json(Revoked { revoked }))
+}
+
+/// Leaves an organization: the person's own decision, which no rule of that organization can
+/// prevent, except that its last owner stays (docs/api/access.md, "Leaving an organization").
+async fn leave_org(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    Path(org_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let mut tx = crate::db::begin(&state.db).await?;
+    // The organization's row first, then its owner rows (lock order in `authz`), so a concurrent
+    // removal or demotion of the other owners is seen here.
+    crate::authz::lock_org(&mut tx, &org_id).await?;
+    let other_owners = crate::authz::lock_owners(&mut tx, &org_id, &user.id).await?;
+    let role: Option<(String,)> = sqlx::query_as(
+        "SELECT m.role FROM org_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.org_id = $1 AND m.user_id = $2 AND u.service_account = 0",
+    )
+    .bind(&org_id)
+    .bind(&user.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((role,)) = role else { return Err(ApiError::not_found()) };
+    if role == crate::authz::BuiltinRole::Owner.as_str() && other_owners == 0 {
+        return Err(
+            super::support::conflict("the last owner of an organization cannot leave it").because("members.last_owner")
+        );
+    }
+    super::members::remove_membership(&mut tx, &org_id, &user.id).await?;
+    let actor = Actor { user_id: &user.id, info: &info, at_ms: state.clock.now_ms() };
+    let summary = json!({ "userId": user.id, "role": role });
+    audit(&mut tx, &actor, Some(&org_id), "member.left", ("user", &user.id), summary).await?;
+    crate::db::commit(tx).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

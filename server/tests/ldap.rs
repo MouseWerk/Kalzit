@@ -501,9 +501,16 @@ async fn ldap_sign_in_sync_and_threshold() {
     assert_eq!((&first["method"], &first["current"]), (&json!("ldap"), &json!(true)), "{}", r.body);
     assert!(first["providerName"].is_string(), "{}", r.body);
     assert_eq!(app.login("dora", "dora-geheim-4").await.status, StatusCode::OK);
+    // A person the directory confirmed but Kalzit refuses gets the answer of a wrong password, so
+    // the directory password cannot be tested; the reason is in the audit log.
     let r = app.login("carl", "carl-geheim-3").await;
-    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "ldap.sign_in_refused"), "{}", r.body);
-    assert_eq!(r.body["error"]["params"]["outcome"], "unmapped");
+    assert_eq!((r.status, &r.body["error"]["code"]), (StatusCode::UNAUTHORIZED, &json!("invalid_credentials")));
+    assert_eq!(r.reason(), "", "{}", r.body);
+    let (failed,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'auth.sso_failed'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+    assert!(failed > 0, "the refusal is in the audit log");
     // The local owner still signs in with the password.
     assert_eq!(app.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
 
@@ -673,9 +680,11 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     // Without the server admin role, so the break-glass rule alone refuses the link.
     sqlx::query("UPDATE users SET is_server_admin = 0 WHERE id = $1").bind(&bg).execute(&app.state.db).await.unwrap();
-    let refused = |r: &Reply| (r.status, r.reason().to_string(), r.body["error"]["params"]["outcome"].clone());
-    let taken = (StatusCode::FORBIDDEN, "ldap.sign_in_refused".to_string(), json!("email_taken"));
-    assert_eq!(refused(&app.login("conf", "conf-geheim-1").await), taken, "trustEmail is off by default");
+    // A refusal answers like a wrong password and keeps its attempt counted, so every attempt
+    // comes from an address of its own here.
+    let refused = |r: &Reply| (r.status, r.body["error"]["code"].clone());
+    let taken = (StatusCode::UNAUTHORIZED, json!("invalid_credentials"));
+    assert_eq!(refused(&app.login_from("10.1.0.1", "conf", "conf-geheim-1").await), taken, "trustEmail is off");
     let r = app.get(&format!("/api/admin/sign-in/providers/{provider}"), &admin).await;
     assert_eq!(r.body["ldap"]["trustEmail"], false);
     let mut body = form(&env, &dir, None);
@@ -684,11 +693,49 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     body["version"] = r.body["version"].clone();
     let r = app.put(&format!("/api/admin/sign-in/ldap/{provider}"), body, &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let r = app.login("conf", "conf-geheim-1").await;
+    // The confirmed local account has a password and no second factor: the first sign-in through
+    // the directory asks for that password once before the link counts.
+    let local_hash = kalzit::auth::password::hash(PASSWORD.to_string()).await.unwrap();
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&local_hash)
+        .bind(&conf)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let r = app.login_from("10.2.0.1", "conf", "conf-geheim-1").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.body["id"], conf.as_str(), "linked to the confirmed local account");
-    for uid in ["unconf", "adm", "bg", "svc"] {
-        assert_eq!(refused(&app.login(uid, &format!("{uid}-geheim-1")).await), taken, "{uid}");
+    assert_eq!(r.body["secondFactor"]["linkPassword"], json!(true), "{}", r.body);
+    let pending = r.cookie("kalzit_pending").expect("the half-signed-in state");
+    let r = app
+        .send(
+            Method::POST,
+            "/api/auth/second-factor",
+            Some(json!({ "method": "totp", "code": "123456" })),
+            Some(&pending),
+        )
+        .await;
+    assert_eq!(r.reason(), "second_factor.password_first", "{}", r.body);
+    let r = app
+        .send(
+            Method::POST,
+            "/api/auth/second-factor/password",
+            Some(json!({ "password": "falsch-falsch" })),
+            Some(&pending),
+        )
+        .await;
+    assert_eq!(r.body["error"]["code"], json!("invalid_credentials"), "{}", r.body);
+    let r = app
+        .send(Method::POST, "/api/auth/second-factor/password", Some(json!({ "password": PASSWORD })), Some(&pending))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["me"]["id"], conf.as_str(), "linked to the confirmed local account");
+    // Confirmed now: the next sign-in through the directory needs no password of the account.
+    let r = app.login_from("10.3.0.1", "conf", "conf-geheim-1").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["id"], conf.as_str(), "{}", r.body);
+    for (i, uid) in ["unconf", "adm", "bg", "svc"].into_iter().enumerate() {
+        let r = app.login_from(&format!("10.{}.0.1", 10 + i), uid, &format!("{uid}-geheim-1")).await;
+        assert_eq!(refused(&r), taken, "{uid}");
     }
 
     // A changed password connection needs the password again: a stored one never goes out over a

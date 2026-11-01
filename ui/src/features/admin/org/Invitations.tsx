@@ -317,10 +317,15 @@ function Delivery({ invitation }: { invitation: Invitation }) {
  */
 export function InviteDialog({
   orgId,
+  initialEmail = "",
+  initialRole = "viewer",
   onClose,
   onCreated,
 }: {
   orgId: string;
+  /** Filled in when "Add member" sends the admin here for a person who has an account. */
+  initialEmail?: string;
+  initialRole?: string;
   onClose: () => void;
   onCreated: (created: { items: IssuedInvitation[]; mailed: boolean }) => void;
 }) {
@@ -333,8 +338,8 @@ export function InviteDialog({
     queryFn: () => listTeams(orgId, undefined, MAX_PAGE_SIZE),
     enabled: mayTeam,
   });
-  const [raw, setRaw] = useState("");
-  const [role, setRole] = useState("viewer");
+  const [raw, setRaw] = useState(initialEmail);
+  const [role, setRole] = useState(initialRole);
   const [team, setTeam] = useState("");
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
   const emailsRef = useRef<HTMLTextAreaElement>(null);

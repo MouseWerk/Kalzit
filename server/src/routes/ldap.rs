@@ -462,6 +462,7 @@ async fn create(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     JsonBody(body): JsonBody<LdapBody>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let valid = validate(body)?;
@@ -473,6 +474,8 @@ async fn create(
         ));
     };
     let now = state.clock.now_ms();
+    let trusting = valid.config.trust_email;
+    super::sso::require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
     verify_check_token(&state, valid.check_token.as_deref(), &valid.config, &password, now)?;
     let id = super::new_id();
     let taken = || conflict("another provider has this slug").with_field("slug").because("sso.slug_taken");
@@ -515,6 +518,7 @@ async fn update(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     JsonBody(body): JsonBody<LdapBody>,
 ) -> ApiResult<Json<Value>> {
@@ -529,6 +533,8 @@ async fn update(
     let old = current.ldap()?;
     let new = &valid.config;
     let now = state.clock.now_ms();
+    let trusting = old.trust_email || new.trust_email;
+    super::sso::require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
     let connection_changed = old.url != new.url
         || old.encryption != new.encryption
         || old.certificate != new.certificate
