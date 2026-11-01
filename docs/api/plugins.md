@@ -208,6 +208,15 @@ Empty while the plugin is not registered.
 
 ## Trust
 
+Kalzit's database is part of the trust: the publisher keys, the switches and the installed
+plugins with their manifests and signers are kept there, and with several servers so are the
+packages. Write access to the database counts as full server admin (it can create admins, and
+admins may install plugins), so protect its credentials like admin credentials. Every server
+checks a shared package against that trust list before it runs it (docs/operations/high-availability.md):
+its stored SHA-256, the installed manifest byte for byte, a signature by a key trusted now and the
+signer recorded at the installation, and a generated package directory name. Whenever a plugin is
+registered to run, the manifest on disk must still be the installed one.
+
 ### Publisher keys: `GET|POST /admin/plugin-keys`, `DELETE /admin/plugin-keys/{keyId}`
 
 `POST` `{ "name": "Example GmbH", "publicKey": "<32 bytes, base64 or hex>" }` answers `201`:

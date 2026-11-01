@@ -457,7 +457,7 @@ impl PluginHost {
                 continue;
             }
             if let Err(e) = self.register(&row, &keys, datasources) {
-                tracing::warn!(plugin = %row.id, reason = e.reason, "the plugin does not run: {}", e.message);
+                self.not_running(db, None, &row, Some(e.reason), &e.message).await;
             }
         }
         Ok(())
@@ -508,6 +508,12 @@ impl PluginHost {
         check_kind(row, &manifest)?;
         manifest.runs_on(env!("CARGO_PKG_VERSION")).map_err(|i| HostError::new("plugin.kalzit_too_old", i.message))?;
         let package_dir = self.package_path(&row.dir)?;
+        // The package on disk must be the one installed: its manifest (which lists every file
+        // with its hash, and which the signature covers) byte for byte the stored one.
+        let on_disk = std::fs::read(package_dir.join(manifest::MANIFEST_FILE))?;
+        if on_disk != row.manifest.as_bytes() {
+            return Err(manifest_differs());
+        }
         if manifest.plugin_kind() == manifest::PluginKind::Panel {
             // Nothing runs on the server: the panel may be shown.
             self.panels.insert(&row.id, ActivePanel { manifest: Arc::new(manifest), package_dir });
@@ -952,7 +958,7 @@ impl PluginHost {
             _ => return,
         };
         if let Err(e) = self.register(&row, &keys, &state.datasources) {
-            tracing::warn!(plugin = %id, reason = e.reason, "the plugin does not run: {}", e.message);
+            self.not_running(&state.db, Some(state.cluster.id()), &row, Some(e.reason), &e.message).await;
         }
     }
 
@@ -1361,20 +1367,15 @@ impl PluginHost {
                 tracing::warn!(plugin = %row.id, "the plugin is unsigned and unsigned plugins are not allowed; it does not run on this server");
                 continue;
             }
+            let server = Some(state.cluster.id());
             if let Err(e) = self.materialize(state, row, &keys, switches.allow_unsigned).await {
-                let reason = e.reason.as_ref().map(|r| r.code.clone());
-                match reason.as_deref() {
-                    Some(reason) if !matches!(reason, "plugin.package_missing" | "plugin.io") => {
-                        tracing::error!(plugin = %row.id, reason, "the shared package is refused: {}", e.message);
-                        self.record_package_refusal(state, row, reason).await;
-                    }
-                    _ => tracing::warn!(plugin = %row.id, "the plugin's package is not on this server: {}", e.message),
-                }
+                let reason = e.reason.as_ref().map(|r| r.code.as_str());
+                self.not_running(&state.db, server, row, reason, &e.message).await;
                 complete = false;
                 continue;
             }
             if let Err(e) = self.register(row, &keys, &state.datasources) {
-                tracing::warn!(plugin = %row.id, reason = e.reason, "the plugin does not run: {}", e.message);
+                self.not_running(&state.db, server, row, Some(e.reason), &e.message).await;
                 complete = false;
             }
         }
@@ -1400,11 +1401,28 @@ impl PluginHost {
         Ok(complete)
     }
 
-    /// A shared package this server refused, in the audit log once per directory and reason.
-    async fn record_package_refusal(&self, state: &AppState, row: &PluginRow, reason: &str) {
+    /// Why the plugin of `row` does not run here. A refused package (`is_refusal`) is logged as
+    /// an error and recorded in the audit log as `plugins.package_refused`, once per package
+    /// directory and reason; anything else (a missing package, a file or database error) may pass
+    /// and is only logged, and the caller tries again.
+    async fn not_running(
+        &self,
+        db: &sqlx::AnyPool,
+        server: Option<&str>,
+        row: &PluginRow,
+        reason: Option<&str>,
+        message: &str,
+    ) {
+        let Some(reason) = reason.filter(|r| is_refusal(r)) else {
+            tracing::warn!(plugin = %row.id, reason, "the plugin does not run on this server: {message}");
+            return;
+        };
+        tracing::error!(plugin = %row.id, reason, "the plugin's package is refused: {message}");
         if !self.refused.lock_or_recover().insert((row.dir.clone(), reason.to_string())) {
             return;
         }
+        let at_ms =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
         let event = AuditEvent {
             org_id: None,
             actor_user_id: None,
@@ -1412,11 +1430,11 @@ impl PluginHost {
             action: "plugins.package_refused",
             resource_type: Some("plugin"),
             resource_id: Some(&row.id),
-            summary: json!({ "reason": reason, "version": row.version, "server": state.cluster.id() }),
-            at_ms: state.clock.now_ms(),
+            summary: json!({ "reason": reason, "version": row.version, "server": server }),
+            at_ms,
         };
         let recorded = async {
-            let mut tx = crate::db::begin(&state.db).await?;
+            let mut tx = crate::db::begin(db).await?;
             audit::record(&mut tx, &event).await?;
             crate::db::commit(tx).await?;
             Ok::<_, ApiError>(())
@@ -1483,7 +1501,7 @@ impl PluginHost {
                 .map_err(|e| ApiError::internal("plugin package", e))?
                 .map_err(HostError::api)?;
             if signed.manifest_text != manifest_text {
-                return Err(manifest_differs());
+                return Err(manifest_differs().api());
             }
             let verified = package::verify(&signed, &self.trusted(keys), allow_unsigned).map_err(HostError::api)?;
             let key_hex = verified.key.as_ref().map(signing::key_hex);
@@ -1504,7 +1522,7 @@ impl PluginHost {
                 .map_err(|e| ApiError::internal("plugin unpack", e))?
                 .map_err(HostError::api)?;
             if unpacked.manifest_text != manifest_text {
-                return Err(manifest_differs());
+                return Err(manifest_differs().api());
             }
             if is_panel {
                 panels::check_bundle(&unpacked.manifest, &partial).map_err(HostError::api)?;
@@ -1525,10 +1543,29 @@ impl PluginHost {
     }
 }
 
-fn manifest_differs() -> ApiError {
-    HostError::new("plugin.package_invalid", "the manifest differs from the one installed")
-        .with("issues", "manifest")
-        .api()
+fn manifest_differs() -> HostError {
+    HostError::new("plugin.package_invalid", "the manifest differs from the one installed").with("issues", "manifest")
+}
+
+/// Whether `reason` refuses a package for what it is: tampered, damaged, in the wrong place,
+/// signed by another or an untrusted key. Not a passing failure (a missing package, a file or
+/// database error), which is tried again and not recorded as a refusal.
+fn is_refusal(reason: &str) -> bool {
+    matches!(
+        reason,
+        "plugin.package_hash_mismatch"
+            | "plugin.package_dir_invalid"
+            | "plugin.signer_mismatch"
+            | "plugin.unsigned_refused"
+            | "plugin.signer_untrusted"
+            | "plugin.signature_invalid"
+            | "plugin.package_invalid"
+            | "plugin.package_unreadable"
+            | "plugin.package_too_large"
+            | "plugin.manifest_missing"
+            | "plugin.manifest_invalid"
+            | "plugin.id_reserved"
+    )
 }
 
 /// Whether `name` is a package directory name as `install` makes them: a UUID in its simple

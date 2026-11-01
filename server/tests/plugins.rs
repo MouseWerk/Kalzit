@@ -1247,10 +1247,9 @@ async fn the_example_plugin_built_with_the_sdk_installs_and_answers() {
     t.finish().await;
 }
 
-/// Another server on the same database shared `archive` as the plugin's package `dir` with the
-/// SHA-256 `sha` (as `PluginHost::install` does when coordinated), and this server takes it over
-/// (`PluginHost::sync`). Answers whether everything that may run here runs.
-async fn take_shared(t: &TestApp, dir: &str, archive: &[u8], sha: &str) -> bool {
+/// Another server on the same database shared `archive` as the package `dir` of plugin `id`
+/// with the SHA-256 `sha` (as `PluginHost::install` does when coordinated).
+async fn share(t: &TestApp, id: &str, dir: &str, archive: &[u8], sha: &str) {
     let db = &t.state.db;
     sqlx::query("INSERT INTO plugin_packages (dir, archive, sha256, created_at) VALUES ($1, $2, $3, 0)")
         .bind(dir)
@@ -1259,17 +1258,40 @@ async fn take_shared(t: &TestApp, dir: &str, archive: &[u8], sha: &str) -> bool 
         .execute(db)
         .await
         .unwrap();
-    sqlx::query("UPDATE plugins SET dir = $1 WHERE id = $2").bind(dir).bind(ID).execute(db).await.unwrap();
+    sqlx::query("UPDATE plugins SET dir = $1 WHERE id = $2").bind(dir).bind(id).execute(db).await.unwrap();
+}
+
+/// `share` for the test plugin, then this server takes it over (`PluginHost::sync`). Answers
+/// whether everything that may run here runs.
+async fn take_shared(t: &TestApp, dir: &str, archive: &[u8], sha: &str) -> bool {
+    share(t, ID, dir, archive, sha).await;
     t.state.plugins.sync(&t.state).await.unwrap()
+}
+
+/// The reasons of the `plugins.package_refused` entries.
+async fn refusals(t: &TestApp) -> Vec<String> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'plugins.package_refused'")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    rows.iter().map(|(s,)| serde_json::from_str::<Value>(s).unwrap()["reason"].as_str().unwrap().to_string()).collect()
+}
+
+fn count(reasons: &[String], reason: &str) -> usize {
+    reasons.iter().filter(|r| *r == reason).count()
 }
 
 #[tokio::test]
 async fn a_shared_package_is_checked_like_an_installation_on_every_server() {
+    const SECOND: &str = "dev.example.second";
     let t = test_app().await;
-    let (publisher, stranger) = (key(15), key(16));
+    let (publisher, stranger, other) = (key(15), key(16), key(17));
     t.trust(&publisher).await;
     let good = Pkg { key: Some(&publisher), ..Default::default() };
     t.ready(&good).await;
+    let second = Pkg { id: SECOND, key: Some(&publisher), ..Default::default() };
+    t.ready(&second).await;
     let packages = t.dir.path().join("plugins").join("packages");
     let fresh = || format!("{}", uuid::Uuid::now_v7().simple());
 
@@ -1290,29 +1312,61 @@ async fn a_shared_package_is_checked_like_an_installation_on_every_server() {
     let escape = "../escape";
     assert!(!take_shared(&t, escape, &archive, &sha(&archive)).await);
     assert!(!packages.join(escape).exists() && !packages.join(format!(".partial-{escape}")).exists());
+    // A validly signed package whose manifest is not the stored one.
+    let changed = package(&Pkg { mode: "other", key: Some(&publisher), ..Default::default() });
+    let dir = fresh();
+    assert!(!take_shared(&t, &dir, &changed, &sha(&changed)).await);
+    assert!(!packages.join(&dir).exists());
 
-    let rows: Vec<(String,)> =
-        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'plugins.package_refused'")
-            .fetch_all(&t.state.db)
-            .await
-            .unwrap();
-    let reasons: Vec<String> = rows
-        .iter()
-        .map(|(s,)| serde_json::from_str::<Value>(s).unwrap()["reason"].as_str().unwrap().to_string())
-        .collect();
+    // Every refusal is in the audit log once, however often the sync tries again.
+    for _ in 0..3 {
+        assert!(!t.state.plugins.sync(&t.state).await.unwrap());
+    }
+    let reasons = refusals(&t).await;
     for reason in [
         "plugin.unsigned_refused",
         "plugin.signer_untrusted",
         "plugin.package_hash_mismatch",
         "plugin.package_dir_invalid",
+        "plugin.package_invalid",
     ] {
-        assert!(reasons.iter().any(|r| r == reason), "{reason} is missing from {reasons:?}");
+        assert_eq!(count(&reasons, reason), 1, "{reason} in {reasons:?}");
     }
+
+    // Another plugin still takes its new package while this one is refused.
+    let next = fresh();
+    let second_archive = package(&second);
+    share(&t, SECOND, &next, &second_archive, &sha(&second_archive)).await;
+    assert!(!t.state.plugins.sync(&t.state).await.unwrap());
+    assert!(packages.join(&next).is_dir());
+    assert_eq!(t.plugin(SECOND).await["running"], true);
+    assert_eq!(t.plugin(ID).await["running"], false);
+
+    // Signed by another trusted key, or unsigned while unsigned plugins are allowed: not the
+    // signer recorded at the installation.
+    t.trust(&other).await;
+    let by_other = package(&Pkg { key: Some(&other), ..Default::default() });
+    assert!(!take_shared(&t, &fresh(), &by_other, &sha(&by_other)).await);
+    t.allow_unsigned().await;
+    let unsigned = package(&Pkg::default());
+    assert!(!take_shared(&t, &fresh(), &unsigned, &sha(&unsigned)).await);
+    assert_eq!(count(&refusals(&t).await, "plugin.signer_mismatch"), 2);
+    assert_eq!(t.plugin(ID).await["running"], false);
 
     // The package as installed is taken over and runs.
     let dir = fresh();
     assert!(take_shared(&t, &dir, &archive, &sha(&archive)).await);
     assert!(packages.join(&dir).is_dir() && packages.join(format!("{dir}.complete")).exists());
     assert_eq!(t.plugin(ID).await["running"], true);
+
+    // A package whose manifest on disk changed after it was unpacked does not start again.
+    let r = t.send(Method::POST, &format!("/admin/plugins/{ID}/disable"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let file = packages.join(&dir).join("kalzit-plugin.toml");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, format!("{text}\n# changed\n")).unwrap();
+    let r = t.send(Method::POST, &format!("/admin/plugins/{ID}/enable"), None).await;
+    assert_eq!((r.status, r.body["running"].clone()), (StatusCode::OK, json!(false)), "{}", r.body);
+    assert_eq!(count(&refusals(&t).await, "plugin.package_invalid"), 2);
     t.finish().await;
 }
