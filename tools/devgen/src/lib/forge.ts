@@ -30,6 +30,8 @@ export interface Forge {
   releaseTags(): string[];
   /** The branch checked out in the repository, or `HEAD` when detached. */
   currentBranch(): string;
+  /** Updates `origin/main`, so numbers and files on main are current; warns when it cannot. */
+  fetchMain(): void;
   warnings: string[];
 }
 
@@ -122,6 +124,12 @@ export function realForge(root: string): Forge {
         ? []
         : (JSON.parse(out) as { tagName: string }[]).map((r) => r.tagName);
     },
+    fetchMain() {
+      const fetched = git(root, "fetch", "--quiet", "origin", "main");
+      if (!fetched.ok) {
+        warnings.push("git fetch origin main failed; main is as of the last fetch");
+      }
+    },
     currentBranch() {
       return git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.trim() || "HEAD";
     },
@@ -147,6 +155,7 @@ export function fakeForge(data: Partial<Omit<Forge, "warnings">> = {}): Forge {
     tags: () => [],
     releaseTags: () => [],
     currentBranch: () => "HEAD",
+    fetchMain: () => undefined,
     ...data,
   };
 }

@@ -375,7 +375,18 @@ describe("${request.key}", () => {
 `;
 }
 
-export function scaffoldSetting(root: string, request: SettingRequest): ScaffoldResult {
+export function scaffoldSetting(root: string, input: SettingRequest): ScaffoldResult {
+  // Texts end up in Rust literals, Markdown table cells and JSON: one line each.
+  const line = (text: string) => text.replace(/\s+/g, " ").trim();
+  const request: SettingRequest = {
+    ...input,
+    description: line(input.description),
+    labelEn: line(input.labelEn),
+    labelDe: line(input.labelDe),
+    descriptionEn: line(input.descriptionEn),
+    descriptionDe: line(input.descriptionDe),
+    ...(input.docs === undefined ? {} : { docs: line(input.docs).replace(/\|/g, "\\|") }),
+  };
   if (!KEY.test(request.key)) {
     throw new Error(`${request.key} is not a setting key like audit.retention_days`);
   }

@@ -188,6 +188,8 @@ interface Rules {
   german: RegExp;
   english: RegExp;
   same: Set<string>;
+  /** `fooNamed` keys whose visible text is another key than `foo`. */
+  visibleKey: Map<string, string>;
   source: "test" | "fallback";
 }
 
@@ -198,6 +200,7 @@ const FALLBACK_RULES: Rules = {
   english:
     /\b(the|and|or|not|with|your|you|Sign in|Sign out|Settings|Password|Email|Loading|Setup|Data sources|Try again|Theme|Language)\b/,
   same: new Set(),
+  visibleKey: new Map(),
   source: "fallback",
 };
 
@@ -208,30 +211,51 @@ export function readRules(root: string): Rules {
     return FALLBACK_RULES;
   }
   const test = readText(path);
-  const pattern = (name: string): RegExp | undefined => {
+  // The test exists, so its rules must be readable: a silent fallback would check against stale
+  // copies and let CI fail later.
+  const broken = (what: string) =>
+    new Error(
+      `cannot read ${what} from ${I18N_DIR}/i18n.test.ts; the test changed its form, update tools/devgen/src/lib/i18n.ts`,
+    );
+  const pattern = (name: string): RegExp => {
     const match = new RegExp(`const ${name} =\\s*\\/(.+?)\\/([a-z]*);`).exec(test);
     if (match === null) {
-      return undefined;
+      throw broken(`const ${name}`);
     }
     try {
       return new RegExp(match[1] ?? "", match[2] ?? "");
     } catch {
-      return undefined;
+      throw broken(`const ${name}`);
     }
   };
-  const sameBlock = /const same = new Set\(\[([\s\S]*?)\]\);/.exec(test)?.[1];
-  const same = new Set(
-    [...(sameBlock ?? "").matchAll(/^\s*"((?:[^"\\]|\\.)*)",?\s*$/gm)].map((m) =>
-      JSON.parse(`"${m[1] ?? ""}"`),
-    ),
-  );
-  const formal = pattern("formal");
-  const german = pattern("german");
-  const english = pattern("english");
-  if (formal === undefined || german === undefined || english === undefined) {
-    return { ...FALLBACK_RULES, same };
+  const block = (name: string, open: string, close: string): string => {
+    const at = test.indexOf(`const ${name}`);
+    const start = at === -1 ? -1 : test.indexOf(open, at);
+    const end = start === -1 ? -1 : test.indexOf(close, start);
+    if (end === -1) {
+      throw broken(`const ${name}`);
+    }
+    return test.slice(start + open.length, end);
+  };
+  const strings = (text: string) =>
+    [...text.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1] ?? ""}"`) as string);
+  const same = new Set(strings(block("same", "new Set([", "]);")));
+  if (same.size < 10) {
+    throw broken("the names in const same");
   }
-  return { formal, german, english, same, source: "test" };
+  const pairs = strings(block("visibleKey", "{", "};"));
+  const visibleKey = new Map<string, string>();
+  for (let i = 0; i + 1 < pairs.length; i += 2) {
+    visibleKey.set(pairs[i] ?? "", pairs[i + 1] ?? "");
+  }
+  return {
+    formal: pattern("formal"),
+    german: pattern("german"),
+    english: pattern("english"),
+    same,
+    visibleKey,
+    source: "test",
+  };
 }
 
 export interface AvoidWord {
@@ -277,14 +301,70 @@ function placeholders(message: string): string[] {
   return [...message.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 }
 
-let cachedContext: { root: string; rules: Rules; avoid: AvoidWord[] } | undefined;
+let cachedContext: { root: string; stamp: string; rules: Rules; avoid: AvoidWord[] } | undefined;
+
+/** The rules, read again whenever the translation test or the glossary changed on disk. */
 function context(root: string) {
-  if (cachedContext?.root !== root) {
-    const glossaryPath = join(root, "docs", "glossary.md");
-    const avoid = existsSync(glossaryPath) ? glossaryAvoid(readText(glossaryPath)) : [];
-    cachedContext = { root, rules: readRules(root), avoid };
+  const testPath = join(root, I18N_DIR, "i18n.test.ts");
+  const glossaryPath = join(root, "docs", "glossary.md");
+  const mtime = (path: string) => (existsSync(path) ? statSync(path).mtimeMs : 0);
+  const stamp = `${mtime(testPath)}:${mtime(glossaryPath)}`;
+  if (cachedContext?.root !== root || cachedContext.stamp !== stamp) {
+    let avoid: AvoidWord[] = [];
+    if (existsSync(glossaryPath)) {
+      avoid = glossaryAvoid(readText(glossaryPath));
+      if (avoid.length === 0) {
+        throw new Error(
+          "docs/glossary.md has no words to avoid that devgen can read; its table changed form, update tools/devgen/src/lib/i18n.ts",
+        );
+      }
+    }
+    cachedContext = { root, stamp, rules: readRules(root), avoid };
   }
   return cachedContext;
+}
+
+/** Words of a message, lower case, as the accessible-name test compares them. */
+function nameWords(message: string): string {
+  return message
+    .toLowerCase()
+    .replace(/\{\w+\}/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/**
+ * `fooNamed` is the accessible name of a control whose visible text is `foo` (or the key the
+ * test's `visibleKey` names): the name must contain the visible words in order (WCAG 2.5.3).
+ */
+export function namedProblems(
+  root: string,
+  catalogs: Record<Language, Map<string, string>>,
+  wanted: (key: string) => boolean,
+): string[] {
+  const { visibleKey } = context(root).rules;
+  const problems: string[] = [];
+  for (const language of LANGUAGES) {
+    const catalog = catalogs[language];
+    for (const [key, named] of catalog) {
+      if (!key.endsWith("Named") || !wanted(key)) {
+        continue;
+      }
+      const visible = catalog.get(visibleKey.get(key) ?? key.slice(0, -"Named".length));
+      if (visible === undefined) {
+        problems.push(
+          `${key} has no visible text key; add it or list it in visibleKey of i18n.test.ts`,
+        );
+        continue;
+      }
+      if (!` ${nameWords(named)} `.includes(` ${nameWords(visible)} `)) {
+        problems.push(
+          `${language}:${key} does not contain its visible text "${visible}": ${named}`,
+        );
+      }
+    }
+  }
+  return problems;
 }
 
 /** What the translation tests would say about one key's German and English text. */
@@ -486,6 +566,7 @@ export function i18nCheck(root: string, options: { keys?: string[] } = {}): Chec
     checked++;
     errors.push(...messageProblems(root, key, { de: german, en: english }));
   }
+  errors.push(...namedProblems(root, { de, en }, wanted));
 
   const files = sourceFiles(join(root, "ui", "src"));
   const sources = files.map((file) => readText(file));

@@ -113,6 +113,26 @@ describe("release file detection", () => {
       notesTarget(root, fakeForge({ tags: () => ["v0.5.0"] }), { version: "0.5.0" }),
     ).toThrow(/released already/);
   });
+
+  it("counts main's notes files, so an old branch never writes into released notes", () => {
+    const root = repo(releases);
+    const forge = fakeForge({
+      tags: () => ["v0.5.0"],
+      mainFiles: () => ["v0.5.0.md", "v0.6.0.md"],
+    });
+    const target = notesTarget(root, forge);
+    expect(target.file).toBe("docs/releases/v0.6.0.md");
+    expect(target.exists).toBe(false);
+    expect(() => addReleaseNote(root, forge, { section: "fixed", text: "A fix." })).toThrow(
+      /merge origin\/main first/,
+    );
+  });
+
+  it("steps forward past every released version", () => {
+    const root = repo(releases);
+    const target = notesTarget(root, fakeForge({ tags: () => ["v0.5.0", "v0.6.0", "v0.7.0"] }));
+    expect(target.version).toBe("0.8.0");
+  });
 });
 
 describe("adding a note", () => {

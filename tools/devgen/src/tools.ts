@@ -575,33 +575,25 @@ export const TOOLS: Tool[] = [
   {
     name: "cleanup_storage",
     description:
-      "Lists worktrees under .claude/worktrees and cargo target dirs (kalzit-target-* in the home folder) with sizes. With apply, removes merged clean worktrees (branch merged into origin/main, squash merges included) and idle target dirs; never unmerged work or the main checkout.",
+      "Lists worktrees under .claude/worktrees and cargo target dirs (<home>/kalzit-target-*) with sizes. With apply, removes only worktrees whose own commits are merged (a merged PR's head is the worktree's commit, or all own commits are in origin/main) and that are unlocked, clean and idle, and idle target dirs; never fresh or running worktrees, unmerged work or the main checkout.",
     fields: [
       { name: "apply", type: "boolean", description: "Remove what is safe to remove" },
       {
         name: "idleHours",
         type: "number",
-        description: "Target dirs untouched this long count as idle (default 2)",
-      },
-      {
-        name: "targets",
-        type: "string",
-        description: "Glob of the target dirs (default <home>/kalzit-target-*)",
+        description:
+          "Worktrees and target dirs changed within this many hours are kept (default 2, at least 1)",
       },
     ],
     run(input, { root, forge }) {
       const report = cleanupStorage(
         root,
         forge,
-        defined({
-          apply: bool(input, "apply"),
-          idleHours: num(input, "idleHours"),
-          targetsGlob: str(input, "targets"),
-        }),
+        defined({ apply: bool(input, "apply"), idleHours: num(input, "idleHours") }),
       );
       const targets = report.targets.map(
         (t) =>
-          `${t.removed === true ? "removed" : t.note.startsWith("idle") ? "removable" : "kept"}  ${formatBytes(t.bytes).padStart(10)}  ${t.path}  (${t.note}, ${t.idleHours} h)`,
+          `${t.removed === true ? "removed" : t.removable ? "removable" : "kept"}  ${formatBytes(t.bytes).padStart(10)}  ${t.path}  (${t.note}, ${t.idleHours} h)`,
       );
       return {
         text:

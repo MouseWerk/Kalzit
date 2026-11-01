@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -161,5 +161,42 @@ describe("i18n_add", () => {
   it("refuses a key that exists", () => {
     const root = fixture({ "admin.users.title": "Benutzer" }, { "admin.users.title": "Users" });
     expect(() => i18nAdd(root, { key: "admin.users.title", en: "x", de: "y" })).toThrow(/exists/);
+  });
+});
+
+describe("i18n_check, further rules", () => {
+  it("checks that a fooNamed accessible name contains the visible text of foo", () => {
+    const root = fixture(
+      {
+        "admin.users.remove": "Entfernen",
+        "admin.users.removeNamed": "{name} löschen",
+        "admin.users.edit": "Bearbeiten",
+        "admin.users.editNamed": "{name} bearbeiten",
+      },
+      {
+        "admin.users.remove": "Remove",
+        "admin.users.removeNamed": "Remove {name}",
+        "admin.users.edit": "Edit",
+        "admin.users.editNamed": "Edit {name}",
+      },
+    );
+    const named = i18nCheck(root).errors.filter((e) => e.includes("Named"));
+    expect(named).toEqual([
+      'de:admin.users.removeNamed does not contain its visible text "Entfernen": {name} löschen',
+    ]);
+  });
+
+  it("fails loudly when the translation test changed its form", () => {
+    const root = fixture({ "admin.users.title": "Benutzer" }, { "admin.users.title": "Users" });
+    writeFileSync(join(root, "ui/src/i18n/i18n.test.ts"), "// rules moved elsewhere\n");
+    expect(() => i18nCheck(root)).toThrow(/i18n\.test\.ts; the test changed its form/);
+  });
+
+  it("reads the rules again when the translation test changes", () => {
+    const root = fixture({ "admin.users.title": "Benutzer" }, { "admin.users.title": "Users" });
+    expect(i18nCheck(root).rulesFrom).toBe("fallback");
+    const test = readFileSync(join(REPO, "ui/src/i18n/i18n.test.ts"), "utf8");
+    writeFileSync(join(root, "ui/src/i18n/i18n.test.ts"), test);
+    expect(i18nCheck(root).rulesFrom).toBe("test");
   });
 });

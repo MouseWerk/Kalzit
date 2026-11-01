@@ -38,6 +38,7 @@ jobs:
       docker: ${{ steps.areas.outputs.docker }}
       installer: ${{ steps.areas.outputs.installer }}
       devgen: ${{ steps.areas.outputs.devgen }}
+      devgen_proof: ${{ steps.areas.outputs.devgen_proof }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@v7
@@ -509,7 +510,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.devgen == 'true' }}
+      # Also for server and UI changes: the generators read the catalogs, the translation test,
+      # the route and settings sources, so a change there can break them (a minute of work).
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.devgen == 'true' || needs.changes.outputs.server == 'true' || needs.changes.outputs.ui == 'true' }}
     defaults:
       run:
         working-directory: tools/devgen
@@ -535,36 +538,14 @@ jobs:
       - if: env.RUN_JOB == 'true'
         run: npm test
 
-  # The generators' proof: scaffolds routes and settings into this checkout and runs cargo fmt,
-  # clippy, the generated and affected server tests, Biome, the UI typecheck and the affected UI
-  # tests, so generated code passes the repository's checks out of the box.
+  # The generators' proof (about 12 minutes; devgen-proof.yml): only for pull requests that
+  # change what the scaffolds write into or read from, or the generators themselves (flag
+  # `devgen_proof`), and weekly by its own schedule.
   devgen-proof:
     name: devgen proof
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.devgen == 'true') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: devgen-proof
-          save-if: ${{ github.event_name != 'merge_group' }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: |
-            ui/package-lock.json
-            tools/devgen/package-lock.json
-      - run: npm ci
-        working-directory: ui
-      - run: npm ci
-        working-directory: tools/devgen
-      - run: npm run proof -- --in-place
-        working-directory: tools/devgen
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && (needs.changes.result != 'success' || needs.changes.outputs.devgen_proof == 'true') }}
+    uses: ./.github/workflows/devgen-proof.yml
 
   # End-to-end tests against the server binary with the embedded UI (ui/e2e), built with the
   # e2e profile (release settings, less optimization, so it builds faster). Not a required check

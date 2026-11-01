@@ -55,7 +55,11 @@ export function notesTarget(
   options: { version?: string } = {},
 ): NotesTarget {
   const dir = join(root, RELEASES_DIR);
-  const versions = (existsSync(dir) ? readdirSync(dir) : [])
+  // The checkout's files and main's: a branch cut before a newer notes file landed on main must
+  // not add to an older one.
+  const mainNotes = forge.mainFiles(RELEASES_DIR);
+  const names = new Set([...(existsSync(dir) ? readdirSync(dir) : []), ...mainNotes]);
+  const versions = [...names]
     .map(parseVersion)
     .filter((v): v is Version => v !== undefined)
     .sort((a, b) => compare(b, a));
@@ -87,14 +91,21 @@ export function notesTarget(
       version = newest;
       reason = "newest notes file without a tag or release";
     } else {
+      // The next minor version, and further while a tag or release says that one is out too.
       version = [newest[0], newest[1] + 1, 0];
-      reason = `v${versionText(newest)} is released; the next minor version starts`;
+      while (isReleased(version)) {
+        version = [version[0], version[1] + 1, 0];
+      }
+      reason = `v${versionText(newest)} is released; v${versionText(version)} is the next unreleased version`;
     }
   }
   const file = `${RELEASES_DIR}/v${versionText(version)}.md`;
   const exists = existsSync(join(root, file));
   const branch = forge.currentBranch();
-  const onMain = forge.mainFiles(RELEASES_DIR).includes(`v${versionText(version)}.md`);
+  const onMain = mainNotes.includes(`v${versionText(version)}.md`);
+  if (!exists && onMain) {
+    forge.warnings.push(`${file} is on main but not in this checkout; merge origin/main first`);
+  }
   const othersCreating = onMain
     ? []
     : forge
@@ -183,6 +194,12 @@ export function addReleaseNote(
     options.version === undefined ? {} : { version: options.version },
   );
   const path = join(root, target.file);
+  if (
+    !target.exists &&
+    forge.mainFiles(RELEASES_DIR).includes(target.file.slice(RELEASES_DIR.length + 1))
+  ) {
+    throw new Error(`${target.file} is on main but not in this checkout; merge origin/main first`);
+  }
   const before = target.exists ? readText(path) : emptyNotes(target.version);
   writeText(path, insertNote(before, options.section, options.text));
   const warnings = [...target.warnings];

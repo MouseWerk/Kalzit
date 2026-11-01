@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AUTHOR, checklist, drift, lint, parseDiff } from "../src/lib/rules.ts";
+import { AUTHOR, checklist, drift, lint, lintBranch, parseDiff } from "../src/lib/rules.ts";
 import { REPO } from "./helpers.ts";
 
 /** A unified diff that adds `added` lines to `file` after one context line. */
@@ -95,6 +95,54 @@ describe("rules lint", () => {
       "warning i18n-jsx ui/src/features/x/Page.tsx:12",
     ]);
     expect(rules(diff("ui/src/features/x/Page.test.tsx", tsx, "return ("))).toEqual([]);
+  });
+
+  it("does not take arrow functions, comparisons, code, values or keys for JSX text", () => {
+    const code = [
+      "  submit: (proof: Proof) => Promise<void>;",
+      "  if (port > 0 && port < 65536) {",
+      "  const inside = x >= plot.left && x <= plot.right;",
+      '  <option value="max_tokens">max_tokens</option>',
+      '  <pre className="mono">kalzit update apply</pre>',
+      '  <span className="mono">.kalzit-update</span>',
+      '  <Card title="usage.dashboards.title" lead="usage.dashboards.lead">',
+      '  <input placeholder="https://ca.example.com/acme" />',
+      '  <input placeholder="xxxx-xxxx-xxxx" />',
+      '  <span translate="no">Kalzit Server</span>',
+    ];
+    expect(rules(diff("ui/src/features/x/Page.tsx", code, "return ("))).toEqual([]);
+  });
+
+  it("finds no untranslated JSX in the UI as it is today", () => {
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) {
+          walk(path);
+        } else if (name.endsWith(".tsx")) {
+          const file = relative(REPO, path).replace(/\\/g, "/");
+          const text = readFileSync(path, "utf8").split(/\r?\n/);
+          const whole = [
+            `+++ b/${file}`,
+            `@@ -0,0 +1,${text.length} @@`,
+            ...text.map((l) => `+${l}`),
+          ];
+          for (const f of lint({ diff: whole.join("\n") })) {
+            if (f.rule === "i18n-jsx") {
+              found.push(`${file}:${f.line} ${f.message}`);
+            }
+          }
+        }
+      }
+    };
+    walk(join(REPO, "ui", "src"));
+    expect(found).toEqual([]);
+  });
+
+  it("refuses a base that is not a commit or looks like an option", () => {
+    expect(() => lintBranch(REPO, { base: "--output=x" })).toThrow(/not a commit/);
+    expect(() => lintBranch(REPO, { base: "no-such-ref-anywhere" })).toThrow(/not a commit/);
   });
 
   it("flags emojis and lines added to released notes", () => {

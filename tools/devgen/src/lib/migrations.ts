@@ -126,6 +126,7 @@ export function nextMigration(
   forge: Forge,
   options: { name?: string; description?: string; create?: boolean; excludeBranch?: string } = {},
 ): NextMigration {
+  forge.fetchMain();
   const exclude = options.excludeBranch ?? forge.currentBranch();
   // The checkout's own new files count: they are this branch's, and the next one comes after.
   const taken = takenMigrations(root, forge, { excludeBranch: exclude });
@@ -171,6 +172,7 @@ export interface MigrationCheck {
 
 /** Clashes of a branch's new migrations with main, with open pull requests and with each other. */
 export function checkMigrations(root: string, forge: Forge, branch: string): MigrationCheck {
+  forge.fetchMain();
   const added = forge
     .branchFiles(branch, "A")
     .filter((path) => path.startsWith(`${MIGRATIONS_DIR}/`) && parse(baseName(path)) !== undefined)

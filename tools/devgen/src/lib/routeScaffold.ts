@@ -855,7 +855,17 @@ function rootOf(plan: Plan): string {
   return roots.get(plan) ?? "";
 }
 
-export function scaffoldRoute(root: string, request: RouteRequest): ScaffoldResult {
+/** One line of text: the summary and title end up in doc comments and Markdown headings. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+export function scaffoldRoute(root: string, input: RouteRequest): ScaffoldResult {
+  const request: RouteRequest = {
+    ...input,
+    summary: oneLine(input.summary),
+    ...(input.title === undefined ? {} : { title: oneLine(input.title) }),
+  };
   const changed = new Set<string>();
   const created: string[] = [];
   const next: string[] = [];

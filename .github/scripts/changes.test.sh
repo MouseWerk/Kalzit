@@ -9,16 +9,16 @@ trap 'rm -rf "$work"' EXIT
 failures=0
 
 flags() {
-  # The devgen flag has checks of its own (expect_devgen), so the columns below stay as they are.
-  grep -v '^devgen=' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
+  # The devgen flags have checks of their own (expect_flag), so the columns below stay as they are.
+  grep -v '^devgen' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
 }
 
-# expect_devgen "<true|false>" path...
-expect_devgen() {
-  local want=$1 got
-  shift
-  got=$( (for p in "$@"; do printf '%s\0' "$p"; done) | "$script" 2> /dev/null | sed -n 's/^devgen=//p')
-  check "devgen: $*" "$got" "$want"
+# expect_flag <flag> "<true|false>" path...
+expect_flag() {
+  local flag=$1 want=$2 got
+  shift 2
+  got=$( (for p in "$@"; do printf '%s\0' "$p"; done) | "$script" 2> /dev/null | sed -n "s/^$flag=//p")
+  check "$flag: $*" "$got" "$want"
 }
 
 check() {
@@ -79,11 +79,21 @@ expect "false false false false false false false false"  tools/devgen/src/cli.t
 expect "false false false false false false false false"  .mcp.json
 expect "false false false false false false false false"  tools/devgen/README.md docs/PLAN.md
 
-expect_devgen true   tools/devgen/src/cli.ts
-expect_devgen true   .mcp.json
-expect_devgen true   .github/workflows/ci.yml
-expect_devgen true
-expect_devgen false  server/src/main.rs ui/src/app.tsx docs/PLAN.md
+expect_flag devgen true   tools/devgen/src/cli.ts
+expect_flag devgen true   .mcp.json
+expect_flag devgen true   .github/workflows/ci.yml
+expect_flag devgen true
+expect_flag devgen false  server/src/main.rs ui/src/app.tsx docs/PLAN.md
+
+# The scaffolds' proof: only for what they write into or read from, and for their own code.
+expect_flag devgen_proof true   server/src/routes/usage.rs
+expect_flag devgen_proof true   server/src/settings.rs
+expect_flag devgen_proof true   ui/src/i18n/de/admin.json
+expect_flag devgen_proof true   ui/src/features/settings/sections.ts
+expect_flag devgen_proof true   tools/devgen/src/lib/routeScaffold.ts
+expect_flag devgen_proof true   .github/workflows/ci.yml
+expect_flag devgen_proof false  tools/devgen/README.md tools/devgen/test/rules.test.ts .mcp.json
+expect_flag devgen_proof false  server/src/main.rs ui/src/app.tsx
 
 # From commits: a deletion and a move out of server/ into docs/ both count as server changes.
 repo="$work/repo"

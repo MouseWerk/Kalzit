@@ -194,6 +194,55 @@ const ASSISTANT = new RegExp(
 const TRAILER = /^\s*(Co-Authored-By|Generated-By|Session-Id)\s*:/im;
 const GENERATED = /generated with/i;
 
+/** Comments, arrow functions and comparisons: `<` and `>` there are not JSX. */
+const NOT_JSX = /^\s*(\/\/|\*|\/\*)|=>|[<>]=|\s[<>]\s/;
+/** Tags whose text is code, a command or a name, not a sentence. */
+const CODE_TAGS = new Set(["code", "pre", "kbd", "samp", "var"]);
+
+/** The text of a one-line `<Tag ...>text</Tag>` that is not translated, if any. */
+export function untranslatedText(line: string): string | undefined {
+  for (const match of line.matchAll(/<([A-Za-z][\w.]*)(\s[^<>]*)?>([^<>{}]+)<\/\1>/g)) {
+    const tag = match[1] ?? "";
+    const attrs = match[2] ?? "";
+    const text = (match[3] ?? "").trim();
+    if (CODE_TAGS.has(tag.toLowerCase()) || /\btranslate="no"/.test(attrs)) {
+      continue;
+    }
+    // `<option value="max_tokens">max_tokens</option>`: the value itself, shown as is.
+    if (new RegExp(`\\bvalue="${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`).test(attrs)) {
+      continue;
+    }
+    // Identifiers and file names (`max_tokens`, `.kalzit-update`) and short abbreviations pass.
+    const identifier = !/\s/.test(text) && /[_./]/.test(text);
+    if (/\p{L}{2,}/u.test(text) && !/^[\p{Lu}\d\s.-]{2,6}$/u.test(text) && !identifier) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+/** A label, title, placeholder or alt text written as a sentence instead of `t("...")`. */
+export function untranslatedAttribute(line: string): [string, string] | undefined {
+  const match = /\b(aria-label|title|placeholder|alt|label)="([^"]*)"/.exec(line);
+  if (match === null) {
+    return undefined;
+  }
+  const value = match[2] ?? "";
+  // Catalog keys passed to a component, addresses, hosts, e-mail and PEM examples.
+  if (
+    /^[a-z]\w*(\.\w+)+$/.test(value) ||
+    /^[\w.+-]*[@:/.][\w.@:/+-]*$/.test(value) ||
+    /^-{3,}/.test(value)
+  ) {
+    return undefined;
+  }
+  // One lower-case token is a format example (`xxxx-xxxx`), not a sentence.
+  if (!/\s/.test(value) && !/\p{Lu}/u.test(value)) {
+    return undefined;
+  }
+  return /\p{L}{2,}/u.test(value) ? [match[1] ?? "", value] : undefined;
+}
+
 interface DiffLine {
   file: string;
   line: number;
@@ -392,9 +441,9 @@ export function lint(input: LintInput): Finding[] {
           message: "a literal color in code; use a token (var(--...))",
         });
       }
-      if (file.endsWith(".tsx") && !/^\s*(\/\/|\*|\/\*)/.test(text)) {
-        const node = />([^<>{}]*)</.exec(text)?.[1]?.trim() ?? "";
-        if (/\p{L}{2,}/u.test(node) && !/^[\p{Lu}\d\s.-]{2,6}$/u.test(node)) {
+      if (file.endsWith(".tsx") && !NOT_JSX.test(text)) {
+        const node = untranslatedText(text);
+        if (node !== undefined) {
           add({
             rule: "i18n-jsx",
             severity: "error",
@@ -403,16 +452,14 @@ export function lint(input: LintInput): Finding[] {
             message: `untranslated JSX text "${node}"; use t("...")`,
           });
         }
-        const attr = /\b(aria-label|title|placeholder|alt|label)="([^"]*\p{L}{2,}[^"]*)"/u.exec(
-          text,
-        );
-        if (attr !== null) {
+        const attr = untranslatedAttribute(text);
+        if (attr !== undefined) {
           add({
             rule: "i18n-jsx",
             severity: "warning",
             file,
             line,
-            message: `${attr[1]}="${attr[2]}" looks untranslated; use t("...")`,
+            message: `${attr[0]}="${attr[1]}" looks untranslated; use t("...")`,
           });
         }
       }
@@ -499,6 +546,13 @@ export function lintBranch(
   options: { base?: string; prBody?: string; prBodyFile?: string; releasedVersions?: string[] },
 ): Finding[] {
   const base = options.base ?? "origin/main";
+  // A base is a commit, never an option smuggled into git's arguments.
+  if (
+    base.startsWith("-") ||
+    !git(root, "rev-parse", "--verify", "--quiet", "--end-of-options", `${base}^{commit}`).ok
+  ) {
+    throw new Error(`${base} is not a commit to compare with`);
+  }
   const diff = git(root, "diff", "--no-color", "--no-renames", "-U3", `${base}...HEAD`);
   if (!diff.ok) {
     throw new Error(`git diff ${base}...HEAD failed: ${diff.stderr.trim()}`);

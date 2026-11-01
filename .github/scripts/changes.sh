@@ -12,6 +12,8 @@
 #   docker     the container image: server or ui, the Dockerfile, .dockerignore or deploy/
 #   installer  the Windows installer: server or packaging/
 #   devgen     the developer generators (tools/devgen, .mcp.json); never part of the product
+#   devgen_proof  what the generators scaffold into or generate from: route modules, the
+#              settings registry, the UI catalogs and settings pages, and the generators' code
 #
 # changes.sh BASE HEAD   compares two commits (renames count as a deletion and an addition, so
 #                        the old path counts too)
@@ -30,11 +32,18 @@ docs=false
 image=false
 packaging=false
 devgen=false
+devgen_proof=false
 unknown=false
 count=0
 
 classify() {
   local path=$1
+  # In addition to the area below: the scaffolds' proof (job `devgen proof`) runs for these.
+  case "$path" in
+    server/src/routes/* | server/src/settings* | ui/src/i18n/* | ui/src/features/settings/* \
+      | tools/devgen/src/* | tools/devgen/package.json | tools/devgen/package-lock.json)
+      devgen_proof=true ;;
+  esac
   case "$path" in
     .github/*)
       workflows=true ;;
@@ -96,6 +105,7 @@ if [ "$workflows" = true ] || [ "$unknown" = true ] || [ "$count" -eq 0 ]; then
   server=true
   ui=true
   devgen=true
+  devgen_proof=true
 fi
 [ "$server" = true ] && audit=true
 e2e=false
@@ -119,3 +129,4 @@ echo "docs_only=$docs_only"
 echo "docker=$docker"
 echo "installer=$installer"
 echo "devgen=$devgen"
+echo "devgen_proof=$devgen_proof"

@@ -45,7 +45,7 @@ Commands that find errors exit with 2.
 | `pr_overlap`       | `pr-overlap`       | files open PRs share, with a hint at likely conflicts, and migration numbers taken twice                                                            |
 | `rules`            | `rules`            | the binding rules of CLAUDE.md and the owner decisions as a checklist                                                                               |
 | `rules_lint`       | `rules-lint`       | lints this branch's diff, commits and PR body for common violations                                                                                 |
-| `cleanup_storage`  | `cleanup-storage`  | lists merged worktrees and cargo target dirs with sizes; `--apply` removes what is safe                                                             |
+| `cleanup_storage`  | `cleanup-storage`  | lists worktrees and cargo target dirs with sizes; `--apply` removes merged, idle, clean worktrees and idle target dirs                              |
 
 ### Examples
 
@@ -99,8 +99,11 @@ node src/cli.ts cleanup-storage --apply
   git tag, no GitHub release and no release pull request (`release/v<version>`, open or merged).
   When it is released, the next minor version's file is created with the three sections.
 - **i18n rules** come from `ui/src/i18n/i18n.test.ts` where the test writes them as data (the Sie
-  pattern, the German and English word lists, the names allowed in both languages) and from the
-  Avoid column of `docs/glossary.md`, so the test stays the one definition. "Unused" counts
+  pattern, the German and English word lists, the names allowed in both languages, the
+  `visibleKey` map of the `fooNamed` check) and from the Avoid column of `docs/glossary.md`, so
+  the test stays the one definition. When the test or glossary changes form so that they cannot
+  be read, the check fails loudly instead of using stale copies; they are read again whenever
+  either file changes. "Unused" counts
   literals, template heads (`` `settings.density.${v}` ``), prefixes ending in a dot and plural
   bases; it is a hint, the UI builds some keys at runtime.
 - **Route scaffolds** follow `routes::access_guard`: `ServerAdmin` under `/admin`, organization
@@ -121,13 +124,25 @@ node src/cli.ts cleanup-storage --apply
   catalogs, generated types, lock files, route and setting registries) as likely conflicts.
 - **The lint** reads `git diff origin/main...HEAD` and `git log origin/main..HEAD`: literal colors,
   spacing, font sizes, weights, radii and z-indexes outside `tokens.css`; accent or status frames
-  on states and left bars; `:focus` without `-visible`; JSX text and labels outside `t(...)`;
+  on states and left bars; `:focus` without `-visible`; JSX text and labels outside `t(...)`
+  (one-line `<Tag>text</Tag>` only, not code tags, arrow functions or comparisons; no finding in
+  today's ui/src, which a test keeps so);
   emojis; lines in released notes; a "Generated with" line, trailers or assistant names in the PR
   body or commits; and commits not authored as the owner.
-- **Cleanup** never touches the main checkout, the checkout it runs in, a worktree with
-  uncommitted changes or one whose branch is not merged. Merged means the head commit is in
-  `origin/main`, or a merged pull request's head is exactly that commit (squash merges). Target
-  directories (`<home>/kalzit-target-*`) count as idle after two hours without a build.
+- **Cleanup** removes a worktree only when its work is merged: a merged pull request's head is
+  exactly the worktree's commit (squash merges), or the branch has commits of its own (not on
+  main's first-parent line) and all of them are in `origin/main`. A worktree without commits of
+  its own is a new or running agent's isolation worktree and is always kept, as are locked
+  worktrees, worktrees with uncommitted or untracked changes, and worktrees whose HEAD, index or
+  any file changed within the idle window (`--idle-hours`, default 2, at least 1). The dry run
+  says how many ignored entries (node_modules, build output) go with each. Target directories
+  are only `<home>/kalzit-target-*`, never a path from the caller, and go when idle. Links and
+  junctions are never followed or removed. The main checkout and the current checkout are never
+  touched.
+- **Release notes** also read main's `docs/releases` (after `git fetch`), so a branch cut before
+  a newer notes file landed adds to that file (after merging main) and never to released notes.
+- **Migration numbers** fetch `origin main` first.
+- **Missing packages**: `cli.ts` and `mcp.ts` say "run npm ci" instead of failing to start.
 
 ## Proof
 
@@ -135,7 +150,10 @@ node src/cli.ts cleanup-storage --apply
 module, a session-only route) and three settings (whole number, choice in a reasons namespace,
 organization bool) into a temporary git worktree, then runs `cargo fmt --check`,
 `cargo clippy --all-targets -D warnings`, the generated and affected server tests, Biome, the UI
-typecheck and the affected UI tests. CI runs it in place (`--in-place`) in the job `devgen proof`.
+typecheck and the affected UI tests. CI runs it in place (`--in-place`) in the job `devgen proof`
+for pull requests that change route modules, the settings registry, the UI catalogs or settings
+pages, or the generators' code (flag `devgen_proof`), and weekly (`devgen-proof.yml`). The cheap
+`devgen` job (Biome, types, unit tests) runs for every server, UI or devgen change.
 Locally, keep the load low:
 
 ```
