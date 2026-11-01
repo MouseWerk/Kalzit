@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { kindMonogram } from "../datasources/kindMarks";
@@ -11,6 +11,32 @@ import "./plugins.css";
 /** The installed plugins and the host switches, shared by every plugin page. */
 export function usePlugins() {
   return useQuery({ queryKey: pluginKeys.list, queryFn: ({ signal }) => listPlugins(signal) });
+}
+
+/**
+ * A table that scrolls sideways when the card is narrower than its columns: the scroll box is a
+ * named region in the tab order, so keyboard users can scroll it too (WCAG 2.1.1).
+ */
+export function TableScroll({
+  labelledBy,
+  label,
+  children,
+}: {
+  labelledBy?: string;
+  label?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className="plugins-table-wrap"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll box takes focus so the keyboard can scroll it
+      tabIndex={0}
+      {...(labelledBy === undefined ? {} : { "aria-labelledby": labelledBy })}
+      {...(label === undefined ? {} : { "aria-label": label })}
+    >
+      {children}
+    </section>
+  );
 }
 
 /** The current time, ticking every `every` milliseconds while `active`. */

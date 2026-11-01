@@ -275,7 +275,16 @@ export const MAIN_PAGES: readonly MainPage[] = [
   { name: "general settings", path: () => "/settings/general", ready: settingsRows },
   { name: "network settings", path: () => "/settings/network", ready: settingsRows },
   { name: "security settings", path: () => "/settings/security", ready: settingsRows },
-  { name: "sign-in settings", path: () => "/settings/signin", ready: settingsRows },
+  {
+    name: "sign-in settings",
+    path: () => "/settings/signin",
+    ready: async (page, _world, language) => {
+      await expect(page.getByRole("tablist", { name: t("sso.tabs", {}, language) })).toBeVisible();
+      // The providers: none yet, or the ones other tests added.
+      const panel = page.getByRole("tabpanel");
+      await expect(panel.getByRole("heading").or(panel.getByRole("table")).first()).toBeVisible();
+    },
+  },
   { name: "storage settings", path: () => "/settings/storage", ready: settingsRows },
   // The usage page once its counts and the unused dashboards arrived.
   {

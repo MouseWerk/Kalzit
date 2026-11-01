@@ -12,6 +12,7 @@ import { addKey, listKeys, type PluginList, pluginKeys, removeKey, type TrustedK
 import { CatalogKeyCell } from "./CatalogKey";
 import { keyBase64, keyIdOf, parsePublicKey } from "./fingerprint";
 import { useHostSwitch } from "./hooks";
+import { TableScroll } from "./parts";
 import { groupedKeyId } from "./status";
 import "./plugins.css";
 
@@ -75,7 +76,7 @@ export function TrustTab({
             <LoadState error={keys.error} onRetry={() => void keys.refetch()} />
           </div>
         ) : (
-          <div className="plugins-table-wrap">
+          <TableScroll labelledBy={titleId}>
             <table className="plugins-table">
               <thead>
                 <tr>
@@ -133,7 +134,7 @@ export function TrustTab({
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
       </section>
 

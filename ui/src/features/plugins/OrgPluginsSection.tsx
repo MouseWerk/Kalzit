@@ -8,7 +8,7 @@ import { errorMessage } from "../dashboards/ui/errors";
 import { KINDS_KEY } from "../datasources/api";
 import { listOrgPlugins, type OrgPlugin, pluginKeys, setOrgBlock } from "./api";
 import { kindLabel } from "./PluginsSection";
-import { PluginMark } from "./parts";
+import { PluginMark, TableScroll } from "./parts";
 import "./plugins.css";
 
 /**
@@ -59,7 +59,7 @@ export function OrgPluginsSection() {
           <p className="plugins-hint">{t("plugins.org.none")}</p>
         </div>
       ) : (
-        <div className="plugins-table-wrap">
+        <TableScroll labelledBy={titleId}>
           <table className="plugins-table">
             <thead>
               <tr>
@@ -109,7 +109,7 @@ export function OrgPluginsSection() {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </section>
   );
