@@ -1154,3 +1154,71 @@ mod tests {
         assert_eq!(installed("CREATE QUERY x() FOR GRAPH g { DELETE s FROM Person:s; }"), Err("gsql.write"));
     }
 }
+
+/// The checker sees every query text a user can type: it answers with a result or a refusal,
+/// never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Text built from the pieces the lexer cares about, so cases reach past the header.
+    fn gsql_like() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            prop::sample::select(vec![
+                "INTERPRET QUERY ",
+                "CREATE QUERY ",
+                "FOR GRAPH g ",
+                "SELECT ",
+                "FROM ",
+                "ACCUM ",
+                "PRINT ",
+                "RUN QUERY ",
+                "DELETE ",
+                "{",
+                "}",
+                "(",
+                ")",
+                "<",
+                ">",
+                "\"",
+                "\\",
+                "@@",
+                "${",
+                "//",
+                "/*",
+                "*/",
+                "#",
+                ";",
+                ":",
+                "-(",
+                ")->",
+            ])
+            .prop_map(str::to_string),
+            "[a-zA-Z_0-9 .,=-]{0,6}",
+            "\\PC{0,3}",
+        ];
+        prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
+    }
+
+    fn checks(q: &str) {
+        let _ = check_with(q, Form::Interpret, Some(&[]));
+        let _ = check_with(q, Form::Installed, None);
+        let _ = check(q, Form::Interpret);
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn check_never_panics_on_any_text(q in "\\PC{0,200}") {
+            checks(&q);
+        }
+
+        #[test]
+        fn check_never_panics_on_gsql_like_text(q in gsql_like()) {
+            checks(&q);
+        }
+    }
+}

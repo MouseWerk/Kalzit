@@ -671,3 +671,84 @@ mod tests {
         assert_eq!(seconds(-1500), "-1.500");
     }
 }
+
+/// PromQL expressions are scanned by hand for variables and macros: any text gets a result or a
+/// refusal, never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::datasources::Limits;
+    use crate::datasources::frame::ResponseBudget;
+    use crate::shapes::TimeRange;
+    use proptest::prelude::*;
+
+    fn req() -> SourceQuery {
+        SourceQuery {
+            ref_id: "A".into(),
+            query: json!({}),
+            range: TimeRange { from: 1_800_000_000_000, to: 1_800_003_600_000 },
+            interval_ms: 15_000,
+            max_data_points: None,
+            variables: serde_json::from_value(json!({ "job": "api\"}`'", "insts": ["a.b:9090", "c"] })).unwrap(),
+            identifier_variables: None,
+            limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
+            cursor: None,
+        }
+    }
+
+    fn promql_like() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            prop::sample::select(vec![
+                "rate(",
+                "sum by (",
+                "{",
+                "}",
+                "[",
+                "]",
+                "=~",
+                "!~",
+                "\"",
+                "'",
+                "`",
+                "\\",
+                "#",
+                "\n",
+                "$job",
+                "${insts}",
+                "${insts:",
+                "$__rate_interval",
+                "$__timeTo",
+                "$",
+                "@ ",
+                "offset ",
+            ])
+            .prop_map(str::to_string),
+            "[a-zA-Z_0-9 .,=:-]{0,6}",
+            "\\PC{0,3}",
+        ];
+        prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn expand_never_panics_on_any_text(expr in "\\PC{0,200}") {
+            let _ = expand(&expr, &req());
+        }
+
+        #[test]
+        fn expand_never_panics_on_promql_like_text(expr in promql_like()) {
+            let _ = expand(&expr, &req());
+        }
+
+        /// An answer that is JSON but not the shape Prometheus sends is an error.
+        #[test]
+        fn answers_never_panic(body in "\\PC{0,200}") {
+            if let Ok(data) = serde_json::from_str::<Value>(&body) {
+                let _ = to_frame(&data, &req());
+            }
+        }
+    }
+}

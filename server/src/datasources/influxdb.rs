@@ -1708,3 +1708,106 @@ mod tests {
         assert_eq!(frame.fields()[1].values, [json!("a"), Value::Null]);
     }
 }
+
+/// InfluxQL, Flux and SQL texts and the server's answers are read by hand-written scanners:
+/// they answer with a result or an error, never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::datasources::Limits;
+    use crate::datasources::frame::ResponseBudget;
+    use crate::shapes::TimeRange;
+    use proptest::prelude::*;
+
+    fn req() -> SourceQuery {
+        SourceQuery {
+            ref_id: "A".into(),
+            query: json!({}),
+            range: TimeRange { from: 1_800_000_000_000, to: 1_800_003_600_000 },
+            interval_ms: 30_000,
+            max_data_points: None,
+            variables: serde_json::from_value(json!({ "host": "a\"b'c$d", "hosts": ["x.1", "y/z"] })).unwrap(),
+            identifier_variables: None,
+            limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
+            cursor: None,
+        }
+    }
+
+    /// Text built from the pieces the scanners care about.
+    fn query_like() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            prop::sample::select(vec![
+                "SELECT ",
+                "INTO ",
+                "DROP ",
+                "from(bucket: ",
+                "|> ",
+                "to(",
+                "import ",
+                "$host",
+                "${hosts}",
+                "$__timeFilter",
+                "$__interval",
+                "$",
+                "v.timeRangeStart",
+                "\"",
+                "'",
+                "`",
+                "/",
+                "\\",
+                "//",
+                "--",
+                "/*",
+                "*/",
+                ";",
+                "=~",
+                "(",
+                ")",
+                "\n",
+            ])
+            .prop_map(str::to_string),
+            "[a-zA-Z_0-9 .,=-]{0,6}",
+            "\\PC{0,3}",
+        ];
+        prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
+    }
+
+    fn scan(text: &str) {
+        let r = req();
+        let _ = check_influxql(text);
+        let _ = check_flux(text);
+        for language in [Language::Flux, Language::InfluxQl, Language::Sql] {
+            let _ = expand(text, language, &r, Some("db"));
+        }
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn scanners_never_panic_on_any_text(text in "\\PC{0,200}") {
+            scan(&text);
+        }
+
+        #[test]
+        fn scanners_never_panic_on_query_like_text(text in query_like()) {
+            scan(&text);
+        }
+
+        /// Annotated CSV and JSON lines come from the server; a broken or hostile answer is an error.
+        #[test]
+        fn answers_never_panic(
+            body in prop::collection::vec(any::<u8>(), 0..400),
+            csv in "(#[a-z,]{0,12}\r?\n|[a-z0-9,\"_:.-]{0,16}\r?\n){0,12}",
+        ) {
+            let r = req();
+            let _ = flux_tables(&body, 10);
+            let _ = flux_tables(csv.as_bytes(), 10);
+            let _ = flux_frame(&body, &r);
+            let _ = flux_frame(csv.as_bytes(), &r);
+            let _ = jsonl_frame(&body, &r);
+            let _ = sql_rows(&body);
+        }
+    }
+}
