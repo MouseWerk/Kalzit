@@ -795,3 +795,72 @@ mod hardening_tests {
         assert_eq!(r.next_record(1 << 20).unwrap().unwrap().fields, ["\u{FFFD}x"]);
     }
 }
+
+/// CSV files and every cell in them come from users: reading and converting answer with a value
+/// or an error, never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn read_all(bytes: &[u8], delimiter: Option<u8>) {
+        let mut input = std::io::BufReader::with_capacity(16, bytes);
+        if skip_bom(&mut input).is_err() {
+            return;
+        }
+        let mut r = Reader::new(input, delimiter.unwrap_or(b','));
+        if delimiter.is_none() {
+            let Ok(start) = r.peek() else { return };
+            let d = detect_delimiter(start);
+            r.set_delimiter(d);
+        }
+        for _ in 0..1000 {
+            match r.next_record(256) {
+                Ok(Some(rec)) => {
+                    let present: Vec<&str> = rec.fields.iter().map(String::as_str).collect();
+                    let cells: Vec<Option<&str>> = present.iter().map(|c| Some(*c)).collect();
+                    for decimal in [Decimal::Auto, Decimal::Point, Decimal::Comma] {
+                        let decimal = resolve_decimal(&present, decimal);
+                        let ty = infer(&cells, decimal);
+                        for cell in &cells {
+                            let _ = convert(*cell, ty, decimal);
+                        }
+                    }
+                    let _ = column_names(&rec.fields, rec.fields.len() + 2);
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn reader_never_panics_on_any_bytes(
+            bytes in prop::collection::vec(any::<u8>(), 0..600),
+            d in prop::option::of(any::<u8>()),
+        ) {
+            read_all(&bytes, d);
+        }
+
+        #[test]
+        fn reader_never_panics_on_csv_like_text(
+            text in "\u{FEFF}?([a-z0-9 .,;\t\"|-]{0,12}(\r\n|\n|\r))*",
+            d in prop::option::of(prop::sample::select(vec![b',', b';', b'\t', b'|', b'"', b'\n'])),
+        ) {
+            read_all(text.as_bytes(), d);
+        }
+
+        #[test]
+        fn cell_parsers_never_panic(v in "\\PC{0,40}", w in "[-+0-9.,eE: TZ]{0,30}") {
+            for decimal in [Decimal::Auto, Decimal::Point, Decimal::Comma] {
+                let _ = parse_number(&v, decimal);
+                let _ = parse_number(&w, decimal);
+            }
+            let _ = parse_time(&v);
+            let _ = parse_time(&w);
+        }
+    }
+}

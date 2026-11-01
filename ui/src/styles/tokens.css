@@ -302,6 +302,13 @@
   }
 }
 
+/* Explore's steps rail beside the result (the Explore board: 300 to 340 px). */
+@layer tokens {
+  :root {
+    --size-explore-rail: 20rem;
+  }
+}
+
 /* The plugin pages: a column of the details, and the height of the manifest and the log. */
 @layer tokens {
   :root {
@@ -450,7 +457,7 @@
     --size-menu-min: 15rem;
     --size-menu-max: 20rem;
 
-    /* Skeleton loaders breathe slowly; components.css stops them for reduced motion. */
+    /* Skeleton loaders shimmer slowly; components.css stops them for reduced motion. */
     --duration-pulse: 1.4s;
 
     /* The QR code of an authenticator app's key: dark modules on a light field in every theme,

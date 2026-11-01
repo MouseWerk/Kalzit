@@ -184,7 +184,9 @@
     gap: var(--space-1);
   }
 
+  /* Positioned, so visually hidden header text stays inside the scroll box, not past the page. */
   .plugins-table-wrap {
+    position: relative;
     overflow-x: auto;
   }
 

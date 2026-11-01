@@ -1,6 +1,6 @@
 [package]
 name = "kalzit"
-version = "0.4.2"
+version = "0.5.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -127,6 +127,9 @@ windows-service = "0.8.1"
 rcgen = "0.14.10"
 
 [dev-dependencies]
+# Property tests: the hand-written parsers never panic on arbitrary input. No fork or timeout
+# support, so the cases run in the test process.
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 http-body-util = "0.1.5"
 # The software authenticator of the passkey tests: P-256 keys and ECDSA signatures (ES256).
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }

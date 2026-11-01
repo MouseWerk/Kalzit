@@ -309,6 +309,11 @@
     color: var(--danger-text);
   }
 
+  /* An action under a notice's text, such as Retry after a failed load. */
+  .notice__action {
+    margin-block-start: var(--space-2);
+  }
+
   .form-alert:not(:empty) {
     margin-block-end: var(--space-4);
   }
@@ -1123,15 +1128,25 @@
   }
 
   /*
-   * Skeleton loaders: neutral blocks in the shape of the content to come, breathing between two
-   * surface tints. Only the color changes, never the size; reduced motion keeps them still.
+   * Skeleton loaders (components/Skeleton.tsx): neutral blocks in the shape of the content to
+   * come, with a quiet shimmer of a lighter surface tint passing over them. Only the background
+   * moves, never the size; reduced motion keeps them still in the base tint.
    */
   .skeleton {
     display: block;
     min-height: var(--font-size-md);
     border-radius: var(--radius-sm);
-    background: var(--bg-hover);
-    animation: skeleton-pulse var(--duration-pulse) var(--easing) infinite alternate;
+    background-color: var(--bg-hover);
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--bg-active) 50%,
+      transparent 100%
+    );
+    background-repeat: no-repeat;
+    background-size: 50% 100%;
+    background-position: -100% 0;
+    animation: skeleton-shimmer var(--duration-pulse) var(--easing) infinite;
   }
 
   .skeleton--block {
@@ -1139,16 +1154,48 @@
     border-radius: var(--radius-md);
   }
 
-  @keyframes skeleton-pulse {
+  @keyframes skeleton-shimmer {
     to {
-      background-color: var(--bg-active);
+      background-position: 200% 0;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .skeleton {
+      background-image: none;
       animation: none;
     }
+  }
+
+  /* A loading region of skeleton bars: text lines of varying length, or a panel's chart area. */
+  .skeleton-group {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .skeleton-group__line:nth-child(3n + 2) {
+    width: 85%;
+  }
+
+  .skeleton-group__line:nth-child(3n + 3) {
+    width: 60%;
+  }
+
+  .skeleton-group--panel {
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: var(--size-card-min);
+  }
+
+  .skeleton-group__bar {
+    width: 40%;
+  }
+
+  .skeleton-group__area {
+    min-height: 0;
+    border-radius: var(--radius-md);
   }
 
   /* Tabs (Explore's result, the panel editor's queries and steps) */
