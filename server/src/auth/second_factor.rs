@@ -1127,12 +1127,14 @@ pub async fn require_fresh_for_setting(
 #[derive(Clone, Copy, Debug)]
 pub enum FirstStep<'a> {
     /// A local password; its hash binds the half-signed-in state, so a password changed meanwhile
-    /// ends it.
-    Password { password_hash: Option<&'a str> },
-    /// A directory password (LDAP): always Kalzit's second factor. `sync_run` is the run of the
-    /// directory sync that disabled the account, when it did: the account is enabled only when the
-    /// second step succeeds and that very record still stands (`take_pending`).
-    Directory { sync_run: Option<&'a str> },
+    /// ends it. `break_glass` marks the break-glass admin's sign-in while password sign-in is off
+    /// (docs/api/sso.md), which the recorded sign-in names.
+    Password { password_hash: Option<&'a str>, break_glass: bool },
+    /// A directory password (LDAP) of the directory `provider_id`: always Kalzit's second factor.
+    /// `sync_run` is the run of the directory sync that disabled the account, when it did: the
+    /// account is enabled only when the second step succeeds and that very record still stands
+    /// (`take_pending`).
+    Directory { provider_id: &'a str, sync_run: Option<&'a str> },
     /// An identity provider. `mfa_done` is the provider's claim (such as OIDC `amr`) and
     /// `provider_mfa_trusted` the provider's switch in Kalzit, off by default.
     Provider { provider_id: &'a str, mfa_done: bool, provider_mfa_trusted: bool },
@@ -1146,15 +1148,37 @@ impl FirstStep<'_> {
 
     fn sync_run(&self) -> Option<&str> {
         match self {
-            FirstStep::Directory { sync_run } => *sync_run,
+            FirstStep::Directory { sync_run, .. } => *sync_run,
             _ => None,
         }
     }
 
     fn password_hash(&self) -> Option<&str> {
         match self {
-            FirstStep::Password { password_hash } => *password_hash,
+            FirstStep::Password { password_hash, .. } => *password_hash,
             _ => None,
+        }
+    }
+
+    /// The directory or identity provider of this first step.
+    pub fn provider_id(&self) -> Option<&str> {
+        match self {
+            FirstStep::Directory { provider_id, .. } | FirstStep::Provider { provider_id, .. } => Some(provider_id),
+            FirstStep::Password { .. } => None,
+        }
+    }
+
+    fn break_glass(&self) -> bool {
+        matches!(self, FirstStep::Password { break_glass: true, .. })
+    }
+
+    /// How the sign-in recorded for this first step names it (`auth::sign_ins`).
+    pub fn via(&self) -> crate::auth::sign_ins::Via {
+        crate::auth::sign_ins::Via {
+            first_step: self.label().to_string(),
+            break_glass: self.break_glass(),
+            provider_id: self.provider_id().map(str::to_string),
+            provider_mfa: matches!(self, FirstStep::Provider { mfa_done: true, provider_mfa_trusted: true, .. }),
         }
     }
 
@@ -1255,7 +1279,8 @@ pub async fn create_pending(
     let token = hex::encode(rand::random::<[u8; 32]>());
     sqlx::query(
         "INSERT INTO sign_in_challenges (token_hash, user_id, setup, forget_browser, first_step, password_fingerprint, \
-         created_at, expires_at, ldap_sync_run) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+         created_at, expires_at, ldap_sync_run, provider_id, break_glass) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
     .bind(session::hash_token(&token))
     .bind(user_id)
@@ -1266,6 +1291,8 @@ pub async fn create_pending(
     .bind(now)
     .bind(now + CHALLENGE_TTL_MS)
     .bind(first.sync_run())
+    .bind(first.provider_id())
+    .bind(i64::from(first.break_glass()))
     .execute(conn)
     .await?;
     Ok(token)
@@ -1291,14 +1318,31 @@ pub struct Taken {
     /// The current password hash, for the device cookie.
     pub password_hash: Option<String>,
     pub first_step: String,
+    /// The directory or identity provider of the first step.
+    pub provider_id: Option<String>,
+    /// The first step was the break-glass admin's password.
+    pub break_glass: bool,
+}
+
+impl Taken {
+    /// How the recorded sign-in names the first step (`auth::sign_ins`).
+    pub fn via(&self) -> crate::auth::sign_ins::Via {
+        crate::auth::sign_ins::Via {
+            first_step: self.first_step.clone(),
+            break_glass: self.break_glass,
+            provider_id: self.provider_id.clone(),
+            provider_mfa: false,
+        }
+    }
 }
 
 /// Ends the half-signed-in state for good, inside the transaction that signs the person in;
 /// `None` when another request took it first or the account changed meanwhile (disabled, a new
 /// password).
 pub async fn take_pending(conn: &mut sqlx::AnyConnection, pending: &Pending, now: i64) -> ApiResult<Option<Taken>> {
-    let first: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT first_step, ldap_sync_run FROM sign_in_challenges WHERE token_hash = $1 AND expires_at > $2",
+    let first: Option<(String, Option<String>, Option<String>, i64)> = sqlx::query_as(
+        "SELECT first_step, ldap_sync_run, provider_id, break_glass FROM sign_in_challenges \
+         WHERE token_hash = $1 AND expires_at > $2",
     )
     .bind(&pending.token_hash)
     .bind(now)
@@ -1310,7 +1354,9 @@ pub async fn take_pending(conn: &mut sqlx::AnyConnection, pending: &Pending, now
         .execute(&mut *conn)
         .await?
         .rows_affected();
-    let Some((first_step, sync_run)) = first.filter(|_| taken == 1) else { return Ok(None) };
+    let Some((first_step, sync_run, provider_id, break_glass)) = first.filter(|_| taken == 1) else {
+        return Ok(None);
+    };
     // Under the user row's lock, as a sign-in with a password takes it (`routes::auth::login`): a
     // password change or a disable that raced this either is seen here or ends the new session.
     sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1")
@@ -1338,7 +1384,12 @@ pub async fn take_pending(conn: &mut sqlx::AnyConnection, pending: &Pending, now
     {
         disabled = 0;
     }
-    Ok((disabled == 0 && same_password).then_some(Taken { password_hash, first_step }))
+    Ok((disabled == 0 && same_password).then_some(Taken {
+        password_hash,
+        first_step,
+        provider_id,
+        break_glass: break_glass != 0,
+    }))
 }
 
 pub async fn prompt(
@@ -1480,8 +1531,8 @@ mod tests {
         };
         assert!(ask(false, false) && ask(true, false) && ask(false, true));
         assert!(!ask(true, true));
-        assert!(FirstStep::Directory { sync_run: None }.asks_second_factor());
-        assert!(FirstStep::Password { password_hash: None }.asks_second_factor());
+        assert!(FirstStep::Directory { provider_id: "ldap", sync_run: None }.asks_second_factor());
+        assert!(FirstStep::Password { password_hash: None, break_glass: false }.asks_second_factor());
     }
 
     #[test]

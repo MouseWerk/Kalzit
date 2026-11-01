@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { openAdmin, sent } from "../admin/test/openAdmin";
+import { deviceOf, type SignIn } from "./signIns";
 import { base64UrlForTests } from "./webauthn";
 
 async function enterPassword(path: string) {
@@ -151,6 +152,108 @@ describe("account: sign-in and security", () => {
     await user.type(within(dialog).getByLabelText("Six-digit code"), server.security.code);
     const codes = await screen.findByRole("dialog", { name: "Your recovery codes" });
     expect(within(codes).getAllByRole("listitem")).toHaveLength(10);
+  });
+});
+
+describe("recent sign-ins", () => {
+  const now = Date.now();
+  const signIns: SignIn[] = [
+    {
+      id: "e3",
+      at: now,
+      result: "success",
+      reason: null,
+      method: "oidc",
+      provider: "mueller-sso",
+      providerName: "Müller SSO",
+      secondFactor: "passkey",
+      address: "10.20.4.17",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0",
+      current: true,
+    },
+    {
+      id: "e2",
+      at: now - 60_000,
+      result: "refused",
+      reason: "credentials",
+      method: "password",
+      provider: null,
+      providerName: null,
+      secondFactor: null,
+      address: "10.20.9.112",
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
+      current: false,
+    },
+    {
+      id: "e1",
+      at: now - 120_000,
+      result: "success",
+      reason: null,
+      method: "break_glass",
+      provider: null,
+      providerName: null,
+      secondFactor: "totp",
+      address: "10.20.0.2",
+      userAgent: null,
+      current: false,
+    },
+  ];
+
+  it("lists the account’s own beside its cards, with this session and refusals marked", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.signIns = signIns;
+    renderApp("/settings/account-security");
+    const list = await screen.findByRole("list", { name: "Recent sign-ins" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[0]?.textContent).toMatch(/^Today, .+ · Müller SSO \+ Passkey/);
+    expect(
+      within(items[0] as HTMLElement).getByText("Firefox on Windows · 10.20.4.17"),
+    ).toBeTruthy();
+    expect(within(items[0] as HTMLElement).getByText("This session")).toBeTruthy();
+    expect(
+      within(items[1] as HTMLElement).getByText("Wrong password · Safari on a phone · 10.20.9.112"),
+    ).toBeTruthy();
+    expect(within(items[1] as HTMLElement).getByText("Refused")).toBeTruthy();
+    expect(items[2]?.textContent).toMatch(/Password \+ App/);
+    expect(
+      within(items[2] as HTMLElement).getByText(
+        "Break-glass sign-in · /anmelden/lokal · 10.20.0.2",
+      ),
+    ).toBeTruthy();
+    expect(server.security.signInRequests).toEqual(["/api/me/sign-ins?limit=5"]);
+    const link = screen.getByRole("link", { name: "See all sessions" });
+    expect(link.getAttribute("href")).toBe("/settings/profile#sessions");
+  });
+
+  it("shows a person’s sign-ins to a server admin from the user list", async () => {
+    const { user, server } = await openAdmin("/admin/server/users", { isServerAdmin: true });
+    server.security.signIns = signIns.map((signIn) => ({ ...signIn, current: false }));
+    await user.click(await screen.findByRole("button", { name: "Recent sign-ins: Grace Hopper" }));
+    const dialog = await screen.findByRole("dialog", { name: "Recent sign-ins of Grace Hopper" });
+    expect(await within(dialog).findAllByRole("listitem")).toHaveLength(3);
+    expect(within(dialog).queryByText("This session")).toBeNull();
+    expect(server.security.signInRequests).toEqual(["/api/admin/users/u2/sign-ins?limit=20"]);
+  });
+
+  it("names browsers and systems from the user agent", () => {
+    expect(
+      deviceOf(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 Version/19.0 Safari/605.1.15",
+      ),
+    ).toEqual({ browser: "Safari", system: "macOS" });
+    expect(
+      deviceOf(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141.0 Safari/537.36 Edg/141.0",
+      ),
+    ).toEqual({ browser: "Edge", system: "Windows" });
+    expect(
+      deviceOf(
+        "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36",
+      ),
+    ).toEqual({ browser: "Chrome", system: "phone" });
+    expect(deviceOf("curl/8.10")).toEqual({ browser: null, system: null });
   });
 });
 

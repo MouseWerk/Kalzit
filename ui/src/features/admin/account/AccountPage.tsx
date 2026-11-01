@@ -63,15 +63,18 @@ export function AccountSections() {
 function AccountSection({
   title,
   lead,
+  id,
   children,
 }: {
   title: string;
   lead?: string;
+  /** The anchor other pages link to (`#sessions`). */
+  id?: string;
   children: ReactNode;
 }) {
   const titleId = useId();
   return (
-    <section className="admin-section admin-account__section" aria-labelledby={titleId}>
+    <section id={id} className="admin-section admin-account__section" aria-labelledby={titleId}>
       <div className="admin-section__heading">
         <h2 id={titleId}>{title}</h2>
         {lead === undefined ? null : <p className="admin-section__lead">{lead}</p>}
@@ -319,7 +322,11 @@ function SessionsSection() {
   const others = list.filter((session) => !session.current);
 
   return (
-    <AccountSection title={t("admin.account.sessions")} lead={t("admin.account.sessionsLead")}>
+    <AccountSection
+      id="sessions"
+      title={t("admin.account.sessions")}
+      lead={t("admin.account.sessionsLead")}
+    >
       <Notice notice={notice.notice} onDismiss={notice.clear} />
       {sessions.items === undefined ? (
         <LoadState error={sessions.query.error} onRetry={() => void sessions.query.refetch()} />

@@ -397,6 +397,7 @@ async fn store_setup_setting(
 pub async fn complete(
     State(state): State<AppState>,
     axum::Extension(info): axum::Extension<RequestInfo>,
+    request_headers: HeaderMap,
     JsonBody(req): JsonBody<SetupRequest>,
 ) -> ApiResult<impl IntoResponse> {
     let now = state.clock.now_ms();
@@ -504,13 +505,26 @@ pub async fn complete(
     let mut headers = HeaderMap::new();
     let body = match second_step {
         None => {
-            let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
+            let (token, session_id) = session::create_with_id(&mut *tx, &state.config.sessions, now, &user_id).await?;
+            // The owner's first sign-in, recorded like every other (`auth::sign_ins`).
+            let first = sf::FirstStep::Password { password_hash: Some(&hash), break_glass: false };
+            crate::auth::sign_ins::record(
+                &mut tx,
+                &info,
+                &request_headers,
+                &user_id,
+                &session_id,
+                &first.via(),
+                None,
+                now,
+            )
+            .await?;
             let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
             headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
             serde_json::to_value(me(&mut tx, user).await?).map_err(|e| ApiError::internal("setup", e))?
         }
         Some(prompt) => {
-            let first = sf::FirstStep::Password { password_hash: Some(&hash) };
+            let first = sf::FirstStep::Password { password_hash: Some(&hash), break_glass: false };
             let token = sf::create_pending(&mut tx, &user_id, true, false, first, now).await?;
             headers.insert(header::SET_COOKIE, sf::set_pending_cookie(&token, info.https));
             json!({ "secondFactor": prompt })

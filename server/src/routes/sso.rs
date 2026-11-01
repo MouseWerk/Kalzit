@@ -443,41 +443,28 @@ pub(crate) async fn complete_sign_in(
         Some(o) => signin::apply(&mut tx, info, ids, &linked.user.id, o, None, now).await?,
         None => Default::default(),
     };
-    cookies.extend(open_session(&mut tx, state, info, headers, &linked.user, provider, person, now).await?);
+    cookies.extend(open_session(&mut tx, state, info, headers, &linked.user, &first.via(), now).await?);
     crate::db::commit(tx).await?;
     crate::sso::rights_changed(state, &touched).await;
     Ok(see_other(return_to, cookies))
 }
 
 /// Opens the session after a sign-in through a provider that needs no second step, inside `tx`
-/// (as `routes::second_factor::open_session`, with the provider in the audit entry).
-#[expect(clippy::too_many_arguments, reason = "the parts of one sign-in, passed on as they are")]
+/// (as `routes::second_factor::open_session`, with the provider in the recorded sign-in).
 async fn open_session(
     tx: &mut sqlx::AnyConnection,
     state: &AppState,
     info: &RequestInfo,
     headers: &HeaderMap,
     user: &SessionUser,
-    provider: &ProviderRow,
-    person: &Person,
+    via: &crate::auth::sign_ins::Via,
     now: i64,
 ) -> ApiResult<Vec<HeaderValue>> {
     if let Some(old) = session::read_cookie(headers, info.https) {
         session::delete(&mut *tx, &old).await?;
     }
-    let token = session::create(&mut *tx, &state.config.sessions, now, &user.id).await?;
-    let provider_mfa = provider.trust_provider_mfa != 0 && person.mfa_done;
-    let event = crate::audit::AuditEvent {
-        org_id: None,
-        actor_user_id: Some(&user.id),
-        actor_address: Some(info.client_ip.to_string()),
-        action: "auth.signed_in",
-        resource_type: Some("user"),
-        resource_id: Some(&user.id),
-        summary: json!({ "provider": provider.slug, "providerMfa": provider_mfa }),
-        at_ms: now,
-    };
-    crate::audit::record(&mut *tx, &event).await?;
+    let (token, session_id) = session::create_with_id(&mut *tx, &state.config.sessions, now, &user.id).await?;
+    crate::auth::sign_ins::record(&mut *tx, info, headers, &user.id, &session_id, via, None, now).await?;
     Ok(vec![session::set_cookie(&token, &state.config.sessions, info.https)])
 }
 

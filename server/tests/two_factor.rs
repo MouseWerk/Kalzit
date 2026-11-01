@@ -116,7 +116,11 @@ impl TestApp {
         body: Option<Value>,
         who: &Browser,
     ) -> Reply {
-        let mut req = Request::builder().method(method).uri(path).header(header::HOST, host).header("origin", origin);
+        let mut req =
+            Request::builder().method(method).uri(path).header(header::HOST, host).header("origin", origin).header(
+                header::USER_AGENT,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0",
+            );
         let cookies = who.header();
         if !cookies.is_empty() {
             req = req.header(header::COOKIE, cookies);
@@ -822,6 +826,87 @@ async fn check_passkeys_sign_in_and_a_cloned_authenticator_is_refused(t: TestApp
     t.finish().await;
 }
 
+async fn check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    // Setup signs the owner in; that session is the first sign-in on the list.
+    let r = t.get("/api/me/sign-ins", &owner).await;
+    let first = &r.body["items"][0];
+    assert_eq!(
+        (r.body["items"].as_array().unwrap().len(), &first["method"], &first["current"]),
+        (1, &json!("password"), &json!(true)),
+        "{}",
+        r.body
+    );
+    let ana = t.member(&owner, &org, "ana@example.de", "viewer").await;
+    let wrong = json!({ "email": "ana@example.de", "password": "not the password" });
+    assert_eq!(t.post("/api/auth/login", wrong, &Browser::default()).await.status, StatusCode::UNAUTHORIZED);
+    let (secret, _) = t.enroll_totp(&ana).await;
+    let (pending, _) = t.password("ana@example.de").await;
+    let bad = if t.code(&secret) == "000000" { "111111" } else { "000000" };
+    second_step(&t, &pending, json!({ "method": "totp", "code": bad })).await;
+    let (ana, r) = second_step(&t, &pending, json!({ "method": "totp", "code": t.code(&secret) })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    // Newest first: the sign-in of this session, the wrong code, the wrong password, the first one.
+    let r = t.get("/api/me/sign-ins", &ana).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let items = r.body["items"].as_array().unwrap().clone();
+    let summary: Vec<(&str, &str, &str, &str, bool)> = items
+        .iter()
+        .map(|i| {
+            (
+                i["result"].as_str().unwrap(),
+                i["method"].as_str().unwrap_or(""),
+                i["reason"].as_str().unwrap_or(""),
+                i["secondFactor"].as_str().unwrap_or(""),
+                i["current"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("success", "password", "", "totp", true),
+            ("refused", "", "second_factor", "totp", false),
+            ("refused", "password", "credentials", "", false),
+            ("success", "password", "", "", false),
+        ]
+    );
+    assert_eq!(items[0]["address"], "127.0.0.1");
+    assert!(items[0]["userAgent"].as_str().unwrap().contains("Firefox/142.0"));
+    assert!(items[2]["userAgent"].as_str().unwrap().contains("Firefox/142.0"), "a refused attempt names the browser");
+    // Pages.
+    let r = t.get("/api/me/sign-ins?limit=3", &ana).await;
+    assert_eq!(r.body["items"].as_array().unwrap().len(), 3);
+    let cursor = r.body["nextCursor"].as_str().unwrap().to_string();
+    let r = t.get(&format!("/api/me/sign-ins?limit=3&cursor={cursor}"), &ana).await;
+    assert_eq!(r.body["items"][0]["id"], items[3]["id"]);
+    assert!(r.body["nextCursor"].is_null());
+
+    // Everyone sees only their own: the owner's list does not have Ana's.
+    let (owner_again, _) = t.password("joerg@example.de").await;
+    let r = t.get("/api/me/sign-ins", &owner_again).await;
+    let current: Vec<bool> =
+        r.body["items"].as_array().unwrap().iter().map(|i| i["current"].as_bool().unwrap()).collect();
+    assert_eq!(current, [true, false], "this sign-in and the one of setup: {}", r.body);
+    // Server admins see a person's on the user page, never marked as their session; others not.
+    let ana_id = member_id(&t, "ana@example.de").await;
+    let owner_id = member_id(&t, "joerg@example.de").await;
+    let r = t.get(&format!("/api/admin/users/{ana_id}/sign-ins"), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let listed = r.body["items"].as_array().unwrap();
+    assert_eq!(listed.len(), 4);
+    assert!(listed.iter().all(|i| i["current"] == false));
+    let r = t.get(&format!("/api/admin/users/{owner_id}/sign-ins"), &ana).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert_eq!(t.get("/api/admin/users/nobody/sign-ins", &owner).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.get("/api/me/sign-ins", &Browser::default()).await.status, StatusCode::UNAUTHORIZED);
+    // The half-signed-in state reaches no list.
+    let (pending, _) = t.password("ana@example.de").await;
+    assert_eq!(t.get("/api/me/sign-ins", &pending).await.status, StatusCode::UNAUTHORIZED);
+    t.finish().await;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Each check on SQLite, and all of them on PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set.
 
@@ -891,6 +976,11 @@ async fn the_rule_changes_only_with_a_fresh_confirmation() {
 }
 
 #[tokio::test]
+async fn recent_sign_ins_are_listed_for_their_owner_and_server_admins() {
+    check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(test_app().await).await;
+}
+
+#[tokio::test]
 async fn postgres_two_factor() {
     let Some(base) = common::postgres_url("PostgreSQL test") else { return };
     check_totp_sign_in_and_the_half_signed_in_state_reaches_no_api(postgres_app(&base).await).await;
@@ -906,4 +996,5 @@ async fn postgres_two_factor() {
     check_a_forced_setup_never_replaces_a_factor_set_up_meanwhile(postgres_app(&base).await).await;
     check_passkeys_need_a_host_name_and_the_app_is_offered_instead(postgres_app(&base).await).await;
     check_the_rule_changes_only_with_a_fresh_confirmation(postgres_app(&base).await).await;
+    check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(postgres_app(&base).await).await;
 }

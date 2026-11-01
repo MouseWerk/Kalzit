@@ -211,6 +211,7 @@ describe("catalogs", () => {
       "Beta",
       "Let’s Encrypt",
       // Single sign-on: terms of the OpenID Connect and OAuth specifications.
+      "OpenID Connect",
       "Slug",
       "Scopes",
       "PKCE",
@@ -224,6 +225,7 @@ describe("catalogs", () => {
       "LDAP · Active Directory",
       // SAML: the protocol's name.
       "SAML 2.0",
+      "SAML",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");
