@@ -66,7 +66,8 @@ function inspectLayout(): { overflow: LayoutProblem[]; clipped: LayoutProblem[] 
     const parts: string[] = [];
     let node: Element | null = element;
     while (node !== null && node !== document.body && parts.length < 5) {
-      if (node.id !== "") {
+      // React's generated ids (_r_0_, :r1:) change between renders; they make no selector.
+      if (node.id !== "" && !/^(_r_|:r)/.test(node.id)) {
         parts.unshift(`#${CSS.escape(node.id)}`);
         break;
       }
@@ -128,8 +129,11 @@ function inspectLayout(): { overflow: LayoutProblem[]; clipped: LayoutProblem[] 
     const ownText = [...element.childNodes].some(
       (n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== "",
     );
+    // Text for screen readers only sits in a 1 px box on purpose.
+    const screenReaderOnly = element.clientWidth <= 2 || element.clientHeight <= 2;
     if (
       ownText &&
+      !screenReaderOnly &&
       style.textOverflow !== "ellipsis" &&
       style.webkitLineClamp === "none" &&
       ((hides(style.overflowX) && element.scrollWidth > element.clientWidth + 1) ||
@@ -230,6 +234,11 @@ export async function uiCheck(options: UiCheckOptions): Promise<UiCheckReport> {
           await page.goto(base.path);
           await settle(page);
           pagesChecked += 1;
+          // The page's own console errors, before axe injects its script and styles. Signed out,
+          // the 401 of the session probe is expected.
+          const pageErrors = consoleErrors.filter(
+            (m) => !(screen.signedOut === true && /status of 401/.test(m)),
+          );
           if (checks.has("axe")) {
             for (const f of await axeFindings(page, impacts)) findings.push({ ...base, ...f });
           }
@@ -243,7 +252,7 @@ export async function uiCheck(options: UiCheckOptions): Promise<UiCheckReport> {
             }
           }
           if (checks.has("console")) {
-            for (const message of consoleErrors) {
+            for (const message of pageErrors) {
               findings.push({
                 ...base,
                 kind: "console",

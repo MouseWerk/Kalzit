@@ -224,7 +224,17 @@ function stopSync(state: InstanceState): void {
       }
     }
   }
-  rmSync(state.runDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  // The exit hook cannot wait asynchronously; the same retries as removeDir, sleeping in place.
+  const until = Date.now() + 15_000;
+  for (;;) {
+    try {
+      rmSync(state.runDir, { recursive: true, force: true });
+      return;
+    } catch {
+      if (Date.now() > until) return;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    }
+  }
 }
 
 export async function startInstance(options: StartOptions = {}): Promise<StartResult> {
@@ -375,7 +385,24 @@ async function stopState(state: InstanceState): Promise<void> {
     }
   }
   for (const container of state.containers) await removeContainer(container);
-  rmSync(state.runDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  await removeDir(state.runDir);
+}
+
+/**
+ * Removes a run folder. Windows releases the files of an ended process (and a virus scanner its
+ * look at the copied binary) a moment after the process is gone, so this tries for up to 30 s.
+ */
+async function removeDir(dir: string): Promise<void> {
+  const until = Date.now() + 30_000;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (Date.now() > until) throw error;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
 }
 
 export function readState(runDir: string): InstanceState | undefined {

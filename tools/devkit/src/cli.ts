@@ -162,11 +162,15 @@ async function main(argv: readonly string[]): Promise<number> {
 
 const isMain = /\/cli\.[jt]s$/.test(process.argv[1]?.replaceAll("\\", "/") ?? "");
 if (isMain) {
+  // Exit codes through process.exitCode: a hard process.exit while the browser's pipes are still
+  // closing trips an assertion in libuv on Windows.
   main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+    (code) => {
+      process.exitCode = code;
+    },
     (error: Error) => {
       process.stderr.write(`${error.message}\n`);
-      process.exit(1);
+      process.exitCode = 1;
     },
   );
 }
