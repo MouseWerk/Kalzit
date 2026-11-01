@@ -15,6 +15,11 @@ The user guide (`docs/guide/`) and the docs pages of the website show these. A p
 visibly changes the UI reruns `npm run screenshots` in `ui/` and commits the changed images in this
 folder (see CONTRIBUTING.md, "Screenshots").
 
+The sign-in pictures (`sign-in-providers`, `sign-in-ldap`, `sign-in-saml`, `recent-sign-ins-*`;
+`ui/e2e/screenshots/sign-in.shots.ts`) answer the providers and the recent sign-ins from fixtures
+in that file, since the e2e services have no identity provider or directory; `service-accounts`
+and `scim` are taken against the real server.
+
 The graph pictures (`graph-*`) need the Neo4j of the e2e specs and the field distribution
 (`explore-distribution-dark`) its MongoDB; without them those tests are skipped and the images
 here stay. The plugin pictures (`plugins`, `plugin-details`, `plugins-trust`,

@@ -100,6 +100,7 @@ pub async fn open_session(
     info: &RequestInfo,
     headers: &HeaderMap,
     user: SessionUser,
+    via: &crate::auth::sign_ins::Via,
     second_factor: Option<&str>,
     device: DeviceCookie<'_>,
     now: i64,
@@ -108,25 +109,12 @@ pub async fn open_session(
     if let Some(old) = session::read_cookie(headers, info.https) {
         session::delete(&mut *tx, &old).await?;
     }
-    let token = session::create(&mut *tx, &state.config.sessions, now, &user.id).await?;
+    let (token, session_id) = session::create_with_id(&mut *tx, &state.config.sessions, now, &user.id).await?;
     if second_factor.is_some() {
         // Just confirmed: changes that need a fresh confirmation work right away.
         sf::mark_confirmed(&mut *tx, &session::hash_token(&token), now).await?;
     }
-    let event = crate::audit::AuditEvent {
-        org_id: None,
-        actor_user_id: Some(&user.id),
-        actor_address: Some(info.client_ip.to_string()),
-        action: "auth.signed_in",
-        resource_type: Some("user"),
-        resource_id: Some(&user.id),
-        summary: match second_factor {
-            Some(method) => json!({ "secondFactor": method }),
-            None => json!({}),
-        },
-        at_ms: now,
-    };
-    crate::audit::record(&mut *tx, &event).await?;
+    crate::auth::sign_ins::record(&mut *tx, info, headers, &user.id, &session_id, via, second_factor, now).await?;
     let device_value = match device {
         DeviceCookie::Issue(hash) => Some(crate::auth::device::issue(&state.secrets, &user.id, hash, now)),
         DeviceCookie::Forget | DeviceCookie::Keep => None,
@@ -164,10 +152,10 @@ pub async fn finish_first_step(
         let device = match (first, forget_browser) {
             (_, true) => DeviceCookie::Forget,
             // Bound to the password hash; an account without one (made by a provider) gets none.
-            (FirstStep::Password { password_hash: Some(hash) }, false) => DeviceCookie::Issue(Some(hash)),
+            (FirstStep::Password { password_hash: Some(hash), .. }, false) => DeviceCookie::Issue(Some(hash)),
             _ => DeviceCookie::Keep,
         };
-        let (out, answer) = open_session(&mut tx, state, info, headers, user, None, device, now).await?;
+        let (out, answer) = open_session(&mut tx, state, info, headers, user, &first.via(), None, device, now).await?;
         crate::db::commit(tx).await?;
         return Ok((out, Json(answer)).into_response());
     };
@@ -243,7 +231,7 @@ async fn complete(
         Default::default()
     };
     let (mut out, answer) =
-        open_session(&mut tx, state, info, headers, pending.user(), Some(method), device, now).await?;
+        open_session(&mut tx, state, info, headers, pending.user(), &taken.via(), Some(method), device, now).await?;
     crate::db::commit(tx).await?;
     crate::sso::rights_changed(state, &touched).await;
     out.append(header::SET_COOKIE, sf::clear_pending_cookie(info.https));

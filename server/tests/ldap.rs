@@ -495,6 +495,11 @@ async fn ldap_sign_in_sync_and_threshold() {
     assert_eq!(app.role(&org, "ben@kalzit.test").await.as_deref(), Some("viewer"));
     let ben_session = app.login("ben", "ben-geheim-2").await.session();
     assert_eq!(app.get("/api/me", &ben_session).await.status, StatusCode::OK);
+    // His recent sign-ins name the directory.
+    let r = app.get("/api/me/sign-ins", &ben_session).await;
+    let first = &r.body["items"][0];
+    assert_eq!((&first["method"], &first["current"]), (&json!("ldap"), &json!(true)), "{}", r.body);
+    assert!(first["providerName"].is_string(), "{}", r.body);
     assert_eq!(app.login("dora", "dora-geheim-4").await.status, StatusCode::OK);
     let r = app.login("carl", "carl-geheim-3").await;
     assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "ldap.sign_in_refused"), "{}", r.body);
@@ -718,6 +723,17 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     let r = app.login("gina", "gina-geheim-1").await;
     assert_eq!(r.body["error"]["params"]["outcome"], "disabled", "{}", r.body);
     assert!(app.disabled("gina@kalzit.test").await);
+    // The refusal is on her recent sign-ins, for a server admin to see.
+    let (gina_id,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'gina@kalzit.test'").fetch_one(&app.state.db).await.unwrap();
+    let r = app.get(&format!("/api/admin/users/{gina_id}/sign-ins"), &admin).await;
+    let first = &r.body["items"][0];
+    assert_eq!(
+        (&first["result"], &first["method"], &first["reason"]),
+        (&json!("refused"), &json!("ldap"), &json!("sso.account_disabled")),
+        "{}",
+        r.body
+    );
 
     // With a second factor, a sign-in enables an account the sync disabled only after that step.
     let r = app.login("hans", "hans-geheim-1").await;
@@ -734,6 +750,9 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(!app.disabled("hans@kalzit.test").await, "enabled once the second factor succeeded");
     assert_eq!(app.get("/api/me", &r.session()).await.status, StatusCode::OK);
+    let list = app.get("/api/me/sign-ins", &r.session()).await;
+    let first = &list.body["items"][0];
+    assert_eq!((&first["method"], &first["secondFactor"]), (&json!("ldap"), &json!("totp")), "{}", list.body);
 
     // An account an admin disabled is refused before any second step.
     let r = app.login("jo", "jo-geheim-1").await;

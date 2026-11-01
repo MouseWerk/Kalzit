@@ -503,6 +503,15 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let me = app.get("/api/me", &lea_session).await;
     assert_eq!(me.body["email"], json!("lea@example.de"));
     assert_eq!(me.body["orgs"][0]["role"], json!("viewer"));
+    // Her recent sign-ins name the provider.
+    let r = app.get("/api/me/sign-ins", &lea_session).await;
+    let first = &r.body["items"][0];
+    assert_eq!(
+        (&first["result"], &first["method"], &first["providerName"], &first["current"]),
+        (&json!("success"), &json!("oidc"), &json!("Müller SSO"), &json!(true)),
+        "{}",
+        r.body
+    );
     let actions = app.audit_actions().await;
     assert!(actions.contains(&"auth.sso_account_created".to_string()));
     assert!(actions.contains(&"sso.memberships_changed".to_string()));
@@ -804,13 +813,13 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         json!("breakGlassReady"),
         "the break-glass admin needs a second factor"
     );
-    sqlx::query(
-        "INSERT INTO user_passkeys (id, user_id, credential_id, name, credential, created_at)          VALUES ('pk-1', $1, 'cred-1', 'Schlüssel', '{}', 0)",
-    )
-    .bind(&admin_id)
-    .execute(&app.state.db)
-    .await
-    .unwrap();
+    // The break-glass admin sets up the app, whose codes finish the break-glass sign-in below.
+    let r = app.post("/api/me/security/totp/setup", json!({}), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let secret = kalzit::auth::totp::decode_secret(&r.body["secret"].as_str().unwrap().replace(' ', "")).unwrap();
+    let code = |now: i64| kalzit::auth::totp::code_at(&secret, kalzit::auth::totp::step_at(now));
+    let r = app.post("/api/me/security/totp", json!({ "code": code(app.clock.now_ms()) }), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = app.put("/api/admin/sign-in/local", off, &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.body["localPassword"], json!("off"));
@@ -831,6 +840,22 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(r.body.get("secondFactor").is_some(), "the second factor follows: {}", r.body);
     assert!(app.audit_actions().await.contains(&"auth.break_glass_signed_in".to_string()));
+    // With the second factor, the sign-in is recorded as the break-glass one.
+    let pending = format!("kalzit_pending={}", r.cookie("kalzit_pending").expect("the half-signed-in state"));
+    app.clock.advance_ms(kalzit::auth::totp::STEP_SECS * 1000);
+    let r = app
+        .post("/api/auth/second-factor", json!({ "method": "totp", "code": code(app.clock.now_ms()) }), &pending)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.get("/api/me/sign-ins", &session_of(&r)).await;
+    let first = &r.body["items"][0];
+    assert_eq!((&first["method"], &first["secondFactor"]), (&json!("break_glass"), &json!("totp")), "{}", r.body);
+    // Nora's refused attempts are on her list, for a server admin to see.
+    let nora_id: (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'nora@example.de'").fetch_one(&app.state.db).await.unwrap();
+    let r = app.get(&format!("/api/admin/users/{}/sign-ins", nora_id.0), &admin).await;
+    let reasons: Vec<&str> = r.body["items"].as_array().unwrap().iter().filter_map(|i| i["reason"].as_str()).collect();
+    assert_eq!(reasons[..3], ["password_off", "credentials", "password_off"], "{}", r.body);
     // Every server admin gets a mail about it.
     app.state.mail.settle().await;
     let mails = app.inbox.lock().unwrap().clone();
@@ -844,7 +869,9 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(r.reason(), "sso.break_glass_protected");
     // Without a second factor (gone through a database change), the break-glass admin sets one up
     // before getting in: a password alone never opens the server.
-    sqlx::query("DELETE FROM user_passkeys WHERE user_id = $1").bind(&admin_id).execute(&app.state.db).await.unwrap();
+    for sql in ["DELETE FROM user_totp WHERE user_id = $1", "DELETE FROM user_recovery_codes WHERE user_id = $1"] {
+        sqlx::query(sql).bind(&admin_id).execute(&app.state.db).await.unwrap();
+    }
     let r = app.send(Method::POST, "/api/auth/login/local", Some(login("joerg@example.de", PASSWORD)), None).await;
     assert_eq!(r.body["secondFactor"]["setup"], json!(true), "{}", r.body);
     assert!(r.cookie("kalzit_session").is_none());

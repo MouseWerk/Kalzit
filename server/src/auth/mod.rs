@@ -6,6 +6,7 @@ pub mod ratelimit;
 pub mod recovery;
 pub mod second_factor;
 pub mod session;
+pub mod sign_ins;
 pub mod totp;
 
 use axum::extract::FromRequestParts;

@@ -14,6 +14,7 @@ import {
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
 import { resetUserSecondFactor } from "../../security/api";
+import { UserSignInsDialog } from "../../security/RecentSignIns";
 import { ResetSecondFactorDialog, SecondFactorBadge } from "../../security/ResetDialog";
 import {
   type AdminUser,
@@ -50,6 +51,7 @@ export function UsersPage() {
   const [renaming, setRenaming] = useState<AdminUser | null>(null);
   const [settingPassword, setSettingPassword] = useState<AdminUser | null>(null);
   const [resetting, setResetting] = useState<AdminUser | null>(null);
+  const [signIns, setSignIns] = useState<AdminUser | null>(null);
   const users = list.items ?? [];
   const keys = useRowKeys(users.length);
 
@@ -206,6 +208,14 @@ export function UsersPage() {
                 >
                   {t("admin.users.setPassword")}
                 </button>
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  aria-label={t("security.signIns.adminShowNamed", { name: user.name })}
+                  onClick={() => setSignIns(user)}
+                >
+                  {t("security.signIns.adminShow")}
+                </button>
                 {user.id !== me.id &&
                 ((user.secondFactor?.methods.length ?? 0) > 0 ||
                   user.secondFactor?.lockedUntil != null) ? (
@@ -297,6 +307,9 @@ export function UsersPage() {
             void refresh();
           }}
         />
+      )}
+      {signIns === null ? null : (
+        <UserSignInsDialog user={signIns} onClose={() => setSignIns(null)} />
       )}
       {settingPassword === null ? null : (
         <SetPasswordDialog

@@ -45,6 +45,7 @@ pub mod second_factor;
 pub mod security;
 pub mod service_accounts;
 pub mod setup;
+pub mod sign_ins;
 pub mod sso;
 pub mod support;
 pub mod table;
@@ -96,6 +97,7 @@ pub fn all() -> Vec<table::RouteDef> {
         admin_users::routes(),
         admin_orgs::routes(),
         me::routes(),
+        sign_ins::routes(),
         home::routes(),
         panel_state::routes(),
         panel_plugins::routes(),
@@ -363,6 +365,8 @@ mod access_guard {
         "GET /me/sessions",
         "DELETE /me/sessions/{sessionId}",
         "POST /me/sessions/revoke-others",
+        // The user's own recent sign-ins only (`routes::sign_ins`).
+        "GET /me/sign-ins",
         "GET /me/preferences",
         "PATCH /me/preferences",
         // Sends the user's own address a confirmation link (docs/api/mail.md).

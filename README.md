@@ -180,14 +180,47 @@ never returned by the API. Plugins add further kinds (see below).
   per server and per organization. Settings export and import as JSON with a preview of every
   change.
 - Users and organizations for server administrators; an audit log with configurable retention.
-- Local accounts with Argon2id passwords, sessions you can see and end, and a sign-in rate
-  limit.
+- Usage insights per organization: the most viewed dashboards, the slowest panels, errors, cache
+  hit rates and dashboards nobody opens, counted per dashboard, panel and data source, never per
+  person.
 - Updates from signed GitHub releases or an offline package: verified with Ed25519 before
   anything is installed, a database backup first, an automatic return when the new version does
   not start healthy, planning for a maintenance window and a history with returns to kept
   versions ([operator guide](docs/operations/updates.md)).
 - Interface in English and German, light, dark and high contrast themes, keyboard shortcuts and a
   command palette (Ctrl+K).
+
+### Sign-in and identity
+
+- Single sign-on with OpenID Connect (Keycloak, Authentik, Entra ID, ...), SAML 2.0 (AD FS, Entra
+  ID, Shibboleth, ...) and LDAP or Active Directory, each tested with a test sign-in before it is
+  saved. The groups a provider sends give roles and teams per organization ("IdP decides" or
+  "Kalzit adds"), and a nightly directory sync locks people who left.
+- SCIM 2.0 provisioning of people and groups from Entra ID, Okta and other directories, one token
+  per organization; nothing is ever deleted through SCIM.
+- Two-factor sign-in with passkeys, an authenticator app and recovery codes, optional or required
+  by the server or an organization, also after LDAP and providers.
+- Recent sign-ins on the account page (method, provider, second factor, browser, address and
+  refused attempts), and for server admins on the user list; sessions you can see and end.
+- Local accounts with Argon2id passwords and sign-in rate limits; password sign-in can be turned
+  off for everyone except a break-glass admin.
+- Service accounts with API tokens (`Bearer kz_sa_...`) that are shown once, expire, can be bound
+  to networks and are revoked at once.
+- Mail through your SMTP server: invitations with a role and team, password reset links and
+  notices, in the recipient's language; without a mail server, links to pass on.
+
+### Operations
+
+- Windows installer (MSI) that sets up the Windows service with its own service account, in German
+  or English; deb and rpm packages with a hardened systemd service for Debian, Ubuntu, Fedora and
+  RHEL; a Docker image.
+- HTTPS with your own certificate files or automatic certificates from Let's Encrypt or another
+  ACME authority (HTTP-01 or TLS-ALPN-01), renewed without a restart.
+- High availability: several Kalzit servers on one PostgreSQL database behind a load balancer,
+  with one leader for scheduled work and changes reaching every server within a second
+  ([guide](docs/operations/high-availability.md)).
+- A query cache on the server, per person, so repeated loads and auto refresh do not hit the
+  database again.
 
 ### Security posture
 
@@ -281,6 +314,21 @@ time series.
 | Installed plugins with publisher, signature and status. | A plugin's page: what it may reach and the layers of its sandbox. |
 | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/plugin-install-light.webp"><img src="docs/screenshots/gallery/plugin-install-dark.webp" alt="Install from file: the checks of a signed package passed, and the network targets to grant"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/plugins-catalog-light.webp"><img src="docs/screenshots/gallery/plugins-catalog-dark.webp" alt="The plugin catalog: a signed list of plugins with publisher key, version and network targets, to install or update"></picture> |
 | Every package is checked before anything in it runs. | The catalog: a signed list, off until an administrator turns it on. |
+
+### Sign-in and identity
+
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/recent-sign-ins-light.png"><img src="docs/screenshots/recent-sign-ins-dark.png" alt="Settings, Sign-in and security: the password and the second factor with an authenticator app, passkeys and recovery codes, and beside them the recent sign-ins with method, provider, second factor, browser and address, this session marked and a refused attempt"></picture>
+
+Your sign-ins, with this session marked and refused attempts with their reason.
+
+| | |
+|---|---|
+| <img src="docs/screenshots/sign-in-providers.png" alt="Settings, Sign-in: three providers, OpenID Connect, LDAP and SAML, with their place on the sign-in page, status and number of people"> | <img src="docs/screenshots/sign-in-ldap.png" alt="The dialog of an Active Directory provider: server with LDAPS, service account, base DN, login attribute and the directory sync"> |
+| OpenID Connect, LDAP and SAML side by side, in the order of the sign-in page. | An Active Directory with LDAPS, nested groups and a nightly sync. |
+| <img src="docs/screenshots/sign-in-saml.png" alt="The dialog of a SAML provider: metadata URL, entity ID, sign-in URL, the pinned certificate and Kalzit's own addresses to enter at the provider"> | <img src="docs/screenshots/two-factor-setup-app.png" alt="The second step of setting up two-factor sign-in: the QR code and key for an authenticator app"> |
+| SAML with the pinned certificate and Kalzit's addresses for the provider. | Two-factor sign-in with an authenticator app, passkeys and recovery codes. |
+| <img src="docs/screenshots/service-accounts.png" alt="Administration, Service accounts: an account with its role and an API token limited to a network"> | <img src="docs/screenshots/scim.png" alt="The SCIM card: the endpoint to copy, the organization's SCIM token and what SCIM did today"> |
+| Service accounts with API tokens that expire and can be bound to networks. | SCIM provisioning from Entra ID, Okta and other directories. |
 
 ### First steps
 
@@ -511,7 +559,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, saved analyses, live updates with change streams, Docker image | Done |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels with node details, explorer mode, graph steps, variables across result shapes, new sign-in and setup with sample data | Done |
 | M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | Done |
-| M5 Operations | OIDC, LDAP and Active Directory, SAML and SCIM, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, query cache, usage insights, InfluxDB, Loki, ClickHouse | Planned |
+| M5 Operations | OIDC, LDAP and Active Directory, SAML and SCIM, two-factor sign-in, recent sign-ins, mail and invitations, ACME, service accounts, high availability on PostgreSQL, Windows service installer, deb and rpm packages, query cache, usage insights, InfluxDB, Loki, ClickHouse | Done |
 | M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label) | Planned |
 | M7 Expansion | Alerting, public links and snapshots, scheduled reports, provisioning as code with Git and a CLI, deeper analysis and Explore, dashboard tabs, XY and map panels, forecast and outlier steps, graph analysis (algorithms, filters, schema, map layout), an MCP server, further sources (Graphite, Redis, Oracle, traces, BigQuery, Snowflake, Databricks) | Planned |
 | M8 Plugin store | Community store for plugins: a site with every plugin, submissions by community authors, review and signing, revocations; the source of the catalog in Kalzit | Planned |
