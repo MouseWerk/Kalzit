@@ -20,7 +20,8 @@ use serde_json::{Value, json};
 
 use super::Detail;
 use super::frame::{Column, FrameBuilder};
-use super::http_json::{header_value, parse_url};
+use super::http_json::parse_url;
+use super::http_source::{self, Scrubber, header_value};
 use super::sql::{self, Bind, Engine};
 use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
@@ -47,6 +48,9 @@ const MAX_SMALL_RESPONSE: usize = 16 * 1024 * 1024;
 const MAX_SCHEMA_COLUMNS: usize = 20_000;
 /// The format Kalzit asks for: a line of names, a line of types, then one JSON array per row.
 const FORMAT: &str = "JSONCompactEachRowWithNamesAndTypes";
+/// ClickHouse's error codes for a refused login: AUTHENTICATION_FAILED, UNKNOWN_USER,
+/// WRONG_PASSWORD, REQUIRED_PASSWORD.
+const LOGIN_CODES: &[&str] = &["516", "192", "193", "194"];
 /// ClickHouse's error code for a refused change in read-only mode.
 const READONLY_CODE: &str = "164";
 
@@ -75,6 +79,8 @@ struct Client {
     base: Url,
     database: String,
     headers: HeaderMap,
+    /// The password, to scrub from errors.
+    scrubber: Scrubber,
 }
 
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
@@ -103,7 +109,7 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             );
         }
         let database = s.database.filter(|d| !d.trim().is_empty()).unwrap_or_else(|| "default".into());
-        Ok(Client { http, base, database, headers })
+        Ok(Client { http, base, database, headers, scrubber: Scrubber::new(conn) })
     })
     .await
 }
@@ -167,6 +173,9 @@ fn clickhouse_error(code: Option<&str>, text: &str) -> SourceError {
     let code = code
         .map(str::to_string)
         .or_else(|| text.strip_prefix("Code: ").and_then(|rest| rest.split(['.', ' ']).next()).map(str::to_string));
+    if code.as_deref().is_some_and(|c| LOGIN_CODES.contains(&c)) {
+        return super::connect::auth_failed(text);
+    }
     if code.as_deref() == Some(READONLY_CODE) {
         return SourceError::rejected("query.write_refused", format!("the query tried to write: {text}"))
             .with("detail", text);
@@ -178,10 +187,7 @@ fn clickhouse_error(code: Option<&str>, text: &str) -> SourceError {
 
 impl Client {
     fn failed(&self, e: HttpError) -> SourceError {
-        match e {
-            HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            other => SourceError::Failed(other.detail()),
-        }
+        http_source::failed(e, &self.scrubber)
     }
 
     /// Sends one statement and answers the response once ClickHouse accepted it.
@@ -706,6 +712,17 @@ mod tests {
             clickhouse_error(None, "Code: 60. DB::Exception: Unknown table expression identifier 'x'. (UNKNOWN_TABLE)");
         assert_eq!(e.detail().reason, "clickhouse.error");
         assert_eq!(e.detail().params["code"], "60");
+    }
+
+    #[test]
+    fn a_refused_login_is_named_by_its_code() {
+        let text = "Code: 516. DB::Exception: default: Authentication failed: password is incorrect, or there is \
+                    no user with such name. (AUTHENTICATION_FAILED)";
+        let e = clickhouse_error(Some("516"), text);
+        assert_eq!(e.detail().reason, "source.auth_failed");
+        assert_eq!(clickhouse_error(None, text).detail().reason, "source.auth_failed", "the code from the text");
+        let e = clickhouse_error(Some("60"), "Code: 60. DB::Exception: authentication of table x. (UNKNOWN_TABLE)");
+        assert_eq!(e.detail().reason, "clickhouse.error", "the code decides, not the words");
     }
 
     #[test]

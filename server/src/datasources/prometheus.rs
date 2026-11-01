@@ -9,7 +9,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine as _;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::{Method, Url};
 use serde::Deserialize;
@@ -17,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::Detail;
 use super::frame::{Charge, Column, FrameBuilder};
+use super::http_source::{self, Auth, Scrubber};
 use super::{
     Connection, DataSourcePlugin, FieldError, Health, Kind, SettingField, SettingType, SourceError, SourceQuery,
     SourceSchema,
@@ -72,8 +72,8 @@ struct Client {
     http: HttpClient,
     base: Url,
     auth: Option<HeaderValue>,
-    /// `user:password` in base64, as sent in the header, to scrub from errors.
-    basic_token: Option<String>,
+    /// The secrets and the base64 of `user:password`, to scrub from errors.
+    scrubber: Scrubber,
 }
 
 pub(crate) fn parse_url(raw: &str) -> Result<Url, Detail> {
@@ -113,45 +113,26 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             policy: Arc::new(conn.policy().clone()),
         })
         .map_err(|e| SourceError::Failed(e.detail()))?;
-        let mut basic_token = None;
-        let auth = match (s.basic_auth_user.filter(|u| !u.is_empty()), conn.secret("bearerToken")) {
-            (Some(user), _) => {
-                let token = base64::engine::general_purpose::STANDARD
-                    .encode(format!("{user}:{}", conn.secret("basicAuthPassword").unwrap_or("")));
-                let value = format!("Basic {token}");
-                basic_token = Some(token);
-                Some(value)
-            }
-            (None, Some(token)) => Some(format!("Bearer {token}")),
-            (None, None) => None,
-        };
-        let auth = match auth {
-            Some(a) => Some(HeaderValue::from_str(&a).map_err(|_| {
-                SourceError::failed(
-                    "prometheus.credentials_invalid",
-                    "the credentials contain characters a header cannot carry",
-                )
-            })?),
-            None => None,
-        };
-        Ok(Client { http, base, auth, basic_token })
+        let mut scrubber = Scrubber::new(conn);
+        let auth = Auth::basic_or_bearer(
+            s.basic_auth_user.as_deref(),
+            conn.secret("basicAuthPassword"),
+            conn.secret("bearerToken"),
+        )
+        .map(|a| a.header("prometheus.credentials_invalid", &mut scrubber))
+        .transpose()?;
+        Ok(Client { http, base, auth, scrubber })
     })
     .await
 }
 
 impl Client {
     fn scrub(&self, text: &str) -> String {
-        match &self.basic_token {
-            Some(t) => text.replace(t, "***"),
-            None => text.to_string(),
-        }
+        self.scrubber.scrub(text)
     }
 
     fn failed(&self, e: HttpError) -> SourceError {
-        match e {
-            HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
-        }
+        http_source::failed(e, &self.scrubber)
     }
 
     /// GETs an API path and answers its `data`, or the server's error message. With a charge,
@@ -177,6 +158,9 @@ impl Client {
             None => crate::http::read_limited(response, max_bytes).await,
         }
         .map_err(|e| self.failed(e))?;
+        if let Some(e) = http_source::unauthorized(status, &body, &self.scrubber) {
+            return Err(e);
+        }
         let parsed: Value = serde_json::from_slice(&body).map_err(|_| {
             SourceError::failed(
                 "prometheus.not_an_api_response",

@@ -317,6 +317,8 @@ impl BoltError {
                 if code.contains("AccessMode") || code.contains("ForbiddenDueToTransactionType") {
                     SourceError::rejected("query.write_refused", format!("the query tried to write: {message}"))
                         .with("detail", message)
+                } else if code == "Neo.ClientError.Security.Unauthorized" {
+                    super::connect::auth_failed(message)
                 } else {
                     SourceError::from_source(message)
                 }

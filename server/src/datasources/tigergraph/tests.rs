@@ -9,6 +9,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap as AxHeaders, StatusCode as AxStatus};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use base64::Engine as _;
 use zeroize::Zeroizing;
 
 use super::*;

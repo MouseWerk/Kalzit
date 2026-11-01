@@ -23,7 +23,8 @@ use serde_json::{Map, Value, json};
 
 use super::Detail;
 use super::frame::Charge;
-use super::http_json::{basic_auth, header_value, parse_url};
+use super::http_json::parse_url;
+use super::http_source::{self, Auth, Scrubber, header_value};
 use super::json_documents::DocumentsBuilder;
 use super::prometheus;
 use super::{
@@ -168,8 +169,8 @@ struct Client {
     http: HttpClient,
     base: Url,
     headers: HeaderMap,
-    /// The base64 of `user:password`, to scrub from errors.
-    basic_token: Option<String>,
+    /// The secrets and the base64 of `user:password`, to scrub from errors.
+    scrubber: Scrubber,
 }
 
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
@@ -186,17 +187,14 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
         })
         .map_err(|e| SourceError::Failed(e.detail()))?;
         let mut headers = HeaderMap::new();
-        let mut basic_token = None;
-        match (s.basic_auth_user.filter(|u| !u.is_empty()), conn.secret("bearerToken")) {
-            (Some(user), _) => {
-                let (value, token) = basic_auth(&user, conn.secret("basicAuthPassword").unwrap_or(""));
-                headers.insert(AUTHORIZATION, header_value(&value, "loki.credentials_invalid")?);
-                basic_token = Some(token);
-            }
-            (None, Some(token)) => {
-                headers.insert(AUTHORIZATION, header_value(&format!("Bearer {token}"), "loki.credentials_invalid")?);
-            }
-            (None, None) => {}
+        let mut scrubber = Scrubber::new(conn);
+        let auth = Auth::basic_or_bearer(
+            s.basic_auth_user.as_deref(),
+            conn.secret("basicAuthPassword"),
+            conn.secret("bearerToken"),
+        );
+        if let Some(auth) = auth {
+            headers.insert(AUTHORIZATION, auth.header("loki.credentials_invalid", &mut scrubber)?);
         }
         if let Some(tenant) = s.tenant_id.filter(|t| !t.trim().is_empty()) {
             headers.insert(
@@ -204,25 +202,18 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
                 header_value(tenant.trim(), "loki.credentials_invalid")?,
             );
         }
-        Ok(Client { http, base, headers, basic_token })
+        Ok(Client { http, base, headers, scrubber })
     })
     .await
 }
 
 impl Client {
     fn scrub(&self, text: &str) -> String {
-        match &self.basic_token {
-            Some(t) => text.replace(t, "***"),
-            None => text.to_string(),
-        }
+        self.scrubber.scrub(text)
     }
 
     fn failed(&self, e: HttpError) -> SourceError {
-        match e {
-            HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            HttpError::Refused(d) => SourceError::Rejected(d),
-            other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
-        }
+        http_source::failed(e, &self.scrubber)
     }
 
     /// GETs an endpoint and answers the whole JSON body. With a charge, the body is charged to
@@ -251,6 +242,9 @@ impl Client {
             None => crate::http::read_limited(response, max_bytes).await,
         }
         .map_err(|e| self.failed(e))?;
+        if let Some(e) = http_source::unauthorized(status, &body, &self.scrubber) {
+            return Err(e);
+        }
         if !status.is_success() {
             // Loki answers errors as plain text (`parse error at line 1, col 5: ...`).
             let text = String::from_utf8_lossy(&body);

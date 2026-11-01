@@ -24,7 +24,8 @@ use serde_json::{Value, json};
 
 use super::Detail;
 use super::frame::{Charge, Column, FrameBuilder};
-use super::http_json::{basic_auth, header_value, parse_url};
+use super::http_json::parse_url;
+use super::http_source::{self, Auth, Scrubber};
 use super::sql::{self, Bind, Engine};
 use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
@@ -224,7 +225,8 @@ struct Client {
     organization: Option<String>,
     database: Option<String>,
     headers: HeaderMap,
-    basic_token: Option<String>,
+    /// The secrets and the base64 of `user:password`, to scrub from errors.
+    scrubber: Scrubber,
 }
 
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
@@ -242,21 +244,18 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
         .map_err(|e| SourceError::Failed(e.detail()))?;
         let version = s.version.unwrap_or(Version::V2);
         let mut headers = HeaderMap::new();
-        let mut basic_token = None;
-        match (s.user.filter(|u| !u.is_empty()), conn.secret("token")) {
+        let mut scrubber = Scrubber::new(conn);
+        let auth = match (s.user.as_deref().filter(|u| !u.is_empty()), conn.secret("token")) {
+            // 2.x takes `Token`, 3.x `Bearer` (and `Token`); 1.x with authentication on takes a
+            // token as the password of basic auth, sent when a user is set.
             (_, Some(token)) => {
-                // 2.x takes `Token`, 3.x `Bearer` (and `Token`); 1.x with authentication on
-                // takes a token as the password of basic auth, sent below when a user is set.
-                let scheme = if version == Version::V3 { "Bearer" } else { "Token" };
-                headers
-                    .insert(AUTHORIZATION, header_value(&format!("{scheme} {token}"), "influxdb.credentials_invalid")?);
+                Some(Auth::Token { scheme: if version == Version::V3 { "Bearer" } else { "Token" }, token })
             }
-            (Some(user), None) => {
-                let (value, token) = basic_auth(&user, conn.secret("password").unwrap_or(""));
-                headers.insert(AUTHORIZATION, header_value(&value, "influxdb.credentials_invalid")?);
-                basic_token = Some(token);
-            }
-            (None, None) => {}
+            (Some(user), None) => Some(Auth::Basic { user, password: conn.secret("password").unwrap_or("") }),
+            (None, None) => None,
+        };
+        if let Some(auth) = auth {
+            headers.insert(AUTHORIZATION, auth.header("influxdb.credentials_invalid", &mut scrubber)?);
         }
         Ok(Client {
             http,
@@ -265,7 +264,7 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             organization: s.organization.filter(|o| !o.trim().is_empty()),
             database: s.database.filter(|d| !d.trim().is_empty()),
             headers,
-            basic_token,
+            scrubber,
         })
     })
     .await
@@ -273,18 +272,11 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
 
 impl Client {
     fn scrub(&self, text: &str) -> String {
-        match &self.basic_token {
-            Some(t) => text.replace(t, "***"),
-            None => text.to_string(),
-        }
+        self.scrubber.scrub(text)
     }
 
     fn failed(&self, e: HttpError) -> SourceError {
-        match e {
-            HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            HttpError::Refused(d) => SourceError::Rejected(d),
-            other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
-        }
+        http_source::failed(e, &self.scrubber)
     }
 
     fn database(&self) -> Result<&str, SourceError> {
@@ -326,6 +318,9 @@ impl Client {
         }
         let status = response.status();
         let body = crate::http::read_limited(response, MAX_SMALL_RESPONSE).await.map_err(|e| self.failed(e))?;
+        if let Some(e) = http_source::unauthorized(status, &body, &self.scrubber) {
+            return Err(e);
+        }
         let text = String::from_utf8_lossy(&body);
         let message = serde_json::from_slice::<Value>(&body)
             .ok()

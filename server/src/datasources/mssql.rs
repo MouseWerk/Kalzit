@@ -5,25 +5,24 @@
 //! Kalzit opens the TCP connection itself, to the checked address; the configured host name is
 //! kept for the TLS certificate check.
 
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tiberius::{AuthMethod, ColumnData, ColumnType, EncryptionLevel, FromSql, Query, QueryItem};
 use tokio::net::TcpStream;
-use tokio::sync::Semaphore;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::Detail;
 use super::frame::{Column, FrameBuilder};
+use super::pool::{ConnPool, Lease, Pooled};
 use super::sql::{self, Bind, Engine};
 use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
     SourceQuery, SourceSchema,
 };
-use crate::locks::MutexExt;
 use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] = &[
@@ -69,11 +68,11 @@ struct Settings {
 
 type Client = tiberius::Client<Compat<TcpStream>>;
 
-/// tiberius has no pool: idle clients wait here (with the time they were returned), the
-/// semaphore bounds the open ones.
-struct Pool {
-    idle: Mutex<Vec<(Client, Instant)>>,
-    slots: Semaphore,
+/// A client and a second handle on its socket, to see whether the server closed the
+/// connection while it waited in the pool (tiberius keeps its stream to itself).
+struct Conn {
+    client: Client,
+    probe: std::net::TcpStream,
 }
 
 /// Idle clients older than this are closed instead of reused.
@@ -81,69 +80,50 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long a dropped lease may take to cancel its query and close.
 const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A client on loan; it goes back to the pool only through `release`, after a clean finish. A
-/// client dropped mid-query (timeout, cancelled request) sends SQL Server an attention (cancel)
-/// so the statement stops on the server, and is then closed.
-struct Lease<'p> {
-    pool: &'p Pool,
-    client: Option<Client>,
-    /// The client waited in the pool before (it was not opened for this lease).
-    reused: bool,
-    _permit: tokio::sync::SemaphorePermit<'p>,
-}
-
-impl Lease<'_> {
-    fn client(&mut self) -> &mut Client {
-        self.client.as_mut().expect("a lease holds its client until released")
+/// tiberius has no pool; this one bounds the open clients and closes idle ones (`pool.rs`).
+impl Pooled for Conn {
+    fn reusable(&mut self) -> bool {
+        super::pool::socket_open(&self.probe)
     }
 
-    fn release(mut self) {
-        if let Some(c) = self.client.take() {
-            self.pool.idle.lock_or_recover().push((c, Instant::now()));
-        }
-    }
-
-    /// Closes a client whose connection broke, and the idle ones with it: they most likely went
-    /// down with the same server.
-    fn discard(mut self) {
-        self.client = None;
-        self.pool.idle.lock_or_recover().clear();
-    }
-}
-
-impl Drop for Lease<'_> {
-    fn drop(&mut self) {
-        let Some(mut client) = self.client.take() else { return };
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
-        runtime.spawn(async move {
-            let stop = async {
-                let _ = client.cancel_query().await;
-                let _ = client.close().await;
-            };
-            let _ = tokio::time::timeout(CANCEL_TIMEOUT, stop).await;
-        });
+    /// A client dropped mid-query (timeout, cancelled request) sends SQL Server an attention
+    /// (cancel) so the statement stops on the server, and is then closed.
+    async fn abandon(mut self) {
+        let stop = async {
+            let _ = self.client.cancel_query().await;
+            let _ = self.client.close().await;
+        };
+        let _ = tokio::time::timeout(CANCEL_TIMEOUT, stop).await;
     }
 }
 
 pub struct MsSql;
 
+/// SQL Server's error number for a refused login (wrong password, unknown or disabled login).
+const LOGIN_FAILED: u32 = 18456;
+
 fn failed(e: tiberius::error::Error) -> SourceError {
     match e {
         tiberius::error::Error::Io { kind, message } if super::connect::is_dead(kind) => super::connect::lost(message),
+        tiberius::error::Error::Server(t) if t.code() == LOGIN_FAILED => super::connect::auth_failed(t.message()),
         other => SourceError::from_source(other.to_string()),
     }
 }
 
-async fn pool(conn: &Connection) -> Result<Arc<Pool>, SourceError> {
-    conn.shared(|| async { Ok(Pool { idle: Mutex::new(Vec::new()), slots: Semaphore::new(POOL_SIZE) }) }).await
+async fn pool(conn: &Connection) -> Result<Arc<ConnPool<Conn>>, SourceError> {
+    conn.shared(|| async { Ok(ConnPool::new(POOL_SIZE, IDLE_TIMEOUT)) }).await
 }
 
-async fn open(conn: &Connection) -> Result<Client, SourceError> {
+async fn open(conn: &Connection) -> Result<Conn, SourceError> {
     crate::http::ensure_crypto_provider();
     let s: Settings = conn.settings_as()?;
     let port = s.port.unwrap_or(1433) as u16;
     let (_, tcp) = conn.policy().connect(&s.host, port, CONNECT_TIMEOUT).await?;
     tcp.set_nodelay(true).map_err(|e| SourceError::from_source(e.to_string()))?;
+    let io = |e: std::io::Error| SourceError::from_source(e.to_string());
+    let socket = tcp.into_std().map_err(io)?;
+    let probe = socket.try_clone().map_err(io)?;
+    let tcp = TcpStream::from_std(socket).map_err(io)?;
     let mut config = tiberius::Config::new();
     config.host(&s.host);
     config.port(port);
@@ -160,24 +140,11 @@ async fn open(conn: &Connection) -> Result<Client, SourceError> {
         .await
         .map_err(|_| SourceError::failed("mssql.login_timeout", "SQL Server did not complete the login in time"))?
         .map_err(failed)?;
-    Ok(client)
+    Ok(Conn { client, probe })
 }
 
-async fn lease<'p>(conn: &Connection, pool: &'p Pool) -> Result<Lease<'p>, SourceError> {
-    let permit =
-        pool.slots.acquire().await.map_err(|_| SourceError::failed("server.shutting_down", "the pool is closed"))?;
-    let idle = {
-        let mut idle = pool.idle.lock_or_recover();
-        // Closed by dropping; an idle client has no statement to cancel.
-        idle.retain(|(_, since)| since.elapsed() < IDLE_TIMEOUT);
-        idle.pop().map(|(c, _)| c)
-    };
-    let reused = idle.is_some();
-    let client = match idle {
-        Some(c) => c,
-        None => open(conn).await?,
-    };
-    Ok(Lease { pool, client: Some(client), reused, _permit: permit })
+async fn lease(conn: &Connection, pool: &Arc<ConnPool<Conn>>) -> Result<Lease<Conn>, SourceError> {
+    pool.checkout(|| open(conn)).await
 }
 
 async fn simple(client: &mut Client, sql: &'static str) -> Result<(), SourceError> {
@@ -209,7 +176,7 @@ impl DataSourcePlugin for MsSql {
             let pool = pool(conn).await?;
             let mut lease = lease(conn, &pool).await?;
             let row = lease
-                .client()
+                .client
                 .simple_query(
                     "SELECT CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128)), IS_SRVROLEMEMBER('sysadmin')",
                 )
@@ -238,7 +205,7 @@ impl DataSourcePlugin for MsSql {
              ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION",
         );
         q.bind(MAX_SCHEMA_COLUMNS);
-        let rows = q.query(lease.client()).await.map_err(failed)?.into_first_result().await.map_err(failed)?;
+        let rows = q.query(&mut lease.client).await.map_err(failed)?.into_first_result().await.map_err(failed)?;
         lease.release();
         let text = |r: &tiberius::Row, i: usize| r.get::<&str, _>(i).unwrap_or("").to_string();
         let rows = rows.iter().map(|r| (text(r, 0), text(r, 1), text(r, 2), text(r, 3))).collect();
@@ -254,11 +221,11 @@ impl DataSourcePlugin for MsSql {
         // first round trip: a pooled client whose connection broke while idle (the server
         // restarted) fails here, before any result, and the query runs once more on a fresh
         // connection, which is safe as it only reads.
-        match simple(lease.client(), "BEGIN TRANSACTION").await {
-            Err(e) if super::connect::is_lost(&e) && lease.reused => {
+        match simple(&mut lease.client, "BEGIN TRANSACTION").await {
+            Err(e) if super::connect::is_lost(&e) && lease.reused() => {
                 lease.discard();
                 lease = self::lease(conn, &pool).await?;
-                simple(lease.client(), "BEGIN TRANSACTION").await?;
+                simple(&mut lease.client, "BEGIN TRANSACTION").await?;
             }
             other => other?,
         }
@@ -278,7 +245,7 @@ impl DataSourcePlugin for MsSql {
         let mut binary = false;
         let mut stopped_early = false;
         {
-            let mut stream = q.query(lease.client()).await.map_err(failed)?;
+            let mut stream = q.query(&mut lease.client).await.map_err(failed)?;
             while let Some(item) = stream.try_next().await.map_err(failed)? {
                 match item {
                     QueryItem::Metadata(meta) if meta.result_index() == 0 && frame.is_none() => {
@@ -317,7 +284,7 @@ impl DataSourcePlugin for MsSql {
             // and SQL Server rolls the transaction back.
             drop(lease);
         } else {
-            simple(lease.client(), "ROLLBACK TRANSACTION").await?;
+            simple(&mut lease.client, "ROLLBACK TRANSACTION").await?;
             lease.release();
         }
         Ok(QueryResult::Frame { frame: frame.finish() })
