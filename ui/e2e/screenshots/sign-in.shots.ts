@@ -17,14 +17,10 @@ import { DEMO_OWNER, SCREENSHOT_NOW } from "./demo";
  * sign-ins are answered the same way: the run signs in only with a password, and the list shows
  * the mix of methods a real installation has.
  */
-const OUT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "..",
-  "docs",
-  "screenshots",
-);
+// KALZIT_SCREENSHOTS_OUT sends the pictures elsewhere (the devkit's capture_screens scenes).
+const OUT =
+  process.env.KALZIT_SCREENSHOTS_OUT ??
+  resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "docs", "screenshots");
 
 test.describe.configure({ mode: "serial" });
 

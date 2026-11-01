@@ -1,8 +1,10 @@
 @layer components {
+  /* The page is the container the rail's place is measured by, not the window. */
   .explore {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
+    container: explore / inline-size;
   }
 
   /* The source on the left; time range and Run on the right, as on the blueprint. */
@@ -47,9 +49,14 @@
     gap: var(--space-2);
   }
 
-  @media (min-width: 80rem) {
+  /*
+   * The rail stays beside the result while the result keeps a usable width (28rem) next to it,
+   * whatever the sidebar takes (down to a window of about 1080 px with the sidebar open);
+   * narrower, it moves under the result on purpose and spans the width, so its forms keep room.
+   */
+  @container explore (min-width: 49rem) {
     .explore__body {
-      grid-template-columns: minmax(0, 1fr) var(--size-text-max);
+      grid-template-columns: minmax(0, 1fr) var(--size-explore-rail);
       align-items: start;
     }
   }
