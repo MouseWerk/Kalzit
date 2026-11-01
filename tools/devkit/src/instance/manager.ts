@@ -243,6 +243,7 @@ export async function startInstance(options: StartOptions = {}): Promise<StartRe
   const binary = await resolveBinary(options);
   const id = newInstanceId();
   const runDir = createRunDir(instancesDir(), id);
+  restrictToUser(runDir);
   const state: InstanceState = {
     id,
     url: "",
@@ -425,7 +426,40 @@ function allStates(): { dir: string; state: InstanceState | undefined }[] {
   const base = instancesDir();
   return readdirSync(base)
     .filter((name) => name.startsWith("inst-"))
-    .map((name) => ({ dir: join(base, name), state: readState(join(base, name)) }));
+    .map((name) => {
+      const dir = join(base, name);
+      const state = readState(dir);
+      // Stop and sweep end processes and remove folders named in the state file; a state that
+      // names another folder than the one it lies in is not trusted with either.
+      return { dir, state: state !== undefined && sameDir(state.runDir, dir) ? state : undefined };
+    });
+}
+
+export function sameDir(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    const r = resolve(p);
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  return typeof a === "string" && norm(a) === norm(b);
+}
+
+/**
+ * On Windows the 0600 modes mean nothing: the run folder (credentials, keys, data) gets an ACL of
+ * its own instead, without inherited entries and with full control for the current user only.
+ */
+function restrictToUser(dir: string): void {
+  if (process.platform !== "win32") return;
+  const user = process.env.USERDOMAIN
+    ? `${process.env.USERDOMAIN}\\${process.env.USERNAME ?? ""}`
+    : (process.env.USERNAME ?? "");
+  try {
+    execFileSync("icacls", [dir, "/inheritance:r", "/grant:r", `${user}:(OI)(CI)F`], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+  } catch {
+    // Left with the inherited ACL of the output folder (the user's own checkout).
+  }
 }
 
 export interface ListedInstance extends InstanceState {

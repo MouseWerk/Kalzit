@@ -82,7 +82,8 @@ export async function runChecked(
   const result = await run(command, args, options);
   if (result.code !== 0) {
     const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-20).join("\n");
-    throw new Error(`${command} ${args.join(" ")} failed with code ${result.code}:\n${tail}`);
+    // Only the program and its subcommand: arguments may carry values that belong in no log.
+    throw new Error(`${command} ${args[0] ?? ""} failed with code ${result.code}:\n${tail}`);
   }
   return result.stdout;
 }

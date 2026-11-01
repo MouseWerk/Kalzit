@@ -150,6 +150,7 @@ export function classifyJob(job: JobInput): Classification {
     result.reasons.push("the job was cancelled");
     return result;
   }
+  const steps = job.steps ?? [];
   const lines = job.log === undefined ? [] : cleanLog(job.log);
   const tests: string[] = [];
   const assertions: string[] = [];
@@ -169,16 +170,27 @@ export function classifyJob(job: JobInput): Classification {
   result.failingTests = unique(tests, 30);
   result.assertions = unique(assertions, 20);
 
-  const steps = job.steps ?? [];
   const failedWithoutStep =
     (job.conclusion === "failure" || job.conclusion === "startup_failure") &&
     steps.length > 0 &&
     failedSteps.length === 0;
   const hasCode = result.failingTests.length > 0 || codeReasons.length > 0;
+  // A job that ran into timeout-minutes ends with its running step cancelled and this annotation;
+  // a hang in the code looks the same as a slow runner, so it is never taken as the runner's.
+  const timedOut =
+    job.conclusion === "timed_out" ||
+    steps.some((s) => s.conclusion === "cancelled") ||
+    lines.some((l) => /exceeded the maximum execution time/i.test(l));
+  // Steps that run the product itself: a reset connection there can be the server crashing.
+  const productStep = failedSteps.find((s) => /smoke|health|docker|package|msi|install/i.test(s));
 
   if (strong.length > 0) {
     result.category = "infra";
     result.reasons.push(...unique(strong, 5));
+  } else if (timedOut) {
+    result.category = hasCode ? "code" : "unknown";
+    result.reasons.push("the job hit its time limit (a hang or a slow runner); not rerun");
+    if (hasCode) result.reasons.push(...unique(codeReasons, 5));
   } else if (failedWithoutStep) {
     result.category = "infra";
     result.reasons.push("the job failed without a failed step");
@@ -188,6 +200,10 @@ export function classifyJob(job: JobInput): Classification {
     if (result.failingTests.length > 0)
       result.reasons.push(`${result.failingTests.length} failing test(s)`);
     if (weak.length > 0) result.reasons.push(`also seen: ${unique(weak, 3).join(", ")}`);
+  } else if (weak.length > 0 && productStep !== undefined) {
+    result.reasons.push(
+      `${unique(weak, 3).join(", ")} in step "${productStep}", which runs the product: could be a crash`,
+    );
   } else if (weak.length > 0) {
     result.category = "infra";
     result.reasons.push(...unique(weak, 5));

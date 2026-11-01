@@ -27,6 +27,32 @@ export interface Affected {
   uncovered: string[];
 }
 
+/** A plain repository path: letters, digits, underscore, dot, slash and dash only. */
+export function isSafePath(path: string): boolean {
+  return /^[\w./-]+$/.test(path) && !path.startsWith("-") && !path.split("/").includes("..");
+}
+
+/** The script behind an npx command, relative to the command's folder. */
+const PACKAGE_BINS: Record<string, string> = {
+  vitest: "node_modules/vitest/vitest.mjs",
+  playwright: "node_modules/@playwright/test/cli.js",
+};
+
+/**
+ * The program and arguments that run a command without a shell: npx commands run their package
+ * script with this Node directly (no npx.cmd on Windows, no shell parsing anywhere).
+ */
+export function directInvocation(
+  c: TestCommand,
+  root: string,
+): { command: string; args: string[] } {
+  if (c.command !== "npx") return { command: c.command, args: c.args };
+  const [tool, ...rest] = c.args;
+  const bin = tool === undefined ? undefined : PACKAGE_BINS[tool];
+  if (bin === undefined) throw new Error(`no known package script for npx ${tool ?? ""}`);
+  return { command: process.execPath, args: [join(root, c.cwd, bin), ...rest] };
+}
+
 const basenameNoExt = (path: string) => (path.split("/").pop() ?? "").replace(/\.[^.]+$/, "");
 
 /** The Cargo package of each Rust crate folder, from its Cargo.toml. */
@@ -87,7 +113,13 @@ function importsOf(file: string, text: string): string[] {
  *   Playwright specs that are, or import, a changed e2e file, or are named after the feature.
  * - The change detection script, and the devkit's own tests.
  */
-export function mapAffected(changed: readonly string[], repo: RepoView): Affected {
+export function mapAffected(changedInput: readonly string[], input: RepoView): Affected {
+  // Only plain repository paths become arguments of a test command: a path with spaces, quotes
+  // or shell characters (a crafted file name, a `paths` input) is reported, never passed on.
+  const repo: RepoView = { files: input.files.filter(isSafePath), read: input.read };
+  const changed = changedInput.filter(isSafePath);
+  const rejected = changedInput.filter((p) => !isSafePath(p));
+  const tracked = new Set(repo.files);
   const cargoTests = new Map<string, Set<string>>();
   const libFilters = new Set<string>();
   const wholeCrates = new Set<string>();
@@ -160,7 +192,7 @@ export function mapAffected(changed: readonly string[], repo: RepoView): Affecte
         add("cargo-whole", path);
       }
     } else if (/^ui\/src\/.+\.test\.tsx?$/.test(path)) {
-      vitest.add(path);
+      if (tracked.has(path)) vitest.add(path);
       add("vitest", path);
     } else if (/^ui\/src\/.+\.(tsx?|json)$/.test(path)) {
       const target = path.replace(/\.(tsx?|json)$/, "");
@@ -211,7 +243,7 @@ export function mapAffected(changed: readonly string[], repo: RepoView): Affecte
         }
       }
     } else if (/^ui\/e2e\/[^/]+\.spec\.ts$/.test(path)) {
-      specs.add(path);
+      if (tracked.has(path)) specs.add(path);
       add("playwright", path);
     } else if (/^ui\/e2e\/support\/.+\.ts$/.test(path)) {
       const target = path.replace(/\.ts$/, "");
@@ -327,12 +359,12 @@ export function mapAffected(changed: readonly string[], repo: RepoView): Affecte
     commands.push({
       kind: "devkit",
       cwd: "tools/devkit",
-      command: "npm",
-      args: ["test"],
+      command: "npx",
+      args: ["vitest", "run"],
       because: reasons("devkit"),
     });
   }
-  return { changed: [...changed], commands, uncovered };
+  return { changed: [...changed], commands, uncovered: [...uncovered, ...rejected] };
 }
 
 export function commandLine(c: TestCommand): string {
@@ -370,6 +402,9 @@ export async function affectedTests(options: AffectedOptions): Promise<AffectedR
   const base = options.base ?? "origin/main";
   let changed = options.paths;
   if (changed === undefined) {
+    // A base is a revision, never an option: no leading dash, and git has to know it.
+    if (base.startsWith("-")) throw new Error(`invalid base ${base}`);
+    await git(["rev-parse", "--verify", "--quiet", "--end-of-options", `${base}^{commit}`]);
     const names = new Set(
       (await git(["diff", "--name-only", `${base}...HEAD`])).split("\n").filter((l) => l !== ""),
     );
@@ -415,8 +450,8 @@ export async function affectedTests(options: AffectedOptions): Promise<AffectedR
         env.CARGO_BUILD_JOBS = process.env.CARGO_BUILD_JOBS;
       }
       if (c.kind === "playwright") env.KALZIT_E2E_RUN_DIR = outDir("e2e-runs", stamp());
-      const shell = c.command === "npx" || c.command === "npm";
-      const r = await run(c.command, c.args, { cwd: join(REPO_DIR, c.cwd), env, shell });
+      const direct = directInvocation(c, REPO_DIR);
+      const r = await run(direct.command, direct.args, { cwd: join(REPO_DIR, c.cwd), env });
       const output = `${r.stdout}\n${r.stderr}`;
       writeFileSync(log, output);
       result.results.push({

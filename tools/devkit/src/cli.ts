@@ -137,17 +137,9 @@ async function main(argv: readonly string[]): Promise<number> {
     process.stderr.write(`unknown tool ${command}\n\n${help()}\n`);
     return 2;
   }
-  const showCredentials = rest.includes("--show-credentials");
-  const args = parseArgs(
-    def,
-    rest.filter((w) => w !== "--show-credentials"),
-  );
+  const args = parseArgs(def, rest);
   const log = (line: string) => process.stderr.write(`${line}\n`);
   const result = (await def.run(args as never, { log })) as Record<string, unknown>;
-  if (def.name === "instance_start" && !showCredentials && typeof result === "object") {
-    // Credentials stay in the run folder; stdout may end up in a log.
-    result.credentials = "hidden; see credentialsFile, or pass --show-credentials";
-  }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (def.name === "instance_start" && args.detached !== true) {
     log("Instance runs until this process ends (Ctrl+C), then it is stopped and removed.");

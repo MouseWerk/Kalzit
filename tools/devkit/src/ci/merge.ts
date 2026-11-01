@@ -22,9 +22,12 @@ export interface MergeResult {
   events: string[];
 }
 
-const rerunnable = (failures: readonly JobFailure[]) =>
-  failures.length > 0 &&
-  failures.every((f) => f.category === "infra" || f.category === "cancelled");
+/**
+ * A rerun only when every failure is a runner fault. Cancelled and timed-out jobs (a hang in the
+ * code looks like a slow runner) and unknown or code failures stop the merge instead.
+ */
+export const rerunnable = (failures: readonly JobFailure[]) =>
+  failures.length > 0 && failures.every((f) => f.category === "infra");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -80,7 +83,10 @@ export async function mergePr(options: MergeOptions): Promise<MergeResult> {
     if (status.overall === "green") break;
     const ids = status.failing.flatMap((c) => (c.jobId === undefined ? [] : [c.jobId]));
     const failures = await classifyJobs(repo, ids, out);
-    if (!rerun && rerunnable(failures)) {
+    // A failing check that is no Actions job (another app's status) cannot be read or rerun.
+    const foreign = status.failing.filter((c) => c.jobId === undefined).map((c) => c.name);
+    if (foreign.length > 0) note(`failing checks without an Actions job: ${foreign.join(", ")}`);
+    if (!rerun && foreign.length === 0 && rerunnable(failures)) {
       rerun = true;
       for (const runId of new Set(failures.map((f) => f.runId))) {
         note(
@@ -102,8 +108,13 @@ export async function mergePr(options: MergeOptions): Promise<MergeResult> {
       pr.merge_commit_sha === null ? {} : { mergeCommit: pr.merge_commit_sha },
     );
     if (options.deleteBranch !== false && pr.head.repo?.full_name === repo) {
-      await ghApi(`repos/${repo}/git/refs/heads/${pr.head.ref}`, "DELETE").catch(() => {});
-      events.push(`deleted branch ${pr.head.ref}`);
+      const ref = pr.head.ref.split("/").map(encodeURIComponent).join("/");
+      try {
+        await ghApi(`repos/${repo}/git/refs/heads/${ref}`, "DELETE");
+        events.push(`deleted branch ${pr.head.ref}`);
+      } catch (error) {
+        events.push(`could not delete branch ${pr.head.ref}: ${(error as Error).message}`);
+      }
     }
     return result;
   };

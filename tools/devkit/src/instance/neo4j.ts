@@ -20,36 +20,49 @@ export interface Neo4jContainer {
  * removed again (by its id) before the error is thrown.
  */
 export async function startNeo4j(id: string, password: string): Promise<Neo4jContainer> {
+  // The password reaches Docker through the environment (`-e NAME` copies it from there), so it
+  // is in no command line, process list or error message.
+  const env = { ...process.env, NEO4J_AUTH: `neo4j/${password}`, NEO4J_PASSWORD: password };
   const containerId = (
-    await runChecked("docker", [
-      "run",
-      "-d",
-      "--name",
-      `kalzit-devkit-neo4j-${id}`,
-      "--label",
-      `kalzit-devkit-instance=${id}`,
-      "-p",
-      "127.0.0.1::7687",
-      "-e",
-      `NEO4J_AUTH=neo4j/${password}`,
-      "-e",
-      "NEO4J_server_memory_heap_initial__size=256m",
-      "-e",
-      "NEO4J_server_memory_heap_max__size=512m",
-      "-e",
-      "NEO4J_server_memory_pagecache_size=128m",
-      NEO4J_IMAGE,
-    ])
+    await runChecked(
+      "docker",
+      [
+        "run",
+        "-d",
+        "--name",
+        `kalzit-devkit-neo4j-${id}`,
+        "--label",
+        `kalzit-devkit-instance=${id}`,
+        "-p",
+        "127.0.0.1::7687",
+        "-e",
+        "NEO4J_AUTH",
+        "-e",
+        "NEO4J_server_memory_heap_initial__size=256m",
+        "-e",
+        "NEO4J_server_memory_heap_max__size=512m",
+        "-e",
+        "NEO4J_server_memory_pagecache_size=128m",
+        NEO4J_IMAGE,
+      ],
+      { env },
+    )
   ).trim();
   try {
     const mapped = (await runChecked("docker", ["port", containerId, "7687/tcp"])).trim();
     const first = mapped.split("\n")[0] ?? "";
     const port = Number(first.slice(first.lastIndexOf(":") + 1));
     const shell = (input: string) =>
-      run("docker", ["exec", "-i", containerId, "cypher-shell", "-u", "neo4j", "-p", password], {
-        input,
-        timeoutMs: 60_000,
-      });
+      // cypher-shell reads NEO4J_PASSWORD from its environment.
+      run(
+        "docker",
+        ["exec", "-i", "-e", "NEO4J_PASSWORD", containerId, "cypher-shell", "-u", "neo4j"],
+        {
+          input,
+          env,
+          timeoutMs: 60_000,
+        },
+      );
     let ready = false;
     for (let i = 0; i < 90 && !ready; i++) {
       ready = (await shell("RETURN 1;")).code === 0;

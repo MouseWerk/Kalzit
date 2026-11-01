@@ -59,9 +59,15 @@ fix the page clock to it, so captures repeat; `--no-fixed-clock` puts the data a
   it as a server provider, turns AI on and opens the sources to AI, for Explore's AI buttons and
   Fragen.
 
-The result names the URL and the generated credentials. The CLI hides them unless
-`--show-credentials` is given; they are always in `credentials.json` in the run folder and are
-never written to a log. The server's build goes through `CARGO_BUILD_JOBS=2` unless set.
+The result names the URL, the owner's email and `credentialsFile`; the passwords are only in
+`credentials.json` in the run folder (the Neo4j password reaches Docker through the environment,
+never a command line). `--show-credentials` (MCP: `showCredentials`) adds them to the result.
+On Linux the run folder and its files are private by mode (0700/0600); on Windows modes mean
+nothing, so the run folder gets an ACL without inherited entries and full control for the current
+user only. The server's build goes through `CARGO_BUILD_JOBS=2` unless set.
+
+`--binary` and `KALZIT_DEVKIT_BINARY` name a file that is copied into the run folder and
+executed: only point them at a Kalzit build you trust.
 
 Stopping ends only the PIDs and containers the instance started (a PID is only ended when its
 command line still names the run folder; containers by id), then removes the run folder. An
@@ -140,7 +146,10 @@ Playwright) and assertion lines, and classifies each job:
   or ran out of disk, an action could not be downloaded, a job failed without a failed step, or
   network and download errors without failing tests
 - `code`: failing tests, compiler, type or lint errors
-- `cancelled`, or `unknown` when nothing in the log is recognised (the failed steps are listed)
+- `cancelled`, or `unknown` when nothing in the log is recognised (the failed steps are listed),
+  when the job hit its time limit (a hang in the code looks the same as a slow runner), or when a
+  reset connection or 5xx shows up in a step that runs the product itself (smoke, health, Docker,
+  package and installer steps), where it can be a crash
 
 ```
 node dist/cli.js ci-status 181
@@ -151,7 +160,8 @@ node dist/cli.js ci-failures --run 18934123456
 ### merge_pr
 
 Merges a PR through the merge queue: stops on conflicts (DIRTY), waits until every check on the
-head finished, reruns the failed jobs once when all failures are runner faults (or cancelled),
+head finished, reruns the failed jobs once when every failure is a runner fault (never cancelled
+or timed-out jobs, and never when a failing check is no Actions job),
 enqueues the PR (GraphQL `enqueuePullRequest` with the expected head), and waits until it is
 merged. When the merge group fails for runner reasons it enqueues once more; real failures stop
 it with the classified failures. Deletes the head branch after the merge (`--no-delete-branch`
@@ -178,7 +188,9 @@ Maps a diff (default: the branch against `origin/main` plus uncommitted and untr
 
 `--run` runs them with the load limits (`CARGO_BUILD_JOBS=2`, `vitest --maxWorkers=2`,
 Playwright `--workers=2` on Chromium with its own `KALZIT_E2E_RUN_DIR`) and reports each exit code
-with the log's tail.
+with the log's tail. Commands run without a shell (vitest and Playwright as `node <package
+script>`), only tracked files with plain names (`[A-Za-z0-9_./-]`) become arguments, other paths
+are listed as uncovered, and `--base` has to be a revision git knows.
 
 ```
 node dist/cli.js affected-tests

@@ -155,9 +155,11 @@ export async function captureScreens(options: CaptureOptions): Promise<CaptureMa
     const sceneOut = join(out, "scenes", scene);
     const binary = await resolveBinary({});
     const log = join(out, `scene-${scene}.log`);
-    const result = await run("npx", ["playwright", "test", "-c", `e2e/${spec.config}`, spec.file], {
+    // The Playwright CLI run by this Node directly, without npx or a shell.
+    const cli = join(UI_DIR, "node_modules", "@playwright", "test", "cli.js");
+    const args = [cli, "test", "-c", `e2e/${spec.config}`, spec.file];
+    const result = await run(process.execPath, args, {
       cwd: UI_DIR,
-      shell: true,
       env: {
         ...process.env,
         KALZIT_E2E_BINARY: binary,

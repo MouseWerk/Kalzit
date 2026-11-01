@@ -61,13 +61,19 @@ export const TOOLS = [
       binary: z.string().optional().describe("Use this server binary instead of building"),
       rebuild: z.boolean().optional().describe("Build even when a binary exists"),
       profile: z.enum(["e2e", "release"]).optional().describe("Cargo profile (default e2e)"),
+      showCredentials: z
+        .boolean()
+        .optional()
+        .describe("Also return the passwords; by default only the owner's email and the file"),
     },
     run: async (args, ctx) => {
-      const result = await startInstance({ ...stripUndefined(args), log: ctx.log });
+      const { showCredentials, ...options } = stripUndefined(args);
+      const result = await startInstance({ ...options, log: ctx.log });
       return {
         id: result.instance.id,
         url: result.instance.url,
-        credentials: result.credentials,
+        owner: result.credentials.owner?.email,
+        ...(showCredentials === true ? { credentials: result.credentials } : {}),
         credentialsFile: result.credentialsPath,
         runDir: result.instance.runDir,
         serverLog: result.instance.logPath,
