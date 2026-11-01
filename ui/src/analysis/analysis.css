@@ -14,45 +14,47 @@
 
   .steps__list {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-2);
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
+  /* A compact card with a quiet edge, raised off the rail or tab it sits on (Explore board). */
   .step {
     display: grid;
-    gap: var(--space-3);
-    padding: var(--space-3);
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
-    background: var(--bg-surface);
+    background: var(--bg-raised);
   }
 
   .step__header {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-1) var(--space-2);
   }
 
   .step__number {
-    min-width: var(--space-6);
+    min-width: var(--space-5);
     padding: 0 var(--space-1);
     border-radius: var(--radius-pill);
     background: var(--bg-active);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
     text-align: center;
   }
 
   .step__title {
-    font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-medium);
   }
 
   .step__actions {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-1);
+    gap: 0;
     margin-inline-start: auto;
   }
 
@@ -63,8 +65,8 @@
 
   .step__form {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--size-list-max), 1fr));
-    gap: var(--space-3);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--size-list-max)), 1fr));
+    gap: var(--space-2) var(--space-3);
     align-items: start;
   }
 
@@ -109,7 +111,7 @@
 
   .step__status {
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
   }
 
   .steps__error {
@@ -119,7 +121,7 @@
   /* Where a step runs, and whether it changes the shape (graph steps). */
   .step__where {
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
   }
 
   /* The shapes a step reads and makes, "Graph → Tabelle": a quiet tag, no color. */
