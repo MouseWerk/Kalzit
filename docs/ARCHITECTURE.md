@@ -1737,8 +1737,10 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
   the runnable ones. An unsigned plugin starts only while unsigned plugins are allowed, at boot
   (`PluginHost::load`) as in a sync. A package
   not on disk is unpacked from the shared copy into `.partial-<dir>`, checked like an
-  installation (valid package, the stored manifest byte for byte, every file as listed, the
-  binary or the panel bundle), renamed into place and marked complete (`<dir>.complete`, also
+  installation (only a generated directory name; the archive against its stored SHA-256 before
+  anything is written; the stored manifest byte for byte; the signature verified with the keys
+  this server trusts and matching the stored signer and key; every file as listed, the binary or
+  the panel bundle; a refusal is logged and audited as `plugins.package_refused`), renamed into place and marked complete (`<dir>.complete`, also
   written by an installation); a directory without the mark is unpacked again when a shared copy
   exists. Package directories no plugin refers to are removed. A sync that left a plugin out or
   failed is tried again after 5 s, doubling up to 5 minutes. The leader deletes shared copies no
