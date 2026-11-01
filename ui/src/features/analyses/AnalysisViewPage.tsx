@@ -209,6 +209,7 @@ function AnalysisView({
                 range={timeRange}
                 pending={result.isPending}
                 error={result.error}
+                onRetry={() => void result.refetch()}
                 outcomes={result.data ?? []}
                 revision={String(result.dataUpdatedAt)}
                 kindOf={kindOf}

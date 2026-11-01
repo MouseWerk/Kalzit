@@ -558,6 +558,11 @@ export function PanelEditor({
     [onMakeLibrary],
   );
   const pending = firstLoad(results);
+  // Runs the preview's queries again after a data source error, as they were last run.
+  const { refetch } = results;
+  const retry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   /** Takes over another panel's or an analysis's queries, steps and look, and runs them. */
   function takeOver(next: PanelModel) {
@@ -765,6 +770,7 @@ export function PanelEditor({
         range={range}
         pending={pending}
         error={results.error}
+        onRetry={retry}
         outcomes={outcomes}
         stepsRun={stepsRun}
         variables={texts}

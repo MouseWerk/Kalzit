@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { PanelPlugin } from "../../panels/types";
 import { expectConsoleOutput } from "../../test/console";
@@ -87,5 +87,98 @@ describe("a panel body whose panel fails while drawing", () => {
     view.rerender(<div>{body(panel("table", {}))}</div>);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("table")).toBeTruthy();
+  });
+});
+
+describe("a panel body while loading or after a data source error", () => {
+  it("shows a skeleton, not a spinner or text, while the first answer is on its way", () => {
+    render(
+      <PanelBody
+        panel={panel("table", {})}
+        title="Panel"
+        range={{ from: 0, to: 1 }}
+        pending
+        error={null}
+        outcomes={[]}
+      />,
+    );
+    const status = screen.getByRole("status");
+    expect(status.getAttribute("aria-busy")).toBe("true");
+    expect(status.textContent).toBe("Loading…");
+    expect(status.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+  });
+
+  it("offers Retry beside a failed request and beside a query's error", () => {
+    const onRetry = vi.fn();
+    const view = render(
+      <PanelBody
+        panel={panel("table", {})}
+        title="Panel"
+        range={{ from: 0, to: 1 }}
+        pending={false}
+        error={new Error("connection refused")}
+        outcomes={[]}
+        onRetry={onRetry}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <PanelBody
+        panel={panel("table", {})}
+        title="Panel"
+        range={{ from: 0, to: 1 }}
+        pending={false}
+        error={null}
+        outcomes={[{ refId: "A", error: { code: "datasource", message: "timed out" } }]}
+        onRetry={onRetry}
+      />,
+    );
+    expect(screen.getByRole("alert").querySelector("li")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("a state timeline over several queries", () => {
+  const status = (refId: string, values: string[]): TargetOutcome => ({
+    refId,
+    result: {
+      shape: "frame",
+      frame: {
+        fields: [
+          { name: "time", type: "time", values: values.map((_, i) => i * 1000) },
+          { name: "state", type: "string", values },
+        ],
+      },
+    },
+  });
+
+  it("draws one row per query, not only the first query's", () => {
+    const model: PanelModel = {
+      ...panel("state-timeline", {}),
+      targets: ["A", "B", "C"].map((refId) => ({
+        refId,
+        datasourceId: "ds",
+        query: { sql: "SELECT 1" },
+      })),
+    };
+    const { container } = render(
+      <PanelBody
+        panel={model}
+        title="Services"
+        range={{ from: 0, to: 3000 }}
+        pending={false}
+        error={null}
+        outcomes={[
+          status("A", ["ok", "down"]),
+          status("B", ["degraded", "ok"]),
+          status("C", ["ok", "ok"]),
+        ]}
+      />,
+    );
+    const names = [...container.querySelectorAll(".state__name")].map((n) => n.textContent);
+    expect(names).toEqual(["state (A)", "state (B)", "state (C)"]);
   });
 });
