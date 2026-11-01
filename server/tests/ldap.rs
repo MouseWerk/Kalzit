@@ -767,8 +767,9 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     let r = app.post(&sync, json!({}), &admin).await;
     assert_eq!((r.body["status"].as_str(), r.body["reactivated"].as_i64()), (Some("done"), Some(0)), "{}", r.body);
     assert!(app.disabled("gina@kalzit.test").await);
-    let r = app.login("gina", "gina-geheim-1").await;
-    assert_eq!(r.body["error"]["params"]["outcome"], "disabled", "{}", r.body);
+    // Refused like a wrong password; the attempt stays counted, so from an address of its own.
+    let r = app.login_from("10.20.0.1", "gina", "gina-geheim-1").await;
+    assert_eq!((r.status, &r.body["error"]["code"]), (StatusCode::UNAUTHORIZED, &json!("invalid_credentials")));
     assert!(app.disabled("gina@kalzit.test").await);
     // The refusal is on her recent sign-ins, for a server admin to see.
     let (gina_id,): (String,) =
@@ -809,8 +810,8 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     let user = format!("/api/admin/users/{jo_id}");
     let r = app.send(Method::PATCH, &user, Some(json!({ "disabled": true })), Some(&admin)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let r = app.login("jo", "jo-geheim-1").await;
-    assert_eq!((r.status, r.body["error"]["params"]["outcome"].as_str()), (StatusCode::FORBIDDEN, Some("disabled")));
+    let r = app.login_from("10.21.0.1", "jo", "jo-geheim-1").await;
+    assert_eq!((r.status, &r.body["error"]["code"]), (StatusCode::UNAUTHORIZED, &json!("invalid_credentials")));
     assert!(r.cookie("kalzit_pending").is_none() && r.body["secondFactor"].is_null(), "no second step");
 
     // A second step started while the account was enabled, finished after the sync disabled it:
