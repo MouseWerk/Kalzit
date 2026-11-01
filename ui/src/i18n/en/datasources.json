@@ -456,6 +456,7 @@
   "datasources.reason.source.connect_refused": "Cannot connect to {address}: connection refused. Check that the database server is running and reachable on this port.",
   "datasources.reason.source.connect_timeout": "Cannot connect to {address}: no answer within {seconds} seconds. Check the address, port and firewall.",
   "datasources.reason.source.connect_failed": "Cannot connect to {address}: {detail}",
+  "datasources.reason.source.auth_failed": "The data source refused the sign-in. Check the user name and password or token.",
   "datasources.reason.source.pool_timeout": "No connection to the data source was free within {seconds} seconds. The server is reachable but busy or slow to accept a login; try again in a moment.",
   "datasources.reason.source.connection_lost": "The connection to the data source was interrupted, for example because the database server restarted. Try again in a moment.",
   "datasources.reason.sqlite.open_failed": "The SQLite file could not be opened: {detail}",

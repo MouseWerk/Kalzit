@@ -144,6 +144,15 @@ fn failed(e: sqlx::Error) -> SourceError {
             SourceError::rejected("query.write_refused", format!("the query tried to write: {}", db.message()))
                 .with("detail", db.message())
         }
+        // 1045: access denied (wrong password or no such user); 1698: access denied without a
+        // password (a login bound to the system user).
+        sqlx::Error::Database(db)
+            if db
+                .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
+                .is_some_and(|e| matches!(e.number(), 1045 | 1698)) =>
+        {
+            connect::auth_failed(db.message())
+        }
         sqlx::Error::Database(db) => SourceError::from_source(db.message()),
         sqlx::Error::Io(io) if connect::is_dead(io.kind()) => connect::lost(io),
         other => SourceError::from_source(other.to_string()),
