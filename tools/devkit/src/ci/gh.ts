@@ -110,6 +110,8 @@ export async function jobLog(
   runId: number,
 ): Promise<{ text?: string; source: string }> {
   const attempts: [string, string[]][] = [
+    // Logs carry color codes, which newer gh versions only print with this flag.
+    ["api", ["api", "--allow-escape-sequences", `repos/${repo}/actions/jobs/${jobId}/logs`]],
     ["api", ["api", `repos/${repo}/actions/jobs/${jobId}/logs`]],
     ["run view --log", ["run", "view", String(runId), "-R", repo, "--job", String(jobId), "--log"]],
     ["run view --log-failed", ["run", "view", String(runId), "-R", repo, "--log-failed"]],

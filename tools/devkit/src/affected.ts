@@ -175,7 +175,9 @@ export function mapAffected(changed: readonly string[], repo: RepoView): Affecte
         // Named after the file's topic in the same folder: TeamsPage.tsx and teams.test.tsx.
         const topic = name.toLowerCase().replace(/(page|dialog|panel|view|form)$/, "");
         found = uiTests.filter((t) => {
-          const test = basenameNoExt(t).replace(/\.test$/, "").toLowerCase();
+          const test = basenameNoExt(t)
+            .replace(/\.test$/, "")
+            .toLowerCase();
           return t.startsWith(`${dir}/`) && topic.length >= 3 && test.startsWith(topic);
         });
       }
