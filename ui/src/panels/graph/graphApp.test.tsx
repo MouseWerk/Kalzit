@@ -104,7 +104,7 @@ describe("graph panels on a dashboard", () => {
       }),
     );
     expect(within(nodes(panel)).getByRole("button", { name: "Oak & Co" })).toBeTruthy();
-    const pinned = within(panel).getByRole("region", { name: "Pinned" });
+    const pinned = within(panel).getByRole("group", { name: "Pinned" });
     expect(within(pinned).getByText("step 1")).toBeTruthy();
     // Kept on the server for this viewer and panel, after a short pause.
     await waitFor(
@@ -139,7 +139,7 @@ describe("graph panels on a dashboard", () => {
     renderApp("/dashboards/d-shop");
     const panel = await screen.findByRole("article", { name: "Purchases" });
     expect(await within(panel).findByRole("region", { name: "Details of Grace" })).toBeTruthy();
-    const pinned = within(panel).getByRole("region", { name: "Pinned" });
+    const pinned = within(panel).getByRole("group", { name: "Pinned" });
     expect(within(pinned).getByRole("button", { name: "Lamp" })).toBeTruthy();
   });
 
