@@ -40,6 +40,7 @@ jobs:
       devkit: ${{ steps.areas.outputs.devkit }}
       devgen: ${{ steps.areas.outputs.devgen }}
       devgen_proof: ${{ steps.areas.outputs.devgen_proof }}
+      roadmap: ${{ steps.areas.outputs.roadmap }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -507,6 +508,23 @@ jobs:
         run: npm run build
         env:
           KALZIT_LICENSES_STRICT: "0"
+
+  # The milestone progress bars of the README: the committed SVGs, the README's alt text and the
+  # Status column of its roadmap table must match docs/roadmap/progress.json. Plain Node, no
+  # install.
+  roadmap:
+    name: roadmap
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.roadmap == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 26
+      - run: node tools/roadmap/render-progress.mjs --check
 
   # The developer toolkit (tools/devkit): format, lint, types, unit tests and the build. It is
   # never part of the product binary or packages. Its instance smoke test runs locally only.
