@@ -17,24 +17,23 @@
 //! with a notice naming them.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::Semaphore;
 
 use super::Detail;
 use super::bolt::{self, BoltConn, BoltError, Bv, PullEnd};
 use super::cypher::Checked;
 use super::frame::{Column, FrameBuilder};
 use super::graph::{GraphBuilder, GraphLimits, float_value, int_value};
+use super::pool::{ConnPool, Lease, Pooled};
 use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
     SourceQuery, SourceSchema,
 };
-use crate::locks::MutexExt;
 use crate::shapes::{Edge, FieldType, GraphPath, Node, NoticeSeverity, QueryResult, Shape};
 
 const fn common() -> [SettingField; 10] {
@@ -149,12 +148,6 @@ struct CypherQuery {
     cypher: String,
 }
 
-/// Open connections; the semaphore bounds them, idle ones wait with the time they came back.
-struct Pool {
-    idle: Mutex<Vec<(Opened, Instant)>>,
-    slots: Semaphore,
-}
-
 /// A connection and what Kalzit learned when it opened it.
 struct Opened {
     conn: BoltConn,
@@ -164,97 +157,44 @@ struct Opened {
     checked: Instant,
 }
 
-/// A connection on loan. It goes back only through `release`, after a clean finish; one dropped
-/// mid-query (timeout, cancelled request, a limit reached) is interrupted and closed
-/// (`BoltConn::interrupt`), which stops the server's query and ends its transaction.
-struct Lease<'p> {
-    pool: &'p Pool,
-    opened: Option<Opened>,
-    /// The connection waited in the pool before (it was not opened for this lease).
-    reused: bool,
-    _permit: tokio::sync::SemaphorePermit<'p>,
-}
-
-impl Lease<'_> {
-    fn conn(&mut self) -> &mut BoltConn {
-        &mut self.opened.as_mut().expect("a lease holds its connection until released").conn
+/// Bolt has no pool of its own; this one (`pool.rs`) bounds the open connections and closes idle
+/// ones. One the server closed while it waited (a restart) is dropped, not handed out.
+impl Pooled for Opened {
+    fn reusable(&mut self) -> bool {
+        !self.conn.broken && self.conn.is_alive()
     }
 
-    /// Back to the pool, unless the connection is in an unknown state (then it is closed).
-    fn release(mut self) {
-        if let Some(o) = self.opened.take()
-            && !o.conn.broken
-        {
-            self.pool.idle.lock_or_recover().push((o, Instant::now()));
-        }
-    }
-
-    /// Closes a connection that broke, and the idle ones with it: they most likely went down with
-    /// the same server.
-    fn discard(mut self) {
-        self.opened = None;
-        self.pool.idle.lock_or_recover().clear();
+    /// Given up mid-query (timeout, cancelled request, a limit reached): interrupted and closed
+    /// (`BoltConn::interrupt`), which stops the server's query and ends its transaction.
+    async fn abandon(self) {
+        self.conn.interrupt().await;
     }
 }
 
-impl Drop for Lease<'_> {
-    fn drop(&mut self) {
-        // Not released: given up mid-query. The interrupt runs on its own, since the request
-        // that dropped the lease may be gone already.
-        if let Some(o) = self.opened.take()
-            && let Ok(runtime) = tokio::runtime::Handle::try_current()
-        {
-            runtime.spawn(o.conn.interrupt());
-        }
-    }
+async fn pool(conn: &Connection) -> Result<Arc<ConnPool<Opened>>, SourceError> {
+    conn.shared(|| async { Ok(ConnPool::new(POOL_SIZE, IDLE_TIMEOUT)) }).await
 }
 
-async fn pool(conn: &Connection) -> Result<Arc<Pool>, SourceError> {
-    conn.shared(|| async { Ok(Pool { idle: Mutex::new(Vec::new()), slots: Semaphore::new(POOL_SIZE) }) }).await
-}
-
-async fn lease<'p>(flavor: Flavor, conn: &Connection, pool: &'p Pool) -> Result<Lease<'p>, SourceError> {
-    let permit =
-        pool.slots.acquire().await.map_err(|_| SourceError::failed("server.shutting_down", "the pool is closed"))?;
-    let idle = {
-        let mut idle = pool.idle.lock_or_recover();
-        idle.retain(|(_, since)| since.elapsed() < IDLE_TIMEOUT);
-        // One the server closed while it waited (a restart) is dropped, not handed out.
-        let mut alive = None;
-        while let Some((mut o, _)) = idle.pop() {
-            if o.conn.is_alive() {
-                alive = Some(o);
-                break;
+async fn lease(flavor: Flavor, conn: &Connection, pool: &Arc<ConnPool<Opened>>) -> Result<Lease<Opened>, SourceError> {
+    let mut lease = pool.checkout(|| open(flavor, conn)).await?;
+    // A user's privileges can change while a connection waits in the pool.
+    if lease.reused() && needs_recheck(flavor, lease.checked.elapsed()) {
+        let s: Settings = conn.settings_as()?;
+        match checked_privileges(&mut lease.conn, &s).await {
+            Ok(privileges) => {
+                lease.write_privileges = privileges;
+                lease.checked = Instant::now();
             }
-        }
-        alive
-    };
-    let mut reused = idle.is_some();
-    let opened = match idle {
-        // A user's privileges can change while a connection waits in the pool.
-        Some(mut o) if needs_recheck(flavor, o.checked.elapsed()) => {
-            let s: Settings = conn.settings_as()?;
-            match checked_privileges(&mut o.conn, &s).await {
-                Ok(privileges) => {
-                    o.write_privileges = privileges;
-                    o.checked = Instant::now();
-                    o
-                }
-                // The check is the connection's first round trip: one that broke while it waited
-                // is closed, with the other idle ones, and a fresh one is opened.
-                Err(e) if super::connect::is_lost(&e) => {
-                    drop(o);
-                    pool.idle.lock_or_recover().clear();
-                    reused = false;
-                    open(flavor, conn).await?
-                }
-                Err(e) => return Err(e),
+            // The check is the connection's first round trip: one that broke while it waited
+            // is closed, with the other idle ones, and a fresh one is opened.
+            Err(e) if super::connect::is_lost(&e) => {
+                lease.discard();
+                lease = pool.checkout(|| open(flavor, conn)).await?;
             }
+            Err(e) => return Err(e),
         }
-        Some(o) => o,
-        None => open(flavor, conn).await?,
-    };
-    Ok(Lease { pool, opened: Some(opened), reused, _permit: permit })
+    }
+    Ok(lease)
 }
 
 /// Whether a pooled connection has its user's privileges checked again before use.
@@ -499,13 +439,13 @@ impl DataSourcePlugin for GraphDb {
             let db = s.database.as_deref();
             let pool = pool(conn).await?;
             let mut lease = lease(flavor, conn, &pool).await?;
-            let agent = lease.conn().server.clone();
+            let agent = lease.conn.server.clone();
             let mut version = agent_version(&agent);
             let mut edition = String::new();
             match flavor {
                 Flavor::Neo4j => {
                     let rows = read_all(
-                        lease.conn(),
+                        &mut lease.conn,
                         db,
                         "CALL dbms.components() YIELD name, versions, edition RETURN versions[0], edition",
                     )
@@ -518,16 +458,13 @@ impl DataSourcePlugin for GraphDb {
                 }
                 Flavor::Memgraph => {
                     // Test connection checks the privileges again, also on a pooled connection.
-                    let write = checked_privileges(lease.conn(), &s).await?;
-                    if let Some(o) = lease.opened.as_mut() {
-                        o.write_privileges = write;
-                    }
-                    if let Some(rows) = try_auto(lease.conn(), db, "SHOW VERSION").await
+                    lease.write_privileges = checked_privileges(&mut lease.conn, &s).await?;
+                    if let Some(rows) = try_auto(&mut lease.conn, db, "SHOW VERSION").await
                         && let Some(v) = rows.first().and_then(|r| r.first()).and_then(Bv::as_str)
                     {
                         version = v.to_string();
                     }
-                    if let Some(rows) = try_auto(lease.conn(), db, "SHOW LICENSE INFO").await {
+                    if let Some(rows) = try_auto(&mut lease.conn, db, "SHOW LICENSE INFO").await {
                         let valid = rows.iter().any(|r| {
                             r.first().and_then(Bv::as_str) == Some("is_valid") && r.get(1) == Some(&Bv::Bool(true))
                         });
@@ -535,7 +472,7 @@ impl DataSourcePlugin for GraphDb {
                     }
                 }
             }
-            let write = lease.opened.as_ref().map(|o| o.write_privileges.join(", ")).unwrap_or_default();
+            let write = lease.write_privileges.join(", ");
             lease.release();
             Ok::<_, SourceError>((version, edition, write))
         };
@@ -587,7 +524,7 @@ impl DataSourcePlugin for GraphDb {
         };
         let mut lists = Vec::new();
         for q in queries {
-            lists.push(texts(&read_all(lease.conn(), db, q).await.map_err(BoltError::into_source)?));
+            lists.push(texts(&read_all(&mut lease.conn, db, q).await.map_err(BoltError::into_source)?));
         }
         lease.release();
         let [labels, edge_types, property_keys]: [Vec<String>; 3] = lists.try_into().expect("three lists");
@@ -607,7 +544,7 @@ impl DataSourcePlugin for GraphDb {
         let db = s.database.as_deref();
         let pool = pool(conn).await?;
         let first = lease(self.0, conn, &pool).await?;
-        let reused = first.reused;
+        let reused = first.reused();
         match run(first, conn, &req, &q.cypher, &checked, db).await {
             // The pooled connection broke before any record arrived (the server restarted after
             // it was checked): once more on a fresh connection, which is safe as the query only
@@ -637,17 +574,17 @@ impl Attempt {
 
 /// One run of a query on the leased connection, which goes back to the pool after a clean finish.
 async fn run(
-    mut lease: Lease<'_>,
+    mut lease: Lease<Opened>,
     conn: &Connection,
     req: &SourceQuery,
     cypher: &str,
     checked: &Checked,
     db: Option<&str>,
 ) -> Result<QueryResult, Attempt> {
-    let params = parameters(checked, req, lease.conn().utc).map_err(Attempt::Failed)?;
+    let params = parameters(checked, req, lease.conn.utc).map_err(Attempt::Failed)?;
     let mut received = false;
     let outcome = async {
-        let c = lease.conn();
+        let c = &mut lease.conn;
         let utc = c.utc;
         c.begin(db, req.limits.timeout, true).await?;
         let fields = c.run(cypher, params).await?;
@@ -1231,6 +1168,7 @@ mod tests {
     use crate::datasources::Limits;
     use crate::datasources::frame::ResponseBudget;
     use crate::shapes::TimeRange;
+    use std::sync::Mutex;
 
     fn req(max_rows: usize) -> SourceQuery {
         SourceQuery {
@@ -1586,7 +1524,7 @@ mod tests {
         // The lease drops it before sending anything, rather than finding out at BEGIN.
         let pool = pool(&conn).await.unwrap();
         let fresh = lease(Flavor::Neo4j, &conn, &pool).await.unwrap();
-        assert!(!fresh.reused, "the closed connection was handed out");
+        assert!(!fresh.reused(), "the closed connection was handed out");
         assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
         fresh.release();
         plugin.query(&conn, one_row()).await.unwrap();

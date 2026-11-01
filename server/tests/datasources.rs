@@ -170,11 +170,15 @@ impl T {
     }
 
     async fn create(&self, kind: &str, settings: Value, secrets: Value) -> String {
+        self.create_named(kind, kind, settings, secrets).await
+    }
+
+    async fn create_named(&self, name: &str, kind: &str, settings: Value, secrets: Value) -> String {
         let (status, body) = self
             .send(
                 Method::POST,
                 "/datasources",
-                Some(json!({ "name": kind, "kind": kind, "settings": settings, "secrets": secrets })),
+                Some(json!({ "name": name, "kind": kind, "settings": settings, "secrets": secrets })),
             )
             .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -486,7 +490,8 @@ async fn postgres_errors_never_show_the_password() {
     assert!(!bad.to_string().contains(&wrong));
     let h = t.health(&id).await;
     assert_eq!(h["ok"], false, "{h}");
-    assert_eq!(h["reason"], "source.error", "{h}");
+    assert_eq!(h["reason"], "source.auth_failed", "SQLSTATE 28P01: {h}");
+    assert_eq!(h["code"], "datasource_error", "{h}");
     assert!(!h.to_string().contains(&wrong), "{h}");
     t.finish().await;
 }
@@ -516,6 +521,19 @@ async fn mysql_like(url: &str) {
         .await;
     let h = t.health(&id).await;
     assert_eq!(h["ok"], true, "{h}");
+    // A wrong password is a refused login (error 1045), without the password.
+    let wrong = format!("{}-falsch", password.clone().unwrap_or_default());
+    let bad = t
+        .create_named(
+            "mysql-falsch",
+            "mysql",
+            json!({ "host": host, "port": port, "database": database, "user": user }),
+            json!({ "password": wrong }),
+        )
+        .await;
+    let h = t.health(&bad).await;
+    assert_eq!((h["ok"].clone(), h["reason"].clone()), (json!(false), json!("source.auth_failed")), "{h}");
+    assert!(!h.to_string().contains(&wrong), "{h}");
     let r = t
         .query(
             &id,
@@ -619,7 +637,7 @@ async fn mssql_reads_and_rolls_back() {
     let t = T::new(None).await;
     let settings =
         json!({ "host": host, "port": port, "database": database, "user": user, "trustServerCertificate": true });
-    let id = t.create("mssql", settings, secrets(password)).await;
+    let id = t.create("mssql", settings, secrets(password.clone())).await;
     let h = t.health(&id).await;
     assert_eq!(h["ok"], true, "{h}");
     let r = t
@@ -688,6 +706,22 @@ async fn mssql_reads_and_rolls_back() {
     assert_eq!(slow["error"]["code"], "query_timeout", "{slow}");
     let after = t.query(&id, json!({ "sql": "SELECT 1 AS eins" })).await;
     assert!(after["result"].is_object(), "{after}");
+
+    // More queries at once than the pool holds connections: they wait for a free one and all
+    // answer, on connections the pool hands out again.
+    let many = (0..10).map(|i| t.query(&id, json!({ "sql": format!("SELECT {i} AS n") })));
+    for (i, r) in futures_util::future::join_all(many).await.into_iter().enumerate() {
+        assert_eq!(r["result"]["frame"]["fields"][0]["values"][0], i, "{r}");
+    }
+
+    // A wrong password is a refused login (error 18456), without the password.
+    let wrong = format!("{}-falsch", password.clone().unwrap_or_default());
+    let settings =
+        json!({ "host": host, "port": port, "database": database, "user": user, "trustServerCertificate": true });
+    let bad = t.create_named("mssql-falsch", "mssql", settings, json!({ "password": wrong })).await;
+    let h = t.health(&bad).await;
+    assert_eq!((h["ok"].clone(), h["reason"].clone()), (json!(false), json!("source.auth_failed")), "{h}");
+    assert!(!h.to_string().contains(&wrong), "{h}");
     t.finish().await;
 }
 
@@ -901,6 +935,15 @@ async fn neo4j_reads_graphs_in_read_transactions() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let r = t.query(&id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN n" })).await;
     assert_eq!(r["result"]["graph"]["truncated"]["reason"], "graph.node_limit", "{r}");
+
+    // A wrong password is a refused login (Neo.ClientError.Security.Unauthorized). Only once:
+    // Neo4j locks a login out for a while after several failed attempts.
+    let (mut settings, _) = graph_settings(&url, json!({}));
+    settings["maxNodes"] = json!(10);
+    let bad = t.create_named("neo4j-falsch", "neo4j", settings, json!({ "password": "kalzit-falsch-1" })).await;
+    let h = t.health(&bad).await;
+    assert_eq!((h["ok"].clone(), h["reason"].clone()), (json!(false), json!("source.auth_failed")), "{h}");
+    assert!(!h.to_string().contains("kalzit-falsch-1"), "{h}");
 }
 
 #[tokio::test]

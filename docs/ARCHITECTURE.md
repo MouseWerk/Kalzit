@@ -322,6 +322,17 @@ type QueryResult =
   the same build instead of each opening a pool and logging in. A connection nobody holds closes
   its SQLite file when dropped (also one whose entry was forgotten while it was built), and a
   build that finishes after the server began to stop is closed instead of used.
+  - The sqlx sources use sqlx's pool; SQL Server and Neo4j/Memgraph, whose drivers have none,
+    share `datasources::pool`: at most four open connections per source, idle ones closed after
+    five minutes by a sweep that runs while any wait, every idle connection looked at without a
+    round trip before it is handed out (the server closed it, sent something unasked, or it is in
+    an unknown state: closed, and another taken), and no broken connection put back. A lease
+    dropped mid-query stops the query on the server (SQL Server attention, Bolt `RESET`) and
+    closes the connection.
+  - The HTTP sources share `datasources::http_source`: the `Authorization` header (marked
+    sensitive), one `Scrubber` with every stored secret and the base64 of `user:password`, and
+    one mapping from `HttpError` (blocked target, refused hop, unreachable, timed out, `401`).
+    Failures are classified by error codes, never by the text of a message.
 - **Secrets** (passwords, tokens, client keys) never live in plain settings: settings with a URL
   or DSN reject embedded credentials, which go into dedicated secret fields.
   - Stored in `datasource_secrets`, encrypted with AES-256-GCM, a random 96-bit nonce per

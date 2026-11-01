@@ -35,7 +35,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Method, StatusCode, Url};
 use serde::Deserialize;
@@ -45,6 +44,7 @@ use super::Detail;
 use super::frame::{Charge, Column, FrameBuilder};
 use super::graph::{GraphBuilder, GraphLimits, float_value, int_value};
 use super::gsql::{self, Form, ParamType};
+use super::http_source::{self, Auth, Scrubber};
 use super::{
     Connection, DataSourcePlugin, FieldError, Health, Kind, QueryParam, SettingField, SettingType, SourceError,
     SourceQuery, SourceSchema,
@@ -145,7 +145,9 @@ struct Client {
     graph: String,
     user: String,
     basic: Option<HeaderValue>,
-    basic_token: Option<String>,
+    /// The secrets and the base64 of `user:password`, to scrub from errors (with the current
+    /// REST++ token, which `scrub` adds).
+    scrubber: Scrubber,
     secret: Option<String>,
     approved: Vec<String>,
     api: Api,
@@ -227,14 +229,6 @@ fn check_hop(hop: usize, url: &Url) -> Result<(), Detail> {
     .with("path", url.path()))
 }
 
-fn failed_http(e: HttpError, scrub: &dyn Fn(&str) -> String) -> SourceError {
-    match e {
-        HttpError::Blocked(b) => SourceError::Blocked(b.0),
-        HttpError::Refused(d) => SourceError::Failed(d.scrubbed(scrub)),
-        other => SourceError::Failed(other.detail().scrubbed(scrub)),
-    }
-}
-
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
     conn.shared(|| async {
         let s: Settings = conn.settings_as()?;
@@ -249,17 +243,9 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             policy: Arc::new(conn.policy().clone()),
         })
         .map_err(|e| SourceError::Failed(e.detail()))?;
-        let token = base64::engine::general_purpose::STANDARD.encode(format!(
-            "{}:{}",
-            s.user,
-            conn.secret("password").unwrap_or("")
-        ));
-        let basic = HeaderValue::from_str(&format!("Basic {token}")).map_err(|_| {
-            SourceError::failed(
-                "tigergraph.credentials_invalid",
-                "the credentials contain characters a header cannot carry",
-            )
-        })?;
+        let mut scrubber = Scrubber::new(conn);
+        let basic = Auth::Basic { user: &s.user, password: conn.secret("password").unwrap_or("") }
+            .header("tigergraph.credentials_invalid", &mut scrubber)?;
         let mut c = Client {
             http,
             gsql,
@@ -267,7 +253,7 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             graph: s.graph.clone(),
             user: s.user.clone(),
             basic: Some(basic),
-            basic_token: Some(token),
+            scrubber,
             secret: conn.secret("secret").map(String::from),
             approved: approved_list(s.approved_queries.as_deref()),
             api: Api::V4,
@@ -291,19 +277,22 @@ struct Answer {
 }
 
 impl Client {
-    fn scrub(&self, text: &str) -> String {
-        let mut out = text.to_string();
-        if let Some(t) = &self.basic_token {
-            out = out.replace(t, "***");
-        }
+    /// The current REST++ token as well: it changes, so it is no part of `scrubber`.
+    fn scrubber(&self) -> Scrubber {
+        let mut scrubber = self.scrubber.clone();
         if let Some((t, _)) = self.token.lock_or_recover().as_ref() {
-            out = out.replace(t, "***");
+            scrubber.add(t.clone());
         }
-        out
+        scrubber
     }
 
+    fn scrub(&self, text: &str) -> String {
+        self.scrubber().scrub(text)
+    }
+
+    /// A redirect is refused (`query_rejected`), see `check_hop`.
     fn failed(&self, e: HttpError) -> SourceError {
-        failed_http(e, &|t| self.scrub(t))
+        http_source::failed(e, &self.scrubber())
     }
 
     /// Sends a request and reads the body (at most `max` bytes, charged to `charge` when given).
@@ -1168,7 +1157,8 @@ impl DataSourcePlugin for TigerGraph {
             let token = c.token(false).await?;
             let mut url = c.restpp.join("version").map_err(|e| SourceError::failed("internal", e.to_string()))?;
             url.set_query(None);
-            let auth = token.and_then(|t| HeaderValue::from_str(&format!("Bearer {t}")).ok());
+            let auth = token
+                .and_then(|t| http_source::header_value(&format!("Bearer {t}"), "tigergraph.credentials_invalid").ok());
             let (status, bytes) = c.call(Method::GET, url, auth, None, &[], MAX_SMALL_RESPONSE, None).await?;
             let text = String::from_utf8_lossy(&bytes).to_string();
             let message = serde_json::from_str::<Value>(&text)
@@ -1312,7 +1302,9 @@ impl DataSourcePlugin for TigerGraph {
                 loop {
                     let token = c.token(renew).await?;
                     let had_token = token.is_some();
-                    let auth = token.and_then(|t| HeaderValue::from_str(&format!("Bearer {t}")).ok());
+                    let auth = token.and_then(|t| {
+                        http_source::header_value(&format!("Bearer {t}"), "tigergraph.credentials_invalid").ok()
+                    });
                     let (s, b) =
                         c.call(Method::GET, url.clone(), auth, None, &headers, max_bytes, Some(&mut charge)).await?;
                     // An expired or revoked token: fetch a new one once. 4.2 answers a token it
