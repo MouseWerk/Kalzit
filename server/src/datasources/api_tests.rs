@@ -393,9 +393,37 @@ async fn new_sources_get_the_auto_tls_mode_and_old_ones_keep_theirs() {
             .execute(&t.state.db)
             .await
             .unwrap();
-        let r = t.send(Method::PATCH, &path, Some(json!({ "settings": settings })), Some(&t.owner)).await;
+        let legacy = if kind == "postgres" { "prefer" } else { "preferred" };
+        let stored_mode = |t: &T| {
+            let (db, id) = (t.state.db.clone(), id.clone());
+            async move {
+                let (raw,): (String,) = sqlx::query_as("SELECT settings FROM datasources WHERE id = $1")
+                    .bind(&id)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+                serde_json::from_str::<Value>(&raw).unwrap().get("sslMode").cloned()
+            }
+        };
+        let r = t.send(Method::PATCH, &path, Some(json!({ "settings": settings.clone() })), Some(&t.owner)).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.text);
-        assert!(r.body["settings"].get("sslMode").is_none(), "{kind}: {}", r.text);
+        assert_eq!(stored_mode(&t).await, None, "{kind}");
+        // The answer shows the mode it really connects with, not the default of new sources, so
+        // the form shows it and saving it unchanged is no change of target.
+        assert_eq!(r.body["settings"]["sslMode"], legacy, "{kind}: {}", r.text);
+        let r = t.get(&format!("/datasources/{id}")).await;
+        assert_eq!(r.body["settings"]["sslMode"], legacy, "{kind}: {}", r.text);
+        let mut as_shown = settings.clone();
+        as_shown["sslMode"] = json!(legacy);
+        as_shown["maxRows"] = json!(20);
+        let r = t.send(Method::PATCH, &path, Some(json!({ "settings": as_shown })), Some(&t.owner)).await;
+        assert_eq!(r.status, StatusCode::OK, "no secrets needed: {}", r.text);
+        assert_eq!(stored_mode(&t).await, Some(json!(legacy)), "{kind}");
+        // Choosing `auto` is a change of target like any other mode.
+        let mut auto = settings;
+        auto["sslMode"] = json!("auto");
+        let r = t.send(Method::PATCH, &path, Some(json!({ "settings": auto })), Some(&t.owner)).await;
+        assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", r.text);
     }
     t.finish().await;
 }

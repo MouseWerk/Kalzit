@@ -594,7 +594,10 @@ mod tests {
     #[test]
     fn auto_requires_tls_towards_public_addresses_only() {
         let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
-        for public in ["8.8.8.8", "2a00:1450::1", "::ffff:8.8.4.4"] {
+        // 6to4 and Teredo tunnel over the internet, also with a private IPv4 address inside.
+        for public in
+            ["8.8.8.8", "2a00:1450::1", "::ffff:8.8.4.4", "2002:a00:1::1", "2002:c0a8:1::1", "2001:0:a00:1::1"]
+        {
             assert!(matches!(ssl_mode(Some("auto"), ip(public)), PgSslMode::Require), "{public}");
         }
         for private in ["127.0.0.1", "10.1.2.3", "192.168.0.5", "172.16.0.1", "::1", "fd00::5", "::ffff:10.0.0.1"] {

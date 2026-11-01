@@ -16,17 +16,37 @@ use sha2::{Digest, Sha256};
 use crate::config::TlsConfig;
 
 pub fn server_config(cfg: &TlsConfig) -> Result<Arc<ServerConfig>> {
+    config_from(cfg, &read_files(cfg)?)
+}
+
+/// The certificate and key files as read once: a reload hashes and parses the same bytes, so a
+/// file replaced in between cannot mix into what was compared.
+struct Files {
+    cert: Vec<u8>,
+    key: Vec<u8>,
+}
+
+fn read_files(cfg: &TlsConfig) -> Result<Files> {
     let (Some(cert_file), Some(key_file)) = (&cfg.cert_file, &cfg.key_file) else {
         anyhow::bail!("tls.cert_file and tls.key_file are required for HTTPS");
     };
-    let certs = CertificateDer::pem_file_iter(cert_file)
-        .and_then(|it| it.collect::<Result<Vec<_>, _>>())
-        .with_context(|| format!("reading certificates from {}", cert_file.display()))?;
+    let cert =
+        std::fs::read(cert_file).with_context(|| format!("reading certificates from {}", cert_file.display()))?;
+    let key =
+        std::fs::read(key_file).with_context(|| format!("reading the private key from {}", key_file.display()))?;
+    Ok(Files { cert, key })
+}
+
+fn config_from(cfg: &TlsConfig, files: &Files) -> Result<Arc<ServerConfig>> {
+    let name = |p: &Option<std::path::PathBuf>| p.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
+    let certs = CertificateDer::pem_slice_iter(&files.cert)
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("reading certificates from {}", name(&cfg.cert_file)))?;
     if certs.is_empty() {
-        anyhow::bail!("{} contains no certificate", cert_file.display());
+        anyhow::bail!("{} contains no certificate", name(&cfg.cert_file));
     }
-    let key = PrivateKeyDer::from_pem_file(key_file)
-        .with_context(|| format!("reading the private key from {}", key_file.display()))?;
+    let key = PrivateKeyDer::from_pem_slice(&files.key)
+        .with_context(|| format!("reading the private key from {}", name(&cfg.key_file)))?;
 
     let mut config =
         builder(cfg)?.with_single_cert(certs, key).context("certificate and key do not match or are not supported")?;
@@ -66,10 +86,8 @@ pub fn spawn_reload(rustls: RustlsConfig, cfg: TlsConfig) {
         tick.tick().await;
         loop {
             tick.tick().await;
-            if !watch.changed(&cfg) {
-                continue;
-            }
-            match server_config(&cfg) {
+            let Some(read) = watch.check(&cfg) else { continue };
+            match read.and_then(|files| config_from(&cfg, &files)) {
                 Ok(new) => {
                     rustls.reload_from_config(new);
                     tracing::info!("TLS certificate reloaded");
@@ -89,31 +107,32 @@ struct Watch {
 
 impl Watch {
     fn new(cfg: &TlsConfig) -> Self {
-        Self { last: content_hash(cfg) }
+        Self { last: read_files(cfg).ok().as_ref().map(content_hash) }
     }
 
-    /// Whether the content differs from the last check. Files that cannot be read count as a
-    /// content of their own, so the reload is tried, and fails with a log line, once.
-    fn changed(&mut self, cfg: &TlsConfig) -> bool {
-        let now = content_hash(cfg);
+    /// The files as read now when their content differs from the last check, `None` when it
+    /// does not. Files that cannot be read count as a content of their own, so the reload is
+    /// tried, and fails with a log line, once.
+    fn check(&mut self, cfg: &TlsConfig) -> Option<Result<Files>> {
+        let read = read_files(cfg);
+        let now = read.as_ref().ok().map(content_hash);
         if now == self.last {
-            return false;
+            return None;
         }
         self.last = now;
-        true
+        Some(read)
     }
 }
 
 /// SHA-256 over both files, each after its length, so bytes moved from one file to the other
-/// change it too; `None` when either cannot be read.
-fn content_hash(cfg: &TlsConfig) -> Option<[u8; 32]> {
+/// change it too.
+fn content_hash(files: &Files) -> [u8; 32] {
     let mut hash = Sha256::new();
-    for path in [&cfg.cert_file, &cfg.key_file] {
-        let bytes = std::fs::read(path.as_deref()?).ok()?;
+    for bytes in [&files.cert, &files.key] {
         hash.update((bytes.len() as u64).to_le_bytes());
-        hash.update(&bytes);
+        hash.update(bytes);
     }
-    Some(hash.finalize().into())
+    hash.finalize().into()
 }
 
 #[cfg(test)]
@@ -145,16 +164,16 @@ mod tests {
         set_mtime(&dir.path().join("cert.pem"), at);
         set_mtime(&dir.path().join("key.pem"), at);
         let mut watch = Watch::new(&cfg);
-        assert!(!watch.changed(&cfg));
+        assert!(watch.check(&cfg).is_none());
 
         // Renewed in place with the time kept, then a key copied in with an older time.
         std::fs::write(dir.path().join("cert.pem"), "cert two").unwrap();
         set_mtime(&dir.path().join("cert.pem"), at);
-        assert!(watch.changed(&cfg));
-        assert!(!watch.changed(&cfg), "the same content is loaded once");
+        assert!(watch.check(&cfg).is_some());
+        assert!(watch.check(&cfg).is_none(), "the same content is loaded once");
         std::fs::write(dir.path().join("key.pem"), "key two").unwrap();
         set_mtime(&dir.path().join("key.pem"), at - Duration::from_secs(3600));
-        assert!(watch.changed(&cfg));
+        assert!(watch.check(&cfg).is_some());
     }
 
     #[test]
@@ -166,7 +185,7 @@ mod tests {
         // Rewritten with the same bytes, as by a renewal that found nothing to renew.
         write(dir.path(), "cert", "key");
         set_mtime(&dir.path().join("cert.pem"), SystemTime::now() + Duration::from_secs(60));
-        assert!(!watch.changed(&cfg));
+        assert!(watch.check(&cfg).is_none());
     }
 
     #[test]
@@ -176,10 +195,10 @@ mod tests {
         write(dir.path(), "cert", "key");
         let mut watch = Watch::new(&cfg);
         std::fs::remove_file(dir.path().join("key.pem")).unwrap();
-        assert!(watch.changed(&cfg));
-        assert!(!watch.changed(&cfg));
+        assert!(watch.check(&cfg).is_some());
+        assert!(watch.check(&cfg).is_none());
         std::fs::write(dir.path().join("key.pem"), "key").unwrap();
-        assert!(watch.changed(&cfg));
+        assert!(watch.check(&cfg).is_some());
     }
 
     #[test]
@@ -189,6 +208,24 @@ mod tests {
         write(dir.path(), "ab", "c");
         let mut watch = Watch::new(&cfg);
         write(dir.path(), "a", "bc");
-        assert!(watch.changed(&cfg));
+        assert!(watch.check(&cfg).is_some());
+    }
+
+    /// The configuration is made from the bytes that were compared: a file replaced after the
+    /// check does not get into it.
+    #[test]
+    fn the_reload_parses_what_it_compared() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        write(dir.path(), "old", "old");
+        let mut watch = Watch::new(&cfg);
+        let ck = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        write(dir.path(), &ck.cert.pem(), &ck.signing_key.serialize_pem());
+        let files = watch.check(&cfg).unwrap().unwrap();
+        // Replaced by something broken right after the check.
+        write(dir.path(), "broken", "broken");
+        assert!(config_from(&cfg, &files).is_ok());
+        assert!(server_config(&cfg).is_err());
     }
 }

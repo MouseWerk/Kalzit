@@ -637,7 +637,14 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!([]),
         ui_editable: false,
-        description: "Reverse proxies whose X-Forwarded headers are trusted.",
+        description: "Reverse proxies whose forwarding header is trusted.",
+    },
+    SettingDef {
+        key: "security.forwarded_headers",
+        scope: Scope::Server,
+        default: || json!("x-forwarded"),
+        ui_editable: false,
+        description: "Which header the trusted proxies write: x-forwarded (X-Forwarded-For, -Proto, -Host) or forwarded (RFC 7239). The other is ignored.",
     },
     SettingDef {
         key: "security.hsts",
@@ -977,6 +984,7 @@ fn config_backed(key: &str) -> Option<ConfigBacked> {
         "security.trusted_proxies" => {
             |c| json!(c.security.trusted_proxies.iter().map(ToString::to_string).collect::<Vec<_>>())
         }
+        "security.forwarded_headers" => |c| json!(c.security.forwarded_headers),
         "security.hsts" => |c| json!(c.security.hsts),
         "security.hsts_max_age_secs" => |c| json!(c.security.hsts_max_age_secs),
         "security.login_max_failures" => |c| json!(c.security.login_max_failures),

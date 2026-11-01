@@ -296,10 +296,10 @@ async fn view_in(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, ds: Datasource) -
     Ok(DatasourceView {
         access,
         last_test,
+        settings: datasources::with_effective_tls(&ds.kind, ds.settings),
         id: ds.id,
         name: ds.name,
         kind: ds.kind,
-        settings: ds.settings,
         secrets,
         created_at: ds.created_at,
         updated_at: ds.updated_at,
@@ -710,7 +710,10 @@ async fn check_target_change(
     settings: &Value,
     patch: &SecretPatch,
 ) -> ApiResult<()> {
-    let Some(target) = kind.changed_targets(&ds.settings, settings).first().copied() else {
+    // Compared as they connect: a source stored without a TLS mode and one stating the mode it
+    // falls back to have the same target.
+    let effective = |s: &Value| datasources::with_effective_tls(kind.kind(), s.clone());
+    let Some(target) = kind.changed_targets(&effective(&ds.settings), &effective(settings)).first().copied() else {
         return Ok(());
     };
     let held = resource_permissions(&state.db, ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();

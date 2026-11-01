@@ -924,6 +924,28 @@ impl Kind {
 }
 
 /// The settings without the common limit fields, as the plugin sees them.
+/// The TLS mode a stored source of `kind` without `sslMode` connects with: sources from before
+/// `auto` keep preferring TLS (`postgres::ssl_mode`, `mysql::ssl_mode`).
+pub fn legacy_tls_mode(kind: &str) -> Option<&'static str> {
+    match kind {
+        "postgres" => Some("prefer"),
+        "mysql" => Some("preferred"),
+        _ => None,
+    }
+}
+
+/// Settings with the mode a source without `sslMode` really uses, for the API's answer and for
+/// comparing targets: the form then shows that mode, and saving it unchanged changes nothing,
+/// instead of showing (and saving) the default of new sources.
+pub fn with_effective_tls(kind: &str, mut settings: Value) -> Value {
+    if let (Some(mode), Value::Object(map)) = (legacy_tls_mode(kind), &mut settings)
+        && !map.contains_key("sslMode")
+    {
+        map.insert("sslMode".into(), Value::String(mode.into()));
+    }
+    settings
+}
+
 pub(crate) fn plugin_settings(settings: &Value) -> Value {
     let mut s = settings.clone();
     if let Value::Object(map) = &mut s {

@@ -31,10 +31,18 @@ pub const GRACE: Duration = Duration::from_millis(300);
 pub const AUTO_TLS: &str = "auto";
 
 /// Whether the `auto` TLS mode requires TLS towards `ip`: for every address that is not private,
-/// loopback or otherwise local (`http::LocalGuard::is_private`). The address is the one the
+/// loopback or otherwise local (`http::LocalGuard::is_private`), and always for 6to4
+/// (`2002::/16`) and Teredo (`2001:0::/32`). Those tunnel over the internet whatever IPv4 address
+/// they carry, which `is_private` reads for the blocking rules. The address is the one the
 /// connection goes to, after the name was resolved and checked, so a name pointing to the
 /// internet requires TLS whatever it is called.
 pub fn tls_required(ip: std::net::IpAddr) -> bool {
+    if let std::net::IpAddr::V6(v6) = ip.to_canonical() {
+        let s = v6.segments();
+        if s[0] == 0x2002 || (s[0] == 0x2001 && s[1] == 0) {
+            return true;
+        }
+    }
     !crate::http::LocalGuard::is_private(ip)
 }
 
