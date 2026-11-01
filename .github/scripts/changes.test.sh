@@ -20,7 +20,7 @@ check() {
   fi
 }
 
-# expect "<want>" path... ; want is "<server> <ui> <e2e> <audit> <workflows> <docs_only> <docker> <installer>"
+# expect "<want>" path... ; want is "<server> <ui> <e2e> <audit> <workflows> <docs_only> <docker> <installer> <devkit>"
 expect() {
   local want=$1 got
   shift
@@ -28,43 +28,45 @@ expect() {
   check "$*" "$got" "$want"
 }
 
-#      server ui e2e audit workflows docs_only docker installer   paths
-expect "false false false false false true false false"   docs/ARCHITECTURE.md
-expect "false false false false false true false false"   README.md docs/screenshots/start.png
-expect "false false false false false true false false"   LICENSE
-expect "false false false false false true false false"   "docs/a file with spaces.md"
-expect "true false true true false false true true"       server/src/main.rs
-expect "true false true true false false true true"       server/migrations/sqlite/0001_init.sql
-expect "true false true true false false true true"       Cargo.lock
-expect "true false true true false false true true"       release/src/main.rs
-expect "true false true true false false true true"       plugin-api/src/panel.rs
-expect "true false true true false false true true"       plugin-sdk/src/lib.rs
-expect "true false true true false false true true"       plugin-tool/src/main.rs
-expect "true false true true false false true true"       examples/plugins/panel-kpi/panel.js
-expect "true false true true false false true true"       rust-toolchain
-expect "true false true true false false true true"       rust-toolchain.toml
-expect "true false true true false false true true"       .cargo/config.toml
-expect "true false true true false false true true"       rustfmt.toml docs/PLAN.md
-expect "true true true true false false true true"        server/src/analysis/conformance.json
-expect "true true true true false false true true"        server/src/analysis/engine.rs
-expect "false true true false false false true false"     ui/src/app.tsx
-expect "false true true false false false true false"     ui/e2e/viewer.spec.ts
-expect "false true true true false false true false"      ui/package.json
-expect "false true true true false false true false"      ui/package-lock.json
-expect "true true true true false false true true"        ui/src/api/generated/shapes.ts
-expect "true true true true false false true true"        docs/api/datasources.md
-expect "false true true false false false true false"     docs/glossary.md
-expect "true true true true false false true true"        docs/glossary.md server/src/lib.rs
-expect "true true true true true false true true"         .github/workflows/ci.yml
-expect "true true true true true false true true"         .github/dependabot.yml docs/PLAN.md
-expect "false false false false false false true false"   Dockerfile
-expect "false false false false false false false true"   packaging/windows/Kalzit.wxs
-expect "false false false false false false false true"   packaging/windows/build.ps1 docs/guide/installation.md
-expect "false false false false false false true false"   .dockerignore
-expect "false false false false false false true false"   deploy/docker/compose.sqlite.yaml
-expect "false false false false false false true false"   deploy/docker/example.env docs/guide/installation.md
-expect "true true true true false false true true"        .gitattributes
-expect "true true true true false false true true"
+#      server ui e2e audit workflows docs_only docker installer devkit   paths
+expect "false false false false false true false false false" docs/ARCHITECTURE.md
+expect "false false false false false true false false false" README.md docs/screenshots/start.png
+expect "false false false false false true false false false" LICENSE
+expect "false false false false false true false false false" "docs/a file with spaces.md"
+expect "true false true true false false true true false" server/src/main.rs
+expect "true false true true false false true true false" server/migrations/sqlite/0001_init.sql
+expect "true false true true false false true true false" Cargo.lock
+expect "true false true true false false true true false" release/src/main.rs
+expect "true false true true false false true true false" plugin-api/src/panel.rs
+expect "true false true true false false true true false" plugin-sdk/src/lib.rs
+expect "true false true true false false true true false" plugin-tool/src/main.rs
+expect "true false true true false false true true false" examples/plugins/panel-kpi/panel.js
+expect "true false true true false false true true false" rust-toolchain
+expect "true false true true false false true true false" rust-toolchain.toml
+expect "true false true true false false true true false" .cargo/config.toml
+expect "true false true true false false true true false" rustfmt.toml docs/PLAN.md
+expect "true true true true false false true true false" server/src/analysis/conformance.json
+expect "true true true true false false true true false" server/src/analysis/engine.rs
+expect "false true true false false false true false false" ui/src/app.tsx
+expect "false true true false false false true false false" ui/e2e/viewer.spec.ts
+expect "false true true true false false true false false" ui/package.json
+expect "false true true true false false true false false" ui/package-lock.json
+expect "true true true true false false true true false" ui/src/api/generated/shapes.ts
+expect "true true true true false false true true false" docs/api/datasources.md
+expect "false true true false false false true false false" docs/glossary.md
+expect "true true true true false false true true false" docs/glossary.md server/src/lib.rs
+expect "true true true true true false true true true" .github/workflows/ci.yml
+expect "true true true true true false true true true" .github/dependabot.yml docs/PLAN.md
+expect "false false false false false false true false false" Dockerfile
+expect "false false false false false false false true false" packaging/windows/Kalzit.wxs
+expect "false false false false false false false true false" packaging/windows/build.ps1 docs/guide/installation.md
+expect "false false false false false false true false false" .dockerignore
+expect "false false false false false false true false false" deploy/docker/compose.sqlite.yaml
+expect "false false false false false false true false false" deploy/docker/example.env docs/guide/installation.md
+expect "false false false false false false false false true" tools/devkit/src/cli.ts
+expect "false false false false false false false false true" tools/devkit/README.md .mcp.json
+expect "true true true true false false true true true" .gitattributes
+expect "true true true true false false true true true"
 
 # From commits: a deletion and a move out of server/ into docs/ both count as server changes.
 repo="$work/repo"
@@ -87,9 +89,9 @@ printf 'more\n' >> "$repo/docs/PLAN.md"
 git -C "$repo" commit -q -am docs
 
 run() { (cd "$repo" && "$script" "$@" 2> /dev/null | flags); }
-check "deletion" "$(run HEAD~3 HEAD~2)" "true false true true false false true true"
-check "rename" "$(run HEAD~2 HEAD~1)" "true false true true false false true true"
-check "docs commit" "$(run HEAD~1 HEAD)" "false false false false false true false false"
+check "deletion" "$(run HEAD~3 HEAD~2)" "true false true true false false true true false"
+check "rename" "$(run HEAD~2 HEAD~1)" "true false true true false false true true false"
+check "docs commit" "$(run HEAD~1 HEAD)" "false false false false false true false false false"
 if (cd "$repo" && "$script" HEAD~1 no-such-commit > /dev/null 2>&1); then
   echo "FAIL: a failing git diff did not fail the script"
   failures=$((failures + 1))

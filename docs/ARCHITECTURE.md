@@ -2079,6 +2079,7 @@ through `settings::get`; new registry entries are requested from the orchestrato
   | `workflows` | `.github/`; turns every flag on (shown in the log only) |
   | `docs_only` | only `docs/`, Markdown files and `LICENSE` changed (shown in the log only) |
   | `installer` | `server` or `packaging/` |
+  | `devkit` | `tools/devkit/` and `.mcp.json` (the developer toolkit, job `devkit`) |
 
   `docs/api/` and `docs/glossary.md` count as code because server and UI tests read them;
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
