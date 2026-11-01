@@ -655,3 +655,141 @@ mod tests {
         assert_eq!(seconds(-1500), "-1.500");
     }
 }
+
+/// PromQL expressions are scanned by hand for variables and macros: any text gets a result or a
+/// refusal, never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::datasources::Limits;
+    use crate::datasources::frame::ResponseBudget;
+    use crate::shapes::TimeRange;
+    use proptest::prelude::*;
+
+    fn req() -> SourceQuery {
+        SourceQuery {
+            ref_id: "A".into(),
+            query: json!({}),
+            range: TimeRange { from: 1_800_000_000_000, to: 1_800_003_600_000 },
+            interval_ms: 15_000,
+            max_data_points: None,
+            variables: serde_json::from_value(json!({ "job": "api\"}`'", "insts": ["a.b:9090", "c"] })).unwrap(),
+            identifier_variables: None,
+            limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
+            cursor: None,
+        }
+    }
+
+    fn promql_like() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            prop::sample::select(vec![
+                "rate(",
+                "sum by (",
+                "{",
+                "}",
+                "[",
+                "]",
+                "=~",
+                "!~",
+                "\"",
+                "'",
+                "`",
+                "\\",
+                "#",
+                "\n",
+                "$job",
+                "${insts}",
+                "${insts:",
+                "$__rate_interval",
+                "$__timeTo",
+                "$",
+                "@ ",
+                "offset ",
+            ])
+            .prop_map(str::to_string),
+            "[a-zA-Z_0-9 .,=:-]{0,6}",
+            "\\PC{0,3}",
+        ];
+        prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
+    }
+
+    /// A sample value as Prometheus writes it (a string), or something else a broken server sends.
+    fn sample_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            prop::sample::select(vec!["1.5", "-0", "+Inf", "-Inf", "NaN", "1e308", "1e999", "x", ""])
+                .prop_map(Value::from),
+            any::<f64>().prop_map(|f| json!(f)),
+            Just(Value::Null),
+        ]
+    }
+
+    /// A time in seconds, including ones far outside any date range.
+    fn sample_time_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            (1_700_000_000.0f64..1_900_000_000.0).prop_map(|f| json!(f)),
+            any::<f64>().prop_map(|f| json!(f)),
+            any::<i64>().prop_map(Value::from),
+            Just(Value::from("1700000000")),
+        ]
+    }
+
+    fn point() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            4 => (sample_time_value(), sample_value()).prop_map(|(t, v)| json!([t, v])),
+            1 => prop::collection::vec(sample_value(), 0..4).prop_map(Value::Array),
+            1 => sample_value(),
+        ]
+    }
+
+    /// One series of a matrix or vector: labels, points and the point key of the other kind.
+    fn series() -> impl Strategy<Value = Value> {
+        let labels = prop::collection::btree_map(
+            prop::sample::select(vec!["__name__", "job", "instance", "le", ""]).prop_map(str::to_string),
+            prop_oneof![3 => "\\PC{0,8}".prop_map(Value::from), 1 => any::<i64>().prop_map(Value::from)],
+            0..4,
+        );
+        (labels, prop::collection::vec(point(), 0..12), point(), any::<bool>()).prop_map(
+            |(labels, values, value, with_metric)| {
+                let mut s = serde_json::Map::new();
+                if with_metric {
+                    s.insert("metric".into(), json!(labels));
+                }
+                s.insert("values".into(), Value::Array(values));
+                s.insert("value".into(), value);
+                Value::Object(s)
+            },
+        )
+    }
+
+    /// The `data` of an answer: a result type and a result shaped like it, or not quite.
+    fn answer_data() -> impl Strategy<Value = Value> {
+        let kind = prop::sample::select(vec!["matrix", "vector", "scalar", "string", "streams", ""]);
+        let result = prop_oneof![
+            4 => prop::collection::vec(series(), 0..6).prop_map(Value::Array),
+            1 => point(),
+            1 => sample_value(),
+        ];
+        (kind, result).prop_map(|(kind, result)| json!({ "resultType": kind, "result": result }))
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn expand_never_panics_on_any_text(expr in "\\PC{0,200}") {
+            let _ = expand(&expr, &req());
+        }
+
+        #[test]
+        fn expand_never_panics_on_promql_like_text(expr in promql_like()) {
+            let _ = expand(&expr, &req());
+        }
+
+        /// An answer shaped like Prometheus's, or broken in any part, is a frame or an error.
+        #[test]
+        fn answers_never_panic(data in answer_data()) {
+            let _ = to_frame(&data, &req());
+        }
+    }
+}

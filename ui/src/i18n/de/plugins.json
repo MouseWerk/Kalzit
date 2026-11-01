@@ -43,6 +43,7 @@
   "plugins.filter.updates": "Aktualisierungen",
   "plugins.filter.none": "Kein Plugin passt zu diesem Filter.",
   "plugins.table.label": "Installierte Plugins",
+  "plugins.table.scrollLabel": "{title}, Tabelle",
   "plugins.column.plugin": "Plugin",
   "plugins.column.kind": "Art",
   "plugins.column.publisher": "Herausgeber, Signatur",

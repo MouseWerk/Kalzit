@@ -1703,3 +1703,177 @@ mod tests {
         assert_eq!(frame.fields()[1].values, [json!("a"), Value::Null]);
     }
 }
+
+/// InfluxQL, Flux and SQL texts and the server's answers are read by hand-written scanners:
+/// they answer with a result or an error, never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::datasources::Limits;
+    use crate::datasources::frame::ResponseBudget;
+    use crate::shapes::TimeRange;
+    use proptest::prelude::*;
+
+    fn req() -> SourceQuery {
+        SourceQuery {
+            ref_id: "A".into(),
+            query: json!({}),
+            range: TimeRange { from: 1_800_000_000_000, to: 1_800_003_600_000 },
+            interval_ms: 30_000,
+            max_data_points: None,
+            variables: serde_json::from_value(json!({ "host": "a\"b'c$d", "hosts": ["x.1", "y/z"] })).unwrap(),
+            identifier_variables: None,
+            limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
+            cursor: None,
+        }
+    }
+
+    /// Text built from the pieces the scanners care about.
+    fn query_like() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            prop::sample::select(vec![
+                "SELECT ",
+                "INTO ",
+                "DROP ",
+                "from(bucket: ",
+                "|> ",
+                "to(",
+                "import ",
+                "$host",
+                "${hosts}",
+                "$__timeFilter",
+                "$__interval",
+                "$",
+                "v.timeRangeStart",
+                "\"",
+                "'",
+                "`",
+                "/",
+                "\\",
+                "//",
+                "--",
+                "/*",
+                "*/",
+                ";",
+                "=~",
+                "(",
+                ")",
+                "\n",
+            ])
+            .prop_map(str::to_string),
+            "[a-zA-Z_0-9 .,=-]{0,6}",
+            "\\PC{0,3}",
+        ];
+        prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
+    }
+
+    fn scan(text: &str) {
+        let r = req();
+        let _ = check_influxql(text);
+        let _ = check_flux(text);
+        for language in [Language::Flux, Language::InfluxQl, Language::Sql] {
+            let _ = expand(text, language, &r, Some("db"));
+        }
+    }
+
+    /// A cell of an answer: times as texts and numbers, values of every JSON type.
+    fn cell() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            prop::sample::select(vec![
+                "2026-10-15T09:00:00Z",
+                "2026-10-15T09:00:00.123456789+02:00",
+                "9999-12-31T23:59:59Z",
+                "0000-01-01T00:00:00Z",
+                "2026-13-45",
+                "cpu0",
+                "",
+            ])
+            .prop_map(Value::from),
+            any::<i64>().prop_map(Value::from),
+            any::<f64>().prop_map(|f| json!(f)),
+            any::<bool>().prop_map(Value::from),
+            Just(Value::Null),
+            Just(json!({ "nested": [1, "a"] })),
+            Just(json!([1, 2])),
+        ]
+    }
+
+    fn column_name() -> impl Strategy<Value = String> {
+        prop::sample::select(vec!["time", "host", "value", "_field", "_value", "usage_idle", ""])
+            .prop_map(str::to_string)
+    }
+
+    /// The rows of an SQL answer as InfluxDB 3 writes them: a JSON array of objects, or one
+    /// object per line.
+    fn sql_answer() -> impl Strategy<Value = String> {
+        let row = prop::collection::vec((column_name(), cell()), 0..6);
+        (prop::collection::vec(row, 0..8), any::<bool>(), "\\PC{0,4}").prop_map(|(rows, as_array, junk)| {
+            let objects: Vec<String> = rows
+                .into_iter()
+                .map(|entries| {
+                    // Written by hand, so a key may repeat as a server could send it.
+                    let fields: Vec<String> = entries.into_iter().map(|(k, v)| format!("{}:{v}", json!(k))).collect();
+                    format!("{{{}}}", fields.join(","))
+                })
+                .collect();
+            if as_array { format!("[{}]", objects.join(",")) } else { format!("{}\n{junk}", objects.join("\n")) }
+        })
+    }
+
+    /// The series of an InfluxQL answer: names, tags, columns and rows that may not match them.
+    fn influxql_series() -> impl Strategy<Value = Vec<Value>> {
+        let one = (
+            prop::sample::select(vec!["cpu", "mem", ""]),
+            prop::collection::btree_map(column_name(), cell(), 0..3),
+            prop::collection::vec(column_name(), 0..5),
+            prop::collection::vec(prop::collection::vec(cell(), 0..6), 0..8),
+        )
+            .prop_map(|(name, tags, columns, values)| {
+                json!({ "name": name, "tags": tags, "columns": columns, "values": values })
+            });
+        prop::collection::vec(one, 0..4)
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn scanners_never_panic_on_any_text(text in "\\PC{0,200}") {
+            scan(&text);
+        }
+
+        #[test]
+        fn scanners_never_panic_on_query_like_text(text in query_like()) {
+            scan(&text);
+        }
+
+        /// Annotated CSV and JSON lines come from the server; a broken or hostile answer is an error.
+        #[test]
+        fn answers_never_panic(
+            body in prop::collection::vec(any::<u8>(), 0..400),
+            csv in "(#[a-z,]{0,12}\r?\n|[a-z0-9,\"_:.-]{0,16}\r?\n){0,12}",
+        ) {
+            let r = req();
+            let _ = flux_tables(&body, 10);
+            let _ = flux_tables(csv.as_bytes(), 10);
+            let _ = flux_frame(&body, &r);
+            let _ = flux_frame(csv.as_bytes(), &r);
+            let _ = jsonl_frame(&body, &r);
+            let _ = sql_rows(&body);
+        }
+
+        /// SQL answers shaped like InfluxDB's, with odd values and repeated keys.
+        #[test]
+        fn sql_answers_never_panic(body in sql_answer()) {
+            let _ = sql_rows(body.as_bytes());
+            let _ = jsonl_frame(body.as_bytes(), &req());
+        }
+
+        /// InfluxQL series whose columns, rows and tags need not agree.
+        #[test]
+        fn influxql_answers_never_panic(series in influxql_series()) {
+            let _ = influxql_frame(&series, &req());
+        }
+    }
+}

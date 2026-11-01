@@ -16,6 +16,8 @@ Every change is written to the audit log with `resourceType: "plugin"` and the p
 key id, or `server`) as `resourceId`: `plugins.installed`, `plugins.updated`,
 `plugins.update_pending`, `plugins.approved`, `plugins.enabled`, `plugins.disabled`,
 `plugins.restarted`, `plugins.removed`, `plugins.install_refused` (with the reason),
+`plugins.package_refused` (a package another server shared that this server refused: the reason,
+the version and this server's id; once per package and reason),
 `plugins.publisher_changed` (a removed plugin's id installed with another key: both key ids, the
 data sources whose secrets were cleared and how many secrets),
 `plugins.key_added`, `plugins.key_removed` (with the plugins it stopped and the updates it
@@ -205,6 +207,15 @@ id. Kept: the last 2000 lines and at most 512 KiB, lines cut at 4 KiB (marked ` 
 Empty while the plugin is not registered.
 
 ## Trust
+
+Kalzit's database is part of the trust: the publisher keys, the switches and the installed
+plugins with their manifests and signers are kept there, and with several servers so are the
+packages. Write access to the database counts as full server admin (it can create admins, and
+admins may install plugins), so protect its credentials like admin credentials. Every server
+checks a shared package against that trust list before it runs it (docs/operations/high-availability.md):
+its stored SHA-256, the installed manifest byte for byte, a signature by a key trusted now and the
+signer recorded at the installation, and a generated package directory name. Whenever a plugin is
+registered to run, the manifest on disk must still be the installed one.
 
 ### Publisher keys: `GET|POST /admin/plugin-keys`, `DELETE /admin/plugin-keys/{keyId}`
 
@@ -818,6 +829,9 @@ Rules:
 | `plugin.package_too_large` | `maxBytes` | the package is larger than allowed unpacked (`422`) |
 | `plugin.package_invalid` | `issues` | a bad entry path, a link, a device, an encrypted entry, two paths differing only in case, or files that do not match the manifest (`package.*` codes in the message) (`422`) |
 | `plugin.package_missing` | | several servers on one database: no server shared the package of an installed plugin, so this server cannot run it (logged; install it again) |
+| `plugin.package_hash_mismatch` | | several servers on one database: the shared package is not the archive its stored SHA-256 names; this server does not run it (logged, and `plugins.package_refused` in the audit log) |
+| `plugin.package_dir_invalid` | | several servers on one database: the stored package directory is not a name Kalzit makes (32 lowercase hex digits); nothing is written or removed (logged, and `plugins.package_refused`) |
+| `plugin.signer_mismatch` | | several servers on one database: the shared package verifies, but with another signer or key than the one stored at installation (logged, and `plugins.package_refused`) |
 | `plugin.manifest_missing` | | the package has no readable `kalzit-plugin.toml` (`422`) |
 | `plugin.manifest_invalid` | `issues` | the manifest is not valid (`manifest.*` codes) (`422`) |
 | `plugin.kalzit_too_old` | `minKalzit` | the plugin needs a newer Kalzit (`422`) |

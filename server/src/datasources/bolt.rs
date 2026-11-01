@@ -1021,3 +1021,62 @@ mod tests {
         assert!(matches!(connect(&policy(), blocked).await, Err(SourceError::Blocked(_))));
     }
 }
+
+/// Bolt messages come from the graph server: any bytes decode to a value or a protocol error,
+/// never a panic, and every value survives a round trip.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn value() -> impl Strategy<Value = Bv> {
+        let leaf = prop_oneof![
+            Just(Bv::Null),
+            any::<bool>().prop_map(Bv::Bool),
+            any::<i64>().prop_map(Bv::Int),
+            any::<f64>().prop_filter("NaN is not equal to itself", |f| !f.is_nan()).prop_map(Bv::Float),
+            prop::collection::vec(any::<u8>(), 0..40).prop_map(Bv::Bytes),
+            "\\PC{0,20}".prop_map(Bv::String),
+        ];
+        leaf.prop_recursive(4, 48, 8, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..8).prop_map(Bv::List),
+                prop::collection::vec(("\\PC{0,8}", inner.clone()), 0..8).prop_map(Bv::Map),
+                (any::<u8>(), prop::collection::vec(inner, 0..15)).prop_map(|(t, f)| Bv::Struct(t, f)),
+            ]
+        })
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn decode_never_panics_on_any_bytes(bytes in prop::collection::vec(any::<u8>(), 0..300)) {
+            let _ = decode(&bytes);
+        }
+
+        /// Valid messages with one byte changed or cut short reach deeper than random bytes.
+        #[test]
+        fn decode_never_panics_on_damaged_messages(
+            v in value(),
+            at in any::<prop::sample::Index>(),
+            b in any::<u8>(),
+            cut in any::<prop::sample::Index>(),
+        ) {
+            let mut bytes = Vec::new();
+            encode(&v, &mut bytes);
+            let _ = decode(&bytes[..cut.index(bytes.len())]);
+            let i = at.index(bytes.len());
+            bytes[i] = b;
+            let _ = decode(&bytes);
+        }
+
+        #[test]
+        fn values_round_trip(v in value()) {
+            let mut bytes = Vec::new();
+            encode(&v, &mut bytes);
+            prop_assert_eq!(decode(&bytes).unwrap(), v);
+        }
+    }
+}

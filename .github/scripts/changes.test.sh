@@ -9,7 +9,16 @@ trap 'rm -rf "$work"' EXIT
 failures=0
 
 flags() {
-  cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
+  # The devgen and devkit flags have checks of their own (expect_flag), so the columns below stay as they are.
+  grep -v -e '^devgen' -e '^devkit' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
+}
+
+# expect_flag <flag> "<true|false>" path...
+expect_flag() {
+  local flag=$1 want=$2 got
+  shift 2
+  got=$( (for p in "$@"; do printf '%s\0' "$p"; done) | "$script" 2> /dev/null | sed -n "s/^$flag=//p")
+  check "$flag: $*" "$got" "$want"
 }
 
 check() {
@@ -65,6 +74,37 @@ expect "false false false false false false true false"   deploy/docker/compose.
 expect "false false false false false false true false"   deploy/docker/example.env docs/guide/installation.md
 expect "true true true true false false true true"        .gitattributes
 expect "true true true true false false true true"
+# The developer generators run their own job only; the product checks stay off.
+expect "false false false false false false false false"  tools/devgen/src/cli.ts
+expect "false false false false false false false false"  .mcp.json
+expect "false false false false false false false false"  tools/devgen/README.md docs/PLAN.md
+
+expect_flag devgen true   tools/devgen/src/cli.ts
+expect_flag devgen true   .mcp.json
+expect_flag devgen true   .github/workflows/ci.yml
+expect_flag devgen true
+expect_flag devgen false  server/src/main.rs ui/src/app.tsx docs/PLAN.md
+
+# The scaffolds' proof: only for what they write into or read from, and for their own code.
+expect_flag devgen_proof true   server/src/routes/usage.rs
+expect_flag devgen_proof true   server/src/settings.rs
+expect_flag devgen_proof true   ui/src/i18n/de/admin.json
+expect_flag devgen_proof true   ui/src/features/settings/sections.ts
+expect_flag devgen_proof true   tools/devgen/src/lib/routeScaffold.ts
+expect_flag devgen_proof true   .github/workflows/ci.yml
+expect_flag devgen_proof false  tools/devgen/README.md tools/devgen/test/rules.test.ts .mcp.json
+expect_flag devgen_proof false  server/src/main.rs ui/src/app.tsx
+
+# The developer toolkit runs its own job only.
+expect "false false false false false false false false"  tools/devkit/src/cli.ts
+expect_flag devkit true   tools/devkit/src/cli.ts
+expect_flag devkit true   tools/devkit/README.md
+expect_flag devkit true   .github/workflows/ci.yml
+expect_flag devkit true
+expect_flag devkit false  tools/devgen/src/cli.ts server/src/main.rs docs/PLAN.md
+# .mcp.json registers both tools' servers: both jobs run.
+expect_flag devkit true   .mcp.json
+expect_flag devgen true   .mcp.json
 
 # From commits: a deletion and a move out of server/ into docs/ both count as server changes.
 repo="$work/repo"

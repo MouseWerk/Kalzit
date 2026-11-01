@@ -246,6 +246,34 @@
     color: var(--border);
   }
 
+  /*
+   * Forced colors (Windows high contrast) leave the canvas alone, so the probes hand it system
+   * colors: series in text, link and selection colors in turn, the axis in the text color and
+   * the grid in the quiet gray, all on the system background.
+   */
+  @media (forced-colors: active) {
+    .ts__probes {
+      forced-color-adjust: none;
+    }
+
+    .ts__probe,
+    .ts__probe--axis {
+      color: CanvasText;
+    }
+
+    .ts__probe:is(.series-2, .series-5, .series-8, .tone--warn) {
+      color: LinkText;
+    }
+
+    .ts__probe:is(.series-3, .series-6, .tone--critical) {
+      color: Highlight;
+    }
+
+    .ts__probe--grid {
+      color: GrayText;
+    }
+  }
+
   .ts__cursor-line {
     position: absolute;
     inset-block: 0;

@@ -234,6 +234,8 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
+      /* A wrapped check box keeps a 24 px target clear of the categories above (WCAG 2.5.8). */
+      row-gap: var(--space-2);
     }
 
     .catalog-nav__trusted {
