@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use super::table::{RouteDef, route};
 use crate::app::AppState;
-use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{Access, DatasourceAccess, OrgCtx, Permission, Resource, check_resource};
 use crate::dashboards::model::{self, DashboardModel, ValuesFrom, ValuesSource, VariableType};
 use crate::datasources::cache::CacheUse;
 use crate::datasources::distribution::DistributionSpec;
@@ -228,24 +228,14 @@ async fn query(
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
     // Each item is authorized on its own data source; one the caller may not query answers for
-    // its refId only. Ids of other organizations are not found when they are run.
-    // A source is checked once per request, however many items query it (the refusal is
-    // checked again for each of its items, which is rare, to answer each with its own error).
+    // its refId only. Ids of other organizations are not found when they are run. The caller's
+    // rights on data sources are read once per request, however many sources the items query.
     let mut refused = Vec::new();
     let mut allowed = Vec::new();
-    let mut may_query = std::collections::HashSet::new();
+    let access = DatasourceAccess::load(&state.db, &ctx).await?;
     for item in req.queries {
-        if may_query.contains(&item.datasource_id) {
-            allowed.push(item);
-            continue;
-        }
-        match check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id))
-            .await
-        {
-            Ok(()) => {
-                may_query.insert(item.datasource_id.clone());
-                allowed.push(item);
-            }
+        match access.check(Permission::DatasourcesQuery, &item.datasource_id) {
+            Ok(()) => allowed.push(item),
             Err(e) => refused.push((item.ref_id, e)),
         }
     }

@@ -12,19 +12,11 @@ use crate::error::{ApiError, ApiResult};
 /// Folders nest at most this deep, so paths stay readable and every walk up the tree is short.
 pub const MAX_DEPTH: usize = 10;
 
-type LinkRow = (Option<String>, bool, Option<String>);
+/// Rows a chain is read with at most: enough to tell a cycle (`folder_chain`) from a deep tree.
+const CHAIN_ROWS: usize = MAX_DEPTH * 2 + 2;
 
-/// One step up from `folder_id`: its parent, own restricted flag and owner team, or `None` if the
-/// folder is not in the organization. Trashed folders count; trash does not change the structure.
-async fn link(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Option<LinkRow>> {
-    let row: Option<(Option<String>, i64, Option<String>)> =
-        sqlx::query_as("SELECT parent_id, restricted, owner_team_id FROM folders WHERE org_id = $1 AND id = $2")
-            .bind(org_id)
-            .bind(folder_id)
-            .fetch_optional(db)
-            .await?;
-    Ok(row.map(|(parent, restricted, owner)| (parent, restricted != 0, owner)))
-}
+/// A folder of a chain as read: id, parent, restricted, owner team, depth.
+type ChainRow = (String, Option<String>, i64, Option<String>, i64);
 
 /// One folder of a chain, its own restricted flag and the team that owns it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,26 +30,44 @@ pub struct FolderLink {
 /// flags. The nearest restricted folder in the chain decides who sees the folder: a restricted
 /// subfolder narrows access further. `not_found` if the folder is not in the organization.
 pub async fn folder_chain(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Vec<FolderLink>> {
+    // One query walks up the tree; the depth bound keeps a cycle from running on.
+    let rows: Vec<ChainRow> = sqlx::query_as(
+        "WITH RECURSIVE chain(id, parent_id, restricted, owner_team_id, depth) AS ( \
+            SELECT id, parent_id, restricted, owner_team_id, CAST(0 AS BIGINT) FROM folders \
+            WHERE org_id = $1 AND id = $2 \
+            UNION ALL \
+            SELECT f.id, f.parent_id, f.restricted, f.owner_team_id, c.depth + 1 \
+            FROM folders f JOIN chain c ON f.id = c.parent_id \
+            WHERE f.org_id = $1 AND c.depth < $3) \
+         SELECT id, parent_id, restricted, owner_team_id, depth FROM chain ORDER BY depth",
+    )
+    .bind(org_id)
+    .bind(folder_id)
+    .bind(CHAIN_ROWS as i64 - 1)
+    .fetch_all(db)
+    .await?;
     let mut out: Vec<FolderLink> = Vec::new();
     let mut next = Some(folder_id.to_string());
-    while let Some(id) = next {
+    for (id, parent, restricted, owner_team, _) in rows {
         // Moves refuse cycles; this guard keeps a damaged table from hanging a request.
         if out.len() > MAX_DEPTH * 2 || out.iter().any(|seen| seen.id == id) {
-            return Err(ApiError::internal("folders", format!("folder {folder_id} has a cycle among its parents")));
+            return Err(cycle(folder_id));
         }
-        let Some((parent, restricted, owner_team)) = link(db, org_id, &id).await? else {
-            // The folder itself is missing: not in this organization. A missing parent cannot
-            // happen with the foreign key, so it is an error as well.
-            return Err(if out.is_empty() {
-                ApiError::not_found()
-            } else {
-                ApiError::internal("folders", format!("parent {id} of folder {folder_id} is missing"))
-            });
-        };
-        out.push(FolderLink { id, restricted, owner_team });
+        out.push(FolderLink { id, restricted: restricted != 0, owner_team });
         next = parent;
     }
-    Ok(out)
+    match next {
+        None => Ok(out),
+        // The folder itself is missing: not in this organization.
+        Some(_) if out.is_empty() => Err(ApiError::not_found()),
+        Some(_) if out.len() >= CHAIN_ROWS => Err(cycle(folder_id)),
+        // A missing parent cannot happen with the foreign key, so it is an error as well.
+        Some(id) => Err(ApiError::internal("folders", format!("parent {id} of folder {folder_id} is missing"))),
+    }
+}
+
+fn cycle(folder_id: &str) -> ApiError {
+    ApiError::internal("folders", format!("folder {folder_id} has a cycle among its parents"))
 }
 
 /// The folder itself first, then its parents up to the top level. `not_found` if the folder is
@@ -860,5 +870,34 @@ mod tests {
         // Another organization's folder does not exist from here.
         assert_eq!(folder_ancestors(&db, "p", "e").await.unwrap_err().code, "not_found");
         assert_eq!(folder_is_restricted(&db, "o", "nope").await.unwrap_err().code, "not_found");
+
+        // The one query reads a damaged table as the walk one folder at a time did: a chain of
+        // MAX_DEPTH * 2 + 1 folders still reads, one more or a cycle is an error.
+        let insert = |id: String, parent: Option<String>| {
+            let db = db.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) \
+                     VALUES ($1, 'p', $2, $1, 0, 1, 0, 0)",
+                )
+                .bind(id)
+                .bind(parent)
+                .execute(&db)
+                .await
+                .unwrap();
+            }
+        };
+        let longest = MAX_DEPTH * 2 + 1;
+        for i in 0..=longest {
+            insert(format!("l{i}"), i.checked_sub(1).map(|p| format!("l{p}"))).await;
+        }
+        let chain = folder_chain(&db, "p", &format!("l{}", longest - 1)).await.unwrap();
+        assert_eq!(chain.len(), longest);
+        assert_eq!(chain.last().unwrap().id, "l0");
+        assert_eq!(folder_chain(&db, "p", &format!("l{longest}")).await.unwrap_err().code, "internal");
+        insert("c1".into(), None).await;
+        insert("c2".into(), Some("c1".into())).await;
+        sqlx::query("UPDATE folders SET parent_id = 'c2' WHERE id = 'c1'").execute(&db).await.unwrap();
+        assert_eq!(folder_chain(&db, "p", "c2").await.unwrap_err().code, "internal");
     }
 }

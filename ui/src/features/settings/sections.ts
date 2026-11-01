@@ -136,6 +136,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "tls.min_version",
       "tls.reload_interval_secs",
       "security.trusted_proxies",
+      "security.forwarded_headers",
     ],
     visible: serverAdmin,
   },

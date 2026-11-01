@@ -25,9 +25,33 @@ pub struct RequestInfo {
     /// session cookie is then `Secure` with the `__Host-` prefix; a browser would not send such a
     /// cookie back over plain HTTP, so it follows the request's scheme, not `server.public_url`.
     pub https: bool,
-    /// Host the user addressed, from `Host` or a trusted proxy's `X-Forwarded-Host`.
+    /// Host the user addressed: from `Host`, or from a trusted proxy's forwarding header
+    /// (`X-Forwarded-Host`, or `host=` in `Forwarded`, as `security.forwarded_headers` says).
     pub host: Option<String>,
 }
+
+/// Which forwarding header the trusted proxies write (`security.forwarded_headers`). Only that one
+/// is read; the other is ignored completely, because proxies pass a client's own copy of a
+/// header they do not write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForwardedHeaders {
+    /// `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` (the default).
+    XForwarded,
+    /// `Forwarded` (RFC 7239).
+    Forwarded,
+}
+
+impl ForwardedHeaders {
+    /// The configured value; the configuration check allows only these two.
+    pub fn from_config(value: &str) -> Self {
+        if value == "forwarded" { Self::Forwarded } else { Self::XForwarded }
+    }
+}
+
+/// A trusted proxy sent a `Forwarded` header that does not name the client (see
+/// `resolve_forwarded`).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct BadForwarded(&'static str);
 
 pub async fn request_info(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     // Listeners insert `ConnectInfo`; tests insert `MockConnectInfo`. Without either the peer is
@@ -39,20 +63,57 @@ pub async fn request_info(State(state): State<AppState>, mut req: Request, next:
         .or_else(|| ext.get::<MockConnectInfo<SocketAddr>>().map(|m| m.0.ip()))
         .unwrap_or(IpAddr::from([0, 0, 0, 0]));
     let tls = req.extensions().get::<ListenerTls>().map(|t| t.0).unwrap_or(false);
-    let info = resolve(peer, tls, req.headers(), &state.config.security.trusted_proxies);
+    let security = &state.config.security;
+    let mode = ForwardedHeaders::from_config(&security.forwarded_headers);
+    let info = match resolve(peer, tls, req.headers(), &security.trusted_proxies, mode) {
+        Ok(info) => info,
+        Err(BadForwarded(why)) => {
+            // Counted as the proxy, the request would share the budgets (sign-in limits, rate
+            // limits) of everyone behind it, so one malformed header could lock them all out.
+            tracing::warn!(proxy = %peer, why, "refused a request whose Forwarded header names no client");
+            return ApiError::new(
+                axum::http::StatusCode::BAD_REQUEST,
+                "validation",
+                "the Forwarded header from the reverse proxy names no client address",
+            )
+            .into_response();
+        }
+    };
     req.extensions_mut().insert(info);
     next.run(req).await
 }
 
-pub(crate) fn resolve(peer: IpAddr, tls: bool, headers: &HeaderMap, trusted: &[IpNet]) -> RequestInfo {
+/// Where the request came from. From a trusted peer, the configured forwarding header decides
+/// (`mode`); the other one is never read.
+pub(crate) fn resolve(
+    peer: IpAddr,
+    tls: bool,
+    headers: &HeaderMap,
+    trusted: &[IpNet],
+    mode: ForwardedHeaders,
+) -> Result<RequestInfo, BadForwarded> {
     // Dual-stack sockets on Linux report IPv4 peers as ::ffff:a.b.c.d; compare them as IPv4 so
     // `10.0.0.0/8` matches the same proxy on Linux and Windows.
     let peer = peer.to_canonical();
     let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
     let host = single_header(headers, "host");
     if !is_trusted(&peer) {
-        return RequestInfo { client_ip: peer, https: tls, host };
+        return Ok(RequestInfo { client_ip: peer, https: tls, host });
     }
+    match mode {
+        ForwardedHeaders::Forwarded => resolve_forwarded(peer, tls, host, headers, &is_trusted),
+        ForwardedHeaders::XForwarded => Ok(resolve_x_forwarded(peer, tls, host, headers, &is_trusted)),
+    }
+}
+
+/// `X-Forwarded-*` from a trusted peer.
+fn resolve_x_forwarded(
+    peer: IpAddr,
+    tls: bool,
+    host: Option<String>,
+    headers: &HeaderMap,
+    is_trusted: &dyn Fn(&IpAddr) -> bool,
+) -> RequestInfo {
     // Proxies either extend one X-Forwarded-For line or add another (HAProxy), so all lines are
     // read in order. Walk from the right: each trusted hop vouches for the entry to its left. The
     // first untrusted address is the client. An entry that is not an address ends the walk at the
@@ -82,6 +143,140 @@ pub(crate) fn resolve(peer: IpAddr, tls: bool, headers: &HeaderMap, trusted: &[I
         .and_then(|h| h.split(',').next().map(|h| h.trim().to_string()))
         .or(host);
     RequestInfo { client_ip, https, host }
+}
+
+/// `Forwarded` (RFC 7239) from a trusted peer. Each proxy appends one element describing the
+/// request it received: `for` the address it came from, `proto` and `host` what that request
+/// used. Walking from the right as with `X-Forwarded-For`, an element counts while the hop that
+/// wrote it is trusted: the peer wrote the last one, and each trusted `for` vouches for the
+/// element to its left. The client is the first untrusted `for`; scheme and host come from the
+/// leftmost element a trusted hop wrote, so a client cannot claim HTTPS or another host by
+/// sending its own header. Elements left of the client are the client's own and never read.
+///
+/// Without the header the request counts as the peer's (a health check of the proxy itself).
+/// A header that does not lead to a client address is refused (`BadForwarded`) rather than
+/// counted as the proxy: an element a trusted hop wrote that does not parse, lacks `for`, or
+/// names no address there (`unknown`, an obfuscated `_name`, garbage), or a value that is not
+/// text. Counted as the proxy, it would share the budgets of everyone behind it.
+fn resolve_forwarded(
+    peer: IpAddr,
+    tls: bool,
+    host: Option<String>,
+    headers: &HeaderMap,
+    is_trusted: &dyn Fn(&IpAddr) -> bool,
+) -> Result<RequestInfo, BadForwarded> {
+    if !headers.contains_key(header::FORWARDED) {
+        return Ok(RequestInfo { client_ip: peer, https: tls, host });
+    }
+    // Several lines are one list, as for every comma-separated header (RFC 9110, 5.3).
+    let lines = headers
+        .get_all(header::FORWARDED)
+        .iter()
+        .map(|v| v.to_str().map_err(|_| BadForwarded("not text")))
+        .collect::<Result<Vec<&str>, _>>()?;
+    let joined = lines.join(",");
+    let elements = split_quoted(&joined, ',');
+    let mut client_ip = peer;
+    let mut vouched: Option<ForwardedElement> = None;
+    for raw in elements.iter().rev() {
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let element = parse_forwarded_element(raw).ok_or(BadForwarded("an element does not parse"))?;
+        let next = element.for_node.as_deref().ok_or(BadForwarded("an element has no for"))?;
+        let ip = parse_forwarded_ip(next).ok_or(BadForwarded("a for names no address"))?;
+        vouched = Some(element);
+        client_ip = ip;
+        if !is_trusted(&ip) {
+            break;
+        }
+    }
+    let element = vouched.ok_or(BadForwarded("no element"))?;
+    let https = match element.proto.as_deref() {
+        Some(proto) => proto.eq_ignore_ascii_case("https"),
+        None => tls,
+    };
+    Ok(RequestInfo { client_ip, https, host: element.host.or(host) })
+}
+
+/// The parameters of one `Forwarded` element Kalzit uses.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ForwardedElement {
+    for_node: Option<String>,
+    proto: Option<String>,
+    host: Option<String>,
+}
+
+/// `for=192.0.2.60;proto=http;by=203.0.113.43`: pairs separated by `;`, each `token=value` with
+/// a token or a quoted string as value. Parameter names compare without case; a name given twice
+/// makes the element invalid (RFC 7239, 4), as does a pair without `=` or a broken quoted string.
+fn parse_forwarded_element(raw: &str) -> Option<ForwardedElement> {
+    let mut out = ForwardedElement::default();
+    let mut seen = std::collections::BTreeSet::new();
+    for pair in split_quoted(raw, ';') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let (name, value) = pair.split_once('=')?;
+        let name = name.trim().to_ascii_lowercase();
+        if name.is_empty() || !name.bytes().all(is_token_byte) || !seen.insert(name.clone()) {
+            return None;
+        }
+        let value = forwarded_value(value.trim())?;
+        match name.as_str() {
+            "for" => out.for_node = Some(value),
+            "proto" => out.proto = Some(value),
+            "host" => out.host = Some(value).filter(|h| !h.is_empty()),
+            _ => {}
+        }
+    }
+    Some(out)
+}
+
+/// A token, or a quoted string with its backslash escapes undone; `None` for anything else.
+fn forwarded_value(value: &str) -> Option<String> {
+    let Some(inner) = value.strip_prefix('"') else {
+        return (!value.is_empty() && value.bytes().all(|b| is_token_byte(b) || b == b':' || b == b'[' || b == b']'))
+            .then(|| value.to_string());
+    };
+    let inner = inner.strip_suffix('"')?;
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.push(chars.next()?),
+            '"' => return None,
+            c if c.is_control() => return None,
+            c => out.push(c),
+        }
+    }
+    Some(out)
+}
+
+/// The characters of an HTTP token (RFC 9110, 5.6.2).
+fn is_token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
+}
+
+/// Splits on `sep` outside quoted strings (with backslash escapes inside them).
+fn split_quoted(text: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut start, mut quoted, mut escaped) = (0, false, false);
+    for (i, c) in text.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if quoted && c == '\\' {
+            escaped = true;
+        } else if c == '"' {
+            quoted = !quoted;
+        } else if c == sep && !quoted {
+            parts.push(&text[start..i]);
+            start = i + c.len_utf8();
+        }
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
 fn single_header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -264,7 +459,7 @@ mod tests {
     #[test]
     fn untrusted_peer_cannot_spoof_forwarded_headers() {
         let h = headers(&[("x-forwarded-for", "1.2.3.4"), ("x-forwarded-proto", "https")]);
-        let info = resolve(ip("203.0.113.9"), false, &h, &["10.0.0.0/8".parse().unwrap()]);
+        let info = x_forwarded(ip("203.0.113.9"), false, &h, &["10.0.0.0/8".parse().unwrap()]);
         assert_eq!(info.client_ip, ip("203.0.113.9"));
         assert!(!info.https);
     }
@@ -272,7 +467,7 @@ mod tests {
     #[test]
     fn trusted_proxy_chain_yields_first_untrusted_from_right() {
         let h = headers(&[("x-forwarded-for", "6.6.6.6, 198.51.100.7, 10.0.0.2"), ("x-forwarded-proto", "https")]);
-        let info = resolve(ip("10.0.0.1"), false, &h, &["10.0.0.0/8".parse().unwrap()]);
+        let info = x_forwarded(ip("10.0.0.1"), false, &h, &["10.0.0.0/8".parse().unwrap()]);
         assert_eq!(info.client_ip, ip("198.51.100.7"));
         assert!(info.https);
     }
@@ -287,7 +482,7 @@ mod tests {
         let mut h = HeaderMap::new();
         h.append("x-forwarded-for", HeaderValue::from_static("1.1.1.1"));
         h.append("x-forwarded-for", HeaderValue::from_static("203.0.113.5"));
-        assert_eq!(resolve(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip("203.0.113.5"));
+        assert_eq!(x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip("203.0.113.5"));
     }
 
     #[test]
@@ -298,30 +493,224 @@ mod tests {
             ("\"2001:db8::8\"", "2001:db8::8"),
         ] {
             let h = headers(&[("x-forwarded-for", xff)]);
-            assert_eq!(resolve(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip(client), "{xff}");
+            assert_eq!(x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip(client), "{xff}");
         }
     }
 
     #[test]
     fn garbage_in_forwarded_for_does_not_reach_further_left() {
         let h = headers(&[("x-forwarded-for", "6.6.6.6, unknown, 10.0.0.9")]);
-        assert_eq!(resolve(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip("10.0.0.9"));
+        assert_eq!(x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip("10.0.0.9"));
     }
 
     #[test]
     fn ipv4_mapped_peers_match_ipv4_proxies() {
         let h = headers(&[("x-forwarded-for", "203.0.113.5"), ("x-forwarded-proto", "https")]);
-        let info = resolve(ip("::ffff:10.0.0.1"), false, &h, &trusted());
+        let info = x_forwarded(ip("::ffff:10.0.0.1"), false, &h, &trusted());
         assert_eq!(info.client_ip, ip("203.0.113.5"));
         assert!(info.https);
-        let alone = resolve(ip("::ffff:203.0.113.9"), false, &HeaderMap::new(), &trusted());
+        let alone = x_forwarded(ip("::ffff:203.0.113.9"), false, &HeaderMap::new(), &trusted());
         assert_eq!(alone.client_ip, ip("203.0.113.9"));
+    }
+
+    /// The default mode: `X-Forwarded-*` from a trusted peer.
+    fn x_forwarded(peer: IpAddr, tls: bool, h: &HeaderMap, trusted: &[IpNet]) -> RequestInfo {
+        resolve(peer, tls, h, trusted, ForwardedHeaders::XForwarded).unwrap()
+    }
+
+    /// `security.forwarded_headers = "forwarded"`.
+    fn forwarded_mode(peer: &str, h: &HeaderMap) -> Result<RequestInfo, BadForwarded> {
+        resolve(ip(peer), false, h, &trusted(), ForwardedHeaders::Forwarded)
+    }
+
+    fn forwarded_headers(values: &[&'static str]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("host", HeaderValue::from_static("inner.example:8080"));
+        for v in values {
+            h.append(header::FORWARDED, HeaderValue::from_static(v));
+        }
+        h
+    }
+
+    fn forwarded(peer: &str, values: &[&'static str]) -> RequestInfo {
+        forwarded_mode(peer, &forwarded_headers(values)).unwrap()
+    }
+
+    #[test]
+    fn the_setting_names_the_mode() {
+        assert_eq!(ForwardedHeaders::from_config("forwarded"), ForwardedHeaders::Forwarded);
+        assert_eq!(ForwardedHeaders::from_config("x-forwarded"), ForwardedHeaders::XForwarded);
+        assert_eq!(
+            ForwardedHeaders::from_config(&crate::config::SecurityConfig::default().forwarded_headers),
+            ForwardedHeaders::XForwarded
+        );
+    }
+
+    #[test]
+    fn forwarded_names_client_scheme_and_host() {
+        let info = forwarded("10.0.0.1", &["for=203.0.113.9;proto=https;host=kalzit.example"]);
+        assert_eq!(info.client_ip, ip("203.0.113.9"));
+        assert!(info.https);
+        assert_eq!(info.host.as_deref(), Some("kalzit.example"));
+        // Names and the scheme compare without case; values without parameters keep the defaults.
+        let info = forwarded("10.0.0.1", &["For=203.0.113.9;PROTO=HTTPS"]);
+        assert_eq!(info.client_ip, ip("203.0.113.9"));
+        assert!(info.https);
+        assert_eq!(info.host.as_deref(), Some("inner.example:8080"));
+        // Without the header (a health check of the proxy itself) the request is the proxy's.
+        let info = forwarded("10.0.0.1", &[]);
+        assert_eq!(info.client_ip, ip("10.0.0.1"));
+    }
+
+    #[test]
+    fn forwarded_from_an_untrusted_peer_is_ignored() {
+        let info = forwarded("203.0.113.50", &["for=1.2.3.4;proto=https;host=evil.example"]);
+        assert_eq!(info.client_ip, ip("203.0.113.50"));
+        assert!(!info.https);
+        assert_eq!(info.host.as_deref(), Some("inner.example:8080"));
+        // Also a broken one: it is not read at all.
+        assert_eq!(forwarded("203.0.113.50", &["for=\"broken"]).client_ip, ip("203.0.113.50"));
+    }
+
+    #[test]
+    fn forwarded_walks_trusted_hops_from_the_right() {
+        // Two proxies of ours; the client sent an element of its own in front.
+        let value = "for=6.6.6.6;proto=https;host=forged.example, for=198.51.100.7;proto=https;host=kalzit.example, \
+                     for=10.0.0.2;proto=http;host=inner";
+        let mut h = HeaderMap::new();
+        h.insert(header::FORWARDED, HeaderValue::from_str(value).unwrap());
+        let info = forwarded_mode("10.0.0.1", &h).unwrap();
+        assert_eq!(info.client_ip, ip("198.51.100.7"));
+        assert!(info.https);
+        assert_eq!(info.host.as_deref(), Some("kalzit.example"));
+        // The same over several header lines, one per proxy.
+        let info = forwarded(
+            "10.0.0.1",
+            &["for=6.6.6.6;host=forged.example", "for=198.51.100.7;proto=https", "for=10.0.0.2;proto=http"],
+        );
+        assert_eq!(info.client_ip, ip("198.51.100.7"));
+        assert!(info.https);
+        assert_eq!(info.host.as_deref(), Some("inner.example:8080"));
+        // A hop we do not trust ends the walk at the element our own proxy wrote.
+        let info =
+            forwarded("10.0.0.1", &["for=198.51.100.7;proto=https;host=forged.example, for=203.0.113.4;proto=http"]);
+        assert_eq!(info.client_ip, ip("203.0.113.4"));
+        assert!(!info.https);
+        assert_eq!(info.host.as_deref(), Some("inner.example:8080"));
+        // Only trusted hops: the leftmost of them is the client.
+        assert_eq!(forwarded("10.0.0.1", &["for=10.0.0.7, for=10.0.0.2"]).client_ip, ip("10.0.0.7"));
+    }
+
+    #[test]
+    fn forwarded_reads_quoted_values_ports_and_ipv6() {
+        for (value, client) in [
+            ("for=\"[2001:db8:cafe::17]:4711\"", "2001:db8:cafe::17"),
+            ("for=\"[2001:db8:cafe::17]\"", "2001:db8:cafe::17"),
+            ("for=\"192.0.2.43:47011\"", "192.0.2.43"),
+            ("for=192.0.2.43:47011", "192.0.2.43"),
+            ("for=[2001:db8::9]", "2001:db8::9"),
+            ("for=\"::ffff:192.0.2.44\"", "192.0.2.44"),
+            ("  for = 192.0.2.45 ; proto=https ", "192.0.2.45"),
+        ] {
+            assert_eq!(forwarded("10.0.0.1", &[value]).client_ip, ip(client), "{value}");
+        }
+        // A quoted host may hold what a token cannot, a comma or semicolon included, and escapes.
+        let info = forwarded("10.0.0.1", &["for=192.0.2.43;host=\"kalzit.example:8443\";proto=\"https\""]);
+        assert_eq!(info.host.as_deref(), Some("kalzit.example:8443"));
+        assert!(info.https);
+        assert_eq!(
+            parse_forwarded_element("for=\"a,b;c\";host=\"x\\\"y\"").unwrap(),
+            ForwardedElement { for_node: Some("a,b;c".into()), proto: None, host: Some("x\"y".into()) }
+        );
+        let info = forwarded("10.0.0.1", &["for=\"192.0.2.9\";host=\"a,b\", for=10.0.0.3"]);
+        assert_eq!(info.client_ip, ip("192.0.2.9"));
+        assert_eq!(info.host.as_deref(), Some("a,b"));
+    }
+
+    /// A header that does not lead to a client is refused, never counted as the proxy (whose
+    /// sign-in and rate limits everyone behind it shares).
+    #[test]
+    fn a_broken_forwarded_header_is_refused() {
+        for value in [
+            // Unknown and obfuscated nodes (RFC 7239, 6.2 and 6.3) where a trusted hop wrote them.
+            "for=6.6.6.6, for=unknown;proto=https, for=10.0.0.9",
+            "for=6.6.6.6, for=_hidden;proto=https, for=10.0.0.9",
+            "for=_hidden;proto=https",
+            // An element without `for`, one with a parameter twice, one without `=`, a broken
+            // quoted string, nothing at all.
+            "for=6.6.6.6, proto=https, for=10.0.0.9",
+            "for=6.6.6.6, for=1.1.1.1;for=2.2.2.2, for=10.0.0.9",
+            "for=6.6.6.6, for, for=10.0.0.9",
+            "for=6.6.6.6, for=\"1.1.1.1, for=10.0.0.9",
+            "for=\"broken",
+            " , ",
+        ] {
+            assert!(forwarded_mode("10.0.0.1", &forwarded_headers(&[value])).is_err(), "{value}");
+        }
+        let mut h = HeaderMap::new();
+        h.insert(header::FORWARDED, HeaderValue::from_bytes(b"for=\xff").unwrap());
+        assert_eq!(forwarded_mode("10.0.0.1", &h).unwrap_err(), BadForwarded("not text"));
+        // What a client wrote left of the address our proxy appended is never read, broken or not
+        // (an unclosed quote would swallow what follows, so the client only refuses itself).
+        let info = forwarded("10.0.0.1", &["garbage, for, for=_x;proto=https", "for=203.0.113.4"]);
+        assert_eq!(info.client_ip, ip("203.0.113.4"));
+        assert!(!info.https);
+    }
+
+    /// A client's own `Forwarded` passes through a proxy that writes `X-Forwarded-For` (nginx,
+    /// IIS ARR, Traefik and HAProxy do so), and the other way round: only the configured header
+    /// counts, the other is ignored completely.
+    #[test]
+    fn only_the_configured_header_is_read() {
+        let h = headers(&[
+            // Sent by the client.
+            ("forwarded", "for=192.0.2.66;proto=https;host=forged.example"),
+            // Appended by the proxy.
+            ("x-forwarded-for", "198.51.100.1"),
+            ("x-forwarded-proto", "http"),
+            ("host", "kalzit.example"),
+        ]);
+        let info = x_forwarded(ip("10.0.0.1"), false, &h, &trusted());
+        assert_eq!(info.client_ip, ip("198.51.100.1"));
+        assert!(!info.https);
+        assert_eq!(info.host.as_deref(), Some("kalzit.example"));
+
+        let h = headers(&[
+            // Sent by the client.
+            ("x-forwarded-for", "192.0.2.66"),
+            ("x-forwarded-proto", "https"),
+            ("x-forwarded-host", "forged.example"),
+            // Written by the proxy.
+            ("forwarded", "for=198.51.100.1;proto=http"),
+            ("host", "kalzit.example"),
+        ]);
+        let info = forwarded_mode("10.0.0.1", &h).unwrap();
+        assert_eq!(info.client_ip, ip("198.51.100.1"));
+        assert!(!info.https);
+        assert_eq!(info.host.as_deref(), Some("kalzit.example"));
+        // Without `Forwarded`, X-Forwarded-* still do not count in this mode.
+        let h = headers(&[("x-forwarded-for", "192.0.2.66"), ("x-forwarded-proto", "https")]);
+        let info = forwarded_mode("10.0.0.1", &h).unwrap();
+        assert_eq!(info.client_ip, ip("10.0.0.1"));
+        assert!(!info.https);
+    }
+
+    /// The default mode does not look at `Forwarded` at all, a broken one included.
+    #[test]
+    fn the_default_mode_ignores_forwarded() {
+        for value in ["for=192.0.2.66;proto=https;host=forged.example", "for=\"broken", "for=_hidden"] {
+            let h = headers(&[("forwarded", value), ("host", "kalzit.example")]);
+            let info = x_forwarded(ip("10.0.0.1"), false, &h, &trusted());
+            assert_eq!(info.client_ip, ip("10.0.0.1"), "{value}");
+            assert!(!info.https);
+            assert_eq!(info.host.as_deref(), Some("kalzit.example"));
+        }
     }
 
     #[test]
     fn leftmost_forwarded_proto_wins() {
         let h = headers(&[("x-forwarded-proto", "https, http")]);
-        assert!(resolve(ip("10.0.0.1"), false, &h, &trusted()).https);
+        assert!(x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).https);
     }
 
     #[test]
