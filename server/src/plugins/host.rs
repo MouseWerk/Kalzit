@@ -317,6 +317,9 @@ pub struct PluginHost {
     exposed: Arc<Exposure>,
     /// The data sources and server settings as they are now, for the connector (`attach`).
     lookup: Arc<StateLookup>,
+    /// The shared packages whose refusal is in the audit log, by directory and reason, so that
+    /// the retries of `sync` record it once.
+    refused: Mutex<std::collections::HashSet<(String, String)>>,
 }
 
 impl PluginHost {
@@ -335,6 +338,7 @@ impl PluginHost {
             db: OnceLock::new(),
             exposed: Arc::default(),
             lookup: Arc::default(),
+            refused: Mutex::default(),
         }
     }
 
@@ -376,6 +380,26 @@ impl PluginHost {
 
     fn dir(&self, name: &str) -> PathBuf {
         self.root.join(name)
+    }
+
+    /// The directory of the package `name` in `packages`. Names come from the database, so only
+    /// the ones `install` makes are accepted (`is_package_dir_name`), and the path must stay in
+    /// `packages`.
+    fn package_path(&self, name: &str) -> Result<PathBuf, HostError> {
+        let packages = self.dir("packages");
+        let dir = packages.join(name);
+        if !is_package_dir_name(name) || dir.parent() != Some(packages.as_path()) {
+            return Err(HostError::new("plugin.package_dir_invalid", "the package directory name is not valid"));
+        }
+        Ok(dir)
+    }
+
+    /// Removes the package `name` with its mark; a name that is not a package's is left alone.
+    fn remove_package(&self, name: &str) {
+        match self.package_path(name) {
+            Ok(dir) => remove_dir(&dir),
+            Err(_) => tracing::error!("a package directory name from the database is not valid; nothing is removed"),
+        }
     }
 
     /// Creates the host's directories (private) where they are missing.
@@ -434,7 +458,7 @@ impl PluginHost {
                 continue;
             }
             if let Err(e) = self.register(&row, &keys, datasources) {
-                tracing::warn!(plugin = %row.id, reason = e.reason, "the plugin does not run: {}", e.message);
+                self.not_running(db, None, &row, Some(e.reason), &e.message).await;
             }
         }
         Ok(())
@@ -484,7 +508,13 @@ impl PluginHost {
             manifest::parse(&row.manifest).map_err(|e| HostError::new("plugin.manifest_invalid", e.to_string()))?;
         check_kind(row, &manifest)?;
         manifest.runs_on(env!("CARGO_PKG_VERSION")).map_err(|i| HostError::new("plugin.kalzit_too_old", i.message))?;
-        let package_dir = self.dir("packages").join(&row.dir);
+        let package_dir = self.package_path(&row.dir)?;
+        // The package on disk must be the one installed: its manifest (which lists every file
+        // with its hash, and which the signature covers) byte for byte the stored one.
+        let on_disk = std::fs::read(package_dir.join(manifest::MANIFEST_FILE))?;
+        if on_disk != row.manifest.as_bytes() {
+            return Err(manifest_differs());
+        }
         if manifest.plugin_kind() == manifest::PluginKind::Panel {
             // Nothing runs on the server: the panel may be shown.
             self.panels.insert(&row.id, ActivePanel { manifest: Arc::new(manifest), package_dir });
@@ -711,7 +741,7 @@ impl PluginHost {
             self.reregister(state, &row.id).await;
         }
         for old in old_dirs {
-            remove_dir(&self.dir("packages").join(old));
+            self.remove_package(&old);
         }
         Ok(row)
     }
@@ -929,7 +959,7 @@ impl PluginHost {
             _ => return,
         };
         if let Err(e) = self.register(&row, &keys, &state.datasources) {
-            tracing::warn!(plugin = %id, reason = e.reason, "the plugin does not run: {}", e.message);
+            self.not_running(&state.db, Some(state.cluster.id()), &row, Some(e.reason), &e.message).await;
         }
     }
 
@@ -989,7 +1019,7 @@ impl PluginHost {
         self.unregister(id, &state.datasources).await;
         self.reregister(state, id).await;
         if let Some(dir) = old_dir {
-            remove_dir(&self.dir("packages").join(dir));
+            self.remove_package(&dir);
         }
         Ok(row)
     }
@@ -1058,9 +1088,9 @@ impl PluginHost {
         crate::cluster::record(&mut tx, state.cluster.id(), &crate::cluster::Change::Plugins).await?;
         crate::db::commit(tx).await?;
         self.unregister(id, &state.datasources).await;
-        remove_dir(&self.dir("packages").join(&row.dir));
+        self.remove_package(&row.dir);
         if let Some(p) = &row.pending {
-            remove_dir(&self.dir("packages").join(&p.dir));
+            self.remove_package(&p.dir);
         }
         super::sandbox::remove_app_container(&self.dir("run"), id);
         Ok(())
@@ -1187,7 +1217,7 @@ impl PluginHost {
             self.unregister(id, &state.datasources).await;
         }
         for dir in dirs {
-            remove_dir(&self.dir("packages").join(dir));
+            self.remove_package(&dir);
         }
         Ok(stopped)
     }
@@ -1338,13 +1368,15 @@ impl PluginHost {
                 tracing::warn!(plugin = %row.id, "the plugin is unsigned and unsigned plugins are not allowed; it does not run on this server");
                 continue;
             }
-            if let Err(e) = self.materialize(state, &row.id, &row.dir, &row.manifest).await {
-                tracing::warn!(plugin = %row.id, "the plugin's package is not on this server: {}", e.message);
+            let server = Some(state.cluster.id());
+            if let Err(e) = self.materialize(state, row, &keys, switches.allow_unsigned).await {
+                let reason = e.reason.as_ref().map(|r| r.code.as_str());
+                self.not_running(&state.db, server, row, reason, &e.message).await;
                 complete = false;
                 continue;
             }
             if let Err(e) = self.register(row, &keys, &state.datasources) {
-                tracing::warn!(plugin = %row.id, reason = e.reason, "the plugin does not run: {}", e.message);
+                self.not_running(&state.db, server, row, Some(e.reason), &e.message).await;
                 complete = false;
             }
         }
@@ -1370,18 +1402,71 @@ impl PluginHost {
         Ok(complete)
     }
 
-    /// Unpacks the shared package `dir` of plugin `id` when this server does not have it, with
-    /// the checks of an installation: a valid package whose manifest is exactly `manifest_text`
-    /// (the one the installing server checked and stored), every file as the manifest lists it.
-    /// It is unpacked into a temporary directory and renamed into place only once checked, then
-    /// marked complete (`<dir>.complete`); a directory without the mark is unpacked again.
-    async fn materialize(&self, state: &AppState, id: &str, dir_name: &str, manifest_text: &str) -> ApiResult<()> {
-        let dir = self.dir("packages").join(dir_name);
+    /// Why the plugin of `row` does not run here. A refused package (`is_refusal`) is logged as
+    /// an error and recorded in the audit log as `plugins.package_refused`, once per package
+    /// directory and reason; anything else (a missing package, a file or database error) may pass
+    /// and is only logged, and the caller tries again.
+    async fn not_running(
+        &self,
+        db: &sqlx::AnyPool,
+        server: Option<&str>,
+        row: &PluginRow,
+        reason: Option<&str>,
+        message: &str,
+    ) {
+        let Some(reason) = reason.filter(|r| is_refusal(r)) else {
+            tracing::warn!(plugin = %row.id, reason, "the plugin does not run on this server: {message}");
+            return;
+        };
+        tracing::error!(plugin = %row.id, reason, "the plugin's package is refused: {message}");
+        if !self.refused.lock_or_recover().insert((row.dir.clone(), reason.to_string())) {
+            return;
+        }
+        let at_ms =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+        let event = AuditEvent {
+            org_id: None,
+            actor_user_id: None,
+            actor_address: None,
+            action: "plugins.package_refused",
+            resource_type: Some("plugin"),
+            resource_id: Some(&row.id),
+            summary: json!({ "reason": reason, "version": row.version, "server": server }),
+            at_ms,
+        };
+        let recorded = async {
+            let mut tx = crate::db::begin(db).await?;
+            audit::record(&mut tx, &event).await?;
+            crate::db::commit(tx).await?;
+            Ok::<_, ApiError>(())
+        };
+        if let Err(e) = recorded.await {
+            tracing::warn!(plugin = %row.id, "the refused plugin package could not be recorded: {}", e.message);
+        }
+    }
+
+    /// Unpacks the shared package `row.dir` when this server does not have it, with the checks
+    /// of an installation: the archive must match the SHA-256 stored with it, its manifest must
+    /// be exactly the one the installing server checked and stored, its signature must verify
+    /// with a key this server trusts (`package::verify`) and be the signer and key stored with
+    /// the plugin, and every file must be as the manifest lists it. It is unpacked into a
+    /// temporary directory and renamed into place only once checked, then marked complete
+    /// (`<dir>.complete`); a directory without the mark is unpacked again.
+    async fn materialize(
+        &self,
+        state: &AppState,
+        row: &PluginRow,
+        keys: &[KeyRow],
+        allow_unsigned: bool,
+    ) -> ApiResult<()> {
+        let (id, dir_name, manifest_text) = (row.id.as_str(), row.dir.as_str(), row.manifest.as_str());
+        let dir = self.package_path(dir_name).map_err(HostError::api)?;
         let mark = self.dir("packages").join(format!("{dir_name}{COMPLETE_SUFFIX}"));
-        let shared: Option<(String,)> = sqlx::query_as("SELECT archive FROM plugin_packages WHERE dir = $1")
-            .bind(dir_name)
-            .fetch_optional(&state.db)
-            .await?;
+        let shared: Option<(String, String)> =
+            sqlx::query_as("SELECT archive, sha256 FROM plugin_packages WHERE dir = $1")
+                .bind(dir_name)
+                .fetch_optional(&state.db)
+                .await?;
         if dir.exists() {
             // Complete, or installed here before shared copies existed.
             if mark.exists() || shared.is_none() {
@@ -1389,18 +1474,46 @@ impl PluginHost {
             }
             remove_dir(&dir);
         }
-        let Some((archive,)) = shared else {
+        let Some((archive, sha256)) = shared else {
             return Err(HostError::new("plugin.package_missing", "no server shared the package").api());
         };
-        self.prepare().map_err(|e| HostError::from(e).api())?;
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, archive.as_bytes())
-            .map_err(|e| ApiError::internal("plugin package", e))?;
+            .map_err(|_| HostError::new("plugin.package_unreadable", "the shared package is not valid base64").api())?;
+        // Before anything is written: the archive is the one the installing server shared.
+        let digest = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
+        if !digest.eq_ignore_ascii_case(sha256.trim()) {
+            return Err(HostError::new(
+                "plugin.package_hash_mismatch",
+                "the shared package does not match the SHA-256 stored with it",
+            )
+            .api());
+        }
+        self.prepare().map_err(|e| HostError::from(e).api())?;
         let upload = self.upload_path().map_err(|e| e.api())?;
         let partial = self.dir("packages").join(format!(".partial-{dir_name}"));
         remove_dir(&partial);
         let unpacked = async {
             tokio::fs::write(&upload, &bytes).await.map_err(|e| HostError::from(e).api())?;
-            let manifest = manifest::parse(manifest_text).map_err(|e| ApiError::internal("plugin manifest", e))?;
+            // The manifest and the signature as the archive holds them, checked as at the
+            // installation before a file is unpacked.
+            let path = upload.clone();
+            let signed = tokio::task::spawn_blocking(move || package::read_from_zip(&path))
+                .await
+                .map_err(|e| ApiError::internal("plugin package", e))?
+                .map_err(HostError::api)?;
+            if signed.manifest_text != manifest_text {
+                return Err(manifest_differs().api());
+            }
+            let verified = package::verify(&signed, &self.trusted(keys), allow_unsigned).map_err(HostError::api)?;
+            let key_hex = verified.key.as_ref().map(signing::key_hex);
+            if signer_name(verified.signer) != row.signer || key_hex != row.public_key {
+                return Err(HostError::new(
+                    "plugin.signer_mismatch",
+                    "the shared package is signed by another key than the one recorded at the installation",
+                )
+                .api());
+            }
+            let manifest = &signed.manifest;
             let is_panel = manifest.plugin_kind() == manifest::PluginKind::Panel;
             let access = if is_panel { PluginAccess::None } else { PluginAccess::ReadExecute(package::plugin_sid(id)) };
             package::private_dir(&partial, &access).map_err(|e| HostError::from(e).api())?;
@@ -1410,9 +1523,7 @@ impl PluginHost {
                 .map_err(|e| ApiError::internal("plugin unpack", e))?
                 .map_err(HostError::api)?;
             if unpacked.manifest_text != manifest_text {
-                return Err(HostError::new("plugin.package_invalid", "the manifest differs from the one installed")
-                    .with("issues", "manifest")
-                    .api());
+                return Err(manifest_differs().api());
             }
             if is_panel {
                 panels::check_bundle(&unpacked.manifest, &partial).map_err(HostError::api)?;
@@ -1431,6 +1542,37 @@ impl PluginHost {
         }
         unpacked
     }
+}
+
+fn manifest_differs() -> HostError {
+    HostError::new("plugin.package_invalid", "the manifest differs from the one installed").with("issues", "manifest")
+}
+
+/// Whether `reason` refuses a package for what it is: tampered, damaged, in the wrong place,
+/// signed by another or an untrusted key. Not a passing failure (a missing package, a file or
+/// database error), which is tried again and not recorded as a refusal.
+fn is_refusal(reason: &str) -> bool {
+    matches!(
+        reason,
+        "plugin.package_hash_mismatch"
+            | "plugin.package_dir_invalid"
+            | "plugin.signer_mismatch"
+            | "plugin.unsigned_refused"
+            | "plugin.signer_untrusted"
+            | "plugin.signature_invalid"
+            | "plugin.package_invalid"
+            | "plugin.package_unreadable"
+            | "plugin.package_too_large"
+            | "plugin.manifest_missing"
+            | "plugin.manifest_invalid"
+            | "plugin.id_reserved"
+    )
+}
+
+/// Whether `name` is a package directory name as `install` makes them: a UUID in its simple
+/// form, 32 lowercase hex digits. No separator, no `..`, nothing that leaves `packages`.
+fn is_package_dir_name(name: &str) -> bool {
+    name.len() == 32 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// The mark next to a package directory that says it was unpacked and checked in full.
@@ -1553,6 +1695,27 @@ api = 1
         assert_eq!(e.reason, "plugin.kind_changed");
         let fixed = PluginRow { kind: "panel".into(), ..row };
         assert!(check_kind(&fixed, &manifest).is_ok());
+    }
+
+    #[test]
+    fn only_generated_package_dir_names_are_accepted() {
+        let host = PluginHost::new(Path::new("data"));
+        let name = format!("{}", uuid::Uuid::now_v7().simple());
+        assert!(is_package_dir_name(&name));
+        assert_eq!(host.package_path(&name).unwrap(), host.dir("packages").join(&name));
+        for bad in [
+            "",
+            "..",
+            "../0123456789abcdef0123456789abcdef",
+            "0123456789abcdef0123456789abcde/",
+            "0123456789ABCDEF0123456789ABCDEF",
+            "0123456789abcdef0123456789abcdef0",
+            "..\\0123456789abcdef0123456789abc",
+            "/etc",
+        ] {
+            assert!(!is_package_dir_name(bad), "{bad}");
+            assert_eq!(host.package_path(bad).unwrap_err().reason, "plugin.package_dir_invalid", "{bad}");
+        }
     }
 
     #[test]

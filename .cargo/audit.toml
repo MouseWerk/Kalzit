@@ -4,16 +4,20 @@
 [advisories]
 ignore = [
     # rsa 0.9 (Marvin attack: timing of RSA decryption and signing with a private key). It comes in
-    # only through webauthn-rs (crypto-glue), which Kalzit uses to verify passkey signatures with
-    # public keys (RS256, as Windows Hello uses); Kalzit never decrypts or signs with an RSA private
-    # key. No fixed rsa release exists.
+    # through webauthn-rs (crypto-glue), which Kalzit uses to verify passkey signatures with public
+    # keys (RS256, as Windows Hello uses), and, since SAML (PR #175), through bergshamra
+    # (bergshamra-keys, and kryptering, which bergshamra uses for its XML signature and encryption
+    # algorithms). Kalzit only verifies signatures with public keys there (passkeys; the provider's
+    # pinned SAML certificate) and refuses encrypted SAML assertions, so it never decrypts or signs
+    # with an RSA private key. No fixed rsa release exists.
     "RUSTSEC-2023-0071",
     # crypto-bigint 0.5 (timing variability in operations meant to be constant time). It comes in
     # through webauthn-rs (crypto-glue, elliptic-curve 0.13) and, since SAML (PR #175), through
     # bergshamra (bergshamra-keys, ecdsa 0.16, elliptic-curve 0.13). Both only verify signatures
     # over public data with public keys (passkeys; the provider's pinned SAML certificate), so no
-    # secret passes through it; Kalzit never signs with bergshamra. The fix (0.7.6) is outside the
-    # 0.5 line that elliptic-curve 0.13 requires; no fixed version exists in that line. The
-    # crypto-bigint 0.7 that bergshamra's RSA brings is past the fix.
+    # secret passes through it; Kalzit never signs with bergshamra and refuses encrypted
+    # assertions. The fix (0.7.6) is outside the 0.5 line that elliptic-curve 0.13 requires; no
+    # fixed version exists in that line. The crypto-bigint 0.7 that kryptering, crypto-primes and
+    # elliptic-curve 0.14 bring is past the fix.
     "RUSTSEC-2026-0387",
 ]

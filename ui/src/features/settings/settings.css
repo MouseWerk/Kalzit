@@ -783,6 +783,19 @@
     --crystal-beam: var(--accent);
   }
 
+  /* Forced colors: the system's colors, read as they are (the canvas keeps its own colors). */
+  @media (forced-colors: active) {
+    .about-crystal {
+      --crystal-ink: CanvasText;
+      --crystal-quiet: GrayText;
+      --crystal-beam: Highlight;
+    }
+
+    .about-crystal__canvas {
+      forced-color-adjust: none;
+    }
+  }
+
   .about-crystal__canvas {
     display: block;
     width: 100%;
