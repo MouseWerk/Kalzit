@@ -234,7 +234,8 @@ async fn one(state: &AppState, id: &str) -> ApiResult<Json<PluginView>> {
     Ok(Json(view(state, row).await?))
 }
 
-/// A data source of the plugin's kind, for "Used in" and the question before removing it.
+/// A data source of the plugin's kind (for a panel plugin, a dashboard that shows it), for "Used
+/// in" and the question before removing it.
 #[derive(Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 struct UsedIn {
@@ -245,7 +246,7 @@ struct UsedIn {
 }
 
 /// One plugin with what the list leaves out: the manifest as signed and the data sources of its
-/// kind in every organization (not in the trash).
+/// kind (the dashboards that show it, for a panel plugin) in every organization (not in the trash).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginDetail {
@@ -258,16 +259,45 @@ struct PluginDetail {
 async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) -> ApiResult<Json<PluginDetail>> {
     let row = store::get(&state.db, &path.plugin_id).await?.ok_or_else(ApiError::not_found)?;
     let manifest = row.manifest.clone();
-    let used_in: Vec<UsedIn> = sqlx::query_as(
-        "SELECT d.id, d.name, d.org_id, o.name AS org_name \
-         FROM datasources d JOIN orgs o ON o.id = d.org_id \
-         WHERE d.kind = $1 AND d.deleted_at IS NULL \
-         ORDER BY o.name, d.name, d.id",
+    let used_in: Vec<UsedIn> = if row.kind == "panel" {
+        dashboards_showing(&state, &row.id).await?
+    } else {
+        sqlx::query_as(
+            "SELECT d.id, d.name, d.org_id, o.name AS org_name \
+             FROM datasources d JOIN orgs o ON o.id = d.org_id \
+             WHERE d.kind = $1 AND d.deleted_at IS NULL \
+             ORDER BY o.name, d.name, d.id",
+        )
+        .bind(&row.id)
+        .fetch_all(&state.db)
+        .await?
+    };
+    Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
+}
+
+/// The dashboards in every organization (not in the trash) whose current version shows the panel
+/// plugin `id`. Only models that name the plugin or link a library panel or an analysis can show
+/// it, so the others are skipped before they are read.
+async fn dashboards_showing(state: &AppState, id: &str) -> ApiResult<Vec<UsedIn>> {
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT d.id, d.title, d.org_id, o.name, v.model \
+         FROM dashboards d JOIN orgs o ON o.id = d.org_id \
+         JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
+         WHERE d.deleted_at IS NULL \
+           AND (v.model LIKE $1 OR v.model LIKE '%libraryPanelId%' OR v.model LIKE '%analysisId%') \
+         ORDER BY o.name, d.title, d.id",
     )
-    .bind(&row.id)
+    .bind(format!("%{id}%"))
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
+    let mut out = Vec::new();
+    for (dashboard, title, org_id, org_name, raw) in rows {
+        let Ok(model) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+        if super::panel_plugins::model_shows_panel(state, &org_id, &model, id).await? {
+            out.push(UsedIn { id: dashboard, name: title, org_id, org_name });
+        }
+    }
+    Ok(out)
 }
 
 /// Removes the uploaded file when the request ends, however it ends.

@@ -61,13 +61,13 @@ describe("layout guards", () => {
     ).toContain(inset);
   });
 
-  it("lets the step type give up width before its button wraps", () => {
-    expect(value("analysis/analysis.css", ".steps__add > .select", "flex")).toContain("1 1 10rem");
-    expect(value("analysis/analysis.css", ".steps__add > .button", "flex")).toContain("none");
-    // Wide enough for the longest step name while closed.
-    expect(value("analysis/analysis.css", ".steps__add > .select", "max-width")).toContain(
-      "var(--size-column)",
+  it("never cuts the chosen step type; its button wraps instead", () => {
+    // Sized to the chosen name, growing but never shrinking below it.
+    expect(value("analysis/analysis.css", ".steps__add > .select", "flex")).toContain("1 0 auto");
+    expect(value("analysis/analysis.css", ".steps__add > .select", "field-sizing")).toContain(
+      "content",
     );
+    expect(value("analysis/analysis.css", ".steps__add > .button", "flex")).toContain("none");
   });
 
   it("stacks only fields in a narrow settings section; switches stay beside their text", () => {

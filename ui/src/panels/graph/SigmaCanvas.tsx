@@ -3,6 +3,7 @@ import { type Ref, useEffect, useImperativeHandle, useLayoutEffect, useRef, useS
 import Sigma from "sigma";
 import { extremityArrow, layerPlain, pathLine, pathLoop } from "sigma/rendering";
 import type { CameraState } from "sigma/types";
+import { labelWidth } from "../measure";
 import { applyPositionsTo } from "./applyPositions";
 import type { GraphPalette } from "./colors";
 import {
@@ -10,13 +11,15 @@ import {
   type DrawStyle,
   dimsEdges,
   edgeDisplay,
+  labelWish,
   nodeDisplay,
   nodeToward,
 } from "./drawing";
 import { handOver } from "./handover";
+import { blockedLabels, type DrawnNode, sameSet, type WantedLabel } from "./labelCollisions";
 import { installLabelPickingFix } from "./labelPicking";
 import { refreshVisibility } from "./refresh";
-import type { GraphView, Visibility } from "./view";
+import { type GraphView, LABEL_BUDGET, labelBudgetFor, type Visibility } from "./view";
 import "./graph.css";
 
 /**
@@ -85,6 +88,81 @@ const ZOOM_DURATION = 200;
 export interface LiveProps {
   props: SigmaCanvasProps;
   ratioBucket: number;
+  /** Labels left out because they would cover another node (labelCollisions.ts). */
+  blocked?: ReadonlySet<number>;
+  /** The label budget of the panel's size (labelBudgetFor). */
+  budget?: number;
+  /** Checks the labels' room again once the camera, the layout or the panel has settled. */
+  checkLabels?: () => void;
+}
+
+/** The renderer's label size in px (sigma's default). */
+const LABEL_SIZE = 14;
+/** How long the drawing must stay still before the labels' room is checked again, in ms. */
+const SETTLE_MS = 120;
+/** Nodes this far outside the panel can still have a label reaching into it, in px. */
+const OUTSIDE = 240;
+
+const measured = new Map<string, number>();
+
+/** A label's width in px in the panel's font (measured once per text). */
+function textWidth(text: string, font: string): number {
+  const key = `${font}|${text}`;
+  const known = measured.get(key);
+  if (known !== undefined) return known;
+  const width = labelWidth(text, `${LABEL_SIZE}px ${font}`);
+  if (measured.size > 5_000) measured.clear();
+  measured.set(key, width);
+  return width;
+}
+
+/**
+ * Finds the labels that would cover another node's circle at the current camera and draws the
+ * nodes whose label comes or goes again.
+ */
+export function checkLabelRoom(renderer: Sigma, live: { current: LiveProps }): void {
+  const p = live.current.props;
+  const ratio = renderer.getCamera().ratio;
+  const budget = live.current.budget ?? LABEL_BUDGET;
+  const { width, height } = renderer.getDimensions();
+  const nodes: DrawnNode[] = [];
+  const labels: (WantedLabel & { rank: number })[] = [];
+  for (let i = 0; i < p.view.nodes.length; i++) {
+    if (p.visibility.nodes[i] !== 1) continue;
+    const data = renderer.getNodeDisplayData(String(i));
+    if (data === undefined) continue;
+    const point = renderer.framedGraphToViewport(data);
+    if (
+      point.x < -OUTSIDE ||
+      point.y < -OUTSIDE ||
+      point.x > width + OUTSIDE ||
+      point.y > height + OUTSIDE
+    ) {
+      continue;
+    }
+    const drawn = { index: i, x: point.x, y: point.y, radius: renderer.scaleSize(data.size) };
+    nodes.push(drawn);
+    const wish = labelWish(i, p, ratio, budget);
+    const caption = p.view.nodes[i]?.caption ?? "";
+    if (wish === "hidden" || caption === "") continue;
+    labels.push({
+      ...drawn,
+      width: textWidth(caption, p.palette.font),
+      height: LABEL_SIZE,
+      forced: wish === "visible",
+      rank: p.ranks[i] ?? 0,
+    });
+  }
+  labels.sort((a, b) => a.rank - b.rank);
+  const blocked = blockedLabels(nodes, labels);
+  const before = live.current.blocked ?? new Set<number>();
+  if (sameSet(blocked, before)) return;
+  const changed = new Set<number>();
+  for (const i of blocked) if (!before.has(i)) changed.add(i);
+  for (const i of before) if (!blocked.has(i)) changed.add(i);
+  live.current.blocked = blocked;
+  // Without skipping the indexation: a label that comes back must enter the renderer's grid.
+  renderer.refresh({ partialGraph: { nodes: [...changed].map(String) } });
 }
 
 /**
@@ -138,7 +216,14 @@ export function createRenderer(
       ...motionSettings(live.current.props.reducedMotion),
     },
     nodeReducer: (key, data) =>
-      nodeDisplay(Number(key), data, live.current.props, built?.getCamera().ratio ?? 1),
+      nodeDisplay(
+        Number(key),
+        data,
+        live.current.props,
+        built?.getCamera().ratio ?? 1,
+        live.current.blocked,
+        live.current.budget,
+      ),
     edgeReducer: (key, data) => edgeDisplay(Number(key.slice(1)), data, live.current.props),
   });
   built = renderer;
@@ -151,8 +236,23 @@ export function createRenderer(
     live.current.props.onPick(Number(node), additive(event)),
   );
   renderer.on("clickStage", ({ event }) => live.current.props.onPick(null, additive(event)));
+  // The labels' room is checked once the drawing stands still: after a zoom, a pan, a resize
+  // or new positions from the layout.
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  const check = () => {
+    clearTimeout(settle);
+    settle = setTimeout(() => {
+      const { width, height } = renderer.getDimensions();
+      live.current.budget = labelBudgetFor(width, height);
+      checkLabelRoom(renderer, live);
+    }, SETTLE_MS);
+  };
+  live.current.checkLabels = check;
+  renderer.on("resize", check);
+  renderer.on("kill", () => clearTimeout(settle));
   // Labels by zoom level: refresh the reducers when the camera crosses into another level.
   renderer.getCamera().on("updated", ({ ratio }) => {
+    check();
     const bucket = Math.round(Math.log2(Math.max(ratio, 1e-3)) * 2);
     if (bucket !== live.current.ratioBucket) {
       live.current.ratioBucket = bucket;
@@ -163,6 +263,7 @@ export function createRenderer(
       });
     }
   });
+  check();
   return renderer;
 }
 
@@ -240,6 +341,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     if (renderer === null) return;
     renderer.setSetting("renderEdgeLabels", drawStyle.edgeLabels !== "never");
     renderer.refresh({ skipIndexation: true });
+    live.current.checkLabels?.();
   }, [drawStyle]);
 
   // The test hook: where a node with this caption is drawn on the page. Only in development and
@@ -272,6 +374,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
       return;
     }
     applyPositionsTo(graph, positions);
+    live.current.checkLabels?.();
   }, [positions]);
 
   // The time slider: only what changed is drawn again in large graphs (refresh.ts).
@@ -296,6 +399,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     };
     refreshVisibility(target, live.current.props.view, shownVisibility.current, visibility);
     shownVisibility.current = visibility;
+    live.current.checkLabels?.();
   }, [visibility]);
 
   // Theme and label levels change every node's and edge's colors or labels.
@@ -315,6 +419,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     } else {
       renderer.refresh({ partialGraph: { nodes: graph.nodes() }, skipIndexation: true });
     }
+    live.current.checkLabels?.();
   }, [selected, neighbours]);
 
   useImperativeHandle(props.ref, () => ({

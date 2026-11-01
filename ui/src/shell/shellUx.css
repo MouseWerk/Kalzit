@@ -736,6 +736,7 @@
   .start {
     display: grid;
     gap: var(--space-8);
+    container: start / inline-size;
   }
 
   .start__header {
@@ -911,8 +912,18 @@
     list-style: none;
   }
 
+  /*
+   * Four tiles in a row where four fit at their smallest width (4 x --size-stat-min and the
+   * gaps), else two by two: never three and one left alone in a row of its own.
+   */
   .start__stats {
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-stat-min), 100%), 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @container start (min-width: 59rem) {
+    .start__stats {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
   }
 
   /*

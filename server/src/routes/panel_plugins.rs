@@ -124,6 +124,12 @@ async fn shows_panel(state: &AppState, org_id: &str, dashboard_id: &str, kind: &
     .await?;
     let (raw,) = row.ok_or_else(ApiError::not_found)?;
     let model: Value = serde_json::from_str(&raw).map_err(|e| ApiError::internal("dashboards", e))?;
+    model_shows_panel(state, org_id, &model, kind).await
+}
+
+/// Whether a dashboard model of the organization shows a panel of type `kind`: its own, a
+/// linked library panel's or a linked analysis's visualization.
+pub(crate) async fn model_shows_panel(state: &AppState, org_id: &str, model: &Value, kind: &str) -> ApiResult<bool> {
     let panels: Vec<&Value> = model["panels"].as_array().into_iter().flatten().collect();
     if panels.iter().any(|p| p["type"].as_str() == Some(kind)) {
         return Ok(true);

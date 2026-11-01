@@ -129,8 +129,10 @@ What the host checks, in this order, before anything runs:
 ```
 
 `GET /admin/plugins/{pluginId}` answers one item with two more fields: `manifest`, the manifest
-exactly as signed (TOML), and `usedIn`, the data sources of its kind in every organization (not
-in the trash), for "Used in" and the question before removing it:
+exactly as signed (TOML), and `usedIn`, for "Used in" and the question before removing it: for a
+data source plugin the data sources of its kind in every organization (not in the trash), for a
+panel plugin the dashboards in every organization (not in the trash) whose current version shows
+it, directly or through a linked library panel or analysis (`name` is the dashboard's title):
 
 ```json
 { "...": "...", "manifest": "manifest = 1\nid = \"dev.example.redis\"\n...",
@@ -184,7 +186,8 @@ payload_too_large` above). Answers `201` with the plugin.
 Enabling needs the approval (`plugin.not_approved`). Disabling takes the kind out of the registry
 and ends the process: data sources of the kind stay stored and answer
 `datasource.kind_unavailable`. `restart` starts the count of failures afresh after the plugin
-stopped (below); the next call starts it. All three answer the plugin.
+stopped (below); the next call starts it. A panel plugin runs no process, so `restart` refuses it
+with `409 plugin.panel_has_no_process` and records nothing. All three answer the plugin.
 
 ### Remove: `DELETE /admin/plugins/{pluginId}`
 
@@ -844,6 +847,7 @@ Rules:
 | `plugin.nothing_to_approve` | | the version is approved already and no update waits (`409`) |
 | `plugin.version_mismatch` | `version` | the version to approve is neither installed nor waiting (`409`) |
 | `plugin.not_running` | | restarting a plugin that is not enabled or cannot run (`422`) |
+| `plugin.panel_has_no_process` | | restarting a panel plugin, which runs no process (`409`) |
 | `plugin.untrusted` | | the key that signed the plugin is no longer trusted (status, log) |
 | `plugin.key_invalid` | | `publicKey` is not an Ed25519 public key (`422`, `field: publicKey`) |
 | `plugin.key_exists` | | the key is trusted already (`409`) |

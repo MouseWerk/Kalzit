@@ -301,9 +301,14 @@
   .ask-result__table td {
     padding: var(--space-1) var(--space-3);
     border-bottom: var(--border-width) solid var(--border);
-    text-align: left;
+    text-align: start;
     vertical-align: top;
     overflow-wrap: anywhere;
+  }
+
+  /* Numbers line up on their last digit, as in every other table. */
+  .ask-result__table [data-numeric] {
+    text-align: end;
   }
 
   .ask-result__table th {

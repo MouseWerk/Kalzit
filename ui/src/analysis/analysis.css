@@ -137,15 +137,16 @@
   }
 
   /*
-   * The type and its button stay on one line while there is room: the select starts from a small
-   * width and grows up to a column's (a long German step name was pushing the button onto a line
-   * of its own, since a row breaks by the items' starting widths).
+   * The type and its button stay on one line while there is room: the select is as wide as the
+   * chosen name (not the longest one) and grows to fill the row. It never shrinks below that
+   * name, so a long German name ("Vergleich mit Vorperiode") is never cut in a narrow rail; the
+   * button moves under it instead.
    */
   .steps__add > .select {
-    flex: 1 1 10rem;
-    min-width: 0;
-    /* Room for the longest step name closed ("Compare with previous period", 238 px). */
-    max-width: var(--size-column);
+    flex: 1 0 auto;
+    field-sizing: content;
+    min-width: 10rem;
+    max-width: 100%;
   }
 
   .steps__add > .button {

@@ -705,6 +705,38 @@ describe("Plugins, details", () => {
     expect(within(grants).queryByText("Platforms")).toBeNull();
   });
 
+  it("shows a running panel plugin without restart, process, sandbox or log, and the dashboards that show it", async () => {
+    const { user } = await openPlugins("/settings/plugins/x.panel", (s) => {
+      s.areas.plugins.plugins.push(
+        fakePlugin({
+          id: "x.panel",
+          name: "KPI tile",
+          kind: "panel",
+          running: true,
+          process: undefined,
+          platforms: [],
+        }),
+      );
+      s.areas.plugins.usedIn["x.panel"] = [
+        { id: "db1", name: "Hall overview", orgId: "o1", orgName: "Analytical Engines" },
+      ];
+    });
+    expect(await screen.findByRole("heading", { level: 2, name: "KPI tile" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Turn off" })).toBeTruthy();
+    const state = screen.getByRole("region", { name: "State" });
+    expect(within(state).getByText("Version")).toBeTruthy();
+    expect(within(state).getByText("Signature")).toBeTruthy();
+    expect(within(state).getByText("1 dashboard in one organization")).toBeTruthy();
+    expect(within(state).queryByText("Sandbox")).toBeNull();
+    expect(within(state).queryByText("Process")).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Log" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: /Used in/ }));
+    expect(screen.getByRole("link", { name: "Hall overview" }).getAttribute("href")).toBe(
+      "/dashboards/db1",
+    );
+  });
+
   it("shows the warnings of the plugin's process", async () => {
     await openPlugins("/settings/plugins/brueckner.hana", (s) => {
       s.areas.plugins.plugins.push(
