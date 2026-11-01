@@ -318,7 +318,7 @@ function serverTest(request: SettingRequest, t: Typed): string {
     "#[test]",
     `fn ${name}_is_registered_with_a_valid_default() {`,
     `    let def = settings::find("${request.key}", ${scope}).expect("registered");`,
-    `    assert_eq!(def.ui_editable, ${editable});`,
+    `    assert!(${editable ? "" : "!"}def.ui_editable);`,
     `    assert_eq!((def.default)(), json!(${t.jsonDefault}));`,
     "    assert!(settings::validate(def, &(def.default)()).is_ok());",
     "}",
