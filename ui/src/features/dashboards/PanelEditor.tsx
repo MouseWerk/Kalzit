@@ -771,6 +771,7 @@ export function PanelEditor({
         pending={pending}
         error={results.error}
         onRetry={retry}
+        fetching={results.isFetching}
         outcomes={outcomes}
         stepsRun={stepsRun}
         variables={texts}

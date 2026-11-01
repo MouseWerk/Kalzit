@@ -210,6 +210,7 @@ function AnalysisView({
                 pending={result.isPending}
                 error={result.error}
                 onRetry={() => void result.refetch()}
+                fetching={result.isFetching}
                 outcomes={result.data ?? []}
                 revision={String(result.dataUpdatedAt)}
                 kindOf={kindOf}

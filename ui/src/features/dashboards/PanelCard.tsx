@@ -563,6 +563,7 @@ export function PanelCard({
                 variables={variableTexts(query.variables)}
                 kindOf={kindOf}
                 onRetry={retry}
+                fetching={results.isFetching}
                 distribution={panelDistribution(
                   { ...query, panel, manual: query.manual ?? query.run },
                   kindOf,
@@ -718,6 +719,8 @@ interface PanelBodyProps {
   kindOf?: ((datasourceId: string) => string | undefined) | undefined;
   /** Runs the queries again; offered beside a failed request or a query's error. */
   onRetry?: (() => void) | undefined;
+  /** The queries are running (a retry among them): Retry waits until they are back. */
+  fetching?: boolean | undefined;
 }
 
 /**
@@ -738,6 +741,7 @@ export function PanelBody({
   variables,
   kindOf = () => undefined,
   onRetry,
+  fetching = false,
 }: PanelBodyProps) {
   const { t } = useI18n();
   const calendar = useAnalysisCalendar();
@@ -793,6 +797,7 @@ export function PanelBody({
         type="button"
         className="button button--secondary button--small panel-error__retry"
         onClick={onRetry}
+        disabled={fetching}
       >
         {t("common.retry")}
       </button>

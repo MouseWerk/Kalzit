@@ -2,8 +2,10 @@ import { useI18n } from "../i18n/i18n";
 
 /**
  * Placeholders in the shape of content that is still loading: neutral bars with a quiet shimmer
- * (components.css, `.skeleton`), still for reduced motion. The region is announced once as
- * loading; the bars themselves are hidden from assistive technology.
+ * (components.css, `.skeleton`), still for reduced motion. It is no live region: a dashboard
+ * shows one per panel, and a status region each would announce loading again and again. The
+ * loading container marks itself busy (`aria-busy`); the bars are hidden from assistive
+ * technology and a hidden word says what they stand for.
  */
 export function Skeleton({
   lines = 3,
@@ -21,7 +23,7 @@ export function Skeleton({
     .filter((c) => c !== undefined)
     .join(" ");
   return (
-    <div className={classes} role="status" aria-busy="true">
+    <div className={classes}>
       <span className="visually-hidden">{t("common.loading")}</span>
       {variant === "panel" ? (
         <>

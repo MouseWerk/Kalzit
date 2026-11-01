@@ -102,10 +102,11 @@ describe("a panel body while loading or after a data source error", () => {
         outcomes={[]}
       />,
     );
-    const status = screen.getByRole("status");
-    expect(status.getAttribute("aria-busy")).toBe("true");
-    expect(status.textContent).toBe("Loading…");
-    expect(status.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+    const skeleton = screen.getByText("Loading…").parentElement as HTMLElement;
+    expect(skeleton.textContent).toBe("Loading…");
+    expect(skeleton.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+    // No live region per panel: a dashboard of loading panels would announce each one.
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("offers Retry beside a failed request and beside a query's error", () => {
@@ -138,6 +139,21 @@ describe("a panel body while loading or after a data source error", () => {
     expect(screen.getByRole("alert").querySelector("li")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRetry).toHaveBeenCalledTimes(2);
+
+    // While the queries run again, Retry waits.
+    view.rerender(
+      <PanelBody
+        panel={panel("table", {})}
+        title="Panel"
+        range={{ from: 0, to: 1 }}
+        pending={false}
+        error={null}
+        outcomes={[{ refId: "A", error: { code: "datasource", message: "timed out" } }]}
+        onRetry={onRetry}
+        fetching
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Try again" })).toHaveProperty("disabled", true);
   });
 });
 

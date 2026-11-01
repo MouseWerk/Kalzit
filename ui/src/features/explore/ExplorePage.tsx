@@ -1154,6 +1154,7 @@ function Explore({
                       pending={result.isPending}
                       error={result.error}
                       onRetry={() => void result.refetch()}
+                      fetching={result.isFetching}
                       outcomes={outcomes}
                       revision={`${submitted.run}:${current.pages.length}:${result.dataUpdatedAt}`}
                       onFilter={
