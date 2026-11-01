@@ -207,7 +207,8 @@ export function NodeSheet({
         </section>
       )}
       {selected.length === 0 ? null : (
-        <section className="graph-sheet__section" aria-label={t("graph.selection.title")}>
+        // biome-ignore lint/a11y/useSemanticElements: a part of the sheet, not form fields; a group, not a landmark, so panels never repeat a region name
+        <div className="graph-sheet__section" role="group" aria-label={t("graph.selection.title")}>
           <h4 className="graph-sheet__heading">
             {t("graph.selection.count", { count: number.format(selected.length) })}
           </h4>
@@ -281,10 +282,11 @@ export function NodeSheet({
               </button>
             ) : null}
           </div>
-        </section>
+        </div>
       )}
       {pins.length === 0 ? null : (
-        <section className="graph-sheet__section" aria-label={t("graph.pin.title")}>
+        // biome-ignore lint/a11y/useSemanticElements: a part of the sheet, not form fields; a group, not a landmark, so panels never repeat a region name
+        <div className="graph-sheet__section" role="group" aria-label={t("graph.pin.title")}>
           <h4 className="graph-sheet__heading">
             {t("graph.pin.count", { count: number.format(pins.length) })}
           </h4>
@@ -319,7 +321,7 @@ export function NodeSheet({
             ))}
           </ul>
           <p className="graph__note">{t("graph.pin.hint")}</p>
-        </section>
+        </div>
       )}
     </section>
   );

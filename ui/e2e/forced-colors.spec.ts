@@ -12,20 +12,34 @@ import { expect, signInOwner, test } from "./support/test";
  * draw with them.
  */
 
-type Rgb = [number, number, number];
+/** The software WebGL notice of the graph renderer, as in graph.spec.ts. */
+const SIGMA_WEBGL_NOTICES = [
+  /^warning: \[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels/,
+];
 
-function rgb(color: string): Rgb {
-  const [r = 0, g = 0, b = 0] = (color.match(/\d+(\.\d+)?/g) ?? []).map(Number);
-  return [r, g, b];
-}
-
-/** How many opaque pixels of the canvas are close to a color. */
-function drawnPixels(canvas: Locator, color: Rgb): Promise<number> {
-  return canvas.evaluate((element, [r, g, b]) => {
+/**
+ * How many opaque pixels of the canvas are close to a CSS color (any syntax, oklch included).
+ * Both are read through canvases of the test's own, made for reading, so the chart's canvas is
+ * never read back itself.
+ */
+function drawnPixels(canvas: Locator, color: string): Promise<number> {
+  return canvas.evaluate((element, css) => {
     const c = element as HTMLCanvasElement;
-    const data = c.getContext("2d")?.getImageData(0, 0, c.width, c.height).data;
+    const swatch = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    const copy = document.createElement("canvas");
+    copy.width = c.width;
+    copy.height = c.height;
+    const context = copy.getContext("2d", { willReadFrequently: true });
+    if (swatch === null || context === null) {
+      return 0;
+    }
+    swatch.fillStyle = css;
+    swatch.fillRect(0, 0, 1, 1);
+    const [r = 0, g = 0, b = 0] = swatch.getImageData(0, 0, 1, 1).data;
+    context.drawImage(c, 0, 0);
+    const data = context.getImageData(0, 0, copy.width, copy.height).data;
     let hits = 0;
-    for (let i = 0; data !== undefined && i < data.length; i += 4) {
+    for (let i = 0; i < data.length; i += 4) {
       const near =
         Math.abs((data[i] ?? 0) - r) < 24 &&
         Math.abs((data[i + 1] ?? 0) - g) < 24 &&
@@ -84,7 +98,7 @@ test("time series canvases draw their series in system colors and redraw when it
   const probe = (selector: string) =>
     card.locator(`.ts__probes ${selector}`).evaluate((el) => getComputedStyle(el).color);
   const themed = await probe(".ts__probe.series-2");
-  await expect.poll(() => drawnPixels(canvas, rgb(themed))).toBeGreaterThan(20);
+  await expect.poll(() => drawnPixels(canvas, themed)).toBeGreaterThan(20);
 
   await page.emulateMedia({ forcedColors: "active" });
   const text = await systemColor(page, "CanvasText");
@@ -97,18 +111,19 @@ test("time series canvases draw their series in system colors and redraw when it
   expect(await probe(".ts__probe.series-1")).toEqual(text);
   expect(await probe(".ts__probe.series-2")).toEqual(link);
   // And the chart draws again with them, without a reload.
-  await expect.poll(() => drawnPixels(canvas, rgb(link))).toBeGreaterThan(20);
+  await expect.poll(() => drawnPixels(canvas, link)).toBeGreaterThan(20);
 
   await page.emulateMedia({ forcedColors: "none" });
   await expect.poll(() => probe(".ts__probe.series-2")).toEqual(themed);
-  await expect.poll(() => drawnPixels(canvas, rgb(themed))).toBeGreaterThan(20);
+  await expect.poll(() => drawnPixels(canvas, themed)).toBeGreaterThan(20);
 });
 
 /**
  * Graph panels draw with WebGL, which forced colors leave alone too. Left to the browser, every
  * probe turned into the text color, the label background included, and the labels vanished.
  */
-test("graph labels keep a background apart from their text", async ({ page }) => {
+test("graph labels keep a background apart from their text", async ({ page, consoleGuard }) => {
+  for (const notice of SIGMA_WEBGL_NOTICES) consoleGuard.allow(notice);
   const address = serviceAddress("KALZIT_E2E_NEO4J");
   const owner = await Api.owner();
   let dashboardId = "";

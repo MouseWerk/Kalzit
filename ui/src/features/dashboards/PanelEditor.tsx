@@ -1247,7 +1247,7 @@ function OptionsPane({
         </div>
       </OptionGroup>
       {plugin === undefined || Editor === undefined ? null : (
-        <OptionGroup id={`${titleId}-options`} title={t("dashboards.editor.panelOptions")}>
+        <OptionGroup id={`${titleId}-panel-options`} title={t("dashboards.editor.panelOptions")}>
           <Editor
             options={plugin.options(look.options)}
             onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}
