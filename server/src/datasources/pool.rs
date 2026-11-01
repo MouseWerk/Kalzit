@@ -39,6 +39,10 @@ pub fn socket_open(socket: &std::net::TcpStream) -> bool {
     matches!(socket.peek(&mut [0u8; 1]), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock)
 }
 
+/// The longest time between two sweeps: an idle connection is closed at most this long after its
+/// idle timeout ran out. A sweep only looks at the idle connections, without a round trip.
+const MAX_SWEEP_GAP: Duration = Duration::from_secs(5);
+
 pub struct ConnPool<C> {
     state: Mutex<State<C>>,
     slots: Arc<Semaphore>,
@@ -79,7 +83,7 @@ impl<C: Pooled> ConnPool<C> {
             Some(c) => (c, true),
             None => (open().await?, false),
         };
-        Ok(Lease { pool: self.clone(), conn: Some(conn), reused, _permit: permit })
+        Ok(Lease { pool: self.clone(), conn: Some(conn), reused, permit: Some(permit) })
     }
 
     /// The most recent idle connection that is not too old and still reusable; the others it
@@ -150,14 +154,14 @@ impl<C: Pooled> ConnPool<C> {
         }
     }
 
-    /// Sweeps a few times per idle timeout while connections wait; ends with the pool or once
-    /// nothing is idle.
+    /// Sweeps while connections wait, often enough that none outlives the idle timeout by more
+    /// than `MAX_SWEEP_GAP`; ends with the pool or once nothing is idle.
     fn start_sweep(self: &Arc<Self>) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             self.state.lock_or_recover().sweeping = false;
             return;
         };
-        let every = (self.idle_timeout / 4).max(Duration::from_millis(10));
+        let every = (self.idle_timeout / 4).clamp(Duration::from_millis(10), MAX_SWEEP_GAP);
         let pool: Weak<Self> = Arc::downgrade(self);
         runtime.spawn(async move {
             loop {
@@ -176,7 +180,9 @@ pub struct Lease<C: Pooled> {
     pool: Arc<ConnPool<C>>,
     conn: Option<C>,
     reused: bool,
-    _permit: OwnedSemaphorePermit,
+    /// The pool slot; a dropped lease keeps it until its connection is closed, so the pool never
+    /// has more open connections than slots.
+    permit: Option<OwnedSemaphorePermit>,
 }
 
 impl<C: Pooled> Lease<C> {
@@ -216,11 +222,15 @@ impl<C: Pooled> std::ops::DerefMut for Lease<C> {
 
 impl<C: Pooled> Drop for Lease<C> {
     fn drop(&mut self) {
-        // Not released: given up mid-use.
+        // Not released: given up mid-use. The slot is freed once the connection is closed.
         if let Some(c) = self.conn.take()
             && let Ok(runtime) = tokio::runtime::Handle::try_current()
         {
-            runtime.spawn(c.abandon());
+            let permit = self.permit.take();
+            runtime.spawn(async move {
+                c.abandon().await;
+                drop(permit);
+            });
         }
     }
 }
@@ -387,6 +397,35 @@ mod tests {
         drop(server);
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!socket_open(&probe));
+    }
+
+    /// A connection that takes long to stop (a slow server) keeps its slot until it is closed.
+    #[tokio::test]
+    async fn an_abandoned_connection_keeps_its_slot_until_closed() {
+        struct Slow(Arc<tokio::sync::Notify>);
+        impl Pooled for Slow {
+            fn reusable(&mut self) -> bool {
+                true
+            }
+            async fn abandon(self) {
+                self.0.notified().await;
+            }
+        }
+        let stop = Arc::new(tokio::sync::Notify::new());
+        let pool = Arc::new(ConnPool::new(1, Duration::from_secs(60)));
+        let open = || std::future::ready(Ok(Slow(stop.clone())));
+        drop(pool.checkout(open).await.unwrap());
+        let waiting = tokio::time::timeout(Duration::from_millis(50), pool.checkout(open)).await;
+        assert!(waiting.is_err(), "a second connection opened while the first was still closing");
+        stop.notify_one();
+        let next = tokio::time::timeout(Duration::from_secs(5), pool.checkout(open)).await;
+        assert!(next.is_ok_and(|l| l.is_ok()));
+    }
+
+    #[test]
+    fn idle_connections_are_closed_within_seconds_of_the_timeout() {
+        let pool: ConnPool<Fake> = ConnPool::new(1, Duration::from_secs(300));
+        assert!((pool.idle_timeout / 4).clamp(Duration::from_millis(10), MAX_SWEEP_GAP) <= Duration::from_secs(5));
     }
 
     #[tokio::test]

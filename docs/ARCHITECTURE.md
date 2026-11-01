@@ -323,8 +323,9 @@ type QueryResult =
   its SQLite file when dropped (also one whose entry was forgotten while it was built), and a
   build that finishes after the server began to stop is closed instead of used.
   - The sqlx sources use sqlx's pool; SQL Server and Neo4j/Memgraph, whose drivers have none,
-    share `datasources::pool`: at most four open connections per source, idle ones closed after
-    five minutes by a sweep that runs while any wait, every idle connection looked at without a
+    share `datasources::pool`: at most four open connections per source (one still closing after
+    an abandoned query counts), idle ones closed within seconds of five minutes by a sweep that
+    runs every five seconds while any wait, every idle connection looked at without a
     round trip before it is handed out (the server closed it, sent something unasked, or it is in
     an unknown state: closed, and another taken), and no broken connection put back. A lease
     dropped mid-query stops the query on the server (SQL Server attention, Bolt `RESET`) and

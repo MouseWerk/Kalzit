@@ -176,25 +176,27 @@ async fn pool(conn: &Connection) -> Result<Arc<ConnPool<Opened>>, SourceError> {
 }
 
 async fn lease(flavor: Flavor, conn: &Connection, pool: &Arc<ConnPool<Opened>>) -> Result<Lease<Opened>, SourceError> {
-    let mut lease = pool.checkout(|| open(flavor, conn)).await?;
-    // A user's privileges can change while a connection waits in the pool.
-    if lease.reused() && needs_recheck(flavor, lease.checked.elapsed()) {
+    loop {
+        let mut lease = pool.checkout(|| open(flavor, conn)).await?;
+        // A user's privileges can change while a connection waits in the pool; every pooled
+        // connection due for it is checked, also one taken after a broken one.
+        if !(lease.reused() && needs_recheck(flavor, lease.checked.elapsed())) {
+            return Ok(lease);
+        }
         let s: Settings = conn.settings_as()?;
         match checked_privileges(&mut lease.conn, &s).await {
             Ok(privileges) => {
                 lease.write_privileges = privileges;
                 lease.checked = Instant::now();
+                return Ok(lease);
             }
             // The check is the connection's first round trip: one that broke while it waited
-            // is closed, with the other idle ones, and a fresh one is opened.
-            Err(e) if super::connect::is_lost(&e) => {
-                lease.discard();
-                lease = pool.checkout(|| open(flavor, conn)).await?;
-            }
+            // is closed, with the other idle ones, and the next one is taken (most likely a
+            // fresh one, which needs no check).
+            Err(e) if super::connect::is_lost(&e) => lease.discard(),
             Err(e) => return Err(e),
         }
     }
-    Ok(lease)
 }
 
 /// Whether a pooled connection has its user's privileges checked again before use.
