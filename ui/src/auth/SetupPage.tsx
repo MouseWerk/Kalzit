@@ -22,8 +22,16 @@ import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { isPrompt, type Prompt } from "../features/security/api";
 import { SecondFactorSetup } from "../features/security/SecondFactorStep";
-import { LANGUAGES, type MessageKey, useI18n } from "../i18n/i18n";
-import { THEMES, useTheme } from "../theme/theme";
+import {
+  LANGUAGES,
+  type MessageKey,
+  previewLanguage,
+  setLanguage,
+  useI18n,
+  useSavedLanguage,
+} from "../i18n/i18n";
+import { clearChoice } from "../lib/localChoice";
+import { previewTheme, setTheme, THEMES, useSavedTheme } from "../theme/theme";
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
@@ -90,8 +98,9 @@ function timeZones(first: string): string[] {
  * Once Kalzit is set up, the page only says so.
  */
 export function SetupPage() {
-  const { t, language } = useI18n();
-  const theme = useTheme();
+  const { t } = useI18n();
+  const savedLanguage = useSavedLanguage();
+  const savedTheme = useSavedTheme();
   const queryClient = useQueryClient();
   const status = useQuery(setupStatusQuery);
   const hint = status.data?.codeHint;
@@ -99,8 +108,8 @@ export function SetupPage() {
   const [step, setStep] = useState<Step>(1);
   const [values, setValues] = useState<SetupValues>(EMPTY);
   const [choices, setChoices] = useState<SetupChoices>(() => ({
-    language,
-    theme,
+    language: savedLanguage,
+    theme: savedTheme,
     timeZone: browserTimeZone(),
   }));
   const [errors, setErrors] = useState<FieldErrors<SetupField>>({});
@@ -148,6 +157,36 @@ export function SetupPage() {
     }
   }, [step]);
 
+  // Language and theme of the defaults show on the page while the organization step is open, as
+  // a preview: Back, leaving the page or a reload return to the saved ones. Setup keeps them.
+  const previewing = step === 3 && !taken && done === null;
+  useEffect(() => {
+    if (!previewing) {
+      return;
+    }
+    return () => {
+      previewTheme(null);
+      previewLanguage(null);
+    };
+  }, [previewing]);
+  useEffect(() => {
+    if (previewing) {
+      previewTheme(choices.theme);
+      previewLanguage(choices.language);
+    }
+  }, [previewing, choices.theme, choices.language]);
+  // A language or theme picked in the top bar is also the new default.
+  useEffect(() => {
+    setChoices((before) =>
+      before.language === savedLanguage ? before : { ...before, language: savedLanguage },
+    );
+  }, [savedLanguage]);
+  useEffect(() => {
+    setChoices((before) =>
+      before.theme === savedTheme ? before : { ...before, theme: savedTheme },
+    );
+  }, [savedTheme]);
+
   function markSetupDone() {
     queryClient.setQueryData(setupStatusQuery.queryKey, { needed: false });
   }
@@ -192,6 +231,11 @@ export function SetupPage() {
     retry: false,
     onSuccess: (result) => {
       markSetupDone();
+      // The previewed defaults stay. The owner has no preference of their own yet and follows
+      // the defaults, so an earlier choice in the top bar (already part of them) is not adopted.
+      setLanguage(choices.language);
+      setTheme(choices.theme);
+      clearChoice();
       if ("secondFactor" in result) {
         // The server requires a second factor: the owner sets one up before the session opens.
         if (isPrompt(result.secondFactor)) {

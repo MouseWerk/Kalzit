@@ -433,10 +433,13 @@ describe("setup, step 3 and the finish", () => {
     expect((screen.getByRole("radio", { name: "English" }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByRole("radio", { name: /System/ }) as HTMLInputElement).checked).toBe(true);
     await user.click(screen.getByRole("radio", { name: "Deutsch" }));
-    await user.click(screen.getByRole("radio", { name: /High contrast/ }));
-    await user.click(screen.getByRole("button", { name: "Finish setup" }));
+    // The page previews the choice: from here on it speaks German.
+    await user.click(screen.getByRole("radio", { name: /Hoher Kontrast/ }));
+    await user.click(screen.getByRole("button", { name: "Einrichtung abschließen" }));
 
-    expect(await screen.findByRole("heading", { level: 1, name: "All set, Zoë." })).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Alles bereit, Zoë." }),
+    ).toBeTruthy();
     expect(location().pathname).toBe("/setup");
     const body = server.calls.find((call) => call.path === "/api/setup" && call.method === "POST")
       ?.body as Record<string, unknown>;
@@ -450,20 +453,86 @@ describe("setup, step 3 and the finish", () => {
       theme: "contrast",
     });
     expect(typeof body.timeZone).toBe("string");
-    expect(screen.getByText("Müller & Söhne is set up and you are signed in.")).toBeTruthy();
+    expect(
+      screen.getByText("Müller & Söhne ist eingerichtet und du bist angemeldet."),
+    ).toBeTruthy();
     expect(screen.getByText("Zoë Ångström · zoe@example.com")).toBeTruthy();
-    expect(screen.getByText(/Deutsch · theme High contrast/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Add a data source/ }).getAttribute("href")).toBe(
+    expect(screen.getByText(/Deutsch · Darstellung Hoher Kontrast/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Datenquelle hinzufügen/ }).getAttribute("href")).toBe(
       "/data-sources/new",
     );
     expect(
-      screen.getByText("The setup code is deleted; the setup page is closed from now on."),
+      screen.getByText(
+        "Der Einrichtungscode ist gelöscht; die Einrichtungsseite ist ab jetzt geschlossen.",
+      ),
     ).toBeTruthy();
-    expect(within(stepper()).getByRole("listitem", { current: "step" }).textContent).toContain(
-      "Done",
-    );
+    expect(
+      within(screen.getByRole("navigation", { name: "Schritte der Einrichtung" })).getByRole(
+        "listitem",
+        { current: "step" },
+      ).textContent,
+    ).toContain("Fertig");
+    // The choice stays after setup, remembered in this browser.
+    expect(document.documentElement.dataset.theme).toBe("contrast");
+    expect(document.documentElement.lang).toBe("de");
+    expect(window.localStorage.getItem("kalzit.theme")).toBe("contrast");
   });
 
+  it("previews theme and language on the page as soon as they are picked", async () => {
+    installFakeServer({ setupNeeded: true });
+    const { user } = renderApp("/setup");
+    await toOrgStep(user);
+    expect(document.documentElement.dataset.theme).toBe("system");
+
+    await user.click(screen.getByRole("radio", { name: /Dark/ }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    await user.click(screen.getByRole("radio", { name: /High contrast/ }));
+    expect(document.documentElement.dataset.theme).toBe("contrast");
+    // The top bar names what the page shows.
+    expect(screen.getByRole("button", { name: "Theme: High contrast" })).toBeTruthy();
+
+    await user.click(screen.getByRole("radio", { name: "Deutsch" }));
+    expect(screen.getByRole("heading", { level: 1, name: "Deine Organisation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Einrichtung abschließen" })).toBeTruthy();
+    expect(document.documentElement.lang).toBe("de");
+
+    // Only a preview: nothing is remembered before setup is finished.
+    expect(window.localStorage.getItem("kalzit.theme")).toBeNull();
+    expect(window.localStorage.getItem("kalzit.language")).toBeNull();
+  });
+
+  it("returns to the previous theme and language on Back, and previews again on Next", async () => {
+    installFakeServer({ setupNeeded: true });
+    const { user } = renderApp("/setup");
+    await toOrgStep(user);
+    await user.click(screen.getByRole("radio", { name: /Light/ }));
+    await user.click(screen.getByRole("radio", { name: "Deutsch" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+
+    await user.click(screen.getByRole("button", { name: "Zurück" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Your account" })).toBeTruthy();
+    expect(document.documentElement.dataset.theme).toBe("system");
+    expect(document.documentElement.lang).toBe("en");
+
+    // The choice is kept and shows again on its step.
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Deine Organisation" }),
+    ).toBeTruthy();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect((screen.getByRole("radio", { name: /Hell/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("takes a theme picked in the top bar as the new default", async () => {
+    installFakeServer({ setupNeeded: true });
+    const { user } = renderApp("/setup");
+    await toOrgStep(user);
+    await user.click(screen.getByRole("radio", { name: /Light/ }));
+    await user.click(screen.getByRole("button", { name: "Theme: Light" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect((screen.getByRole("radio", { name: /Dark/ }) as HTMLInputElement).checked).toBe(true);
+  });
   it("adds the sample data in one click and opens Explore on it", async () => {
     const server = installFakeServer({ setupNeeded: true });
     const { user, location } = renderApp("/setup");

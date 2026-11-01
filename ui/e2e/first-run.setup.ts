@@ -1,6 +1,6 @@
 import { Api, OWNER } from "./support/api";
 import { seriousViolations } from "./support/axe";
-import { t } from "./support/i18n";
+import { de, t } from "./support/i18n";
 import { findOverflow } from "./support/overflow";
 import { expect, signIn, test } from "./support/test";
 
@@ -67,6 +67,31 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
   ).toBeVisible();
   await page.getByLabel(t("access.setup.org.name")).fill(OWNER.orgName);
   expect(await seriousViolations(page)).toEqual([]);
+
+  // Theme and language of the defaults show on the page at once; Back returns to the page's own,
+  // Next shows the kept choice again.
+  const root = page.locator("html");
+  const ownTheme = (await root.getAttribute("data-theme")) ?? "system";
+  await page.locator("label.theme-tile", { hasText: t("theme.dark") }).click();
+  await expect(root).toHaveAttribute("data-theme", "dark");
+  await page.locator("label.segmented__option", { hasText: t("language.de") }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: de("access.setup.org.title") }),
+  ).toBeVisible();
+  await expect(root).toHaveAttribute("lang", "de");
+  await page.getByRole("button", { name: de("access.back") }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: t("access.setup.account.title") }),
+  ).toBeVisible();
+  await expect(root).toHaveAttribute("data-theme", ownTheme);
+  await expect(root).toHaveAttribute("lang", "en");
+  await page.getByRole("button", { name: t("access.next") }).click();
+  await expect(root).toHaveAttribute("data-theme", "dark");
+  // The other runs expect the page's own language and theme as the server's defaults.
+  await page.locator("label.segmented__option", { hasText: t("language.en") }).click();
+  await page.locator("label.theme-tile", { hasText: t(`theme.${ownTheme}`) }).click();
+  await expect(root).toHaveAttribute("data-theme", ownTheme);
+  await expect(page.getByLabel(t("access.setup.org.name"))).toHaveValue(OWNER.orgName);
   await page.getByRole("button", { name: t("access.setup.org.submit") }).click();
 
   // Done: signed in as the owner, with the next steps.

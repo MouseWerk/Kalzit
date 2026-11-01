@@ -43,6 +43,8 @@ function initialLanguage(): Language {
 }
 
 let current: Language = initialLanguage();
+// A language shown on top of the current one without being remembered (the setup's defaults).
+let preview: Language | null = null;
 const listeners = new Set<() => void>();
 
 function applyToDocument(language: Language): void {
@@ -51,21 +53,48 @@ function applyToDocument(language: Language): void {
 
 applyToDocument(current);
 
+/** The language the page shows: a preview while one runs, else the current language. */
 export function getLanguage(): Language {
+  return preview ?? current;
+}
+
+/** The current language without a preview: the one the page returns to when the preview ends. */
+export function getSavedLanguage(): Language {
   return current;
 }
 
-/** Switches the UI language everywhere at once and remembers the choice. */
+/** Runs a change and tells the listeners when the language or the shown one changed. */
+function change(update: () => void): void {
+  const shown = getLanguage();
+  const saved = current;
+  update();
+  if (getLanguage() !== shown) {
+    applyToDocument(getLanguage());
+  }
+  if (getLanguage() !== shown || current !== saved) {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
+}
+
+/** Switches the UI language everywhere at once and remembers the choice; a preview ends. */
 export function setLanguage(language: Language): void {
   writePreference(LANGUAGE_STORAGE_KEY, language);
-  if (language === current) {
-    return;
-  }
-  current = language;
-  applyToDocument(language);
-  for (const listener of listeners) {
-    listener();
-  }
+  change(() => {
+    current = language;
+    preview = null;
+  });
+}
+
+/**
+ * Shows a language without remembering it, until `null` ends the preview and the current
+ * language returns. A reload never keeps a preview.
+ */
+export function previewLanguage(language: Language | null): void {
+  change(() => {
+    preview = language;
+  });
 }
 
 function subscribe(listener: () => void): () => void {
@@ -73,6 +102,11 @@ function subscribe(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+/** The current language without a preview, for the controls that change it for good. */
+export function useSavedLanguage(): Language {
+  return useSyncExternalStore(subscribe, getSavedLanguage, getSavedLanguage);
 }
 
 /** Looks up a message and fills `{name}` placeholders; unknown placeholders stay visible. */
