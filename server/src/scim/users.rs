@@ -627,6 +627,12 @@ pub async fn create(ctx: &Ctx<'_>, body: Value) -> ScimResult<Response> {
     })?;
     let now = ctx.state.clock.now_ms();
     let mut tx = crate::db::begin(&ctx.state.db).await?;
+    // The row of the account the address names first (user rows come before organization rows in
+    // the lock order): every way of joining an organization takes it, so `existing_account`'s
+    // check of its other memberships cannot race a join elsewhere on PostgreSQL.
+    if let [(id, false)] = crate::routes::all_accounts_with_email(&mut tx, &email).await?.as_slice() {
+        sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(id).execute(&mut *tx).await?;
+    }
     crate::authz::lock_org(&mut tx, ctx.org_id).await?;
     ensure_user_name_free(&mut tx, ctx.org_id, &data.user_name, None).await?;
     let (user_id, made) = match existing_account(&mut tx, ctx, &email).await? {

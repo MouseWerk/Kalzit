@@ -172,6 +172,14 @@ impl TestApp {
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
         let r = self.post(&format!("/api/orgs/{org}/members"), json!({ "email": email, "role": role }), owner).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+        // As if the person had accepted an invitation: the organization's rules bind only members
+        // who joined by consent (docs/api/access.md, "Members").
+        sqlx::query("UPDATE org_members SET joined_by = 'invitation' WHERE org_id = $1 AND user_id = $2")
+            .bind(org)
+            .bind(r.body["userId"].as_str().unwrap())
+            .execute(&self.state.db)
+            .await
+            .unwrap();
         let (browser, r) = self.password(email).await;
         assert!(r.body["id"].is_string(), "{}", r.body);
         browser

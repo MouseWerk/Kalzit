@@ -122,6 +122,14 @@ below). Service accounts are never linked, listed or changed through SCIM. Linki
 account is recorded as `scim.user_linked` (with the token and the organization) and counted on the
 SCIM card.
 
+**Memberships.** The group mapping makes a SCIM user a member: `joinedBy` `scim_owned` for an
+account this SCIM made and owns, which binds it to the organization's sign-in rules, `direct` for a
+linked account, which does not (docs/api/access.md, "Members"). SCIM never makes a person a member
+who belongs to another organization, nor one who left this organization or whom an admin removed
+here (`scim_users.left_at`), also not after a `PATCH`, a group change or `active: true`; the skip
+is listed in the changes of the `scim.memberships_changed` entry (`"skipped": "elsewhere"` or
+`"left"`). Accepting an invitation, or an admin adding the account, ends that.
+
 **Changing a user.** `PUT` replaces the attributes (an `active` it leaves out stays as it is).
 `PATCH` takes `add`, `replace` and `remove` with or without a path, as Entra ID and Okta send them:
 `op` in any case (`"Replace"`), booleans as JSON or as the strings `"True"` and `"False"`, paths such

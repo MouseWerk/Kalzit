@@ -478,7 +478,9 @@ pub async fn complete(
     .bind(now)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, 'owner', $3)")
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, 'owner', $3, 'creator')",
+    )
         .bind(&org_id)
         .bind(&user_id)
         .bind(now)

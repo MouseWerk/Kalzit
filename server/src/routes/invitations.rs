@@ -892,16 +892,28 @@ pub async fn redeem(tx: &mut sqlx::AnyConnection, found: &Found, user_id: &str, 
         .fetch_one(&mut *tx)
         .await?;
     if members == 0 {
-        sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)")
-            .bind(&found.org_id)
-            .bind(user_id)
-            .bind(&role.key)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
+        // The person accepted: this organization's sign-in rules bind them (`authz::CONSENTED_JOINS`).
+        sqlx::query(
+            "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) \
+             VALUES ($1, $2, $3, $4, 'invitation')",
+        )
+        .bind(&found.org_id)
+        .bind(user_id)
+        .bind(&role.key)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
         // In another organization now: no other organization's SCIM owns the account any more.
         crate::scim::release(&mut *tx, user_id, Some(&found.org_id)).await?;
+    } else {
+        // Already a member some other way: accepting is the person's consent from now on.
+        sqlx::query("UPDATE org_members SET joined_by = 'invitation' WHERE org_id = $1 AND user_id = $2")
+            .bind(&found.org_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
     }
+    crate::routes::members::rejoined(&mut *tx, &found.org_id, user_id).await?;
     if let Some(team_id) = &found.team_id {
         let (in_team,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2")
@@ -963,6 +975,9 @@ async fn accept(
                 .await?;
         let setup_needed = required.is_some() && !sf::methods(&state.db, &user.id).await?.any();
         let mut tx = crate::db::begin(&state.db).await?;
+        // The account's row before the organization's (`authz` lock order), as every way of
+        // joining takes it, so concurrent joins of one account run one after the other.
+        sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(&user.id).execute(&mut *tx).await?;
         redeem(&mut tx, &found, &user.id, now).await?;
         if mailed {
             sqlx::query("UPDATE users SET email_confirmed = 1 WHERE id = $1").bind(&user.id).execute(&mut *tx).await?;

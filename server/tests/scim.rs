@@ -505,11 +505,12 @@ async fn delete_deactivates_and_never_deletes() {
     assert_eq!(t.account(&lea).await.2, 0, "not locked");
     assert_eq!(t.role_of(&org, &lea).await, None, "its membership here ended");
     assert_eq!(t.role_of(&other, &lea).await.as_deref(), Some("editor"));
-    // Reactivating brings the membership back.
+    // Reactivating does not bring the membership back: Lea belongs to another organization and
+    // joins this one again only by invitation.
     let on = patch(json!([{ "op": "replace", "path": "active", "value": true }]));
     let r = t.scim(Method::PATCH, &format!("/Users/{lea}"), Some(on), &token).await;
     assert_eq!(r.body["active"], true, "{}", r.body);
-    assert_eq!(t.role_of(&org, &lea).await.as_deref(), Some("viewer"));
+    assert_eq!(t.role_of(&org, &lea).await, None);
 
     // A group DELETE deactivates it.
     let r = t
@@ -617,6 +618,68 @@ async fn an_account_in_another_organization_is_linked_only_after_it_joined() {
     let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "pia@mueller.example" })), &token).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     assert_eq!(r.id(), pia);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn scim_never_adds_back_a_person_who_left_or_joined_elsewhere() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let other = t.other_org().await;
+    let token = t.scim_token(&org).await;
+    // Sam joins this organization through SCIM.
+    let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "sam@mueller.example" })), &token).await;
+    let sam = r.id();
+    assert_eq!(t.role_of(&org, &sam).await.as_deref(), Some("viewer"));
+    let (joined_by,): (String,) =
+        sqlx::query_as("SELECT joined_by FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(&org)
+            .bind(&sam)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(joined_by, "scim_owned");
+    // Sam sets a password, joins the other organization by invitation and leaves this one.
+    let hash = kalzit::auth::password::hash(PASSWORD.to_string()).await.unwrap();
+    sqlx::query("UPDATE users SET password_hash = $1, email_confirmed = 1 WHERE id = $2")
+        .bind(&hash)
+        .bind(&sam)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, 'viewer', 0, 'invitation')",
+    )
+    .bind(&other)
+    .bind(&sam)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let cookie = t.login("sam@mueller.example").await;
+    let r = t
+        .request(Method::DELETE, &format!("/api/me/orgs/{org}"), None, Some(("cookie", &cookie)), "application/json")
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+
+    // Neither a PATCH, a reactivation nor a group change adds Sam back.
+    let ops = patch(json!([{ "op": "replace", "path": "displayName", "value": "Samuel" }]));
+    let r = t.scim(Method::PATCH, &format!("/Users/{sam}"), Some(ops), &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let ops = patch(json!([{ "op": "replace", "path": "active", "value": true }]));
+    let r = t.scim(Method::PATCH, &format!("/Users/{sam}"), Some(ops), &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let group = json!({ "displayName": "alle", "members": [{ "value": sam }] });
+    let r = t.scim(Method::POST, "/Groups", Some(group), &token).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(t.role_of(&org, &sam).await, None, "the leave sticks");
+    assert_eq!(t.role_of(&other, &sam).await.as_deref(), Some("viewer"));
+    let skipped = t
+        .audit_actions()
+        .await
+        .into_iter()
+        .filter(|(a, _)| a == "scim.memberships_changed")
+        .any(|(_, s)| s.to_string().contains("\"skipped\""));
+    assert!(skipped, "the skip is in the audit log");
     t.finish().await;
 }
 

@@ -200,6 +200,39 @@ impl Managed<'_> {
     }
 }
 
+/// Whether SCIM of an organization may make a person a member there.
+enum ScimJoin {
+    /// The account this SCIM made and still owns (`scim_owned`).
+    Owned,
+    /// An account SCIM linked (in no other organization, or one that joined here by invitation):
+    /// joined without the person's consent (`direct`).
+    Linked,
+    /// Never: `left` (the person left or was removed here) or `elsewhere` (a member of another
+    /// organization, who joins only by invitation).
+    Refused(&'static str),
+}
+
+async fn scim_join(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str) -> ApiResult<ScimJoin> {
+    let row: Option<(i64, Option<i64>)> =
+        sqlx::query_as("SELECT created_account, left_at FROM scim_users WHERE org_id = $1 AND user_id = $2")
+            .bind(org_id)
+            .bind(user_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if row.as_ref().is_some_and(|(_, left)| left.is_some()) {
+        return Ok(ScimJoin::Refused("left"));
+    }
+    let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1 AND org_id <> $2")
+        .bind(user_id)
+        .bind(org_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    if elsewhere > 0 {
+        return Ok(ScimJoin::Refused("elsewhere"));
+    }
+    Ok(if row.is_some_and(|(created, _)| created != 0) { ScimJoin::Owned } else { ScimJoin::Linked })
+}
+
 /// Writes `outcome` for `user_id` after a sign-in through `provider_id`, inside the sign-in's
 /// transaction. Answers the changes (for the audit entry) and the organizations whose rights
 /// changed. Owners are never changed, so no organization loses its last owner.
@@ -255,13 +288,30 @@ async fn apply_to(
                 .await?;
         match current {
             None => {
-                sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)")
-                    .bind(&org.org_id)
-                    .bind(user_id)
-                    .bind(&org.role)
-                    .bind(now)
-                    .execute(&mut *conn)
-                    .await?;
+                let joined_by = match managed {
+                    // A group mapping of a provider a server admin set up.
+                    Managed::Provider(_) => "mapping",
+                    Managed::Scim(scim_org) => match scim_join(&mut *conn, scim_org, user_id).await? {
+                        ScimJoin::Owned => "scim_owned",
+                        ScimJoin::Linked => "direct",
+                        // The person left or was removed here, or belongs to another organization:
+                        // SCIM never adds them (back); recorded with the other changes.
+                        ScimJoin::Refused(reason) => {
+                            changes.push(json!({ "orgId": org.org_id, "skipped": reason }));
+                            continue;
+                        }
+                    },
+                };
+                sqlx::query(
+                    "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, $3, $4, $5)",
+                )
+                .bind(&org.org_id)
+                .bind(user_id)
+                .bind(&org.role)
+                .bind(now)
+                .bind(joined_by)
+                .execute(&mut *conn)
+                .await?;
                 // In another organization now: no other organization's SCIM owns the account.
                 crate::scim::release(&mut *conn, user_id, Some(&org.org_id)).await?;
                 changes.push(json!({ "orgId": org.org_id, "added": org.role }));

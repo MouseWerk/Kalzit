@@ -65,8 +65,21 @@ interface Member {
   name: string;
   role: string;      // role key
   joinedAt: number;
+  joinedBy: "invitation" | "creator" | "scim_owned" | "mapping" | "direct" | "legacy";
 }
 ```
+
+`joinedBy` (`org_members.joined_by`) records how the person joined: `invitation` (they accepted
+an invitation), `creator` (they set up Kalzit with this organization, or a server admin made the
+organization with them as its owner), `scim_owned` (an account this organization's SCIM made and
+owns), `mapping` (a group mapping of an identity provider a server admin set up), `direct` (an
+admin added the account, or SCIM linked an existing account that belonged to no organization;
+service accounts too) or `legacy` (every membership from before 0.5.1). The organization's sign-in
+rules, password sign-in off (`signin.local_password`, docs/api/sso.md) and its second factor
+requirement (`security.two_factor_required`, "Second factor" below), bind a member only for
+`invitation`, `creator`, `scim_owned` and `mapping`: the person's consent. They never bind a
+`direct` or `legacy` member, for whom only the server's rules count. Accepting an invitation of an
+organization one is already a member of turns the membership into `invitation`.
 
 | Method and path | Access | Answer |
 |---|---|---|
@@ -78,13 +91,15 @@ interface Member {
 **`POST`** `{ "email": string, "role": string }` adds an existing account that belongs to no
 organization yet (any case and surrounding spaces in the email are fine). A person who already
 belongs to an organization joins another one only by accepting an invitation
-(docs/api/mail.md, "Invitations"): an organization's sign-in rules (password sign-in off, a
-required second factor) bind the account wherever it signs in, so the person decides. Errors:
+(docs/api/mail.md, "Invitations"), so the person decides. The new membership is `direct`: this
+organization's sign-in rules do not bind it. The account's row is locked before the
+organization's, as on every way of joining, so two organizations cannot add one account at the
+same time. Errors:
 `validation` `email` (not an address, or no account has it), `validation` `role` (no such role
 key), `409 conflict` `email` (already a member; reason `mail.email_unconfirmed` for an address
 its owner has not confirmed; reason `members.invite_instead` for an account in another
 organization), `403` (role exceeds the caller's permissions). Audit `member.added`.
-Memberships added directly before 0.5.1 stay as they are; their members can leave on their own
+Memberships from before 0.5.1 stay as they are (`legacy`); their members can leave on their own
 (below).
 
 **`PATCH`** `{ "role": string }`. Errors: `404` (not a member), `validation` `role`, `403` (new or
@@ -94,7 +109,8 @@ current role exceeds the caller's permissions), `409 conflict` (last owner). Aud
 **`DELETE`** removes the membership, the member's team memberships in this organization and the
 grants to them here; the account stays. The caller must hold what the member loses: their org
 role, the roles of their teams here and the permissions of their grants. Errors: `404`, `403`,
-`409 conflict` (last owner). Audit `member.removed`.
+`409 conflict` (last owner). Audit `member.removed`. This organization's SCIM never adds the
+person back (docs/api/scim.md, "Users").
 
 ### Leaving an organization
 
@@ -108,8 +124,10 @@ organization route, so no rule of that organization stands in the way: it works 
 of the person, also while that organization turned password sign-in off and the password no
 longer signs them in. Its last enabled owner cannot leave (`409 conflict`, reason
 `members.last_owner`); another member becomes owner first. Errors: `404` (not a member). Audit
-`member.left` in that organization. A provider whose group mapping decides the membership ("IdP
-entscheidet") may add the person again at their next sign-in through it.
+`member.left` in that organization. The leave sticks for the organization's SCIM, which never
+adds the person back (docs/api/scim.md, "Users"), until they accept an invitation again or an
+admin adds them. A provider whose group mapping a server admin set up may add the person again
+at their next sign-in through it.
 
 ## Teams
 
@@ -860,11 +878,10 @@ The server's rule is the minimum everywhere; an organization can only add to it 
 accepted there). `admins` on the server means server admins and the administrators of any
 organization; in an organization, its administrators. An administrator is a member whose role
 holds `users:write`, `roles:write` or `settings:write`. A person needs a second factor when the
-server's rule or the rule of any organization they belong to applies to them. Such a rule binds
-only people who joined by their own consent: a person who already belongs to an organization
-joins another only by accepting an invitation (docs/api/access.md, "Members"; SCIM likewise), and
-everyone can leave an organization ("Leaving an organization"); members added directly before
-0.5.1 keep their membership and can leave it. A method turned off
+server's rule or the rule of any organization they joined by consent (`joinedBy` `invitation`,
+`creator`, `scim_owned` or `mapping`, "Members") applies to them; an organization's rule never
+binds a `direct` or `legacy` member. Everyone can leave an organization ("Leaving an
+organization"). A method turned off
 keeps working for those who have it; it can no longer be set up. Where passkeys cannot work (Kalzit opened by an IP address), the authenticator app is offered instead even when only passkeys are allowed (`allowed` says so), so a required setup, the first owner's included, never dead-ends. Changing these settings (also by import or reset) needs a fresh confirmation (`403 confirmation_required`) when the admin has a second factor. There is no grace period: whoever
 must have a second factor and has none sets one up at the next sign-in, before a session opens.
 The break-glass administrator signs in through the same steps; nothing bypasses the policy.

@@ -121,7 +121,9 @@ account's second factor, or, when it has none, its password (`linkPassword`, doc
 "Second factor"); a factor set up in its place would prove nothing. The link counts as
 confirmed once that second step completes; a sign-in left unfinished asks again next time. An
 account without a password and a second factor (one SCIM owns, see above) links at once, as
-before. Links made before 0.5.1 count as confirmed. The same holds for LDAP (step 2 of
+before. Such an account has nothing of its own to prove it with, so whoever controls its verified
+address at a trusted provider signs in to it; it is protected only as well as that address and
+provider are. Links made before 0.5.1 count as confirmed. The same holds for LDAP (step 2 of
 "LDAP and Active Directory").
 
 A disabled account answers `sso=disabled`, the unmapped rule `refuse` answers `sso=unmapped`
@@ -170,8 +172,10 @@ With password sign-in off (for the server, or for one of the person's organizati
 one, and the attempt stays counted against the sign-in limits, so a password cannot be tested
 while it signs nobody in; the account's own recent sign-ins record it as `password_off`. The
 sign-in page shows the providers either way. An organization's `off` never applies to server
-admins, and binds only members who joined by their own consent (docs/api/access.md, "Members");
-a member can leave the organization with any session (`DELETE /me/orgs/{orgId}`). With password sign-in off for the server or the inviting organization,
+admins, and binds only members who joined by their own consent: `joinedBy` `invitation`,
+`creator`, `scim_owned` or `mapping` (a group mapping of a provider a server admin set up). It
+never binds a `direct` or `legacy` member (docs/api/access.md, "Members"), whose password keeps
+signing them in. A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`). With password sign-in off for the server or the inviting organization,
 an invitation is accepted through a provider only: `POST /auth/invitation` answers
 `password: false` and the providers in `sso`, and accepting with a password answers
 `403 forbidden`, reason `sso.password_sign_in_off`; the person signs in through a provider with
@@ -323,7 +327,8 @@ secret is wrong. Answers
   second factor when they have one (`403 confirmation_required`, docs/api/access.md, "Second
   factor"): such a provider signs people in to existing accounts on its word.
 - `PATCH /admin/sign-in/providers/{providerId}/enabled`: `{"enabled": false}` pauses, `true`
-  resumes. Audit `sso.provider_paused` or `sso.provider_resumed`.
+  resumes. Audit `sso.provider_paused` or `sso.provider_resumed`. Resuming a provider with
+  `trustEmail` or `trustProviderMfa` on needs the same fresh confirmation as changing it.
 - `PUT /admin/sign-in/order`: `{"ids": [...]}`, every provider exactly once. Audit
   `sso.providers_reordered`.
 - `DELETE /admin/sign-in/providers/{providerId}`: only without people (`409 conflict`, reason

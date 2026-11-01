@@ -256,6 +256,8 @@ async fn leave_org(
         );
     }
     super::members::remove_membership(&mut tx, &org_id, &user.id).await?;
+    // A leave sticks: this organization's SCIM never adds the person back.
+    super::members::left(&mut tx, &org_id, &user.id, state.clock.now_ms()).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "userId": user.id, "role": role });
     audit(&mut tx, &actor, Some(&org_id), "member.left", ("user", &user.id), summary).await?;

@@ -72,6 +72,13 @@ fn rate_limited(wait: std::time::Duration) -> ApiError {
     ApiError::rate_limited("too many failed sign-ins, wait a few minutes", wait)
 }
 
+/// A failed sign-in while a directory could not be asked, whether or not a local account has the
+/// login (docs/api/sso.md, "LDAP and Active Directory").
+fn directory_unreachable_error() -> ApiError {
+    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "busy", "the directory cannot be reached, try again in a moment")
+        .because("ldap.directory_unreachable")
+}
+
 fn invalid_credentials() -> ApiError {
     // Same answer for unknown email, wrong password and disabled account, so the response does
     // not reveal which accounts exist.
@@ -318,12 +325,7 @@ pub async fn login_with(
         // A directory could not be asked: said whether or not a local account has this login, so
         // the answer tells nothing about local accounts.
         if directory_unreachable {
-            return Err(ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "busy",
-                "the directory cannot be reached, try again in a moment",
-            )
-            .because("ldap.directory_unreachable"));
+            return Err(directory_unreachable_error());
         }
         return Err(invalid_credentials());
     };
@@ -343,6 +345,10 @@ pub async fn login_with(
         };
         if let Err(e) = recorded {
             tracing::warn!(client = %info.client_ip, "recording a refused sign-in in the audit log failed: {e}");
+        }
+        // Exactly the answer of a wrong password, also while a directory could not be asked.
+        if directory_unreachable {
+            return Err(directory_unreachable_error());
         }
         return Err(invalid_credentials());
     }

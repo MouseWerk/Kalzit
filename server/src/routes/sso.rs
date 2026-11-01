@@ -1222,11 +1222,22 @@ async fn set_enabled(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     JsonBody(body): JsonBody<EnabledBody>,
 ) -> ApiResult<Json<Value>> {
     let current = load_provider(&state, &id).await?;
     let now = state.clock.now_ms();
+    // Resuming a provider that takes the provider's word for addresses or second factors lets it
+    // sign people in on that word again: the same fresh confirmation as changing it.
+    if body.enabled && current.enabled == 0 {
+        let trust_email = serde_json::from_str::<Value>(&current.config)
+            .ok()
+            .and_then(|c| c["trustEmail"].as_bool())
+            .unwrap_or(false);
+        let trusting = trust_email || current.trust_provider_mfa != 0;
+        require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
+    }
     if (current.enabled != 0) != body.enabled {
         let mut tx = crate::db::begin(&state.db).await?;
         sqlx::query("UPDATE sso_providers SET enabled = $1, version = version + 1, updated_at = $2 WHERE id = $3")

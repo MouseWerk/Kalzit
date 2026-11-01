@@ -172,7 +172,9 @@ impl TestApp {
 
     /// Makes `user_id` a member of `org` with `role`, as an accepted invitation does.
     async fn join(&self, org: &str, user_id: &str, role: &str) {
-        sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, 0)")
+        sqlx::query(
+            "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, $3, 0, 'invitation')",
+        )
             .bind(org)
             .bind(user_id)
             .bind(role)
@@ -990,6 +992,75 @@ async fn people_leave_organizations_themselves_except_the_last_owner() {
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
     let r = t.send(Method::POST, "/api/auth/login", Some(login), None).await;
     assert_eq!(r.status, StatusCode::OK, "the organization's rule no longer binds her: {}", r.body);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn an_organizations_sign_in_rules_bind_only_members_who_consented() {
+    let t = test_app(None).await;
+    let (admin, org) = t.setup().await;
+    // Dora was added by an admin, Lena's membership is from before 0.5.1, Ina accepted an invitation.
+    t.member(&admin, &org, "Dora", "dora@example.de", "viewer").await;
+    t.member(&admin, &org, "Lena", "lena@example.de", "viewer").await;
+    sqlx::query("UPDATE org_members SET joined_by = 'legacy' WHERE user_id = (SELECT id FROM users WHERE email = $1)")
+        .bind("lena@example.de")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let ina = t.user(&admin, "Ina", "ina@example.de").await;
+    t.join(&org, &ina.user_id, "viewer").await;
+    let r = t.get(&format!("/api/orgs/{org}/members"), &admin).await;
+    let joined: Vec<(String, String)> = r.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["email"].as_str().unwrap().to_string(), m["joinedBy"].as_str().unwrap().to_string()))
+        .collect();
+    for expected in [("dora@example.de", "direct"), ("lena@example.de", "legacy"), ("ina@example.de", "invitation")] {
+        assert!(joined.contains(&(expected.0.to_string(), expected.1.to_string())), "{joined:?}");
+    }
+    assert!(joined.contains(&("joerg@example.de".to_string(), "creator".to_string())), "{joined:?}");
+
+    let set = |key: &'static str, value: &'static str| {
+        let t = &t;
+        let admin = &admin;
+        let org = org.clone();
+        async move {
+            let settings = t.get(&format!("/api/orgs/{org}/settings"), admin).await;
+            let version = settings.body["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["key"] == key)
+                .map(|s| s["version"].as_i64().unwrap())
+                .unwrap();
+            let r = t
+                .patch(&format!("/api/orgs/{org}/settings/{key}"), json!({ "value": value, "version": version }), admin)
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
+        }
+    };
+    let login = |email: &str| json!({ "email": email, "password": PASSWORD });
+
+    // Password sign-in off binds Ina only.
+    set("signin.local_password", "off").await;
+    for email in ["dora@example.de", "lena@example.de"] {
+        let r = t.send(Method::POST, "/api/auth/login", Some(login(email)), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{email}: {}", r.body);
+        assert!(r.body.get("secondFactor").is_none(), "{email}: {}", r.body);
+    }
+    let r = t.send(Method::POST, "/api/auth/login", Some(login("ina@example.de")), None).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNAUTHORIZED, "invalid_credentials"), "{}", r.body);
+    set("signin.local_password", "inherit").await;
+
+    // So does a second factor the organization requires.
+    set("security.two_factor_required", "everyone").await;
+    for email in ["dora@example.de", "lena@example.de"] {
+        let r = t.send(Method::POST, "/api/auth/login", Some(login(email)), None).await;
+        assert!(r.body.get("secondFactor").is_none(), "{email}: {}", r.body);
+    }
+    let r = t.send(Method::POST, "/api/auth/login", Some(login("ina@example.de")), None).await;
+    assert_eq!(r.body["secondFactor"]["setup"], json!(true), "{}", r.body);
     t.finish().await;
 }
 
