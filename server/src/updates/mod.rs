@@ -513,7 +513,9 @@ impl Updates {
 
     /// A fetcher of the release source, through the outbound proxy when one is set.
     async fn fetcher(&self, state: &AppState, timeout: Duration) -> Result<source::Fetcher, UpdateError> {
-        let proxy = crate::outbound::current_or_none(state).await;
+        let proxy = crate::outbound::current_or_refuse(state, "the update check")
+            .await
+            .map_err(UpdateError::SourceUnreachable)?;
         source::Fetcher::new(&self.data_dir, &self.db_url, read(&self.source).clone(), timeout, proxy)
     }
 

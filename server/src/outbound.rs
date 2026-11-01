@@ -149,8 +149,12 @@ impl OutboundProxy {
 
     /// Whether a request to `url` goes past the proxy (`network.no_proxy`).
     pub fn bypasses(&self, url: &Url) -> bool {
-        let Some(raw) = url.host_str() else { return true };
-        let host = normalize(raw.trim_matches(['[', ']']));
+        url.host_str().is_none_or(|host| self.bypasses_host(host))
+    }
+
+    /// Whether `network.no_proxy` names `host` (a name or an address literal).
+    pub fn bypasses_host(&self, host: &str) -> bool {
+        let host = normalize(host.trim_matches(['[', ']']));
         let ip: Option<IpAddr> = parse_ip_literal(&host);
         self.bypass.iter().any(|b| match b {
             Bypass::All => true,
@@ -161,12 +165,14 @@ impl OutboundProxy {
     }
 
     /// The proxy as reqwest takes it: every request through it, except those `bypasses` names.
+    /// The sign-in goes only with a user name and a password stored for this proxy; without the
+    /// password (none, or one set for another address) no sign-in is sent at all.
     pub fn reqwest_proxy(self: &Arc<Self>) -> reqwest::Proxy {
         let this = self.clone();
         let target = self.url.clone();
         let mut proxy = reqwest::Proxy::custom(move |url| (!this.bypasses(url)).then(|| target.clone()));
-        if let Some(user) = &self.username {
-            proxy = proxy.basic_auth(user, self.password.as_ref().map_or("", |p| p.as_str()));
+        if let (Some(user), Some(password)) = (&self.username, &self.password) {
+            proxy = proxy.basic_auth(user, password.as_str());
         }
         proxy
     }
@@ -195,16 +201,18 @@ pub async fn current(state: &AppState) -> ApiResult<Option<Arc<OutboundProxy>>> 
     Ok(proxy.map(Arc::new))
 }
 
-/// `current` for background work, where a broken setting must not stop the work: the error is
-/// logged and the requests go out without a proxy.
-pub async fn current_or_none(state: &AppState) -> Option<Arc<OutboundProxy>> {
-    match current(state).await {
-        Ok(proxy) => proxy,
-        Err(e) => {
-            tracing::warn!("the outbound proxy cannot be read; requests go out directly: {}", e.message);
-            None
-        }
-    }
+/// `current` for work that runs on its own (update checks and downloads, ACME). It fails closed:
+/// when the proxy setting or its password cannot be read, nothing goes out directly instead.
+/// The error is logged at error level, and the caller records the message where operations see
+/// it (the update check, the certificate status).
+pub async fn current_or_refuse(state: &AppState, purpose: &str) -> Result<Option<Arc<OutboundProxy>>, String> {
+    current(state).await.map_err(|e| {
+        tracing::error!(
+            "the outbound proxy setting cannot be read, so {purpose} does not go out until it is fixed: {}",
+            e.message
+        );
+        format!("the outbound proxy setting cannot be read: {}", e.message)
+    })
 }
 
 /// What the secret holds: the password with the proxy address it was set for. A password is only

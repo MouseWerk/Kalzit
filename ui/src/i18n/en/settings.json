@@ -24,6 +24,7 @@
   "settings.proxyPassword.set": "Set",
   "settings.proxyPassword.notSet": "Not set",
   "settings.proxyPassword.stale": "Set for another proxy address; set it again",
+  "settings.proxyPassword.clearText": "The proxy address starts with http://, so the user name and password travel to the proxy unencrypted. Use an https:// proxy address if the network between Kalzit and the proxy is not trusted.",
   "settings.proxyPassword.input": "New proxy password",
   "settings.proxyPassword.save": "Save password",
   "settings.proxyPassword.remove": "Remove password",

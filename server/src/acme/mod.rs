@@ -613,19 +613,25 @@ impl Acme {
             settings.domains.join(", "),
             settings.directory_url()
         );
+        let proxy = crate::outbound::current_or_refuse(state, "the certificate order").await;
         let cx = issue::Context {
             data_dir: &state.config.paths.data_dir,
             db_url: &state.config.database_url(),
             keyring: &state.secrets,
             now_ms: now,
-            proxy: crate::outbound::current_or_none(state).await,
+            proxy: proxy.clone().unwrap_or_default(),
             shared: state
                 .cluster
                 .coordinated()
                 .then(|| issue::Shared { state, order_id: uuid::Uuid::now_v7().to_string() }),
         };
-        // A certificate counts only once it is served.
-        let outcome = issue::obtain(self, &settings, &cx).await.and_then(|certificate| {
+        // A certificate counts only once it is served. A proxy setting that cannot be read stops
+        // the order (fail closed) and shows as its failure.
+        let obtained = match proxy {
+            Err(message) => Err(Failure::new("acme.directory_unreachable", message)),
+            Ok(_) => issue::obtain(self, &settings, &cx).await,
+        };
+        let outcome = obtained.and_then(|certificate| {
             self.certificates
                 .set(&certificate.chain_pem, &certificate.key_pem)
                 .map(|()| certificate)

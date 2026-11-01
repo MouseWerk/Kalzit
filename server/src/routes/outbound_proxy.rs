@@ -32,17 +32,23 @@ pub struct ProxyPasswordView {
     set: bool,
     /// A password is stored, but for another proxy address: it is not used until it is set again.
     stale: bool,
+    /// A user name is set and the proxy address is `http://`: the sign-in travels unencrypted to
+    /// the proxy.
+    clear_text: bool,
 }
 
 async fn load_view(state: &AppState) -> ApiResult<ProxyPasswordView> {
     let url = crate::settings::get(state, outbound::URL_KEY).await?;
     let url = url.as_str().unwrap_or_default();
+    let username = crate::settings::get(state, outbound::USERNAME_KEY).await?;
+    let clear_text = url.starts_with("http://") && username.as_str().is_some_and(|u| !u.is_empty());
     let stored = outbound::stored_password(&state.db, &state.secrets).await?;
-    Ok(match stored {
-        Some((proxy, _)) if !url.is_empty() && proxy == url => ProxyPasswordView { set: true, stale: false },
-        Some(_) => ProxyPasswordView { set: false, stale: true },
-        None => ProxyPasswordView { set: false, stale: false },
-    })
+    let (set, stale) = match stored {
+        Some((proxy, _)) if !url.is_empty() && proxy == url => (true, false),
+        Some(_) => (false, true),
+        None => (false, false),
+    };
+    Ok(ProxyPasswordView { set, stale, clear_text })
 }
 
 async fn view(State(state): State<AppState>) -> ApiResult<Json<ProxyPasswordView>> {

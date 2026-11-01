@@ -17,12 +17,19 @@ export interface ProxyPasswordView {
   set: boolean;
   /** Stored for another proxy address, so not used until it is set again. */
   stale: boolean;
+  /** A user name with an `http://` proxy: the sign-in travels unencrypted to the proxy. */
+  clearText: boolean;
 }
 
 export const proxyPasswordKey = ["admin", "proxyPassword"] as const;
 
 function isView(value: unknown): value is ProxyPasswordView {
-  return isRecord(value) && typeof value.set === "boolean" && typeof value.stale === "boolean";
+  return (
+    isRecord(value) &&
+    typeof value.set === "boolean" &&
+    typeof value.stale === "boolean" &&
+    typeof value.clearText === "boolean"
+  );
 }
 
 export async function getProxyPassword(): Promise<ProxyPasswordView> {
@@ -84,6 +91,7 @@ export function ProxyPasswordCard() {
         title={t("settings.proxyPassword.title")}
         titleId={titleId}
         description={t("settings.proxyPassword.description")}
+        note={view.data.clearText ? t("settings.proxyPassword.clearText") : undefined}
         badge={state}
         error={problem}
         errorId={errorId}
