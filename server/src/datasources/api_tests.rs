@@ -525,7 +525,11 @@ async fn settings_and_secrets_are_validated() {
         .post("/datasources", pg(json!({ "host": "h", "database": "d", "user": "u", "sslMode": "x" }), json!({})))
         .await;
     assert_eq!(r.body["error"]["reason"], "settings.expected_option", "{}", r.text);
-    assert_eq!(r.body["error"]["params"]["options"], "disable, prefer, require, verify-ca, verify-full", "{}", r.text);
+    assert_eq!(
+        r.body["error"]["params"]["options"], "auto, disable, prefer, require, verify-ca, verify-full",
+        "{}",
+        r.text
+    );
     t.finish().await;
 }
 
