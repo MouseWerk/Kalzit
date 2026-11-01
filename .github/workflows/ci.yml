@@ -37,6 +37,7 @@ jobs:
       audit: ${{ steps.areas.outputs.audit }}
       docker: ${{ steps.areas.outputs.docker }}
       installer: ${{ steps.areas.outputs.installer }}
+      devkit: ${{ steps.areas.outputs.devkit }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@v7
@@ -495,6 +496,46 @@ jobs:
         run: npm run build
         env:
           KALZIT_LICENSES_STRICT: "0"
+
+  # The developer toolkit (tools/devkit): format, lint, types, unit tests and the build. It is
+  # never part of the product binary or packages. Its instance smoke test runs locally only.
+  devkit:
+    name: devkit (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.devkit == 'true' }}
+    defaults:
+      run:
+        working-directory: tools/devkit
+    steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        working-directory: .
+        run: echo "No devkit change in this pull request; the checks are skipped."
+      - uses: actions/checkout@v7
+        if: env.RUN_JOB == 'true'
+      - uses: actions/setup-node@v7
+        if: env.RUN_JOB == 'true'
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: tools/devkit/package-lock.json
+      - if: env.RUN_JOB == 'true'
+        run: npm ci
+      - if: env.RUN_JOB == 'true'
+        run: npm run check
+      - if: env.RUN_JOB == 'true'
+        run: npm run typecheck
+      - if: env.RUN_JOB == 'true'
+        run: npm test
+      - if: env.RUN_JOB == 'true'
+        run: npm run build
 
   # End-to-end tests against the server binary with the embedded UI (ui/e2e), built with the
   # e2e profile (release settings, less optimization, so it builds faster). Not a required check
