@@ -39,7 +39,7 @@ jobs:
       installer: ${{ steps.areas.outputs.installer }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 2
       - name: Test the change detection
@@ -74,13 +74,14 @@ jobs:
       - name: Nothing to check
         if: env.RUN_JOB != 'true'
         run: echo "No server change in this pull request; the checks are skipped."
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         if: env.RUN_JOB == 'true'
         with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: env.RUN_JOB == 'true'
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
@@ -187,9 +188,11 @@ jobs:
       # A PostgreSQL test without the URL fails here instead of skipping.
       KALZIT_TEST_REQUIRE_POSTGRES: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo test --locked --test api --test access --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
@@ -219,9 +222,11 @@ jobs:
       KALZIT_TEST_LDAP_ADMIN_DN: cn=admin,dc=kalzit,dc=test
       KALZIT_TEST_LDAP_ADMIN_PASSWORD: kalzit-ci-ldap
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo build --locked --tests
@@ -247,9 +252,11 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
       - name: Build the test as the runner user
@@ -392,9 +399,11 @@ jobs:
       KALZIT_TEST_INFLUXDB3_URL: http://127.0.0.1:8181/kalzit
       KALZIT_TEST_LOKI_URL: http://127.0.0.1:3100
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
       - name: Start InfluxDB 3 Core
@@ -458,7 +467,7 @@ jobs:
         if: env.RUN_JOB != 'true'
         working-directory: .
         run: echo "No UI change in this pull request; the checks are skipped."
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
       - name: Check for the UI
         if: env.RUN_JOB == 'true'
@@ -466,7 +475,7 @@ jobs:
         shell: bash
         working-directory: .
         run: echo "present=$([ -f ui/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: steps.has_ui.outputs.present == 'true'
         with:
           node-version: 26
@@ -521,7 +530,7 @@ jobs:
       - name: Nothing to check
         if: env.RUN_JOB != 'true'
         run: echo "No server or UI change in this pull request; the end-to-end tests are skipped."
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
       # MongoDB, OpenSearch, Neo4j and Memgraph for the document, search and graph specs, started
       # first so they are up once the build is done. Linux only: Windows runners have no Linux
@@ -531,15 +540,17 @@ jobs:
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh start
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: env.RUN_JOB == 'true'
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         if: env.RUN_JOB == 'true'
-      - uses: Swatinem/rust-cache@v2
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: env.RUN_JOB == 'true'
         with:
           key: e2e-profile
@@ -564,7 +575,7 @@ jobs:
       - name: Restore Playwright browsers
         if: env.RUN_JOB == 'true'
         id: browsers
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .playwright-browsers
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
@@ -583,7 +594,7 @@ jobs:
         if: >-
           env.RUN_JOB == 'true' && steps.browsers.outputs.cache-hit != 'true'
           && github.event_name != 'merge_group'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .playwright-browsers
           key: ${{ steps.browsers.outputs.cache-primary-key }}
@@ -603,7 +614,7 @@ jobs:
       - name: Restore browser system packages
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         id: debs
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/kalzit-browser-debs
           key: browser-debs-${{ steps.image.outputs.name }}-playwright-${{ steps.playwright.outputs.version }}
@@ -619,7 +630,7 @@ jobs:
         if: >-
           env.RUN_JOB == 'true' && runner.os == 'Linux' && steps.debs.outputs.cache-hit != 'true'
           && github.event_name != 'merge_group'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/kalzit-browser-debs
           key: ${{ steps.debs.outputs.cache-primary-key }}
@@ -742,12 +753,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Commit
         id: commit
         run: echo "short=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64
@@ -771,14 +782,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: e2e-profile
           save-if: false
@@ -819,14 +832,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: letsencrypt/pebble
           ref: v2.10.1
           path: pebble-src
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: pebble-src/go.mod
           cache: false
@@ -835,8 +848,10 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/pebble-bin"
           go build -o "$RUNNER_TEMP/pebble-bin/" ./cmd/pebble ./cmd/pebble-challtestsrv
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: false
       - name: Build the test
@@ -882,8 +897,8 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.audit == 'true') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: cargo-audit
       # The advisory database is fetched with retries, so a network failure does not read as a

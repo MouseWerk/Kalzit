@@ -16,6 +16,8 @@ Every change is written to the audit log with `resourceType: "plugin"` and the p
 key id, or `server`) as `resourceId`: `plugins.installed`, `plugins.updated`,
 `plugins.update_pending`, `plugins.approved`, `plugins.enabled`, `plugins.disabled`,
 `plugins.restarted`, `plugins.removed`, `plugins.install_refused` (with the reason),
+`plugins.package_refused` (a package another server shared that this server refused: the reason,
+the version and this server's id; once per package and reason),
 `plugins.publisher_changed` (a removed plugin's id installed with another key: both key ids, the
 data sources whose secrets were cleared and how many secrets),
 `plugins.key_added`, `plugins.key_removed` (with the plugins it stopped and the updates it
@@ -818,6 +820,9 @@ Rules:
 | `plugin.package_too_large` | `maxBytes` | the package is larger than allowed unpacked (`422`) |
 | `plugin.package_invalid` | `issues` | a bad entry path, a link, a device, an encrypted entry, two paths differing only in case, or files that do not match the manifest (`package.*` codes in the message) (`422`) |
 | `plugin.package_missing` | | several servers on one database: no server shared the package of an installed plugin, so this server cannot run it (logged; install it again) |
+| `plugin.package_hash_mismatch` | | several servers on one database: the shared package is not the archive its stored SHA-256 names; this server does not run it (logged, and `plugins.package_refused` in the audit log) |
+| `plugin.package_dir_invalid` | | several servers on one database: the stored package directory is not a name Kalzit makes (32 lowercase hex digits); nothing is written or removed (logged, and `plugins.package_refused`) |
+| `plugin.signer_mismatch` | | several servers on one database: the shared package verifies, but with another signer or key than the one stored at installation (logged, and `plugins.package_refused`) |
 | `plugin.manifest_missing` | | the package has no readable `kalzit-plugin.toml` (`422`) |
 | `plugin.manifest_invalid` | `issues` | the manifest is not valid (`manifest.*` codes) (`422`) |
 | `plugin.kalzit_too_old` | `minKalzit` | the plugin needs a newer Kalzit (`422`) |

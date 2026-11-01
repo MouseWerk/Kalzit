@@ -1246,3 +1246,73 @@ async fn the_example_plugin_built_with_the_sdk_installs_and_answers() {
     assert_eq!(r["error"]["reason"], "source.error", "{r}");
     t.finish().await;
 }
+
+/// Another server on the same database shared `archive` as the plugin's package `dir` with the
+/// SHA-256 `sha` (as `PluginHost::install` does when coordinated), and this server takes it over
+/// (`PluginHost::sync`). Answers whether everything that may run here runs.
+async fn take_shared(t: &TestApp, dir: &str, archive: &[u8], sha: &str) -> bool {
+    let db = &t.state.db;
+    sqlx::query("INSERT INTO plugin_packages (dir, archive, sha256, created_at) VALUES ($1, $2, $3, 0)")
+        .bind(dir)
+        .bind(base64::engine::general_purpose::STANDARD.encode(archive))
+        .bind(sha)
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE plugins SET dir = $1 WHERE id = $2").bind(dir).bind(ID).execute(db).await.unwrap();
+    t.state.plugins.sync(&t.state).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_shared_package_is_checked_like_an_installation_on_every_server() {
+    let t = test_app().await;
+    let (publisher, stranger) = (key(15), key(16));
+    t.trust(&publisher).await;
+    let good = Pkg { key: Some(&publisher), ..Default::default() };
+    t.ready(&good).await;
+    let packages = t.dir.path().join("plugins").join("packages");
+    let fresh = || format!("{}", uuid::Uuid::now_v7().simple());
+
+    // The manifest is the stored one, but the signature is gone or from a key nobody trusts:
+    // refused before anything is unpacked.
+    for archive in [package(&Pkg::default()), package(&Pkg { key: Some(&stranger), ..Default::default() })] {
+        let dir = fresh();
+        assert!(!take_shared(&t, &dir, &archive, &sha(&archive)).await);
+        assert!(!packages.join(&dir).exists());
+        assert_eq!(t.plugin(ID).await["running"], false);
+    }
+    // An archive that is not the one stored with its SHA-256.
+    let archive = package(&good);
+    let dir = fresh();
+    assert!(!take_shared(&t, &dir, &archive, &sha(b"another archive")).await);
+    assert!(!packages.join(&dir).exists());
+    // A directory name that leaves the packages directory.
+    let escape = "../escape";
+    assert!(!take_shared(&t, escape, &archive, &sha(&archive)).await);
+    assert!(!packages.join(escape).exists() && !packages.join(format!(".partial-{escape}")).exists());
+
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'plugins.package_refused'")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    let reasons: Vec<String> = rows
+        .iter()
+        .map(|(s,)| serde_json::from_str::<Value>(s).unwrap()["reason"].as_str().unwrap().to_string())
+        .collect();
+    for reason in [
+        "plugin.unsigned_refused",
+        "plugin.signer_untrusted",
+        "plugin.package_hash_mismatch",
+        "plugin.package_dir_invalid",
+    ] {
+        assert!(reasons.iter().any(|r| r == reason), "{reason} is missing from {reasons:?}");
+    }
+
+    // The package as installed is taken over and runs.
+    let dir = fresh();
+    assert!(take_shared(&t, &dir, &archive, &sha(&archive)).await);
+    assert!(packages.join(&dir).is_dir() && packages.join(format!("{dir}.complete")).exists());
+    assert_eq!(t.plugin(ID).await["running"], true);
+    t.finish().await;
+}
