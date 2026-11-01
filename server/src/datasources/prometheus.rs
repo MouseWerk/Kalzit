@@ -729,6 +729,65 @@ mod property_tests {
         prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
     }
 
+    /// A sample value as Prometheus writes it (a string), or something else a broken server sends.
+    fn sample_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            prop::sample::select(vec!["1.5", "-0", "+Inf", "-Inf", "NaN", "1e308", "1e999", "x", ""])
+                .prop_map(Value::from),
+            any::<f64>().prop_map(|f| json!(f)),
+            Just(Value::Null),
+        ]
+    }
+
+    /// A time in seconds, including ones far outside any date range.
+    fn sample_time_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            (1_700_000_000.0f64..1_900_000_000.0).prop_map(|f| json!(f)),
+            any::<f64>().prop_map(|f| json!(f)),
+            any::<i64>().prop_map(Value::from),
+            Just(Value::from("1700000000")),
+        ]
+    }
+
+    fn point() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            4 => (sample_time_value(), sample_value()).prop_map(|(t, v)| json!([t, v])),
+            1 => prop::collection::vec(sample_value(), 0..4).prop_map(Value::Array),
+            1 => sample_value(),
+        ]
+    }
+
+    /// One series of a matrix or vector: labels, points and the point key of the other kind.
+    fn series() -> impl Strategy<Value = Value> {
+        let labels = prop::collection::btree_map(
+            prop::sample::select(vec!["__name__", "job", "instance", "le", ""]).prop_map(str::to_string),
+            prop_oneof![3 => "\\PC{0,8}".prop_map(Value::from), 1 => any::<i64>().prop_map(Value::from)],
+            0..4,
+        );
+        (labels, prop::collection::vec(point(), 0..12), point(), any::<bool>()).prop_map(
+            |(labels, values, value, with_metric)| {
+                let mut s = serde_json::Map::new();
+                if with_metric {
+                    s.insert("metric".into(), json!(labels));
+                }
+                s.insert("values".into(), Value::Array(values));
+                s.insert("value".into(), value);
+                Value::Object(s)
+            },
+        )
+    }
+
+    /// The `data` of an answer: a result type and a result shaped like it, or not quite.
+    fn answer_data() -> impl Strategy<Value = Value> {
+        let kind = prop::sample::select(vec!["matrix", "vector", "scalar", "string", "streams", ""]);
+        let result = prop_oneof![
+            4 => prop::collection::vec(series(), 0..6).prop_map(Value::Array),
+            1 => point(),
+            1 => sample_value(),
+        ];
+        (kind, result).prop_map(|(kind, result)| json!({ "resultType": kind, "result": result }))
+    }
+
     proptest! {
         // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
         #![proptest_config(ProptestConfig::default())]
@@ -743,12 +802,10 @@ mod property_tests {
             let _ = expand(&expr, &req());
         }
 
-        /// An answer that is JSON but not the shape Prometheus sends is an error.
+        /// An answer shaped like Prometheus's, or broken in any part, is a frame or an error.
         #[test]
-        fn answers_never_panic(body in "\\PC{0,200}") {
-            if let Ok(data) = serde_json::from_str::<Value>(&body) {
-                let _ = to_frame(&data, &req());
-            }
+        fn answers_never_panic(data in answer_data()) {
+            let _ = to_frame(&data, &req());
         }
     }
 }
