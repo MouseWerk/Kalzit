@@ -11,6 +11,7 @@
 #   docs_only  only documentation changed (docs/, Markdown files, LICENSE)
 #   docker     the container image: server or ui, the Dockerfile, .dockerignore or deploy/
 #   installer  the Windows installer: server or packaging/
+#   devkit     the developer toolkit (tools/devkit, .mcp.json)
 #
 # changes.sh BASE HEAD   compares two commits (renames count as a deletion and an addition, so
 #                        the old path counts too)
@@ -28,6 +29,7 @@ workflows=false
 docs=false
 image=false
 packaging=false
+devkit=false
 unknown=false
 count=0
 
@@ -36,6 +38,8 @@ classify() {
   case "$path" in
     .github/*)
       workflows=true ;;
+    tools/devkit/* | .mcp.json)
+      devkit=true ;;
     # The UI's conformance test runs server/src/analysis/conformance.json, which the Rust
     # engine there must also pass.
     server/src/analysis/*)
@@ -91,6 +95,7 @@ wait $! || exit 1
 if [ "$workflows" = true ] || [ "$unknown" = true ] || [ "$count" -eq 0 ]; then
   server=true
   ui=true
+  devkit=true
 fi
 [ "$server" = true ] && audit=true
 e2e=false
@@ -113,3 +118,4 @@ echo "workflows=$workflows"
 echo "docs_only=$docs_only"
 echo "docker=$docker"
 echo "installer=$installer"
+echo "devkit=$devkit"

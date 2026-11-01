@@ -10,14 +10,10 @@ import { SCREENSHOT_NOW } from "./demo";
  * (files run in name order with one worker), whose seeding completes setup. Nothing here
  * completes it; checking the code only confirms it.
  */
-const OUT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "..",
-  "docs",
-  "screenshots",
-);
+// KALZIT_SCREENSHOTS_OUT sends the pictures elsewhere (the devkit's capture_screens scenes).
+const OUT =
+  process.env.KALZIT_SCREENSHOTS_OUT ??
+  resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "docs", "screenshots");
 
 test.describe.configure({ mode: "serial" });
 
