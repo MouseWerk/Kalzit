@@ -269,15 +269,17 @@ fn check_panels(
     model: &model::DashboardModel,
     previous: Option<&model::DashboardModel>,
 ) -> ApiResult<()> {
-    model::check_panel_options(model, previous)
-        .and_then(|()| crate::plugins::panels::check_dashboard_options(state.plugins.panels(), model, previous))
-        .map_err(|(panel, detail)| {
-            ApiError::validation(detail.clone())
-                .with_field("model")
-                .because("dashboards.panel_options")
-                .param("panel", panel)
-                .param("detail", detail)
-        })
+    model::check_panel_options(model, previous).map_err(|(panel, detail)| {
+        ApiError::validation(detail.clone())
+            .with_field("model")
+            .because("dashboards.panel_options")
+            .param("panel", panel)
+            .param("detail", detail)
+    })?;
+    crate::plugins::panels::check_dashboard_options(state.plugins.panels(), model, previous).map_err(|r| {
+        let (panel, detail) = (r.panel.clone(), r.detail.clone());
+        r.into_error(&panel, detail)
+    })
 }
 
 fn clean_message(raw: Option<&str>) -> ApiResult<String> {

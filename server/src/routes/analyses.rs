@@ -606,7 +606,7 @@ async fn create(
     JsonBody(body): JsonBody<CreateAnalysis>,
 ) -> ApiResult<impl IntoResponse> {
     let model = parse_model(body.model)?;
-    saved_analyses::check_visualization(&model, None)?;
+    saved_analyses::check_visualization(state.plugins.panels(), &model, None)?;
     authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
     saved_analyses::check_sources(&state.db, &ctx, &model, None).await?;
 
@@ -713,7 +713,7 @@ async fn save(
         return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
     let stored = saved_analyses::stored(&row.body)?;
-    saved_analyses::check_visualization(&model, Some(&stored))?;
+    saved_analyses::check_visualization(state.plugins.panels(), &model, Some(&stored))?;
     saved_analyses::check_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     let new = NewVersion { model: &model, folder_id: folder_id.as_deref(), restored_from: None };
     // Another folder can mean other readers: no answer kept under the old place may stay. Taken
@@ -1165,7 +1165,7 @@ async fn restore_version(
     // Rules may have tightened since that version was saved; it must pass today's.
     let model = parse_model(stored_value(&raw)?)?;
     let current = saved_analyses::stored(&row.body)?;
-    saved_analyses::check_visualization(&model, Some(&current))?;
+    saved_analyses::check_visualization(state.plugins.panels(), &model, Some(&current))?;
     saved_analyses::check_sources(&state.db, &ctx, &model, Some(&current)).await?;
     let new = NewVersion { model: &model, folder_id: row.folder_id.as_deref(), restored_from: Some(summary.version) };
     Ok(Json(write_version(&state, &ctx, &info, &row, new).await?))

@@ -441,8 +441,10 @@ visualization picker and the options editor:
 builds the options editor from them, and gives a panel only declared options whose values fit,
 with the defaults for the rest. Creating, saving and restoring a dashboard check the options of
 the plugin panels they add or change against the manifest (`422 validation`,
-`dashboards.panel_options`, naming the panel and the option), while the plugin may be shown;
-library panels and saved analyses keep their options unchecked for now.
+`dashboards.plugin_panel_options` with `panel`, `plugin`, `code` and `detail`, naming the panel
+and the option), while the plugin may be shown. Library panels and the visualization of saved
+analyses are checked the same way. Unchanged panels and panels of plugins that cannot be shown
+are left as they are, so a stored dashboard keeps saving.
 
 ### Frame: `GET /orgs/{orgId}/panel-plugins/{pluginId}/frame?dashboard={dashboardId}`
 
@@ -805,10 +807,15 @@ Rules:
   types and fields it does not know; Kalzit speaks to a bundle in the version its manifest names
   (`[panel] api`) and refuses versions it does not know at install.
 
-## Not here yet
+## Release
 
-- `Release` calls when a data source changes or is deleted (plugins key their pools by
-  `Connection.revision` meanwhile).
+When a data source changes (name, settings or secrets), goes to the trash, or its organization
+blocks the plugin, Kalzit takes back what the plugin was handed for it and calls `Release` with
+its id, on every server of the installation. The call goes only to a running process that was
+handed the source since the last `Release`, in the background with a 5 second deadline: the
+user's change never waits for it, and a failure is only logged (the plugin keys its pools by
+`Connection.revision` anyway). A source purged from the trash was released when it went there,
+so it gets no second call. A plugin answers `Release` for an id it does not know with success.
 
 ## Reasons
 

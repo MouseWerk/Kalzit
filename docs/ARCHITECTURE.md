@@ -516,7 +516,7 @@ process, a network target or the gRPC protocol.
 | `Query` | One query; the result streams as parts (below). |
 | `CheckOnSave` | Capability `check_on_save`: checks on the source itself when it is saved (the login may only read). |
 | `Watch` | Capability `watch`: change feed for live updates, positions as opaque resume tokens; `unsupported` as first event means "poll". |
-| `Release` | Kalzit forgets a data source (settings changed, deleted): close its pools. |
+| `Release` | Kalzit forgets a data source (changed, trashed, blocked): close its pools. Sent once per hand-over, in the background; failures are logged (docs/api/plugins.md, "Release"). |
 
 - Every call carries the data source (`Connection`: id, revision, settings, secrets); plugins
   may keep pools per id and revision until `Release`. Secrets are never logged or echoed.

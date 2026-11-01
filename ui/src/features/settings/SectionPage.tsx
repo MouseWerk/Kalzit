@@ -29,6 +29,7 @@ import { PolicyOverview } from "../security/PolicyOverview";
 import { SecuritySection } from "../security/SecuritySection";
 import { AboutSection } from "./AboutSection";
 import { AcmeSection } from "./AcmeSection";
+import { ProxyPasswordCard } from "./ProxyPasswordCard";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
 import { MailSection } from "./MailSection";
@@ -139,6 +140,7 @@ function SectionBody({ section }: { section: SectionDef }) {
       return (
         <>
           <ServerSettings section={section} />
+          <ProxyPasswordCard />
           <AcmeSection />
         </>
       );

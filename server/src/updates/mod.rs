@@ -511,8 +511,10 @@ impl Updates {
         self.handover_requested.notify_waiters();
     }
 
-    fn fetcher(&self, timeout: Duration) -> Result<source::Fetcher, UpdateError> {
-        source::Fetcher::new(&self.data_dir, &self.db_url, read(&self.source).clone(), timeout)
+    /// A fetcher of the release source, through the outbound proxy when one is set.
+    async fn fetcher(&self, state: &AppState, timeout: Duration) -> Result<source::Fetcher, UpdateError> {
+        let proxy = crate::outbound::current_or_none(state).await;
+        source::Fetcher::new(&self.data_dir, &self.db_url, read(&self.source).clone(), timeout, proxy)
     }
 
     /// Asks the release source for the newest release of `channel`.
@@ -521,7 +523,7 @@ impl Updates {
         self.set_job(Job::Checking);
         let channel = channel(state).await?;
         let now = state.clock.now_ms();
-        let found = match self.fetcher(source::API_TIMEOUT) {
+        let found = match self.fetcher(state, source::API_TIMEOUT).await {
             Ok(fetcher) => fetcher.latest(channel, &self.current, &self.keys(), &self.platform).await,
             Err(e) => Err(e),
         };
@@ -553,7 +555,7 @@ impl Updates {
             .filter(|o| o.version == version)
             .ok_or_else(|| UpdateError::NotOffered(version.to_string()))?;
         self.set_job(Job::Downloading { version: version.to_string(), bytes_done: 0, bytes_total: offer.size });
-        let fetcher = self.fetcher(source::DOWNLOAD_TIMEOUT)?;
+        let fetcher = self.fetcher(state, source::DOWNLOAD_TIMEOUT).await?;
         let this = self.clone();
         let state = state.clone();
         tokio::spawn(async move {

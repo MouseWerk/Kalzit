@@ -222,7 +222,7 @@ async fn each_field_is_checked_and_the_settings_are_saved_in_one_step() {
     assert_eq!((e.field, e.reason), ("challenge", "acme.https_off"));
     let http: crate::acme::AcmeSettings = serde_json::from_value(settings(&base, &ca)).unwrap();
     assert_eq!(crate::acme::settings::check_against(&http, &https_off), Ok(()));
-    let checked = crate::acme::check_connection(&http, &https_off).await.unwrap();
+    let checked = crate::acme::check_connection(&http, &https_off, None).await.unwrap();
     assert_eq!(checked.warnings[0].reason, "acme.https_later");
 
     let r = t.save(settings(&base, &ca), 0).await;

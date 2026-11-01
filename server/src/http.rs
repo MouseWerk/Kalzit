@@ -4,8 +4,11 @@
 //! guard test fails when another module builds its own client.
 //!
 //! Data source traffic never goes through a proxy (system proxy variables are ignored): a proxy
-//! resolves names itself, so the target check could not see the address it connects to. A
-//! configurable proxy that tunnels to the checked address can come later.
+//! resolves names itself, so the target check could not see the address it connects to.
+//! Kalzit's own requests to the internet (catalog, updates, ACME, AI providers) may use the
+//! outbound proxy (`client_proxied`, `outbound`): there the client resolves and checks every
+//! target before the request goes to the proxy, so the proxy reaches nothing the target check
+//! refuses.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -124,6 +127,8 @@ pub struct HttpClient {
     client: reqwest::Client,
     policy: Arc<TargetPolicy>,
     guard: Option<LocalGuard>,
+    /// The outbound proxy, for the requests it does not bypass.
+    proxy: Option<Arc<crate::outbound::OutboundProxy>>,
 }
 
 /// Refuses every address of this computer: loopback, unspecified, and any address one of its
@@ -218,14 +223,18 @@ impl LocalGuard {
     }
 }
 
-/// Resolves names through the target policy, so the connection uses the checked address.
-struct CheckedResolver(Arc<TargetPolicy>, Option<LocalGuard>);
+/// Resolves names through the target policy, so the connection uses the checked address. The
+/// outbound proxy's own name (`proxy_host`) is resolved with the rules every address keeps (no
+/// metadata address), not the allow-list or guard of the targets: an administrator chose it, and
+/// it usually stands in the private network the guards keep targets out of.
+struct CheckedResolver(Arc<TargetPolicy>, Option<LocalGuard>, Option<String>);
 
 impl reqwest::dns::Resolve for CheckedResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let policy = self.0.clone();
-        let guard = self.1.clone();
         let host = name.as_str().to_string();
+        let is_proxy = self.2.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(host.trim_end_matches('.')));
+        let policy = if is_proxy { Arc::new(self.0.without_allow_list()) } else { self.0.clone() };
+        let guard = if is_proxy { None } else { self.1.clone() };
         Box::pin(async move {
             let boxed = |b: Blocked| -> Box<dyn std::error::Error + Send + Sync> { Box::new(b) };
             // Port 0 is replaced by the URL's port.
@@ -261,15 +270,31 @@ pub fn client(opts: HttpOptions) -> Result<HttpClient, HttpError> {
 /// `client` that also refuses every local address (`LocalGuard`), at the resolver and for
 /// address literals.
 pub fn client_guarded(opts: HttpOptions, guard: Option<LocalGuard>) -> Result<HttpClient, HttpError> {
+    client_proxied(opts, guard, None)
+}
+
+/// `client_guarded` whose requests go through the outbound `proxy`, except those its
+/// `network.no_proxy` names. Every target is still resolved and checked here first
+/// (`check_url`); only then does the proxy connect, by name.
+pub fn client_proxied(
+    opts: HttpOptions,
+    guard: Option<LocalGuard>,
+    proxy: Option<Arc<crate::outbound::OutboundProxy>>,
+) -> Result<HttpClient, HttpError> {
     ensure_crypto_provider();
+    let proxy_host = proxy.as_ref().map(|p| p.host());
     let mut builder = reqwest::Client::builder()
         .timeout(opts.timeout)
         .connect_timeout(CONNECT_TIMEOUT.min(opts.timeout))
         .user_agent(concat!("Kalzit/", env!("CARGO_PKG_VERSION")))
         // Redirects are followed in `send`, which checks each target first.
         .redirect(reqwest::redirect::Policy::none())
+        // No system proxy; the outbound proxy only when one is given.
         .no_proxy()
-        .dns_resolver(Arc::new(CheckedResolver(opts.policy.clone(), guard.clone())));
+        .dns_resolver(Arc::new(CheckedResolver(opts.policy.clone(), guard.clone(), proxy_host)));
+    if let Some(proxy) = &proxy {
+        builder = builder.proxy(proxy.reqwest_proxy());
+    }
     if let Some(pem) = opts.extra_root_pem.as_deref().filter(|p| !p.trim().is_empty()) {
         for cert in reqwest::Certificate::from_pem_bundle(pem.as_bytes())
             .map_err(|e| HttpError::Other(format!("the CA certificate is not valid PEM: {e}")))?
@@ -278,7 +303,7 @@ pub fn client_guarded(opts: HttpOptions, guard: Option<LocalGuard>) -> Result<Ht
         }
     }
     let client = builder.build().map_err(|e| HttpError::Other(format!("building the HTTP client: {e}")))?;
-    Ok(HttpClient { client, policy: opts.policy, guard })
+    Ok(HttpClient { client, policy: opts.policy, guard, proxy })
 }
 
 impl HttpClient {
@@ -370,8 +395,10 @@ impl HttpClient {
         Ok(request.send().await?)
     }
 
-    /// Names are checked by the resolver when the client connects (there is no proxy); this
-    /// covers the scheme and address literals, which skip the resolver.
+    /// Names are checked by the resolver when the client connects; this covers the scheme and
+    /// address literals, which skip the resolver. A request that goes through the outbound proxy
+    /// never reaches the resolver with its target: here the name is resolved and every address
+    /// checked, so a name that leads somewhere refused is refused before the proxy sees it.
     async fn check_url(&self, url: &Url) -> Result<(), HttpError> {
         if !matches!(url.scheme(), "http" | "https") {
             let detail = crate::datasources::Detail::new(
@@ -395,6 +422,13 @@ impl HttpClient {
             self.policy.check_ip(host, ip)?;
             if let Some(guard) = &self.guard {
                 guard.check(ip)?;
+            }
+        } else if self.proxy.as_ref().is_some_and(|p| !p.bypasses(url)) {
+            let port = url.port_or_known_default().unwrap_or(443);
+            for addr in self.policy.resolve_all(host, port).await? {
+                if let Some(guard) = &self.guard {
+                    guard.check(addr.ip())?;
+                }
             }
         }
         Ok(())
@@ -750,5 +784,113 @@ mod tests {
         let url = Url::parse(&format!("http://{hop}/")).unwrap();
         let e = c.send(Method::GET, url, HeaderMap::new()).await.unwrap_err();
         assert!(matches!(&e, HttpError::Blocked(b) if b.0.reason == "target.url_credentials"), "{e}");
+    }
+
+    /// A forward proxy for the tests: answers every request itself with `via proxy` and keeps
+    /// the request head it got (request line and headers).
+    async fn test_proxy() -> (std::net::SocketAddr, Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let kept = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let kept = kept.clone();
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => head.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    kept.lock().unwrap().push(String::from_utf8_lossy(&head).into_owned());
+                    let body = "via proxy";
+                    let answer = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(answer.as_bytes()).await;
+                });
+            }
+        });
+        (addr, seen)
+    }
+
+    fn proxied(
+        allowed: &[&str],
+        guard: Option<LocalGuard>,
+        proxy: &str,
+        no_proxy: &[&str],
+        user: Option<(&str, &str)>,
+    ) -> HttpClient {
+        let allowed: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
+        let no_proxy: Vec<String> = no_proxy.iter().map(|s| s.to_string()).collect();
+        let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &allowed);
+        let proxy = crate::outbound::OutboundProxy::new(
+            proxy,
+            &no_proxy,
+            user.map(|(u, _)| u.to_string()),
+            user.map(|(_, p)| zeroize::Zeroizing::new(p.to_string())),
+        )
+        .unwrap()
+        .map(Arc::new);
+        let opts = HttpOptions { timeout: Duration::from_secs(5), extra_root_pem: None, policy: Arc::new(policy) };
+        client_proxied(opts, guard, proxy).unwrap()
+    }
+
+    /// Requests go through the outbound proxy with its credentials, past it for `no_proxy`, and
+    /// the proxy reaches nothing the target check refuses: the client resolves and checks every
+    /// target first, while the proxy itself may stand in the private network.
+    #[tokio::test]
+    async fn the_outbound_proxy_carries_requests_but_never_past_the_target_check() {
+        use crate::datasources::targets::test_hosts::pin;
+        let public: std::net::IpAddr = "93.184.216.34".parse().unwrap();
+        pin("release.proxy-test.example", &[public]);
+        pin("other.proxy-test.example", &[public]);
+        pin("metadata.proxy-test.example", &["169.254.169.254".parse().unwrap()]);
+        pin("lan.proxy-test.example", &["10.0.0.5".parse().unwrap()]);
+        pin("proxy.proxy-test.example", &["127.0.0.1".parse().unwrap()]);
+        let (addr, seen) = test_proxy().await;
+        let url = |s: &str| Url::parse(s).unwrap();
+
+        // Through the proxy, with its sign-in; the proxy's name resolves although the target
+        // allow-list does not hold it.
+        let proxy = format!("http://proxy.proxy-test.example:{}", addr.port());
+        let c = proxied(&["release.proxy-test.example"], None, &proxy, &[], Some(("kalzit", "geheim")));
+        let r = c.send(Method::GET, url("http://release.proxy-test.example/latest"), HeaderMap::new()).await.unwrap();
+        assert_eq!(r.text().await.unwrap(), "via proxy");
+        let head = seen.lock().unwrap().last().cloned().unwrap();
+        assert!(head.starts_with("GET http://release.proxy-test.example/latest HTTP/1.1"), "{head}");
+        let auth = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "kalzit:geheim");
+        assert!(head.to_ascii_lowercase().contains(&format!("proxy-authorization: basic {}", auth.to_ascii_lowercase())), "{head}");
+
+        // The allow-list still decides, and metadata addresses stay refused, by name and literal.
+        let before = seen.lock().unwrap().len();
+        let e = c.send(Method::GET, url("http://other.proxy-test.example/"), HeaderMap::new()).await.unwrap_err();
+        assert_eq!(e.detail().reason, "target.not_allowed", "{e}");
+        let open = proxied(&[], None, &proxy, &[], None);
+        for target in ["http://metadata.proxy-test.example/", "http://169.254.169.254/latest/meta-data"] {
+            let e = open.send(Method::GET, url(target), HeaderMap::new()).await.unwrap_err();
+            assert_eq!(e.detail().reason, "target.metadata_address", "{target}: {e}");
+        }
+        // A guard that admits only public addresses keeps judging the target, not the proxy.
+        let private = crate::datasources::Detail::new("catalog.private_target", "private");
+        let guarded =
+            proxied(&[], Some(LocalGuard { refused: private.clone(), private: Some(private) }), &proxy, &[], None);
+        let e = guarded.send(Method::GET, url("http://lan.proxy-test.example/"), HeaderMap::new()).await.unwrap_err();
+        assert_eq!(e.detail().reason, "catalog.private_target", "{e}");
+        let r = guarded.send(Method::GET, url("http://other.proxy-test.example/"), HeaderMap::new()).await.unwrap();
+        assert_eq!(r.text().await.unwrap(), "via proxy");
+        assert_eq!(seen.lock().unwrap().len(), before + 1, "only the allowed request reached the proxy");
+
+        // `no_proxy` goes direct.
+        let direct = upstream().await;
+        let past = proxied(&[], None, &proxy, &["127.0.0.1"], None);
+        let r = past.send(Method::GET, url(&format!("http://{direct}/ok")), HeaderMap::new()).await.unwrap();
+        assert_eq!(r.text().await.unwrap(), "fertig");
+        assert_eq!(seen.lock().unwrap().len(), before + 1);
     }
 }

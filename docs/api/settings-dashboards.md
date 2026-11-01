@@ -237,6 +237,41 @@ versions: the previous value for a setting whose `source` was `database`, a `res
 was `default`, so undo never stores a copy of the default. The settings pages undo a single
 change the same way.
 
+### Outbound proxy
+
+Kalzit's own requests to the internet can go through an HTTP or HTTPS proxy: the plugin catalog
+and its packages, update checks and downloads, ACME and the AI providers. Data sources never use
+it; each keeps its own connection. Three ordinary server settings, with undo and lockable by
+`KALZIT_SETTING_*` like any other:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `network.proxy_url` | `""` | `http://host:port` or `https://host:port`, nothing else (no user name, password or path). Empty: requests go out directly. |
+| `network.no_proxy` | `[]` | Up to 100 entries the requests reach directly: a host name, `.example.com` or `*.example.com` (the domain and everything below it), an address, a network (`10.0.0.0/8`), or `*` for all. |
+| `network.proxy_username` | `""` | The user name for the proxy's basic sign-in; empty: no sign-in. |
+
+The proxy never widens what Kalzit may reach. Before a request goes to the proxy, Kalzit resolves
+the target's name itself and checks every address with the same rules as without a proxy (no
+metadata address, `datasources.allowed_targets` where it applies, the catalog's public-only rule,
+the AI provider's "not this Kalzit" rule), so a target must resolve on the Kalzit server. The
+proxy's own address is only kept from metadata addresses: it may stand in the private network.
+The proxy then connects by name; what it resolves is up to the proxy.
+
+#### `GET /admin/network/proxy-password`
+
+Server administrators. `{ "set": bool, "stale": bool }`: `set` when a password is stored for the
+proxy address in force, `stale` when one is stored for another address. The password is never
+sent back.
+
+#### `PUT /admin/network/proxy-password`
+
+Body `{ "password": string | null }`; `null` or `""` removes it. The password is stored encrypted
+(`server_secrets`) together with the proxy address in force, and is only ever sent to that
+address: after `network.proxy_url` changes it is not used (`stale`) until it is set again.
+Refusals: `422 validation` on `password` with `settings.proxy_password_invalid` (`maxChars`, more
+than 1024 characters or control characters) or `settings.proxy_url_missing` (no proxy address
+set). Audited as `settings.updated` with key `network.proxy_password`, never the value.
+
 ## HTTPS certificates
 
 Automatic certificates over ACME (guide: docs/guide/https.md), server administrators only. The

@@ -22,6 +22,12 @@ pub const KEY_ENV: &str = "KALZIT_PLUGIN_SIGNING_KEY";
 
 /// The largest package Kalzit accepts.
 pub const MAX_PACKAGE_BYTES: usize = 256 * 1024 * 1024;
+/// The most a package may hold once unpacked, as Kalzit counts it; a zip bomb stops here.
+pub const MAX_UNPACKED_BYTES: u64 = 1024 * 1024 * 1024;
+/// The largest single file a package may hold once unpacked.
+pub const MAX_ENTRY_BYTES: u64 = MAX_PACKAGE_BYTES as u64;
+/// Entries one package may have (the manifest lists at most 4096 files, plus directories).
+pub const MAX_ENTRIES: usize = 8192;
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -133,9 +139,33 @@ pub struct Contents {
 
 /// Reads a package and checks it the way Kalzit does before it trusts the signature: valid
 /// entry paths, no links or other special entries, a valid manifest, and exactly the listed
-/// files with their hashes.
+/// files with their hashes. The sizes in the archive are not trusted: reading stops at
+/// [`MAX_ENTRY_BYTES`] per file, [`MAX_UNPACKED_BYTES`] in all and [`MAX_ENTRIES`] entries.
 pub fn read(bytes: &[u8]) -> Result<Contents, String> {
+    read_within(bytes, &Limits::PACKAGE)
+}
+
+/// The caps [`read`] applies; tests use smaller ones.
+struct Limits {
+    entries: usize,
+    entry_bytes: u64,
+    unpacked_bytes: u64,
+}
+
+impl Limits {
+    const PACKAGE: Limits =
+        Limits { entries: MAX_ENTRIES, entry_bytes: MAX_ENTRY_BYTES, unpacked_bytes: MAX_UNPACKED_BYTES };
+}
+
+fn read_within(bytes: &[u8], limits: &Limits) -> Result<Contents, String> {
+    if bytes.len() > MAX_PACKAGE_BYTES {
+        return Err(format!("plugin.package_too_large: the package is larger than {MAX_PACKAGE_BYTES} bytes"));
+    }
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("not a zip file: {e}"))?;
+    if archive.len() > limits.entries {
+        return Err(format!("plugin.package_too_large: the package has more than {} entries", limits.entries));
+    }
+    let mut unpacked: u64 = 0;
     let mut manifest_text = None;
     let mut signature = None;
     let mut files = BTreeMap::new();
@@ -153,8 +183,13 @@ pub fn read(bytes: &[u8]) -> Result<Contents, String> {
         if !entry.is_file() || entry.is_symlink() {
             return Err(format!("{name} is a link or special entry"));
         }
+        let limit = limits.entry_bytes.min(limits.unpacked_bytes - unpacked);
         let mut content = Vec::new();
-        entry.read_to_end(&mut content).map_err(|e| format!("{name}: {e}"))?;
+        (&mut entry).take(limit + 1).read_to_end(&mut content).map_err(|e| format!("{name}: {e}"))?;
+        if content.len() as u64 > limit {
+            return Err(format!("plugin.package_too_large: {name} makes the unpacked package too large"));
+        }
+        unpacked += content.len() as u64;
         entries.push(manifest::PackageEntry {
             path: name.clone(),
             kind: manifest::EntryKind::File { sha256: sha256_hex(&content) },
@@ -333,6 +368,44 @@ linux-x64 = "bin/linux-x64/tool"
         let text = manifest(TEMPLATE, &f, &["linux-x64".into()]).unwrap();
         assert!(!text.contains("windows-x64"), "{text}");
         assert!(manifest(TEMPLATE, &f, &["mac".into()]).is_err());
+    }
+
+    /// A zip with `entries` files of `size` zero bytes each: a few KiB on disk, much more unpacked.
+    fn bomb(entries: usize, size: usize) -> Vec<u8> {
+        let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let chunk = vec![0u8; 64 * 1024];
+        for i in 0..entries {
+            out.start_file(format!("data/{i}.bin"), options).unwrap();
+            let mut left = size;
+            while left > 0 {
+                let n = left.min(chunk.len());
+                out.write_all(&chunk[..n]).unwrap();
+                left -= n;
+            }
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn zip_bombs_stop_at_the_caps() {
+        const MIB: usize = 1024 * 1024;
+        let limits = Limits { entries: 8, entry_bytes: 2 * MIB as u64, unpacked_bytes: 3 * MIB as u64 };
+        // One entry that unpacks beyond the per-file cap.
+        let one = bomb(1, 4 * MIB);
+        assert!(one.len() < 64 * 1024, "{}", one.len());
+        let err = read_within(&one, &limits).unwrap_err();
+        assert!(err.starts_with("plugin.package_too_large"), "{err}");
+        // Entries that each fit but together pass the total cap.
+        let err = read_within(&bomb(3, 3 * MIB / 2), &limits).unwrap_err();
+        assert!(err.starts_with("plugin.package_too_large"), "{err}");
+        // Too many entries.
+        let err = read_within(&bomb(9, 1), &limits).unwrap_err();
+        assert!(err.contains("more than 8 entries"), "{err}");
+        // Within the caps the package is read on (and refused for its missing manifest).
+        let err = read_within(&bomb(2, MIB), &limits).unwrap_err();
+        assert!(err.contains("no kalzit-plugin.toml"), "{err}");
     }
 
     #[test]

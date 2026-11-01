@@ -1,6 +1,7 @@
 //! The ACME client's HTTP: every request goes through Kalzit's one HTTP client (`crate::http`),
-//! with the system's certificate store plus the CA of a custom directory, no proxy, and the
-//! target check (never a cloud metadata address or Kalzit's own database).
+//! with the system's certificate store plus the CA of a custom directory, the outbound proxy when
+//! one is set (`outbound`), and the target check (never a cloud metadata address or Kalzit's own
+//! database).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -25,13 +26,16 @@ pub struct Transport {
 }
 
 impl Transport {
-    pub fn new(data_dir: &std::path::Path, db_url: &str, directory_ca: Option<&str>) -> Result<Self, http::HttpError> {
+    pub fn new(
+        data_dir: &std::path::Path,
+        db_url: &str,
+        directory_ca: Option<&str>,
+        proxy: Option<Arc<crate::outbound::OutboundProxy>>,
+    ) -> Result<Self, http::HttpError> {
         let policy = TargetPolicy::new(data_dir, db_url, &[], &[]);
-        let client = http::client(HttpOptions {
-            timeout: TIMEOUT,
-            extra_root_pem: directory_ca.map(str::to_string),
-            policy: Arc::new(policy),
-        })?;
+        let options =
+            HttpOptions { timeout: TIMEOUT, extra_root_pem: directory_ca.map(str::to_string), policy: Arc::new(policy) };
+        let client = http::client_proxied(options, None, proxy)?;
         Ok(Self { client: Arc::new(client) })
     }
 

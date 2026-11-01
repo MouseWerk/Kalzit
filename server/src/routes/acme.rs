@@ -54,7 +54,7 @@ pub struct TestBody {
 async fn checked(state: &AppState, settings: &AcmeSettings) -> Result<Checked, FieldError> {
     acme::settings::check(settings)?;
     acme::settings::check_against(settings, &state.config)?;
-    acme::check_connection(settings, &state.config).await
+    acme::check_connection(settings, &state.config, crate::outbound::current_or_none(state).await).await
 }
 
 async fn test(State(state): State<AppState>, JsonBody(body): JsonBody<TestBody>) -> ApiResult<Json<Checked>> {

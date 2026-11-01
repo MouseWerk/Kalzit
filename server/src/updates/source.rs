@@ -111,12 +111,19 @@ pub struct Fetcher {
 }
 
 impl Fetcher {
-    pub fn new(data_dir: &Path, db_url: &str, source: ReleaseSource, timeout: Duration) -> Result<Self, UpdateError> {
+    pub fn new(
+        data_dir: &Path,
+        db_url: &str,
+        source: ReleaseSource,
+        timeout: Duration,
+        proxy: Option<Arc<crate::outbound::OutboundProxy>>,
+    ) -> Result<Self, UpdateError> {
         // The target policy's allow-list holds the release hosts, so a name cannot reach any
-        // other address either.
+        // other address either, also not through the outbound proxy.
         let policy = TargetPolicy::new(data_dir, db_url, &[], &source.hosts);
-        let client = http::client(HttpOptions { timeout, extra_root_pem: None, policy: Arc::new(policy) })
-            .map_err(|e| UpdateError::SourceUnreachable(e.to_string()))?;
+        let client =
+            http::client_proxied(HttpOptions { timeout, extra_root_pem: None, policy: Arc::new(policy) }, None, proxy)
+                .map_err(|e| UpdateError::SourceUnreachable(e.to_string()))?;
         Ok(Self { client, source })
     }
 
@@ -375,7 +382,7 @@ pub(crate) mod tests {
         let key = test_key(5);
         let server = serve_releases(&key, &[("1.2.0", false, b"stable"), ("1.3.0-rc.1", true, b"preview")], &[]).await;
         let dir = tempfile::tempdir().unwrap();
-        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT).unwrap();
+        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT, None).unwrap();
         let platform = Platform::current();
         let keys = keys_for(&key);
         let found = fetcher.latest(Channel::Stable, &v("1.1.0"), &keys, &platform).await.unwrap();
@@ -395,14 +402,14 @@ pub(crate) mod tests {
         let platform = Platform::current();
         let server = serve_releases(&stranger, &[("1.2.0", false, b"stable")], &[]).await;
         let dir = tempfile::tempdir().unwrap();
-        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT).unwrap();
+        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT, None).unwrap();
         let e = fetcher.latest(Channel::Stable, &v("1.1.0"), &keys_for(&key), &platform).await.err().unwrap();
         assert!(matches!(e, UpdateError::UnknownKey(_)), "{e}");
         let e = fetcher.latest(Channel::Stable, &v("1.1.0"), &TrustedKeys::default(), &platform).await.err().unwrap();
         assert!(matches!(e, UpdateError::NoTrustedKey), "{e}");
 
         let server = serve_releases(&key, &[("1.2.0", false, b"stable")], &[".sig"]).await;
-        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT).unwrap();
+        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT, None).unwrap();
         let e = fetcher.latest(Channel::Stable, &v("1.1.0"), &keys_for(&key), &platform).await.err().unwrap();
         assert!(matches!(e, UpdateError::SourceUnreachable(_)), "{e}");
     }
@@ -412,14 +419,14 @@ pub(crate) mod tests {
         let key = test_key(5);
         let server = serve_releases(&key, &[("1.2.0", false, b"stable")], &[]).await;
         let dir = tempfile::tempdir().unwrap();
-        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT).unwrap();
+        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT, None).unwrap();
         // A redirect to another host is refused before it is followed.
         let url = Url::parse(&format!("http://{server}/elsewhere")).unwrap();
         let e = fetcher.get_bytes(url, "*/*", 1024).await.unwrap_err();
         assert!(matches!(&e, UpdateError::SourceRefused(host) if host == "evil.example"), "{e}");
         // The production source refuses plain HTTP and hosts that are not GitHub's, before
         // anything is sent.
-        let github = Fetcher::new(dir.path(), "sqlite::memory:", ReleaseSource::github(), API_TIMEOUT).unwrap();
+        let github = Fetcher::new(dir.path(), "sqlite::memory:", ReleaseSource::github(), API_TIMEOUT, None).unwrap();
         let local = format!("https://{server}/x");
         for raw in ["http://api.github.com/repos", "https://example.com/kalzit", local.as_str()] {
             let e = github.get_bytes(Url::parse(raw).unwrap(), "*/*", 1024).await.unwrap_err();
@@ -433,7 +440,7 @@ pub(crate) mod tests {
         let key = test_key(5);
         let server = serve_releases(&key, &[("1.2.0", false, b"0123456789")], &[]).await;
         let dir = tempfile::tempdir().unwrap();
-        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT).unwrap();
+        let fetcher = Fetcher::new(dir.path(), "sqlite::memory:", local_source(server), API_TIMEOUT, None).unwrap();
         let platform = Platform::current();
         let file = format!("kalzit-1.2.0-{}-{}", platform.os, platform.arch);
         let url = Url::parse(&format!("http://{server}/download/{file}")).unwrap();

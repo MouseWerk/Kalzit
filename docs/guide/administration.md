@@ -212,6 +212,18 @@ size, start page, time zone and week start or follow the server (**Like the serv
 The **Sign-in page** can show your own **Welcome text** (up to 280 characters) and a **Notice**
 (up to 2000), with bold, italic and links.
 
+### Outbound proxy
+
+Under **Network, HTTPS and proxy**, **Outbound proxy** sends Kalzit's own requests to the internet
+through an HTTP or HTTPS proxy, such as `http://proxy.example.com:3128`: the plugin catalog,
+update checks and downloads, Let's Encrypt (ACME) and the AI providers. **Without proxy** lists
+hosts, domains (`.example.com`), addresses and networks that are reached directly. If the proxy
+asks for a sign-in, enter the **Proxy user name** and set the **Proxy password** below it; the
+password is stored encrypted, is never shown again and is used only with the proxy address it was
+set for. Data sources never use this proxy. The proxy cannot reach anything Kalzit would refuse
+without it: Kalzit resolves and checks every target itself first, so the names must resolve on
+the Kalzit server. Details: [settings and dashboards](../api/settings-dashboards.md#outbound-proxy).
+
 ### Export and import settings
 
 **Export / import settings** downloads the server's settings, or those of one organization, as a

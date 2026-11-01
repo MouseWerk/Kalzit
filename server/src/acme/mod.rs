@@ -618,6 +618,7 @@ impl Acme {
             db_url: &state.config.database_url(),
             keyring: &state.secrets,
             now_ms: now,
+            proxy: crate::outbound::current_or_none(state).await,
             shared: state
                 .cluster
                 .coordinated()
@@ -766,7 +767,11 @@ pub async fn load_settings(db: &sqlx::AnyPool) -> anyhow::Result<(AcmeSettings, 
 
 /// Checks what can only be checked over the network: the directory answers as an ACME directory,
 /// and every name resolves. Warns about listeners on other ports than the CA connects to.
-pub async fn check_connection(settings: &AcmeSettings, config: &Config) -> Result<Checked, FieldError> {
+pub async fn check_connection(
+    settings: &AcmeSettings,
+    config: &Config,
+    proxy: Option<std::sync::Arc<crate::outbound::OutboundProxy>>,
+) -> Result<Checked, FieldError> {
     let url_field = if settings.directory == Directory::Custom { "directoryUrl" } else { "directory" };
     let url = settings.directory_url();
     let unreachable = |detail: String| {
@@ -781,7 +786,7 @@ pub async fn check_connection(settings: &AcmeSettings, config: &Config) -> Resul
         FieldError::new(url_field, "acme.directory_invalid", format!("{url} is not an ACME directory: {detail}"))
             .with("detail", detail)
     };
-    let transport = transport::Transport::new(&config.paths.data_dir, &config.database_url(), settings.directory_ca())
+    let transport = transport::Transport::new(&config.paths.data_dir, &config.database_url(), settings.directory_ca(), proxy)
         .map_err(|e| unreachable(e.to_string()))?;
     let (status, body) = transport.get(url).await.map_err(unreachable)?;
     if status != 200 {

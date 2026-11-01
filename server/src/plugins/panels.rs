@@ -69,15 +69,44 @@ impl PanelRegistry {
     }
 }
 
-/// Checks the options of the panels of plugins that a dashboard write adds or changes against the
-/// options their manifest declares (`panel::check_options`). Panels of plugins that cannot be
-/// shown now, and unchanged panels, are left as they are, like unknown types. The error names the
-/// panel and the option, as `dashboards::model::check_panel_options` does.
+/// A plugin panel whose options its manifest does not allow.
+#[derive(Debug)]
+pub struct OptionsRefused {
+    /// The panel's title, else its id.
+    pub panel: String,
+    /// The plugin (the panel's type).
+    pub plugin: String,
+    /// `panel.option_unknown` or `panel.option_invalid`.
+    pub code: &'static str,
+    /// Where and what, as `model.panels[i].options.<name>: <what fits>`.
+    pub detail: String,
+}
+
+impl OptionsRefused {
+    /// The refusal as the API answers it (`422 validation` on `model`, reason
+    /// `dashboards.plugin_panel_options`), with `panel` as the caller names the panel and
+    /// `detail` as the caller places the option.
+    pub fn into_error(self, panel: &str, detail: String) -> crate::error::ApiError {
+        crate::error::ApiError::validation(detail.clone())
+            .with_field("model")
+            .because("dashboards.plugin_panel_options")
+            .param("panel", panel)
+            .param("plugin", &self.plugin)
+            .param("code", self.code)
+            .param("detail", detail)
+    }
+}
+
+/// Checks the options of the panels of plugins that a write adds or changes (a dashboard, a
+/// library panel or the visualization of a saved analysis) against the options their manifest
+/// declares (`panel::check_options`): only declared keys, each value of its option's type and
+/// within its bounds. Panels of plugins that cannot be shown now, and unchanged panels, are left
+/// as they are, like unknown types.
 pub fn check_dashboard_options(
     registry: &PanelRegistry,
     model: &crate::dashboards::model::DashboardModel,
     previous: Option<&crate::dashboards::model::DashboardModel>,
-) -> Result<(), (String, String)> {
+) -> Result<(), OptionsRefused> {
     for (i, p) in model.panels.iter().enumerate() {
         let Some(panel) = registry.get(&p.kind) else { continue };
         let unchanged = previous
@@ -86,13 +115,35 @@ pub fn check_dashboard_options(
         if unchanged {
             continue;
         }
-        let name = || if p.title.trim().is_empty() { p.id.clone() } else { p.title.clone() };
-        let options =
-            p.options.as_object().ok_or_else(|| (name(), format!("model.panels[{i}].options must be an object")))?;
+        let refused = |code: &'static str, detail: String| OptionsRefused {
+            panel: if p.title.trim().is_empty() { p.id.clone() } else { p.title.clone() },
+            plugin: p.kind.clone(),
+            code,
+            detail,
+        };
+        let options = p.options.as_object().ok_or_else(|| {
+            refused("panel.option_invalid", format!("model.panels[{i}].options must be an object"))
+        })?;
         kalzit_plugin_api::panel::check_options(&panel.bundle().options, options)
-            .map_err(|r| (name(), format!("model.panels[{i}].{}", r.message)))?;
+            .map_err(|r| refused(r.code, format!("model.panels[{i}].{}", r.message)))?;
     }
     Ok(())
+}
+
+/// A panel plugin `dev.example.tile` with the options `decimals` (integer 0 to 10) and `mode`
+/// (`last` or `mean`), for tests of the option checks.
+#[cfg(test)]
+pub(crate) fn options_panel_for_tests(dir: &Path) -> ActivePanel {
+    let text = format!(
+        "manifest = 1\nid = \"dev.example.tile\"\nname = \"Tile\"\nversion = \"1.0.0\"\nkind = \"panel\"\n\
+         min_kalzit = \"0.1.0\"\nshapes = [\"frame\"]\n\n[panel]\npath = \"dist/panel.js\"\napi = 1\n\n\
+         [[panel.options]]\nname = \"decimals\"\nlabel = {{ en = \"Decimals\" }}\ntype = \"integer\"\nmin = 0\nmax = 10\n\n\
+         [[panel.options]]\nname = \"mode\"\nlabel = {{ en = \"Mode\" }}\ntype = \"select\"\nchoices = [\"last\", \"mean\"]\n\n\
+         [files]\n\"dist/panel.js\" = \"{}\"\n",
+        hex::encode(Sha256::digest(b"panel();"))
+    );
+    let manifest = kalzit_plugin_api::manifest::parse(&text).expect("a valid panel manifest");
+    ActivePanel { manifest: Arc::new(manifest), package_dir: dir.to_path_buf() }
 }
 
 fn path_in(package_dir: &Path, path: &str) -> PathBuf {
@@ -242,6 +293,41 @@ mod tests {
             assert!(f.csp.contains(part), "{part} is missing from {}", f.csp);
         }
         assert!(!f.csp.contains("allow-same-origin"));
+    }
+
+    #[test]
+    fn plugin_panel_options_are_checked_against_the_manifest_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = PanelRegistry::default();
+        registry.insert("dev.example.tile", options_panel_for_tests(dir.path()));
+        let model = |options: serde_json::Value| {
+            crate::dashboards::model::parse(serde_json::json!({
+                "schemaVersion": crate::dashboards::model::SCHEMA_VERSION,
+                "panels": [
+                    { "id": "p1", "type": "table", "title": "", "options": {} },
+                    { "id": "p2", "type": "dev.example.tile", "title": "Kachel", "options": options },
+                ]
+            }))
+            .unwrap()
+        };
+        let fine = model(serde_json::json!({ "decimals": 10, "mode": "mean" }));
+        assert!(check_dashboard_options(&registry, &fine, None).is_ok());
+        for (options, code, at) in [
+            (serde_json::json!({ "decimals": 11 }), "panel.option_invalid", "model.panels[1].options.decimals"),
+            (serde_json::json!({ "mode": "max" }), "panel.option_invalid", "model.panels[1].options.mode"),
+            (serde_json::json!({ "colour": "red" }), "panel.option_unknown", "model.panels[1].options.colour"),
+        ] {
+            let bad = model(options);
+            let r = check_dashboard_options(&registry, &bad, None).unwrap_err();
+            assert_eq!((r.code, r.panel.as_str(), r.plugin.as_str()), (code, "Kachel", "dev.example.tile"));
+            assert!(r.detail.starts_with(at), "{}", r.detail);
+            let e = r.into_error("Kachel", "detail".into());
+            assert_eq!(e.reason.as_ref().unwrap().code, "dashboards.plugin_panel_options");
+            assert_eq!(e.field, Some("model"));
+            // Left as it was stored, the panel passes; a plugin that cannot be shown is not checked.
+            assert!(check_dashboard_options(&registry, &bad, Some(&bad)).is_ok());
+            assert!(check_dashboard_options(&PanelRegistry::default(), &bad, None).is_ok());
+        }
     }
 
     #[test]

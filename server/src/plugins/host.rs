@@ -403,13 +403,14 @@ impl PluginHost {
     /// at start. A plugin that cannot run is logged and left out.
     pub async fn load(&self, db: &sqlx::AnyPool, datasources: &DataSources) -> ApiResult<()> {
         let _ = self.db.set(db.clone());
-        // A changed or deleted data source takes back what plugins may reach for it.
+        // A changed, trashed or purged data source takes back what plugins may reach for it, and
+        // the plugin that served it closes its pools (`Release`).
         // Weak: the data sources must not keep the plugins alive.
         let running = Arc::downgrade(&self.running);
         datasources.on_forget(Arc::new(move |datasource_id| {
             let Some(running) = running.upgrade() else { return };
             for supervisor in running.lock_or_recover().values() {
-                supervisor.grants().revoke(datasource_id);
+                supervisor.forget(datasource_id);
             }
         }));
         datasources.set_blocks(store::blocks(db).await?);
@@ -1268,7 +1269,7 @@ impl PluginHost {
                 .fetch_all(&state.db)
                 .await?;
             for (source,) in sources {
-                supervisor.grants().revoke(&source);
+                supervisor.forget(&source);
             }
         }
         Ok(changed)
@@ -1308,7 +1309,7 @@ impl PluginHost {
                         .fetch_all(&state.db)
                         .await?;
                 for (source,) in sources {
-                    supervisor.grants().revoke(&source);
+                    supervisor.forget(&source);
                 }
             }
         }
