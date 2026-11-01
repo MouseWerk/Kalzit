@@ -808,10 +808,8 @@ mod tests {
                     }
                     kept.lock().unwrap().push(String::from_utf8_lossy(&head).into_owned());
                     let body = "via proxy";
-                    let answer = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
+                    let answer =
+                        format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
                     let _ = stream.write_all(answer.as_bytes()).await;
                 });
             }
@@ -865,7 +863,10 @@ mod tests {
         let head = seen.lock().unwrap().last().cloned().unwrap();
         assert!(head.starts_with("GET http://release.proxy-test.example/latest HTTP/1.1"), "{head}");
         let auth = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "kalzit:geheim");
-        assert!(head.to_ascii_lowercase().contains(&format!("proxy-authorization: basic {}", auth.to_ascii_lowercase())), "{head}");
+        assert!(
+            head.to_ascii_lowercase().contains(&format!("proxy-authorization: basic {}", auth.to_ascii_lowercase())),
+            "{head}"
+        );
 
         // The allow-list still decides, and metadata addresses stay refused, by name and literal.
         let before = seen.lock().unwrap().len();

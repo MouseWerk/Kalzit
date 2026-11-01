@@ -33,8 +33,11 @@ impl Transport {
         proxy: Option<Arc<crate::outbound::OutboundProxy>>,
     ) -> Result<Self, http::HttpError> {
         let policy = TargetPolicy::new(data_dir, db_url, &[], &[]);
-        let options =
-            HttpOptions { timeout: TIMEOUT, extra_root_pem: directory_ca.map(str::to_string), policy: Arc::new(policy) };
+        let options = HttpOptions {
+            timeout: TIMEOUT,
+            extra_root_pem: directory_ca.map(str::to_string),
+            policy: Arc::new(policy),
+        };
         let client = http::client_proxied(options, None, proxy)?;
         Ok(Self { client: Arc::new(client) })
     }

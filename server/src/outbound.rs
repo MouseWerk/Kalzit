@@ -94,9 +94,9 @@ pub fn check_url(text: &str) -> Result<(), String> {
 
 /// Checks a `network.no_proxy` entry.
 pub fn check_bypass(text: &str) -> Result<(), String> {
-    parse_bypass(text).map(|_| ()).ok_or_else(|| {
-        format!("{text} is not a host name, .domain, *.domain, address, network (10.0.0.0/8) or *")
-    })
+    parse_bypass(text)
+        .map(|_| ())
+        .ok_or_else(|| format!("{text} is not a host name, .domain, *.domain, address, network (10.0.0.0/8) or *"))
 }
 
 /// The proxy in force.
@@ -190,8 +190,8 @@ pub async fn current(state: &AppState) -> ApiResult<Option<Arc<OutboundProxy>>> 
         Some(u) if !u.is_empty() => load_password(&state.db, &state.secrets, url).await?,
         _ => None,
     };
-    let proxy = OutboundProxy::new(url, &no_proxy, username, password)
-        .map_err(|e| ApiError::internal("outbound proxy", e))?;
+    let proxy =
+        OutboundProxy::new(url, &no_proxy, username, password).map_err(|e| ApiError::internal("outbound proxy", e))?;
     Ok(proxy.map(Arc::new))
 }
 
@@ -283,7 +283,8 @@ mod tests {
 
     #[test]
     fn proxy_urls_are_scheme_host_and_port_only() {
-        for good in ["", "http://proxy:3128", "https://proxy.example.com", "http://10.0.0.5:8080/", "http://[fd00::1]:3128"]
+        for good in
+            ["", "http://proxy:3128", "https://proxy.example.com", "http://10.0.0.5:8080/", "http://[fd00::1]:3128"]
         {
             assert!(check_url(good).is_ok(), "{good}");
         }

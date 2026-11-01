@@ -463,7 +463,9 @@ impl Supervisor {
         let mut request = tonic::Request::new(pb::ReleaseRequest { datasource_id: datasource_id.to_string() });
         request.set_timeout(RELEASE_TIMEOUT);
         match client.release(request).await {
-            Ok(_) => tracing::debug!(plugin = %self.id, datasource = %datasource_id, "the plugin released the data source"),
+            Ok(_) => {
+                tracing::debug!(plugin = %self.id, datasource = %datasource_id, "the plugin released the data source")
+            }
             Err(status) => tracing::warn!(
                 plugin = %self.id,
                 datasource = %datasource_id,

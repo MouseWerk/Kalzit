@@ -58,7 +58,9 @@ export function ProxyPasswordCard() {
       queryClient.setQueryData(proxyPasswordKey, saved);
       setDraft("");
       notice.show({
-        message: t(password === null ? "settings.proxyPassword.removed" : "settings.proxyPassword.saved"),
+        message: t(
+          password === null ? "settings.proxyPassword.removed" : "settings.proxyPassword.saved",
+        ),
       });
     },
     onError: (error) => {

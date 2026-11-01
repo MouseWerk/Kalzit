@@ -655,7 +655,7 @@ async fn changed_and_trashed_sources_are_released_once() {
     // A change: the plugin closes what it kept for the source.
     let r = t.send(Method::PATCH, &path, Some(json!({ "name": "Umbenannt" }))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(t.released(&via, 1).await, [ds.clone()]);
+    assert_eq!(t.released(&via, 1).await, std::slice::from_ref(&ds));
     // Another change before the plugin was handed the source again releases nothing more.
     let r = t.send(Method::PATCH, &path, Some(json!({ "name": "Noch einmal" }))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);

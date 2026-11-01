@@ -786,8 +786,9 @@ pub async fn check_connection(
         FieldError::new(url_field, "acme.directory_invalid", format!("{url} is not an ACME directory: {detail}"))
             .with("detail", detail)
     };
-    let transport = transport::Transport::new(&config.paths.data_dir, &config.database_url(), settings.directory_ca(), proxy)
-        .map_err(|e| unreachable(e.to_string()))?;
+    let transport =
+        transport::Transport::new(&config.paths.data_dir, &config.database_url(), settings.directory_ca(), proxy)
+            .map_err(|e| unreachable(e.to_string()))?;
     let (status, body) = transport.get(url).await.map_err(unreachable)?;
     if status != 200 {
         return Err(invalid(format!("HTTP {status}")));

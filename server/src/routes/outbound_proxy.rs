@@ -80,8 +80,7 @@ async fn save(
     }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    outbound::store_password(&mut tx, &state.secrets, password.as_deref().map(|p| (url.as_str(), p.as_str())))
-        .await?;
+    outbound::store_password(&mut tx, &state.secrets, password.as_deref().map(|p| (url.as_str(), p.as_str()))).await?;
     let event = crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: Some(&user.id),

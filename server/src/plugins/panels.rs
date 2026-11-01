@@ -121,9 +121,10 @@ pub fn check_dashboard_options(
             code,
             detail,
         };
-        let options = p.options.as_object().ok_or_else(|| {
-            refused("panel.option_invalid", format!("model.panels[{i}].options must be an object"))
-        })?;
+        let options = p
+            .options
+            .as_object()
+            .ok_or_else(|| refused("panel.option_invalid", format!("model.panels[{i}].options must be an object")))?;
         kalzit_plugin_api::panel::check_options(&panel.bundle().options, options)
             .map_err(|r| refused(r.code, format!("model.panels[{i}].{}", r.message)))?;
     }
@@ -303,9 +304,12 @@ mod tests {
         let model = |options: serde_json::Value| {
             crate::dashboards::model::parse(serde_json::json!({
                 "schemaVersion": crate::dashboards::model::SCHEMA_VERSION,
+                "title": "Übersicht",
+                "timeRange": { "from": "now-6h", "to": "now" },
                 "panels": [
-                    { "id": "p1", "type": "table", "title": "", "options": {} },
-                    { "id": "p2", "type": "dev.example.tile", "title": "Kachel", "options": options },
+                    { "id": "p1", "type": "table", "title": "", "options": {}, "grid": { "x": 0, "y": 0, "w": 6, "h": 4 } },
+                    { "id": "p2", "type": "dev.example.tile", "title": "Kachel", "options": options,
+                      "grid": { "x": 6, "y": 0, "w": 6, "h": 4 } },
                 ]
             }))
             .unwrap()

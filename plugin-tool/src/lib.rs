@@ -373,8 +373,7 @@ linux-x64 = "bin/linux-x64/tool"
     /// A zip with `entries` files of `size` zero bytes each: a few KiB on disk, much more unpacked.
     fn bomb(entries: usize, size: usize) -> Vec<u8> {
         let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let options =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         let chunk = vec![0u8; 64 * 1024];
         for i in 0..entries {
             out.start_file(format!("data/{i}.bin"), options).unwrap();
