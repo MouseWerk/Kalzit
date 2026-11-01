@@ -59,7 +59,7 @@ export function OrgPluginsSection() {
           <p className="plugins-hint">{t("plugins.org.none")}</p>
         </div>
       ) : (
-        <TableScroll labelledBy={titleId}>
+        <TableScroll title={t("plugins.org.title")}>
           <table className="plugins-table">
             <thead>
               <tr>

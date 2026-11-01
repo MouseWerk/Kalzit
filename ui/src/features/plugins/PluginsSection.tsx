@@ -309,7 +309,7 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
             <p className="plugins-hint">{t("plugins.filter.none")}</p>
           </div>
         ) : (
-          <TableScroll label={t("plugins.table.label")}>
+          <TableScroll title={t("plugins.table.label")}>
             <table className="plugins-table">
               <thead>
                 <tr>

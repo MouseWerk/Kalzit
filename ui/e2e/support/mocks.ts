@@ -1,10 +1,18 @@
 import type { Page } from "@playwright/test";
+import type { AiStatus } from "../../src/api/generated/shapes";
+import type { PluginDetail, PluginLogs } from "../../src/features/plugins/api";
+import type {
+  CatalogAction,
+  CatalogItem,
+  CatalogView,
+} from "../../src/features/plugins/catalogApi";
 
 /**
  * Server answers for the page checks that a fresh server cannot give on its own: AI in use (it
  * needs a provider and the server switch, which other tests turn off), an installed plugin (it
  * needs the test plugin's binary) and a loaded plugin catalog (it needs HTTPS with a trusted
- * certificate). Only the GET of each route is answered; everything else reaches the server.
+ * certificate). Only the GET of each route is answered; everything else reaches the server. The
+ * bodies carry the UI's API types, so a change of shape fails the type check here too.
  */
 
 const NOW = Date.UTC(2026, 9, 15, 9, 0);
@@ -17,7 +25,7 @@ export const MOCK_PLUGIN = { id: "dev.e2etest.meters", name: "Energy meters" } a
 const PUBLISHER = "Basalt Labs";
 const KEY_ID = "4be1c0ffee09fa21";
 
-async function answerGet(page: Page, url: RegExp, json: unknown): Promise<void> {
+async function answerGet<T>(page: Page, url: RegExp, json: T): Promise<void> {
   await page.route(url, (route) =>
     route.request().method() === "GET" ? route.fulfill({ json }) : route.continue(),
   );
@@ -25,12 +33,24 @@ async function answerGet(page: Page, url: RegExp, json: unknown): Promise<void> 
 
 /** AI on and usable in every organization, with the first-use notice read. */
 export async function aiInUse(page: Page): Promise<void> {
-  await answerGet(page, /\/api\/orgs\/[^/]+\/ai\/status(\?|$)/, {
+  await answerGet<AiStatus>(page, /\/api\/orgs\/[^/]+\/ai\/status(\?|$)/, {
     enabled: true,
     usable: true,
     orgProvidersAllowed: true,
     noticeAcknowledged: true,
-    provider: { id: "p1", name: "Local gateway", kind: "openai", model: "model-1" },
+    provider: {
+      id: "p1",
+      name: "Local gateway",
+      kind: "openai",
+      model: "model-1",
+      host: "127.0.0.1",
+      scope: "server",
+      endpoint: "127.0.0.1:4000",
+      leavesNetwork: false,
+      leavesNetworkEstimated: false,
+      usable: true,
+      noticeAcknowledged: true,
+    },
     usage: {
       requests: 3,
       tokens: 1_200,
@@ -46,7 +66,7 @@ export async function aiInUse(page: Page): Promise<void> {
 /** One installed, running data source plugin with a log. */
 export async function installedPlugin(page: Page): Promise<void> {
   const base = `/api/admin/plugins/${MOCK_PLUGIN.id.replaceAll(".", "\\.")}`;
-  await answerGet(page, new RegExp(`${base}(\\?|$)`), {
+  await answerGet<PluginDetail>(page, new RegExp(`${base}(\\?|$)`), {
     id: MOCK_PLUGIN.id,
     name: MOCK_PLUGIN.name,
     version: "1.2.0",
@@ -79,7 +99,7 @@ export async function installedPlugin(page: Page): Promise<void> {
     manifest: `id = "${MOCK_PLUGIN.id}"\nname = "${MOCK_PLUGIN.name}"\nversion = "1.2.0"\n`,
     usedIn: [],
   });
-  await answerGet(page, new RegExp(`${base}/logs(\\?|$)`), {
+  await answerGet<PluginLogs>(page, new RegExp(`${base}/logs(\\?|$)`), {
     lines: [
       { at: NOW - 2 * HOUR, stream: "host", text: "started" },
       { at: NOW - 2 * HOUR + 1_000, stream: "stdout", text: "listening on the plugin socket" },
@@ -95,9 +115,9 @@ export async function loadedCatalog(page: Page): Promise<void> {
     id: string,
     name: string,
     kind: string,
-    action: string,
+    action: CatalogAction,
     publisher = PUBLISHER,
-  ) => ({
+  ): CatalogItem => ({
     id,
     name,
     kind,
@@ -107,6 +127,7 @@ export async function loadedCatalog(page: Page): Promise<void> {
     keyId: publisher === PUBLISHER ? KEY_ID : "9d44c1e07a52f6b2",
     ...(publisher === PUBLISHER ? { keyName: PUBLISHER } : {}),
     network: kind === "datasource" ? ["<host>:502"] : [],
+    detailsFrom: action === "installed" ? "package" : "catalog",
     size: 2_400_000,
     sha256: "4be1c0ffee09fa".padEnd(64, "0"),
     urlHost: host,
@@ -119,8 +140,8 @@ export async function loadedCatalog(page: Page): Promise<void> {
     entry("dev.basalt.panel-kpi", "KPI tile", "panel", "update"),
     entry("de.nordlicht.heatmap", "Calendar heatmap", "panel", "untrusted", "nordlicht.example"),
   ];
-  const setting = (value: unknown, version: number) => ({ value, version, editable: true });
-  await answerGet(page, /\/api\/admin\/plugin-catalog(\?|$)/, {
+  const setting = <T>(value: T, version: number) => ({ value, version, editable: true });
+  await answerGet<CatalogView>(page, /\/api\/admin\/plugin-catalog(\?|$)/, {
     state: "ready",
     settings: {
       enabled: setting(true, 2),

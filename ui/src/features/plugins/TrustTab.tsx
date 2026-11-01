@@ -76,7 +76,7 @@ export function TrustTab({
             <LoadState error={keys.error} onRetry={() => void keys.refetch()} />
           </div>
         ) : (
-          <TableScroll labelledBy={titleId}>
+          <TableScroll title={t("plugins.trust.keys.title")}>
             <table className="plugins-table">
               <thead>
                 <tr>

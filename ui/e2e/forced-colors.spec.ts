@@ -1,6 +1,9 @@
 import { join } from "node:path";
-import type { Page } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 import { Api, fixturesDir, unique } from "./support/api";
+import { systemColor } from "./support/colors";
+import { t } from "./support/i18n";
+import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
 import { expect, signInOwner, test } from "./support/test";
 
 /**
@@ -11,27 +14,34 @@ import { expect, signInOwner, test } from "./support/test";
 
 type Rgb = [number, number, number];
 
-/** A system color keyword as the browser resolves it in forced colors. */
-function systemColor(page: Page, keyword: string): Promise<string> {
-  return page.evaluate((name) => {
-    const probe = document.createElement("span");
-    probe.style.setProperty("forced-color-adjust", "none");
-    probe.style.setProperty("color", name);
-    document.body.append(probe);
-    const color = getComputedStyle(probe).color;
-    probe.remove();
-    return color;
-  }, keyword);
-}
-
 function rgb(color: string): Rgb {
   const [r = 0, g = 0, b = 0] = (color.match(/\d+(\.\d+)?/g) ?? []).map(Number);
   return [r, g, b];
 }
 
+/** How many opaque pixels of the canvas are close to a color. */
+function drawnPixels(canvas: Locator, color: Rgb): Promise<number> {
+  return canvas.evaluate((element, [r, g, b]) => {
+    const c = element as HTMLCanvasElement;
+    const data = c.getContext("2d")?.getImageData(0, 0, c.width, c.height).data;
+    let hits = 0;
+    for (let i = 0; data !== undefined && i < data.length; i += 4) {
+      const near =
+        Math.abs((data[i] ?? 0) - r) < 24 &&
+        Math.abs((data[i + 1] ?? 0) - g) < 24 &&
+        Math.abs((data[i + 2] ?? 0) - b) < 24 &&
+        (data[i + 3] ?? 0) > 200;
+      if (near) hits += 1;
+    }
+    return hits;
+  }, color);
+}
+
 test.use({ colorScheme: "light" });
 
-test("time series canvases draw their series in system colors", async ({ page }) => {
+test("time series canvases draw their series in system colors and redraw when it changes", async ({
+  page,
+}) => {
   const owner = await Api.owner();
   let dashboardId = "";
   try {
@@ -65,43 +75,91 @@ test("time series canvases draw their series in system colors", async ({ page })
     await owner.dispose();
   }
 
-  await page.emulateMedia({ forcedColors: "active" });
+  // Loaded with Kalzit's colors; high contrast is turned on afterwards, then off again.
   await signInOwner(page);
   await page.goto(`/dashboards/${dashboardId}`);
   const card = page.getByRole("article", { name: "Two series", exact: true });
   const canvas = card.locator(".ts__uplot canvas");
   await expect(canvas).toBeVisible();
+  const probe = (selector: string) =>
+    card.locator(`.ts__probes ${selector}`).evaluate((el) => getComputedStyle(el).color);
+  const themed = await probe(".ts__probe.series-2");
+  await expect.poll(() => drawnPixels(canvas, rgb(themed))).toBeGreaterThan(20);
 
+  await page.emulateMedia({ forcedColors: "active" });
   const text = await systemColor(page, "CanvasText");
   const link = await systemColor(page, "LinkText");
   const background = await systemColor(page, "Canvas");
   expect(text).not.toEqual(background);
   // The probes hand the canvas system colors: the first series in the text color, the second in
   // the link color.
-  const probe = (selector: string) =>
-    card.locator(`.ts__probes ${selector}`).evaluate((el) => getComputedStyle(el).color);
   expect(await probe(".ts__probe--axis")).toEqual(text);
   expect(await probe(".ts__probe.series-1")).toEqual(text);
   expect(await probe(".ts__probe.series-2")).toEqual(link);
+  // And the chart draws again with them, without a reload.
+  await expect.poll(() => drawnPixels(canvas, rgb(link))).toBeGreaterThan(20);
 
-  // And the canvas draws with them: pixels of the second series' color are on it.
-  const target = rgb(link);
-  await expect
-    .poll(() =>
-      canvas.evaluate((element, [r, g, b]) => {
-        const c = element as HTMLCanvasElement;
-        const data = c.getContext("2d")?.getImageData(0, 0, c.width, c.height).data;
-        let hits = 0;
-        for (let i = 0; data !== undefined && i < data.length; i += 4) {
-          const near =
-            Math.abs((data[i] ?? 0) - r) < 24 &&
-            Math.abs((data[i + 1] ?? 0) - g) < 24 &&
-            Math.abs((data[i + 2] ?? 0) - b) < 24 &&
-            (data[i + 3] ?? 0) > 200;
-          if (near) hits += 1;
-        }
-        return hits;
-      }, target),
-    )
-    .toBeGreaterThan(20);
+  await page.emulateMedia({ forcedColors: "none" });
+  await expect.poll(() => probe(".ts__probe.series-2")).toEqual(themed);
+  await expect.poll(() => drawnPixels(canvas, rgb(themed))).toBeGreaterThan(20);
+});
+
+/**
+ * Graph panels draw with WebGL, which forced colors leave alone too. Left to the browser, every
+ * probe turned into the text color, the label background included, and the labels vanished.
+ */
+test("graph labels keep a background apart from their text", async ({ page }) => {
+  const address = serviceAddress("KALZIT_E2E_NEO4J");
+  const owner = await Api.owner();
+  let dashboardId = "";
+  try {
+    const sourceId = await owner.createSource(
+      unique("Shop graph (forced colors)"),
+      "neo4j",
+      { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+      { password: GRAPH_FIXTURE.neo4jPassword },
+    );
+    dashboardId = await owner.createDashboard({
+      schemaVersion: 1,
+      title: unique("Graph in high contrast"),
+      timeRange: { from: "now-6h", to: "now" },
+      panels: [
+        {
+          id: "g1",
+          type: "network",
+          title: "Customers and orders",
+          grid: { x: 0, y: 0, w: 24, h: 10 },
+          targets: [
+            {
+              refId: "A",
+              datasourceId: sourceId,
+              query: { cypher: "MATCH (c:Customer)-[p:PLACED]->(o:Order) RETURN c, p, o" },
+            },
+          ],
+        },
+      ],
+    });
+  } finally {
+    await owner.dispose();
+  }
+
+  await page.emulateMedia({ forcedColors: "active" });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${dashboardId}`);
+  const card = page.getByRole("article", { name: "Customers and orders", exact: true });
+  const drawing = card.getByRole("application", { name: "Customers and orders", exact: true });
+  const noWebgl = card.getByText(t("graph.notice.noWebgl"), { exact: true });
+  await expect(drawing.or(noWebgl)).toBeVisible({ timeout: 15_000 });
+  test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+  const probe = (name: string) =>
+    drawing.locator(`.graph__probe--${name}`).evaluate((el) => getComputedStyle(el).color);
+  const text = await probe("text");
+  expect(text).toEqual(await systemColor(page, "CanvasText"));
+  // The label backgrounds, plain and selected, are the system background, not the text color.
+  const background = await probe("bg");
+  expect(background).toEqual(await systemColor(page, "Canvas"));
+  expect(background).not.toEqual(text);
+  expect(await probe("active")).not.toEqual(text);
+  expect(await probe("edge")).not.toEqual(background);
 });

@@ -225,6 +225,10 @@
       forced-color-adjust: none;
     }
 
+    /*
+     * The ramps collapse to the text color on purpose: high contrast has no system color steps
+     * for a number scale, and the values stay readable in the details and the tables.
+     */
     .graph__probe--1,
     .graph__probe--4,
     .graph__probe--7,
