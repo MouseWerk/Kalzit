@@ -15,6 +15,7 @@ import {
   PluginStatusLabel,
   PublisherBadge,
   SignatureLabel,
+  TableScroll,
   UnsignedBanner,
   useNow,
   usePlugins,
@@ -298,7 +299,7 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
           </span>
         )}
       </div>
-      <section className="plugins-card" aria-label={t("plugins.table.label")}>
+      <div className="plugins-card">
         {items.length === 0 ? (
           <div className="plugins-card__body">
             <p className="plugins-hint">{t("plugins.empty")}</p>
@@ -308,7 +309,7 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
             <p className="plugins-hint">{t("plugins.filter.none")}</p>
           </div>
         ) : (
-          <div className="plugins-table-wrap">
+          <TableScroll title={t("plugins.table.label")}>
             <table className="plugins-table">
               <thead>
                 <tr>
@@ -329,9 +330,9 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
-      </section>
+      </div>
       <p className="plugins-hint">{t("plugins.allOrgs")}</p>
     </div>
   );
