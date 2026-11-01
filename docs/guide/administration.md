@@ -212,6 +212,35 @@ size, start page, time zone and week start or follow the server (**Like the serv
 The **Sign-in page** can show your own **Welcome text** (up to 280 characters) and a **Notice**
 (up to 2000), with bold, italic and links.
 
+### Outbound proxy
+
+Under **Network, HTTPS and proxy**, **Outbound proxy** sends Kalzit's own requests to the internet
+through an HTTP or HTTPS proxy, such as `http://proxy.example.com:3128`: the plugin catalog,
+update checks and downloads, Let's Encrypt (ACME) and the AI providers. **Without proxy** lists
+hosts, domains (`.example.com`), addresses and networks that are reached directly. If the proxy
+asks for a sign-in, enter the **Proxy user name** and set the **Proxy password** below it; the
+password is stored encrypted, is never shown again and is used only with the proxy address it was
+set for. With an `http://` proxy address the user name and password travel to the proxy
+unencrypted (the page says so); use an `https://` proxy address when the network in between is not
+trusted. Data sources never use this proxy.
+
+Kalzit resolves and checks every target itself before the request goes to the proxy, so the names
+must resolve on the Kalzit server. The proxy then resolves the name again, and a name whose answer
+changes in between (DNS rebinding) is only stopped by the proxy's own rules. **The proxy must
+refuse private (RFC 1918), loopback, link-local and cloud metadata addresses itself.** Plain-http
+requests of the plugin catalog's packages and of an organization's AI provider go to the address
+Kalzit checked (with the name in the `Host` header), so the proxy has nothing to resolve; HTTPS
+requests go through `CONNECT` by name, because the certificate is checked against the name. For
+squid, for example:
+
+```
+acl to_private dst 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 169.254.0.0/16 100.64.0.0/10 ::1 fc00::/7 fe80::/10
+http_access deny to_private
+http_access deny CONNECT to_private
+```
+
+Details: [settings and dashboards](../api/settings-dashboards.md#outbound-proxy).
+
 ### Export and import settings
 
 **Export / import settings** downloads the server's settings, or those of one organization, as a

@@ -483,7 +483,8 @@ pub async fn build(state: &AppState, row: &ProviderRow) -> ApiResult<Box<dyn Pro
     let config =
         ProviderConfig { kind, base_url, model: row.model.clone(), api_key, timeout, token_limit_field, local_guard };
     let policy = state.datasources.policy(state).await?;
-    super::provider(config, policy).map_err(|e| provider_error(&e))
+    let proxy = crate::outbound::current(state).await?;
+    super::provider(config, policy, proxy).map_err(|e| provider_error(&e))
 }
 
 /// The API error of a failed call.

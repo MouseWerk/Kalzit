@@ -163,6 +163,8 @@ pub const MAX_LOG_LINES: usize = 2000;
 pub const MAX_LOG_BYTES: usize = 512 * 1024;
 /// Lines per second passed on to Kalzit's log and kept; more are counted and dropped.
 pub const MAX_LINES_PER_SECOND: u32 = 200;
+/// How long a `Release` call may take before it is given up (and logged).
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct LogState {
@@ -430,6 +432,48 @@ impl Supervisor {
     /// The data sources the plugin was handed, with their settings (`connector`).
     pub fn grants(&self) -> &Arc<Grants> {
         &self.grants
+    }
+
+    /// Forgets a data source that changed, went to the trash, was purged or blocked: what the
+    /// plugin was handed for it is taken back (`Grants::revoke`), and when it had been handed,
+    /// the running process gets `Release` in the background to close its pools. Calling it again
+    /// for the same source does nothing until the plugin is handed the source anew.
+    pub fn forget(self: &Arc<Self>, datasource_id: &str) {
+        if !self.grants.revoke(datasource_id) {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        let this = self.clone();
+        let id = datasource_id.to_string();
+        runtime.spawn(async move { this.release(&id).await });
+    }
+
+    /// `Release` of one data source to the running process. A plugin that does not run holds no
+    /// pools and is not started for it. A failure is logged and changes nothing else: the user's
+    /// change is done, and the plugin keys its pools by revision anyway.
+    pub async fn release(&self, datasource_id: &str) {
+        let client = {
+            let state = self.state.lock().await;
+            match &*state {
+                State::Running(running) if running.exited.borrow().is_none() => running.client.clone(),
+                _ => return,
+            }
+        };
+        let mut client = client;
+        let mut request = tonic::Request::new(pb::ReleaseRequest { datasource_id: datasource_id.to_string() });
+        request.set_timeout(RELEASE_TIMEOUT);
+        match client.release(request).await {
+            Ok(_) => {
+                tracing::debug!(plugin = %self.id, datasource = %datasource_id, "the plugin released the data source")
+            }
+            Err(status) => tracing::warn!(
+                plugin = %self.id,
+                datasource = %datasource_id,
+                code = ?status.code(),
+                "the plugin did not release the data source: {}",
+                status.message()
+            ),
+        }
     }
 
     pub fn id(&self) -> &str {

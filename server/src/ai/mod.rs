@@ -288,11 +288,17 @@ pub async fn complete(
     Ok(out)
 }
 
-/// The client for `config`, its requests checked by `policy`.
-pub fn provider(config: ProviderConfig, policy: Arc<TargetPolicy>) -> Result<Box<dyn Provider>, AiError> {
-    let http = crate::http::client_guarded(
+/// The client for `config`, its requests checked by `policy`, through the outbound `proxy` when
+/// one is set.
+pub fn provider(
+    config: ProviderConfig,
+    policy: Arc<TargetPolicy>,
+    proxy: Option<Arc<crate::outbound::OutboundProxy>>,
+) -> Result<Box<dyn Provider>, AiError> {
+    let http = crate::http::client_proxied(
         HttpOptions { timeout: config.timeout, extra_root_pem: None, policy },
         config.local_guard.clone(),
+        proxy,
     )
     .map_err(AiError::from_http)?;
     Ok(match config.kind {

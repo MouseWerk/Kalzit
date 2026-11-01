@@ -27,6 +27,8 @@ pub struct Context<'a> {
     pub db_url: &'a str,
     pub keyring: &'a Keyring,
     pub now_ms: i64,
+    /// The outbound proxy the requests to the certificate authority go through, if any.
+    pub proxy: Option<std::sync::Arc<crate::outbound::OutboundProxy>>,
     /// Several servers on one database (`cluster`): the challenge answers go to the database
     /// too, so the server the certificate authority reaches answers.
     pub shared: Option<Shared<'a>>,
@@ -133,7 +135,7 @@ async fn order(
     answered: &mut Answered<'_>,
 ) -> Result<StoredCertificate, Failure> {
     let url = settings.directory_url().to_string();
-    let transport = Transport::new(cx.data_dir, cx.db_url, settings.directory_ca())
+    let transport = Transport::new(cx.data_dir, cx.db_url, settings.directory_ca(), cx.proxy.clone())
         .map_err(|e| Failure::new("acme.directory_unreachable", e.to_string()))?;
     let identifiers: Vec<Identifier> = settings.domains.iter().map(|d| Identifier::Dns(d.clone())).collect();
 

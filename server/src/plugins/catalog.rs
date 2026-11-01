@@ -329,10 +329,15 @@ impl Catalog {
             None
         };
         let extra_root_pem = self.extra_root_pem.read_or_recover().clone();
+        // The outbound proxy, if any; the clients still check every target first.
+        let proxy = crate::outbound::current(state)
+            .await
+            .map_err(|e| Failure::new("catalog.unreachable", e.message.clone()).with("detail", e.message))?;
         let build = |guard: Option<LocalGuard>| {
-            http::client_guarded(
+            http::client_proxied(
                 HttpOptions { timeout, extra_root_pem: extra_root_pem.clone(), policy: policy.clone() },
                 guard,
+                proxy.clone(),
             )
             .map_err(|e| Failure::new("catalog.unreachable", e.to_string()).with("detail", e))
         };

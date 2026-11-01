@@ -613,18 +613,25 @@ impl Acme {
             settings.domains.join(", "),
             settings.directory_url()
         );
+        let proxy = crate::outbound::current_or_refuse(state, "the certificate order").await;
         let cx = issue::Context {
             data_dir: &state.config.paths.data_dir,
             db_url: &state.config.database_url(),
             keyring: &state.secrets,
             now_ms: now,
+            proxy: proxy.clone().unwrap_or_default(),
             shared: state
                 .cluster
                 .coordinated()
                 .then(|| issue::Shared { state, order_id: uuid::Uuid::now_v7().to_string() }),
         };
-        // A certificate counts only once it is served.
-        let outcome = issue::obtain(self, &settings, &cx).await.and_then(|certificate| {
+        // A certificate counts only once it is served. A proxy setting that cannot be read stops
+        // the order (fail closed) and shows as its failure.
+        let obtained = match proxy {
+            Err(message) => Err(Failure::new("acme.directory_unreachable", message)),
+            Ok(_) => issue::obtain(self, &settings, &cx).await,
+        };
+        let outcome = obtained.and_then(|certificate| {
             self.certificates
                 .set(&certificate.chain_pem, &certificate.key_pem)
                 .map(|()| certificate)
@@ -766,7 +773,11 @@ pub async fn load_settings(db: &sqlx::AnyPool) -> anyhow::Result<(AcmeSettings, 
 
 /// Checks what can only be checked over the network: the directory answers as an ACME directory,
 /// and every name resolves. Warns about listeners on other ports than the CA connects to.
-pub async fn check_connection(settings: &AcmeSettings, config: &Config) -> Result<Checked, FieldError> {
+pub async fn check_connection(
+    settings: &AcmeSettings,
+    config: &Config,
+    proxy: Option<std::sync::Arc<crate::outbound::OutboundProxy>>,
+) -> Result<Checked, FieldError> {
     let url_field = if settings.directory == Directory::Custom { "directoryUrl" } else { "directory" };
     let url = settings.directory_url();
     let unreachable = |detail: String| {
@@ -781,8 +792,9 @@ pub async fn check_connection(settings: &AcmeSettings, config: &Config) -> Resul
         FieldError::new(url_field, "acme.directory_invalid", format!("{url} is not an ACME directory: {detail}"))
             .with("detail", detail)
     };
-    let transport = transport::Transport::new(&config.paths.data_dir, &config.database_url(), settings.directory_ca())
-        .map_err(|e| unreachable(e.to_string()))?;
+    let transport =
+        transport::Transport::new(&config.paths.data_dir, &config.database_url(), settings.directory_ca(), proxy)
+            .map_err(|e| unreachable(e.to_string()))?;
     let (status, body) = transport.get(url).await.map_err(unreachable)?;
     if status != 200 {
         return Err(invalid(format!("HTTP {status}")));

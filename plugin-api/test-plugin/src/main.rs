@@ -10,7 +10,8 @@
 //!   and `read` (`path`), `env` (the names of its environment), `ptrace` (Linux), and the network:
 //!   `net_direct` (a TCP connection of its own to `host`:`port`, which the sandbox must refuse),
 //!   `net_connect` (through Kalzit's connector; `wait` then waits for an idle close) and
-//!   `net_many` (`n` connections at once, against the connector's limit).
+//!   `net_many` (`n` connections at once, against the connector's limit); `released` answers
+//!   the data sources `Release` named so far, in order.
 //!
 //! Like a real plugin it serves only Kalzit's process (`KALZIT_PLUGIN_HOST_PID`: the peer of its
 //! Unix socket on Linux, the server of the pipe it connects to on Windows) and refuses calls
@@ -40,6 +41,8 @@ struct Plugin {
     wrong_kind: bool,
     /// Kalzit's process id.
     host: u32,
+    /// The data sources `Release` named, in order.
+    released: std::sync::Mutex<Vec<String>>,
 }
 
 fn chunk(part: pb::query_chunk::Part) -> Result<pb::QueryChunk, Status> {
@@ -506,6 +509,10 @@ impl DataSource for Plugin {
                 let path = std::env::temp_dir().join("test-plugin-probe.txt");
                 documents(vec![try_write(&path.to_string_lossy())])
             }
+            "released" => {
+                let released = self.released.lock().map(|r| r.clone()).unwrap_or_default();
+                documents(vec![json!({ "released": released })])
+            }
             "env" => {
                 let names: Vec<String> = std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned()).collect();
                 documents(vec![json!({ "names": names })])
@@ -543,7 +550,10 @@ impl DataSource for Plugin {
         Err(Status::unimplemented("no change feeds"))
     }
 
-    async fn release(&self, _: Request<pb::ReleaseRequest>) -> Result<Response<pb::ReleaseResponse>, Status> {
+    async fn release(&self, request: Request<pb::ReleaseRequest>) -> Result<Response<pb::ReleaseResponse>, Status> {
+        if let Ok(mut released) = self.released.lock() {
+            released.push(request.into_inner().datasource_id);
+        }
         Ok(Response::new(pb::ReleaseResponse {}))
     }
 }
@@ -719,7 +729,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .expect("KALZIT_PLUGIN_HOST_PID is set");
     let incoming = listen::incoming(&address, host).expect("the plugin listens");
-    let plugin = Plugin { kind, wrong_kind: mode == "wrong_kind", host };
+    let plugin = Plugin { kind, wrong_kind: mode == "wrong_kind", host, released: std::sync::Mutex::default() };
     // Every call must carry the token of this start.
     let check =
         move |request: Request<()>| match request.metadata().get("kalzit-plugin-token").and_then(|v| v.to_str().ok()) {
