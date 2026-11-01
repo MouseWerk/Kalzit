@@ -9,7 +9,16 @@ trap 'rm -rf "$work"' EXIT
 failures=0
 
 flags() {
-  cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
+  # The devgen flag has checks of its own (expect_devgen), so the columns below stay as they are.
+  grep -v '^devgen=' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
+}
+
+# expect_devgen "<true|false>" path...
+expect_devgen() {
+  local want=$1 got
+  shift
+  got=$( (for p in "$@"; do printf '%s\0' "$p"; done) | "$script" 2> /dev/null | sed -n 's/^devgen=//p')
+  check "devgen: $*" "$got" "$want"
 }
 
 check() {
@@ -65,6 +74,16 @@ expect "false false false false false false true false"   deploy/docker/compose.
 expect "false false false false false false true false"   deploy/docker/example.env docs/guide/installation.md
 expect "true true true true false false true true"        .gitattributes
 expect "true true true true false false true true"
+# The developer generators run their own job only; the product checks stay off.
+expect "false false false false false false false false"  tools/devgen/src/cli.ts
+expect "false false false false false false false false"  .mcp.json
+expect "false false false false false false false false"  tools/devgen/README.md docs/PLAN.md
+
+expect_devgen true   tools/devgen/src/cli.ts
+expect_devgen true   .mcp.json
+expect_devgen true   .github/workflows/ci.yml
+expect_devgen true
+expect_devgen false  server/src/main.rs ui/src/app.tsx docs/PLAN.md
 
 # From commits: a deletion and a move out of server/ into docs/ both count as server changes.
 repo="$work/repo"

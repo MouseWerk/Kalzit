@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "kalzit-devgen": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["tools/devgen/src/mcp.ts"]
+    }
+  }
+}

@@ -37,6 +37,7 @@ jobs:
       audit: ${{ steps.areas.outputs.audit }}
       docker: ${{ steps.areas.outputs.docker }}
       installer: ${{ steps.areas.outputs.installer }}
+      devgen: ${{ steps.areas.outputs.devgen }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@v7
@@ -495,6 +496,75 @@ jobs:
         run: npm run build
         env:
           KALZIT_LICENSES_STRICT: "0"
+
+  # The developer generators (tools/devgen): format, lint, types and unit tests on both systems.
+  # They are never part of the product binary, packages or image.
+  devgen:
+    name: devgen (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.devgen == 'true' }}
+    defaults:
+      run:
+        working-directory: tools/devgen
+    steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        working-directory: .
+        run: echo "No devgen change in this pull request; the checks are skipped."
+      - uses: actions/checkout@v7
+        if: env.RUN_JOB == 'true'
+      - uses: actions/setup-node@v7
+        if: env.RUN_JOB == 'true'
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: tools/devgen/package-lock.json
+      - if: env.RUN_JOB == 'true'
+        run: npm ci
+      - if: env.RUN_JOB == 'true'
+        run: npm run check
+      - if: env.RUN_JOB == 'true'
+        run: npm run typecheck
+      - if: env.RUN_JOB == 'true'
+        run: npm test
+
+  # The generators' proof: scaffolds routes and settings into this checkout and runs cargo fmt,
+  # clippy, the generated and affected server tests, Biome, the UI typecheck and the affected UI
+  # tests, so generated code passes the repository's checks out of the box.
+  devgen-proof:
+    name: devgen proof
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.devgen == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: devgen-proof
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            tools/devgen/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npm ci
+        working-directory: tools/devgen
+      - run: npm run proof -- --in-place
+        working-directory: tools/devgen
 
   # End-to-end tests against the server binary with the embedded UI (ui/e2e), built with the
   # e2e profile (release settings, less optimization, so it builds faster). Not a required check
