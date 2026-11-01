@@ -23,7 +23,8 @@ use serde_json::{Map, Value, json};
 
 use super::Detail;
 use super::frame::{Charge, Column, FrameBuilder, ResponseBudget};
-use super::http_json::{basic_auth, header_value, parse_url, variable_name};
+use super::http_json::{parse_url, variable_name};
+use super::http_source::{self, Auth, Scrubber};
 use super::json_documents::DocumentsBuilder;
 use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
@@ -1080,7 +1081,8 @@ struct Client {
     http: HttpClient,
     base: Url,
     headers: HeaderMap,
-    basic_token: Option<String>,
+    /// The secrets and the base64 of `user:password`, to scrub from errors.
+    scrubber: Scrubber,
 }
 
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
@@ -1099,36 +1101,28 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         let invalid = "elasticsearch.credentials_invalid";
-        let mut basic_token = None;
-        if let Some(user) = s.basic_auth_user.filter(|u| !u.is_empty()) {
-            let (value, token) = basic_auth(&user, conn.secret("basicAuthPassword").unwrap_or(""));
-            headers.insert(AUTHORIZATION, header_value(&value, invalid)?);
-            basic_token = Some(token);
-        } else if let Some(key) = conn.secret("apiKey") {
-            headers.insert(AUTHORIZATION, header_value(&format!("ApiKey {key}"), invalid)?);
-        } else if let Some(token) = conn.secret("bearerToken") {
-            headers.insert(AUTHORIZATION, header_value(&format!("Bearer {token}"), invalid)?);
+        let mut scrubber = Scrubber::new(conn);
+        let user = s.basic_auth_user.as_deref().filter(|u| !u.is_empty());
+        let auth = match (user, conn.secret("apiKey")) {
+            (None, Some(key)) => Some(Auth::Token { scheme: "ApiKey", token: key }),
+            _ => Auth::basic_or_bearer(user, conn.secret("basicAuthPassword"), conn.secret("bearerToken")),
+        };
+        if let Some(auth) = auth {
+            headers.insert(AUTHORIZATION, auth.header(invalid, &mut scrubber)?);
         }
-        Ok(Client { http, base, headers, basic_token })
+        Ok(Client { http, base, headers, scrubber })
     })
     .await
 }
 
 impl Client {
     fn scrub(&self, text: &str) -> String {
-        match &self.basic_token {
-            Some(t) => text.replace(t, "***"),
-            None => text.to_string(),
-        }
+        self.scrubber.scrub(text)
     }
 
+    /// A redirect to anything but a read endpoint is a refusal (`query_rejected`).
     fn failed(&self, e: HttpError) -> SourceError {
-        match e {
-            HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            // A redirect to anything but a read endpoint.
-            HttpError::Refused(d) => SourceError::Rejected(d),
-            other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
-        }
+        http_source::failed(e, &self.scrubber)
     }
 
     /// Sends one request to a read endpoint and answers the JSON, or the server's error. With
@@ -1160,6 +1154,9 @@ impl Client {
             None => crate::http::read_limited(response, max_bytes).await,
         }
         .map_err(|e| self.failed(e))?;
+        if let Some(e) = http_source::unauthorized(status, &bytes, &self.scrubber) {
+            return Err(e);
+        }
         let parsed: Option<Value> = serde_json::from_slice(&bytes).ok();
         if !status.is_success() {
             let message = parsed.as_ref().and_then(error_reason).map(|m| self.scrub(&m));
