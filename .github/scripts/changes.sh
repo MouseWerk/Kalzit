@@ -15,6 +15,8 @@
 #   devgen     the developer generators (tools/devgen, .mcp.json); never part of the product
 #   devgen_proof  what the generators scaffold into or generate from: route modules, the
 #              settings registry, the UI catalogs and settings pages, and the generators' code
+#   roadmap    the README's milestone progress bars: docs/roadmap/, tools/roadmap/, README.md and
+#              the design tokens they take their colors from
 #
 # changes.sh BASE HEAD   compares two commits (renames count as a deletion and an addition, so
 #                        the old path counts too)
@@ -35,6 +37,7 @@ packaging=false
 devkit=false
 devgen=false
 devgen_proof=false
+roadmap=false
 unknown=false
 count=0
 
@@ -45,6 +48,11 @@ classify() {
     server/src/routes/* | server/src/settings* | ui/src/i18n/* | ui/src/features/settings/* \
       | tools/devgen/src/* | tools/devgen/package.json | tools/devgen/package-lock.json)
       devgen_proof=true ;;
+  esac
+  # In addition to the area below: the progress bars' check (job `roadmap`) runs for these.
+  case "$path" in
+    docs/roadmap/* | tools/roadmap/* | README.md | ui/src/styles/tokens.css)
+      roadmap=true ;;
   esac
   case "$path" in
     .github/*)
@@ -57,6 +65,9 @@ classify() {
       devkit=true ;;
     tools/devgen/*)
       devgen=true ;;
+    # Only the roadmap job above.
+    tools/roadmap/*)
+      ;;
     # The UI's conformance test runs server/src/analysis/conformance.json, which the Rust
     # engine there must also pass.
     server/src/analysis/*)
@@ -115,6 +126,7 @@ if [ "$workflows" = true ] || [ "$unknown" = true ] || [ "$count" -eq 0 ]; then
   devkit=true
   devgen=true
   devgen_proof=true
+  roadmap=true
 fi
 [ "$server" = true ] && audit=true
 e2e=false
@@ -141,3 +153,4 @@ echo "installer=$installer"
 echo "devkit=$devkit"
 echo "devgen=$devgen"
 echo "devgen_proof=$devgen_proof"
+echo "roadmap=$roadmap"

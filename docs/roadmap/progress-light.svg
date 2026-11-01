@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="340" viewBox="0 0 880 340" role="img" aria-labelledby="title desc">
+<title id="title">Kalzit milestone progress</title>
+<desc id="desc">Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 15 of 68 plan items done. M7 Expansion: planned. M8 Plugin store: planned.</desc>
+<defs>
+<linearGradient id="sweep" x1="0" x2="1" y1="0" y2="0">
+<stop offset="0" stop-color="#17171a" stop-opacity="0"/>
+<stop offset="0.5" stop-color="#17171a" stop-opacity="0.45"/>
+<stop offset="1" stop-color="#17171a" stop-opacity="0"/>
+</linearGradient>
+</defs>
+<style>
+text{font-family:"Instrument Sans","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;font-size:13px;fill:#57575f;font-variant-numeric:tabular-nums}
+.title{font-size:14px;font-weight:600;fill:#17171a}
+.id{font-family:"JetBrains Mono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;font-size:12px;font-weight:600;fill:#17171a}
+.status.current{fill:#17171a;font-weight:600}
+.track{fill:#e1e1e4}
+.fill{fill:#57575f;transform-box:fill-box;transform-origin:left center;animation:grow 1.2s cubic-bezier(.22,.7,.2,1) backwards}
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes sweep-m6{0%{transform:translateX(0)}55%,100%{transform:translateX(239.12px)}}
+.sweep-m6{animation:sweep-m6 4.8s ease-in-out 1.74s infinite}
+@media (prefers-reduced-motion:reduce){.fill,.sweep{animation:none}}
+</style>
+<rect x="0.5" y="0.5" width="879" height="339" rx="12" fill="#ffffff" stroke="#e1e1e4"/>
+<text class="title" x="24" y="36">Milestones</text>
+<g class="row">
+<text class="id" x="24" y="72">M0</text>
+<text class="name" x="64" y="72">Foundation</text>
+<rect class="track" x="210" y="65" width="540" height="6" rx="3"/>
+<rect class="fill" x="210" y="65" width="540" height="6" rx="3" style="animation-delay:0s"/>
+<text class="status" x="856" y="72" text-anchor="end">Done</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="102">M1</text>
+<text class="name" x="64" y="102">Core</text>
+<rect class="track" x="210" y="95" width="540" height="6" rx="3"/>
+<rect class="fill" x="210" y="95" width="540" height="6" rx="3" style="animation-delay:0.09s"/>
+<text class="status" x="856" y="102" text-anchor="end">Done</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="132">M2</text>
+<text class="name" x="64" y="132">Documents</text>
+<rect class="track" x="210" y="125" width="540" height="6" rx="3"/>
+<rect class="fill" x="210" y="125" width="540" height="6" rx="3" style="animation-delay:0.18s"/>
+<text class="status" x="856" y="132" text-anchor="end">Done</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="162">M3</text>
+<text class="name" x="64" y="162">Graphs</text>
+<rect class="track" x="210" y="155" width="540" height="6" rx="3"/>
+<rect class="fill" x="210" y="155" width="540" height="6" rx="3" style="animation-delay:0.27s"/>
+<text class="status" x="856" y="162" text-anchor="end">Done</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="192">M4</text>
+<text class="name" x="64" y="192">Plugins and AI</text>
+<rect class="track" x="210" y="185" width="540" height="6" rx="3"/>
+<rect class="fill" x="210" y="185" width="540" height="6" rx="3" style="animation-delay:0.36s"/>
+<text class="status" x="856" y="192" text-anchor="end">Done</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="222">M5</text>
+<text class="name" x="64" y="222">Operations</text>
+<rect class="track" x="210" y="215" width="540" height="6" rx="3"/>
+<rect class="fill" x="210" y="215" width="540" height="6" rx="3" style="animation-delay:0.45s"/>
+<text class="status" x="856" y="222" text-anchor="end">Done</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="252">M6</text>
+<text class="name" x="64" y="252">Polish</text>
+<rect class="track" x="210" y="245" width="540" height="6" rx="3"/>
+<rect class="fill" x="210" y="245" width="119.12" height="6" rx="3" style="animation-delay:0.54s"/>
+<clipPath id="clip-m6"><rect x="210" y="245" width="119.12" height="6" rx="3"/></clipPath>
+<g clip-path="url(#clip-m6)"><rect class="sweep sweep-m6" x="90" y="245" width="120" height="6" fill="url(#sweep)"/></g>
+<text class="status current" x="856" y="252" text-anchor="end">15 of 68</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="282">M7</text>
+<text class="name" x="64" y="282">Expansion</text>
+<rect class="track" x="210" y="275" width="540" height="6" rx="3"/>
+<text class="status" x="856" y="282" text-anchor="end">Planned</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="312">M8</text>
+<text class="name" x="64" y="312">Plugin store</text>
+<rect class="track" x="210" y="305" width="540" height="6" rx="3"/>
+<text class="status" x="856" y="312" text-anchor="end">Planned</text>
+</g>
+</svg>

@@ -2096,6 +2096,7 @@ through `settings::get`; new registry entries are requested from the orchestrato
   | `devkit` | `tools/devkit/` and the shared `.mcp.json` (the developer toolkit, job `devkit`) |
   | `devgen` | `tools/devgen/` and the shared `.mcp.json` (the developer generators, job `devgen`, which also runs for `server` and `ui`) |
   | `devgen_proof` | `server/src/routes/`, `server/src/settings*`, `ui/src/i18n/`, `ui/src/features/settings/`, `tools/devgen/src/` (job `devgen proof` on pull requests; weekly by `devgen-proof.yml`) |
+  | `roadmap` | `docs/roadmap/`, `tools/roadmap/`, `README.md`, `ui/src/styles/tokens.css` (job `roadmap`: the README's milestone progress bars match `docs/roadmap/progress.json`) |
 
   `docs/api/` and `docs/glossary.md` count as code because server and UI tests read them;
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
