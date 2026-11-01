@@ -44,6 +44,13 @@ function probeNumber(root: HTMLElement, name: string, fallback: number): number 
   return Number.isFinite(value) ? value : fallback;
 }
 
+/** Whether forced colors (Windows high contrast) are on. */
+function forcedColors(): boolean {
+  return (
+    typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches
+  );
+}
+
 function CursorLine({ x }: { x: number }) {
   const ref = useRef<HTMLDivElement>(null);
   useStyleVars(ref, { "--cursor-x": `${x}px` });
@@ -117,6 +124,7 @@ export function UplotTimeSeriesChart({
     const axis = probeColor(probes, ".ts__probe--axis");
     const grid = probeColor(probes, ".ts__probe--grid");
     const font = `${getComputedStyle(probes).fontSize} ${getComputedStyle(probes).fontFamily}`;
+    const forced = forcedColors();
     const tones: Partial<Record<Tone, string>> = {};
     for (const tone of TONES) {
       tones[tone] = probeColor(probes, `.tone--${tone}`);
@@ -188,9 +196,12 @@ export function UplotTimeSeriesChart({
           const style = styles[index];
           const paint: Paint = {
             // A free colour is used as it is; the others come from the theme through the probes.
+            // With forced colors a free colour gives way to the system color of its position.
             color:
               style?.colorClass === FREE_CLASS && style.freeColor !== null
-                ? style.freeColor
+                ? forced
+                  ? probeColor(probes, `.series-${(index % SERIES_COLORS) + 1}`)
+                  : style.freeColor
                 : probeColor(probes, `.${style?.colorClass ?? "series-1"}`),
             tones,
             hatchAlpha,
