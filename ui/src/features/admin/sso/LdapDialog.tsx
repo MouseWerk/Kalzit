@@ -4,6 +4,7 @@ import { isApiError } from "../../../api/client";
 import { Icon } from "../../../components/Icon";
 import { type Translate, useI18n } from "../../../i18n/i18n";
 import { reasonText } from "../../datasources/reasons";
+import { useConfirmedCalls } from "../../security/ConfirmFactorDialog";
 import { Segmented } from "../../settings/rows";
 import { Dialog } from "../components/Dialog";
 import { LoadState } from "../components/Section";
@@ -119,6 +120,8 @@ function LdapForm({
   onSaved: (name: string, created: boolean) => void;
 }) {
   const { t } = useI18n();
+  // A directory that trusts addresses needs a fresh second factor to change.
+  const confirmed = useConfirmedCalls();
   const ids = useId();
   const editing = provider !== undefined;
   const ldap = provider?.ldap;
@@ -368,9 +371,11 @@ function LdapForm({
     try {
       const token = checkCurrent ? checked?.check.checkToken : undefined;
       if (editing) {
-        await updateLdap(provider.id, input(), version, connectionChanged ? token : undefined);
+        await confirmed.run(() =>
+          updateLdap(provider.id, input(), version, connectionChanged ? token : undefined),
+        );
       } else {
-        await createLdap(input(), token ?? "");
+        await confirmed.run(() => createLdap(input(), token ?? ""));
       }
       onSaved(name.trim(), !editing);
     } catch (error) {
@@ -524,297 +529,302 @@ function LdapForm({
   const caId = `${ids}-caPem`;
   const caError = fieldErrors.caPem;
   return (
-    <Dialog
-      open
-      wide
-      title={editing ? t("sso.form.editTitleFor", { name: provider.name }) : t("sso.ldap.addTitle")}
-      onClose={onClose}
-      initialFocus={refs.name}
-      footer={
-        <div className="sso-dialog__footer">
-          <button
-            type="button"
-            className="button button--secondary"
-            aria-disabled={busy !== null}
-            onClick={() => void onCheck()}
-          >
-            <Icon name="refresh" />
-            {busy === "check" ? t("sso.form.checking") : t("sso.form.check")}
-          </button>
-          <span className="sso-dialog__spacer" />
-          <button type="button" className="button button--secondary" onClick={onClose}>
-            {t("admin.common.cancel")}
-          </button>
-          <button
-            type="button"
-            className="button button--primary"
-            aria-disabled={!canSave || busy !== null}
-            aria-describedby={canSave ? undefined : `${ids}-save-hint`}
-            onClick={() => void onSave()}
-          >
-            {busy === "save" ? t("sso.form.saving") : t("sso.form.save")}
-          </button>
-        </div>
-      }
-    >
-      <form
-        className="form sso-form"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          void onSave();
-        }}
+    <>
+      <Dialog
+        open
+        wide
+        title={
+          editing ? t("sso.form.editTitleFor", { name: provider.name }) : t("sso.ldap.addTitle")
+        }
+        onClose={onClose}
+        initialFocus={refs.name}
+        footer={
+          <div className="sso-dialog__footer">
+            <button
+              type="button"
+              className="button button--secondary"
+              aria-disabled={busy !== null}
+              onClick={() => void onCheck()}
+            >
+              <Icon name="refresh" />
+              {busy === "check" ? t("sso.form.checking") : t("sso.form.check")}
+            </button>
+            <span className="sso-dialog__spacer" />
+            <button type="button" className="button button--secondary" onClick={onClose}>
+              {t("admin.common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="button button--primary"
+              aria-disabled={!canSave || busy !== null}
+              aria-describedby={canSave ? undefined : `${ids}-save-hint`}
+              onClick={() => void onSave()}
+            >
+              {busy === "save" ? t("sso.form.saving") : t("sso.form.save")}
+            </button>
+          </div>
+        }
       >
-        <div role="alert" aria-atomic="true">
-          {formError === undefined ? null : (
-            <p className="sso-alarm">
-              <Icon name="alert" />
-              <span>{formError}</span>
-            </p>
-          )}
-        </div>
-        <div className="sso-form__pair">
-          {textInput(
-            "name",
-            name,
-            (value) => {
-              setName(value);
-              if (!slugEdited) {
-                setSlug(slugFrom(value));
-              }
-            },
-            { label: t("sso.ldap.name"), hint: t("sso.ldap.nameHint") },
-          )}
-          {textInput(
-            "slug",
-            slug,
-            (value) => {
-              setSlug(value);
-              setSlugEdited(true);
-            },
-            {
-              label: t("sso.form.slug"),
-              mono: true,
-              readOnly: editing,
-              hint: t(editing ? "sso.form.slugFixed" : "sso.ldap.slugHint"),
-            },
-          )}
-        </div>
-        {segmented(
-          null,
-          t("sso.ldap.flavor"),
-          flavor,
-          [
-            { value: "ad", label: t("sso.ldap.flavor.ad") },
-            { value: "ldap", label: t("sso.ldap.flavor.ldap") },
-          ],
-          chooseFlavor,
-        )}
-        <div className="sso-form__pair">
-          {textInput("url", url, setUrl, {
-            label: t("sso.ldap.url"),
-            mono: true,
-            placeholder: "ldaps://dc01.example.com:636",
-          })}
-          {segmented(
-            "encryption",
-            t("sso.ldap.encryption"),
-            encryption,
-            [
-              { value: "ldaps", label: t("sso.ldap.encryption.ldaps") },
-              { value: "starttls", label: t("sso.ldap.encryption.starttls") },
-              { value: "none", label: t("sso.ldap.encryption.none") },
-            ],
-            setEncryption,
-            encryption === "none" ? t("sso.ldap.encryption.noneHint") : undefined,
-          )}
-        </div>
-        <div className="sso-form__pair">
-          {textInput("bindDn", bindDn, setBindDn, {
-            label: t("sso.ldap.bindDn"),
-            mono: true,
-            hint: t("sso.ldap.bindDnHint"),
-          })}
-          {textInput("bindPassword", bindPassword, setBindPassword, {
-            label: t("sso.ldap.bindPassword"),
-            mono: true,
-            type: "password",
-            placeholder:
-              editing && ldap?.bindPasswordSet === true ? t("sso.ldap.bindPasswordStored") : "",
-            hint:
-              editing && ldap?.bindPasswordSet === true
-                ? t("sso.ldap.bindPasswordKeep")
-                : t("sso.ldap.bindPasswordHint"),
-          })}
-        </div>
-        <div className="sso-form__pair">
-          {textInput("userBaseDn", userBaseDn, setUserBaseDn, {
-            label: t("sso.ldap.userBaseDn"),
-            mono: true,
-          })}
-          {select(
-            "loginAttribute",
-            t("sso.ldap.loginAttribute"),
-            loginAttribute,
-            LOGIN_ATTRIBUTES[flavor].map((attribute) => ({ value: attribute, label: attribute })),
-            setLoginAttribute,
-          )}
-        </div>
-        {textInput("userFilter", userFilter, setUserFilter, {
-          label: t("sso.ldap.userFilter"),
-          mono: true,
-          placeholder: "(department=Vertrieb)",
-          hint: t("sso.ldap.userFilterHint"),
-        })}
-        {flavor === "ad" ? (
-          <label className="sso-check">
-            <input
-              type="checkbox"
-              checked={nestedGroups}
-              onChange={(event) => setNestedGroups(event.currentTarget.checked)}
-            />
-            <span>
-              {t("sso.ldap.nestedGroups")}
-              <span className="field__hint">{t("sso.ldap.nestedGroupsHint")}</span>
-            </span>
-          </label>
-        ) : null}
-        <label className="sso-check">
-          <input
-            type="checkbox"
-            checked={createAccounts}
-            onChange={(event) => setCreateAccounts(event.currentTarget.checked)}
-          />
-          <span>
-            {t("sso.form.createAccounts")}
-            <span className="field__hint">{t("sso.form.createAccountsHint")}</span>
-          </span>
-        </label>
-        <fieldset className="sso-fieldset">
-          <legend className="field__label">{t("sso.ldap.sync")}</legend>
-          <div className="sso-form__pair">
-            {select(
-              "syncSchedule",
-              t("sso.ldap.syncSchedule"),
-              syncSchedule,
-              [
-                { value: "daily", label: t("sso.ldap.syncSchedule.daily") },
-                { value: "every6h", label: t("sso.ldap.syncSchedule.every6h") },
-                { value: "off", label: t("sso.ldap.syncSchedule.off") },
-              ],
-              (value) => setSyncSchedule(value as LdapSchedule),
+        <form
+          className="form sso-form"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onSave();
+          }}
+        >
+          <div role="alert" aria-atomic="true">
+            {formError === undefined ? null : (
+              <p className="sso-alarm">
+                <Icon name="alert" />
+                <span>{formError}</span>
+              </p>
             )}
-            {syncSchedule === "daily"
-              ? textInput("syncHour", syncHour, setSyncHour, {
-                  label: t("sso.ldap.syncHour"),
-                  inputMode: "numeric",
-                  hint: t("sso.ldap.syncHourHint"),
-                })
-              : null}
-            {textInput("syncThreshold", syncThreshold, setSyncThreshold, {
-              label: t("sso.ldap.syncThreshold"),
-              inputMode: "numeric",
-              hint: t("sso.ldap.syncThresholdHint"),
+          </div>
+          <div className="sso-form__pair">
+            {textInput(
+              "name",
+              name,
+              (value) => {
+                setName(value);
+                if (!slugEdited) {
+                  setSlug(slugFrom(value));
+                }
+              },
+              { label: t("sso.ldap.name"), hint: t("sso.ldap.nameHint") },
+            )}
+            {textInput(
+              "slug",
+              slug,
+              (value) => {
+                setSlug(value);
+                setSlugEdited(true);
+              },
+              {
+                label: t("sso.form.slug"),
+                mono: true,
+                readOnly: editing,
+                hint: t(editing ? "sso.form.slugFixed" : "sso.ldap.slugHint"),
+              },
+            )}
+          </div>
+          {segmented(
+            null,
+            t("sso.ldap.flavor"),
+            flavor,
+            [
+              { value: "ad", label: t("sso.ldap.flavor.ad") },
+              { value: "ldap", label: t("sso.ldap.flavor.ldap") },
+            ],
+            chooseFlavor,
+          )}
+          <div className="sso-form__pair">
+            {textInput("url", url, setUrl, {
+              label: t("sso.ldap.url"),
+              mono: true,
+              placeholder: "ldaps://dc01.example.com:636",
+            })}
+            {segmented(
+              "encryption",
+              t("sso.ldap.encryption"),
+              encryption,
+              [
+                { value: "ldaps", label: t("sso.ldap.encryption.ldaps") },
+                { value: "starttls", label: t("sso.ldap.encryption.starttls") },
+                { value: "none", label: t("sso.ldap.encryption.none") },
+              ],
+              setEncryption,
+              encryption === "none" ? t("sso.ldap.encryption.noneHint") : undefined,
+            )}
+          </div>
+          <div className="sso-form__pair">
+            {textInput("bindDn", bindDn, setBindDn, {
+              label: t("sso.ldap.bindDn"),
+              mono: true,
+              hint: t("sso.ldap.bindDnHint"),
+            })}
+            {textInput("bindPassword", bindPassword, setBindPassword, {
+              label: t("sso.ldap.bindPassword"),
+              mono: true,
+              type: "password",
+              placeholder:
+                editing && ldap?.bindPasswordSet === true ? t("sso.ldap.bindPasswordStored") : "",
+              hint:
+                editing && ldap?.bindPasswordSet === true
+                  ? t("sso.ldap.bindPasswordKeep")
+                  : t("sso.ldap.bindPasswordHint"),
             })}
           </div>
-        </fieldset>
-        <div className="sso-advanced">
-          <button
-            type="button"
-            className="sso-advanced__toggle"
-            aria-expanded={advanced}
-            aria-controls={`${ids}-advanced`}
-            onClick={() => setAdvanced(!advanced)}
-          >
-            <Icon name={advanced ? "chevronDown" : "chevron"} />
-            {t("sso.ldap.advanced")}
-          </button>
-          <div id={`${ids}-advanced`} className="sso-advanced__body" hidden={!advanced}>
-            {textInput("groupBaseDn", groupBaseDn, setGroupBaseDn, {
-              label: t("sso.ldap.groupBaseDn"),
+          <div className="sso-form__pair">
+            {textInput("userBaseDn", userBaseDn, setUserBaseDn, {
+              label: t("sso.ldap.userBaseDn"),
               mono: true,
-              hint: t("sso.ldap.groupBaseDnHint"),
             })}
-            <div className="sso-form__pair">
-              {textInput("emailAttribute", emailAttribute, setEmailAttribute, {
-                label: t("sso.ldap.emailAttribute"),
-                mono: true,
-              })}
-              {textInput("nameAttribute", nameAttribute, setNameAttribute, {
-                label: t("sso.ldap.nameAttribute"),
-                mono: true,
-              })}
-            </div>
+            {select(
+              "loginAttribute",
+              t("sso.ldap.loginAttribute"),
+              loginAttribute,
+              LOGIN_ATTRIBUTES[flavor].map((attribute) => ({ value: attribute, label: attribute })),
+              setLoginAttribute,
+            )}
+          </div>
+          {textInput("userFilter", userFilter, setUserFilter, {
+            label: t("sso.ldap.userFilter"),
+            mono: true,
+            placeholder: "(department=Vertrieb)",
+            hint: t("sso.ldap.userFilterHint"),
+          })}
+          {flavor === "ad" ? (
             <label className="sso-check">
               <input
                 type="checkbox"
-                checked={trustEmail}
-                onChange={(event) => setTrustEmail(event.currentTarget.checked)}
+                checked={nestedGroups}
+                onChange={(event) => setNestedGroups(event.currentTarget.checked)}
               />
               <span>
-                {t("sso.ldap.trustEmail")}
-                <span className="field__hint">{t("sso.ldap.trustEmailHint")}</span>
+                {t("sso.ldap.nestedGroups")}
+                <span className="field__hint">{t("sso.ldap.nestedGroupsHint")}</span>
               </span>
             </label>
-            {segmented(
-              null,
-              t("sso.ldap.certificate"),
-              certificate,
-              [
-                { value: "system", label: t("sso.ldap.certificate.system") },
-                { value: "custom", label: t("sso.ldap.certificate.custom") },
-              ],
-              setCertificate,
-            )}
-            {certificate === "custom" ? (
-              <FormField
-                id={caId}
-                label={t("sso.ldap.caPem")}
-                hint={t("sso.ldap.caPemHint")}
-                error={caError}
-              >
-                <textarea
-                  ref={refs.caPem}
-                  id={caId}
-                  className="input input--mono admin-textarea"
-                  rows={4}
-                  spellCheck={false}
-                  value={caPem}
-                  aria-invalid={caError === undefined ? undefined : true}
-                  aria-describedby={describedBy(caId, true, caError)}
-                  onChange={(event) => {
-                    setCaPem(event.currentTarget.value);
-                    clearError("caPem");
-                  }}
+          ) : null}
+          <label className="sso-check">
+            <input
+              type="checkbox"
+              checked={createAccounts}
+              onChange={(event) => setCreateAccounts(event.currentTarget.checked)}
+            />
+            <span>
+              {t("sso.form.createAccounts")}
+              <span className="field__hint">{t("sso.form.createAccountsHint")}</span>
+            </span>
+          </label>
+          <fieldset className="sso-fieldset">
+            <legend className="field__label">{t("sso.ldap.sync")}</legend>
+            <div className="sso-form__pair">
+              {select(
+                "syncSchedule",
+                t("sso.ldap.syncSchedule"),
+                syncSchedule,
+                [
+                  { value: "daily", label: t("sso.ldap.syncSchedule.daily") },
+                  { value: "every6h", label: t("sso.ldap.syncSchedule.every6h") },
+                  { value: "off", label: t("sso.ldap.syncSchedule.off") },
+                ],
+                (value) => setSyncSchedule(value as LdapSchedule),
+              )}
+              {syncSchedule === "daily"
+                ? textInput("syncHour", syncHour, setSyncHour, {
+                    label: t("sso.ldap.syncHour"),
+                    inputMode: "numeric",
+                    hint: t("sso.ldap.syncHourHint"),
+                  })
+                : null}
+              {textInput("syncThreshold", syncThreshold, setSyncThreshold, {
+                label: t("sso.ldap.syncThreshold"),
+                inputMode: "numeric",
+                hint: t("sso.ldap.syncThresholdHint"),
+              })}
+            </div>
+          </fieldset>
+          <div className="sso-advanced">
+            <button
+              type="button"
+              className="sso-advanced__toggle"
+              aria-expanded={advanced}
+              aria-controls={`${ids}-advanced`}
+              onClick={() => setAdvanced(!advanced)}
+            >
+              <Icon name={advanced ? "chevronDown" : "chevron"} />
+              {t("sso.ldap.advanced")}
+            </button>
+            <div id={`${ids}-advanced`} className="sso-advanced__body" hidden={!advanced}>
+              {textInput("groupBaseDn", groupBaseDn, setGroupBaseDn, {
+                label: t("sso.ldap.groupBaseDn"),
+                mono: true,
+                hint: t("sso.ldap.groupBaseDnHint"),
+              })}
+              <div className="sso-form__pair">
+                {textInput("emailAttribute", emailAttribute, setEmailAttribute, {
+                  label: t("sso.ldap.emailAttribute"),
+                  mono: true,
+                })}
+                {textInput("nameAttribute", nameAttribute, setNameAttribute, {
+                  label: t("sso.ldap.nameAttribute"),
+                  mono: true,
+                })}
+              </div>
+              <label className="sso-check">
+                <input
+                  type="checkbox"
+                  checked={trustEmail}
+                  onChange={(event) => setTrustEmail(event.currentTarget.checked)}
                 />
-              </FormField>
-            ) : null}
+                <span>
+                  {t("sso.ldap.trustEmail")}
+                  <span className="field__hint">{t("sso.ldap.trustEmailHint")}</span>
+                </span>
+              </label>
+              {segmented(
+                null,
+                t("sso.ldap.certificate"),
+                certificate,
+                [
+                  { value: "system", label: t("sso.ldap.certificate.system") },
+                  { value: "custom", label: t("sso.ldap.certificate.custom") },
+                ],
+                setCertificate,
+              )}
+              {certificate === "custom" ? (
+                <FormField
+                  id={caId}
+                  label={t("sso.ldap.caPem")}
+                  hint={t("sso.ldap.caPemHint")}
+                  error={caError}
+                >
+                  <textarea
+                    ref={refs.caPem}
+                    id={caId}
+                    className="input input--mono admin-textarea"
+                    rows={4}
+                    spellCheck={false}
+                    value={caPem}
+                    aria-invalid={caError === undefined ? undefined : true}
+                    aria-describedby={describedBy(caId, true, caError)}
+                    onChange={(event) => {
+                      setCaPem(event.currentTarget.value);
+                      clearError("caPem");
+                    }}
+                  />
+                </FormField>
+              ) : null}
+            </div>
           </div>
-        </div>
-        <fieldset className="sso-fieldset">
-          <legend className="field__label">{t("sso.ldap.test")}</legend>
-          <p className="field__hint">{t("sso.ldap.testHint")}</p>
-          <div className="sso-form__pair">
-            {textInput("testLogin", testLogin, setTestLogin, {
-              label: t("sso.ldap.testLogin"),
-              mono: true,
-            })}
-            {textInput("testPassword", testPassword, setTestPassword, {
-              label: t("sso.ldap.testPassword"),
-              type: "password",
-            })}
+          <fieldset className="sso-fieldset">
+            <legend className="field__label">{t("sso.ldap.test")}</legend>
+            <p className="field__hint">{t("sso.ldap.testHint")}</p>
+            <div className="sso-form__pair">
+              {textInput("testLogin", testLogin, setTestLogin, {
+                label: t("sso.ldap.testLogin"),
+                mono: true,
+              })}
+              {textInput("testPassword", testPassword, setTestPassword, {
+                label: t("sso.ldap.testPassword"),
+                type: "password",
+              })}
+            </div>
+          </fieldset>
+          <div role="status" aria-atomic="true" className="sso-results">
+            {checkCurrent && checked !== null ? <CheckResult t={t} check={checked.check} /> : null}
           </div>
-        </fieldset>
-        <div role="status" aria-atomic="true" className="sso-results">
-          {checkCurrent && checked !== null ? <CheckResult t={t} check={checked.check} /> : null}
-        </div>
-        {canSave ? null : (
-          <p className="field__hint" id={`${ids}-save-hint`}>
-            {t("sso.form.saveNeedsCheck")}
-          </p>
-        )}
-      </form>
-    </Dialog>
+          {canSave ? null : (
+            <p className="field__hint" id={`${ids}-save-hint`}>
+              {t("sso.form.saveNeedsCheck")}
+            </p>
+          )}
+        </form>
+      </Dialog>
+      {confirmed.dialog}
+    </>
   );
 }
 

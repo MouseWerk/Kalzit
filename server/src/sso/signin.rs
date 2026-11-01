@@ -69,6 +69,28 @@ pub struct Linked {
     pub created: bool,
     /// The break-glass admin: never changed by a group mapping.
     pub break_glass: bool,
+    /// The identity was linked to an existing account by its address in this sign-in, or such a
+    /// link is not confirmed yet: the provider's word for a second factor (`trustProviderMfa`)
+    /// does not count in this sign-in.
+    pub email_linked: bool,
+    /// Such a link to an account that has a password or a second factor: the person proves the
+    /// account once (`FirstStep::confirm_link`), and the link counts as confirmed after that.
+    pub confirm_link: bool,
+}
+
+/// Whether the account can prove itself: it has a password or a second factor of its own.
+async fn has_own_proof(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<bool> {
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT (CASE WHEN password_hash IS NULL THEN 0 ELSE 1 END) \
+         + (SELECT COUNT(*) FROM user_totp t WHERE t.user_id = $1) \
+         + (SELECT COUNT(*) FROM user_passkeys p WHERE p.user_id = $2) FROM users WHERE id = $3",
+    )
+    .bind(user_id)
+    .bind(user_id)
+    .bind(user_id)
+    .fetch_one(conn)
+    .await?;
+    Ok(n > 0)
 }
 
 /// Finds or makes the account of `person` at `provider` (whose issuer is `issuer`) and records the
@@ -84,16 +106,18 @@ pub async fn account(
     now: i64,
 ) -> ApiResult<Result<Linked, Refusal>> {
     let break_glass = super::local_policy(state).await?.break_glass;
-    let linked: Option<(String, String)> =
-        sqlx::query_as("SELECT user_id, issuer FROM sso_identities WHERE provider_id = $1 AND subject = $2")
+    let linked: Option<(String, String, i64)> =
+        sqlx::query_as("SELECT user_id, issuer, confirmed FROM sso_identities WHERE provider_id = $1 AND subject = $2")
             .bind(&provider.id)
             .bind(&person.subject)
             .fetch_optional(&mut *conn)
             .await?;
     let mut created = false;
+    let mut email_linked = false;
+    let mut confirm_link = false;
     let account: Account = match linked {
         // A link made with another issuer is not this person: subjects are only unique per issuer.
-        Some((user_id, linked_issuer)) if linked_issuer != issuer => {
+        Some((user_id, linked_issuer, _)) if linked_issuer != issuer => {
             return Ok(Err(Refusal::new(
                 "failed",
                 "sso.identity_issuer_mismatch",
@@ -101,7 +125,12 @@ pub async fn account(
             )
             .of(&user_id)));
         }
-        Some((user_id, _)) => {
+        Some((user_id, _, confirmed)) => {
+            // A link by email whose first sign-in was never completed: still to be confirmed.
+            if confirmed == 0 {
+                email_linked = true;
+                confirm_link = has_own_proof(&mut *conn, &user_id).await?;
+            }
             sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE id = $1")))
                 .bind(&user_id)
                 .fetch_one(&mut *conn)
@@ -173,6 +202,12 @@ pub async fn account(
                         )
                         .of(&a.id)));
                     }
+                    // The first link of this identity to an account that has a password or a
+                    // second factor: the person proves the account once before the link counts
+                    // (docs/api/sso.md, "Linking by email"). An account SCIM owns has neither and
+                    // links at once, as before.
+                    email_linked = true;
+                    confirm_link = has_own_proof(&mut *conn, &a.id).await?;
                     a
                 }
                 None if provider.create_accounts != 0 => {
@@ -226,10 +261,13 @@ pub async fn account(
     }
     // A mapping an earlier sign-in kept for its second step belongs to that sign-in only.
     sqlx::query("DELETE FROM sso_pending_mappings WHERE user_id = $1").bind(&account.id).execute(&mut *conn).await?;
+    // An unconfirmed link stays unconfirmed until the second step proves the account
+    // (`routes::second_factor`); one with nothing to prove counts at once.
     sqlx::query(
-        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, username, created_at, last_sign_in_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (provider_id, subject) DO UPDATE SET \
-         username = excluded.username, last_sign_in_at = excluded.last_sign_in_at",
+        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, username, created_at, last_sign_in_at, \
+         confirmed) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (provider_id, subject) DO UPDATE SET \
+         username = excluded.username, last_sign_in_at = excluded.last_sign_in_at, \
+         confirmed = CASE WHEN excluded.confirmed = 1 THEN 1 ELSE sso_identities.confirmed END",
     )
     .bind(&provider.id)
     .bind(&person.subject)
@@ -238,6 +276,7 @@ pub async fn account(
     .bind(person.username.as_deref())
     .bind(now)
     .bind(now)
+    .bind(i64::from(!confirm_link))
     .execute(&mut *conn)
     .await?;
     // A sign-in method is linked: SCIM's ownership ends now, for good, also if the identity goes
@@ -281,7 +320,7 @@ pub async fn account(
         name: account.name,
         is_server_admin: account.is_server_admin,
     };
-    Ok(Ok(Linked { user, created, break_glass: is_break_glass }))
+    Ok(Ok(Linked { user, created, break_glass: is_break_glass, email_linked, confirm_link }))
 }
 
 /// What the group mapping makes of `groups` for `linked`, without changing anything. `None` for

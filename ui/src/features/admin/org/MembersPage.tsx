@@ -65,7 +65,8 @@ export function MembersPage() {
   const notice = useNotice();
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
-  const [inviting, setInviting] = useState(false);
+  // The invitation dialog, filled in when "Add member" hands a person with an account over.
+  const [inviting, setInviting] = useState<{ email: string; role: string } | null>(null);
   const [links, setLinks] = useState<IssuedInvitation[] | null>(null);
   const [resetting, setResetting] = useState<Member | null>(null);
   const members = list.items ?? [];
@@ -134,7 +135,7 @@ export function MembersPage() {
               <button
                 type="button"
                 className="button button--primary"
-                onClick={() => setInviting(true)}
+                onClick={() => setInviting({ email: "", role: "viewer" })}
               >
                 {t("admin.invitations.invite")}
               </button>
@@ -254,14 +255,24 @@ export function MembersPage() {
             await refresh();
             notice.show({ message: t("admin.members.added", { email }) });
           }}
+          onInvite={
+            canInvite
+              ? (email, role) => {
+                  setAdding(false);
+                  setInviting({ email, role });
+                }
+              : undefined
+          }
         />
       ) : null}
-      {inviting ? (
+      {inviting !== null ? (
         <InviteDialog
           orgId={orgId}
-          onClose={() => setInviting(false)}
+          initialEmail={inviting.email}
+          initialRole={inviting.role}
+          onClose={() => setInviting(null)}
           onCreated={async ({ items, mailed }) => {
-            setInviting(false);
+            setInviting(null);
             await queryClient.invalidateQueries({ queryKey: invitationKeys.list(orgId) });
             if (!mailed) {
               setLinks(items);
@@ -335,10 +346,13 @@ function AddMemberDialog({
   orgId,
   onClose,
   onAdded,
+  onInvite,
 }: {
   orgId: string;
   onClose: () => void;
   onAdded: (email: string) => void;
+  /** Hands the address over to an invitation; absent without `users:invite`. */
+  onInvite: ((email: string, role: string) => void) | undefined;
 }) {
   const { t } = useI18n();
   const access = useAdminAccess();
@@ -346,6 +360,8 @@ function AddMemberDialog({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("viewer");
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
+  // The person belongs to another organization: they join only by accepting an invitation.
+  const [inviteInstead, setInviteInstead] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const roleId = useId();
   const add = useMutation({
@@ -354,10 +370,18 @@ function AddMemberDialog({
     onError: (error) => {
       // Problems with the address belong to its field, where they are announced.
       if (isApiError(error) && error.field === "email") {
+        const reason = errorReason(error)?.reason;
+        setInviteInstead(reason === "members.invite_instead");
         setEmailError(
-          errorReason(error)?.reason === "mail.email_unconfirmed"
+          reason === "mail.email_unconfirmed"
             ? t("admin.members.unconfirmed")
-            : errorText(t, error, ADD_MEMBER_ERRORS),
+            : reason === "members.invite_instead"
+              ? t(
+                  onInvite === undefined
+                    ? "admin.members.inviteInsteadNoRight"
+                    : "admin.members.inviteInstead",
+                )
+              : errorText(t, error, ADD_MEMBER_ERRORS),
         );
         emailRef.current?.focus();
       }
@@ -395,9 +419,21 @@ function AddMemberDialog({
           onValueChange={(value) => {
             setEmail(value);
             setEmailError(undefined);
+            setInviteInstead(false);
           }}
           error={emailError}
         />
+        {inviteInstead && onInvite !== undefined ? (
+          <div>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => onInvite(trimWhitespace(email), role)}
+            >
+              {t("admin.members.inviteInsteadAction")}
+            </button>
+          </div>
+        ) : null}
         <div className="field">
           <label className="field__label" htmlFor={roleId}>
             {t("admin.members.role")}

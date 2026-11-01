@@ -599,6 +599,24 @@ async fn existing_account(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, email: 
         return Err(ScimError::taken("this account is already a user of this organization's directory")
             .because("scim.account_linked"));
     }
+    // A person who belongs to another organization joins this one only by accepting an
+    // invitation (docs/api/scim.md, "Users"): the directory's word does not bind their account to
+    // this organization's sign-in rules. Once they are a member here, the link is theirs to keep.
+    let (here, elsewhere): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(CASE WHEN org_id = $2 THEN 1 ELSE 0 END), 0), \
+         COALESCE(SUM(CASE WHEN org_id <> $3 THEN 1 ELSE 0 END), 0) FROM org_members WHERE user_id = $1",
+    )
+    .bind(&account.id)
+    .bind(ctx.org_id)
+    .bind(ctx.org_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if here == 0 && elsewhere > 0 {
+        return Err(ScimError::taken(
+            "an account with this email belongs to another organization; invite the person instead",
+        )
+        .because("scim.account_in_other_org"));
+    }
     Ok(Some(account.id))
 }
 
@@ -609,6 +627,12 @@ pub async fn create(ctx: &Ctx<'_>, body: Value) -> ScimResult<Response> {
     })?;
     let now = ctx.state.clock.now_ms();
     let mut tx = crate::db::begin(&ctx.state.db).await?;
+    // The row of the account the address names first (user rows come before organization rows in
+    // the lock order): every way of joining an organization takes it, so `existing_account`'s
+    // check of its other memberships cannot race a join elsewhere on PostgreSQL.
+    if let [(id, false)] = crate::routes::all_accounts_with_email(&mut tx, &email).await?.as_slice() {
+        sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(id).execute(&mut *tx).await?;
+    }
     crate::authz::lock_org(&mut tx, ctx.org_id).await?;
     ensure_user_name_free(&mut tx, ctx.org_id, &data.user_name, None).await?;
     let (user_id, made) = match existing_account(&mut tx, ctx, &email).await? {

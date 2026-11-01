@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
-import { meQuery } from "../../../api/auth";
+import { meQuery, type OrgMembership } from "../../../api/auth";
 import { isApiError } from "../../../api/client";
 import { MIN_PASSWORD_LENGTH, trimWhitespace } from "../../../auth/validation";
 import { Page } from "../../../components/Page";
@@ -10,6 +10,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
 import { PreferencesSection } from "../../../preferences/PreferencesSection";
+import { errorReason } from "../../datasources/reasons";
 import { fetchSecurity, securityKeys } from "../../security/api";
 import { ConfirmFactorDialog } from "../../security/ConfirmFactorDialog";
 import { WhyCanI } from "../access/WhyCanI";
@@ -17,6 +18,7 @@ import "../admin.css";
 import {
   adminKeys,
   changeMyPassword,
+  leaveOrg,
   listMySessions,
   revokeOtherSessions,
   revokeSession,
@@ -56,6 +58,7 @@ export function AccountSections() {
       <PasswordSection />
       <SessionsSection />
       <PermissionsSection />
+      <OrganizationsSection />
     </>
   );
 }
@@ -400,6 +403,87 @@ function SessionsSection() {
         onConfirm={() => revokeOthers.mutate()}
       >
         {t("admin.account.revokeOthersText")}
+      </ConfirmDialog>
+    </AccountSection>
+  );
+}
+
+/**
+ * The user's organizations, each of which they may leave on their own; only the last owner of an
+ * organization stays (`members.last_owner`).
+ */
+function OrganizationsSection() {
+  const { t } = useI18n();
+  const { me } = appRoute.useRouteContext();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const notice = useNotice();
+  const current = useCurrentOrg();
+  const [leaving, setLeaving] = useState<OrgMembership | null>(null);
+  const keys = useRowKeys(me.orgs.length);
+  const leave = useMutation({
+    mutationFn: (org: OrgMembership) => leaveOrg(org.id),
+    onSuccess: async (_, org) => {
+      setLeaving(null);
+      // Every page reads its organization when it loads: leaving the current one starts over.
+      if (org.id === current?.id) {
+        window.location.assign("/");
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: meQuery.queryKey });
+      await router.invalidate();
+      notice.show({ message: t("admin.account.orgLeft", { name: org.name }) });
+    },
+  });
+  if (me.orgs.length === 0) {
+    return null;
+  }
+  const leaveError =
+    leave.error === null
+      ? null
+      : errorReason(leave.error)?.reason === "members.last_owner"
+        ? t("admin.account.orgLastOwner")
+        : errorText(t, leave.error);
+  return (
+    <AccountSection title={t("admin.account.orgs")} lead={t("admin.account.orgsLead")}>
+      <Notice notice={notice.notice} onDismiss={notice.clear} />
+      <ul className="admin-list" aria-label={t("admin.account.orgs")} {...keys.listProps}>
+        {me.orgs.map((org, index) => (
+          <li key={org.id} className="admin-row" {...keys.rowProps(index)}>
+            <div className="admin-row__main">
+              <span className="admin-row__title">{org.name}</span>
+              <span className="admin-row__meta">{roleLabel(t, org.role, undefined)}</span>
+            </div>
+            <div className="admin-row__actions">
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-label={t("admin.account.orgLeaveNamed", { name: org.name })}
+                onClick={() => {
+                  leave.reset();
+                  setLeaving(org);
+                }}
+              >
+                {t("admin.account.orgLeave")}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <ConfirmDialog
+        open={leaving !== null}
+        title={t("admin.account.orgLeaveTitle")}
+        confirmLabel={t("admin.account.orgLeaveConfirm")}
+        busy={leave.isPending}
+        error={leaveError}
+        onClose={() => setLeaving(null)}
+        onConfirm={() => {
+          if (leaving !== null) {
+            leave.mutate(leaving);
+          }
+        }}
+      >
+        {t("admin.account.orgLeaveText", { name: leaving?.name ?? "" })}
       </ConfirmDialog>
     </AccountSection>
   );

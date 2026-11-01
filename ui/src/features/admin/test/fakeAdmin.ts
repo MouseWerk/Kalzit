@@ -126,6 +126,8 @@ export interface FakeAdminState {
   orgSettings: WireSetting[];
   audit: WireAuditEvent[];
   users: WireAdminUser[];
+  /** Accounts that belong to another organization: they join only by invitation. */
+  elsewhere: Set<string>;
   orgs: WireAdminOrg[];
   serverSettings: WireSetting[];
   sessions: WireSession[];
@@ -346,6 +348,7 @@ function initialState(server: FakeServer): FakeAdminState {
         createdAt: T0,
       },
     ],
+    elsewhere: new Set(),
     users: [
       {
         id: me.id,
@@ -683,6 +686,24 @@ function handleMe(
     state.sessions = state.sessions.filter((session) => session.current);
     return json(200, { revoked });
   }
+  // Leaving an organization; as here the only owner, an owner stays.
+  const leaving = /^\/api\/me\/orgs\/([^/]+)$/.exec(path);
+  if (leaving !== null && method === "DELETE") {
+    const org = server.state.user.orgs.find((candidate) => candidate.id === leaving[1]);
+    if (org === undefined) {
+      refuse("not_found");
+    }
+    if (org.role === "owner") {
+      return json(409, {
+        error: { code: "conflict", message: "last owner", reason: "members.last_owner" },
+      });
+    }
+    server.state.user = {
+      ...server.state.user,
+      orgs: server.state.user.orgs.filter((candidate) => candidate.id !== org.id),
+    };
+    return noContent();
+  }
   const session = /^\/api\/me\/sessions\/([^/]+)$/.exec(path);
   if (session !== null && method === "DELETE") {
     if (!state.sessions.some((candidate) => candidate.id === session[1])) {
@@ -785,6 +806,16 @@ function members(
     }
     if (state.members.some((member) => member.userId === user.id)) {
       refuse("conflict", "email");
+    }
+    if (state.elsewhere.has(user.id)) {
+      return json(409, {
+        error: {
+          code: "conflict",
+          message: "invite instead",
+          field: "email",
+          reason: "members.invite_instead",
+        },
+      });
     }
     holds(state, permissions);
     const member = {

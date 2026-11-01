@@ -698,3 +698,23 @@ async fn service_accounts_are_outside_the_second_factor_rules() {
     assert_eq!(pending, 0);
     t.finish().await;
 }
+
+#[tokio::test]
+async fn a_token_never_changes_how_people_sign_in() {
+    let mut t = TestApp::new().await;
+    let id = t.account("bot", "admin").await;
+    let (token, _) = t.token(&id, json!({ "name": "x" })).await;
+    for key in ["security.two_factor_required", "security.two_factor_methods", "signin.local_password"] {
+        let value = if key == "security.two_factor_methods" { json!(["totp"]) } else { json!("off") };
+        let body = json!({ "value": value, "version": 0 });
+        let r = t.with_token(Method::PATCH, &t.path(&format!("/settings/{key}")), Some(body), &token).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "token.not_for_this_route"), "{key}: {}", r.body);
+        let batch = json!({ "changes": [{ "key": key, "value": value, "version": 0 }] });
+        let r = t.with_token(Method::POST, &t.path("/settings/batch"), Some(batch), &token).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "token.not_for_this_route"), "{key}: {}", r.body);
+    }
+    // Other settings of its organization stay open to it.
+    let r = t.with_token(Method::GET, &t.path("/settings"), None, &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.finish().await;
+}

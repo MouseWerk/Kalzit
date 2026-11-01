@@ -15,6 +15,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::auth::SessionUser;
+use crate::auth::api_token::TokenCaller;
 use crate::authz::{Access, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -121,10 +122,12 @@ async fn patch_org(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
     headers: HeaderMap,
     Path((_, key)): Path<(String, String)>,
     JsonBody(body): JsonBody<PatchSetting>,
 ) -> ApiResult<Json<SettingView>> {
+    crate::auth::second_factor::refuse_tokens_for_setting(caller.as_deref(), &key)?;
     patch(&state, &ctx.user, &info, &headers, Some(&ctx.org_id), &key, body).await
 }
 
@@ -507,8 +510,12 @@ async fn batch_org(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
     headers: HeaderMap,
     JsonBody(body): JsonBody<BatchRequest>,
 ) -> ApiResult<Json<Page<SettingView>>> {
+    for change in &body.changes {
+        crate::auth::second_factor::refuse_tokens_for_setting(caller.as_deref(), &change.key)?;
+    }
     batch(&state, &ctx.user, &info, &headers, Some(&ctx.org_id), body).await
 }

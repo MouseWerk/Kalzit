@@ -55,6 +55,9 @@ pub struct Member {
     /// An "IdP entscheidet" group mapping decides the role (docs/api/sso.md).
     #[sqlx(try_from = "i64")]
     idp_managed: IdpManaged,
+    /// How the member joined (`invitation`, `creator`, `scim_owned`, `mapping`, `direct`,
+    /// `legacy`); only the first four bind them to this organization's sign-in rules.
+    joined_by: String,
 }
 
 /// A 0/1 column as a JSON boolean.
@@ -74,7 +77,7 @@ const MEMBER_COLUMNS: &str = "SELECT u.id AS user_id, u.email, u.name, m.role, m
      (SELECT l.locked_until FROM second_factor_lockouts l WHERE l.user_id = u.id) AS sf_locked_until, \
      CASE WHEN EXISTS (SELECT 1 FROM sso_managed s WHERE s.user_id = m.user_id AND s.org_id = m.org_id \
      AND s.team_id = '') OR EXISTS (SELECT 1 FROM scim_managed c WHERE c.user_id = m.user_id \
-     AND c.org_id = m.org_id AND c.team_id = '') THEN 1 ELSE 0 END AS idp_managed \
+     AND c.org_id = m.org_id AND c.team_id = '') THEN 1 ELSE 0 END AS idp_managed, m.joined_by \
      FROM org_members m JOIN users u ON u.id = m.user_id";
 
 /// Fills in the members' second factor: whether the server or this organization requires one of
@@ -94,7 +97,9 @@ async fn with_second_factor(state: &AppState, org_id: &str, members: &mut [Membe
                 admin
             }
         };
-        let rule = sf::MembershipRule { org_id: org_id.into(), org_name: String::new(), requirement: own, admin };
+        // A membership the person did not consent to is bound by the server's rule only.
+        let requirement = if crate::authz::consented(&m.joined_by) { own } else { sf::Requirement::Off };
+        let rule = sf::MembershipRule { org_id: org_id.into(), org_name: String::new(), requirement, admin };
         let required = sf::resolve(server, m.sf_server_admin != 0, std::slice::from_ref(&rule)).is_some();
         m.second_factor = sf::summary(m.sf_totp, m.sf_passkeys, m.sf_locked_until, required, now);
     }
@@ -150,10 +155,6 @@ async fn add(
 ) -> ApiResult<(StatusCode, Json<Member>)> {
     let email = super::normalize_email(&req.email).map_err(|e| e.with_field("email"))?;
     let mut tx = crate::db::begin(&state.db).await?;
-    // First, so that two requests adding the same account run one after the other and the second
-    // finds the membership.
-    lock_org(&mut tx, &ctx.org_id).await?;
-    let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     let user: Option<(String, i64)> =
         sqlx::query_as("SELECT id, email_confirmed FROM users WHERE email = $1 AND service_account = 0")
             .bind(&email)
@@ -163,6 +164,14 @@ async fn add(
     let Some((user_id, confirmed)) = user else {
         return Err(ApiError::validation("no account has this email").with_field("email"));
     };
+    // The account's row first (user rows come before organization rows in the lock order): every
+    // way of joining an organization takes it, so the check below that the account belongs to no
+    // organization cannot race another organization's join on PostgreSQL.
+    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(&user_id).execute(&mut *tx).await?;
+    // Then the organization, so that two requests adding the same account run one after the other
+    // and the second finds the membership.
+    lock_org(&mut tx, &ctx.org_id).await?;
+    let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     // An address nobody proved to read (an account from a copied invitation link) names nobody
     // for sure: its owner confirms it by mail first (docs/api/mail.md, "Email confirmation").
     if confirmed == 0 {
@@ -178,15 +187,33 @@ async fn add(
     if existing > 0 {
         return Err(conflict("this account is already a member").with_field("email"));
     }
-    let now = state.clock.now_ms();
-    sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)")
-        .bind(&ctx.org_id)
+    // A person who already belongs to an organization joins another one only by accepting an
+    // invitation: this organization's sign-in rules (password sign-in off, a required second
+    // factor) would bind their account everywhere, so they decide themselves. Accounts in no
+    // organization yet are still added directly.
+    let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1")
         .bind(&user_id)
-        .bind(&role.key)
-        .bind(now)
-        .execute(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
+    if elsewhere > 0 {
+        return Err(conflict("this account belongs to another organization; invite it instead")
+            .with_field("email")
+            .because("members.invite_instead"));
+    }
+    let now = state.clock.now_ms();
+    // Added by an admin, not by the person: this organization's sign-in rules do not bind them
+    // (`authz::CONSENTED_JOINS`).
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, $3, $4, 'direct')",
+    )
+    .bind(&ctx.org_id)
+    .bind(&user_id)
+    .bind(&role.key)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     crate::scim::release(&mut tx, &user_id, Some(&ctx.org_id)).await?;
+    rejoined(&mut tx, &ctx.org_id, &user_id).await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user_id, "role": role.key });
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.added", ("user", &user_id), summary).await?;
@@ -316,11 +343,36 @@ async fn remove(
     current_role_checked(&mut tx, &ctx, &user_id, None).await?;
     ensure_not_idp_managed(&mut tx, &ctx.org_id, &user_id).await?;
     remove_membership(&mut tx, &ctx.org_id, &user_id).await?;
+    left(&mut tx, &ctx.org_id, &user_id, state.clock.now_ms()).await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.removed", ("user", &user_id), json!({ "userId": user_id }))
         .await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The person left `org_id` or an admin removed them: this organization's SCIM never adds them
+/// back (`sso::mapping`, `scim_users.left_at`), until they join again by invitation or an admin
+/// adds them (`rejoined`). Not for SCIM's own deactivation, which a reactivation undoes.
+pub async fn left(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str, now: i64) -> ApiResult<()> {
+    sqlx::query("UPDATE scim_users SET left_at = $1 WHERE org_id = $2 AND user_id = $3")
+        .bind(now)
+        .bind(org_id)
+        .bind(user_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// The person is a member of `org_id` again by an invitation or an admin's adding: SCIM may keep
+/// them in step from now on.
+pub async fn rejoined(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str) -> ApiResult<()> {
+    sqlx::query("UPDATE scim_users SET left_at = NULL WHERE org_id = $1 AND user_id = $2")
+        .bind(org_id)
+        .bind(user_id)
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// Ends `user_id`'s membership in `org_id` with everything that belongs to it there; the account

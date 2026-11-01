@@ -582,8 +582,11 @@ async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
     let orgs: Vec<(String, String)> =
         sqlx::query_as("SELECT id, name FROM orgs ORDER BY name, id").fetch_all(&state.db).await?;
     // Members without any method, per organization.
-    let without: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT m.org_id, m.user_id, m.role, u.is_server_admin FROM org_members m JOIN users u ON u.id = m.user_id \
+    // Only memberships the person consented to are bound by the organization's rule
+    // (`authz::CONSENTED_JOINS`); the server's rule is counted for the others too.
+    let without: Vec<(String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT m.org_id, m.user_id, m.role, u.is_server_admin, m.joined_by FROM org_members m \
+         JOIN users u ON u.id = m.user_id \
          WHERE u.disabled = 0 AND u.service_account = 0 AND NOT EXISTS (SELECT 1 FROM user_totp t WHERE t.user_id = u.id) \
          AND NOT EXISTS (SELECT 1 FROM user_passkeys p WHERE p.user_id = u.id)",
     )
@@ -594,9 +597,10 @@ async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
         let policy = crate::settings::get_org(&state, &id, sf::POLICY_KEY).await?;
         let own = sf::Requirement::parse(&policy);
         let mut missing = 0;
-        for (_, _, role, server_admin) in without.iter().filter(|(org, ..)| *org == id) {
+        for (_, _, role, server_admin, joined_by) in without.iter().filter(|(org, ..)| *org == id) {
             let admin = sf::is_admin_role(&state.db, &id, role).await?;
-            let rule = sf::MembershipRule { org_id: id.clone(), org_name: name.clone(), requirement: own, admin };
+            let requirement = if crate::authz::consented(joined_by) { own } else { sf::Requirement::Off };
+            let rule = sf::MembershipRule { org_id: id.clone(), org_name: name.clone(), requirement, admin };
             if sf::resolve(server, *server_admin != 0, std::slice::from_ref(&rule)).is_some() {
                 missing += 1;
             }

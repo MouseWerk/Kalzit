@@ -65,8 +65,21 @@ interface Member {
   name: string;
   role: string;      // role key
   joinedAt: number;
+  joinedBy: "invitation" | "creator" | "scim_owned" | "mapping" | "direct" | "legacy";
 }
 ```
+
+`joinedBy` (`org_members.joined_by`) records how the person joined: `invitation` (they accepted
+an invitation), `creator` (they set up Kalzit with this organization, or a server admin made the
+organization with them as its owner), `scim_owned` (an account this organization's SCIM made and
+owns), `mapping` (a group mapping of an identity provider a server admin set up), `direct` (an
+admin added the account, or SCIM linked an existing account that belonged to no organization;
+service accounts too) or `legacy` (every membership from before 0.5.1). The organization's sign-in
+rules, password sign-in off (`signin.local_password`, docs/api/sso.md) and its second factor
+requirement (`security.two_factor_required`, "Second factor" below), bind a member only for
+`invitation`, `creator`, `scim_owned` and `mapping`: the person's consent. They never bind a
+`direct` or `legacy` member, for whom only the server's rules count. Accepting an invitation of an
+organization one is already a member of turns the membership into `invitation`.
 
 | Method and path | Access | Answer |
 |---|---|---|
@@ -75,10 +88,19 @@ interface Member {
 | `PATCH /orgs/{orgId}/members/{userId}` | `users:write` | `200 Member` |
 | `DELETE /orgs/{orgId}/members/{userId}` | `users:write` | `204` |
 
-**`POST`** `{ "email": string, "role": string }` adds an existing account (any case and
-surrounding spaces in the email are fine). Errors: `validation` `email` (not an address, or no
-account has it), `validation` `role` (no such role key), `409 conflict` `email` (already a
-member), `403` (role exceeds the caller's permissions). Audit `member.added`.
+**`POST`** `{ "email": string, "role": string }` adds an existing account that belongs to no
+organization yet (any case and surrounding spaces in the email are fine). A person who already
+belongs to an organization joins another one only by accepting an invitation
+(docs/api/mail.md, "Invitations"), so the person decides. The new membership is `direct`: this
+organization's sign-in rules do not bind it. The account's row is locked before the
+organization's, as on every way of joining, so two organizations cannot add one account at the
+same time. Errors:
+`validation` `email` (not an address, or no account has it), `validation` `role` (no such role
+key), `409 conflict` `email` (already a member; reason `mail.email_unconfirmed` for an address
+its owner has not confirmed; reason `members.invite_instead` for an account in another
+organization), `403` (role exceeds the caller's permissions). Audit `member.added`.
+Memberships from before 0.5.1 stay as they are (`legacy`); their members can leave on their own
+(below).
 
 **`PATCH`** `{ "role": string }`. Errors: `404` (not a member), `validation` `role`, `403` (new or
 current role exceeds the caller's permissions), `409 conflict` (last owner). Audit
@@ -87,7 +109,25 @@ current role exceeds the caller's permissions), `409 conflict` (last owner). Aud
 **`DELETE`** removes the membership, the member's team memberships in this organization and the
 grants to them here; the account stays. The caller must hold what the member loses: their org
 role, the roles of their teams here and the permissions of their grants. Errors: `404`, `403`,
-`409 conflict` (last owner). Audit `member.removed`.
+`409 conflict` (last owner). Audit `member.removed`. This organization's SCIM never adds the
+person back (docs/api/scim.md, "Users").
+
+### Leaving an organization
+
+| Method and path | Access | Answer |
+|---|---|---|
+| `DELETE /me/orgs/{orgId}` | signed in (a session, never an API token) | `204` |
+
+Everyone can leave an organization on their own; it ends the membership like `DELETE` above (team
+memberships, grants and what the person kept there go with it, the account stays). It is not an
+organization route, so no rule of that organization stands in the way: it works with any session
+of the person, also while that organization turned password sign-in off and the password no
+longer signs them in. Its last enabled owner cannot leave (`409 conflict`, reason
+`members.last_owner`); another member becomes owner first. Errors: `404` (not a member). Audit
+`member.left` in that organization. The leave sticks for the organization's SCIM, which never
+adds the person back (docs/api/scim.md, "Users"), until they accept an invitation again or an
+admin adds them. A provider whose group mapping a server admin set up may add the person again
+at their next sign-in through it.
 
 ## Teams
 
@@ -838,7 +878,10 @@ The server's rule is the minimum everywhere; an organization can only add to it 
 accepted there). `admins` on the server means server admins and the administrators of any
 organization; in an organization, its administrators. An administrator is a member whose role
 holds `users:write`, `roles:write` or `settings:write`. A person needs a second factor when the
-server's rule or the rule of any organization they belong to applies to them. A method turned off
+server's rule or the rule of any organization they joined by consent (`joinedBy` `invitation`,
+`creator`, `scim_owned` or `mapping`, "Members") applies to them; an organization's rule never
+binds a `direct` or `legacy` member. Everyone can leave an organization ("Leaving an
+organization"). A method turned off
 keeps working for those who have it; it can no longer be set up. Where passkeys cannot work (Kalzit opened by an IP address), the authenticator app is offered instead even when only passkeys are allowed (`allowed` says so), so a required setup, the first owner's included, never dead-ends. Changing these settings (also by import or reset) needs a fresh confirmation (`403 confirmation_required`) when the admin has a second factor. There is no grace period: whoever
 must have a second factor and has none sets one up at the next sign-in, before a session opens.
 The break-glass administrator signs in through the same steps; nothing bypasses the policy.
@@ -863,6 +906,7 @@ interface Prompt {
   requiredBy: { kind: "server" } | { kind: "org"; id: string; name: string } | null;
   lockedUntil: number | null;
   expiresAt: number;
+  linkPassword: boolean;          // the account's own password first (below)
 }
 type Proof =
   | { method: "totp"; code: string }
@@ -878,6 +922,7 @@ type Proof =
 | `POST /auth/second-factor/setup/totp` | `200 TotpSetup` |
 | `POST /auth/second-factor/setup/passkey` | `200 { "publicKey": PublicKeyCredentialCreationOptionsJSON }` |
 | `POST /auth/second-factor/setup` | `200 { "me": Me, "recoveryCodes": string[] }` and the session cookie |
+| `POST /auth/second-factor/password` | `200 { "me": Me }` and the session cookie, or `200 { "secondFactor": Prompt }` when a setup follows |
 
 All are `Public` and need the pending cookie; without a valid one they answer `401
 unauthenticated` with `reason` `second_factor.pending_expired`. `POST /auth/second-factor` takes a
@@ -887,7 +932,17 @@ unauthenticated` with `reason` `second_factor.pending_expired`. `POST /auth/seco
 "name"?, "credential" }` and stores the method with a first set of recovery codes, all in the
 transaction that opens the session. A completed sign-in sets the session and device cookies as
 `POST /auth/login` does, removes the pending cookie, and counts as a fresh confirmation of the new
-session. `POST /auth/logout` also ends a half-signed-in state. Audit `auth.signed_in` with
+session. `POST /auth/logout` also ends a half-signed-in state.
+
+`linkPassword: true` comes after a sign-in through a provider whose identity was linked to an
+existing account by its email address and is not confirmed yet, when that account has a password
+and no second factor (docs/api/sso.md, "Linking by email"). `POST /auth/second-factor/password`
+takes `{ "password" }`, the account's own password; it counts against the account's lockout and
+the address's sign-in budget like a wrong code and answers `401 invalid_credentials` (field
+`password`) when it is wrong. With `setup: true` the setup of a second factor follows, and the
+setup routes and `POST /auth/second-factor` answer `validation` `second_factor.password_first`
+until the password was confirmed. A sign-in completed with the password is not a fresh
+confirmation of the session. Audit `auth.signed_in` with
 `{ "secondFactor": method }`, `user.second_factor_enrolled` after a setup.
 
 ```ts
@@ -993,10 +1048,13 @@ second factor at their next sign-in.
 ### Sign-ins through identity providers
 
 `auth::second_factor::FirstStep` is the hook for sign-ins that do not use a local password:
-`Provider { provider_id, mfa_done, provider_mfa_trusted }` skips Kalzit's second factor only when
-the provider says it checked one (`mfa_done`, such as OIDC `amr`) and the provider's switch in
-Kalzit trusts that (`provider_mfa_trusted`, off by default); otherwise Kalzit asks. `Directory`
-(LDAP) always asks. `routes::second_factor::finish_first_step` opens the session or starts the
+`Provider { provider_id, mfa_done, provider_mfa_trusted, confirm_link }` skips Kalzit's second
+factor only when the provider says it checked one (`mfa_done`, such as OIDC `amr`) and the
+provider's switch in Kalzit trusts that (`provider_mfa_trusted`, off by default, and never on the
+first sign-in that links an identity by email); otherwise Kalzit asks. `Directory` (LDAP) always
+asks. `confirm_link` marks an unconfirmed link by email: the account's second factor, or without
+one its password (`linkPassword`), is asked once, and the link counts as confirmed when that
+second step completes. `routes::second_factor::finish_first_step` opens the session or starts the
 second step for any of them.
 
 ## Reasons
@@ -1004,6 +1062,13 @@ second step for any of them.
 Errors of the routes above carry `error.reason` and `error.params` like those of the data source
 routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request reasons
 (`request.name_length`, ...) are listed there.
+
+### Members
+
+| Reason | Code | When |
+|---|---|---|
+| `members.invite_instead` | `409 conflict` | adding an account that belongs to another organization: invite the person instead |
+| `members.last_owner` | `409 conflict` | the last owner of an organization leaving it |
 
 ### Second factor
 
@@ -1013,6 +1078,8 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.locked` | `429 rate_limited` | too many wrong codes; `params.until` |
 | `second_factor.busy` | `429 rate_limited` | more code attempts at once than the budget |
 | `second_factor.setup_needed` | `422 validation` | the account must set up a second factor first |
+| `second_factor.password_first` | `422 validation` | the account's password comes first (`linkPassword`) |
+| `second_factor.password_not_asked` | `422 validation` | `POST /auth/second-factor/password` for a sign-in that does not ask for it |
 | `second_factor.setup_done` | `409 conflict` | a forced setup when the account got a second factor meanwhile |
 | `second_factor.setup_expired` | `422 validation` | the app setup or passkey dialog was not started or expired |
 | `second_factor.no_totp` | `422 validation` | the account has no authenticator app |
@@ -1040,5 +1107,5 @@ needs a fresh confirmation.
 | `token.expiry_out_of_range` | `maxDays` | `422 validation` on `expiresInDays` or `expiresAt`: not in the future, or more than `maxDays` days ahead |
 | `token.ip_invalid` | `line`, `value` | `422 validation` on `allowedIps`: entry `line` (from 1) is no address or network |
 | `token.ip_too_many` | `max` | `422 validation` on `allowedIps`: more than `max` entries |
-| `token.not_for_this_route` | | `403 forbidden`: API tokens cannot manage service accounts or tokens |
+| `token.not_for_this_route` | | `403 forbidden`: API tokens cannot manage service accounts or tokens, nor change an organization's sign-in rules (`security.two_factor_required`, `security.two_factor_methods`, `signin.local_password`) |
 | `token.org_routes_only` | | `403 forbidden`: an API token was sent to a route outside its organization |

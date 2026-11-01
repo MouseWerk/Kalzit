@@ -1182,6 +1182,7 @@ const SCIM_REASONS = [
   "scim.email_taken",
   "scim.email_unconfirmed",
   "scim.account_linked",
+  "scim.account_in_other_org",
   "scim.account_protected",
   "scim.too_many",
   "scim.group_name_missing",

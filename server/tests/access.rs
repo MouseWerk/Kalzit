@@ -170,6 +170,19 @@ impl TestApp {
         s
     }
 
+    /// Makes `user_id` a member of `org` with `role`, as an accepted invitation does.
+    async fn join(&self, org: &str, user_id: &str, role: &str) {
+        sqlx::query(
+            "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, $3, 0, 'invitation')",
+        )
+            .bind(org)
+            .bind(user_id)
+            .bind(role)
+            .execute(&self.state.db)
+            .await
+            .unwrap();
+    }
+
     /// Sends the calls at the same moment, each from its own task; the answers in call order.
     async fn parallel(&self, calls: Vec<(Method, String, Value, Session)>) -> Vec<(StatusCode, Value)> {
         let mut tasks = Vec::new();
@@ -933,6 +946,124 @@ async fn users_manage_their_own_name_password_and_sessions() {
     t.finish().await;
 }
 
+#[tokio::test]
+async fn people_leave_organizations_themselves_except_the_last_owner() {
+    let t = test_app(None).await;
+    let (admin, org) = t.setup().await;
+    let bea = t.member(&admin, &org, "Bea", "bea@example.de", "editor").await;
+    let r = t.post("/api/admin/orgs", json!({ "name": "Beas Firma", "ownerUserId": bea.user_id }), &admin).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let own = r.body["id"].as_str().unwrap().to_string();
+    let reason = |r: &Reply| r.body["error"]["reason"].as_str().unwrap_or("").to_string();
+
+    // Bea leaves the first organization; the one she alone owns she cannot leave.
+    let r = t.delete(&format!("/api/me/orgs/{org}"), &bea).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let me = t.get("/api/me", &bea).await;
+    assert_eq!(me.body["orgs"].as_array().unwrap().len(), 1, "{}", me.body);
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &bea).await.status, StatusCode::NOT_FOUND);
+    let r = t.delete(&format!("/api/me/orgs/{own}"), &bea).await;
+    assert_eq!((r.status, reason(&r).as_str()), (StatusCode::CONFLICT, "members.last_owner"), "{}", r.body);
+    // Nothing to leave where she is no member.
+    assert_eq!(t.delete(&format!("/api/me/orgs/{org}"), &bea).await.status, StatusCode::NOT_FOUND);
+    // The last owner of the first organization stays too.
+    let r = t.delete(&format!("/api/me/orgs/{org}"), &admin).await;
+    assert_eq!((r.status, reason(&r).as_str()), (StatusCode::CONFLICT, "members.last_owner"), "{}", r.body);
+    assert!(has(&t.audit_actions().await, "member.left"));
+
+    // Back in the first organization, which turns password sign-in off for its members: her
+    // password no longer signs her in, but her session still lets her leave, and then it does.
+    t.join(&org, &bea.user_id, "viewer").await;
+    let settings = t.get(&format!("/api/orgs/{org}/settings"), &admin).await;
+    let version = settings.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == "signin.local_password")
+        .map(|s| s["version"].as_i64().unwrap())
+        .unwrap();
+    let path = format!("/api/orgs/{org}/settings/signin.local_password");
+    let r = t.patch(&path, json!({ "value": "off", "version": version }), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let login = json!({ "email": "bea@example.de", "password": PASSWORD });
+    let r = t.send(Method::POST, "/api/auth/login", Some(login.clone()), None).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNAUTHORIZED, "invalid_credentials"), "{}", r.body);
+    let r = t.delete(&format!("/api/me/orgs/{org}"), &bea).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let r = t.send(Method::POST, "/api/auth/login", Some(login), None).await;
+    assert_eq!(r.status, StatusCode::OK, "the organization's rule no longer binds her: {}", r.body);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn an_organizations_sign_in_rules_bind_only_members_who_consented() {
+    let t = test_app(None).await;
+    let (admin, org) = t.setup().await;
+    // Dora was added by an admin, Lena's membership is from before 0.5.1, Ina accepted an invitation.
+    t.member(&admin, &org, "Dora", "dora@example.de", "viewer").await;
+    t.member(&admin, &org, "Lena", "lena@example.de", "viewer").await;
+    sqlx::query("UPDATE org_members SET joined_by = 'legacy' WHERE user_id = (SELECT id FROM users WHERE email = $1)")
+        .bind("lena@example.de")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let ina = t.user(&admin, "Ina", "ina@example.de").await;
+    t.join(&org, &ina.user_id, "viewer").await;
+    let r = t.get(&format!("/api/orgs/{org}/members"), &admin).await;
+    let joined: Vec<(String, String)> = r.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["email"].as_str().unwrap().to_string(), m["joinedBy"].as_str().unwrap().to_string()))
+        .collect();
+    for expected in [("dora@example.de", "direct"), ("lena@example.de", "legacy"), ("ina@example.de", "invitation")] {
+        assert!(joined.contains(&(expected.0.to_string(), expected.1.to_string())), "{joined:?}");
+    }
+    assert!(joined.contains(&("joerg@example.de".to_string(), "creator".to_string())), "{joined:?}");
+
+    let set = |key: &'static str, value: &'static str| {
+        let t = &t;
+        let admin = &admin;
+        let org = org.clone();
+        async move {
+            let settings = t.get(&format!("/api/orgs/{org}/settings"), admin).await;
+            let version = settings.body["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["key"] == key)
+                .map(|s| s["version"].as_i64().unwrap())
+                .unwrap();
+            let r = t
+                .patch(&format!("/api/orgs/{org}/settings/{key}"), json!({ "value": value, "version": version }), admin)
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
+        }
+    };
+    let login = |email: &str| json!({ "email": email, "password": PASSWORD });
+
+    // Password sign-in off binds Ina only.
+    set("signin.local_password", "off").await;
+    for email in ["dora@example.de", "lena@example.de"] {
+        let r = t.send(Method::POST, "/api/auth/login", Some(login(email)), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{email}: {}", r.body);
+        assert!(r.body.get("secondFactor").is_none(), "{email}: {}", r.body);
+    }
+    let r = t.send(Method::POST, "/api/auth/login", Some(login("ina@example.de")), None).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNAUTHORIZED, "invalid_credentials"), "{}", r.body);
+    set("signin.local_password", "inherit").await;
+
+    // So does a second factor the organization requires.
+    set("security.two_factor_required", "everyone").await;
+    for email in ["dora@example.de", "lena@example.de"] {
+        let r = t.send(Method::POST, "/api/auth/login", Some(login(email)), None).await;
+        assert!(r.body.get("secondFactor").is_none(), "{email}: {}", r.body);
+    }
+    let r = t.send(Method::POST, "/api/auth/login", Some(login("ina@example.de")), None).await;
+    assert_eq!(r.body["secondFactor"]["setup"], json!(true), "{}", r.body);
+    t.finish().await;
+}
+
 /// Disabling an owner of two organizations while members change in both at the same moment: no
 /// deadlock or 500, and each organization keeps an enabled owner. On PostgreSQL this needs the
 /// disable path to lock the organizations before their owner rows, like member changes do.
@@ -943,11 +1074,10 @@ async fn check_disable_races_member_changes(t: &TestApp, admin: &Session) {
     let first_org = first_org.as_str();
     let r = t.post("/api/admin/orgs", json!({ "name": "Zweite", "ownerUserId": ada.user_id }), admin).await;
     let second_org = r.body["id"].as_str().unwrap().to_string();
-    let add = |email: &str| json!({ "email": email, "role": "owner" });
-    let r = t.post(&format!("/api/orgs/{second_org}/members"), add("joerg@example.de"), &ada).await;
-    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
-    let r = t.post(&format!("/api/orgs/{first_org}/members"), add("ada.race@example.de"), admin).await;
-    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    // Both already belong to an organization, so they join the other one as if they had accepted
+    // an invitation (direct adding is for accounts in no organization).
+    t.join(&second_org, &admin.user_id, "owner").await;
+    t.join(first_org, &ada.user_id, "owner").await;
 
     let demote = |org: &str, who: &Session| format!("/api/orgs/{org}/members/{}", who.user_id);
     let calls = vec![

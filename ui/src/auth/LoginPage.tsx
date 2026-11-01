@@ -28,7 +28,11 @@ import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { errorReason } from "../features/datasources/reasons";
 import { fetchPrompt, isPrompt, type Prompt } from "../features/security/api";
-import { SecondFactorSetup, SecondFactorStep } from "../features/security/SecondFactorStep";
+import {
+  LinkPasswordStep,
+  SecondFactorSetup,
+  SecondFactorStep,
+} from "../features/security/SecondFactorStep";
 import { type Translate, useI18n } from "../i18n/i18n";
 import { leavePage } from "../lib/leavePage";
 import { readPreference, writePreference } from "../lib/storage";
@@ -411,7 +415,13 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     };
     return (
       <AccessLayout>
-        {prompt.setup ? <SecondFactorSetup {...props} /> : <SecondFactorStep {...props} />}
+        {prompt.linkPassword === true ? (
+          <LinkPasswordStep {...props} onPrompt={setPrompt} />
+        ) : prompt.setup ? (
+          <SecondFactorSetup {...props} />
+        ) : (
+          <SecondFactorStep {...props} />
+        )}
       </AccessLayout>
     );
   }

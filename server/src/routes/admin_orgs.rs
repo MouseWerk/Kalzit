@@ -104,13 +104,15 @@ async fn create(
         .bind(now)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)")
-        .bind(&id)
-        .bind(&req.owner_user_id)
-        .bind(BuiltinRole::Owner.as_str())
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, $3, $4, 'creator')",
+    )
+    .bind(&id)
+    .bind(&req.owner_user_id)
+    .bind(BuiltinRole::Owner.as_str())
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     // Owner of another organization now: no SCIM owns the account any more.
     crate::scim::release(&mut tx, &req.owner_user_id, Some(&id)).await?;
     let actor = Actor { user_id: &admin.id, info: &info, at_ms: now };

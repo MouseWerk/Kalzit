@@ -14,6 +14,7 @@ import { type Translate, useI18n } from "../../../i18n/i18n";
 import { writeClipboard } from "../../../lib/clipboard";
 import { leavePage } from "../../../lib/leavePage";
 import { reasonText } from "../../datasources/reasons";
+import { useConfirmedCalls } from "../../security/ConfirmFactorDialog";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
 import { LoadState } from "../components/Section";
@@ -156,6 +157,8 @@ function SamlForm({
   onSaved: (name: string, created: boolean) => void;
 }) {
   const { t, language, timeZone } = useI18n();
+  // A provider that trusts addresses or second factors needs a fresh second factor to change.
+  const confirmed = useConfirmedCalls();
   const ids = useId();
   const editing = provider !== undefined;
   const saml = provider?.saml;
@@ -414,15 +417,17 @@ function SamlForm({
     try {
       const token = checkCurrent ? checked?.check.checkToken : undefined;
       if (editing) {
-        await updateSaml(
-          provider.id,
-          input(),
-          version,
-          trustChanged ? token : undefined,
-          confirmEntityChange,
+        await confirmed.run(() =>
+          updateSaml(
+            provider.id,
+            input(),
+            version,
+            trustChanged ? token : undefined,
+            confirmEntityChange,
+          ),
         );
       } else {
-        await createSaml(input(), token ?? "");
+        await confirmed.run(() => createSaml(input(), token ?? ""));
       }
       setConfirmEntity(null);
       onSaved(name.trim(), !editing);
@@ -878,6 +883,7 @@ function SamlForm({
           )}
         </form>
       </Dialog>
+      {confirmed.dialog}
     </>
   );
 }

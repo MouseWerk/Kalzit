@@ -113,6 +113,19 @@ Then the account:
    mail, and, without a password, a password link gives it none (docs/api/mail.md).
 4. Otherwise `sso=no_account`.
 
+**Linking by email.** The first link of an identity to an existing account in step 2 stays
+unconfirmed (`sso_identities.confirmed`) when that account has a password or a second factor: the
+person proves the account once. Kalzit then always asks for the second step, never takes the
+provider's word for a second factor (`trustProviderMfa`) in that sign-in, and asks for the
+account's second factor, or, when it has none, its password (`linkPassword`, docs/api/access.md,
+"Second factor"); a factor set up in its place would prove nothing. The link counts as
+confirmed once that second step completes; a sign-in left unfinished asks again next time. An
+account without a password and a second factor (one SCIM owns, see above) links at once, as
+before. Such an account has nothing of its own to prove it with, so whoever controls its verified
+address at a trusted provider signs in to it; it is protected only as well as that address and
+provider are. Links made before 0.5.1 count as confirmed. The same holds for LDAP (step 2 of
+"LDAP and Active Directory").
+
 A disabled account answers `sso=disabled`, the unmapped rule `refuse` answers `sso=unmapped`
 (the memberships the provider decided end then too). The account and its link exist from here on,
 since the second step needs an account; it has no rights until the mapping applies. The group
@@ -155,9 +168,14 @@ is `inherit` or `off` (`PATCH /orgs/{orgId}/settings/signin.local_password`), an
 sign-in off for its members.
 
 With password sign-in off (for the server, or for one of the person's organizations),
-`POST /auth/login` answers `403 forbidden` with the reason `sso.password_sign_in_off`, but only
-after a correct password, so nobody can probe accounts with it. An organization's `off` never
-applies to server admins. With password sign-in off for the server or the inviting organization,
+`POST /auth/login` answers like a wrong password, `401 invalid_credentials`, also for the right
+one, and the attempt stays counted against the sign-in limits, so a password cannot be tested
+while it signs nobody in; the account's own recent sign-ins record it as `password_off`. The
+sign-in page shows the providers either way. An organization's `off` never applies to server
+admins, and binds only members who joined by their own consent: `joinedBy` `invitation`,
+`creator`, `scim_owned` or `mapping` (a group mapping of a provider a server admin set up). It
+never binds a `direct` or `legacy` member (docs/api/access.md, "Members"), whose password keeps
+signing them in. A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`). With password sign-in off for the server or the inviting organization,
 an invitation is accepted through a provider only: `POST /auth/invitation` answers
 `password: false` and the providers in `sso`, and accepting with a password answers
 `403 forbidden`, reason `sso.password_sign_in_off`; the person signs in through a provider with
@@ -168,7 +186,7 @@ through `POST /auth/login/local`, the form of the fixed, unlinked page `/anmelde
 
 Public. Same body and answers as `POST /auth/login`. With password sign-in on it works for
 everyone like `POST /auth/login`. With it off only the break-glass admin gets in; others get
-`sso.password_sign_in_off` after a correct password. The break-glass admin always goes on to the
+`401 invalid_credentials`, as for a wrong password. The break-glass admin always goes on to the
 second factor, and sets one up first if the account has none; their last factor cannot be removed
 and an admin cannot reset it (`sso.break_glass_protected`). Every attempt counts against a budget of its
 own (10 per address in 15 minutes, `429 rate_limited`), on top of the sign-in limits. A
@@ -304,8 +322,13 @@ secret is wrong. Answers
   uses a link made through another issuer. Without a valid one: `422 validation`, reason
   `sso.check_required`. A stale `version`: `409 version_conflict`. Audit `sso.provider_updated`
   with the changed field names.
+- Creating or changing a provider (OpenID Connect, SAML or LDAP) while `trustEmail` or
+  `trustProviderMfa` is on, or turning one of them on, needs a fresh confirmation of the admin's
+  second factor when they have one (`403 confirmation_required`, docs/api/access.md, "Second
+  factor"): such a provider signs people in to existing accounts on its word.
 - `PATCH /admin/sign-in/providers/{providerId}/enabled`: `{"enabled": false}` pauses, `true`
-  resumes. Audit `sso.provider_paused` or `sso.provider_resumed`.
+  resumes. Audit `sso.provider_paused` or `sso.provider_resumed`. Resuming a provider with
+  `trustEmail` or `trustProviderMfa` on needs the same fresh confirmation as changing it.
 - `PUT /admin/sign-in/order`: `{"ids": [...]}`, every provider exactly once. Audit
   `sso.providers_reordered`.
 - `DELETE /admin/sign-in/providers/{providerId}`: only without people (`409 conflict`, reason
@@ -419,10 +442,12 @@ accounts; when neither confirms the person, the answer is the usual `401 invalid
 and the attempt counts against the same sign-in limits. When a directory could not be reached
 and the sign-in failed, the answer is `503 busy` with the reason `ldap.directory_unreachable`, whether
 or not a local account has the login, so the answer tells nothing about local accounts.
-A person the directory confirmed but Kalzit refuses gets `403 forbidden` with the reason
-`ldap.sign_in_refused` and the params `outcome` (the outcomes of the provider sign-in:
-`disabled`, `unmapped`, `no_account`, `email_taken`, `failed`) and `ref` (the error id of the
-`auth.sso_failed` entry). The break-glass form `POST /auth/login/local` never asks a directory,
+A person the directory confirmed but Kalzit refuses (the outcomes of the provider sign-in:
+`disabled`, `unmapped`, `no_account`, `email_taken`, `failed`) gets the answer of a wrong
+password, `401 invalid_credentials`, and the attempt stays counted, so the directory password
+cannot be tested through Kalzit; the outcome is in the `auth.sso_failed` entry and the account's
+recent sign-ins. The sign-in limits come back only for a sign-in that goes on to a session or
+the second step. The break-glass form `POST /auth/login/local` never asks a directory,
 and "password sign-in off" does not apply to directory accounts.
 
 Connections: at most 16 at once to all directories for sign-ins and checks (more wait up to 5
@@ -765,7 +790,7 @@ Pausing, ordering, removing and the group mapping are the routes of every provid
 | `sso.org_unknown` | | `422` on `orgId` or `defaultOrgId`: no such organization |
 | `sso.team_unknown` | | `422` on `teamId`: no such team in the organization |
 | `sso.role_managed` | | `409 conflict`: an "IdP entscheidet" group mapping decides this member's role |
-| `sso.password_sign_in_off` | | `403 forbidden`: password sign-in is off for this account; sign in through a provider |
+| `sso.password_sign_in_off` | | `403 forbidden` when accepting an invitation with a password: password sign-in is off there; sign in through a provider |
 | `sso.local_off_blocked` | `check` | `409 conflict`: password sign-in cannot be turned off while `check` is not met |
 | `sso.break_glass_invalid` | | `422` on `breakGlassUserId`: not an enabled server admin with a password |
 | `sso.break_glass_protected` | | `409 conflict`: the break-glass admin cannot be disabled or lose the server admin role |
@@ -835,7 +860,7 @@ Pausing, ordering, removing and the group mapping are the routes of every provid
 | `ldap.test_bind_failed` | `code` | `422` on `testPassword`: the bind as the test person was refused |
 | `ldap.check_required` | | `422` on `url`: the connection was not checked with these values (or the check is older than 30 minutes) |
 | `ldap.directory_unreachable` | | `503` at sign-in: a directory could not be reached and the sign-in failed (whether or not a local account has the login) |
-| `ldap.sign_in_refused` | `outcome`, `ref` | `403 forbidden` at sign-in: the directory confirmed the person, but Kalzit refuses the sign-in |
+| `ldap.sign_in_refused` | `outcome`, `ref` | internal: the directory confirmed the person, but Kalzit refuses the sign-in; `POST /auth/login` answers `401 invalid_credentials` instead |
 | `ldap.sync_running` | | `409 conflict`: a sync of this provider is running |
 | `ldap.sync_not_halted` | | `409 conflict`: the run is not halted, or was applied already |
 | `ldap.sync_needs_second_factor` | | `409 conflict`: "apply anyway" needs a second factor; set one up first |

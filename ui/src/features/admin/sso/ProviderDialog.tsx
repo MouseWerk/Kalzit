@@ -6,6 +6,7 @@ import { type Translate, useI18n } from "../../../i18n/i18n";
 import { writeClipboard } from "../../../lib/clipboard";
 import { leavePage } from "../../../lib/leavePage";
 import { reasonText } from "../../datasources/reasons";
+import { useConfirmedCalls } from "../../security/ConfirmFactorDialog";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { LoadState } from "../components/Section";
 import {
@@ -189,6 +190,8 @@ function ProviderForm({
   onSaved: (name: string, created: boolean) => void;
 }) {
   const { t } = useI18n();
+  // A provider that trusts addresses or second factors needs a fresh second factor to change.
+  const confirmed = useConfirmedCalls();
   const ids = useId();
   const editing = provider !== undefined;
   const [name, setName] = useState(provider?.name ?? "");
@@ -396,9 +399,11 @@ function ProviderForm({
       const token = checkCurrent ? checked?.check.checkToken : undefined;
       if (editing) {
         const sent = connectionChanged ? token : undefined;
-        await updateProvider(provider.id, input(), version, sent, confirmIssuerChange);
+        await confirmed.run(() =>
+          updateProvider(provider.id, input(), version, sent, confirmIssuerChange),
+        );
       } else {
-        await createProvider(input(), token ?? "");
+        await confirmed.run(() => createProvider(input(), token ?? ""));
       }
       setConfirmIssuer(null);
       onSaved(name.trim(), !editing);
@@ -721,6 +726,7 @@ function ProviderForm({
           )}
         </form>
       </Dialog>
+      {confirmed.dialog}
     </>
   );
 }
