@@ -131,7 +131,7 @@ async fn refresh_keys(conn: &mut sqlx::AnyConnection) -> Result<()> {
     let current = stored.as_ref().is_some_and(|(v,)| v == VERSION);
     for (table, text, key_column) in KEYED {
         // Table and column names are the constants above, so nothing else reaches the SQL. Missing
-        // keys are the column default; a partial index (0035) finds them.
+        // keys are the column default; a partial index (0037) finds them.
         let only_missing = if current { format!(" AND {key_column} = '' AND {text} <> ''") } else { String::new() };
         let select = format!("SELECT id, {text} FROM {table} WHERE id > $1{only_missing} ORDER BY id LIMIT $2");
         let update =
