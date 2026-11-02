@@ -54,7 +54,10 @@ pub struct TestBody {
 async fn checked(state: &AppState, settings: &AcmeSettings) -> Result<Checked, FieldError> {
     acme::settings::check(settings)?;
     acme::settings::check_against(settings, &state.config)?;
-    acme::check_connection(settings, &state.config).await
+    let proxy = crate::outbound::current_or_refuse(state, "the ACME check").await.map_err(|message| {
+        FieldError::new("directory", "acme.directory_unreachable", message.clone()).with("detail", message)
+    })?;
+    acme::check_connection(settings, &state.config, proxy).await
 }
 
 async fn test(State(state): State<AppState>, JsonBody(body): JsonBody<TestBody>) -> ApiResult<Json<Checked>> {

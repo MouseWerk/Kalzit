@@ -32,6 +32,7 @@ import { AcmeSection } from "./AcmeSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
 import { MailSection } from "./MailSection";
+import { ProxyPasswordCard } from "./ProxyPasswordCard";
 import { QueryCacheCard } from "./QueryCacheCard";
 import { type Changes, SettingRow } from "./rows";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
@@ -139,6 +140,7 @@ function SectionBody({ section }: { section: SectionDef }) {
       return (
         <>
           <ServerSettings section={section} />
+          <ProxyPasswordCard />
           <AcmeSection />
         </>
       );
