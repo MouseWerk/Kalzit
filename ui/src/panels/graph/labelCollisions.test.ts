@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { blockedLabels, type DrawnNode, LABEL_MARGIN, sameSet } from "./labelCollisions";
+import {
+  blockedLabels,
+  type DrawnNode,
+  LABEL_MARGIN,
+  labelBox,
+  nodeHitsBox,
+  type WantedLabel,
+} from "./labelCollisions";
 import { LABEL_BUDGET, labelBudgetFor } from "./view";
 
 function node(index: number, x: number, y: number, radius = 6): DrawnNode {
   return { index, x, y, radius };
 }
 
-function label(n: DrawnNode, width = 48, forced = false) {
-  return { ...n, width, height: 14, forced };
+function label(n: DrawnNode, width = 48, forced = false): WantedLabel {
+  return { index: n.index, box: labelBox(n, width, 14), forced };
 }
 
 describe("label collisions", () => {
@@ -40,9 +47,24 @@ describe("label collisions", () => {
     expect([...blocked]).toEqual([0]);
   });
 
-  it("compares sets", () => {
-    expect(sameSet(new Set([1, 2]), new Set([2, 1]))).toBe(true);
-    expect(sameSet(new Set([1]), new Set([2]))).toBe(false);
+  it("leaves out a label that would run out of the panel, unless it is forced", () => {
+    const a = node(0, 380, 100);
+    const panel = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+    expect([...blockedLabels([a], [label(a)], panel)]).toEqual([0]);
+    expect(blockedLabels([a], [label(a, 48, true)], panel).size).toBe(0);
+  });
+
+  it("tests a label against the shape a node is drawn with", () => {
+    // A box just off the corner of a node of radius 10 at the origin.
+    const corner = { minX: 8, maxX: 20, minY: 8, maxY: 20 };
+    expect(nodeHitsBox({ index: 0, x: 0, y: 0, radius: 10, shape: "circle" }, corner)).toBe(false);
+    expect(nodeHitsBox({ index: 0, x: 0, y: 0, radius: 10, shape: "square" }, corner)).toBe(true);
+    expect(nodeHitsBox({ index: 0, x: 0, y: 0, radius: 10, shape: "diamond" }, corner)).toBe(false);
+    // Straight to the right, all three reach it.
+    const side = { minX: 9, maxX: 20, minY: -2, maxY: 2 };
+    for (const shape of ["circle", "square", "diamond"] as const) {
+      expect(nodeHitsBox({ index: 0, x: 0, y: 0, radius: 10, shape }, side)).toBe(true);
+    }
   });
 });
 

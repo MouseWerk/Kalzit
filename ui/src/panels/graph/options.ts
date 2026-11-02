@@ -44,6 +44,9 @@ export const LABEL_TONES = [
   "chart-8",
 ] as const;
 export type LabelTone = (typeof LABEL_TONES)[number];
+/** The shapes a node can take, a second cue next to its color (shapes.ts). */
+export const NODE_SHAPES = ["circle", "square", "diamond"] as const;
+export type NodeShape = (typeof NODE_SHAPES)[number];
 
 /**
  * How the hierarchy lays out: Kalzit's own layered layout (the default), or ELK's layered
@@ -69,6 +72,8 @@ export const DEFAULT_SIZE_MAX = 14;
 export const MAX_LABEL_TOP = 200;
 /** At most this many labels carry a color of their own. */
 export const MAX_LABEL_COLORS = 50;
+/** At most this many labels carry a shape of their own. */
+export const MAX_LABEL_SHAPES = 50;
 
 export interface GraphPanelOptions {
   /** Node property shown as its name; empty picks name, title and the like. */
@@ -83,6 +88,8 @@ export interface GraphPanelOptions {
   colorMax: number | null;
   /** A palette color per label, instead of the palette's order. */
   labelColors: Record<string, LabelTone>;
+  /** A shape per label, instead of the one its order gives it (shapes.ts). */
+  labelShapes: Record<string, NodeShape>;
   /** "degree", "" for one size, or a node property key. */
   sizeBy: string;
   sizeMin: number;
@@ -158,6 +165,19 @@ function labelColors(value: unknown): Record<string, LabelTone> {
   return out;
 }
 
+function labelShapes(value: unknown): Record<string, NodeShape> {
+  if (!isRecord(value)) return {};
+  const out: Record<string, NodeShape> = {};
+  for (const [label, shape] of Object.entries(value)) {
+    const name = text(label);
+    const known = NODE_SHAPES.find((s) => s === shape);
+    if (name !== "" && known !== undefined && Object.keys(out).length < MAX_LABEL_SHAPES) {
+      out[name] = known;
+    }
+  }
+  return out;
+}
+
 export function parseGraphOptions(stored: unknown): GraphPanelOptions {
   const value = isRecord(stored) ? stored : {};
   const variable = text(value.variable).replace(/^\$/, "");
@@ -175,6 +195,7 @@ export function parseGraphOptions(stored: unknown): GraphPanelOptions {
     colorMin: finiteOrNull(value.colorMin),
     colorMax: finiteOrNull(value.colorMax),
     labelColors: labelColors(value.labelColors),
+    labelShapes: labelShapes(value.labelShapes),
     sizeBy: text(value.sizeBy, "degree"),
     sizeMin: Math.min(sizeMin, sizeMax),
     sizeMax: Math.max(sizeMin, sizeMax),

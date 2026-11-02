@@ -1,14 +1,17 @@
 import { useI18n } from "../../i18n/i18n";
 import type { RampName } from "./colors";
 import type { PropertyPaint } from "./paint";
+import type { NodeShape } from "./shapes";
 import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
 
 /**
- * The legend under a graph: each label with its color and count, a click hides its nodes or
- * shows them again (the button says which with `aria-pressed`). Colors by a number property show
- * the ramp's range and the nodes without a value. The swatch carries the label's palette color;
- * it is the data's color, never a state.
+ * The legend under a graph: each label with its shape, color and count, a click hides its nodes
+ * or shows them again (the button says which with `aria-pressed`). Colors by a number property
+ * show the ramp's range and the nodes without a value. The swatch has the label's node shape and
+ * carries its palette color (neutral when nodes are colored by something else); it is the data's
+ * color, never a state. Drawn in `currentColor`, it keeps its shape with forced colors, where
+ * every node has the same color and the shape is what tells labels apart.
  */
 export function Legend({
   labels,
@@ -19,7 +22,7 @@ export function Legend({
   ramp,
   propertyName,
 }: {
-  labels: readonly { label: string; group: number; count: number }[];
+  labels: readonly { label: string; group: number; shape: NodeShape; count: number }[];
   hidden: ReadonlySet<string>;
   onToggle: (label: string) => void;
   /** Whether labels carry their colors (colors by label). */
@@ -33,7 +36,7 @@ export function Legend({
   return (
     <div className="graph-legend">
       <ul className="graph-legend__list" aria-label={t("graph.legend.title")}>
-        {labels.map(({ label, group, count }) => {
+        {labels.map(({ label, group, shape, count }) => {
           const name = label === "" ? t("graph.cluster.unlabelled") : label;
           const shown = !hidden.has(label);
           return (
@@ -45,12 +48,7 @@ export function Legend({
                 title={shown ? t("graph.legend.hide", { name }) : t("graph.legend.show", { name })}
                 onClick={() => onToggle(label)}
               >
-                {swatches ? (
-                  <span
-                    className={`graph-legend__swatch graph-legend__swatch--${group < 0 ? "neutral" : (group % 8) + 1}`}
-                    aria-hidden="true"
-                  />
-                ) : null}
+                <ShapeSwatch shape={shape} tone={swatches && group >= 0 ? (group % 8) + 1 : null} />
                 <span>{name}</span>
                 <span className="graph-legend__count">{number.format(count)}</span>
               </button>
@@ -88,5 +86,29 @@ export function Legend({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * A node's shape at legend size, in the label's palette color (`tone`, 1 to 8) or the muted text
+ * color. The shape's name is not read out: the button already names the label.
+ */
+export function ShapeSwatch({ shape, tone }: { shape: NodeShape; tone: number | null }) {
+  return (
+    <svg
+      className={`graph-legend__swatch graph-legend__swatch--${tone ?? "neutral"}`}
+      viewBox="0 0 10 10"
+      aria-hidden="true"
+      focusable="false"
+      data-shape={shape}
+    >
+      {shape === "square" ? (
+        <rect x="1.1" y="1.1" width="7.8" height="7.8" />
+      ) : shape === "diamond" ? (
+        <path d="M5 0 10 5 5 10 0 5Z" />
+      ) : (
+        <circle cx="5" cy="5" r="4.4" />
+      )}
+    </svg>
   );
 }

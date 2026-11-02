@@ -28,6 +28,7 @@ import {
 let restore: () => void;
 let SigmaClass: typeof import("sigma").default;
 let createRenderer: typeof import("./SigmaCanvas").createRenderer;
+let collidingLabels: typeof import("./labelRoom").collidingLabels;
 let SigmaCanvas: typeof import("./SigmaCanvas").SigmaCanvas;
 
 beforeAll(async () => {
@@ -35,6 +36,7 @@ beforeAll(async () => {
   // Sigma reads WebGL constants while its module loads, so it loads after the stand-in.
   SigmaClass = (await import("sigma")).default;
   ({ createRenderer, SigmaCanvas } = await import("./SigmaCanvas"));
+  ({ collidingLabels } = await import("./labelRoom"));
 });
 
 afterAll(() => restore());
@@ -240,5 +242,72 @@ describe("the label budget", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("labels with room, on every frame", () => {
+  /** Two labelled nodes on top of each other, one square, and a third far away. */
+  function crowdedView(): GraphView {
+    const set: GraphSet = {
+      nodes: [
+        { id: "a1", labels: ["UPS"], properties: { name: "UPS A1" } },
+        { id: "a2", labels: ["UPS"], properties: { name: "UPS A2" } },
+        { id: "grid", labels: ["Utility"], properties: { name: "Grid" } },
+      ],
+      edges: [],
+      schema: { labels: ["UPS", "Utility"], edgeTypes: [], propertyKeys: {} },
+    };
+    const model = buildGraphModel([set], { nodeLimit: 10, caption: "" });
+    return buildView(model, {
+      sizes: nodeSizes(model, ""),
+      widths: edgeWidths(model, ""),
+      groups: Int32Array.from(model.nodes, (n) => n.label),
+      cluster: false,
+      open: new Set(),
+      clusterCaption: (label) => label,
+      unlabelled: "",
+      labelShape: (label) => (label === 1 ? "square" : "circle"),
+    });
+  }
+
+  it("hooks the check into the renderer's choice of labels and draws each node's shape", () => {
+    const view = crowdedView();
+    const live: { current: LiveProps } = {
+      current: { ratioBucket: 0, props: canvasProps(view, { current: null }) },
+    };
+    const handover = handOver(view, Float32Array.from([0, 0, 0.1, 0, 50, 50]), (graph) => {
+      const element = host();
+      Object.defineProperty(element, "offsetWidth", { configurable: true, value: 400 });
+      Object.defineProperty(element, "offsetHeight", { configurable: true, value: 300 });
+      return createRenderer(graph, element, live);
+    });
+    const renderer = handover.renderer;
+    renderer.refresh();
+    const labels = (renderer as unknown as { labelRenderer: Record<string, unknown> })
+      .labelRenderer;
+    // The renderer's own method is wrapped on the instance, not on its class.
+    expect(Object.hasOwn(labels, "computeDisplayedNodeLabels")).toBe(true);
+    expect(renderer.getNodeDisplayData("2")?.shape).toBe("square");
+    expect(renderer.getNodeDisplayData("0")?.shape).toBe("circle");
+
+    // Labels of 40 x 14 px to the right of their node.
+    const box = (_: unknown, radius: number) => ({
+      minX: radius + 2,
+      maxX: radius + 42,
+      minY: -7,
+      maxY: 7,
+    });
+    const { blocked, frame } = collidingLabels(renderer, new Set(["0", "1", "2"]), box, {
+      rank: (i) => i,
+      shape: (i) => view.nodes[i]?.shape ?? "circle",
+    });
+    // A1 comes first; A2 lies on it, so its label is left out; the far node keeps its label
+    // unless it runs out of the panel.
+    expect(blocked).toContain(1);
+    expect(blocked).not.toContain(0);
+    // The frame holds what stays: every node with its shape, and the labels that kept room.
+    expect(frame.nodes.map((n) => n.shape)).toEqual(["circle", "circle", "square"]);
+    expect(frame.labels.map((l) => l.index)).not.toContain(1);
+    renderer.kill();
   });
 });

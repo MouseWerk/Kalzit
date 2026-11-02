@@ -23,6 +23,7 @@ import {
   MAX_NODE_LIMIT,
   MAX_SIZE,
   MIN_SIZE,
+  NODE_SHAPES,
   parseGraphOptions,
   SHOW_WHEN,
 } from "./options";
@@ -238,10 +239,10 @@ export function GraphEditor({
   const variables = [
     ...new Set([...(host.variables?.names ?? []), ...(host.variables?.multi ?? [])]),
   ];
-  // Labels of the preview, and labels with a color of their own that the preview lacks.
+  // Labels of the preview, and labels with a color or shape of their own that the preview lacks.
   const labels = [
     ...graphLabels,
-    ...Object.keys(options.labelColors)
+    ...[...new Set([...Object.keys(options.labelColors), ...Object.keys(options.labelShapes)])]
       .filter((label) => !graphLabels.some((l) => l.label === label))
       .map((label) => ({ label, count: 0 })),
   ].filter((l) => l.label !== "");
@@ -263,11 +264,13 @@ export function GraphEditor({
           text={(mode) => t(`graph.options.colorBy.${mode}`)}
           onChange={(colorBy) => set({ colorBy })}
         />
-        {options.colorBy === "label" && labels.length > 0 ? (
-          <LabelColors
+        {labels.length > 0 ? (
+          <LabelStyles
             labels={labels}
-            colors={options.labelColors}
-            onChange={(labelColors) => set({ labelColors })}
+            colors={options.colorBy === "label" ? options.labelColors : null}
+            shapes={options.labelShapes}
+            onColors={(labelColors) => set({ labelColors })}
+            onShapes={(labelShapes) => set({ labelShapes })}
           />
         ) : null}
         {options.colorBy === "property" ? (
@@ -521,43 +524,55 @@ export function GraphEditor({
   );
 }
 
-/** A palette color per label; "automatic" keeps the palette's order. */
-function LabelColors({
+/**
+ * A palette color (where nodes are colored by label) and a shape per label; "automatic" keeps
+ * the order of the labels, for both.
+ */
+function LabelStyles({
   labels,
   colors,
-  onChange,
+  shapes,
+  onColors,
+  onShapes,
 }: {
   labels: readonly { label: string; count: number }[];
-  colors: GraphPanelOptions["labelColors"];
-  onChange: (colors: GraphPanelOptions["labelColors"]) => void;
+  /** null: nodes are colored by something else, and the labels choose only their shape. */
+  colors: GraphPanelOptions["labelColors"] | null;
+  shapes: GraphPanelOptions["labelShapes"];
+  onColors: (colors: GraphPanelOptions["labelColors"]) => void;
+  onShapes: (shapes: GraphPanelOptions["labelShapes"]) => void;
 }) {
   const { t, language } = useI18n();
   const number = new Intl.NumberFormat(language);
-  const baseId = useId();
   return (
     <fieldset className="graph-options__labels">
-      <legend className="field__label">{t("graph.options.labelColors")}</legend>
-      <p className="field__hint">{t("graph.options.labelColorsHint")}</p>
-      {labels.map(({ label, count }, i) => {
-        const id = `${baseId}-${i}`;
-        return (
-          <div key={label} className="graph-options__label-row">
-            <label htmlFor={id} className="graph-options__label-name">
-              {label}
-              {count > 0 ? (
-                <span className="graph-options__label-count"> {number.format(count)}</span>
-              ) : null}
-            </label>
+      <legend className="field__label">
+        {colors === null ? t("graph.options.labelShapes") : t("graph.options.labelStyles")}
+      </legend>
+      {colors === null ? null : <p className="field__hint">{t("graph.options.labelColorsHint")}</p>}
+      <p className="field__hint">{t("graph.options.labelShapesHint")}</p>
+      {labels.map(({ label, count }) => (
+        <div
+          key={label}
+          className={`graph-options__label-row${colors === null ? "" : " graph-options__label-row--both"}`}
+        >
+          <span className="graph-options__label-name">
+            {label}
+            {count > 0 ? (
+              <span className="graph-options__label-count"> {number.format(count)}</span>
+            ) : null}
+          </span>
+          {colors === null ? null : (
             <select
-              id={id}
               className="select"
+              aria-label={t("graph.options.labelColorFor", { name: label })}
               value={colors[label] ?? ""}
               onChange={(event) => {
                 const tone = LABEL_TONES.find((x) => x === event.currentTarget.value);
                 const next = { ...colors };
                 if (tone === undefined) delete next[label];
                 else next[label] = tone;
-                onChange(next);
+                onColors(next);
               }}
             >
               <option value="">{t("graph.options.labelColorAuto")}</option>
@@ -567,9 +582,28 @@ function LabelColors({
                 </option>
               ))}
             </select>
-          </div>
-        );
-      })}
+          )}
+          <select
+            className="select"
+            aria-label={t("graph.options.labelShapeFor", { name: label })}
+            value={shapes[label] ?? ""}
+            onChange={(event) => {
+              const shape = NODE_SHAPES.find((x) => x === event.currentTarget.value);
+              const next = { ...shapes };
+              if (shape === undefined) delete next[label];
+              else next[label] = shape;
+              onShapes(next);
+            }}
+          >
+            <option value="">{t("graph.options.labelShapeAuto")}</option>
+            {NODE_SHAPES.map((shape) => (
+              <option key={shape} value={shape}>
+                {t(`graph.shape.${shape}`)}
+              </option>
+            ))}
+          </select>
+        </div>
+      ))}
     </fieldset>
   );
 }

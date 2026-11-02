@@ -1,75 +1,93 @@
+import type { NodeShape } from "./shapes";
+
 /**
- * Which node labels would cover another node's circle or a label placed before them, for the
- * current camera. The renderer's own label grid only keeps labels apart from each other; in a
- * small panel the fitted drawing puts nodes close together, and a label drawn to the right of
- * its node then runs over the next circle ("UPS A1" over "UPS A2"). Labels are placed in order
- * (forced ones first, then the best connected), and one that would collide is left out until the
- * camera gives it room. Pure, in viewport pixels, so it is tested without WebGL.
+ * Which node labels would cover another node or a label placed before them, for the current
+ * camera. The renderer's own label grid only spreads labels over the panel; in a small panel the
+ * fitted drawing puts nodes close together, and a label drawn to the right of its node then runs
+ * over the next one ("UPS A1" over "UPS A2"). Labels are placed in order (forced ones first, then
+ * the best connected), and one that would collide, or run out of the panel, is left out until
+ * the camera gives it room. Pure, in viewport pixels, so it is tested without WebGL; labelRoom.ts
+ * runs it on every frame the renderer draws.
  */
 
-/** A drawn node: where its centre is on the panel and its radius, in px. */
+/** A drawn node: where its centre is on the panel, how far its shape reaches and the shape. */
 export interface DrawnNode {
   index: number;
   x: number;
   y: number;
+  /** The circle's radius, the square's half side or the diamond's half diagonal, in px. */
   radius: number;
+  shape?: NodeShape;
 }
 
-/** A label that wants to show, beside its node. */
-export interface WantedLabel extends DrawnNode {
-  /** Width and height of the text in px. */
-  width: number;
-  height: number;
-  /** Shown whatever it covers (a selected node, labels set to always). */
-  forced: boolean;
-}
-
-/** Space between a node and its label, as the renderer draws it (sigma's label margin). */
-export const LABEL_MARGIN = 5;
-/** The label's background reaches this far around its text (drawing.ts). */
-export const LABEL_PAD = 2;
-
-const CELL = 48;
-
-interface Box {
+/** A box in viewport px. */
+export interface Box {
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
 }
 
-/** The box a label takes, to the right of its node and centred on it vertically. */
-export function labelBox(label: WantedLabel): Box {
-  const minX = label.x + label.radius + LABEL_MARGIN - LABEL_PAD;
+/** A label that wants to show: its node and the box it takes on the panel. */
+export interface WantedLabel {
+  index: number;
+  box: Box;
+  /** Shown whatever it covers (a selected node, labels set to always). */
+  forced: boolean;
+}
+
+/** Space between a node and its label, as the renderer draws it (sigma's label margin). */
+export const LABEL_MARGIN = 5;
+/** The label's background reaches this far around its text (sigma's default padding). */
+export const LABEL_PAD = 3;
+
+const CELL = 48;
+
+/** The box a label of this text size takes to the right of its node, centred vertically. */
+export function labelBox(node: DrawnNode, width: number, height: number): Box {
+  const minX = node.x + node.radius + LABEL_MARGIN - LABEL_PAD;
   return {
     minX,
-    maxX: minX + label.width + 2 * LABEL_PAD,
-    minY: label.y - label.height / 2 - LABEL_PAD,
-    maxY: label.y + label.height / 2 + LABEL_PAD,
+    maxX: minX + width + 2 * LABEL_PAD,
+    minY: node.y - height / 2 - LABEL_PAD,
+    maxY: node.y + height / 2 + LABEL_PAD,
   };
 }
 
-function circleHitsBox(node: DrawnNode, box: Box): boolean {
-  const nx = Math.max(box.minX, Math.min(node.x, box.maxX));
-  const ny = Math.max(box.minY, Math.min(node.y, box.maxY));
-  const dx = node.x - nx;
-  const dy = node.y - ny;
-  return dx * dx + dy * dy < node.radius * node.radius;
+/** Distance from a value to a range (0 inside it). */
+function gap(value: number, min: number, max: number): number {
+  return value < min ? min - value : value > max ? value - max : 0;
 }
 
-function boxesMeet(a: Box, b: Box): boolean {
+/** Whether a node's shape reaches into a box. */
+export function nodeHitsBox(node: DrawnNode, box: Box): boolean {
+  const dx = gap(node.x, box.minX, box.maxX);
+  const dy = gap(node.y, box.minY, box.maxY);
+  switch (node.shape ?? "circle") {
+    case "square":
+      return dx < node.radius && dy < node.radius;
+    case "diamond":
+      return dx + dy < node.radius;
+    default:
+      return dx * dx + dy * dy < node.radius * node.radius;
+  }
+}
+
+export function boxesMeet(a: Box, b: Box): boolean {
   return a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
 }
 
 /** A uniform grid over the panel: what lies near a box, without testing everything. */
-class Grid<T> {
+export class Grid<T> {
   private readonly cells = new Map<number, T[]>();
 
+  constructor(private readonly cell = CELL) {}
+
   private *keys(box: Box): Generator<number> {
-    const x0 = Math.floor(box.minX / CELL);
-    const x1 = Math.floor(box.maxX / CELL);
-    const y0 = Math.floor(box.minY / CELL);
-    const y1 = Math.floor(box.maxY / CELL);
+    const x0 = Math.floor(box.minX / this.cell);
+    const x1 = Math.floor(box.maxX / this.cell);
+    const y0 = Math.floor(box.minY / this.cell);
+    const y1 = Math.floor(box.maxY / this.cell);
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
         // Two signed 16-bit halves: panels are far smaller than 32768 cells across.
@@ -96,16 +114,18 @@ class Grid<T> {
 }
 
 /**
- * The labels (node indexes) to leave out: each that would cover another node's circle or a label
- * placed before it. `labels` comes in order of priority; forced labels are always placed.
+ * The labels (node indexes) to leave out: each that would cover another node, a label placed
+ * before it, or reach out of `bounds` (the panel) when given. `labels` comes in order of
+ * priority; forced labels are always placed, before the others.
  */
 export function blockedLabels(
   nodes: readonly DrawnNode[],
   labels: readonly WantedLabel[],
+  bounds?: Box,
 ): Set<number> {
-  const circles = new Grid<DrawnNode>();
+  const shapes = new Grid<DrawnNode>();
   for (const node of nodes) {
-    circles.add(
+    shapes.add(
       {
         minX: node.x - node.radius,
         maxX: node.x + node.radius,
@@ -118,14 +138,21 @@ export function blockedLabels(
   const placed = new Grid<Box>();
   const blocked = new Set<number>();
   const ordered = [...labels.filter((l) => l.forced), ...labels.filter((l) => !l.forced)];
-  for (const label of ordered) {
-    const box = labelBox(label);
-    if (!label.forced) {
-      let hit = false;
-      for (const node of circles.near(box)) {
-        if (node.index !== label.index && circleHitsBox(node, box)) {
-          hit = true;
-          break;
+  for (const { index, box, forced } of ordered) {
+    if (!forced) {
+      const outside =
+        bounds !== undefined &&
+        (box.minX < bounds.minX ||
+          box.maxX > bounds.maxX ||
+          box.minY < bounds.minY ||
+          box.maxY > bounds.maxY);
+      let hit = outside;
+      if (!hit) {
+        for (const node of shapes.near(box)) {
+          if (node.index !== index && nodeHitsBox(node, box)) {
+            hit = true;
+            break;
+          }
         }
       }
       if (!hit) {
@@ -137,18 +164,11 @@ export function blockedLabels(
         }
       }
       if (hit) {
-        blocked.add(label.index);
+        blocked.add(index);
         continue;
       }
     }
     placed.add(box, box);
   }
   return blocked;
-}
-
-/** Whether two sets hold the same indexes. */
-export function sameSet(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
-  if (a.size !== b.size) return false;
-  for (const item of a) if (!b.has(item)) return false;
-  return true;
 }

@@ -51,6 +51,7 @@ import {
 import { labelGroupOf, type PropertyPaint, propertyPaint } from "./paint";
 import { countText } from "./plural";
 import type { CanvasHandle } from "./SigmaCanvas";
+import { labelShapeOf } from "./shapes";
 import { useShortPanel } from "./shortPanel";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
 import { type LayoutState, useGraphLayout } from "./useGraphLayout";
@@ -163,9 +164,18 @@ function useGraph(
     () => edgeWidths(model, options.edgeWidthBy),
     [model, options.edgeWidthBy],
   );
-  const { labelColors, colorBy, colorProperty, colorScheme, colorRange, colorMin, colorMax } =
-    options;
+  const {
+    labelColors,
+    labelShapes,
+    colorBy,
+    colorProperty,
+    colorScheme,
+    colorRange,
+    colorMin,
+    colorMax,
+  } = options;
   const labelGroup = useMemo(() => labelGroupOf(model, labelColors), [model, labelColors]);
+  const labelShape = useMemo(() => labelShapeOf(model, labelShapes), [model, labelShapes]);
   const property = useMemo(
     () =>
       colorBy === "property"
@@ -205,8 +215,9 @@ function useGraph(
         clusterCaption: clusterText,
         unlabelled,
         labelGroup,
+        labelShape,
       }),
-    [model, sizes, widths, groups, cluster, open, clusterText, unlabelled, labelGroup],
+    [model, sizes, widths, groups, cluster, open, clusterText, unlabelled, labelGroup, labelShape],
   );
   const times = useMemo(
     () => edgeTimes(model, options.timeProperty),
@@ -214,7 +225,7 @@ function useGraph(
   );
   const steps = useMemo(() => timeSteps(times), [times]);
   const ranks = useMemo(() => labelRanks(view), [view]);
-  return { model, parts, view, times, steps, ranks, property, labelGroup };
+  return { model, parts, view, times, steps, ranks, property, labelGroup, labelShape };
 }
 
 function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
@@ -683,8 +694,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         label,
         count,
         group: graph.labelGroup(index),
+        shape: graph.labelShape(index),
       })),
-    [model, graph.labelGroup],
+    [model, graph.labelGroup, graph.labelShape],
   );
 
   // Nodes the steps added beyond the query's own result.
@@ -1152,6 +1164,7 @@ function DrawnGraph({ view, mode, elk, ref, drawStyle, ...rest }: DrawnGraphProp
         positions={shown}
         reducedMotion={reduced}
         drawStyle={drawStyle}
+        spread={mode === "force"}
         {...rest}
       />
       <LayoutNotes
