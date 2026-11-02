@@ -167,7 +167,10 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
         }
         Access::OrgMember | Access::Org(_) => {
             let org_id = path_org_id(&mut parts, state).await?;
-            let ctx = org_ctx(state, user.clone(), org_id).await?;
+            let secure = parts.extensions.get::<RequestInfo>().is_some_and(|i| i.https);
+            let token =
+                crate::auth::session::read_cookie(&parts.headers, secure).ok_or_else(ApiError::unauthenticated)?;
+            let ctx = session_org_ctx(state, user.clone(), org_id, &token).await?;
             if let Access::Org(permission) = access {
                 ctx.check(permission)?;
             }
@@ -188,6 +191,20 @@ async fn path_org_id(parts: &mut Parts, state: &AppState) -> Result<String, ApiE
         return Err(ApiError::not_found());
     }
     Ok(org_id)
+}
+
+/// `org_ctx` for a person signed in with the session `token`, once the organization's sign-in
+/// rules let the session in (`auth::org_gate`).
+pub(crate) async fn session_org_ctx(
+    state: &AppState,
+    user: SessionUser,
+    org_id: String,
+    token: &str,
+) -> Result<OrgCtx, ApiError> {
+    let ctx = org_ctx(state, user, org_id).await?;
+    let hash = crate::auth::session::hash_token(token);
+    crate::auth::org_gate::check(state, &ctx.user, &hash, &ctx.org_id, &ctx.role).await?;
+    Ok(ctx)
 }
 
 /// The caller's membership in `org_id`. Non-members get `not_found`, so organization ids cannot

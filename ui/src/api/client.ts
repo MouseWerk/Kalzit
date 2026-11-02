@@ -24,6 +24,8 @@ const SERVER_ERROR_CODE_SET: Record<ServerErrorCode, true> = {
   invalid_credentials: true,
   invalid_code: true,
   confirmation_required: true,
+  org_second_factor_required: true,
+  org_provider_sign_in_required: true,
   setup_done: true,
   invalid_setup_token: true,
   setup_token_expired: true,

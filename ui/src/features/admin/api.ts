@@ -802,6 +802,29 @@ export function renameOrg(orgId: string, name: string) {
   return send("PATCH", `/api/admin/orgs/${enc(orgId)}`, { name }, isAdminOrg, "organization");
 }
 
+/** The organization's sign-in rules in force after a reset (docs/api/access.md). */
+export interface OrgSignInRules {
+  localPassword: unknown;
+  twoFactorRequired: unknown;
+}
+
+const isOrgSignInRules = (value: unknown): value is OrgSignInRules =>
+  isRecord(value) && "localPassword" in value && "twoFactorRequired" in value;
+
+/**
+ * Puts an organization's password and second factor rules back to the server's, for a server
+ * admin who confirmed their own second factor (`confirmation_required` otherwise).
+ */
+export function resetOrgSignInRules(orgId: string) {
+  return send(
+    "PATCH",
+    `/api/admin/orgs/${enc(orgId)}/sign-in-rules`,
+    { localPassword: "inherit", twoFactorRequired: "inherit" },
+    isOrgSignInRules,
+    "sign-in rules",
+  );
+}
+
 // The signed-in user's own account
 
 export interface Session {

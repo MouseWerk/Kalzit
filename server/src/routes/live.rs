@@ -256,9 +256,11 @@ impl Connection {
             .await
             .map_err(CtxError::Failed)?;
         let Some(user) = user.filter(|u| u.id == self.user_id) else { return Err(CtxError::Ended(unauthenticated())) };
-        match super::table::org_ctx(s, user, self.org_id.clone()).await {
+        match super::table::session_org_ctx(s, user, self.org_id.clone(), &self.token).await {
             Ok(ctx) => Ok(ctx),
             Err(e) if e.code == "not_found" => Err(CtxError::Ended(no_longer_member())),
+            // The organization's sign-in rules no longer let this session in.
+            Err(e) if crate::auth::org_gate::is_gate_error(&e) => Err(CtxError::Ended(close_with(CLOSE_FORBIDDEN, e))),
             Err(e) => Err(CtxError::Failed(e)),
         }
     }

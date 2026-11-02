@@ -24,6 +24,19 @@ pub struct Via {
     pub provider_mfa: bool,
 }
 
+impl Via {
+    /// How a session opened by this sign-in names its method (`sessions.sign_in_method`):
+    /// `password`, `break_glass`, `directory` or `provider`.
+    pub fn session_method(&self) -> &'static str {
+        match (self.break_glass, self.first_step.as_str()) {
+            (true, _) => "break_glass",
+            (false, "directory") => "directory",
+            (false, "provider") => "provider",
+            _ => "password",
+        }
+    }
+}
+
 /// The browser of a request as it describes itself, without control characters and cut to a
 /// sensible length; `None` without one.
 pub fn user_agent(headers: &HeaderMap) -> Option<String> {
@@ -76,6 +89,15 @@ pub async fn record(
     if let Some(agent) = user_agent(headers) {
         summary.insert("userAgent".into(), json!(agent));
     }
+    // The session keeps how it was established, for the sign-in rules of the organizations it
+    // enters (`auth::org_gate`).
+    let session_factor = second_factor.or(via.provider_mfa.then_some("provider"));
+    sqlx::query("UPDATE sessions SET sign_in_method = $1, sign_in_second_factor = $2 WHERE id = $3")
+        .bind(via.session_method())
+        .bind(session_factor)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
     let event = crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: Some(user_id),

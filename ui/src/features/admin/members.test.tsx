@@ -128,7 +128,7 @@ describe("members", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(
       await within(dialog).findByText(
-        "This person already belongs to another organization. They join only by accepting an invitation.",
+        "This person cannot be added directly. Anyone who already belongs to an organization or has not confirmed their address joins only through an invitation.",
       ),
     ).toBeTruthy();
     expect(admin.members.some((member) => member.userId === "u2")).toBe(false);

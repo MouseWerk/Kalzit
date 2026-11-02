@@ -225,13 +225,16 @@ unencrypted (the page says so); use an `https://` proxy address when the network
 trusted. Data sources never use this proxy.
 
 Kalzit resolves and checks every target itself before the request goes to the proxy, so the names
-must resolve on the Kalzit server. The proxy then resolves the name again, and a name whose answer
-changes in between (DNS rebinding) is only stopped by the proxy's own rules. **The proxy must
-refuse private (RFC 1918), loopback, link-local and cloud metadata addresses itself.** Plain-http
-requests of the plugin catalog's packages and of an organization's AI provider go to the address
-Kalzit checked (with the name in the `Host` header), so the proxy has nothing to resolve; HTTPS
-requests go through `CONNECT` by name, because the certificate is checked against the name. For
-squid, for example:
+must resolve on the Kalzit server. Every plain-http request through the proxy goes to the address
+Kalzit checked (with the name in the `Host` header), so the proxy has nothing to resolve. HTTPS
+requests go through `CONNECT` by name, because the certificate is checked against the name: the
+proxy then resolves the name again, and a name whose answer changes in between (DNS rebinding) is
+only stopped by the proxy's own rules. **The proxy must refuse private (RFC 1918), loopback,
+link-local and cloud metadata addresses itself.** Since plain-http requests are pinned to the
+checked address (IPv4 first), the proxy sees that address, not the name: name-based virtual hosts
+still get the name in `Host`, but rules on the proxy that allow domains by name do not match them;
+allow those targets by address or use `https://`. The proxy address cannot be Kalzit's own
+listener or the server of its own database. For squid, for example:
 
 ```
 acl to_private dst 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 169.254.0.0/16 100.64.0.0/10 ::1 fc00::/7 fe80::/10
