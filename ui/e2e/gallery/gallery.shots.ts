@@ -1373,6 +1373,9 @@ for (const scheme of SCHEMES) {
     const result = page.getByRole("region", { name: t("explore.result") }).first();
     await expect(result.getByLabel(t("explore.visualization"))).toBeVisible();
     await expect(result).toHaveAttribute("aria-busy", "false");
+    // The newest rows of all racks share a few moments: a table reads them better than a chart.
+    await result.getByLabel(t("explore.visualization"), { exact: true }).selectOption("table");
+    await expect(result.getByRole("table")).toBeVisible();
     // The tip after the first result, and the cheat sheet from the keyboard.
     await expect(page.getByRole("note", { name: t("help.tip.label") })).toBeVisible();
     await page.keyboard.press("Shift+F1");
