@@ -1033,6 +1033,19 @@ fn influxql_words(text: &str) -> Result<Vec<String>, SourceError> {
     Ok(words)
 }
 
+/// Expands and checks an InfluxQL or Flux query as a run would, without sending it; for the test
+/// of the queries the UI's guides fill in (`guide_queries.rs`).
+#[cfg(test)]
+pub(crate) fn check_text(query: &Value, req: &SourceQuery) -> Result<(), SourceError> {
+    if let Some(text) = query.get("influxql").and_then(Value::as_str) {
+        check_influxql(&expand(text, Language::InfluxQl, req, Some("db"))?)
+    } else if let Some(text) = query.get("flux").and_then(Value::as_str) {
+        check_flux(&expand(text, Language::Flux, req, Some("db"))?)
+    } else {
+        Err(SourceError::rejected("influxdb.query_form", "no InfluxQL or Flux text"))
+    }
+}
+
 /// One `SELECT` without `INTO`, or one `SHOW`.
 fn check_influxql(text: &str) -> Result<(), SourceError> {
     let mut words = influxql_words(text)?;

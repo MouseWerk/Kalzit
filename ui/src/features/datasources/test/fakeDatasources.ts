@@ -106,14 +106,14 @@ function sqlKind(kind: string, name: string, port: number, tls: WireSetting[]): 
 export const FAKE_KINDS: WireKind[] = [
   sqlKind("postgres", "PostgreSQL", 5432, [
     setting("sslMode", "select", {
-      options: ["disable", "prefer", "require", "verify-ca", "verify-full"],
-      default: "prefer",
+      options: ["auto", "disable", "prefer", "require", "verify-ca", "verify-full"],
+      default: "auto",
     }),
   ]),
   sqlKind("mysql", "MySQL / MariaDB", 3306, [
     setting("sslMode", "select", {
-      options: ["disabled", "preferred", "required", "verify_ca", "verify_identity"],
-      default: "preferred",
+      options: ["auto", "disabled", "preferred", "required", "verify_ca", "verify_identity"],
+      default: "auto",
     }),
   ]),
   {

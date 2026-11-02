@@ -43,6 +43,8 @@ export interface FakeServerOptions {
   setupOs?: "windows" | "linux";
   /** Permissions per role name; defaults follow the built-in roles in docs/ARCHITECTURE.md. */
   rolePermissions?: Record<string, string[]>;
+  /** Whether tips show; off by default, so other tests never meet one. */
+  tips?: boolean;
 }
 
 // A representative excerpt of the built-in roles, enough for what the UI decides on.
@@ -147,6 +149,10 @@ export interface FakePreferences {
   timeZone: string | null;
   weekStart: string | null;
   startDashboard: { orgId: string; dashboardId: string } | null;
+  /** `false` once tips are turned off; `null` or `true` shows them. */
+  showTips?: boolean | null;
+  /** The tips already shown, oldest first. */
+  seenTips?: string[];
   /** The server defaults (`appearance.*`); English here, so tests read English. */
   defaults: { language: string; theme: string };
 }
@@ -238,6 +244,9 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         timeZone: null,
         weekStart: null,
         startDashboard: null,
+        // Tips seen already, so screens show no tip unless a test asks for one.
+        showTips: options.tips === true ? null : false,
+        seenTips: [],
         defaults: { language: "en", theme: "system" },
       },
       branding: {
@@ -308,6 +317,8 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         weekStart: ["monday", "sunday", "saturday"],
         timeZone: null,
         startDashboard: null,
+        showTips: null,
+        seenTips: null,
       };
       for (const [key, value] of Object.entries(input)) {
         if (!(key in allowed)) {
@@ -337,7 +348,32 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
           return error(422, "validation", "startDashboard");
         }
       }
-      Object.assign(stored, input);
+      if (
+        input.showTips !== undefined &&
+        input.showTips !== null &&
+        typeof input.showTips !== "boolean"
+      ) {
+        return error(422, "validation", "showTips");
+      }
+      const seen = input.seenTips;
+      if (
+        seen !== undefined &&
+        seen !== null &&
+        (!Array.isArray(seen) || seen.some((id) => !/^[a-z][a-z0-9._-]{0,63}$/.test(String(id))))
+      ) {
+        return error(422, "validation", "seenTips");
+      }
+      const { seenTips, ...rest } = input;
+      Object.assign(stored, rest);
+      if (seenTips === null) {
+        stored.seenTips = [];
+      } else if (Array.isArray(seenTips)) {
+        const seen = stored.seenTips ?? [];
+        for (const id of seenTips as string[]) {
+          if (!seen.includes(id)) seen.push(id);
+        }
+        stored.seenTips = seen;
+      }
     }
     const start = stored.startDashboard;
     const dashboard =
@@ -348,6 +384,8 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
           );
     return json(200, {
       ...stored,
+      showTips: stored.showTips !== false,
+      seenTips: [...(stored.seenTips ?? [])],
       startDashboard:
         start === null || dashboard === undefined
           ? null

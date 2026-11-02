@@ -32,6 +32,12 @@ const SCHEMES: Readonly<Record<string, Scheme>> = {
   },
 };
 
+/**
+ * Kalzit's own TLS mode (TLS required towards public addresses, preferred towards private ones):
+ * no driver knows it, so a written string leaves `sslmode` out and reading it back keeps the field.
+ */
+const AUTO_TLS = "auto";
+
 export function supportsConnectionString(kind: string): boolean {
   return Object.hasOwn(SCHEMES, kind);
 }
@@ -249,7 +255,7 @@ export function toConnectionString(
       if (value === true) {
         params.push(`${param}=true`);
       }
-    } else if (String(value ?? "") !== "") {
+    } else if (String(value ?? "") !== "" && value !== AUTO_TLS) {
       params.push(`${param}=${encodeURIComponent(String(value))}`);
     }
   }

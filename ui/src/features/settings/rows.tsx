@@ -64,6 +64,12 @@ function choicesOf(t: Translate, key: string): Choice[] | undefined {
         { value: "text", label: "Text" },
         { value: "json", label: "JSON" },
       ];
+    // Header names, the same in every language.
+    case "security.forwarded_headers":
+      return [
+        { value: "x-forwarded", label: "X-Forwarded-For, -Proto, -Host" },
+        { value: "forwarded", label: "Forwarded (RFC 7239)" },
+      ];
     case "security.two_factor_required":
       return [
         { value: "off", label: t("security.policy.off") },

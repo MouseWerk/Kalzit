@@ -10,6 +10,17 @@ with query access to a data source). Viewers still see the dashboards shared wit
 their stored queries, and open saved analyses to view and run them under **Analyses**
 (Auswertungen) in the sidebar ([Saved analyses](saved-analyses.md#the-list)).
 
+## Start from zero
+
+New to the query language of a source? **Start here** shows while the editor is empty: its
+starter actions fill in a safe, read-only query, and **Show the query** shows how a starter or
+step is written. In the schema list, **Show rows**, **Count** and **Show structure** next to a
+table, collection or label do the same for that entry. **Cheat sheet** (Shift+F1, or Ctrl+/ / Cmd+/ outside the editor)
+lists the common clauses, macros and variables of the current language, and a failed query comes
+with a hint on what to change. Small tips appear once and can be dismissed; turn them off under
+**Account** > **Preferences** > **Show tips**. Examples per source kind:
+[Query languages for beginners](query-languages.md).
+
 ## Running a query
 
 1. Pick a **Data source**. The last one you used is remembered.

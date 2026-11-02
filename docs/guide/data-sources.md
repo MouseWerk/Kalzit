@@ -73,8 +73,8 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 
 | Kind | Connection settings | Shape |
 |---|---|---|
-| PostgreSQL (TimescaleDB included) | Host, Port (5432), Database, User name, Password, TLS mode (disable, prefer, require, verify-ca, verify-full), CA certificate | frame |
-| MySQL, MariaDB | Host, Port (3306), Database, User name, Password, TLS mode (disabled, preferred, required, verify_ca, verify_identity), CA certificate | frame |
+| PostgreSQL (TimescaleDB included) | Host, Port (5432), Database, User name, Password, TLS mode (auto, disable, prefer, require, verify-ca, verify-full), CA certificate | frame |
+| MySQL, MariaDB | Host, Port (3306), Database, User name, Password, TLS mode (auto, disabled, preferred, required, verify_ca, verify_identity), CA certificate | frame |
 | Microsoft SQL Server | Host, Port (1433), Database, User name, Password, Encrypt the connection, Trust the server certificate (only for tests), CA certificate | frame |
 | SQLite | Absolute path of the file; opened read-only, only from folders an admin allowed | frame |
 | ClickHouse (HTTP interface) | URL (port 8123, or 8443 with TLS), Database (`default`), User name (`default`), Password, CA certificate | frame |

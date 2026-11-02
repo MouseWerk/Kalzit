@@ -93,6 +93,9 @@ async function signIn(
   await page.getByLabel(t("access.login.password"), { exact: true }).fill(account.password);
   await page.getByRole("button", { name: t("access.login.submit") }).click();
   await expect(page.getByRole("navigation", { name: t("nav.label") })).toBeVisible();
+  // Tips show once and at their own moment; the pictures show the screens without them.
+  const tips = await page.request.patch("/api/me/preferences", { data: { showTips: false } });
+  expect(tips.ok()).toBe(true);
 }
 
 async function shoot(page: Page, name: string): Promise<void> {

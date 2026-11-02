@@ -75,6 +75,13 @@ export const SHORTCUT_AREAS: readonly Area[] = [
     title: "shell.shortcuts.area.explore",
     shortcuts: [
       { keys: [["Mod", "Enter"]], label: "shell.shortcuts.run" },
+      {
+        keys: [
+          ["Shift", "F1"],
+          ["Mod", "/"],
+        ],
+        label: "shell.shortcuts.helpPanel",
+      },
       { keys: [["←"], ["→"]], label: "shell.shortcuts.tabs" },
     ],
   },
