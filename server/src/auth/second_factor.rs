@@ -128,8 +128,9 @@ pub async fn org_requirement(state: &AppState, org_id: &str) -> ApiResult<Requir
     Ok(Requirement::parse(&crate::settings::get_org(state, org_id, POLICY_KEY).await?))
 }
 
-/// The memberships of `user_id` whose rules bind them, read through `db`: only those the person
-/// consented to (`authz::CONSENTED_JOINS`).
+/// The memberships of `user_id` whose rules apply at the sign-in, read through `db`: only those
+/// the person consented to (`authz::CONSENTED_JOINS`). Every membership meets its organization's
+/// rules on entering it (`auth::org_gate`).
 pub async fn memberships(state: &AppState, db: &AnyPool, user_id: &str) -> ApiResult<Vec<MembershipRule>> {
     let mut rows: Vec<(String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = $1 \

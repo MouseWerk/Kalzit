@@ -825,9 +825,17 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert!(r.body["error"].get("reason").is_none(), "{}", r.body);
     let r = app.send(Method::POST, "/api/auth/login", Some(login("joerg@example.de", PASSWORD)), None).await;
     assert_eq!(r.status, StatusCode::OK, "a server admin in the organization: {}", r.body);
+    // Inside the organization the rule counts for the server admin too: a password session is
+    // refused there (docs/api/access.md, "Organization sign-in rules"), so it goes back by hand.
     let r =
         app.send(Method::PATCH, &path, Some(json!({ "value": "inherit", "version": version + 1 })), Some(&admin)).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["error"]["code"], json!("org_provider_sign_in_required"), "{}", r.body);
+    sqlx::query("DELETE FROM org_settings WHERE org_id = $1 AND key = 'signin.local_password'")
+        .bind(&org)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    kalzit::settings::cache(&app.state).invalidate(Some(&org));
 
     // Password sign-in off: only with a break-glass admin and a checked provider.
     let r =
@@ -1081,7 +1089,7 @@ async fn unverified_provider_accounts_and_invitations_without_passwords() {
     let r = app
         .post(&format!("/api/orgs/{org}/members"), json!({ "email": "uwe@example.de", "role": "viewer" }), &admin)
         .await;
-    assert_eq!(r.reason(), "mail.email_unconfirmed", "{}", r.body);
+    assert_eq!(r.reason(), "members.invite_instead", "{}", r.body);
     let other = Who { sub: "sub-uwe-elsewhere", email: "uwe@example.de", verified: true, groups: &[] };
     let (r, _) = sign_in(&app, &idp, &other, |_| {}).await;
     assert_eq!(outcome_of(&r), "email_taken", "no other identity is linked to it by email");
@@ -1344,6 +1352,90 @@ async fn service_accounts_never_sign_in_or_link_through_a_provider() {
     app.finish().await;
 }
 
+/// An account without a password and a second factor has nothing to prove it with, so a provider
+/// never links it by its email address alone (docs/api/sso.md, "Linking by email"): not when it
+/// signs in through another provider or a directory, and not when nothing owns it either.
+#[tokio::test]
+async fn accounts_without_a_proof_of_their_own_are_never_linked_by_email() {
+    let app = test_app().await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, _) = app.setup().await;
+    add_provider(&app, &issuer, &admin).await;
+    // A directory the account signs in through: a provider of its own, with a confirmed identity.
+    sqlx::query(
+        "INSERT INTO sso_providers (id, slug, kind, name, position, enabled, config, created_at, updated_at) \
+         VALUES ('dir-1', 'verzeichnis', 'ldap', 'Verzeichnis', 9, 0, '{}', 0, 0)",
+    )
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    for (id, email) in [("u-paula", "paula@example.de"), ("u-quirin", "quirin@example.de")] {
+        sqlx::query(
+            "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, \
+             email_confirmed) VALUES ($1, $2, $3, NULL, 0, 0, 0, 1)",
+        )
+        .bind(id)
+        .bind(email)
+        .bind(email)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, username, created_at, last_sign_in_at, \
+         confirmed) VALUES ('dir-1', 'paula-guid', 'ldap', 'u-paula', 'paula', 0, 0, 1)",
+    )
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+
+    // Paula signs in through the directory: the provider is not linked to her account by email.
+    let paula = Who { sub: "sub-paula", email: "paula@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &paula, |_| {}).await;
+    assert_eq!(outcome_of(&r), "link_refused", "{}", r.location());
+    assert!(r.cookie("kalzit_session").is_none() && r.cookie("kalzit_pending").is_none());
+    // Quirin's account has no sign-in method at all, and no SCIM owns it: refused too.
+    let quirin = Who { sub: "sub-quirin", email: "quirin@example.de", verified: true, groups: &[] };
+    let (r, _) = sign_in(&app, &idp, &quirin, |_| {}).await;
+    assert_eq!(outcome_of(&r), "link_refused", "{}", r.location());
+    let (links,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sso_identities WHERE user_id IN ('u-paula', 'u-quirin') AND provider_id <> 'dir-1'",
+    )
+    .fetch_one(&app.state.db)
+    .await
+    .unwrap();
+    assert_eq!(links, 0, "nothing was linked");
+    let causes: Vec<(String,)> = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'auth.sso_failed'")
+        .fetch_all(&app.state.db)
+        .await
+        .unwrap();
+    assert!(causes.iter().any(|(s,)| s.contains("sso.email_link_other_sign_in")), "{causes:?}");
+    assert!(causes.iter().any(|(s,)| s.contains("sso.email_link_no_proof")), "{causes:?}");
+    // With a password of its own, the account proves itself once and the link follows as before.
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = 'u-paula'")
+        .bind(kalzit::auth::password::hash(PASSWORD.to_string()).await.unwrap())
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let (r, _) = sign_in(&app, &idp, &paula, |_| {}).await;
+    assert!(r.location().starts_with("/anmelden?secondFactor=1"), "{}", r.location());
+    app.finish().await;
+}
+
+/// A group mapping of `provider` into `org`: the provider leads into that organization, so an
+/// account its SCIM owns may be linked by email (docs/api/sso.md, "Linking by email").
+async fn map_into(app: &TestApp, provider: &str, org: &str, admin: &str) {
+    let r = app
+        .post(
+            "/api/admin/sign-in/mappings",
+            json!({ "providerId": provider, "group": "alle", "orgId": org, "role": "viewer", "idpDecides": false }),
+            admin,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+}
+
 /// Creates a SCIM user in `org` with its SCIM token and answers its id.
 async fn scim_user(app: &TestApp, org: &str, token: &str, user_name: &str) -> String {
     let req = Request::builder()
@@ -1370,16 +1462,20 @@ async fn scim_accounts_link_at_sign_in_and_stay_unconfirmed_for_everything_else(
     let idp = fake_idp().await;
     let issuer = idp.lock().unwrap().issuer.clone();
     let (admin, admin_id, org) = app.setup().await;
-    add_provider(&app, &issuer, &admin).await;
+    let provider_id = add_provider(&app, &issuer, &admin).await;
     let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     let token = r.body["token"].as_str().unwrap().to_string();
 
-    // Entra ID SCIM, then Entra ID OIDC with the same address: linked at once.
+    // Entra ID SCIM, then Entra ID OIDC with the same address. The account has nothing to prove
+    // it with: it is linked only through a provider whose mapping leads into its organization.
     let sina = scim_user(&app, &org, &token, "sina@example.de").await;
     let who = Who { sub: "sub-sina", email: "sina@example.de", verified: true, groups: &[] };
     let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
-    assert_eq!(r.location(), "/dashboards", "{}", r.location());
+    assert_eq!(outcome_of(&r), "link_refused", "{}", r.location());
+    map_into(&app, &provider_id, &org, &admin).await;
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(r.location(), "/dashboards", "linked at once: {}", r.location());
     let session = session_of(&r);
     let me = app.get("/api/me", &session).await;
     assert_eq!(me.body["id"], json!(sina), "{}", me.body);
@@ -1403,7 +1499,7 @@ async fn scim_accounts_link_at_sign_in_and_stay_unconfirmed_for_everything_else(
     let r = app
         .post(&format!("/api/orgs/{nord}/members"), json!({ "email": "sina@example.de", "role": "viewer" }), &admin)
         .await;
-    assert_eq!(r.reason(), "mail.email_unconfirmed", "{}", r.body);
+    assert_eq!(r.reason(), "members.invite_instead", "{}", r.body);
 
     // An unused account SCIM made never blocks a mailed invitation of another organization: the
     // invited person takes it over, and SCIM's ownership ends.
@@ -1446,7 +1542,8 @@ async fn a_signed_in_scim_account_never_takes_another_persons_address() {
     let idp = fake_idp().await;
     let issuer = idp.lock().unwrap().issuer.clone();
     let (admin, _, org) = app.setup().await;
-    add_provider(&app, &issuer, &admin).await;
+    let provider = add_provider(&app, &issuer, &admin).await;
+    map_into(&app, &provider, &org, &admin).await;
     let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
     let token = r.body["token"].as_str().unwrap().to_string();
 
@@ -1490,6 +1587,7 @@ async fn the_first_link_ends_scim_ownership_even_when_the_identity_goes() {
     let issuer = idp.lock().unwrap().issuer.clone();
     let (admin, _, org) = app.setup().await;
     let provider = add_provider(&app, &issuer, &admin).await;
+    map_into(&app, &provider, &org, &admin).await;
     let r = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &admin).await;
     let token = r.body["token"].as_str().unwrap().to_string();
 

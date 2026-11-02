@@ -1,5 +1,12 @@
 {
   "shell.toast.region": "Notifications",
+  "shell.orgGate.secondFactor.title": "This organization requires a second factor",
+  "shell.orgGate.secondFactor.text": "To work in {name}, set up a second factor for your account: an authenticator app or a passkey. Your other organizations, your account and signing out stay available.",
+  "shell.orgGate.secondFactor.setUp": "Set up now",
+  "shell.orgGate.provider.title": "This organization requires a sign-in through its provider",
+  "shell.orgGate.provider.text": "{name} does not accept a sign-in with a password. Sign in again through the identity provider or directory of your organization. Your other organizations and your account stay available.",
+  "shell.orgGate.provider.signIn": "Sign in through the provider",
+  "shell.orgGate.leave": "Leave organization",
   "shell.toast.errors": "Errors",
   "shell.toast.undoHint": "Press F6 to reach Undo.",
   "shell.breadcrumbs": "Breadcrumbs",

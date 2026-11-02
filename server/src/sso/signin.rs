@@ -93,6 +93,47 @@ async fn has_own_proof(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResu
     Ok(n > 0)
 }
 
+/// Whether an account with nothing of its own to prove it with (no password, no second factor)
+/// may be linked to `provider_id` by its address without a proof (docs/api/sso.md, "Linking by
+/// email"). Only an account SCIM made and still owns may, and only when this provider's group
+/// mapping leads into that organization. An account that signs in through another provider or a
+/// directory is refused: the person signs in the way they already do. Inside the sign-in's
+/// transaction.
+async fn link_without_proof(
+    conn: &mut sqlx::AnyConnection,
+    user_id: &str,
+    provider_id: &str,
+    break_glass: Option<&str>,
+) -> ApiResult<Result<(), Refusal>> {
+    let (others,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sso_identities WHERE user_id = $1 AND provider_id <> $2 AND confirmed = 1",
+    )
+    .bind(user_id)
+    .bind(provider_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if others > 0 {
+        return Ok(Err(Refusal::new(
+            "link_refused",
+            "sso.email_link_other_sign_in",
+            "the account has no password or second factor and signs in through another provider or directory",
+        )
+        .of(user_id)));
+    }
+    if crate::scim::vouches_for_sign_in(&mut *conn, user_id, break_glass).await?
+        && let Some(org_id) = crate::scim::owner_org(&mut *conn, user_id, break_glass).await?
+        && mapping::rules(&mut *conn, provider_id).await?.iter().any(|r| r.org_id == org_id)
+    {
+        return Ok(Ok(()));
+    }
+    Ok(Err(Refusal::new(
+        "link_refused",
+        "sso.email_link_no_proof",
+        "the account has no password or second factor to prove it with and no directory of this provider owns it",
+    )
+    .of(user_id)))
+}
+
 /// Finds or makes the account of `person` at `provider` (whose issuer is `issuer`) and records the
 /// identity with this sign-in's groups, inside `conn` (a transaction). A refusal changes nothing:
 /// the caller rolls back.
@@ -130,6 +171,12 @@ pub async fn account(
             if confirmed == 0 {
                 email_linked = true;
                 confirm_link = has_own_proof(&mut *conn, &user_id).await?;
+                if !confirm_link
+                    && let Err(refusal) =
+                        link_without_proof(&mut *conn, &user_id, &provider.id, break_glass.as_deref()).await?
+                {
+                    return Ok(Err(refusal));
+                }
             }
             sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCOUNT_COLUMNS} WHERE id = $1")))
                 .bind(&user_id)
@@ -204,10 +251,17 @@ pub async fn account(
                     }
                     // The first link of this identity to an account that has a password or a
                     // second factor: the person proves the account once before the link counts
-                    // (docs/api/sso.md, "Linking by email"). An account SCIM owns has neither and
-                    // links at once, as before.
+                    // (docs/api/sso.md, "Linking by email"). An account with neither links at
+                    // once only when SCIM owns it for an organization this provider leads into
+                    // (`link_without_proof`).
                     email_linked = true;
                     confirm_link = has_own_proof(&mut *conn, &a.id).await?;
+                    if !confirm_link
+                        && let Err(refusal) =
+                            link_without_proof(&mut *conn, &a.id, &provider.id, break_glass.as_deref()).await?
+                    {
+                        return Ok(Err(refusal));
+                    }
                     a
                 }
                 None if provider.create_accounts != 0 => {

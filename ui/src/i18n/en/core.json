@@ -50,6 +50,8 @@
   "errors.invalid_credentials": "Email address or password is incorrect.",
   "errors.invalid_code": "The code is not correct. Codes change every 30 seconds; check the time of your phone too.",
   "errors.confirmation_required": "Confirm with your second factor first, then try again.",
+  "errors.org_second_factor_required": "This organization requires a second factor. Set one up on your account, then try again.",
+  "errors.org_provider_sign_in_required": "This organization requires a sign-in through its identity provider, not a password.",
   "errors.rate_limited": "Too many attempts. Wait a moment, then try again.",
   "errors.busy": "The server is busy right now. Try again in a moment.",
   "errors.cross_origin": "The server rejected the request because this address does not match its configuration. If the server runs behind a reverse proxy, set server.public_url or security.trusted_proxies in its configuration.",

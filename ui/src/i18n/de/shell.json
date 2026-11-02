@@ -1,5 +1,12 @@
 {
   "shell.toast.region": "Benachrichtigungen",
+  "shell.orgGate.secondFactor.title": "Diese Organisation verlangt einen zweiten Faktor",
+  "shell.orgGate.secondFactor.text": "Um in {name} zu arbeiten, richte für dein Konto einen zweiten Faktor ein: eine Authenticator-App oder einen Passkey. Deine anderen Organisationen, dein Konto und die Abmeldung bleiben erreichbar.",
+  "shell.orgGate.secondFactor.setUp": "Jetzt einrichten",
+  "shell.orgGate.provider.title": "Diese Organisation verlangt die Anmeldung über ihren Anbieter",
+  "shell.orgGate.provider.text": "{name} lässt keine Anmeldung mit Passwort zu. Melde dich erneut über den Identitätsanbieter oder das LDAP-Verzeichnis deiner Organisation an. Deine anderen Organisationen und dein Konto bleiben erreichbar.",
+  "shell.orgGate.provider.signIn": "Über den Anbieter anmelden",
+  "shell.orgGate.leave": "Organisation verlassen",
   "shell.toast.errors": "Fehler",
   "shell.toast.undoHint": "Mit F6 erreichst du Rückgängig.",
   "shell.breadcrumbs": "Pfad",

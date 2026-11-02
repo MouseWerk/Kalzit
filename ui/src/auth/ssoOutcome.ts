@@ -11,6 +11,7 @@ export const SSO_OUTCOMES = [
   "unmapped",
   "no_account",
   "email_taken",
+  "link_refused",
 ] as const;
 
 export type SsoOutcome = (typeof SSO_OUTCOMES)[number];

@@ -534,6 +534,8 @@ async fn people_in_another_organization_are_invited_not_added() {
     let r = app.post(&members, json!({ "email": "paul@example.com", "role": "viewer" }), &owner).await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "members.invite_instead"), "{}", r.body);
     assert_eq!(r.body["error"]["field"], "email");
+    // The answer does not say that the account belongs to another organization.
+    assert!(!r.body.to_string().contains("organization"), "{}", r.body);
     // An account in no organization yet is still added directly.
     app.user(&owner, "Nora Neu", "nora@example.com").await;
     let r = app.post(&members, json!({ "email": "nora@example.com", "role": "viewer" }), &owner).await;
@@ -1055,7 +1057,7 @@ async fn a_copied_link_makes_an_unconfirmed_account_until_it_confirms_by_mail() 
     let r = app
         .post(&format!("/api/orgs/{other}/members"), json!({ "email": "nora@example.com", "role": "viewer" }), &owner)
         .await;
-    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "mail.email_unconfirmed"));
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "members.invite_instead"));
     // Without a mail server the address cannot be confirmed.
     let r = app.post("/api/me/email-confirmation", json!({}), &nora).await;
     assert_eq!(r.reason(), "mail.reset_unavailable");
@@ -1180,6 +1182,10 @@ async fn a_team_with_a_team_space_takes_invitations_from_maintainers_and_admins_
 async fn a_new_account_from_an_invitation_sets_up_a_required_second_factor_first() {
     let app = test_app(Setup::NoMail).await;
     let (owner, org) = app.setup().await;
+    // Invited first: once the rule holds, the owner (without a second factor) is refused inside
+    // the organization too (docs/api/access.md, "Organization sign-in rules").
+    let r = app.invite(&org, &["nora@example.com"], "viewer", &owner).await;
+    let link = r.body["items"][0]["link"].as_str().unwrap().to_string();
     let r = app
         .send(
             Method::PATCH,
@@ -1189,8 +1195,6 @@ async fn a_new_account_from_an_invitation_sets_up_a_required_second_factor_first
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let r = app.invite(&org, &["nora@example.com"], "viewer", &owner).await;
-    let link = r.body["items"][0]["link"].as_str().unwrap().to_string();
     let token = link.rsplit('#').next().unwrap();
     let r = app
         .public("/api/auth/invitation/accept", json!({ "token": token, "name": "Nora", "password": PASSWORD }))

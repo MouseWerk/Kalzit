@@ -356,8 +356,10 @@ without it.
    any Windows, start it with `msiexec /i kalzit-<version>-windows-x64.msi TRANSFORMS=:1031`.
 
 3. The last page of a first installation has **Open setup in the browser**, ticked by default:
-   **Finish** opens `http://localhost:3000/setup` (or the port you chose). The setup code is not
-   part of that link: the finish page runs without administrator rights and cannot read it.
+   **Finish** opens `http://localhost:3000/setup` (or the port you chose), or
+   `https://localhost:3443/setup` (or the HTTPS port you chose) when you chose HTTPS. The setup
+   code is not part of that link: the finish page runs without administrator rights and cannot
+   read it.
    The code is in `setup-token.txt` in the data folder, which only administrators can open; an
    editor or Explorer started normally is refused ("You don't have permission to open this
    file"). Open PowerShell with **Run as administrator** and enter one of these (the setup

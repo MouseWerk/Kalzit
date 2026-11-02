@@ -91,6 +91,19 @@ try {
     if ($open.Count -ne 1 -or $open[0] -notlike '*http://localhost:`[PORT`]/setup' -or $open[0] -like '*code*') {
         throw "the finish page opens '$($open -join ' | ')', expected http://localhost:[PORT]/setup"
     }
+    $openHttps = @(Get-TransformedValues $Msi 0 "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = 'KalzitOpenSetupHttps'")
+    if ($openHttps.Count -ne 1 -or $openHttps[0] -notlike '*https://localhost:`[HTTPSPORT`]/setup' -or $openHttps[0] -like '*code*') {
+        throw "the finish page opens '$($openHttps -join ' | ')' over HTTPS, expected https://localhost:[HTTPSPORT]/setup"
+    }
+    # Each runs only for its listener and only with a port from 1 to 65535, so a property that is
+    # no port never ends up in the address handed to the browser.
+    foreach ($case in @(@('KalzitOpenSetup', 'HTTPS = "off"', 'PORT'), @('KalzitOpenSetupHttps', 'HTTPS <> "off"', 'HTTPSPORT'))) {
+        $conditions = @(Get-TransformedValues $Msi 0 "SELECT ``Condition`` FROM ``ControlEvent`` WHERE ``Dialog_`` = 'ExitDialog' AND ``Control_`` = 'Finish' AND ``Argument`` = '$($case[0])'")
+        $wanted = @($case[1], "$($case[2]) >= 1", "$($case[2]) <= 65535", 'NOT Installed')
+        if ($conditions.Count -ne 1 -or @($wanted | Where-Object { $conditions[0] -notlike "*$_*" }).Count -ne 0) {
+            throw "the finish page runs $($case[0]) when '$($conditions -join ' | ')', expected a condition with $($wanted -join ', ')"
+        }
+    }
     $checked = @(Get-TransformedValues $Msi 0 "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'WIXUI_EXITDIALOGOPTIONALCHECKBOX'")
     if ($checked.Count -ne 1 -or $checked[0] -ne '1') { throw "the option to open setup is not checked by default ('$checked')" }
     foreach ($case in @(@(0, 'Open setup in the'), @(1031, 'Einrichtung im'))) {

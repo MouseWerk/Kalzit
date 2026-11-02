@@ -175,6 +175,11 @@ export interface FakeServer {
     branding: Record<string, unknown>;
     /** `GET /api/orgs/{orgId}/appearance` for every organization. */
     appearance: Record<string, unknown>;
+    /**
+     * Organizations whose sign-in rules refuse the session, by id: every route of such an
+     * organization answers `403` with the code (docs/api/access.md, "Organization sign-in rules").
+     */
+    gates: Record<string, string>;
   };
   calls: { method: string; path: string; body: unknown }[];
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
@@ -252,6 +257,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         timeZone: "browser",
         weekStart: "monday",
       },
+      gates: {},
     },
     calls: [],
     failNext: (path, status, code, method, field) =>
@@ -534,6 +540,10 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       if (membership === undefined) {
         return error(404, "not_found");
       }
+      const gate = state.gates[membership.id];
+      if (gate !== undefined) {
+        return error(403, gate);
+      }
       return json(200, { ...membership, permissions: permissionsOf(membership.role) });
     }
     if (path.startsWith("/api/orgs/")) {
@@ -546,6 +556,10 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       );
       if (membership === undefined) {
         return error(404, "not_found");
+      }
+      const gate = state.gates[membership.id];
+      if (gate !== undefined) {
+        return error(403, gate);
       }
       if (route.endsWith("/appearance") && route.split("/").length === 5 && method === "GET") {
         return json(200, state.appearance);
