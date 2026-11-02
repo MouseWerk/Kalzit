@@ -22,6 +22,7 @@ import { ConflictDialog, useSettingChanges } from "../admin/components/Settings"
 import { SignInSection } from "../admin/sso/SignInSection";
 import { AiOrgSection } from "../ai/admin/AiOrgSection";
 import { AiServerSection } from "../ai/admin/AiServerSection";
+import { errorReason } from "../datasources/reasons";
 import { OrgPluginsSection } from "../plugins/OrgPluginsSection";
 import { PluginsSection } from "../plugins/PluginsSection";
 import { useConfirmedCalls } from "../security/ConfirmFactorDialog";
@@ -333,6 +334,7 @@ function ServerSettings({ section }: { section: SectionDef }) {
 }
 
 function OrgSettings({ section }: { section: SectionDef }) {
+  const { t } = useI18n();
   const access = useSettingsAccess();
   const orgId = access.orgId ?? "";
   const queryKey = adminKeys.orgSettings(orgId);
@@ -355,6 +357,7 @@ function OrgSettings({ section }: { section: SectionDef }) {
         queryClient,
         await confirmed.run(() => resetSetting({ kind: "org", orgId }, key, version)),
       ),
+    reasonText: (error) => orgRuleRefusal(t, error),
   });
   if (settings.data === undefined) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
@@ -369,4 +372,23 @@ function OrgSettings({ section }: { section: SectionDef }) {
       before={confirmed.dialog}
     />
   );
+}
+
+/**
+ * Why an organization's sign-in rule was not saved: it would lock people, or the admin saving it,
+ * out of the organization (docs/api/access.md, "Organization sign-in rules").
+ */
+function orgRuleRefusal(t: ReturnType<typeof useI18n>["t"], error: unknown): string | undefined {
+  const reason = errorReason(error);
+  if (reason?.reason === "sso.org_local_off_blocked") {
+    return t(
+      reason.params?.check === "selfViaProvider"
+        ? "settings.orgRules.signInFirst"
+        : "settings.orgRules.noProvider",
+    );
+  }
+  if (reason?.reason === "second_factor.setup_first") {
+    return t("settings.orgRules.setupFirst");
+  }
+  return undefined;
 }

@@ -172,6 +172,9 @@ async fn patch(
     }
     settings::validate(def, &body.value).map_err(|e| ApiError::validation(e).with_field("value"))?;
     check_not_own(state, def.key, &body.value).map_err(|e| e.with_field("value"))?;
+    check_org_change(state, user, info, headers, org_id, def.key, &body.value)
+        .await
+        .map_err(|e| e.with_field("value"))?;
     crate::ai::service::check_switch(state, org_id, key, &body.value).await?;
     let conflict = |e: Effective| ApiError::version_conflict(json!(view(def, e)));
     if body.version != before.version {
@@ -191,6 +194,26 @@ async fn patch(
     // nothing may fail as "busy, nothing changed". The value comes from the database now, since
     // the environment and the file were ruled out above.
     Ok(Json(view(def, stored_view(body.value, version, user, now))))
+}
+
+/// Refuses an organization sign-in rule that would lock people or the saving session out of the
+/// organization (`auth::org_gate::check_change`).
+async fn check_org_change(
+    state: &AppState,
+    user: &SessionUser,
+    info: &RequestInfo,
+    headers: &HeaderMap,
+    org_id: Option<&str>,
+    key: &str,
+    value: &Value,
+) -> ApiResult<()> {
+    let Some(org_id) = org_id else { return Ok(()) };
+    if key != "signin.local_password" && key != crate::auth::second_factor::POLICY_KEY {
+        return Ok(());
+    }
+    let token = crate::auth::session::read_cookie(headers, info.https).ok_or_else(ApiError::unauthenticated)?;
+    let hash = crate::auth::session::hash_token(&token);
+    crate::auth::org_gate::check_change(state, user, &hash, org_id, key, value).await
 }
 
 /// Refuses an outbound proxy address that names Kalzit's own listener or database
@@ -455,6 +478,9 @@ async fn batch(
             (Some(value), false) => {
                 settings::validate(def, value).map_err(|e| ApiError::validation(e).with_field("changes"))?;
                 check_not_own(state, def.key, value).map_err(|e| e.with_field("changes"))?;
+                check_org_change(state, user, info, headers, org_id, def.key, value)
+                    .await
+                    .map_err(|e| e.with_field("changes"))?;
                 crate::ai::service::check_switch(state, org_id, def.key, value).await?;
             }
             (None, true) => {}

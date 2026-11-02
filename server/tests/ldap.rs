@@ -868,17 +868,7 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     .execute(&app.state.db)
     .await
     .unwrap();
-    let settings = app.get(&format!("/api/orgs/{org}/settings"), &admin).await;
-    let version = settings.body["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|s| s["key"] == "signin.local_password")
-        .unwrap()["version"]
-        .clone();
-    let path = format!("/api/orgs/{org}/settings/signin.local_password");
-    let r = app.send(Method::PATCH, &path, Some(json!({ "value": "off", "version": version })), Some(&admin)).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    store_org_setting(&app.state, &org, "signin.local_password", "off").await;
     let off = app.login_from("10.23.1.1", "olaf@example.de", PASSWORD).await;
     assert_eq!((off.status, off.reason()), (local.status, local.reason()), "{}", off.body);
     // The owner still signs in with the right password.
@@ -897,4 +887,21 @@ fn logins_count_without_domain_and_case() {
     // An address with a backslash stays the address.
     assert_eq!(kalzit::routes::auth::login_key("a\\b@x.de"), "a\\b@x.de");
     assert_eq!(kalzit::routes::auth::login_key(" A\\B@X.de "), "a\\b@x.de");
+}
+
+/// Stores an organization setting directly, as an admin signed in through a provider (and with a
+/// second factor) would; the API refuses rules that would lock out the password session saving
+/// them (docs/api/access.md, "Organization sign-in rules").
+async fn store_org_setting(state: &kalzit::app::AppState, org: &str, key: &str, value: &str) {
+    sqlx::query(
+        "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at) VALUES ($1, $2, $3, 1, NULL, 0) \
+         ON CONFLICT (org_id, key) DO UPDATE SET value = excluded.value, version = org_settings.version + 1",
+    )
+    .bind(org)
+    .bind(key)
+    .bind(serde_json::Value::from(value).to_string())
+    .execute(&state.db)
+    .await
+    .unwrap();
+    kalzit::settings::cache(state).invalidate(Some(org));
 }

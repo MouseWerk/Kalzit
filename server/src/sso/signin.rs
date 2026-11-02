@@ -96,13 +96,16 @@ async fn has_own_proof(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResu
 /// Whether an account with nothing of its own to prove it with (no password, no second factor)
 /// may be linked to `provider_id` by its address without a proof (docs/api/sso.md, "Linking by
 /// email"). Only an account SCIM made and still owns may, and only when this provider's group
-/// mapping leads into that organization. An account that signs in through another provider or a
+/// mapping, for this person's `groups`, gives a membership in that organization (as `decide`
+/// would, the rule for unmapped people included). An account that signs in through another provider or a
 /// directory is refused: the person signs in the way they already do. Inside the sign-in's
 /// transaction.
 async fn link_without_proof(
     conn: &mut sqlx::AnyConnection,
+    state: &AppState,
     user_id: &str,
     provider_id: &str,
+    groups: &[String],
     break_glass: Option<&str>,
 ) -> ApiResult<Result<(), Refusal>> {
     let (others,): (i64,) = sqlx::query_as(
@@ -122,9 +125,12 @@ async fn link_without_proof(
     }
     if crate::scim::vouches_for_sign_in(&mut *conn, user_id, break_glass).await?
         && let Some(org_id) = crate::scim::owner_org(&mut *conn, user_id, break_glass).await?
-        && mapping::rules(&mut *conn, provider_id).await?.iter().any(|r| r.org_id == org_id)
     {
-        return Ok(Ok(()));
+        let rules = mapping::rules(&mut *conn, provider_id).await?;
+        let outcome = mapping::resolve(&rules, groups, &super::unmapped(state).await?);
+        if !outcome.refused && outcome.orgs.iter().any(|o| o.org_id == org_id) {
+            return Ok(Ok(()));
+        }
     }
     Ok(Err(Refusal::new(
         "link_refused",
@@ -172,8 +178,15 @@ pub async fn account(
                 email_linked = true;
                 confirm_link = has_own_proof(&mut *conn, &user_id).await?;
                 if !confirm_link
-                    && let Err(refusal) =
-                        link_without_proof(&mut *conn, &user_id, &provider.id, break_glass.as_deref()).await?
+                    && let Err(refusal) = link_without_proof(
+                        &mut *conn,
+                        state,
+                        &user_id,
+                        &provider.id,
+                        &person.groups,
+                        break_glass.as_deref(),
+                    )
+                    .await?
                 {
                     return Ok(Err(refusal));
                 }
@@ -257,8 +270,15 @@ pub async fn account(
                     email_linked = true;
                     confirm_link = has_own_proof(&mut *conn, &a.id).await?;
                     if !confirm_link
-                        && let Err(refusal) =
-                            link_without_proof(&mut *conn, &a.id, &provider.id, break_glass.as_deref()).await?
+                        && let Err(refusal) = link_without_proof(
+                            &mut *conn,
+                            state,
+                            &a.id,
+                            &provider.id,
+                            &person.groups,
+                            break_glass.as_deref(),
+                        )
+                        .await?
                     {
                         return Ok(Err(refusal));
                     }

@@ -974,17 +974,7 @@ async fn people_leave_organizations_themselves_except_the_last_owner() {
     // Back in the first organization, which turns password sign-in off for its members: her
     // password no longer signs her in, but her session still lets her leave, and then it does.
     t.join(&org, &bea.user_id, "viewer").await;
-    let settings = t.get(&format!("/api/orgs/{org}/settings"), &admin).await;
-    let version = settings.body["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|s| s["key"] == "signin.local_password")
-        .map(|s| s["version"].as_i64().unwrap())
-        .unwrap();
-    let path = format!("/api/orgs/{org}/settings/signin.local_password");
-    let r = t.patch(&path, json!({ "value": "off", "version": version }), &admin).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    store_org_setting(&t.state, &org, "signin.local_password", "off").await;
     let login = json!({ "email": "bea@example.de", "password": PASSWORD });
     let r = t.send(Method::POST, "/api/auth/login", Some(login.clone()), None).await;
     assert_eq!((r.status, r.code()), (StatusCode::UNAUTHORIZED, "invalid_credentials"), "{}", r.body);
@@ -1025,22 +1015,8 @@ async fn an_organizations_sign_in_rules_bind_consenting_members_at_sign_in_and_e
 
     let set = |key: &'static str, value: &'static str| {
         let t = &t;
-        let admin = &admin;
         let org = org.clone();
-        async move {
-            let settings = t.get(&format!("/api/orgs/{org}/settings"), admin).await;
-            let version = settings.body["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|s| s["key"] == key)
-                .map(|s| s["version"].as_i64().unwrap())
-                .unwrap();
-            let r = t
-                .patch(&format!("/api/orgs/{org}/settings/{key}"), json!({ "value": value, "version": version }), admin)
-                .await;
-            assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
-        }
+        async move { store_org_setting(&t.state, &org, key, value).await }
     };
     let login = |email: &str| json!({ "email": email, "password": PASSWORD });
     // Turning a rule back by hand: the admin's own password session is refused by it too.
@@ -1398,4 +1374,21 @@ async fn postgres_access_model() {
     check_concurrent_admin_revocations(&t, &owner).await;
     t.finish().await;
     schema.drop_now().await;
+}
+
+/// Stores an organization setting directly, as an admin signed in through a provider (and with a
+/// second factor) would; the API refuses rules that would lock out the password session saving
+/// them (docs/api/access.md, "Organization sign-in rules").
+async fn store_org_setting(state: &kalzit::app::AppState, org: &str, key: &str, value: &str) {
+    sqlx::query(
+        "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at) VALUES ($1, $2, $3, 1, NULL, 0) \
+         ON CONFLICT (org_id, key) DO UPDATE SET value = excluded.value, version = org_settings.version + 1",
+    )
+    .bind(org)
+    .bind(key)
+    .bind(serde_json::Value::from(value).to_string())
+    .execute(&state.db)
+    .await
+    .unwrap();
+    kalzit::settings::cache(state).invalidate(Some(org));
 }

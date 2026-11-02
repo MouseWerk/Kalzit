@@ -230,7 +230,10 @@ Kalzit checked (with the name in the `Host` header), so the proxy has nothing to
 requests go through `CONNECT` by name, because the certificate is checked against the name: the
 proxy then resolves the name again, and a name whose answer changes in between (DNS rebinding) is
 only stopped by the proxy's own rules. **The proxy must refuse private (RFC 1918), loopback,
-link-local and cloud metadata addresses itself.** The proxy address cannot be Kalzit's own
+link-local and cloud metadata addresses itself.** Since plain-http requests are pinned to the
+checked address (IPv4 first), the proxy sees that address, not the name: name-based virtual hosts
+still get the name in `Host`, but rules on the proxy that allow domains by name do not match them;
+allow those targets by address or use `https://`. The proxy address cannot be Kalzit's own
 listener or the server of its own database. For squid, for example:
 
 ```

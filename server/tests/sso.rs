@@ -810,8 +810,23 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         .map(|s| s["version"].as_i64().unwrap())
         .unwrap();
     let path = format!("/api/orgs/{org}/settings/signin.local_password");
+    // A provider leads into the organization, but the admin is signed in with a password: turning
+    // it off would shut them out, so the API refuses (docs/api/access.md, "Organization sign-in
+    // rules"); it is stored as an admin signed in through the provider would.
     let r = app.send(Method::PATCH, &path, Some(json!({ "value": "off", "version": version })), Some(&admin)).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.reason(), "sso.org_local_off_blocked", "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["check"], json!("selfViaProvider"), "{}", r.body);
+    sqlx::query(
+        "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at) \
+         VALUES ($1, 'signin.local_password', '\"off\"', $2, NULL, 0) \
+         ON CONFLICT (org_id, key) DO UPDATE SET value = excluded.value, version = excluded.version",
+    )
+    .bind(&org)
+    .bind(version + 1)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    kalzit::settings::cache(&app.state).invalidate(Some(&org));
     let login = |email: &str, password: &str| json!({ "email": email, "password": password });
     // The right password answers like a wrong one, so it cannot be tested while it signs in nobody;
     // only the account's own recent sign-ins say why.
@@ -1162,9 +1177,9 @@ async fn unverified_provider_accounts_and_invitations_without_passwords() {
     let path = format!("/api/orgs/{org}/settings/security.two_factor_required");
     let r =
         app.send(Method::PATCH, &path, Some(json!({ "value": "everyone", "version": version })), Some(&admin)).await;
-    assert!(r.status == StatusCode::OK || r.status == StatusCode::FORBIDDEN, "{}", r.body);
-    if r.status == StatusCode::FORBIDDEN {
-        // The change asks for a fresh confirmation of the admin's own factor; set it directly.
+    if r.status != StatusCode::OK {
+        // The change asks for a fresh confirmation of the admin's own factor, or for one at all
+        // (it would shut the admin out); set it directly.
         sqlx::query(
             "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at) \
              VALUES ($1, 'security.two_factor_required', '\"everyone\"', 1, $2, 0)",
@@ -1468,12 +1483,17 @@ async fn scim_accounts_link_at_sign_in_and_stay_unconfirmed_for_everything_else(
     let token = r.body["token"].as_str().unwrap().to_string();
 
     // Entra ID SCIM, then Entra ID OIDC with the same address. The account has nothing to prove
-    // it with: it is linked only through a provider whose mapping leads into its organization.
+    // it with: it is linked only when the provider's mapping gives this person a membership in its
+    // organization.
     let sina = scim_user(&app, &org, &token, "sina@example.de").await;
-    let who = Who { sub: "sub-sina", email: "sina@example.de", verified: true, groups: &[] };
+    let who = Who { sub: "sub-sina", email: "sina@example.de", verified: true, groups: &["alle"] };
     let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
-    assert_eq!(outcome_of(&r), "link_refused", "{}", r.location());
+    assert_eq!(outcome_of(&r), "link_refused", "no mapping into the organization: {}", r.location());
     map_into(&app, &provider_id, &org, &admin).await;
+    // Same provider, but the person is not in the mapped group: still refused.
+    let outsider = Who { sub: "sub-sina", email: "sina@example.de", verified: true, groups: &["andere"] };
+    let (r, _) = sign_in(&app, &idp, &outsider, |_| {}).await;
+    assert_eq!(outcome_of(&r), "link_refused", "not in the mapped group: {}", r.location());
     let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
     assert_eq!(r.location(), "/dashboards", "linked at once: {}", r.location());
     let session = session_of(&r);
@@ -1548,7 +1568,7 @@ async fn a_signed_in_scim_account_never_takes_another_persons_address() {
     let token = r.body["token"].as_str().unwrap().to_string();
 
     let x = scim_user(&app, &org, &token, "x@example.de").await;
-    let who = Who { sub: "sub-x", email: "x@example.de", verified: true, groups: &[] };
+    let who = Who { sub: "sub-x", email: "x@example.de", verified: true, groups: &["alle"] };
     let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
     assert_eq!(r.location(), "/dashboards", "{}", r.location());
     // SCIM tries to give X the victim's address.
@@ -1592,7 +1612,7 @@ async fn the_first_link_ends_scim_ownership_even_when_the_identity_goes() {
     let token = r.body["token"].as_str().unwrap().to_string();
 
     let rua = scim_user(&app, &org, &token, "rua@example.de").await;
-    let who = Who { sub: "sub-rua", email: "rua@example.de", verified: true, groups: &[] };
+    let who = Who { sub: "sub-rua", email: "rua@example.de", verified: true, groups: &["alle"] };
     let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
     assert_eq!(r.location(), "/dashboards", "{}", r.location());
     let (owned,): (i64,) = sqlx::query_as("SELECT created_account FROM scim_users WHERE user_id = $1")

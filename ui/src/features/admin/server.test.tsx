@@ -214,6 +214,26 @@ describe("server organizations", () => {
     await waitFor(() => expect(admin.orgs[0]?.name).toBe("Engines"));
   });
 
+  it("puts an organization's sign-in rules back to the server's after asking", async () => {
+    const { user, server } = await openAdmin("/admin/server/organizations", {
+      isServerAdmin: true,
+    });
+    await screen.findByRole("list", { name: "Organizations" });
+    await user.click(
+      screen.getByRole("button", { name: "Reset sign-in rules of Analytical Engines…" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Reset the sign-in rules of Analytical Engines?",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Reset rules" }));
+    expect(
+      await screen.findByText("The sign-in rules of Analytical Engines follow the server again."),
+    ).toBeTruthy();
+    const call = server.calls.find((c) => c.path.endsWith("/sign-in-rules"));
+    expect(call?.method).toBe("PATCH");
+    expect(call?.body).toEqual({ localPassword: "inherit", twoFactorRequired: "inherit" });
+  });
+
   it("says when no account could own a new organization", async () => {
     const { user } = await openAdmin("/admin/server/organizations", {
       isServerAdmin: true,

@@ -124,10 +124,14 @@ account without a password and a second factor has nothing of its own to prove i
 not linked by email (`sso=link_refused`) when it signs in through another provider or a directory
 (a confirmed identity of another provider, cause `sso.email_link_other_sign_in`): the person signs
 in the way they already do. Otherwise it links at once only when an organization's SCIM made and
-still owns it (see above) and this provider's group mapping leads into that organization; whoever
+still owns it (see above) and this provider's group mapping, for the person's groups (or the rule
+for people without a mapped group), gives a membership in that organization; whoever
 controls its verified address at that provider signs in to it, so it is protected only as well
 as that address and provider are. Any other such account is refused too
-(`sso.email_link_no_proof`). Links made before 0.5.1 count as confirmed. The same holds for LDAP (step 2 of
+(`sso.email_link_no_proof`). Links made before 0.5.1 count as confirmed. Such a provider-only
+account is stranded when its provider is gone: a password reset by mail gives it no password (the
+mail says where its password lives, docs/api/mail.md); a server admin sets one under Verwaltung >
+Benutzer (`PATCH /admin/users/{userId}`), and with it the person confirms a new provider's link. The same holds for LDAP (step 2 of
 "LDAP and Active Directory").
 
 A disabled account answers `sso=disabled`, the unmapped rule `refuse` answers `sso=unmapped`
@@ -182,7 +186,9 @@ consent: `joinedBy` `invitation`, `creator`, `scim_owned` or `mapping` (a group 
 provider a server admin set up). A `direct` or `legacy` member's password still signs them in,
 but inside the organization the rule applies to every member, server admins included: a session
 signed in with a password is refused there with `403 org_provider_sign_in_required`
-(docs/api/access.md, "Organization sign-in rules"). A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`);
+(docs/api/access.md, "Organization sign-in rules"); only the break-glass admin's session passes.
+Turning it `off` needs a provider or directory that leads into the organization and a session
+signed in through one (`409 conflict`, `sso.org_local_off_blocked`). A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`);
 a group mapping that still names the organization adds them again, as `mapping`, at their next
 sign-in through that provider. With password sign-in off for the server or the inviting organization,
 an invitation is accepted through a provider only: `POST /auth/invitation` answers
@@ -903,7 +909,7 @@ outcome. They are not answered as API errors.
 | `sso.email_ambiguous` | two accounts have the address in two forms of its domain, left from before the forms were compared as one (new accounts with another form of a taken address are refused) |
 | `sso.email_link_admin` | the email belongs to a server admin or the break-glass admin, who are never linked by email |
 | `sso.email_link_other_sign_in` | the account with the email has no password and no second factor and signs in through another provider or directory (`sso=link_refused`) |
-| `sso.email_link_no_proof` | the account with the email has no password and no second factor, and no SCIM of an organization this provider leads into owns it (`sso=link_refused`) |
+| `sso.email_link_no_proof` | the account with the email has no password and no second factor, and no SCIM of an organization the provider's mapping gives this person owns it (`sso=link_refused`) |
 | `sso.service_account` | the identity is linked to a service account, or a service account has the email; service accounts never sign in through a provider |
 | `ldap.unreachable` | a directory could not be reached at sign-in (`detail` says why) |
 | `ldap.service_bind_failed` | the service account's bind was refused at sign-in |

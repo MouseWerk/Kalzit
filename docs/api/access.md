@@ -149,17 +149,36 @@ of the request first.
   `403 org_second_factor_required` (reason `second_factor.org_required`, `params.orgId`). A
   session whose sign-in took a provider's word for a second factor (`trustProviderMfa`) passes.
 - **Password sign-in off.** When the organization set `signin.local_password` to `off`, a session
-  signed in with a password, the break-glass admin's included, is refused with
+  signed in with a password (not the break-glass admin's, see below) is refused with
   `403 org_provider_sign_in_required` (reason `sso.org_password_off`, `params.orgId`). Sessions
   signed in through an identity provider or a directory pass. Sessions from before 0.5.2 count as
   signed in with a password.
+
+Saving the rules is refused when they would lock people out (`409 conflict`): `off` while no
+enabled identity provider or directory leads into the organization (a group mapping, or the
+server's rule for people without one; reason `sso.org_local_off_blocked`, `check` =
+`providerReady`), or while the saving session was itself signed in with a password or as the
+break-glass admin (`check` = `selfViaProvider`: sign in through the provider first); a second
+factor rule that would refuse the saving member (reason `second_factor.setup_first`,
+`params.setupPath`: set up your own second factor first). The break-glass admin's session, which
+always has Kalzit's second factor, passes an organization's `off` inside it.
+
+`PATCH /admin/orgs/{orgId}/sign-in-rules` (server admins) puts the rules back to the server's
+when they shut out everyone who could change them: `{ "localPassword"?: "inherit",
+"twoFactorRequired"?: "inherit" }`, at least one. It needs the admin's own second factor,
+confirmed within the last minutes (`403 confirmation_required`; without one `403`
+`second_factor.admin_needs_factor`), answers `200 { "localPassword", "twoFactorRequired" }` (the
+values in force now) or `404`, and is audited as `org.sign_in_rules_reset`
+(`{ "orgId", "keys" }`, only the rules that changed).
 
 Only that organization is refused. The person's other organizations, their account (`/me`),
 the setup of a second factor (`/me/security/...`), leaving the organization ("Leaving an
 organization") and signing out stay open; the UI shows a page that explains the rule and offers
 the setup or the sign-in through a provider. Server admins are members like everyone else here;
 server administration (`/admin/...`) answers to the server's rules alone. API tokens of service
-accounts are not gated. Each session records how it was established (`password`, `break_glass`,
+accounts are not gated by an organization's sign-in rules: they have no session and no second
+factor, and they never sign in with a password; limit them with their role, expiry and allowed
+addresses ("Service accounts"), and they can never change these rules. Each session records how it was established (`password`, `break_glass`,
 `directory` or `provider`, and its second factor) for this check. The members list
 (`secondFactor.required`) and the server's overview (`missing`) count every member the rule
 applies to.
@@ -1132,6 +1151,8 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.reset_self` | `403 forbidden` | an admin's reset of their own second factor |
 | `second_factor.reset_needs_server_admin` | `403 forbidden` | the account belongs to another organization or is a server admin |
 | `second_factor.org_required` | `403 org_second_factor_required` | the organization requires a second factor of this member and the account has none; `params.orgId` |
+| `second_factor.setup_first` | `409 conflict` | saving an organization's second factor rule that would refuse the saving member, who has none; `params.setupPath` |
+| `sso.org_local_off_blocked` | `409 conflict` | an organization's password sign-in `off` would lock people out; `params.check` is `providerReady` or `selfViaProvider` |
 | `sso.org_password_off` | `403 org_provider_sign_in_required` | the organization turned password sign-in off and the session was signed in with a password; `params.orgId` |
 
 `invalid_code` (`422`) is a wrong or used code; `confirmation_required` (`403`) a change that

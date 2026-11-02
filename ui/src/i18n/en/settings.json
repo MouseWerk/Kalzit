@@ -337,5 +337,8 @@
   "settings.mail.sends.reset": "Password reset",
   "settings.mail.sends.resetNote": "Link, valid for 60 minutes",
   "settings.mail.sends.tests": "Test mails",
-  "settings.mail.sends.testsNote": "From this page"
+  "settings.mail.sends.testsNote": "From this page",
+  "settings.orgRules.signInFirst": "Sign in through the provider first: you are signed in with a password, and turning it off would shut you out of the organization.",
+  "settings.orgRules.noProvider": "No sign-in provider leads into this organization yet. Set one up with a group mapping first, or nobody could sign in here.",
+  "settings.orgRules.setupFirst": "Set up your own second factor first under Sign-in and security; this rule would otherwise shut you out of the organization."
 }

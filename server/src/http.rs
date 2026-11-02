@@ -467,7 +467,10 @@ impl HttpClient {
             }
         }
         let pin = url.scheme() == "http" && !proxy.bypasses(url);
-        Ok(pin.then(|| addrs[0].ip()))
+        // Every address was checked; an IPv4 one first, which a proxy reaches in more networks
+        // than IPv6. The proxy sees the address, not the name (docs/guide/administration.md).
+        let chosen = addrs.iter().find(|a| a.is_ipv4()).unwrap_or(&addrs[0]);
+        Ok(pin.then(|| chosen.ip()))
     }
 }
 
