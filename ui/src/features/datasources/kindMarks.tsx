@@ -10,7 +10,7 @@ import postgresql from "../../assets/logos/postgresql.svg?raw";
 import prometheus from "../../assets/logos/prometheus.svg?raw";
 import sqlite from "../../assets/logos/sqlite.svg?raw";
 import { Icon, type IconName } from "../../components/Icon";
-import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
+import { hasMessage, type MessageKey, type Translate } from "../../i18n/i18n";
 import "./datasources.css";
 
 /**
@@ -144,7 +144,7 @@ export function kindMonogram(name: string): string {
 /** The one-line summary of a kind for the picker, when this UI has one. */
 export function kindSummary(t: Translate, kind: string): string | null {
   const key = `datasources.kinds.${kind}.summary`;
-  return Object.hasOwn(catalogs.en, key) ? t(key as MessageKey) : null;
+  return hasMessage(key) ? t(key as MessageKey) : null;
 }
 
 /**

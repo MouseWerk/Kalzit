@@ -1,4 +1,4 @@
-import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
+import { hasMessage, type MessageKey, type Translate } from "../../i18n/i18n";
 import { type Reason, reasonText } from "../datasources/reasons";
 import type { PermissionLine, Plugin } from "./api";
 
@@ -155,5 +155,5 @@ export function sameLine(a: PermissionLine, b: PermissionLine): boolean {
 /** The sandbox layers in the UI's words; unknown ones as the server names them. */
 export function layerText(t: Translate, layer: string): string {
   const key = `plugins.layer.${layer}`;
-  return Object.hasOwn(catalogs.en, key) ? t(key as MessageKey) : layer;
+  return hasMessage(key) ? t(key as MessageKey) : layer;
 }

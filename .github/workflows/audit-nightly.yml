@@ -1,0 +1,92 @@
+name: Audit nightly
+
+# The PR check audits the dependencies only when a pull request changes them (ci.yml, job
+# `audit`). Advisories are published every day against versions already on main, so this job
+# audits main once a night, on demand, and on pull requests that change this file or the audit
+# settings: the Rust crates of Cargo.lock with `cargo audit` (its ignores, each with its reason,
+# are in .cargo/audit.toml) and the npm packages of every lockfile with `npm audit`. A failed
+# scheduled run is reported to the repository's admins by GitHub's workflow notifications. It is
+# not a required check.
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/audit-nightly.yml
+      - .cargo/audit.toml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-nightly-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cargo:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: cargo-audit
+      # Fetched with retries, as in ci.yml, so a network failure does not read as a finding.
+      - name: Fetch the advisory database
+        shell: bash
+        run: |
+          db="$HOME/.cargo/advisory-db"
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$db"
+            if git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "$db"; then
+              exit 0
+            fi
+            echo "Fetching the advisory database failed (attempt $attempt of 5)" >&2
+            if [ "$attempt" -lt 5 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          exit 1
+      # Unmaintained and yanked crates are warnings here, as in the PR check; vulnerabilities
+      # fail the run.
+      - run: cargo audit --no-fetch
+
+  npm:
+    name: npm audit (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [ui, tools/devkit, tools/devgen]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 26
+      # The lockfile alone is audited; nothing is installed and no package script runs.
+      - name: npm audit
+        working-directory: ${{ matrix.dir }}
+        shell: bash
+        # A report with its metadata means the registry answered: its exit status is the result.
+        # Without one (the registry was unreachable) it is tried again, so that does not read as
+        # a finding.
+        run: |
+          for attempt in 1 2 3; do
+            status=0
+            npm audit --audit-level=high --package-lock-only --json > "$RUNNER_TEMP/audit.json" || status=$?
+            if node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).metadata ? 0 : 1)' "$RUNNER_TEMP/audit.json" 2> /dev/null; then
+              npm audit --audit-level=high --package-lock-only || true
+              exit "$status"
+            fi
+            echo "npm audit could not reach the registry (attempt $attempt of 3)" >&2
+            sleep $((attempt * 10))
+          done
+          exit 1

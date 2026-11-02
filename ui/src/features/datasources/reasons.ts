@@ -1,6 +1,6 @@
 import { isApiError, isRecord } from "../../api/client";
 import type { Notice } from "../../api/generated/shapes";
-import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
+import { hasMessage, type MessageKey, type Translate } from "../../i18n/i18n";
 
 /**
  * A reason as the server sends it: on errors (`error.reason`, `error.params`), health answers
@@ -19,7 +19,7 @@ const PREFIX = "datasources.reason.";
 /** The catalog key of a reason this UI knows. */
 export function reasonKey(reason: string): MessageKey | undefined {
   const key = `${PREFIX}${reason}`;
-  return Object.hasOwn(catalogs.en, key) ? (key as MessageKey) : undefined;
+  return hasMessage(key) ? key : undefined;
 }
 
 /** The params as the texts use them: one name per value, whichever the server sent. */
@@ -47,7 +47,7 @@ function typeWords(t: Translate, reason: string, params: Record<string, string>)
     const value = out[name];
     if (value === undefined) continue;
     const key = `analysis.valueType.${TYPE_PHRASES[value] ?? value}`;
-    if (Object.hasOwn(catalogs.en, key)) {
+    if (hasMessage(key)) {
       out[name] = t(key as MessageKey);
     }
   }

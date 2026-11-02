@@ -2,17 +2,30 @@ import { useSyncExternalStore } from "react";
 import { getBrand, subscribeBrand } from "../appearance/brand";
 import { readPreference, writePreference } from "../lib/storage";
 import { getTimeSettings, subscribeTimeSettings, type WeekStart } from "../lib/timeSettings";
-import { de, en } from "./catalogs";
+import type { en } from "./en";
 
 export const LANGUAGES = ["de", "en"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
 export type MessageKey = keyof typeof en;
 export type MessageParams = Readonly<Record<string, string | number>>;
+export type Catalog = Record<MessageKey, string>;
 
-// Typed against the English keys, so a key missing in German fails the typecheck as well as the
-// parity test.
-export const catalogs: Record<Language, Record<MessageKey, string>> = { de, en };
+// Each language is a chunk of its own, loaded when it is first shown: the page fetches only the
+// language it starts in (main.tsx waits for it before the first render), and the other one when
+// someone switches. Typed against the English keys, so a key missing in German fails the
+// typecheck as well as the parity test.
+const LOADERS: Record<Language, () => Promise<Catalog>> = {
+  de: () => import("./de").then((module): Catalog => module.de),
+  en: () => import("./en").then((module): Catalog => module.en),
+};
+
+/** The catalogs loaded so far; the shown language's is always among them once the page runs. */
+export const catalogs: Partial<Record<Language, Catalog>> = {};
+const loading = new Map<Language, Promise<Catalog>>();
+// The loaded catalogs as one value that changes whenever one arrives, for what reads several
+// languages at once and must render again then.
+let loadedCatalogs: Readonly<Partial<Record<Language, Catalog>>> = {};
 
 export const LANGUAGE_STORAGE_KEY = "kalzit.language";
 const FALLBACK_LANGUAGE: Language = "en";
@@ -78,10 +91,75 @@ function change(update: () => void): void {
   }
 }
 
+/**
+ * Loads a language's catalog (once; later calls share the first). The listeners hear of it, so
+ * whatever reads both languages (the settings search) picks up the one that arrived.
+ */
+export function loadLanguage(language: Language): Promise<Catalog> {
+  const loaded = catalogs[language];
+  if (loaded !== undefined) {
+    return Promise.resolve(loaded);
+  }
+  let pending = loading.get(language);
+  if (pending === undefined) {
+    pending = LOADERS[language]().then(
+      (catalog) => {
+        catalogs[language] = catalog;
+        loading.delete(language);
+        loadedCatalogs = { ...catalogs };
+        for (const listener of listeners) {
+          listener();
+        }
+        return catalog;
+      },
+      (error: unknown) => {
+        // A failed fetch (a deploy replaced the chunk, the network dropped) may be tried again.
+        loading.delete(language);
+        throw error;
+      },
+    );
+    loading.set(language, pending);
+  }
+  return pending;
+}
+
+/** Loads the language the page starts in; main.tsx renders once it is there. */
+export function loadInitialLanguage(): Promise<Catalog> {
+  return loadLanguage(getLanguage());
+}
+
+/** Loads every language, for what searches across both (the settings search). */
+export function loadAllLanguages(): Promise<void> {
+  return Promise.all(LANGUAGES.map(loadLanguage)).then(() => undefined);
+}
+
+// Runs `apply` once the language's catalog is loaded: at once when it already is, so a switch
+// to a loaded language is synchronous. The latest request wins, so an earlier switch whose
+// catalog arrives later does not undo a newer one.
+let request = 0;
+function whenLoaded(language: Language | null, apply: () => void): void {
+  request += 1;
+  if (language === null || catalogs[language] !== undefined) {
+    change(apply);
+    return;
+  }
+  const mine = request;
+  loadLanguage(language).then(
+    () => {
+      if (mine === request) {
+        change(apply);
+      }
+    },
+    () => {
+      // The page keeps the language it shows; the next switch tries the download again.
+    },
+  );
+}
+
 /** Switches the UI language everywhere at once and remembers the choice; a preview ends. */
 export function setLanguage(language: Language): void {
   writePreference(LANGUAGE_STORAGE_KEY, language);
-  change(() => {
+  whenLoaded(language, () => {
     current = language;
     preview = null;
   });
@@ -92,9 +170,32 @@ export function setLanguage(language: Language): void {
  * language returns. A reload never keeps a preview.
  */
 export function previewLanguage(language: Language | null): void {
-  change(() => {
+  whenLoaded(language, () => {
     preview = language;
   });
+}
+
+function getLoadedCatalogs(): Readonly<Partial<Record<Language, Catalog>>> {
+  return loadedCatalogs;
+}
+
+/** The catalogs loaded so far; a new value (and a render) whenever one arrives. */
+export function useLoadedCatalogs(): Readonly<Partial<Record<Language, Catalog>>> {
+  return useSyncExternalStore(subscribe, getLoadedCatalogs, getLoadedCatalogs);
+}
+
+/**
+ * Whether a key is in the catalogs, for keys built at run time (`documents.type.${type}`). Both
+ * languages have the same keys (the parity test), so any loaded catalog answers.
+ */
+export function hasMessage(key: string): key is MessageKey {
+  for (const language of LANGUAGES) {
+    const catalog = catalogs[language];
+    if (catalog !== undefined) {
+      return Object.hasOwn(catalog, key);
+    }
+  }
+  return false;
 }
 
 function subscribe(listener: () => void): () => void {
@@ -111,7 +212,10 @@ export function useSavedLanguage(): Language {
 
 /** Looks up a message and fills `{name}` placeholders; unknown placeholders stay visible. */
 export function translate(language: Language, key: MessageKey, params?: MessageParams): string {
-  const message = catalogs[language][key];
+  // The shown language is loaded before anything renders; a language asked for by name that is
+  // still on its way falls back to whichever catalog is there, and the key as the last resort.
+  const message =
+    catalogs[language]?.[key] ?? catalogs[getLanguage()]?.[key] ?? anyCatalog()?.[key] ?? key;
   if (params === undefined) {
     return message;
   }
@@ -119,6 +223,10 @@ export function translate(language: Language, key: MessageKey, params?: MessageP
     const value = params[name];
     return value === undefined ? placeholder : String(value);
   });
+}
+
+function anyCatalog(): Catalog | undefined {
+  return catalogs.en ?? catalogs.de;
 }
 
 export type Translate = (key: MessageKey, params?: MessageParams) => string;

@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
-import { catalogs, type MessageKey, translate } from "../../i18n/i18n";
+import { de as deCatalog, en as enCatalog } from "../../i18n/catalogs";
+import { type MessageKey, translate } from "../../i18n/i18n";
 import { errorMessage } from "../dashboards/ui/errors";
 import { noticeText, reasonText } from "./reasons";
 
@@ -75,12 +76,12 @@ describe("reason texts", () => {
 
   it.each([...documented.keys()])("has a German and an English text for %s", (reason) => {
     const key = `${PREFIX}${reason}`;
-    expect(Object.hasOwn(catalogs.en, key), `en: ${key}`).toBe(true);
-    expect(Object.hasOwn(catalogs.de, key), `de: ${key}`).toBe(true);
+    expect(Object.hasOwn(enCatalog, key), `en: ${key}`).toBe(true);
+    expect(Object.hasOwn(deCatalog, key), `de: ${key}`).toBe(true);
   });
 
   it("has no reason text without a documented reason", () => {
-    for (const catalog of [catalogs.en, catalogs.de]) {
+    for (const catalog of [enCatalog, deCatalog]) {
       const left = Object.keys(catalog)
         .filter((key) => key.startsWith(PREFIX))
         .map((key) => key.slice(PREFIX.length))
@@ -90,7 +91,7 @@ describe("reason texts", () => {
   });
 
   it.each([...documented])("uses only documented params in %s", (reason, params) => {
-    for (const catalog of [catalogs.en, catalogs.de]) {
+    for (const catalog of [enCatalog, deCatalog]) {
       const text = catalog[`${PREFIX}${reason}` as MessageKey] ?? "";
       for (const [, name] of text.matchAll(/\{(\w+)\}/g)) {
         expect(params.has(name ?? ""), `${reason}: {${name}}`).toBe(true);

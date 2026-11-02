@@ -314,6 +314,22 @@ With Compose: `docker compose pull && docker compose up -d`. The new version mig
 database on its first start. To go back, run the previous version's tag with the backup taken
 before the update.
 
+### Checking the image's signature
+
+From 0.6.0 on, every released image is signed with [Sigstore cosign](https://docs.sigstore.dev)
+by the release workflow, without a key of its own: the signature names the workflow and the tag
+it ran for, and is recorded in Sigstore's public transparency log. Check it before you run a new
+version:
+
+```sh
+cosign verify ghcr.io/mousewerk/kalzit:0.6.0 \
+  --certificate-identity https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v0.6.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+It prints the signed digest; pin that digest (`ghcr.io/mousewerk/kalzit@sha256:...`) where you want
+exactly the checked image. A different image, or one built anywhere else, fails the check.
+
 ### Building the image
 
 From a checkout of the repository:

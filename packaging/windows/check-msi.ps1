@@ -1,22 +1,65 @@
 <#
 .SYNOPSIS
-  Checks that an MSI package carries exactly the given kalzit.exe: the installed file (unpacked
-  with an administrative installation, `msiexec /a`, which installs nothing) and the copy the
-  package's setup steps run from (the Binary table, exported with `wix msi decompile -x`).
+  Checks that an MSI package carries exactly the given kalzit.exe and nothing it should not, with
+  Windows' own tools only: the installed file (unpacked with an administrative installation,
+  `msiexec /a`, which installs nothing) and every row of the tables that run code or put files on
+  disk (CustomAction, Binary, File, ServiceInstall), read through the Windows Installer
+  automation interface and compared with packaging/windows/msi-expected.psd1, in English and with
+  the German transform applied.
 
 .DESCRIPTION
   The release workflow runs this before the MSI is signed (job `windows-msi`), so only a package
-  built from the signed program gets a signature; the CI job `msi` runs it as well.
+  built from the signed program, with no custom action, stream, file or service beyond the listed
+  ones, gets a signature; the CI job `msi` runs it as well. The copy of kalzit.exe the package's
+  setup steps run from (the Binary stream KalzitSetup) must be the given program too, and WiX's
+  dialog DLL must carry the WiX Toolset's valid Authenticode signature.
 #>
 param(
     [Parameter(Mandatory)] [string] $Msi,
     [Parameter(Mandatory)] [string] $Exe,
-    [string[]] $Wix = @('wix')
+    [string] $ExpectedRows = (Join-Path $PSScriptRoot 'msi-expected.psd1')
 )
 
 $ErrorActionPreference = 'Stop'
 $Msi = (Resolve-Path $Msi).Path
 $expected = (Get-FileHash (Resolve-Path $Exe).Path -Algorithm SHA256).Hash
+$rows = Import-PowerShellDataFile $ExpectedRows
+. (Join-Path $PSScriptRoot 'language.ps1')
+
+# The differences between the rows a table has and the rows it must have, as readable lines.
+function Compare-Rows([string] $Table, [int] $LanguageId, [string[]] $Actual, [string[]] $Wanted) {
+    foreach ($row in $Actual) {
+        if ($Wanted -cnotcontains $row) { "$Table (transform $LanguageId) has a row not in the list: $row" }
+    }
+    foreach ($row in $Wanted) {
+        if ($Actual -cnotcontains $row) { "$Table (transform $LanguageId) lacks the listed row: $row" }
+    }
+}
+
+# What a stream of the Binary table must be (msi-expected.psd1); the problem, or nothing.
+function Test-Stream([string] $Name, [string] $Kind, [string] $File, [int] $LanguageId) {
+    switch ($Kind) {
+        'Program' {
+            if ((Get-FileHash $File -Algorithm SHA256).Hash -ne $expected) {
+                "the copy of kalzit.exe the setup steps run ($Name, transform $LanguageId) is not the given program"
+            }
+        }
+        'WixDll' {
+            $signature = Get-AuthenticodeSignature $File
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike 'CN=WiX Toolset (.NET Foundation),*') {
+                "$Name (transform $LanguageId) is not signed by the WiX Toolset: $($signature.Status), $($signature.SignerCertificate.Subject)"
+            }
+        }
+        'Picture' {
+            $head = [IO.File]::ReadAllBytes($File)
+            $bitmap = $head.Length -gt 2 -and $head[0] -eq 0x42 -and $head[1] -eq 0x4D
+            $icon = $head.Length -gt 4 -and $head[0] -eq 0 -and $head[1] -eq 0 -and $head[2] -eq 1 -and $head[3] -eq 0
+            if (-not ($bitmap -or $icon)) { "$Name (transform $LanguageId) is neither a bitmap nor an icon" }
+        }
+        default { throw "msi-expected.psd1 names the unknown kind '$Kind' for $Name" }
+    }
+}
+
 $work = Join-Path ([IO.Path]::GetTempPath()) ("kalzit-msi-check-" + [guid]::NewGuid())
 New-Item -ItemType Directory $work | Out-Null
 try {
@@ -29,21 +72,54 @@ try {
         throw 'the kalzit.exe the package installs is not the given program'
     }
 
-    $export = Join-Path $work 'export'
-    $command = $Wix[0]
-    $arguments = @($Wix | Select-Object -Skip 1) + @('msi', 'decompile', $Msi, '-x', $export, '-o', (Join-Path $work 'package.wxs'))
-    & $command @arguments | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "wix msi decompile failed with exit code $LASTEXITCODE" }
-    $setup = @(Get-ChildItem $export -Recurse -File | Where-Object { $_.Name -like 'KalzitSetup*' })
-    if ($setup.Count -ne 1) { throw "the package holds $($setup.Count) setup copies, expected 1" }
-    if ((Get-FileHash $setup[0].FullName -Algorithm SHA256).Hash -ne $expected) {
-        throw 'the copy of kalzit.exe the setup steps run is not the given program'
+    # The rows that run code or land on disk, in English and with the German transform: exactly
+    # those of msi-expected.psd1. Targets are compared where the list gives one.
+    $problems = [Collections.Generic.List[string]]::new()
+    $streamNames = @($rows.Binary.Keys | Sort-Object)
+    $serviceColumns = 'ServiceInstall', 'Name', 'DisplayName', 'ServiceType', 'StartType', 'ErrorControl',
+    'LoadOrderGroup', 'Dependencies', 'StartName', 'Password', 'Arguments', 'Component_', 'Description'
+    foreach ($id in 0, 1031) {
+        $actions = @(Get-TransformedRows $Msi $id 'SELECT `Action`, `Type`, `Source`, `Target` FROM `CustomAction`')
+        @(Compare-Rows 'CustomAction' $id @($actions | ForEach-Object { "$($_[0]) (type $($_[1]), source $($_[2]))" }) `
+                @($rows.CustomAction | ForEach-Object { "$($_.Action) (type $($_.Type), source $($_.Source))" })) |
+            ForEach-Object { $problems.Add($_) }
+        foreach ($want in $rows.CustomAction | Where-Object { $_.ContainsKey('Target') }) {
+            $have = $actions | Where-Object { $_[0] -ceq $want.Action } | Select-Object -First 1
+            if ($null -ne $have -and $have[3] -cne $want.Target) {
+                $problems.Add("CustomAction $($want.Action) (transform $id) has the target '$($have[3])', expected '$($want.Target)'")
+            }
+        }
+        @(Compare-Rows 'Binary' $id @(Get-TransformedValues $Msi $id 'SELECT `Name` FROM `Binary`') $streamNames) |
+            ForEach-Object { $problems.Add($_) }
+        @(Compare-Rows 'File' $id @(Get-TransformedRows $Msi $id 'SELECT `File`, `Component_`, `FileName`, `Attributes` FROM `File`' |
+                    ForEach-Object { $_ -join ' | ' }) `
+                @($rows.File | ForEach-Object { @($_.File, $_.Component, $_.FileName, $_.Attributes) -join ' | ' })) |
+            ForEach-Object { $problems.Add($_) }
+        $serviceQuery = 'SELECT `' + ($serviceColumns -join '`, `') + '` FROM `ServiceInstall`'
+        @(Compare-Rows 'ServiceInstall' $id @(Get-TransformedRows $Msi $id $serviceQuery | ForEach-Object { $_ -join ' | ' }) `
+                @($rows.ServiceInstall | ForEach-Object { $s = $_; @($serviceColumns | ForEach-Object { $s[$_ -replace '_$', ''] }) -join ' | ' })) |
+            ForEach-Object { $problems.Add($_) }
+
+        # The streams as Windows Installer exports them (Binary\<name>.ibd).
+        $streams = Join-Path $work "binary-$id"
+        Export-TransformedTable $Msi $id 'Binary' $streams
+        foreach ($name in $streamNames) {
+            $file = Join-Path $streams "Binary\$name.ibd"
+            if (Test-Path $file) {
+                @(Test-Stream $name $rows.Binary[$name] $file $id) | ForEach-Object { $problems.Add($_) }
+            }
+        }
     }
+    if ($problems.Count -gt 0) {
+        $problems | ForEach-Object { Write-Host "::error::$_" }
+        throw "the package differs from packaging/windows/msi-expected.psd1 in $($problems.Count) places"
+    }
+    $export = Join-Path $work 'binary-0'
     Write-Host "$Msi carries $Exe (SHA-256 $expected) as the installed program and as the setup copy"
+    Write-Host "$Msi has exactly the custom actions, streams, files and service of msi-expected.psd1, in English and German"
 
     # The wizard in German: the package lists the language and its embedded transform turns the
     # settings page German without touching what gets installed.
-    . (Join-Path $PSScriptRoot 'language.ps1')
     $languages = @(Get-PackageLanguages $Msi)
     if ($languages -notcontains '1033' -or $languages -notcontains '1031') {
         throw "the package lists the languages '$($languages -join ',')', expected 1033 and 1031"

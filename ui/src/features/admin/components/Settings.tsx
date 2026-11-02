@@ -2,7 +2,7 @@ import { type QueryKey, useMutation, useQueryClient } from "@tanstack/react-quer
 import { useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { useI18n } from "../../../i18n/i18n";
-import { rangeLabel } from "../../dashboards/TimeRangePicker";
+import { rangeLabel } from "../../dashboards/rangeLabel";
 import type { TextRange } from "../../dashboards/timeRange";
 import { isLockedSetting, isSetting, type Setting } from "../api";
 import { settingName } from "../catalog";

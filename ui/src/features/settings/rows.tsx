@@ -15,7 +15,8 @@ import { settingText } from "../admin/catalog";
 import { Dialog } from "../admin/components/Dialog";
 import { formatValue } from "../admin/components/format";
 import type { useSettingChanges } from "../admin/components/Settings";
-import { rangeLabel, TimeRangePicker } from "../dashboards/TimeRangePicker";
+import { rangeLabel } from "../dashboards/rangeLabel";
+import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import type { TextRange } from "../dashboards/timeRange";
 import "./settings.css";
 

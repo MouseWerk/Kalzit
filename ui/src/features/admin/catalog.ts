@@ -6,7 +6,7 @@
  */
 import { ORG_ROLES, type OrgRole } from "../../api/auth";
 import type { Permission, SettingKey } from "../../api/generated/shapes";
-import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
+import { catalogs, hasMessage, type MessageKey, type Translate } from "../../i18n/i18n";
 import type { GrantLevel, ResourceType, Role, Setting, SubjectType } from "./api";
 
 export const PERMISSION_TEXT: Record<Permission, MessageKey> = {
@@ -150,23 +150,19 @@ export const SUBJECT_TEXT: Record<SubjectType, MessageKey> = {
   role: "admin.subject.role",
 };
 
-function isMessageKey(key: string): key is MessageKey {
-  return Object.hasOwn(catalogs.en, key);
-}
-
 /**
  * A readable name for an audit action (`team.created` reads "Team created"). Actions this UI has
  * no text for yet show as they are, so a new action on the server is never hidden.
  */
 export function auditActionLabel(t: Translate, action: string): string {
   const key = `admin.auditAction.${action}`;
-  return isMessageKey(key) ? t(key) : action;
+  return hasMessage(key) ? t(key) : action;
 }
 
 /** The audit actions with a readable name, for the action filter. */
 export function knownAuditActions(): string[] {
   const prefix = "admin.auditAction.";
-  return Object.keys(catalogs.en)
+  return Object.keys(catalogs.en ?? catalogs.de ?? {})
     .filter((key) => key.startsWith(prefix))
     .map((key) => key.slice(prefix.length));
 }
@@ -182,7 +178,7 @@ export function settingMessage(key: SettingKey, part: "label" | "description"): 
 
 /** Whether the UI has texts for a setting; a newer server may send keys this UI does not know. */
 export function isKnownSetting(key: string): key is SettingKey {
-  return isMessageKey(`admin.settings.${key}.label`);
+  return hasMessage(`admin.settings.${key}.label`);
 }
 
 export interface SettingText {

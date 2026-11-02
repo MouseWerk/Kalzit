@@ -38,21 +38,24 @@ type Service =
 /**
  * The address of a database server some specs read beside the fixture files: MongoDB
  * (`host:port`, seeded with e2e/fixtures/mongo-orders.js), OpenSearch (a base URL), Neo4j and
- * Memgraph (`host:port`, seeded with e2e/fixtures/graph-shop.cypher). CI starts them on Linux
- * (.github/scripts/e2e-services.sh). Windows runners cannot run Linux containers, so there the
- * spec is skipped with this reason and the Windows checklist of the release covers these
- * sources by hand. On Linux in CI a missing service fails instead of passing silently.
- * Call it inside a test or a hook.
+ * Memgraph (`host:port`, seeded with e2e/fixtures/graph-shop.cypher). CI starts them: on Linux as
+ * containers (.github/scripts/e2e-services.sh), on Windows, which has no Linux containers, as
+ * their native builds (.github/scripts/e2e-services.ps1). Memgraph has no Windows build, so its
+ * spec skips on Windows with that reason. In CI a missing service fails instead of passing
+ * silently; on a developer's machine without it the spec skips. Call it inside a test or a hook.
  */
 export function serviceAddress(variable: Service): string {
   const value = process.env[variable] ?? "";
   const ci = process.env.CI !== undefined && process.env.CI !== "";
-  if (value === "" && ci && process.platform === "linux") {
-    throw new Error(`${variable} is not set; the e2e job in CI starts this service on Linux`);
+  const native = !(variable === "KALZIT_E2E_MEMGRAPH" && process.platform === "win32");
+  if (value === "" && ci && native) {
+    throw new Error(`${variable} is not set; the e2e job in CI starts this service`);
   }
   test.skip(
     value === "",
-    `${variable} is not set: the service runs in CI on Linux only (Windows runners have no Linux containers); the Windows checklist covers it`,
+    native
+      ? `${variable} is not set: start the service (.github/scripts/e2e-services.sh on Linux, e2e-services.ps1 on Windows)`
+      : `${variable} is not set: Memgraph has no Windows build; the Linux e2e job runs this spec against it`,
   );
   return value;
 }

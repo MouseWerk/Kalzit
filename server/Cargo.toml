@@ -80,17 +80,17 @@ hyper-util = { version = "0.1.21", features = ["tokio"] }
 toml = "1.1.8"
 # The second factor (`auth::second_factor`): TOTP codes (RFC 6238, HMAC-SHA-1), their keys in
 # Base32, the QR code of the key for authenticator apps, and passkeys (WebAuthn).
-# webauthn-rs is pinned to the pre-release =0.6.1-dev on purpose: the latest stable release, 0.5.5,
-# needs OpenSSL (webauthn-rs-core depends on openssl and openssl-sys), which Kalzit does not build
-# or ship on Windows or Linux (rustls and ring only). The 0.6 line from the same maintainers (kanidm)
-# does the same checks in pure Rust (RustCrypto through crypto-glue). Move to the first stable 0.6
-# release once it is published. Registration and authentication states are kept in the server's
-# database between the two steps, which the feature allows.
+# webauthn-rs is pinned exactly on the 0.6 line, its first stable release since the pre-release
+# 0.6.1-dev Kalzit used before: the 0.5 line needs OpenSSL (webauthn-rs-core depends on openssl and
+# openssl-sys), which Kalzit does not build or ship on Windows or Linux (rustls and ring only); the
+# 0.6 line does the same checks in pure Rust (RustCrypto through crypto-glue). Registration and
+# authentication states are kept in the server's database between the two steps, which the
+# feature allows.
 hmac = "0.13.0"
 sha1 = "0.11.0"
 data-encoding = "2.11.1"
 qrcode = { version = "=0.14.1", default-features = false }
-webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = ["danger-allow-state-serialisation"] }
+webauthn-rs = { version = "=0.6.2", default-features = false, features = ["danger-allow-state-serialisation"] }
 tower = { version = "0.5.3", features = ["util"] }
 unicode-normalization = "0.1.26"
 # The sort order of titles and names (`collation`): ICU4X's collator with its compiled CLDR data,
@@ -135,8 +135,9 @@ http-body-util = "0.1.5"
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
 # Packages the example plugin in the plugin contract tests.
 kalzit-plugin-tool = { path = "../plugin-tool" }
-# A WebSocket client for the live update tests; the version axum's server side uses.
-tokio-tungstenite = "0.29.0"
+# A WebSocket client for the live update tests. It may be newer than the tokio-tungstenite axum's
+# server side uses: the tests speak the WebSocket protocol to it, not its Rust types.
+tokio-tungstenite = "0.30.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "json"] }
 tower = { version = "0.5.3", features = ["util"] }
 ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }

@@ -1,4 +1,4 @@
-import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
+import { hasMessage, type MessageKey, type Translate } from "../../i18n/i18n";
 import { errorReason, type Reason, reasonText } from "../datasources/reasons";
 
 const PREFIX = "ai.reason.";
@@ -6,7 +6,7 @@ const PREFIX = "ai.reason.";
 /** The catalog key of an AI reason this UI knows (docs/api/ai.md, "Reasons"). */
 export function aiReasonKey(reason: string): MessageKey | undefined {
   const key = `${PREFIX}${reason}`;
-  return Object.hasOwn(catalogs.en, key) ? (key as MessageKey) : undefined;
+  return hasMessage(key) ? key : undefined;
 }
 
 /**

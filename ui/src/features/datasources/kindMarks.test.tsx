@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { catalogs, type MessageKey } from "../../i18n/i18n";
+import { de as deCatalog, en as enCatalog } from "../../i18n/catalogs";
+import type { MessageKey } from "../../i18n/i18n";
 import {
   KIND_FAMILIES,
   KIND_LOGOS,
@@ -12,7 +13,7 @@ import {
   LOGO_PATHS,
 } from "./kindMarks";
 
-const t = (key: MessageKey) => catalogs.en[key];
+const t = (key: MessageKey) => enCatalog[key];
 
 describe("kind marks", () => {
   it("gives every known kind a family and an unknown one the generic glyph", () => {
@@ -29,10 +30,10 @@ describe("kind marks", () => {
   it("has a summary in both languages for each kind it knows a summary for", () => {
     for (const kind of Object.keys(KIND_FAMILIES)) {
       const key = `datasources.kinds.${kind}.summary`;
-      expect(Object.hasOwn(catalogs.de, key), key).toBe(Object.hasOwn(catalogs.en, key));
+      expect(Object.hasOwn(deCatalog, key), key).toBe(Object.hasOwn(enCatalog, key));
     }
     expect(kindSummary(t as never, "postgres")).toBe(
-      catalogs.en["datasources.kinds.postgres.summary"],
+      enCatalog["datasources.kinds.postgres.summary"],
     );
     expect(kindSummary(t as never, "something-new")).toBeNull();
   });
