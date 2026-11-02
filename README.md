@@ -470,7 +470,8 @@ and `smtp` (the mail server, otherwise set in Settings, Email; give its password
 - **HTTPS:** your own certificate and key in PEM (`tls.cert_file`, `tls.key_file`), reloaded
   without a restart, or without them automatic certificates from Let's Encrypt or another ACME
   authority, set up in Settings, Network ([HTTPS and certificates](docs/guide/https.md));
-  trusted reverse proxies in `security.trusted_proxies`.
+  trusted reverse proxies in `security.trusted_proxies`, and the header they write in
+  `security.forwarded_headers` (`x-forwarded`, the default, or `forwarded`).
 - **Secrets key** for data source passwords and tokens, first match wins: `KALZIT_SECRETS_KEY`,
   systemd credentials (`kalzit-secrets-key`) on Linux, a DPAPI-protected key file on Windows,
   and as a last resort a `secrets.key` file with mode 0600 in the data directory (with a warning in

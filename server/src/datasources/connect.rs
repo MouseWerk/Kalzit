@@ -26,6 +26,26 @@ use crate::locks::MutexExt;
 /// healthy server on the same network answers well within it, so the check rarely runs.
 pub const GRACE: Duration = Duration::from_millis(300);
 
+/// The TLS mode new PostgreSQL and MySQL sources get (`sslMode`): TLS required towards a public
+/// address, preferred towards a private or loopback one (`tls_required`).
+pub const AUTO_TLS: &str = "auto";
+
+/// Whether the `auto` TLS mode requires TLS towards `ip`: for every address that is not private,
+/// loopback or otherwise local (`http::LocalGuard::is_private`), and always for 6to4
+/// (`2002::/16`) and Teredo (`2001:0::/32`). Those tunnel over the internet whatever IPv4 address
+/// they carry, which `is_private` reads for the blocking rules. The address is the one the
+/// connection goes to, after the name was resolved and checked, so a name pointing to the
+/// internet requires TLS whatever it is called.
+pub fn tls_required(ip: std::net::IpAddr) -> bool {
+    if let std::net::IpAddr::V6(v6) = ip.to_canonical() {
+        let s = v6.segments();
+        if s[0] == 0x2002 || (s[0] == 0x2001 && s[1] == 0) {
+            return true;
+        }
+    }
+    !crate::http::LocalGuard::is_private(ip)
+}
+
 /// `host:port`, with an IPv6 address in brackets.
 pub fn address(host: &str, port: u16) -> String {
     let host = host.trim_matches(['[', ']']);

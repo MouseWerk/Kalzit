@@ -33,7 +33,7 @@ use super::prompts::{self, fence};
 use super::redact;
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
-use crate::authz::{AccessIndex, OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{AccessIndex, DatasourceAccess, OrgCtx, Permission, Resource, check_resource};
 use crate::datasources::cache::CacheUse;
 use crate::datasources::registry::Origin;
 use crate::datasources::{Datasource, find_in_org, run_queries_cached};
@@ -842,14 +842,12 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         items.iter().map(|i| i.datasource_id.clone()).collect::<BTreeSet<_>>().into_iter().collect();
     let mut policies = BTreeMap::new();
     let mut outward = false;
+    let access = DatasourceAccess::load(&scope.state.db, scope.ctx).await?;
     for id in &datasource_ids {
         let ds = find_in_org(&scope.state.db, &scope.ctx.org_id, id, false).await?;
         outward |= outward_facing(scope.state, &ds.kind);
         // A viewer of the panel learns that one of its sources is closed, not which.
-        let may_read =
-            check_resource(&scope.state.db, scope.ctx, Permission::DatasourcesRead, Resource::Datasource(&ds.id))
-                .await
-                .is_ok();
+        let may_read = access.allows(Permission::DatasourcesRead, &ds.id);
         if !scope.selected(&ds.id) {
             let e = ApiError::new(StatusCode::CONFLICT, "ai_unavailable", "a source of this panel is not chosen")
                 .because("ai.chat_source_not_selected");

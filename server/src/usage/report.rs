@@ -18,7 +18,7 @@ use sqlx::any::AnyRow;
 
 use super::{DAY_MS, HOUR_MS, RANGES, bucket_of, quantile};
 use crate::app::AppState;
-use crate::authz::{OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{DatasourceAccess, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
 use crate::folders;
 
@@ -75,13 +75,8 @@ pub async fn visible_sources(state: &AppState, ctx: &OrgCtx) -> ApiResult<Option
             .bind(&ctx.org_id)
             .fetch_all(&state.db)
             .await?;
-    let mut visible = Vec::new();
-    for (id,) in ids {
-        if check_resource(&state.db, ctx, Permission::DatasourcesRead, Resource::Datasource(&id)).await.is_ok() {
-            visible.push(id);
-        }
-    }
-    Ok(Some(visible))
+    let access = DatasourceAccess::load(&state.db, ctx).await?;
+    Ok(Some(ids.into_iter().map(|(id,)| id).filter(|id| access.allows(Permission::DatasourcesRead, id)).collect()))
 }
 
 /// The first hour a report from `from` counts: the first that starts at or after it, so a

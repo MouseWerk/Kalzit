@@ -367,7 +367,7 @@ describe("adding a data source", () => {
       "5432",
     );
     await openSection(user, "TLS");
-    expect(screen.getByRole("combobox", { name: "TLS mode" })).toHaveProperty("value", "prefer");
+    expect(screen.getByRole("combobox", { name: "TLS mode" })).toHaveProperty("value", "auto");
     expect(screen.getByRole("textbox", { name: "CA certificate (PEM) (optional)" }).tagName).toBe(
       "TEXTAREA",
     );
@@ -395,7 +395,7 @@ describe("adding a data source", () => {
         port: 5432,
         database: "dwh",
         user: "kalzit_reader",
-        sslMode: "prefer",
+        sslMode: "auto",
       },
       secrets: { password: "pw" },
     });

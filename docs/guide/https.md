@@ -3,8 +3,10 @@
 Kalzit serves HTTPS itself (TLS 1.2 and 1.3, HTTP/2) when `server.https_addr` is set in
 `kalzit.toml` or `KALZIT_SERVER_HTTPS_ADDR`. The certificate comes from one of two places:
 
-- **your own files**: `tls.cert_file` and `tls.key_file` (PEM). Kalzit reloads them when they
-  change, without a restart (`tls.reload_interval_secs`);
+- **your own files**: `tls.cert_file` and `tls.key_file` (PEM). Kalzit reloads them when their
+  content changes, without a restart (`tls.reload_interval_secs`). It compares the content, not
+  the modification time, so a renewed file that keeps the old time or a copy with an older time is
+  picked up, and a file rewritten with the same content is not loaded again;
 - **ACME**: without certificate files, Kalzit orders the certificate itself from Let's Encrypt or
   any other certificate authority that offers ACME, and renews it. Until the first one is issued,
   HTTPS serves a temporary self-signed certificate, which browsers warn about.
@@ -24,6 +26,42 @@ connection Kalzit is just closing and answer 502. The defaults of nginx (`keepal
 in an `upstream` block) and Caddy fit; for others, set the upstream idle or keep-alive timeout
 below 75 seconds. Add the proxy's address to `security.trusted_proxies`: it is then exempt from the
 limit of 256 connections per client address, which otherwise all its connections would share.
+
+### Client address, scheme and host behind a proxy
+
+Kalzit reads what a proxy says about the original request only when the connection comes from an
+address in `security.trusted_proxies`; from anyone else these headers are ignored. Which header
+it reads is your choice in `security.forwarded_headers` (`kalzit.toml` or
+`KALZIT_SECURITY_FORWARDED_HEADERS`), and it reads only that one:
+
+- `x-forwarded` (the default): `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`.
+  `Forwarded` is ignored completely.
+- `forwarded`: the standard `Forwarded` header (RFC 7239). The `X-Forwarded-*` headers are ignored
+  completely.
+
+Set the one your proxy writes, and make sure the proxy **replaces or removes that header when a
+client sends it**. Most proxies (nginx, IIS ARR, Traefik, HAProxy) pass headers they do not write
+through unchanged, and many append to a forwarding header instead of replacing it. Kalzit copes
+with appending (see below), but a header the proxy neither writes nor removes is the client's to
+fill: with the wrong setting, a client could choose its own address, which sign-in limits, IP
+allow lists and the audit log rely on.
+
+- **Several proxies.** Kalzit reads the list from the right: each entry counts while the proxy
+  that wrote it is trusted. The client is the first address that is not in
+  `security.trusted_proxies`; entries a client put in front are never read. Scheme and host come
+  from the entry the outermost trusted proxy wrote. List every proxy of yours in the chain.
+- **`Forwarded` values.** Quoted values, ports (`for="203.0.113.5:4711"`,
+  `for="[2001:db8::7]:443"`) and several header lines are understood. A request without the
+  header counts as the proxy's own (a health check). A request whose header does not lead to a
+  client address is refused with `400` and a warning in the log: an entry of a trusted proxy that
+  does not parse, lacks `for` or names no address (`for=unknown`, an obfuscated name such as
+  `for=_proxy1`). Counted as the proxy instead, it would share the sign-in and rate limits of
+  everyone behind it.
+
+Example for nginx with `security.forwarded_headers = "forwarded"`, replacing whatever the client
+sent: `proxy_set_header Forwarded "for=\"$remote_addr\";proto=$scheme;host=$host";`. With the
+default, `proxy_set_header X-Forwarded-For $remote_addr;` replaces the client's value
+(`$proxy_add_x_forwarded_for` appends to it, which works as well).
 
 ## Before you turn ACME on
 

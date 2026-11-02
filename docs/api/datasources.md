@@ -52,7 +52,7 @@ translates those, and the English `message` is only the fallback. See [Reasons](
       { "name": "port", "labelKey": "datasources.settings.port", "type": "number", "required": false, "secret": false, "target": true, "default": 5432 },
       { "name": "password", "labelKey": "datasources.settings.password", "type": "string", "required": false, "secret": true, "target": false },
       { "name": "sslMode", "labelKey": "datasources.settings.sslMode", "type": "select", "required": false, "secret": false, "target": true,
-        "options": ["disable", "prefer", "require", "verify-ca", "verify-full"], "default": "prefer" }
+        "options": ["auto", "disable", "prefer", "require", "verify-ca", "verify-full"], "default": "auto" }
     ]
   }],
   "nextCursor": null
@@ -106,8 +106,8 @@ Fields per kind (common fields omitted):
 
 | Kind | Fields (`*` required, `S` secret) |
 |---|---|
-| `postgres` | `host`*, `port` (5432), `database`*, `user`*, `password` S, `sslMode` (`disable`, `prefer` default, `require`, `verify-ca`, `verify-full`), `caCert` (text, PEM) |
-| `mysql` | `host`*, `port` (3306), `database`*, `user`*, `password` S, `sslMode` (`disabled`, `preferred` default, `required`, `verify_ca`, `verify_identity`), `caCert` |
+| `postgres` | `host`*, `port` (5432), `database`*, `user`*, `password` S, `sslMode` (`auto` default, `disable`, `prefer`, `require`, `verify-ca`, `verify-full`; see below), `caCert` (text, PEM) |
+| `mysql` | `host`*, `port` (3306), `database`*, `user`*, `password` S, `sslMode` (`auto` default, `disabled`, `preferred`, `required`, `verify_ca`, `verify_identity`; see below), `caCert` |
 | `sqlite` | `path`* (absolute path of the file) |
 | `mssql` | `host`*, `port` (1433), `database`*, `user`*, `password` S, `encrypt` (bool, default true), `trustServerCertificate` (bool, default false), `caCert` |
 | `prometheus` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
@@ -121,6 +121,15 @@ Fields per kind (common fields omitted):
 | `neo4j` | `host`*, `port` (7687), `database` (the server's default database when empty), `user`, `password` S, `encrypt` (bool, default false: Bolt with TLS), `trustServerCertificate` (bool, default false), `caCert`, `maxNodes` (10,000), `maxEdges` (50,000) |
 | `memgraph` | as `neo4j`, plus `allowWriteCapableUser` (bool, default false, a target field) |
 | `tigergraph` | `url`* (the GSQL server, such as `https://tg.intern:14240`), `restppUrl` (REST++; default `<url>/restpp`), `graph`*, `user`*, `password` S, `secret` S (REST++ secret for tokens), `caCert`, `approvedQueries` (text: installed query names separated by commas or line breaks, a target field), `maxNodes`, `maxEdges` |
+
+`sslMode: auto` (PostgreSQL and MySQL) requires TLS when the address the source connects to is
+public and prefers it when the address is private, loopback or otherwise local (RFC 1918,
+`100.64.0.0/10`, IPv6 unique local and link-local, and the like); the decision is made on the
+resolved and checked address, not the name. Required means encrypted without checking the
+certificate; `verify-full` / `verify_identity` also check it. A new source that leaves `sslMode`
+out gets `auto`, and a change that leaves it out keeps `auto` when the source stores it. A source
+stored without `sslMode` (created over the API before 0.6.0) keeps the earlier fallback, TLS
+preferred, until a mode is set; sources keep any mode they store.
 
 `maxNodes` and `maxEdges` (at least 1) limit graph answers; both are capped by the row limit
 (`maxRows` and the server's `datasources.max_rows`). `allowWriteCapableUser` and

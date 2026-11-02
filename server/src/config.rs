@@ -110,8 +110,13 @@ pub struct TlsConfig {
 pub struct SecurityConfig {
     pub hsts: bool,
     pub hsts_max_age_secs: u64,
-    /// Reverse proxies whose `X-Forwarded-*` headers are trusted. Everyone else's are ignored.
+    /// Reverse proxies whose forwarding header (`forwarded_headers`) is trusted. Everyone else's
+    /// are ignored.
     pub trusted_proxies: Vec<IpNet>,
+    /// Which header the trusted proxies write and Kalzit reads: `x-forwarded` (`X-Forwarded-For`,
+    /// `-Proto`, `-Host`; the default) or `forwarded` (RFC 7239). The other one is ignored
+    /// completely, since proxies pass a client's own copy of a header they do not write.
+    pub forwarded_headers: String,
     /// Sign-in attempts per client address, per account at one address and per account from all
     /// addresses (except from known devices) before further attempts are refused; an IPv6 /48
     /// has five times as many for all accounts (`app::NETWORK_FAILURES_FACTOR`).
@@ -203,6 +208,7 @@ impl Default for SecurityConfig {
             // One year, the value browsers' preload lists expect.
             hsts_max_age_secs: 31_536_000,
             trusted_proxies: Vec::new(),
+            forwarded_headers: "x-forwarded".into(),
             login_max_failures: 10,
             login_window_secs: 15 * 60,
             setup_max_failures: 100,
@@ -478,6 +484,9 @@ impl Config {
         }
         if !matches!(self.tls.min_version.as_str(), "1.2" | "1.3") {
             bail!("tls.min_version must be \"1.2\" or \"1.3\"");
+        }
+        if !matches!(self.security.forwarded_headers.as_str(), "x-forwarded" | "forwarded") {
+            bail!("security.forwarded_headers must be \"x-forwarded\" or \"forwarded\"");
         }
         if !matches!(self.log.format.as_str(), "text" | "json") {
             bail!("log.format must be \"text\" or \"json\"");
@@ -781,6 +790,23 @@ mod tests {
         .unwrap();
         assert_eq!(c.security.trusted_proxies.len(), 2);
         assert!(!c.security.hsts);
+    }
+
+    #[test]
+    fn the_forwarding_header_is_one_of_two() {
+        assert_eq!(Config::from_sources("", env(&[])).unwrap().security.forwarded_headers, "x-forwarded");
+        let c = Config::from_sources("[security]\nforwarded_headers = \"forwarded\"\n", env(&[])).unwrap();
+        assert_eq!(c.security.forwarded_headers, "forwarded");
+        assert_eq!(c.source("security.forwarded_headers"), Source::File);
+        let c = Config::from_sources(
+            "[security]\nforwarded_headers = \"forwarded\"\n",
+            env(&[("KALZIT_SECURITY_FORWARDED_HEADERS", "x-forwarded")]),
+        )
+        .unwrap();
+        assert_eq!(c.security.forwarded_headers, "x-forwarded");
+        assert_eq!(c.source("security.forwarded_headers"), Source::Environment);
+        let e = Config::from_sources("", env(&[("KALZIT_SECURITY_FORWARDED_HEADERS", "both")])).unwrap_err();
+        assert!(format!("{e:#}").contains("security.forwarded_headers"), "{e:#}");
     }
 
     #[test]

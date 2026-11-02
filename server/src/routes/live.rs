@@ -24,7 +24,7 @@ use super::query::{PanelRun, check_variables, panel_run};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::auth::session;
-use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{Access, DatasourceAccess, OrgCtx, Permission};
 use crate::datasources::{api_error_body, check_interval, check_items, check_range};
 use crate::error::{ApiError, ApiResult};
 use crate::live::{FeedState, Hold, Limits, MAX_REFRESH, RangeRule, Slot, Spec};
@@ -610,12 +610,9 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
             if items.iter().any(|i| i.cursor.is_some()) {
                 return Err(invalid_error("live results start at the first page; drop cursor"));
             }
-            let mut checked = std::collections::BTreeSet::new();
+            let access = DatasourceAccess::load(&state.db, ctx).await?;
             for item in items {
-                if checked.insert(item.datasource_id.as_str()) {
-                    let resource = Resource::Datasource(&item.datasource_id);
-                    check_resource(&state.db, ctx, Permission::DatasourcesQuery, resource).await?;
-                }
+                access.check(Permission::DatasourcesQuery, &item.datasource_id)?;
             }
             (items.clone(), sub.variables.clone(), None)
         }

@@ -32,8 +32,8 @@ const SETTINGS: &[SettingField] = &[
     SettingField::new("password", "datasources.settings.password", SettingType::String).secret(),
     SettingField::new("sslMode", "datasources.settings.sslMode", SettingType::Select)
         .target()
-        .options(&["disable", "prefer", "require", "verify-ca", "verify-full"])
-        .default(DefaultValue::Text("prefer")),
+        .options(&["auto", "disable", "prefer", "require", "verify-ca", "verify-full"])
+        .default(DefaultValue::Text(connect::AUTO_TLS)),
     SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text).target(),
 ];
 const POOL_SIZE: u32 = 4;
@@ -65,12 +65,17 @@ struct Settings {
     ca_cert: Option<String>,
 }
 
-fn ssl_mode(s: Option<&str>) -> PgSslMode {
+/// The driver's mode for the setting and the address the connection goes to. `auto`, the
+/// default of new sources, requires TLS towards a public address and prefers it towards a private
+/// or loopback one (`connect::tls_required`). Without a stored mode (sources from before `auto`)
+/// TLS stays preferred, as it was.
+fn ssl_mode(s: Option<&str>, addr: std::net::IpAddr) -> PgSslMode {
     match s {
         Some("disable") => PgSslMode::Disable,
         Some("require") => PgSslMode::Require,
         Some("verify-ca") => PgSslMode::VerifyCa,
         Some("verify-full") => PgSslMode::VerifyFull,
+        Some(connect::AUTO_TLS) if connect::tls_required(addr) => PgSslMode::Require,
         _ => PgSslMode::Prefer,
     }
 }
@@ -93,8 +98,8 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlPool<sqlx::Postgres>>, SourceE
     conn.shared(|| async {
         let s: Settings = conn.settings_as()?;
         let port = s.port.unwrap_or(5432) as u16;
-        let mode = ssl_mode(s.ssl_mode.as_deref());
         let addr = conn.policy().pick_address(&s.host, port, CONNECT_TIMEOUT).await?;
+        let mode = ssl_mode(s.ssl_mode.as_deref(), addr.ip());
         let address = connect::address(&s.host, port);
         // The driver connects to the checked address. With verify-full it must connect by name,
         // because the driver checks the certificate against the host it connects to and has no
@@ -585,6 +590,27 @@ fn money_text(bytes: &[u8], scale: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_requires_tls_towards_public_addresses_only() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        // 6to4 and Teredo tunnel over the internet, also with a private IPv4 address inside.
+        for public in
+            ["8.8.8.8", "2a00:1450::1", "::ffff:8.8.4.4", "2002:a00:1::1", "2002:c0a8:1::1", "2001:0:a00:1::1"]
+        {
+            assert!(matches!(ssl_mode(Some("auto"), ip(public)), PgSslMode::Require), "{public}");
+        }
+        for private in ["127.0.0.1", "10.1.2.3", "192.168.0.5", "172.16.0.1", "::1", "fd00::5", "::ffff:10.0.0.1"] {
+            assert!(matches!(ssl_mode(Some("auto"), ip(private)), PgSslMode::Prefer), "{private}");
+        }
+        // A stored source without a mode keeps preferring TLS, also towards the internet; chosen
+        // modes stay what they are.
+        assert!(matches!(ssl_mode(None, ip("8.8.8.8")), PgSslMode::Prefer));
+        assert!(matches!(ssl_mode(Some("prefer"), ip("8.8.8.8")), PgSslMode::Prefer));
+        assert!(matches!(ssl_mode(Some("disable"), ip("8.8.8.8")), PgSslMode::Disable));
+        assert!(matches!(ssl_mode(Some("verify-full"), ip("10.0.0.1")), PgSslMode::VerifyFull));
+        assert!(matches!(ssl_mode(Some("require"), ip("127.0.0.1")), PgSslMode::Require));
+    }
 
     /// A PostgreSQL server that logs everyone in and answers simple queries and syncs. Connections
     /// opened before `restart` is raised are cut at their next query, as a restarted server's
