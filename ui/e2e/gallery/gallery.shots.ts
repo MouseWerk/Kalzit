@@ -1351,7 +1351,7 @@ for (const scheme of SCHEMES) {
       .filter({ has: page.getByRole("button", { name: t("help.starter.sql.latest") }) })
       .getByText(t("help.showQuery"))
       .click();
-    await expect(start.locator("pre").first()).toContainText("$__timeFilter(ts)");
+    await expect(start.locator("details[open] pre")).toContainText("$__timeFilter(ts)");
     await expect(
       page
         .getByRole("region", { name: t("explore.schema.title") })
