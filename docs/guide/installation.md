@@ -339,11 +339,12 @@ without it.
    [releases](https://github.com/MouseWerk/Kalzit/releases). Its SHA-256 is in
    `kalzit-<version>-manifest.json` of the same release, which is signed with Kalzit's release
    key: `Get-FileHash kalzit-<version>-windows-x64.msi` must show the same value.
-2. Run it (it asks for administrator rights). The wizard asks for:
+2. Run it (it asks for administrator rights). The wizard shows the license (the AGPL, which you
+   do not need to accept) and asks for:
 
    | Page | Setting | Default |
    |---|---|---|
-   | Destination folder | where `kalzit.exe` goes | `C:\Program Files\Kalzit` |
+   | Program folder | where `kalzit.exe` goes | `C:\Program Files\Kalzit` |
    | Server settings | HTTP port | `3000` |
    | | data folder | `%ProgramData%\Kalzit\data` |
    | | HTTPS: off, a self-signed certificate for this computer, or an existing certificate (PEM files) | off |

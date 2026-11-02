@@ -829,6 +829,21 @@ jobs:
       - name: Install, check and uninstall
         shell: pwsh
         run: ./.github/scripts/msi-test.ps1 -Msi dist/kalzit-ci-windows-x64.msi -UpgradeMsi dist/kalzit-ci-next-windows-x64.msi -Exe target/e2e/kalzit.exe -Logs "$env:RUNNER_TEMP/msi-logs"
+      # A picture of every wizard page in English and German, and of the first pages in a contrast
+      # theme, to review the installer's look (artifact installer-pages). Driving a window can
+      # stall on a runner, so it does not decide the job.
+      - name: Installer pages
+        continue-on-error: true
+        timeout-minutes: 15
+        shell: pwsh
+        run: ./.github/scripts/msi-screens.ps1 -Msi dist/kalzit-ci-windows-x64.msi -Out "$env:RUNNER_TEMP/installer-pages" -HighContrast
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: installer-pages
+          path: ${{ runner.temp }}/installer-pages
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Collect the logs
         if: failure()
         shell: pwsh
