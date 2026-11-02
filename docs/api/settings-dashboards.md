@@ -478,13 +478,38 @@ Counts in summaries (`folder.trashed`: `{"folders", "dashboards"}`) are not narr
 Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included), newest first;
 `?orgId=` narrows it to one organization; an empty `orgId` is `422 validation` (field `orgId`).
 
+### `POST /orgs/{orgId}/audit/export` and `POST /admin/audit/export`
+
+The audit log as a file: every event the filters match, newest first, as the list routes show
+them to the caller, not one page. The same rights as the lists: `audit:read` for an
+organization's log (events about folders and dashboards the member cannot see left out, folder
+ids in summaries hidden), server administrators for the server's.
+
+Body: `format` (`csv` or `json`), `language` (CSV only: `de` separates with `;`, `en`, the
+default, with `,`), and the list's filters `actor`, `action`, `resourceType`, `resourceId`,
+`from`, `to`; `orgId` on the server route only (an empty one, or `orgId` on the organization
+route, is `422 validation`, field `orgId`). `from` after `to` is `422 validation` (field `from`).
+
+- `csv`: RFC 4180, UTF-8 with a byte order mark, CRLF line ends, the columns `createdAt` (ISO 8601
+  UTC), `id`, `orgId`, `actorUserId`, `actorName`, `actorAddress`, `actorTokenId`,
+  `actorTokenPrefix`, `action`, `resourceType`, `resourceId`, `summary` (compact JSON). Text a
+  spreadsheet would read as a formula gets a leading `'`, as in data exports.
+- `json`: an array of `AuditEvent`.
+
+The answer is the file (`kalzit-audit.csv` or `.json`) with `Cache-Control: no-store`. At most
+100,000 events: more answer `422 validation` with reason `export.too_many_events` (param `max`);
+a shorter time range or a filter makes a smaller file. Each export records `audit.exported` with
+the format, the filters that were set and the number of `events` (in the organization exported,
+`null` for the whole server's log), before the file is sent: when the entry cannot be written,
+there is no file.
+
 Events older than `audit.retention_days` are deleted every hour; each run that deleted something
 records `audit.expired` with `{"deleted": n, "before": ms}`.
 
 Actions written by these routes: `settings.updated`, `branding.logo_updated`, `branding.logo_removed`, `branding.logo_restored`, `folder.created`, `folder.updated`,
 `folder.trashed`, `folder.restored`, `folder.purged`, `dashboard.created`, `dashboard.saved`,
 `dashboard.version_restored`, `dashboard.trashed`, `dashboard.restored`, `dashboard.purged`,
-`audit.expired`.
+`audit.expired`, `audit.exported`.
 
 ## List order
 

@@ -12,8 +12,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { exportPanel, exportQuery } from "../../analysis/api";
-import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
+import { exportPanel, exportQuery, saveFile } from "../../analysis/api";
+import { type ExportChoice, ExportDialog, exportResults } from "../../analysis/ExportDialog";
 import { runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { DocumentSet, GraphSet, TimeRange } from "../../api/generated/shapes";
@@ -21,6 +21,7 @@ import { Icon } from "../../components/Icon";
 import { Skeleton } from "../../components/Skeleton";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
+import { showErrorToast } from "../../lib/toasts";
 import { liveNote } from "../../live/text";
 import { useInView } from "../../live/useInView";
 import { useOrgPermissions } from "../../org/useOrg";
@@ -32,6 +33,7 @@ import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
 import { type PanelAnnotations, PanelAnnotationsContext } from "../../panels/annotations";
 import { PanelHostContext, usePanelHost } from "../../panels/host";
+import { imageFileName, panelImage } from "../../panels/image";
 import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
@@ -400,6 +402,14 @@ export function PanelCard({
       onSelect: () => setExporting(true),
       disabled: noData,
     });
+    // What the panel shows, as a picture: made in the browser, from the screen.
+    menuItems.push({
+      key: "image",
+      label: t("dashboards.panel.image"),
+      name: t("dashboards.panel.imageNamed", { title }),
+      onSelect: () => void saveImage(ref.current, title, t("dashboards.panel.imageFailed")),
+      disabled: noData,
+    });
   }
   // Each AI function shows while its own provider can be used.
   const storedView = query.source === "stored" && edit === undefined;
@@ -520,7 +530,7 @@ export function PanelCard({
           {panel.description === undefined ? null : (
             <PanelDescription title={title} description={panel.description} />
           )}
-          <div className="panel-card__actions">
+          <div className="panel-card__actions" data-no-image="">
             {edit === undefined ? null : (
               <>
                 <button
@@ -575,6 +585,7 @@ export function PanelCard({
         {edit === undefined || alone ? null : (
           <div
             className="panel-card__resize"
+            data-no-image=""
             aria-hidden="true"
             onPointerDown={(event) => startDrag(event, "resize")}
           />
@@ -602,9 +613,7 @@ export function PanelCard({
         ) : null}
         {exporting ? (
           <ExportDialog
-            frames={runPanelSteps(panel.transformations, outcomes, calendar).frames.map(
-              (f) => f.name,
-            )}
+            results={exportResults(runPanelSteps(panel.transformations, outcomes, calendar))}
             note={
               query.source === "stored" && edit !== undefined
                 ? t("analysis.export.stored")
@@ -617,6 +626,19 @@ export function PanelCard({
       </article>
     </>
   );
+}
+
+/** Saves the panel `card` as a PNG image named after its title; a failure says so in a toast. */
+async function saveImage(card: HTMLElement | null, title: string, failed: string) {
+  if (card === null) return;
+  try {
+    // The menu that asked for it closes first, so focus and hover marks are not in the picture.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const blob = await panelImage(card);
+    saveFile({ blob, filename: imageFileName(title) });
+  } catch {
+    showErrorToast(failed);
+  }
 }
 
 /** Puts the drag placeholder into a grid cell. */
@@ -1047,7 +1069,7 @@ function PanelDescription({ title, description }: { title: string; description: 
 /** The selected panel's size in grid units, quiet in the bottom corner. */
 function SizeBadge({ w, h }: { w: number; h: number }) {
   return (
-    <span className="panel-card__size" aria-hidden="true">
+    <span className="panel-card__size" aria-hidden="true" data-no-image="">
       {w} × {h}
     </span>
   );

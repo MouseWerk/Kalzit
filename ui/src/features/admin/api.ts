@@ -4,7 +4,8 @@
  * follow the server's API documents (docs/api/access.md, docs/api/settings-dashboards.md); every
  * response is checked, so a mismatch fails as `invalid_response` instead of rendering half a page.
  */
-import { expectShape, isRecord, request } from "../../api/client";
+import { type DownloadedFile, expectShape, isRecord, request, requestFile } from "../../api/client";
+import type { ExportLanguage } from "../../api/generated/shapes";
 import { isSummary, type SecondFactorSummary } from "../security/api";
 
 // Small shape checks, combined per type below.
@@ -725,6 +726,29 @@ export function listAudit(
   const params = orgId === null ? filter : { ...filter, orgId: undefined };
   const path = `${base}${query({ ...params, cursor, limit: options.limit })}`;
   return getPage(path, isAuditEvent, "audit", options.signal);
+}
+
+export type AuditExportFormat = "csv" | "json";
+
+/**
+ * Every event the filters match, as a file (the list's rights: `audit:read`, or a server
+ * administrator for the server's log). The server records the export in the log itself.
+ */
+export function exportAudit(
+  orgId: string | null,
+  filter: AuditFilter,
+  format: AuditExportFormat,
+  language: ExportLanguage,
+  signal?: AbortSignal,
+): Promise<DownloadedFile> {
+  const path = orgId === null ? "/api/admin/audit/export" : orgPath(orgId, "/audit/export");
+  const body: Record<string, unknown> = { format };
+  if (format === "csv") body.language = language;
+  const filters = orgId === null ? filter : { ...filter, orgId: undefined };
+  for (const [name, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") body[name] = value;
+  }
+  return requestFile(path, body, { signal });
 }
 
 // Server administration

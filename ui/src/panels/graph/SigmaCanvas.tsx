@@ -3,6 +3,7 @@ import { type Ref, useEffect, useImperativeHandle, useLayoutEffect, useRef, useS
 import Sigma from "sigma";
 import { extremityArrow, layerPlain, pathLine, pathLoop } from "sigma/rendering";
 import type { CameraState } from "sigma/types";
+import { IMAGE_REDRAW } from "../image";
 import { labelWidth } from "../measure";
 import { applyPositionsTo } from "./applyPositions";
 import type { GraphPalette } from "./colors";
@@ -330,7 +331,11 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     sigmaRef.current = renderer;
     graphRef.current = handover.graph;
     shownVisibility.current = null;
+    // A panel image reads the canvases right after this draw (panels/image.ts).
+    const redraw = () => renderer.refresh();
+    host.addEventListener(IMAGE_REDRAW, redraw);
     return () => {
+      host.removeEventListener(IMAGE_REDRAW, redraw);
       handover.cancel();
       camera.current = renderer.getCamera().getState();
       renderer.kill();
@@ -472,7 +477,8 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     },
   }));
 
-  return <div className="graph__canvas" ref={hostRef} />;
+  // `data-image-redraw` (IMAGE_REDRAW_ATTRIBUTE): sent IMAGE_REDRAW before a panel image is made.
+  return <div className="graph__canvas" ref={hostRef} data-image-redraw="" />;
 }
 
 /** Camera animations, which reduced motion turns into jumps. */

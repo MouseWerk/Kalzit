@@ -505,6 +505,29 @@ describe("Explore after the delta review", () => {
     ]);
   });
 
+  it("exports documents as they are, as NDJSON or JSON, without a projection", async () => {
+    const { user } = await open();
+    const sentExports: unknown[] = [];
+    const fakeFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/export")) {
+        sentExports.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(new Response("{}", { status: 500 }));
+      }
+      return fakeFetch(input, init);
+    });
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("3 documents.");
+    await user.click(screen.getByRole("button", { name: "Export…" }));
+    const dialog = screen.getByRole("dialog", { name: "Export data" });
+    // Documents are no table: their own formats, no CSV or Excel.
+    expect(within(dialog).getByRole("radio", { name: /NDJSON/ })).toHaveProperty("checked", true);
+    expect(within(dialog).queryByRole("radio", { name: /CSV/ })).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(sentExports).toHaveLength(1));
+    expect(sentExports[0]).toMatchObject({ format: "ndjson", steps: [] });
+  });
+
   it("clears a filter refusal when the query runs again", async () => {
     const { user } = await open();
     await addStage(user, "$match", MATCH);

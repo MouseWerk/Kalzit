@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Locator, Page } from "@playwright/test";
 import { Api, unique } from "./support/api";
 import { seriousViolations } from "./support/axe";
@@ -279,6 +280,59 @@ test.describe("Neo4j", () => {
     });
 
     expect(await seriousViolations(page)).toEqual([]);
+  });
+
+  test("a graph panel exports as GraphML and saves a PNG of what it draws", async ({ page }) => {
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const tree = page.getByRole("article", { name: PANELS.tree, exact: true });
+    await expect(tree).toContainText(
+      summary(GRAPH_FIXTURE.categories.nodes, GRAPH_FIXTURE.categories.edges),
+      { timeout: STEP_MS },
+    );
+    const menu = () =>
+      tree
+        .getByRole("button", { name: t("dashboards.panel.menuNamed", { title: PANELS.tree }) })
+        .click({ timeout: STEP_MS });
+
+    await test.step("GraphML keeps the graph's nodes and edges", async () => {
+      await menu();
+      await page
+        .getByRole("menuitem", { name: t("analysis.export.buttonNamed", { title: PANELS.tree }) })
+        .click({ timeout: STEP_MS });
+      const dialog = page.getByRole("dialog", { name: t("analysis.export.title") });
+      // A graph is no table: its own formats only.
+      await expect(
+        dialog.getByRole("radio", { name: t("analysis.export.format.csv") }),
+      ).toHaveCount(0);
+      await dialog.getByRole("radio", { name: t("analysis.export.format.graphml") }).check();
+      const download = page.waitForEvent("download", { timeout: STEP_MS });
+      await dialog.getByRole("button", { name: t("analysis.export.submit"), exact: true }).click();
+      const file = await download;
+      expect(file.suggestedFilename()).toBe("Category-tree.graphml");
+      const text = await readFile(await file.path(), "utf8");
+      expect(text).toContain('<graphml xmlns="http://graphml.graphdrawing.org/xmlns"');
+      expect(text.match(/<node /g)).toHaveLength(GRAPH_FIXTURE.categories.nodes);
+      expect(text.match(/<edge /g)).toHaveLength(GRAPH_FIXTURE.categories.edges);
+    });
+
+    await test.step("the image is a PNG at twice the panel's size or more", async () => {
+      const box = await tree.boundingBox();
+      await menu();
+      const download = page.waitForEvent("download", { timeout: STEP_MS });
+      await page
+        .getByRole("menuitem", { name: t("dashboards.panel.imageNamed", { title: PANELS.tree }) })
+        .click({ timeout: STEP_MS });
+      const file = await download;
+      expect(file.suggestedFilename()).toBe("Category-tree.png");
+      const png = await readFile(await file.path());
+      expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+      // The IHDR chunk holds the width and height.
+      expect(png.readUInt32BE(16)).toBeGreaterThanOrEqual(Math.floor((box?.width ?? 0) * 2));
+      expect(png.readUInt32BE(20)).toBeGreaterThanOrEqual(Math.floor((box?.height ?? 0) * 2));
+      // A drawn panel, not an empty card: title, nodes and labels make the file this large.
+      expect(png.length).toBeGreaterThan(5_000);
+    });
   });
 
   test("graph steps in Explore: counts per label and orders that share products", async ({

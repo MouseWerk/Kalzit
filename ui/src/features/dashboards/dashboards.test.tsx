@@ -9,6 +9,12 @@ import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { PANEL_QUERY_CONCURRENCY } from "./queryQueue";
 import { addDashboard, addFolder, latest, type StoredDashboard } from "./test/fakeDashboards";
 
+// jsdom draws no pictures; the image of a panel is tested in panels/image.test.ts.
+vi.mock("../../panels/image", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../panels/image")>()),
+  panelImage: vi.fn(async () => new Blob(["png"], { type: "image/png" })),
+}));
+
 /** Opens a panel's menu and picks an action, named as the old buttons were ("Edit “Orders”"). */
 async function panelAction(user: ReturnType<typeof renderApp>["user"], name: string) {
   const title = /“(.*)”/.exec(name)?.[1] ?? "";
@@ -568,6 +574,7 @@ describe("dashboard view", () => {
       within(panelOf("Orders")).getByRole("button", { name: "Panel menu of “Orders”" }),
     );
     expect(screen.queryByRole("menuitem", { name: "Export Orders" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Save image (PNG) of “Orders”" })).toBeNull();
     cleanup();
 
     const server = setup("editor");
@@ -608,6 +615,16 @@ describe("dashboard view", () => {
     });
     expect(created).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog", { name: "Export data" })).toBeNull();
+
+    // The picture of the panel, from its menu, named after the panel.
+    const { panelImage } = await import("../../panels/image");
+    await user.click(within(orders).getByRole("button", { name: "Panel menu of “Orders”" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Save image (PNG) of “Orders”" }));
+    await waitFor(() => expect(clicked).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(panelImage)).toHaveBeenCalledWith(orders);
+    expect((clicked.mock.contexts[1] as HTMLAnchorElement).download).toBe("Orders.png");
+    // Images are drawn in the browser: no request to the server.
+    expect(server.areas.dashboards.panelExports).toHaveLength(1);
   });
 
   it("gives viewers view mode only", async () => {

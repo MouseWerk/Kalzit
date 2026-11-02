@@ -6,9 +6,9 @@
 //! - `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: a panel's stored
 //!   queries and steps, for whoever may read the dashboard.
 //!
-//! Every export is written to the audit log, a refused one too. The format is chosen per result
-//! shape: frames today; documents (NDJSON) and graphs (GraphML) add their encoders here with M2
-//! and M3.
+//! Every export is written to the audit log, a refused one too. The file keeps the shape of the
+//! result after the steps: a frame as CSV, JSON or Excel, documents as JSON or NDJSON, a graph as
+//! GraphML or JSON; a format that does not fit the shape is refused (`export.format_unsupported`).
 //!
 //! Resources: at most `MAX_EXPORTS` exports make files at once on a server (more answer `busy`);
 //! steps and encoding run off the request threads, stop when the client goes away (a drop guard
@@ -60,7 +60,7 @@ use crate::locks::{MutexExt, RwLockExt};
 use crate::net::RequestInfo;
 use crate::shapes::{
     ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse,
-    QueryResult, Shape, TimeRange,
+    QueryResult, TimeRange,
 };
 
 /// Exports that make their file at the same time, per server (`AppState::exports`).
@@ -231,7 +231,8 @@ enum Msg {
 struct Spooled {
     path: tempfile::TempPath,
     len: u64,
-    rows: usize,
+    /// What the audit entry counts (rows, documents, nodes and edges) and the shape.
+    counts: Vec<(&'static str, Value)>,
     kind: export::Kind,
     user: UserSlot,
 }
@@ -439,8 +440,6 @@ async fn produce(
         .and_then(|v| v.as_u64())
         .unwrap_or(DEFAULT_TIMEOUT_SECS);
     let mut inputs = Vec::new();
-    // Results that are no frame: exported only after a projection or a graph step made one.
-    let mut other_shapes = Vec::new();
     // Graph steps that ran with their query (in the database or on the server); their results
     // are the inputs here.
     let mut done = BTreeSet::new();
@@ -448,17 +447,12 @@ async fn produce(
         match response.results.remove(ref_id) {
             Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                 done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
-                match result {
-                    QueryResult::Frame { frame } => inputs.push((ref_id.clone(), Input::Frame(frame))),
-                    QueryResult::Documents { documents } => {
-                        other_shapes.push((ref_id.clone(), Shape::Documents));
-                        inputs.push((ref_id.clone(), Input::Documents(documents)));
-                    }
-                    QueryResult::Graph { graph } => {
-                        other_shapes.push((ref_id.clone(), Shape::Graph));
-                        inputs.push((ref_id.clone(), Input::Graph(graph)));
-                    }
-                }
+                let input = match result {
+                    QueryResult::Frame { frame } => Input::Frame(frame),
+                    QueryResult::Documents { documents } => Input::Documents(documents),
+                    QueryResult::Graph { graph } => Input::Graph(graph),
+                };
+                inputs.push((ref_id.clone(), input));
             }
             Some(QueryOutcome::Err { error }) => return Err(api_error(error)),
             None => return Err(ApiError::internal("export", format!("no outcome for {ref_id}"))),
@@ -476,42 +470,16 @@ async fn produce(
         let permit = permit;
         #[cfg(test)]
         tests::hold_if_asked(&steps);
-        let (frames, _) = steps::run_shapes(&steps, inputs, &control, &done).map_err(|f| {
+        let outputs = steps::run_outputs(&steps, inputs, &control, &done).map_err(|f| {
             let message = format!("step {}: {}", f.index + 1, f.detail.message);
             step_error(message, f.detail)
         })?;
-        let chosen = match &frame {
-            Some(name) => frames.iter().find(|f| &f.name == name),
-            None => frames.first(),
-        };
-        let Some(chosen) = chosen else {
-            let shape = other_shapes.iter().find(|(r, _)| frame.as_ref().is_none_or(|f| f == r)).map(|(_, s)| *s);
-            return Err(match shape {
-                Some(shape) => {
-                    let shape =
-                        serde_json::to_value(shape).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
-                    refused(
-                        Detail::new("export.shape_unsupported", format!("{shape} results cannot be exported yet"))
-                            .with("shape", shape),
-                    )
-                }
-                None => {
-                    let name = frame.unwrap_or_default();
-                    refused(
-                        Detail::new("export.frame_missing", format!("there is no table {name} to export"))
-                            .with("frame", &name),
-                    )
-                    .with_field("frame")
-                }
-            });
-        };
-        let frame = &chosen.frame;
+        let (name, content) = choose(&outputs, frame.as_deref(), format)?;
         let io = |e: std::io::Error| ApiError::internal("export", format!("the spool file: {e}"));
         std::fs::create_dir_all(&spool).map_err(io)?;
-        // The file may be as large as its cells suggest, up to the limit; the disk keeps what
+        // The file may be as large as its content suggests, up to the limit; the disk keeps what
         // the data directory's other users (the databases) need.
-        let size =
-            (frame.rows().saturating_mul(frame.fields().len()).saturating_mul(24) as u64).min(limits.file_bytes as u64);
+        let size = content.estimate().min(limits.file_bytes as u64);
         // An Excel file takes three copies at once: the sheet, the workbook and the spool file.
         let estimate = if format == ExportFormat::Xlsx { size.saturating_mul(3) } else { size };
         let free = crate::updates::platform::free_space(&spool);
@@ -541,16 +509,59 @@ async fn produce(
                 .map_err(|e| Detail::new("export.failed", format!("the file could not be written: {e}")))
         };
         let caps = export::Caps { file_bytes: limits.file_bytes };
-        export::encode_to(frame, &chosen.name, format, language, &control, caps, &spool, true, &mut write)
+        export::encode_content_to(content, name, format, language, &control, caps, &spool, true, &mut write)
             .map_err(|d| if d.reason.starts_with("steps.") { step_error(d.message.clone(), d) } else { refused(d) })?;
         let file = out.into_inner().map_err(|e| io(e.into_error()))?;
         let len = file.metadata().map_err(io)?.len();
         drop(file);
         // Complete: the server's slot is free for the next export while this one is sent.
         drop(permit);
-        Ok(Spooled { path, len, rows: frame.rows(), kind: export::kind(format), user })
+        let mut counts: Vec<(&'static str, Value)> = content.counts().into_iter().map(|(k, n)| (k, json!(n))).collect();
+        counts.push(("shape", json!(export::shape_name(content.shape()))));
+        Ok(Spooled { path, len, counts, kind: export::kind(format), user })
     };
     tokio::task::spawn_blocking(work).await.map_err(|e| ApiError::internal("export", e))?
+}
+
+/// The result the file holds, with its name. A named result is looked for among the frames, the
+/// documents and the graphs after the steps; without a name, the first result the format writes,
+/// frames before documents before graphs (a CSV, JSON or Excel file of a request that names
+/// nothing holds the first table, as before documents and graphs had formats). A format that
+/// does not write the result's shape is refused, never converted: that is a step.
+fn choose<'a>(
+    outputs: &'a steps::Outputs,
+    name: Option<&str>,
+    format: ExportFormat,
+) -> ApiResult<(&'a str, export::Content<'a>)> {
+    use export::Content;
+    let all = outputs
+        .frames
+        .iter()
+        .map(|f| (f.name.as_str(), Content::Frame(&f.frame)))
+        .chain(outputs.documents.iter().map(|(n, d)| (n.as_str(), Content::Documents(d))))
+        .chain(outputs.graphs.iter().map(|(n, g)| (n.as_str(), Content::Graph(g))));
+    let found = match name {
+        Some(name) => all.into_iter().find(|(n, _)| *n == name),
+        None => {
+            let all: Vec<_> = all.collect();
+            match all.iter().find(|(_, c)| export::fits(c.shape(), format)) {
+                Some(fitting) => Some(*fitting),
+                // Nothing fits: the refusal names the shape of the first result.
+                None => all.first().copied(),
+            }
+        }
+    };
+    let Some((found_name, content)) = found else {
+        let name = name.unwrap_or_default();
+        return Err(refused(
+            Detail::new("export.frame_missing", format!("there is no result {name} to export")).with("frame", name),
+        )
+        .with_field("frame"));
+    };
+    if !export::fits(content.shape(), format) {
+        return Err(refused(export::format_unsupported(content.shape(), format)).with_field("format"));
+    }
+    Ok((found_name, content))
 }
 
 /// A step's failure as an answer: the time limit as `query_timeout`, anything else as a
@@ -634,7 +645,7 @@ fn stopped(reason: &'static str, message: &str) -> Detail {
 async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limits: Limits) {
     use tokio::io::AsyncReadExt;
     let started = Instant::now();
-    let Spooled { path, len, rows, user: _user, .. } = file;
+    let Spooled { path, len, counts, user: _user, .. } = file;
     let mut sent: u64 = 0;
     // Set once `data.exported` is written: the file was complete on the server then, and a client
     // that drops at the last chunk does not turn it into an aborted export.
@@ -642,7 +653,10 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
     let outcome: Result<(), (Detail, &'static str)> = async {
         // A file without bytes still gets its entry.
         if len == 0 {
-            pending.record_exported(rows).await.map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
+            pending
+                .record_exported(&counts)
+                .await
+                .map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
             recorded = true;
         }
         let mut source = tokio::fs::File::open(&path)
@@ -662,7 +676,7 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
             // not get a file that was not recorded.
             if sent + n as u64 >= len {
                 pending
-                    .record_exported(rows)
+                    .record_exported(&counts)
                     .await
                     .map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
                 recorded = true;
@@ -714,7 +728,7 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
 }
 
 impl Pending {
-    async fn record_exported(&self, rows: usize) -> ApiResult<()> {
+    async fn record_exported(&self, counts: &[(&'static str, Value)]) -> ApiResult<()> {
         let copy = Pending {
             state: self.state.clone(),
             ctx: self.ctx.clone(),
@@ -722,7 +736,7 @@ impl Pending {
             dashboard_id: self.dashboard_id.clone(),
             summary: self.summary.clone(),
         };
-        copy.record("data.exported", vec![("rows", json!(rows))]).await
+        copy.record("data.exported", counts.to_vec()).await
     }
 }
 

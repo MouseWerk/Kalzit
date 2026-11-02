@@ -1,17 +1,20 @@
-//! Export files from a frame: CSV, JSON and Excel (docs/api/datasources.md, "Export"). Documents
-//! (JSON, NDJSON) and graphs (GraphML, JSON) get their own encoders with M2 and M3; the route
-//! already picks the encoder by the shape of the result.
+//! Export files from a result after its steps, in the result's own shape (docs/api/datasources.md,
+//! "Export"): a frame as CSV, JSON or Excel, documents as JSON or NDJSON, a graph as GraphML or
+//! JSON. A format never turns one shape into another; that is a step (a projection, a graph step
+//! that makes a table) the export runs before it, as the browser does.
 //!
 //! Excel files are written with `rust_xlsxwriter`: maintained by the author of the Python
 //! XlsxWriter and libxlsxwriter, pure Rust, no default features, and it writes real cells (numbers,
 //! dates, booleans), never formulas. Writing them on the server keeps the export behind the
 //! server's permission check; a browser library would need the data in the browser first.
 //!
-//! Files are written in chunks of 1 MiB into a callback (`encode_to`), CSV and JSON row by row
-//! and Excel from a spool file in constant memory mode, so the route can send each chunk as it is
-//! made and memory does not grow with the file. `encode` and `encode_within` collect the chunks
+//! Files are written in chunks of 1 MiB into a callback (`encode_to`), CSV, JSON, NDJSON and
+//! GraphML row by row (document by document, node by node) and Excel from a spool file in
+//! constant memory mode, so the route can send each chunk as it is made and memory does not grow
+//! with the file. `encode` and `encode_within` collect the chunks
 //! (for tests and small callers).
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -21,7 +24,10 @@ use serde_json::Value;
 use super::expr::{self, iso_time, number_text};
 use super::steps::{Control, int_of};
 use crate::datasources::detail::Detail;
-use crate::shapes::{ExportFormat, ExportLanguage, FieldType, Frame, FrameMeta};
+use crate::shapes::{
+    DocumentSet, ExportFormat, ExportLanguage, FieldSchema, FieldType, Frame, FrameMeta, GraphSet, Notice, OrderedJson,
+    Shape, Truncated,
+};
 
 /// A whole encoded file in chunks (see `encode`).
 #[derive(Debug)]
@@ -53,6 +59,86 @@ pub fn kind(format: ExportFormat) -> Kind {
             content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             extension: "xlsx",
         },
+        ExportFormat::Ndjson => Kind { content_type: "application/x-ndjson", extension: "ndjson" },
+        ExportFormat::Graphml => Kind { content_type: "application/graphml+xml; charset=utf-8", extension: "graphml" },
+    }
+}
+
+/// Whether `format` writes results of `shape`: frames as CSV, JSON or Excel, documents as JSON or
+/// NDJSON, graphs as GraphML or JSON.
+pub fn fits(shape: Shape, format: ExportFormat) -> bool {
+    use ExportFormat::{Csv, Graphml, Json, Ndjson, Xlsx};
+    matches!(
+        (shape, format),
+        (Shape::Frame, Csv | Json | Xlsx) | (Shape::Documents, Json | Ndjson) | (Shape::Graph, Json | Graphml)
+    )
+}
+
+pub fn shape_name(shape: Shape) -> &'static str {
+    match shape {
+        Shape::Frame => "frame",
+        Shape::Documents => "documents",
+        Shape::Graph => "graph",
+    }
+}
+
+fn format_name(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::Csv => "csv",
+        ExportFormat::Json => "json",
+        ExportFormat::Xlsx => "xlsx",
+        ExportFormat::Ndjson => "ndjson",
+        ExportFormat::Graphml => "graphml",
+    }
+}
+
+/// The refusal of a format that does not write this shape.
+pub fn format_unsupported(shape: Shape, format: ExportFormat) -> Detail {
+    let (shape, format) = (shape_name(shape), format_name(format));
+    Detail::new("export.format_unsupported", format!("{shape} results cannot be exported as {format}"))
+        .with("shape", shape)
+        .with("format", format)
+}
+
+/// One result after the steps, in its own shape, as a file holds it.
+#[derive(Clone, Copy, Debug)]
+pub enum Content<'a> {
+    Frame(&'a Frame),
+    Documents(&'a DocumentSet),
+    Graph(&'a GraphSet),
+}
+
+impl Content<'_> {
+    pub fn shape(&self) -> Shape {
+        match self {
+            Content::Frame(_) => Shape::Frame,
+            Content::Documents(_) => Shape::Documents,
+            Content::Graph(_) => Shape::Graph,
+        }
+    }
+
+    /// What the audit entry counts: `rows`, `documents`, or `nodes` and `edges`.
+    pub fn counts(&self) -> Vec<(&'static str, usize)> {
+        match self {
+            Content::Frame(f) => vec![("rows", f.rows())],
+            Content::Documents(d) => vec![("documents", d.documents.len())],
+            Content::Graph(g) => vec![("nodes", g.nodes.len()), ("edges", g.edges.len())],
+        }
+    }
+
+    /// About as large as the file may get, for the disk space check.
+    pub fn estimate(&self) -> u64 {
+        let size = match self {
+            Content::Frame(f) => f.rows().saturating_mul(f.fields().len()).saturating_mul(24),
+            Content::Documents(d) => d.documents.iter().map(|doc| doc.get().len() + 2).sum(),
+            Content::Graph(g) => {
+                let each = |n: usize| n.saturating_add(2).saturating_mul(64);
+                let nodes: usize = g.nodes.iter().map(|n| each(n.properties.len() + n.labels.len())).sum();
+                let edges: usize = g.edges.iter().map(|e| each(e.properties.len())).sum();
+                nodes.saturating_add(edges)
+            }
+        };
+        size as u64
     }
 }
 
@@ -211,11 +297,298 @@ pub fn encode_to(
     deadline: bool,
     out: &mut Emit<'_>,
 ) -> Result<(), Detail> {
-    match format {
-        ExportFormat::Csv => csv_to(frame, language, control, caps.file_bytes, deadline, out),
-        ExportFormat::Json => json_to(frame, control, caps.file_bytes, deadline, out),
-        ExportFormat::Xlsx => xlsx_to(frame, name, control, caps, spool, deadline, out),
+    encode_content_to(Content::Frame(frame), name, format, language, control, caps, spool, deadline, out)
+}
+
+/// `encode_to` for a result of any shape; a format that does not write the shape is refused
+/// (`export.format_unsupported`) before anything is written.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_content_to(
+    content: Content<'_>,
+    name: &str,
+    format: ExportFormat,
+    language: ExportLanguage,
+    control: &Control,
+    caps: Caps,
+    spool: &Path,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let max = caps.file_bytes;
+    match (content, format) {
+        (Content::Frame(frame), ExportFormat::Csv) => csv_to(frame, language, control, max, deadline, out),
+        (Content::Frame(frame), ExportFormat::Json) => json_to(frame, control, max, deadline, out),
+        (Content::Frame(frame), ExportFormat::Xlsx) => xlsx_to(frame, name, control, caps, spool, deadline, out),
+        (Content::Documents(set), ExportFormat::Json) => documents_json_to(set, control, max, deadline, out),
+        (Content::Documents(set), ExportFormat::Ndjson) => ndjson_to(set, control, max, deadline, out),
+        (Content::Graph(graph), ExportFormat::Json) => graph_json_to(graph, control, max, deadline, out),
+        (Content::Graph(graph), ExportFormat::Graphml) => graphml_to(graph, control, max, deadline, out),
+        (content, format) => Err(format_unsupported(content.shape(), format)),
     }
+}
+
+/// The whole file of a result of any shape in memory (tests and small callers).
+pub fn encode_content(
+    content: Content<'_>,
+    format: ExportFormat,
+    control: &Control,
+    caps: Caps,
+) -> Result<File, Detail> {
+    if let Content::Frame(frame) = content {
+        return encode_within(frame, "Kalzit", format, ExportLanguage::En, control, caps);
+    }
+    let mut chunks = Vec::new();
+    let mut out = |c: Vec<u8>| {
+        chunks.push(c);
+        Ok(())
+    };
+    encode_content_to(content, "", format, ExportLanguage::En, control, caps, Path::new(""), true, &mut out)?;
+    let Kind { content_type, extension } = kind(format);
+    Ok(File { chunks, content_type, extension })
+}
+
+/// The documents as their result envelope, `{"shape": "documents", "documents": {...}}`: every
+/// document in its own key order, the schema, and why the set was cut. The statement as sent to
+/// the database and the cursor of the next page stay in Kalzit.
+#[derive(serde::Serialize)]
+struct DocumentsFile<'a> {
+    shape: &'static str,
+    documents: DocumentsBody<'a>,
+}
+
+#[derive(serde::Serialize)]
+struct DocumentsBody<'a> {
+    documents: &'a [OrderedJson],
+    schema: &'a [FieldSchema],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    truncated: Option<&'a Truncated>,
+    notices: &'a [Notice],
+}
+
+fn documents_json_to(
+    set: &DocumentSet,
+    control: &Control,
+    max: usize,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let mut sink = Sink::new(max, control, deadline, out);
+    let file = DocumentsFile {
+        shape: "documents",
+        documents: DocumentsBody {
+            documents: &set.documents,
+            schema: &set.schema,
+            truncated: set.truncated.as_ref(),
+            notices: &set.notices,
+        },
+    };
+    let written = serde_json::to_writer(&mut sink, &file).map_err(std::io::Error::other);
+    sink.done(written)
+}
+
+/// One document per line (NDJSON, LF line ends), each in its own key order. A document from a
+/// plugin may hold line breaks between its tokens; they become spaces (a line break never stands
+/// inside a JSON string), so every line is one document.
+fn ndjson_to(
+    set: &DocumentSet,
+    control: &Control,
+    max: usize,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let mut sink = Sink::new(max, control, deadline, out);
+    let written = (|| -> std::io::Result<()> {
+        for doc in &set.documents {
+            let text = doc.get();
+            if text.contains(['\n', '\r']) {
+                sink.write_all(text.replace(['\n', '\r'], " ").as_bytes())?;
+            } else {
+                sink.write_all(text.as_bytes())?;
+            }
+            sink.write_all(b"\n")?;
+        }
+        Ok(())
+    })();
+    sink.done(written)
+}
+
+/// The graph as its result envelope, `{"shape": "graph", "graph": {...}}`: nodes, edges, paths,
+/// schema and notices as the query and the steps left them.
+#[derive(serde::Serialize)]
+struct GraphFile<'a> {
+    shape: &'static str,
+    graph: &'a GraphSet,
+}
+
+fn graph_json_to(
+    graph: &GraphSet,
+    control: &Control,
+    max: usize,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let mut sink = Sink::new(max, control, deadline, out);
+    let file = GraphFile { shape: "graph", graph };
+    let written = serde_json::to_writer(&mut sink, &file).map_err(std::io::Error::other);
+    sink.done(written)
+}
+
+/// The GraphML type of a property key: the narrowest that holds every value it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyType {
+    Boolean,
+    Long,
+    Double,
+    String,
+}
+
+impl KeyType {
+    fn of(value: &Value) -> Option<KeyType> {
+        match value {
+            Value::Null => None,
+            Value::Bool(_) => Some(KeyType::Boolean),
+            Value::Number(n) if n.is_i64() => Some(KeyType::Long),
+            Value::Number(_) => Some(KeyType::Double),
+            _ => Some(KeyType::String),
+        }
+    }
+
+    fn join(self, other: KeyType) -> KeyType {
+        match (self, other) {
+            (a, b) if a == b => a,
+            (KeyType::Long, KeyType::Double) | (KeyType::Double, KeyType::Long) => KeyType::Double,
+            _ => KeyType::String,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            KeyType::Boolean => "boolean",
+            KeyType::Long => "long",
+            KeyType::Double => "double",
+            KeyType::String => "string",
+        }
+    }
+}
+
+/// The property keys of nodes or edges with their types, in name order. A key that only ever
+/// holds `null` is declared as text.
+fn graph_keys<'a>(maps: impl Iterator<Item = &'a BTreeMap<String, Value>>) -> Vec<(String, KeyType)> {
+    let mut keys: BTreeMap<&str, Option<KeyType>> = BTreeMap::new();
+    for map in maps {
+        for (key, value) in map {
+            let seen = keys.entry(key.as_str()).or_insert(None);
+            if let Some(t) = KeyType::of(value) {
+                *seen = Some(seen.map_or(t, |s| s.join(t)));
+            }
+        }
+    }
+    keys.into_iter().map(|(k, t)| (k.to_string(), t.unwrap_or(KeyType::String))).collect()
+}
+
+/// Text for XML: the special characters as entities, line breaks and tabs kept (as character
+/// references in attributes, where a parser would turn them into spaces), and the characters XML
+/// 1.0 cannot hold replaced by U+FFFD.
+fn xml_text(text: &str, attribute: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\r' => out.push_str("&#13;"),
+            '\n' if attribute => out.push_str("&#10;"),
+            '\t' if attribute => out.push_str("&#9;"),
+            '\n' | '\t' => out.push(c),
+            c if (c as u32) < 0x20 || c == '\u{FFFE}' || c == '\u{FFFF}' => out.push('\u{FFFD}'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// A property's value as GraphML data: text as it is, numbers and booleans in JSON's notation,
+/// lists and objects as compact JSON.
+fn data_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+const GRAPHML_HEAD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+  <key id="labels" for="node" attr.name="labels" attr.type="string"/>
+  <key id="type" for="edge" attr.name="type" attr.type="string"/>
+"#;
+
+/// GraphML (graphml.graphdrawing.org), as Gephi, yEd, Cytoscape and NetworkX read it: a directed
+/// graph whose nodes carry their labels (`:Person:Actor`, as Neo4j writes them) and properties,
+/// and whose edges carry their type and properties. Each property key is declared once for nodes
+/// and once for edges, with the narrowest type that holds all its values (`boolean`, `long`,
+/// `double`, else `string`; lists and objects are JSON text). GraphML has no paths: their nodes
+/// and edges are in the file, the JSON file keeps the paths themselves.
+fn graphml_to(
+    graph: &GraphSet,
+    control: &Control,
+    max: usize,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let node_keys = graph_keys(graph.nodes.iter().map(|n| &n.properties));
+    let edge_keys = graph_keys(graph.edges.iter().map(|e| &e.properties));
+    let index = |keys: &[(String, KeyType)], name: &str| keys.binary_search_by(|(k, _)| k.as_str().cmp(name)).ok();
+    let mut sink = Sink::new(max, control, deadline, out);
+    let written = (|| -> std::io::Result<()> {
+        sink.write_all(GRAPHML_HEAD.as_bytes())?;
+        for (prefix, domain, keys) in [("n", "node", &node_keys), ("e", "edge", &edge_keys)] {
+            for (i, (name, t)) in keys.iter().enumerate() {
+                let line = format!(
+                    "  <key id=\"{prefix}{i}\" for=\"{domain}\" attr.name=\"{}\" attr.type=\"{}\"/>\n",
+                    xml_text(name, true),
+                    t.name()
+                );
+                sink.write_all(line.as_bytes())?;
+            }
+        }
+        sink.write_all(b"  <graph id=\"G\" edgedefault=\"directed\">\n")?;
+        let mut line = String::new();
+        for node in &graph.nodes {
+            line.clear();
+            line.push_str(&format!("    <node id=\"{}\">", xml_text(&node.id, true)));
+            if !node.labels.is_empty() {
+                let labels: String = node.labels.iter().map(|l| format!(":{l}")).collect();
+                line.push_str(&format!("<data key=\"labels\">{}</data>", xml_text(&labels, false)));
+            }
+            for (key, value) in &node.properties {
+                if let (Some(i), false) = (index(&node_keys, key), value.is_null()) {
+                    line.push_str(&format!("<data key=\"n{i}\">{}</data>", xml_text(&data_text(value), false)));
+                }
+            }
+            line.push_str("</node>\n");
+            sink.write_all(line.as_bytes())?;
+        }
+        for edge in &graph.edges {
+            line.clear();
+            line.push_str(&format!(
+                "    <edge id=\"{}\" source=\"{}\" target=\"{}\"><data key=\"type\">{}</data>",
+                xml_text(&edge.id, true),
+                xml_text(&edge.from, true),
+                xml_text(&edge.to, true),
+                xml_text(&edge.edge_type, false)
+            ));
+            for (key, value) in &edge.properties {
+                if let (Some(i), false) = (index(&edge_keys, key), value.is_null()) {
+                    line.push_str(&format!("<data key=\"e{i}\">{}</data>", xml_text(&data_text(value), false)));
+                }
+            }
+            line.push_str("</edge>\n");
+            sink.write_all(line.as_bytes())?;
+        }
+        sink.write_all(b"  </graph>\n</graphml>\n")
+    })();
+    sink.done(written)
 }
 
 /// The result envelope of the frame, `{"shape": "frame", "frame": {...}}`, written straight from
@@ -240,7 +613,7 @@ fn json_to(frame: &Frame, control: &Control, max: usize, deadline: bool, out: &m
 /// can never run as one: `=`, `+`, `-`, `@` (also their full-width forms) after any leading
 /// spaces, line breaks or invisible characters, and a leading tab or carriage return (DDE such as
 /// `=cmd|...` starts with `=`).
-fn defuse(text: &str) -> String {
+pub(crate) fn defuse(text: &str) -> String {
     let lead = text.trim_start_matches([' ', '\n', '\u{00A0}', '\u{200B}', '\u{FEFF}', '\u{3000}']);
     let risky = text.starts_with(['\t', '\r'])
         || lead.starts_with(['=', '+', '-', '@', '\t', '\r', '\u{FF1D}', '\u{FF0B}', '\u{FF0D}', '\u{FF20}']);
@@ -294,7 +667,7 @@ fn csv_cell(value: &Value, field_type: FieldType, language: ExportLanguage) -> S
     }
 }
 
-fn quote(cell: &str, separator: char) -> String {
+pub(crate) fn quote(cell: &str, separator: char) -> String {
     let needs =
         cell.contains([separator, '"', '\n', '\r']) || cell.starts_with([' ', '\t']) || cell.ends_with([' ', '\t']);
     if needs { format!("\"{}\"", cell.replace('"', "\"\"")) } else { cell.to_string() }
@@ -762,6 +1135,44 @@ mod tests {
         let back: QueryResult = serde_json::from_str(&text).unwrap();
         let QueryResult::Frame { frame: back } = back else { panic!() };
         assert_eq!((back.meta().unwrap().rows_truncated, back.rows()), (true, 3));
+    }
+
+    /// Documents keep each one's own key order, one per line, also when a plugin sent line breaks
+    /// between the tokens; their JSON file is the result envelope without what stays in Kalzit.
+    #[test]
+    fn documents_keep_their_key_order_one_per_line() {
+        let set = DocumentSet {
+            documents: vec![
+                OrderedJson::from_text("{\"z\":1,\n  \"a\": \"x\\ny\"}".into()).unwrap(),
+                OrderedJson::from_text("{\"b\":[1,2]}".into()).unwrap(),
+            ],
+            schema: vec![],
+            next_cursor: Some("next-page".into()),
+            truncated: None,
+            notices: vec![],
+            executed_query: Some("db.secret.find()".into()),
+            distributable: false,
+        };
+        let file = |format| encode_content(Content::Documents(&set), format, &Control::unbounded(), Caps::default());
+        let ndjson = String::from_utf8(file(ExportFormat::Ndjson).unwrap().bytes()).unwrap();
+        assert_eq!(ndjson, "{\"z\":1,   \"a\": \"x\\ny\"}\n{\"b\":[1,2]}\n");
+        for line in ndjson.lines() {
+            serde_json::from_str::<Value>(line).unwrap();
+        }
+        let json = String::from_utf8(file(ExportFormat::Json).unwrap().bytes()).unwrap();
+        assert!(json.starts_with(r#"{"shape":"documents","documents":{"documents":[{"z":1,"#), "{json}");
+        assert!(!json.contains("secret") && !json.contains("next-page"), "{json}");
+        let err = file(ExportFormat::Csv).unwrap_err();
+        assert_eq!(err.reason, "export.format_unsupported");
+        assert_eq!(err.params.get("shape").map(String::as_str), Some("documents"));
+        assert!(fits(Shape::Graph, ExportFormat::Graphml) && !fits(Shape::Frame, ExportFormat::Graphml));
+    }
+
+    #[test]
+    fn xml_text_keeps_what_xml_can_hold() {
+        assert_eq!(xml_text("a<b>&\"c\"", false), "a&lt;b&gt;&amp;&quot;c&quot;");
+        assert_eq!(xml_text("x\ny\tz\r", true), "x&#10;y&#9;z&#13;");
+        assert_eq!(xml_text("x\ny\u{0}\u{FFFF}", false), "x\ny\u{FFFD}\u{FFFD}");
     }
 
     #[test]

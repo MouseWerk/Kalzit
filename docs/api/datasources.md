@@ -1557,14 +1557,16 @@ entries. Hits are not audited.
 ## Export
 
 A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
-file. The server runs the queries and the steps itself, so the file is made only after the same
+file, in the result's own shape: a frame as CSV, Excel or JSON, documents as NDJSON or JSON, a
+graph as GraphML or JSON. The server runs the queries and the steps itself, so the file is made only after the same
 checks as running them, plus `data:export` (editor and up by default; viewers do not have it). A
 browser-side export would need the data in the browser first and could not be refused.
 
 - `POST /orgs/{orgId}/export`, body `ExportRequest`: the fields of `QueryRequest` (`queries`,
   `timeRange`, `intervalMs`, `maxDataPoints`, `variables`), plus `steps` (default none),
-  `format`, `language`, `frame` (the `refId` to export after the steps; the first frame when
-  absent), `title` (the file name's base), `timeZone` and `weekStart` (below). Every data source
+  `format`, `language`, `frame` (the `refId` of the result to export after the steps, a frame,
+  documents or a graph; when absent, the first result the format fits, frames before documents
+  before graphs), `title` (the file name's base), `timeZone` and `weekStart` (below). Every data source
   needs `datasources:query` (role or grant); one the caller may not query refuses the whole
   export (`403` or `404`).
 - `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, body
@@ -1580,8 +1582,8 @@ browser-side export would need the data in the browser first and could not be re
 
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
-the format, the time range, the frame, the number of rows and the panel or the data sources,
-never the data, once the whole file has been made and before its last chunk is sent (when the
+the format, the time range, the frame, the result's `shape` and its size (`rows` of a frame,
+`documents`, or `nodes` and `edges` of a graph) and the panel or the data sources, never the data, once the whole file has been made and before its last chunk is sent (when the
 entry cannot be written the download is broken off); an export refused inside the route writes
 `data.export_refused` with the code and reason as well, and one whose download does not complete
 (the client went away, took nothing for 60 s, or needed more than 15 minutes) writes
@@ -1629,9 +1631,34 @@ went away. The statement as sent to the database
   `rust_xlsxwriter` (maintained, no default features, writes cells and never formulas).
 - `json`: the result envelope of the frame, `{"shape": "frame", "frame": {...}}`.
 
-Documents become exportable through a projection step (`toFrame`); their own formats (JSON,
-NDJSON) and graphs (GraphML, JSON) follow with M2 and M3, until then such a result answers
-`export.shape_unsupported`. Steps that are not valid answer `422 validation` with reason
+Documents (results no projection turned into a frame):
+
+- `ndjson` (`application/x-ndjson`): one document per line, LF line ends, each document in the
+  key order the database stored and with its values as the query answered them (typed values
+  such as `{"$date": ...}` stay as they are). A line break between the tokens of a document from
+  a plugin becomes a space, so every line is one document.
+- `json`: the result envelope, `{"shape": "documents", "documents": {"documents": [...],
+  "schema": [...], "truncated"?: {...}, "notices": [...]}}`, without the statement as sent
+  (`executedQuery`) and the cursor of the next page.
+
+Graphs (results no graph step turned into a frame):
+
+- `graphml` (`application/graphml+xml`): GraphML 1.0 as Gephi, yEd, Cytoscape and NetworkX read
+  it, one directed `<graph>`. A node's labels are the key `labels` (`:Person:Customer`, as Neo4j
+  writes them), an edge's type the key `type`. Every property key is declared once for nodes
+  (`n0`, `n1`, ...) and once for edges (`e0`, ...), in name order, with the narrowest type that
+  holds all its values: `boolean`, `long`, `double` (integers and decimals mixed), else `string`;
+  lists and objects are compact JSON text, `null` values are left out. Text is XML-escaped;
+  characters XML 1.0 cannot hold (control characters other than tab and line breaks) become
+  U+FFFD. GraphML has no paths: their nodes and edges are in the file, the JSON file keeps them.
+- `json`: the result envelope, `{"shape": "graph", "graph": {...}}`, with nodes, edges, paths,
+  schema and notices.
+
+A format never converts one shape into another: `csv` or `xlsx` for documents or a graph, or
+`ndjson`/`graphml` for a frame, answers `422 validation` with reason `export.format_unsupported`
+(params `shape`, `format`, `field: format`). A table of documents is a projection step
+(`toFrame`), a table of a graph a graph step that makes one (`countLabels`, `degree`, ...); the
+same steps run in the browser, so the dialog offers the formats of the shape it shows. Steps that are not valid answer `422 validation` with reason
 `steps.invalid` and `field: steps`; a step that fails answers its own reason with `field: steps`
 and a message naming the step. A failing query answers its error as the variable options route
 does: a file never holds less than was asked for.
@@ -1972,10 +1999,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | Reason | Params | When |
 |---|---|---|
 | `export.no_queries` | | the panel has no query |
-| `export.frame_missing` | `frame` | no table with this reference id after the steps (`field: frame`) |
-| `export.shape_unsupported` | `shape` | documents and graphs cannot be exported yet |
+| `export.frame_missing` | `frame` | no result with this reference id after the steps (`field: frame`) |
+| `export.format_unsupported` | `shape`, `format` | the format does not write results of this shape (`field: format`); a step makes a table |
 | `export.too_many_rows` | `max` | Excel takes at most `max` rows |
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
+| `export.too_many_events` | `max` | an audit log export would hold more than `max` events (docs/api/settings-dashboards.md) |
 | `export.failed` | `detail` | the file could not be written |
 | `export.too_large` | `max` | the file would be larger than `max` bytes |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |

@@ -1,23 +1,31 @@
 //! Reading the audit log (an organization's with `audit:read`, the whole server's for server
-//! administrators) and deleting events older than `audit.retention_days`.
+//! administrators), exporting it as CSV or JSON with the same rights and filters, and deleting
+//! events older than `audit.retention_days`.
 
 use std::collections::HashSet;
 
+use axum::body::Body;
 use axum::extract::State;
-use axum::http::Method;
+use axum::http::{Method, header};
+use axum::response::Response;
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::support::{Paging, QueryParams};
 use super::table::{RouteDef, route};
+use crate::analysis::export::{defuse, file_name, quote};
+use crate::analysis::expr::iso_time;
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
+use crate::auth::SessionUser;
 use crate::authz::{Access, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
+use crate::extract::JsonBody;
 use crate::folders;
+use crate::net::RequestInfo;
 use crate::settings;
-use crate::shapes::Page;
+use crate::shapes::{ExportLanguage, Page};
 
 const DAY_MS: i64 = 24 * 3600 * 1000;
 
@@ -25,7 +33,228 @@ pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/orgs/{orgId}/audit", Access::Org(Permission::AuditRead), list_org),
         route(Method::GET, "/admin/audit", Access::ServerAdmin, list_server),
+        route(Method::POST, "/orgs/{orgId}/audit/export", Access::Org(Permission::AuditRead), export_org),
+        route(Method::POST, "/admin/audit/export", Access::ServerAdmin, export_server),
     ]
+}
+
+/// Events one export holds at most; more are refused, so a file never holds less than its filters
+/// ask for without saying so. A shorter time range or a filter makes a smaller file.
+pub const MAX_EXPORT_EVENTS: usize = 100_000;
+/// Events read per query while an export collects them.
+const EXPORT_BATCH: u32 = 1_000;
+
+/// `POST /orgs/{orgId}/audit/export` and `POST /admin/audit/export`: every event the list shows
+/// for these filters, all pages of them, as one file.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuditExportRequest {
+    format: AuditFormat,
+    /// CSV only: `de` separates with `;`, `en` (the default) with `,`.
+    language: Option<ExportLanguage>,
+    actor: Option<String>,
+    action: Option<String>,
+    resource_type: Option<String>,
+    resource_id: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    /// Server export only: one organization.
+    org_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum AuditFormat {
+    Csv,
+    Json,
+}
+
+impl AuditExportRequest {
+    /// The list's filters, without paging.
+    fn query(&self) -> AuditQuery {
+        AuditQuery {
+            actor: self.actor.clone(),
+            action: self.action.clone(),
+            resource_type: self.resource_type.clone(),
+            resource_id: self.resource_id.clone(),
+            from: self.from,
+            to: self.to,
+            limit: None,
+            cursor: None,
+            org_id: None,
+        }
+    }
+
+    /// The audit summary: the format and the filters that were set, never the events.
+    fn summary(&self) -> serde_json::Map<String, Value> {
+        let mut m = serde_json::Map::new();
+        m.insert("format".into(), json!(self.format));
+        let filters = [
+            ("actor", self.actor.as_ref().map(|v| json!(v))),
+            ("action", self.action.as_ref().map(|v| json!(v))),
+            ("resourceType", self.resource_type.as_ref().map(|v| json!(v))),
+            ("resourceId", self.resource_id.as_ref().map(|v| json!(v))),
+            ("from", self.from.map(|v| json!(v))),
+            ("to", self.to.map(|v| json!(v))),
+            ("orgId", self.org_id.as_ref().map(|v| json!(v))),
+        ];
+        for (key, value) in filters {
+            if let Some(value) = value {
+                m.insert(key.into(), value);
+            }
+        }
+        m
+    }
+}
+
+async fn export_org(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(req): JsonBody<AuditExportRequest>,
+) -> ApiResult<Response> {
+    if req.org_id.is_some() {
+        return Err(ApiError::validation("orgId is a filter of the server export only").with_field("orgId"));
+    }
+    let viewer = Viewer {
+        org_id: Some(&ctx.org_id),
+        user_id: &ctx.user.id,
+        role: &ctx.role,
+        sees_every_folder: folders::sees_every_folder(&ctx),
+        scrub: (folders::sees_every_folder(&ctx) == 0).then_some(&ctx),
+    };
+    export(&state, viewer, &ctx.user, &info, req).await
+}
+
+async fn export_server(
+    State(state): State<AppState>,
+    Extension(admin): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(req): JsonBody<AuditExportRequest>,
+) -> ApiResult<Response> {
+    if req.org_id.as_deref().is_some_and(|o| o.trim().is_empty()) {
+        return Err(ApiError::validation("orgId must not be empty").with_field("orgId"));
+    }
+    let org = req.org_id.clone();
+    // Server administrators see every event; no folder is hidden from this view.
+    let viewer = Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None };
+    export(&state, viewer, &admin, &info, req).await
+}
+
+/// Collects every event the filters match, as the list shows them to this viewer, writes the
+/// file, records `audit.exported` and answers the file. The entry is written before the file is
+/// handed out: when it cannot be written, there is no file.
+async fn export(
+    state: &AppState,
+    viewer: Viewer<'_>,
+    actor: &SessionUser,
+    info: &RequestInfo,
+    req: AuditExportRequest,
+) -> ApiResult<Response> {
+    let q = req.query();
+    check_range(&q)?;
+    let unnamed = unnamed_folders(state, &viewer).await?;
+    let mut events: Vec<AuditItem> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let paging = Paging::batch(EXPORT_BATCH, cursor.as_deref())?;
+        let rows = fetch(state, &viewer, &q, &paging, &unnamed).await?;
+        let page = paging.page(rows, |e| (e.created_at, e.id.as_str()));
+        events.extend(page.items);
+        if events.len() > MAX_EXPORT_EVENTS {
+            return Err(ApiError::validation(format!(
+                "the export would hold more than {MAX_EXPORT_EVENTS} events; choose a shorter time range or a filter"
+            ))
+            .because("export.too_many_events")
+            .param("max", MAX_EXPORT_EVENTS));
+        }
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    let (bytes, content_type, extension) = match req.format {
+        AuditFormat::Csv => {
+            let language = req.language.unwrap_or(ExportLanguage::En);
+            (audit_csv(&events, language), "text/csv; charset=utf-8", "csv")
+        }
+        AuditFormat::Json => {
+            (serde_json::to_vec(&events).map_err(|e| ApiError::internal("audit", e))?, "application/json", "json")
+        }
+    };
+    let mut summary = req.summary();
+    summary.insert("events".into(), json!(events.len()));
+    let mut tx = crate::db::begin(&state.db).await?;
+    let event = AuditEvent {
+        org_id: viewer.org_id,
+        actor_user_id: Some(&actor.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action: "audit.exported",
+        resource_type: None,
+        resource_id: None,
+        summary: Value::Object(summary),
+        at_ms: state.clock.now_ms(),
+    };
+    audit::record(&mut tx, &event).await?;
+    crate::db::commit(tx).await?;
+    let mut response = Response::new(Body::from(bytes));
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(content_type));
+    // `file_name` leaves only ASCII letters, digits, `-`, `_` and the dot: always a valid header.
+    let name = file_name("kalzit-audit", extension);
+    if let Ok(value) = header::HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    headers.insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+/// The columns of the CSV file, named as the API names the fields.
+const CSV_COLUMNS: [&str; 12] = [
+    "createdAt",
+    "id",
+    "orgId",
+    "actorUserId",
+    "actorName",
+    "actorAddress",
+    "actorTokenId",
+    "actorTokenPrefix",
+    "action",
+    "resourceType",
+    "resourceId",
+    "summary",
+];
+
+/// RFC 4180 CSV as the data exports write it: a byte order mark, CRLF line ends, the time in ISO
+/// 8601 UTC, the summary as compact JSON, and every text a spreadsheet would read as a formula
+/// defused with a leading `'`.
+fn audit_csv(events: &[AuditItem], language: ExportLanguage) -> Vec<u8> {
+    let separator = if language == ExportLanguage::De { ';' } else { ',' };
+    let sep = separator.to_string();
+    let cell = |text: &str| quote(&defuse(text), separator);
+    let mut out = String::from("\u{FEFF}");
+    out.push_str(&CSV_COLUMNS.map(cell).join(&sep));
+    out.push_str("\r\n");
+    for e in events {
+        let text = |v: &Option<String>| v.as_deref().map(cell).unwrap_or_default();
+        let row = [
+            iso_time(e.created_at),
+            cell(&e.id),
+            text(&e.org_id),
+            text(&e.actor_user_id),
+            text(&e.actor_name),
+            text(&e.actor_address),
+            text(&e.actor_token_id),
+            text(&e.actor_token_prefix),
+            cell(&e.action),
+            text(&e.resource_type),
+            text(&e.resource_id),
+            cell(&e.summary.to_string()),
+        ];
+        out.push_str(&row.join(&sep));
+        out.push_str("\r\n");
+    }
+    out.into_bytes()
 }
 
 #[derive(Deserialize)]
@@ -127,24 +356,25 @@ struct Viewer<'a> {
 /// resources themselves are, also once restricted content is purged (`restricted_tombstones`).
 async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<Json<Page<AuditItem>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
+    check_range(&q)?;
+    let unnamed = unnamed_folders(state, &viewer).await?;
+    let items = fetch(state, &viewer, &q, &paging, &unnamed).await?;
+    Ok(Json(paging.page(items, |e| (e.created_at, e.id.as_str()))))
+}
+
+fn check_range(q: &AuditQuery) -> ApiResult<()> {
     if let (Some(from), Some(to)) = (q.from, q.to)
         && from > to
     {
         return Err(ApiError::validation("from must not be after to").with_field("from"));
     }
-    let (sql, args) = list_sql(&viewer, &q, &paging);
-    let mut query = sqlx::query_as::<_, AuditRow>(sqlx::AssertSqlSafe(sql));
-    for arg in args {
-        query = match arg {
-            Arg::Text(t) => query.bind(t),
-            Arg::Int(i) => query.bind(i),
-        };
-    }
-    let rows: Vec<AuditRow> = query.fetch_all(&state.db).await?;
+    Ok(())
+}
 
-    // Summaries name folders (`parentId`, `folderId`); those the viewer cannot see, or that were
-    // restricted when they were purged, are not named.
-    let unnamed: HashSet<String> = match viewer.scrub {
+/// Summaries name folders (`parentId`, `folderId`); those the viewer cannot see, or that were
+/// restricted when they were purged, are not named.
+async fn unnamed_folders(state: &AppState, viewer: &Viewer<'_>) -> ApiResult<HashSet<String>> {
+    Ok(match viewer.scrub {
         Some(ctx) => {
             let mut conn = state.db.acquire().await?;
             let mut ids = folders::hidden_folder_ids(&mut conn, ctx).await?;
@@ -158,7 +388,26 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
             ids
         }
         None => HashSet::new(),
-    };
+    })
+}
+
+/// One page of events (`paging.fetch_limit()` rows) as the viewer may see them.
+async fn fetch(
+    state: &AppState,
+    viewer: &Viewer<'_>,
+    q: &AuditQuery,
+    paging: &Paging,
+    unnamed: &HashSet<String>,
+) -> ApiResult<Vec<AuditItem>> {
+    let (sql, args) = list_sql(viewer, q, paging);
+    let mut query = sqlx::query_as::<_, AuditRow>(sqlx::AssertSqlSafe(sql));
+    for arg in args {
+        query = match arg {
+            Arg::Text(t) => query.bind(t),
+            Arg::Int(i) => query.bind(i),
+        };
+    }
+    let rows: Vec<AuditRow> = query.fetch_all(&state.db).await?;
     let mut items = Vec::with_capacity(rows.len());
     for r in rows {
         let mut summary: Value = serde_json::from_str(&r.summary)
@@ -184,7 +433,7 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
             created_at: r.created_at,
         });
     }
-    Ok(Json(paging.page(items, |e| (e.created_at, e.id.as_str()))))
+    Ok(items)
 }
 
 /// A bound value of the audit query.

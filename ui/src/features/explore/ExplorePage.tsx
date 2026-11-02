@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { exportQuery } from "../../analysis/api";
-import { ExportDialog } from "../../analysis/ExportDialog";
+import { ExportDialog, exportResults } from "../../analysis/ExportDialog";
 import {
   graphStepsByQuery,
   namedInputs,
@@ -1479,7 +1479,7 @@ function Explore({
       </div>
       {exporting && submitted !== null ? (
         <ExportDialog
-          frames={stepsRun.frames.map((f) => f.name)}
+          results={exportResults(stepsRun)}
           run={(choice, signal) => {
             const timeRange = { from: submitted.from, to: submitted.to };
             return exportQuery(
