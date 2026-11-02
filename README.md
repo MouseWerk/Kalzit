@@ -552,6 +552,11 @@ instance.
 
 The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (German).
 
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 15 of 68 plan items done. M7 Expansion: planned. M8 Plugin store: planned."></picture>
+
+The bars come from [docs/roadmap/progress.json](docs/roadmap/progress.json); M6 counts the items of
+its plan that are merged.
+
 | Milestone | Scope | Status |
 |---|---|---|
 | M0 Foundation | Server with HTTP and HTTPS, own database with migrations, first-run setup, local sign-in, design tokens, i18n, CI on Windows and Linux | Done |
@@ -560,7 +565,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels with node details, explorer mode, graph steps, variables across result shapes, new sign-in and setup with sample data | Done |
 | M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | Done |
 | M5 Operations | OIDC, LDAP and Active Directory, SAML and SCIM, two-factor sign-in, recent sign-ins, mail and invitations, ACME, service accounts, high availability on PostgreSQL, Windows service installer, deb and rpm packages, query cache, usage insights, InfluxDB, Loki, ClickHouse | Done |
-| M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label) | Planned |
+| M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label) | In progress |
 | M7 Expansion | Alerting, public links and snapshots, scheduled reports, provisioning as code with Git and a CLI, deeper analysis and Explore, dashboard tabs, XY and map panels, forecast and outlier steps, graph analysis (algorithms, filters, schema, map layout), an MCP server, further sources (Graphite, Redis, Oracle, traces, BigQuery, Snowflake, Databricks) | Planned |
 | M8 Plugin store | Community store for plugins: a site with every plugin, submissions by community authors, review and signing, revocations; the source of the catalog in Kalzit | Planned |
 
