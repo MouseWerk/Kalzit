@@ -46,7 +46,13 @@ fn check(kind: &str, query: &Value) -> Result<(), String> {
     };
     if let Some(engine) = engine {
         let vars = BTreeMap::new();
-        let ctx = Context { range: RANGE, interval_ms: 30_000, variables: &vars, identifiers: None, identifier_variables: None };
+        let ctx = Context {
+            range: RANGE,
+            interval_ms: 30_000,
+            variables: &vars,
+            identifiers: None,
+            identifier_variables: None,
+        };
         return sql::prepare(text(query, "sql"), engine, &ctx).map(|_| ()).map_err(|e| e.message);
     }
     let req = request(query);
@@ -76,7 +82,11 @@ fn check(kind: &str, query: &Value) -> Result<(), String> {
         },
         // Files and HTTP JSON take `{}`: there is no language to check.
         "file" | "http_json" => {
-            if query == &json!({}) { Ok(()) } else { Err(format!("expected {{}}, got {query}")) }
+            if query == &json!({}) {
+                Ok(())
+            } else {
+                Err(format!("expected {{}}, got {query}"))
+            }
         }
         other => Err(format!("no check for the kind {other}")),
     }

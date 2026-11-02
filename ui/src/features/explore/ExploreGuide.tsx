@@ -269,7 +269,8 @@ export function SchemaList({
                     {t(`explore.schema.kind.${object.kind}`)}
                   </span>
                 </summary>
-                {object.fields.length === 0 ? null : (
+                {/* An installed query's parameters are shown by the editor when it is picked. */}
+                {object.fields.length === 0 || object.kind === "installed" ? null : (
                   <ul className="explore-schema__fields">
                     {object.fields.slice(0, 200).map((field) => (
                       <li key={field.name}>

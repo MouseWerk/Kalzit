@@ -620,7 +620,8 @@ async fn tips_are_seen_once_and_can_be_turned_off(t: TestApp) {
     // Seen tips join the stored list, each once, in the order they were first seen.
     let r = t.patch("/me/preferences", json!({ "seenTips": ["explore.first-result"] }), &t.owner).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let r = t.patch("/me/preferences", json!({ "seenTips": ["explore.cheat-sheet", "explore.first-result"] }), &t.owner);
+    let r =
+        t.patch("/me/preferences", json!({ "seenTips": ["explore.cheat-sheet", "explore.first-result"] }), &t.owner);
     assert_eq!(r.await.body["seenTips"], json!(["explore.first-result", "explore.cheat-sheet"]));
     assert_eq!(t.get("/me/preferences", &t.owner).await.body["showTips"], true);
 
