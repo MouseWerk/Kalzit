@@ -556,6 +556,8 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let members = app.get(&format!("/api/orgs/{org}/members"), &admin).await;
     let row = members.body["items"].as_array().unwrap().iter().find(|m| m["userId"] == json!(lea_id)).unwrap().clone();
     assert_eq!(row["idpManaged"], json!(true));
+    // Joined through a server admin's provider mapping: bound by the organization's rules.
+    assert_eq!(row["joinedBy"], json!("mapping"));
     let r = app
         .send(
             Method::PATCH,
@@ -872,6 +874,19 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = app.put(&provider_path, trusting(true, &version), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // Pausing it needs nothing; resuming it, a fresh confirmation too.
+    let enabled = format!("{provider_path}/enabled");
+    let r = app.send(Method::PATCH, &enabled, Some(json!({ "enabled": false })), Some(&admin)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    app.clock.advance_ms(kalzit::auth::second_factor::CONFIRMATION_TTL_MS + 60_000);
+    let r = app.send(Method::PATCH, &enabled, Some(json!({ "enabled": true })), Some(&admin)).await;
+    assert_eq!((r.status, r.body["error"]["code"].clone()), (StatusCode::FORBIDDEN, json!("confirmation_required")));
+    let r = app
+        .post("/api/me/security/confirm", json!({ "method": "totp", "code": code(app.clock.now_ms()) }), &admin)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = app.send(Method::PATCH, &enabled, Some(json!({ "enabled": true })), Some(&admin)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = app.put(&provider_path, trusting(false, &r.body["version"]), &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);

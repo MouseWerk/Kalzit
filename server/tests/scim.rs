@@ -683,6 +683,96 @@ async fn scim_never_adds_back_a_person_who_left_or_joined_elsewhere() {
     t.finish().await;
 }
 
+impl TestApp {
+    async fn joined_by(&self, org: &str, user: &str) -> Option<String> {
+        sqlx::query_as::<_, (String,)>("SELECT joined_by FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(org)
+            .bind(user)
+            .fetch_optional(&self.state.db)
+            .await
+            .unwrap()
+            .map(|(j,)| j)
+    }
+
+    async fn left_at(&self, org: &str, user: &str) -> Option<i64> {
+        let (left,): (Option<i64>,) =
+            sqlx::query_as("SELECT left_at FROM scim_users WHERE org_id = $1 AND user_id = $2")
+                .bind(org)
+                .bind(user)
+                .fetch_one(&self.state.db)
+                .await
+                .unwrap();
+        left
+    }
+
+    /// Gives the account a password and a confirmed address, so it can sign in and be added.
+    async fn take_over(&self, user: &str) {
+        let hash = kalzit::auth::password::hash(PASSWORD.to_string()).await.unwrap();
+        sqlx::query("UPDATE users SET password_hash = $1, email_confirmed = 1 WHERE id = $2")
+            .bind(&hash)
+            .bind(user)
+            .execute(&self.state.db)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_leave_sticks_also_for_a_person_in_no_other_organization() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    let tom = t.scim(Method::POST, "/Users", Some(json!({ "userName": "tom@mueller.example" })), &token).await.id();
+    assert_eq!(t.joined_by(&org, &tom).await.as_deref(), Some("scim_owned"));
+    t.take_over(&tom).await;
+    let cookie = t.login("tom@mueller.example").await;
+    let r = t
+        .request(Method::DELETE, &format!("/api/me/orgs/{org}"), None, Some(("cookie", &cookie)), "application/json")
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert!(t.left_at(&org, &tom).await.is_some());
+    let ops = patch(json!([{ "op": "replace", "path": "active", "value": true }]));
+    assert_eq!(t.scim(Method::PATCH, &format!("/Users/{tom}"), Some(ops), &token).await.status, StatusCode::OK);
+    let group = json!({ "displayName": "alle", "members": [{ "value": tom }] });
+    assert_eq!(t.scim(Method::POST, "/Groups", Some(group), &token).await.status, StatusCode::CREATED);
+    assert_eq!(t.role_of(&org, &tom).await, None, "the leave sticks");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn an_admins_removal_sticks_until_the_person_is_added_again() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    let ute = t.scim(Method::POST, "/Users", Some(json!({ "userName": "ute@mueller.example" })), &token).await.id();
+    let r = t.owner(Method::DELETE, &format!("/members/{ute}"), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert!(t.left_at(&org, &ute).await.is_some(), "the removal is recorded");
+    let ops = patch(json!([{ "op": "replace", "path": "displayName", "value": "Ute" }]));
+    assert_eq!(t.scim(Method::PATCH, &format!("/Users/{ute}"), Some(ops), &token).await.status, StatusCode::OK);
+    assert_eq!(t.role_of(&org, &ute).await, None, "SCIM does not add her back");
+    // An admin adds her again: SCIM keeps her in step from now on.
+    t.take_over(&ute).await;
+    let r = t.owner(Method::POST, "/members", Some(json!({ "email": "ute@mueller.example", "role": "viewer" }))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(t.left_at(&org, &ute).await, None);
+    assert_eq!(t.joined_by(&org, &ute).await.as_deref(), Some("direct"));
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn a_linked_account_joins_directly() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    // An account in no organization, made by a server admin: SCIM links it, without its consent.
+    let vic = t.person("Vic", "vic@mueller.example").await;
+    let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "vic@mueller.example" })), &token).await;
+    assert_eq!(r.id(), vic);
+    assert_eq!(t.joined_by(&org, &vic).await.as_deref(), Some("direct"));
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn service_accounts_admins_and_the_last_owner_are_protected() {
     let mut t = TestApp::new().await;

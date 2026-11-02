@@ -175,7 +175,9 @@ sign-in page shows the providers either way. An organization's `off` never appli
 admins, and binds only members who joined by their own consent: `joinedBy` `invitation`,
 `creator`, `scim_owned` or `mapping` (a group mapping of a provider a server admin set up). It
 never binds a `direct` or `legacy` member (docs/api/access.md, "Members"), whose password keeps
-signing them in. A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`). With password sign-in off for the server or the inviting organization,
+signing them in. A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`);
+a group mapping that still names the organization adds them again, as `mapping`, at their next
+sign-in through that provider. With password sign-in off for the server or the inviting organization,
 an invitation is accepted through a provider only: `POST /auth/invitation` answers
 `password: false` and the providers in `sso`, and accepting with a password answers
 `403 forbidden`, reason `sso.password_sign_in_off`; the person signs in through a provider with

@@ -78,8 +78,10 @@ service accounts too) or `legacy` (every membership from before 0.5.1). The orga
 rules, password sign-in off (`signin.local_password`, docs/api/sso.md) and its second factor
 requirement (`security.two_factor_required`, "Second factor" below), bind a member only for
 `invitation`, `creator`, `scim_owned` and `mapping`: the person's consent. They never bind a
-`direct` or `legacy` member, for whom only the server's rules count. Accepting an invitation of an
-organization one is already a member of turns the membership into `invitation`.
+`direct` or `legacy` member, for whom only the server's rules count. Accepting a mailed invitation
+of an organization one is already a member of turns the membership into `invitation`; a copied
+link leaves it as it is. When SCIM's ownership of an account ends (docs/api/scim.md, "Accounts"),
+its `scim_owned` memberships become `direct`.
 
 | Method and path | Access | Answer |
 |---|---|---|
@@ -126,8 +128,9 @@ longer signs them in. Its last enabled owner cannot leave (`409 conflict`, reaso
 `members.last_owner`); another member becomes owner first. Errors: `404` (not a member). Audit
 `member.left` in that organization. The leave sticks for the organization's SCIM, which never
 adds the person back (docs/api/scim.md, "Users"), until they accept an invitation again or an
-admin adds them. A provider whose group mapping a server admin set up may add the person again
-at their next sign-in through it.
+admin adds them. A provider whose group mapping a server admin set up adds the person again, as
+`mapping`, at their next sign-in through it when the mapping still names the organization: the
+server admin's mapping decides, not the organization.
 
 ## Teams
 

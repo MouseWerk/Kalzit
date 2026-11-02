@@ -124,7 +124,8 @@ SCIM card.
 
 **Memberships.** The group mapping makes a SCIM user a member: `joinedBy` `scim_owned` for an
 account this SCIM made and owns, which binds it to the organization's sign-in rules, `direct` for a
-linked account, which does not (docs/api/access.md, "Members"). SCIM never makes a person a member
+linked account, which does not (docs/api/access.md, "Members"); when the ownership ends, a
+`scim_owned` membership becomes `direct`. SCIM never makes a person a member
 who belongs to another organization, nor one who left this organization or whom an admin removed
 here (`scim_users.left_at`), also not after a `PATCH`, a group change or `active: true`; the skip
 is listed in the changes of the `scim.memberships_changed` entry (`"skipped": "elsewhere"` or

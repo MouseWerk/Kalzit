@@ -854,6 +854,33 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     let unknown = app.login_from("10.21.1.1", "niemand@example.de", "falsch").await;
     assert_eq!((local.status, local.reason()), (StatusCode::SERVICE_UNAVAILABLE, "ldap.directory_unreachable"));
     assert_eq!((unknown.status, unknown.reason()), (local.status, local.reason()));
+    // Also the right password of an account whose organization turned password sign-in off: the
+    // answer of a wrong one, so the outage tells nothing either.
+    let r = app
+        .post("/api/admin/users", json!({ "name": "Olaf", "email": "olaf@example.de", "password": PASSWORD }), &admin)
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, 'viewer', 0, 'invitation')",
+    )
+    .bind(&org)
+    .bind(r.body["id"].as_str().unwrap())
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    let settings = app.get(&format!("/api/orgs/{org}/settings"), &admin).await;
+    let version = settings.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == "signin.local_password")
+        .unwrap()["version"]
+        .clone();
+    let path = format!("/api/orgs/{org}/settings/signin.local_password");
+    let r = app.send(Method::PATCH, &path, Some(json!({ "value": "off", "version": version })), Some(&admin)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let off = app.login_from("10.23.1.1", "olaf@example.de", PASSWORD).await;
+    assert_eq!((off.status, off.reason()), (local.status, local.reason()), "{}", off.body);
     // The owner still signs in with the right password.
     assert_eq!(app.login_from("10.22.1.1", "joerg@example.de", PASSWORD).await.status, StatusCode::OK);
     let _ = admin_id;

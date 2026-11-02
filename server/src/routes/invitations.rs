@@ -905,8 +905,10 @@ pub async fn redeem(tx: &mut sqlx::AnyConnection, found: &Found, user_id: &str, 
         .await?;
         // In another organization now: no other organization's SCIM owns the account any more.
         crate::scim::release(&mut *tx, user_id, Some(&found.org_id)).await?;
-    } else {
-        // Already a member some other way: accepting is the person's consent from now on.
+    } else if found.delivery == "sent" {
+        // Already a member some other way: accepting a link that reached the person's mailbox is
+        // their consent from now on. A copied link proves nothing about who opened it, so the
+        // membership stays as it was.
         sqlx::query("UPDATE org_members SET joined_by = 'invitation' WHERE org_id = $1 AND user_id = $2")
             .bind(&found.org_id)
             .bind(user_id)
