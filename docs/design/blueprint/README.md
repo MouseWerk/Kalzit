@@ -16,7 +16,7 @@ titles and heights.
 | `DashboardEditSelected.dc.html` | Edit mode with the outline and the panel inspector |
 | `PanelEditor.dc.html` | Full-page panel editor with queries, colours and thresholds |
 | `Start.dc.html` | Start page |
-| `Explore.dc.html` | Explore with documents, schema and analysis steps |
+| `Explore.dc.html` | Explore with documents, schema and analysis steps; below it the guidance: "Hier anfangen" with starters per source, the schema list with its actions, the cheat sheet (Shift+F1) and a tip, hints next to errors, the query of a step, empty states, and tips in the preferences |
 | `Settings.dc.html` | Server settings with live preview and undo |
 | `Updates.dc.html` | Online and offline updates, backups and history |
 | `DataSources.dc.html` | Data source list with team access drawer |

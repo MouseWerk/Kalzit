@@ -177,6 +177,15 @@ async function signIn(page: Page): Promise<void> {
   await page.getByLabel(t("access.login.password"), { exact: true }).fill(OWNER.password);
   await page.getByRole("button", { name: t("access.login.submit") }).click();
   await expect(page.getByRole("navigation", { name: t("nav.label") })).toBeVisible();
+  // Tips show once and at their own moment; only the scene of the cheat sheet shows one.
+  await tipsShown(page, false);
+}
+
+/** Turns the owner's tips off, or on again with every tip unseen. */
+async function tipsShown(page: Page, shown: boolean): Promise<void> {
+  const data = shown ? { showTips: null, seenTips: null } : { showTips: false };
+  const answer = await page.request.patch("/api/me/preferences", { data });
+  expect(answer.ok(), await answer.text()).toBe(true);
 }
 
 /** Settles the page (requests, fonts, charts), hides focus and pointer, and saves the PNG. */
@@ -1318,6 +1327,64 @@ for (const scheme of SCHEMES) {
     await expect(result.locator(".uplot")).toBeVisible();
     await expect(result).toHaveAttribute("aria-busy", "false");
     await shoot(page, `explore-steps-${scheme}`);
+    await page.context().close();
+  });
+}
+
+/** Explore on the metrics source with an empty editor: "Start here" with rack_metrics picked. */
+async function exploreStart(page: Page): Promise<Locator> {
+  await page.goto(`/explore?source=${seeded().sql}`);
+  const start = page.getByRole("region", { name: t("explore.guide.title", { kind: "SQLite" }) });
+  await expect(start).toContainText(t("help.source.sql.holds"));
+  await start.getByLabel(t("help.pick.table")).selectOption("rack_metrics");
+  return start;
+}
+
+for (const scheme of SCHEMES) {
+  test(`explore, start here, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    const start = await exploreStart(page);
+    // The query behind one starter, shown before it is used.
+    await start
+      .getByRole("listitem")
+      .filter({ has: page.getByRole("button", { name: t("help.starter.sql.latest") }) })
+      .getByText(t("help.showQuery"))
+      .click();
+    await expect(start.locator("details[open] pre")).toContainText("$__timeFilter(ts)");
+    await expect(
+      page
+        .getByRole("region", { name: t("explore.schema.title") })
+        .getByText("rack_metrics", { exact: true })
+        .first(),
+    ).toBeVisible();
+    await shoot(page, `explore-start-${scheme}`);
+    await page.context().close();
+  });
+}
+
+for (const scheme of SCHEMES) {
+  test(`explore, cheat sheet and a tip, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await tipsShown(page, true);
+    const start = await exploreStart(page);
+    await start.getByRole("button", { name: t("help.starter.sql.latest") }).click();
+    const result = page.getByRole("region", { name: t("explore.result") }).first();
+    await expect(result.getByLabel(t("explore.visualization"))).toBeVisible();
+    await expect(result).toHaveAttribute("aria-busy", "false");
+    // The newest rows of all racks share a few moments: a table reads them better than a chart.
+    await result.getByLabel(t("explore.visualization"), { exact: true }).selectOption("table");
+    await expect(result.getByRole("table")).toBeVisible();
+    // The tip after the first result, and the cheat sheet from the keyboard.
+    await expect(page.getByRole("note", { name: t("help.tip.label") })).toBeVisible();
+    await page.keyboard.press("Shift+F1");
+    const sheet = page.getByRole("region", {
+      name: t("explore.guide.cheatTitle", { language: "SQL" }),
+    });
+    await expect(sheet).toBeVisible();
+    await shoot(page, `explore-cheat-sheet-${scheme}`);
+    await tipsShown(page, false);
     await page.context().close();
   });
 }

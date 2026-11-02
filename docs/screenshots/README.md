@@ -51,6 +51,8 @@ WebP (quality 90), mostly in dark and light:
 | `documents-pipeline-*` | Explore on MongoDB: a saved pipeline, the preview after stage 1, the document tree |
 | `documents-dashboard-*` | incidents as documents, the schema of the asset records, two field distributions |
 | `explore-steps-*` | Explore with a saved analysis and its steps (moving average, trend) |
+| `explore-start-*` | Explore on the metrics source with an empty editor: "Start here" with `rack_metrics` picked, one starter's query shown, the schema list |
+| `explore-cheat-sheet-*` | the same after a starter ran: the rows, the tip after the first result, the SQL cheat sheet |
 | `dashboard-all-sources-*` | one dashboard on SQLite, OpenSearch, MongoDB and Neo4j |
 | `dashboard-live-*` | a live dashboard of rack temperatures |
 | `explore-explain-*` | Explore with a saved query on PUE per hall and its explanation |

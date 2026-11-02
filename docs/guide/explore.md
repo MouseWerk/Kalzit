@@ -21,6 +21,8 @@ with a hint on what to change. Small tips appear once and can be dismissed; turn
 **Account** > **Preferences** > **Show tips**. Examples per source kind:
 [Query languages for beginners](query-languages.md).
 
+![Explore with an empty editor: Start here with what the source holds, the table sales picked, the starters with one query shown, and the schema list on the right](../screenshots/explore-start-dark.png)
+
 ## Running a query
 
 1. Pick a **Data source**. The last one you used is remembered.

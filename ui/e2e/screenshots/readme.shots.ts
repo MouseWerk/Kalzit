@@ -290,6 +290,24 @@ test("explore", async ({ browser }) => {
 });
 
 for (const scheme of ["light", "dark"] as const) {
+  test(`explore, start here, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await page.goto(`/explore?source=${demo.sourceId}`);
+    const start = page.getByRole("region", {
+      name: t("explore.guide.title", { kind: "SQLite" }),
+    });
+    await expect(start).toContainText(t("help.source.sql.holds"));
+    await start.getByLabel(t("help.pick.table")).selectOption("sales");
+    // The query behind the first starter, shown before it is used.
+    await start.getByText(t("help.showQuery")).first().click();
+    await expect(start.locator("pre").first()).toContainText("FROM sales");
+    await shoot(page, `explore-start-${scheme}`);
+    await page.context().close();
+  });
+}
+
+for (const scheme of ["light", "dark"] as const) {
   test(`data source kinds, ${scheme}`, async ({ browser }) => {
     const page = await openPage(browser, scheme);
     await signIn(page);
