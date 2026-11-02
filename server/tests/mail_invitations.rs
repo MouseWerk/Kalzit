@@ -520,6 +520,144 @@ async fn existing_accounts_sign_in_to_join_and_other_sessions_are_refused() {
 }
 
 #[tokio::test]
+async fn people_in_another_organization_are_invited_not_added() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    // Paul owns an organization of his own.
+    let paul = app.user(&owner, "Paul Weber", "paul@example.com").await;
+    let paul_id = app.get("/api/me", &paul).await.body["id"].as_str().unwrap().to_string();
+    let r = app.post("/api/admin/orgs", json!({ "name": "Weber", "ownerUserId": paul_id }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    // Adding him directly is refused: this organization's sign-in rules would bind his account.
+    let members = format!("/api/orgs/{org}/members");
+    let r = app.post(&members, json!({ "email": "paul@example.com", "role": "viewer" }), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "members.invite_instead"), "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "email");
+    // An account in no organization yet is still added directly.
+    app.user(&owner, "Nora Neu", "nora@example.com").await;
+    let r = app.post(&members, json!({ "email": "nora@example.com", "role": "viewer" }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    // Paul joins by accepting an invitation, signed in with his account.
+    let r = app.invite(&org, &["paul@example.com"], "editor", &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let token = app.mails()[0].token("invite");
+    let r = app.send(Method::POST, "/api/auth/invitation/accept", Some(json!({ "token": token })), Some(&paul)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let orgs: Vec<&str> = r.body["orgs"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap()).collect();
+    assert!(orgs.contains(&org.as_str()) && orgs.len() == 2, "{}", r.body);
+    app.finish().await;
+}
+
+impl TestApp {
+    /// How `email` joined `org` (`org_members.joined_by`).
+    async fn joined_by(&self, org: &str, email: &str) -> String {
+        let (joined,): (String,) = sqlx::query_as(
+            "SELECT m.joined_by FROM org_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 AND u.email = $2",
+        )
+        .bind(org)
+        .bind(email)
+        .fetch_one(&self.state.db)
+        .await
+        .unwrap();
+        joined
+    }
+
+    /// Sets an organization setting through the API.
+    async fn set_org(&self, org: &str, key: &str, value: Value, who: &Session) {
+        let settings = self.get(&format!("/api/orgs/{org}/settings"), who).await;
+        let version = settings.body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["key"] == key)
+            .map(|s| s["version"].as_i64().unwrap())
+            .unwrap();
+        let path = format!("/api/orgs/{org}/settings/{key}");
+        let r = self.send(Method::PATCH, &path, Some(json!({ "value": value, "version": version })), Some(who)).await;
+        assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
+    }
+
+    /// A SCIM user of `org` made through its SCIM token; answers the account id.
+    async fn scim_user(&self, org: &str, token: &str, user_name: &str) -> String {
+        let body = json!({ "userName": user_name });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/scim/v2/o/{org}/Users"))
+            .header(header::HOST, "kalzit.test")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/scim+json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let res = self.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        body["id"].as_str().unwrap().to_string()
+    }
+}
+
+#[tokio::test]
+async fn scim_ownership_ending_ends_the_binding_of_its_membership() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    let token = app.post(&format!("/api/orgs/{org}/scim-token"), json!({}), &owner).await.body["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // SCIM makes Sina's account in the first organization: a membership that binds her.
+    app.scim_user(&org, &token, "sina@example.com").await;
+    assert_eq!(app.joined_by(&org, "sina@example.com").await, "scim_owned");
+    // She accepts a mailed invitation to a second organization and takes the account over: SCIM no
+    // longer owns it, so the first membership no longer counts as her consent.
+    let owner_id = app.get("/api/me", &owner).await.body["id"].as_str().unwrap().to_string();
+    let r = app.post("/api/admin/orgs", json!({ "name": "Zweite", "ownerUserId": owner_id }), &owner).await;
+    let second = r.body["id"].as_str().unwrap().to_string();
+    let r = app.invite(&second, &["sina@example.com"], "viewer", &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let invite = app.mails()[0].token("invite");
+    let accept = json!({ "token": invite, "name": "Sina", "password": PASSWORD });
+    let r = app.public("/api/auth/invitation/accept", accept).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(app.joined_by(&org, "sina@example.com").await, "direct");
+    assert_eq!(app.joined_by(&second, "sina@example.com").await, "invitation");
+    // The first organization turns password sign-in off: her password still signs her in.
+    app.set_org(&org, "signin.local_password", json!("off"), &owner).await;
+    assert_eq!(app.login("sina@example.com", PASSWORD).await.status, StatusCode::OK);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn only_a_mailed_invitation_turns_an_added_member_into_one_who_consented() {
+    for setup in [Setup::Mail, Setup::NoMail] {
+        let mailed = setup == Setup::Mail;
+        let app = test_app(setup).await;
+        let (owner, org) = app.setup().await;
+        let dirk = app.user(&owner, "Dirk", "dirk@example.com").await;
+        let r = app.invite(&org, &["dirk@example.com"], "viewer", &owner).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+        let token = if mailed {
+            app.mails()[0].token("invite")
+        } else {
+            r.body["items"][0]["link"].as_str().unwrap().rsplit('#').next().unwrap().to_string()
+        };
+        // Meanwhile an admin adds him directly.
+        let r = app
+            .post(&format!("/api/orgs/{org}/members"), json!({ "email": "dirk@example.com", "role": "viewer" }), &owner)
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+        assert_eq!(app.joined_by(&org, "dirk@example.com").await, "direct");
+        let r =
+            app.send(Method::POST, "/api/auth/invitation/accept", Some(json!({ "token": token })), Some(&dirk)).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let expected = if mailed { "invitation" } else { "direct" };
+        assert_eq!(app.joined_by(&org, "dirk@example.com").await, expected, "mailed: {mailed}");
+        app.finish().await;
+    }
+}
+
+#[tokio::test]
 async fn without_a_mail_server_the_admin_copies_the_link() {
     let app = test_app(Setup::NoMail).await;
     let (owner, org) = app.setup().await;

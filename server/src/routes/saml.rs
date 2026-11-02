@@ -364,12 +364,15 @@ async fn create(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     JsonBody(body): JsonBody<SamlBody>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let valid = validate(body)?;
     base(&state)?;
     let config = config_of(&valid)?;
     let now = state.clock.now_ms();
+    let trusting = valid.trust_email || valid.trust_provider_mfa;
+    super::sso::require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
     verify_check_token(&state, valid.check_token.as_deref(), &config, now)?;
     let id = super::new_id();
     let taken = || conflict("another provider has this slug").with_field("slug").because("sso.slug_taken");
@@ -412,6 +415,7 @@ async fn update(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     JsonBody(body): JsonBody<SamlBody>,
 ) -> ApiResult<Json<Value>> {
@@ -426,6 +430,8 @@ async fn update(
     let old = current.saml()?;
     let config = config_of(&valid)?;
     let now = state.clock.now_ms();
+    let trusting = old.trust_email || valid.trust_email || current.trust_provider_mfa != 0 || valid.trust_provider_mfa;
+    super::sso::require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
     // A new entity ID, sign-in URL or certificate is a new trust: checked first.
     let trust_changed = !old.same_trust(&config);
     if trust_changed {

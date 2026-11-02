@@ -1,7 +1,8 @@
-import { useId, useRef, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 import type { Me } from "../../api/auth";
 import { isApiError } from "../../api/client";
 import { AccessAlert, AccessNotice } from "../../auth/AccessLayout";
+import { PasswordField } from "../../auth/PasswordField";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { errorText } from "../admin/errors";
@@ -13,6 +14,7 @@ import {
   type SignedIn,
   signInPasskeyOptions,
   signInWith,
+  signInWithPassword,
   startSetupPasskey,
   startSetupTotp,
   type TotpSetup,
@@ -132,6 +134,95 @@ export function SecondFactorStep({
           submit={submit}
         />
       </div>
+      <SigningInAs email={prompt.email} onSignOut={onSignOut} />
+    </>
+  );
+}
+
+/**
+ * The account's own password, once, after a provider linked its identity to the account by the
+ * email address and the account has no second factor to prove it with. Then the person is signed
+ * in, or sets up a second factor the account must have (`onPrompt`).
+ */
+export function LinkPasswordStep({
+  prompt,
+  onSignedIn,
+  onSignOut,
+  onExpired,
+  onPrompt,
+}: {
+  prompt: Prompt;
+  onSignedIn: (me: Me, to?: string) => void;
+  onSignOut: () => void;
+  onExpired: () => void;
+  onPrompt: (next: Prompt) => void;
+}) {
+  const { t } = useI18n();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const fieldRef = useRef<HTMLInputElement>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) {
+      return;
+    }
+    if (password === "") {
+      setError(t("security.linkPassword.required"));
+      fieldRef.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await signInWithPassword(password);
+      if ("secondFactor" in result) {
+        onPrompt(result.secondFactor);
+        return;
+      }
+      onSignedIn(result.me);
+    } catch (failure) {
+      if (isApiError(failure, "unauthenticated")) {
+        onExpired();
+        return;
+      }
+      setError(
+        isApiError(failure, "invalid_credentials")
+          ? t("security.linkPassword.wrong")
+          : errorText(t, failure),
+      );
+      fieldRef.current?.focus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="access__head">
+        <h1>{t("security.linkPassword.title")}</h1>
+        <p className="access__lead">{t("security.linkPassword.lead")}</p>
+      </div>
+      <form className="access__card" noValidate onSubmit={submit}>
+        <PasswordField
+          ref={fieldRef}
+          label={t("security.linkPassword.label")}
+          name="password"
+          autoComplete="current-password"
+          value={password}
+          onValueChange={(value) => {
+            setPassword(value);
+            setError(undefined);
+          }}
+          error={error}
+          readOnly={busy}
+        />
+        <div className="access__foot">
+          <button type="submit" className="button button--primary" aria-disabled={busy}>
+            {t("security.linkPassword.submit")}
+          </button>
+        </div>
+      </form>
       <SigningInAs email={prompt.email} onSignOut={onSignOut} />
     </>
   );

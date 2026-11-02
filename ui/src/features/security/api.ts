@@ -26,6 +26,11 @@ export interface Prompt {
   requiredBy: RequiredBy | null;
   lockedUntil: number | null;
   expiresAt: number;
+  /**
+   * The account's own password comes first: a provider linked its identity to the account by the
+   * email address, and the account has no second factor to prove it with.
+   */
+  linkPassword?: boolean | undefined;
 }
 
 export interface QrCode {
@@ -103,7 +108,8 @@ export function isPrompt(value: unknown): value is Prompt {
     isAllowed(value.allowed) &&
     isRequiredBy(value.requiredBy) &&
     isNullableNumber(value.lockedUntil) &&
-    isNumber(value.expiresAt)
+    isNumber(value.expiresAt) &&
+    (value.linkPassword === undefined || typeof value.linkPassword === "boolean")
   );
 }
 
@@ -198,6 +204,20 @@ function isSignedIn(value: unknown): value is SignedIn {
 
 export async function fetchPrompt(): Promise<Prompt> {
   return expectShape(await request("GET", "/api/auth/second-factor"), isPrompt, "second step");
+}
+
+/**
+ * The account's password in the second step (`Prompt.linkPassword`): signed in, or the setup of a
+ * second factor the account must have comes next.
+ */
+export async function signInWithPassword(
+  password: string,
+): Promise<SignedIn | { secondFactor: Prompt }> {
+  const body = await request("POST", "/api/auth/second-factor/password", { password });
+  if (isRecord(body) && "secondFactor" in body) {
+    return { secondFactor: expectShape(body.secondFactor, isPrompt, "second step") };
+  }
+  return expectShape(body, isSignedIn, "second step");
 }
 
 export async function signInWith(proof: Proof): Promise<SignedIn> {
