@@ -192,6 +192,12 @@ impl TargetPolicy {
         self
     }
 
+    /// The same rules without `datasources.allowed_targets`: what every address keeps (no
+    /// metadata address), for the outbound proxy's own address (`http::client_proxied`).
+    pub fn without_allow_list(&self) -> Self {
+        Self { allowed: None, ..self.clone() }
+    }
+
     /// Kalzit's data directory (canonical): private to the server, for short-lived files such as
     /// a CA certificate a driver reads from a path.
     pub fn data_dir(&self) -> &Path {

@@ -23,6 +23,8 @@ use super::HostError;
 pub const MAX_PACKAGE_BYTES: u64 = 256 * 1024 * 1024;
 /// The most a package may hold once unpacked; a zip bomb stops here.
 pub const MAX_UNPACKED_BYTES: u64 = 1024 * 1024 * 1024;
+/// The largest single file a package may hold once unpacked (as `kalzit-plugin` checks it).
+pub const MAX_ENTRY_BYTES: u64 = MAX_PACKAGE_BYTES;
 /// Entries one package may have (the manifest lists at most 4096 files, plus directories).
 const MAX_ENTRIES: usize = 8192;
 /// The largest signature file accepted.
@@ -175,13 +177,14 @@ pub fn unpack(archive: &Path, into: &Path) -> Result<Unpacked, HostError> {
             .by_index(index)
             .map_err(|e| HostError::new("plugin.package_unreadable", format!("{path} cannot be read: {e}")))?;
         let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&target)?;
-        // The size in the archive is not trusted: the copy stops at the limit.
-        let left = MAX_UNPACKED_BYTES - written;
+        // The size in the archive is not trusted: the copy stops at the limit, per file and in all.
+        let left = (MAX_UNPACKED_BYTES - written).min(MAX_ENTRY_BYTES);
         let copied = std::io::copy(&mut (&mut entry).take(left + 1), &mut out)
             .map_err(|e| HostError::new("plugin.package_unreadable", format!("{path} cannot be unpacked: {e}")))?;
         if copied > left {
+            let max = if left == MAX_ENTRY_BYTES { MAX_ENTRY_BYTES } else { MAX_UNPACKED_BYTES };
             return Err(HostError::new("plugin.package_too_large", "the unpacked plugin package is too large")
-                .with("maxBytes", MAX_UNPACKED_BYTES));
+                .with("maxBytes", max));
         }
         written += copied;
         out.flush()?;

@@ -290,7 +290,31 @@ async fn a_panel_frame_is_served_sandboxed_from_the_checked_package_to_those_who
         "panels": [{ "id": "p1", "type": ID, "grid": { "x": 0, "y": 0, "w": 6, "h": 6 },
                      "options": { "decimals": 99 }, "targets": [] }] });
     let r = t.admin(Method::POST, &format!("/orgs/{}/dashboards", t.org), Some(json!({ "model": bad }))).await;
-    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "dashboards.panel_options"), "{}", r.text);
+    assert_eq!(
+        (r.status, r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "dashboards.plugin_panel_options"),
+        "{}",
+        r.text
+    );
+    assert_eq!(r.body["error"]["params"]["plugin"], ID, "{}", r.text);
+    assert_eq!(r.body["error"]["params"]["code"], "panel.option_invalid", "{}", r.text);
+    // A library panel is checked the same way, also for a key the manifest does not declare.
+    let content = json!({ "schemaVersion": kalzit::dashboards::model::SCHEMA_VERSION, "type": ID, "title": "Kachel",
+                          "options": { "colour": "rot" }, "targets": [] });
+    let r = t
+        .admin(
+            Method::POST,
+            &format!("/orgs/{}/library-panels", t.org),
+            Some(json!({ "name": "Falsche Kachel", "model": content })),
+        )
+        .await;
+    assert_eq!(
+        (r.status, r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "dashboards.plugin_panel_options"),
+        "{}",
+        r.text
+    );
+    assert_eq!(r.body["error"]["params"]["code"], "panel.option_unknown", "{}", r.text);
 
     // Blocked for the organization: neither offered nor served; unblocked again, both.
     let block = format!("/orgs/{}/plugins/{ID}/block", t.org);
