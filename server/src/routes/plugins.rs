@@ -3,7 +3,7 @@
 //! switch for unsigned plugins), the catalog (its index and installs from it) and the block list
 //! of an organization. Documented in docs/api/plugins.md.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use axum::Json;
 use axum::body::Body;
@@ -290,11 +290,84 @@ async fn dashboards_showing(state: &AppState, id: &str) -> ApiResult<Vec<UsedIn>
     .bind(format!("%{id}%"))
     .fetch_all(&state.db)
     .await?;
-    let mut out = Vec::new();
+    // Per dashboard: whether a panel of its own has the type, else the library panels and the
+    // analyses it links. The linked ones are read together afterwards, one query per table.
+    struct Candidate {
+        used: UsedIn,
+        own: bool,
+        library: Vec<String>,
+        analyses: Vec<String>,
+    }
+    let mut candidates = Vec::new();
+    let (mut library_ids, mut analysis_ids) = (BTreeSet::new(), BTreeSet::new());
     for (dashboard, title, org_id, org_name, raw) in rows {
         let Ok(model) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
-        if super::panel_plugins::model_shows_panel(state, &org_id, &model, id).await? {
-            out.push(UsedIn { id: dashboard, name: title, org_id, org_name });
+        let panels: Vec<&serde_json::Value> = model["panels"].as_array().into_iter().flatten().collect();
+        let own = panels.iter().any(|p| p["type"].as_str() == Some(id));
+        let linked = |key: &str| -> Vec<String> {
+            if own { Vec::new() } else { panels.iter().filter_map(|p| p[key].as_str().map(str::to_string)).collect() }
+        };
+        let (library, analyses) = (linked("libraryPanelId"), linked("analysisId"));
+        library_ids.extend(library.iter().cloned());
+        analysis_ids.extend(analyses.iter().cloned());
+        candidates.push(Candidate {
+            used: UsedIn { id: dashboard, name: title, org_id, org_name },
+            own,
+            library,
+            analyses,
+        });
+    }
+    let library_shows = linked_showing(state, "library_panels", "model", &library_ids, |raw| {
+        crate::dashboards::library::stored_content(raw).ok().and_then(|m| m["type"].as_str().map(str::to_string))
+    })
+    .await?;
+    let analyses_show = linked_showing(state, "analyses", "body", &analysis_ids, |raw| {
+        crate::saved_analyses::stored(raw).ok().map(|m| m.visualization.kind)
+    })
+    .await?;
+    let shows = |set: &BTreeSet<(String, String)>, org: &str, ids: &[String]| {
+        ids.iter().any(|linked| set.contains(&(org.to_string(), linked.clone())))
+    };
+    let library_shows: BTreeSet<_> = library_shows.into_iter().filter(|(_, kind)| kind == id).map(|(k, _)| k).collect();
+    let analyses_show: BTreeSet<_> = analyses_show.into_iter().filter(|(_, kind)| kind == id).map(|(k, _)| k).collect();
+    Ok(candidates
+        .into_iter()
+        .filter(|c| {
+            c.own
+                || shows(&library_shows, &c.used.org_id, &c.library)
+                || shows(&analyses_show, &c.used.org_id, &c.analyses)
+        })
+        .map(|c| c.used)
+        .collect())
+}
+
+/// Ids per query, well below the bind-parameter limits of SQLite and PostgreSQL.
+const IDS_PER_QUERY: usize = 500;
+
+/// The panel type of each row of `table` (library panels or analyses) with one of `ids`, keyed by
+/// (organization, id); `kind_of` reads the type from the stored column `column`. A row that
+/// cannot be read is left out, as a dashboard leaves its slot empty.
+async fn linked_showing(
+    state: &AppState,
+    table: &'static str,
+    column: &'static str,
+    ids: &BTreeSet<String>,
+    kind_of: impl Fn(&str) -> Option<String>,
+) -> ApiResult<Vec<((String, String), String)>> {
+    let ids: Vec<&String> = ids.iter().collect();
+    let mut out = Vec::new();
+    for chunk in ids.chunks(IDS_PER_QUERY) {
+        // One placeholder per id: numbers only, so nothing from a model reaches the SQL.
+        let list = (1..=chunk.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", ");
+        let sql = format!("SELECT org_id, id, {column} FROM {table} WHERE id IN ({list})");
+        let mut query = sqlx::query_as::<_, (String, String, String)>(sqlx::AssertSqlSafe(sql));
+        for linked in chunk {
+            query = query.bind(linked.as_str());
+        }
+        for (org_id, linked, raw) in query.fetch_all(&state.db).await? {
+            if let Some(kind) = kind_of(&raw) {
+                out.push(((org_id, linked), kind));
+            }
         }
     }
     Ok(out)

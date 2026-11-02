@@ -558,9 +558,6 @@ function ValuesFromEditor({
         <label className="field__label" htmlFor={id}>
           {t("dashboards.variables.valuesFrom")}
         </label>
-        <p className="field__hint" id={`${id}-hint`}>
-          {t("dashboards.variables.valuesFromHint")}
-        </p>
         <select
           id={id}
           className="select"
@@ -578,6 +575,9 @@ function ValuesFromEditor({
             </option>
           ))}
         </select>
+        <p className="field__hint" id={`${id}-hint`}>
+          {t("dashboards.variables.valuesFromHint")}
+        </p>
       </div>
       {graph ? (
         <TextField

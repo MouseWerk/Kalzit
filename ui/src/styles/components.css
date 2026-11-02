@@ -156,8 +156,14 @@
     padding-block-start: var(--space-2);
   }
 
+  /*
+   * Label, control, then hint and error. The rows keep their own height where a field is taller
+   * than its content (a grid row with a longer hint beside it), so every control has the control
+   * height and fields side by side keep their controls on one line.
+   */
   .field {
     display: grid;
+    align-content: start;
     gap: var(--space-1);
   }
 

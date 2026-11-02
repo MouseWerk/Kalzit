@@ -147,7 +147,7 @@
   .steps__add > .select {
     flex: 1 0 auto;
     field-sizing: content;
-    min-width: 10rem;
+    min-width: var(--size-card-min);
     max-width: 100%;
   }
 

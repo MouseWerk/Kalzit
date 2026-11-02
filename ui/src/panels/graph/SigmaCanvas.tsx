@@ -177,6 +177,9 @@ export function createRenderer(
   // The reducers run while the renderer is being built (its graph has nodes from the start),
   // before `renderer` exists; until then the camera is at its starting ratio of 1.
   let built: Sigma | null = null;
+  // The first drawing already keeps to the panel's label budget, not only the one after the
+  // first settle.
+  live.current.budget = labelBudgetFor(host.offsetWidth, host.offsetHeight);
   const renderer: Sigma = new Sigma(graph, host, {
     primitives: {
       edges: {
@@ -243,7 +246,12 @@ export function createRenderer(
     clearTimeout(settle);
     settle = setTimeout(() => {
       const { width, height } = renderer.getDimensions();
-      live.current.budget = labelBudgetFor(width, height);
+      const budget = labelBudgetFor(width, height);
+      if (budget !== live.current.budget) {
+        live.current.budget = budget;
+        // Every node's label may come or go with another budget, not only the blocked ones.
+        renderer.refresh({ partialGraph: { nodes: renderer.getGraph().nodes() } });
+      }
       checkLabelRoom(renderer, live);
     }, SETTLE_MS);
   };
