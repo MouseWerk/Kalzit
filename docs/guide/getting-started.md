@@ -26,11 +26,12 @@ default `http://localhost:3000`. Setup has four steps; **Back** keeps everything
        `sudo kalzit setup-code`; the data directory belongs to the `kalzit` user.
 
      `kalzit setup-code` finds a data directory of your own through `kalzit.toml`. Without the
-     needed rights it says so ("run as administrator", "use sudo"); once setup is finished it
-     prints no code and says that setup is already finished. `kalzit setup-code --url` prints the
-     setup page's address with the code in its fragment (`#code=...`): opened in a browser, the
-     page fills in the code and removes it from the address bar. The fragment never reaches the
-     server or its logs.
+     needed rights it says so ("run as administrator", "use sudo"). Without a file it prints no
+     code and says that setup is finished, or the server has not started yet (or uses another
+     data folder). `kalzit setup-code --url` prints the setup page's address with the code in its
+     fragment (`#code=...`): opened in a browser, the page fills in the code and removes it from
+     the address bar. The fragment never reaches the server or its logs, but the browser history
+     may keep the address until setup is complete; after that the code no longer works.
    - **Server log**: the log says at start where the file is; it never contains the code.
    - **Docker**: `docker exec kalzit kalzit setup-code` (with Compose:
      `docker compose exec kalzit kalzit setup-code`).

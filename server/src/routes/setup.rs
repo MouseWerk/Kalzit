@@ -169,13 +169,15 @@ pub fn code_command(data_dir: &Path, fixed_code: bool) -> CodeCommand {
             "kalzit: no setup code yet: the data folder {} does not exist; start the server first",
             data_dir.display()
         )),
-        // The server removes the file once the first owner exists.
+        // The server removes the file once the first owner exists; it may also not have written
+        // it yet, or this command may read another configuration than the service.
         Ok(None) => CodeCommand {
             code: None,
-            message: Some(
-                "kalzit: setup is already finished, there is no setup code any more; sign in with your account"
-                    .to_string(),
-            ),
+            message: Some(format!(
+                "kalzit: no setup code in {}: setup is finished, or the server has not started yet (or uses \
+                 another data folder)",
+                data_dir.display()
+            )),
             success: true,
         },
     }
@@ -183,14 +185,22 @@ pub fn code_command(data_dir: &Path, fixed_code: bool) -> CodeCommand {
 
 /// `kalzit setup-code --url`: the setup page with the code in the fragment, which the browser
 /// keeps to itself (never in a request, so never in a log); the page fills in the code and clears
-/// the fragment. The address is `server.public_url`, else this machine's own listener.
+/// the fragment. The address is `server.public_url`, else this machine's own listener: its
+/// address when bound to one non-loopback IP, else `localhost`. An HTTPS link to `localhost` or an
+/// IP shows a certificate warning unless the certificate names that host.
 pub fn setup_link(config: &crate::config::Config, code: &str) -> Option<String> {
+    fn host(addr: std::net::SocketAddr) -> String {
+        match addr {
+            a if a.ip().is_unspecified() || a.ip().is_loopback() => format!("localhost:{}", a.port()),
+            a => a.to_string(),
+        }
+    }
     let base = match &config.server.public_url {
         Some(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/').to_string(),
         _ => match (config.http_addr(), config.https_addr()) {
-            (_, Some(addr)) if config.server.redirect_http_to_https => format!("https://localhost:{}", addr.port()),
-            (Some(addr), _) => format!("http://localhost:{}", addr.port()),
-            (None, Some(addr)) => format!("https://localhost:{}", addr.port()),
+            (_, Some(addr)) if config.server.redirect_http_to_https => format!("https://{}", host(addr)),
+            (Some(addr), _) => format!("http://{}", host(addr)),
+            (None, Some(addr)) => format!("https://{}", host(addr)),
             (None, None) => return None,
         },
     };
@@ -678,7 +688,9 @@ mod tests {
         let answer = code_command(dir.path(), false);
         assert_eq!(answer.code, None, "prints nothing on standard output");
         assert!(answer.success);
-        assert!(answer.message.unwrap().contains("setup is already finished"));
+        let message = answer.message.unwrap();
+        assert!(message.contains("setup is finished, or the server has not started yet"), "{message}");
+        assert!(message.contains(&dir.path().display().to_string()), "{message}");
 
         let fixed = code_command(dir.path(), true);
         assert!(!fixed.success);
@@ -695,6 +707,13 @@ mod tests {
         config.server.http_addr = "0.0.0.0:3010".into();
         config.server.https_addr = String::new();
         assert_eq!(setup_link(&config, "1a2b-3c4d").as_deref(), Some("http://localhost:3010/setup#code=1a2b-3c4d"));
+        config.server.http_addr = "127.0.0.1:3010".into();
+        assert_eq!(setup_link(&config, "1a2b").as_deref(), Some("http://localhost:3010/setup#code=1a2b"));
+        // Bound to one address only: localhost would not reach it.
+        config.server.http_addr = "192.0.2.7:3010".into();
+        assert_eq!(setup_link(&config, "1a2b").as_deref(), Some("http://192.0.2.7:3010/setup#code=1a2b"));
+        config.server.http_addr = "[2001:db8::7]:3010".into();
+        assert_eq!(setup_link(&config, "1a2b").as_deref(), Some("http://[2001:db8::7]:3010/setup#code=1a2b"));
         config.server.public_url = Some("https://kalzit.example.com/".into());
         assert_eq!(
             setup_link(&config, "1a2b-3c4d").as_deref(),

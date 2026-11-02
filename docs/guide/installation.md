@@ -358,8 +358,8 @@ without it.
    **Finish** opens `http://localhost:3000/setup` (or the port you chose). The setup code is not
    part of that link: the finish page runs without administrator rights and cannot read it.
    The code is in `setup-token.txt` in the data folder, which only administrators can open; an
-   editor or Explorer started normally is refused ("Sie haben keine Berechtigung zum Öffnen
-   dieser Datei"). Open PowerShell with **Run as administrator** and enter one of these (the setup
+   editor or Explorer started normally is refused ("You don't have permission to open this
+   file"). Open PowerShell with **Run as administrator** and enter one of these (the setup
    page shows both with a copy button):
 
    ```powershell
@@ -370,7 +370,10 @@ without it.
    `kalzit setup-code` reads the data folder from `kalzit.toml`, so it also works with a data
    folder of your own; with `--url` it prints the setup page's address with the code in its
    fragment (`#code=...`), which fills in the code when opened on this computer and never reaches
-   the server. Continue with [Getting started](getting-started.md#first-setup).
+   the server. The link points at the listener's own address (`localhost` unless Kalzit is bound
+   to one IP) or `server.public_url`; over HTTPS the browser warns unless the certificate names
+   that host. The browser history may keep the `#code=` address until setup is complete; the code
+   is worthless after that. Continue with [Getting started](getting-started.md#first-setup).
 
 What the package sets up:
 

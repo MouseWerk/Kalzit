@@ -1374,7 +1374,9 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
   `kalzit setup-code` explains a denied file. The MSI's finish page opens the setup page without
   the code: its UI runs unelevated and cannot read the file, and handing the code over from the
   elevated steps would need a place anyone can read. `kalzit setup-code --url` puts the code in
-  the fragment (`#code=`), which the page reads into the field and removes from the address.
+  the fragment (`#code=`), which the page reads into the field and removes from the address (the
+  browser history may keep it until setup is complete, when the code stops working). The link
+  uses the listener's IP when bound to one non-loopback address, else `localhost`.
 - One info line names the data directory and the database. `db::redact` parses the URL (`url`) and
   rebuilds it from scheme, user, `***` for a password, host, port and path; query values are shown
   only for harmless keys (`sslmode`, `application_name`, `connect_timeout`, `mode`, `host`,
