@@ -670,11 +670,10 @@
     font-size: var(--font-size-sm);
   }
 
-  /* The icon's drawing fills about 70 % of its box, so at 80 % it covers as much of the tile as a
-     logo does (70 %, below): glyph and logo tiles look equally full side by side. */
+  /* Glyph and logo tiles look equally full side by side (tokens.css). */
   .kind-mark .icon {
-    width: 80%;
-    height: 80%;
+    width: var(--size-kind-glyph);
+    height: var(--size-kind-glyph);
   }
 
   .ds-kinds__link .kind-mark {
@@ -692,7 +691,7 @@
 
   .kind-logo {
     width: auto;
-    height: 70%;
+    height: var(--size-kind-logo);
     aspect-ratio: 1;
   }
 

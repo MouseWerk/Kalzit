@@ -116,10 +116,6 @@ const FAMILY_ICONS: Record<KindFamily, IconName> = {
   generic: "dataSources",
 };
 
-export function familyIcon(family: KindFamily): IconName {
-  return FAMILY_ICONS[family];
-}
-
 /**
  * Whether a kind comes from a plugin: plugin ids are reverse domain names with at least one dot
  * (docs/ARCHITECTURE.md, "Manifest"), built-in kinds never have one.

@@ -209,18 +209,37 @@ describe("the icon set", () => {
 
 const SRC = resolve(import.meta.dirname, "..");
 
-function sources(dir: string): string[] {
+function sources(dir: string, pattern: RegExp): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = resolve(dir, name);
-    if (statSync(path).isDirectory()) return sources(path);
-    return /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name) ? [path] : [];
+    if (statSync(path).isDirectory()) return sources(path, pattern);
+    return pattern.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : [];
   });
 }
 
-const files = sources(SRC).map((path) => ({
+const read = (path: string) => ({
   path: relative(SRC, path).replaceAll("\\", "/"),
   text: readFileSync(path, "utf8"),
-}));
+});
+
+/** The UI code (components and plain modules), without tests. */
+const code = sources(SRC, /\.tsx?$/).map(read);
+const files = code.filter(({ path }) => path.endsWith(".tsx"));
+/** The texts of every language. */
+const catalogs = sources(resolve(SRC, "i18n"), /\.json$/).map(read);
+
+// Triangles, arrows, check marks, crosses, stars, the braille drag dots, the ellipsis menus.
+const GLYPHS =
+  /[\u{25be}\u{25b8}\u{25b4}\u{25b2}\u{25bc}\u{25c2}\u{25c0}\u{25b6}\u{283f}\u{2630}\u{22ee}\u{22ef}\u{2713}\u{2714}\u{2715}\u{2716}\u{2717}\u{2605}\u{2606}\u{2191}\u{2193}]/u;
+
+/**
+ * Lines of code that may hold such a character, each marked with a comment `glyph-ok: <why>` on
+ * the line or the one before (keyboard keys in the shortcut help, for example).
+ */
+const MARKER = /glyph-ok:/;
+
+/** Texts that may hold one: they name keys to press, not icons. */
+const CATALOG_ALLOWED: ReadonlySet<string> = new Set(["shell.palette.hint"]);
 
 /** The end of the JSX tag that starts at `start`: the first `>` outside braces. */
 function tagEnd(text: string, start: number): number {
@@ -238,15 +257,22 @@ const lineOf = (text: string, index: number) => text.slice(0, index).split("\n")
 
 describe("icons in the UI", () => {
   it("draws icons with the icon set or as named pictures, never as text characters", () => {
-    // Triangles, arrows, check marks, crosses, stars, the braille drag dots, the ellipsis menus.
-    const glyphs =
-      /[\u{25be}\u{25b8}\u{25b4}\u{25b2}\u{25bc}\u{25c2}\u{25c0}\u{25b6}\u{283f}\u{2630}\u{22ee}\u{22ef}\u{2713}\u{2714}\u{2715}\u{2716}\u{2717}\u{2605}\u{2606}\u{2191}\u{2193}]/u;
-    const found = files.flatMap(({ path, text }) =>
-      text.split("\n").flatMap((line, index) => {
-        // Comments and the keyboard help (keys, not icons) may name these characters.
-        if (/^\s*(\/\/|\*|\/\*)/.test(line) || path === "shell/ShortcutsHelp.tsx") return [];
-        return glyphs.test(line.replace(/\/\/.*$/, "")) ? [`${path}:${index + 1}`] : [];
-      }),
+    const found = code.flatMap(({ path, text }) => {
+      const lines = text.split("\n");
+      return lines.flatMap((line, index) =>
+        GLYPHS.test(line) && !MARKER.test(line) && !MARKER.test(lines[index - 1] ?? "")
+          ? [`${path}:${index + 1}`]
+          : [],
+      );
+    });
+    expect(found).toEqual([]);
+  });
+
+  it("keeps such characters out of the texts too, except where they name keys", () => {
+    const found = catalogs.flatMap(({ path, text }) =>
+      Object.entries(JSON.parse(text) as Record<string, string>).flatMap(([key, value]) =>
+        GLYPHS.test(value) && !CATALOG_ALLOWED.has(key) ? [`${path} ${key}`] : [],
+      ),
     );
     expect(found).toEqual([]);
   });
@@ -276,7 +302,10 @@ describe("icons in the UI", () => {
           .replace(/<Icon\b[^>]*\/>/g, "")
           .replace(/\{[^{}]*\?\s*\(?\s*\)?\s*:\s*null\s*\}/g, "")
           .trim();
-        const iconOnly = /<Icon\b/.test(text.slice(openEnd + 1, close)) && content === "";
+        const inner = text.slice(openEnd + 1, close).trim();
+        // An icon passed in a variable (`{icon}`, `{statusIcon}`) counts as an icon too.
+        const iconVariable = /^\{\s*\w*icon\w*\s*\}$/i.test(inner);
+        const iconOnly = (/<Icon\b/.test(inner) && content === "") || iconVariable;
         const named = /aria-label(ledby)?=/.test(tag);
         return iconOnly && !named ? [`${path}:${lineOf(text, match.index)}`] : [];
       }),

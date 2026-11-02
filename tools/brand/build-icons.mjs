@@ -1,5 +1,5 @@
-// The product icons of Kalzit, drawn from one mark: the favicon, the PWA and Apple touch icons, the
-// Windows icon (program and installer) and the Linux icons. Run after changing the mark or a size:
+// The product icons of Kalzit, drawn from one mark: the favicon, the PWA and Apple touch icons and
+// the Windows icon (program and installer). Run after changing the mark or a size:
 //
 //   node tools/brand/build-icons.mjs
 //
@@ -138,11 +138,5 @@ write(
   "packaging/windows/kalzit.ico",
   ico([16, 20, 24, 32, 48, 64, 128, 256].map((size) => ({ size, png: app[size] }))),
 );
-
-// Linux: the hicolor theme icons the .desktop entry names (deploy/linux/nfpm.yaml).
-for (const size of [16, 32, 48, 256]) {
-  write(`deploy/linux/icons/kalzit-${size}.png`, app[size]);
-}
-write("deploy/linux/icons/kalzit.svg", tile(LARGE));
 
 await browser.close();

@@ -33,7 +33,6 @@ if ($Version -notmatch '^(\d+\.\d+\.\d+)([-+].*)?$') {
 $msiVersion = $Matches[1]
 $exePath = (Resolve-Path $Exe).Path
 $license = (Resolve-Path (Join-Path $PSScriptRoot '..\..\LICENSE')).Path
-$icon = (Resolve-Path (Join-Path $PSScriptRoot 'kalzit.ico')).Path
 $outDir = Split-Path -Parent $Out
 if ($outDir) { New-Item -ItemType Directory -Force $outDir | Out-Null }
 
@@ -55,7 +54,6 @@ function Build-Package([string] $Culture, [string] $Path) {
         '-d', "ProductCode=$productCode",
         '-d', "ExePath=$exePath",
         '-d', "LicensePath=$license",
-        '-d', "IconPath=$icon",
         '-o', $Path,
         (Join-Path $PSScriptRoot 'Kalzit.wxs'),
         (Join-Path $PSScriptRoot 'KalzitUI.wxs')
