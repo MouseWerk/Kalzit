@@ -23,6 +23,7 @@ import { TextField } from "../components/TextField";
 import { isPrompt, type Prompt } from "../features/security/api";
 import { SecondFactorSetup } from "../features/security/SecondFactorStep";
 import {
+  getLanguage,
   LANGUAGES,
   type MessageKey,
   previewLanguage,
@@ -31,7 +32,7 @@ import {
   useSavedLanguage,
 } from "../i18n/i18n";
 import { clearChoice } from "../lib/localChoice";
-import { previewTheme, setTheme, THEMES, useSavedTheme } from "../theme/theme";
+import { getTheme, previewTheme, setTheme, THEMES, useSavedTheme, useTheme } from "../theme/theme";
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
@@ -98,7 +99,8 @@ function timeZones(first: string): string[] {
  * Once Kalzit is set up, the page only says so.
  */
 export function SetupPage() {
-  const { t } = useI18n();
+  const { t, language: shownLanguage } = useI18n();
+  const shownTheme = useTheme();
   const savedLanguage = useSavedLanguage();
   const savedTheme = useSavedTheme();
   const queryClient = useQueryClient();
@@ -175,7 +177,21 @@ export function SetupPage() {
       previewLanguage(choices.language);
     }
   }, [previewing, choices.theme, choices.language]);
-  // A language or theme picked in the top bar is also the new default.
+  // A language or theme picked in the top bar is also the new default. During the preview, such
+  // a pick ends it (even one equal to the saved value): the choice follows what the page shows.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the shown values change
+  useEffect(() => {
+    if (!previewing) {
+      return;
+    }
+    const theme = getTheme();
+    const language = getLanguage();
+    setChoices((before) =>
+      before.theme === theme && before.language === language
+        ? before
+        : { ...before, theme, language },
+    );
+  }, [previewing, shownTheme, shownLanguage]);
   useEffect(() => {
     setChoices((before) =>
       before.language === savedLanguage ? before : { ...before, language: savedLanguage },

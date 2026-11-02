@@ -523,6 +523,55 @@ describe("setup, step 3 and the finish", () => {
     expect((screen.getByRole("radio", { name: /Hell/ }) as HTMLInputElement).checked).toBe(true);
   });
 
+  it("follows a top-bar pick of the saved theme during the preview, so page and choice agree", async () => {
+    const server = installFakeServer({ setupNeeded: true });
+    const { user } = renderApp("/setup");
+    await toOrgStep(user);
+    await user.click(screen.getByRole("radio", { name: /Dark/ }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    // System is the saved theme already: the pick ends the preview and becomes the choice.
+    await user.click(screen.getByRole("button", { name: "Theme: Dark" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "System" }));
+    expect(document.documentElement.dataset.theme).toBe("system");
+    await waitFor(() =>
+      expect((screen.getByRole("radio", { name: /System/ }) as HTMLInputElement).checked).toBe(
+        true,
+      ),
+    );
+    expect((screen.getByRole("radio", { name: /Dark/ }) as HTMLInputElement).checked).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Finish setup" }));
+    await screen.findByRole("heading", { level: 1, name: "All set, Zoë." });
+    const body = server.calls.find((call) => call.path === "/api/setup" && call.method === "POST")
+      ?.body as Record<string, unknown>;
+    expect(body).toMatchObject({ theme: "system", language: "en" });
+    expect(document.documentElement.dataset.theme).toBe("system");
+  });
+
+  it("follows a top-bar pick of the saved language during the preview, so page and choice agree", async () => {
+    const server = installFakeServer({ setupNeeded: true });
+    const { user } = renderApp("/setup");
+    await toOrgStep(user);
+    await user.click(screen.getByRole("radio", { name: "Deutsch" }));
+    expect(document.documentElement.lang).toBe("de");
+    // English is the saved language already: the pick ends the preview and becomes the choice.
+    await user.click(screen.getByRole("button", { name: "Sprache: Deutsch" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "English" }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Your organization" }),
+    ).toBeTruthy();
+    expect(document.documentElement.lang).toBe("en");
+    await waitFor(() =>
+      expect((screen.getByRole("radio", { name: "English" }) as HTMLInputElement).checked).toBe(
+        true,
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Finish setup" }));
+    await screen.findByRole("heading", { level: 1, name: "All set, Zoë." });
+    const body = server.calls.find((call) => call.path === "/api/setup" && call.method === "POST")
+      ?.body as Record<string, unknown>;
+    expect(body).toMatchObject({ language: "en", theme: "system" });
+    expect(document.documentElement.lang).toBe("en");
+  });
   it("takes a theme picked in the top bar as the new default", async () => {
     installFakeServer({ setupNeeded: true });
     const { user } = renderApp("/setup");
