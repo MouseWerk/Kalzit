@@ -16,7 +16,7 @@
       "title": "Data sources (add and configure)",
       "w": 1440,
       "x": 0,
-      "y": 7120
+      "y": 11260
     },
     "DataSources.dc.html": {
       "expand": "fill",
@@ -28,8 +28,8 @@
     },
     "Explore.dc.html": {
       "expand": "fill",
-      "h": 1000,
-      "title": "Explore",
+      "h": 5140,
+      "title": "Explore (with guidance)",
       "w": 1440,
       "x": 0,
       "y": 4400
@@ -72,7 +72,7 @@
       "title": "Updates (online and offline)",
       "w": 1440,
       "x": 0,
-      "y": 5520
+      "y": 9660
     },
     "DashboardEditSelected.dc.html": {
       "expand": "fill",

@@ -13,8 +13,66 @@
 body{margin:0;background:#141416}
 a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
 button{font:inherit}
+:focus{outline:none}:focus-visible{outline:2px solid #6f6f77;outline-offset:1px}
+/* Frames of the guidance section; the same values as the screen above. */
+.fw{display:flex;flex-direction:column;gap:10px}
+.fh{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.fh .n{color:#6f6f77;font-size:11px;letter-spacing:.04em}
+.fh h2{margin:0;font-size:15px;font-weight:600}
+.fh .d{color:#8f8f97}
+.frame{position:relative;border:1px solid #2a2a2e;border-radius:12px;overflow:hidden;background:#141416}
+.note-text{margin:0;color:#8f8f97;font-size:12px;line-height:1.6;max-width:980px}
+.bar{height:52px;border-bottom:1px solid #222226;display:flex;align-items:center;gap:10px;padding:0 16px;box-sizing:border-box;flex:none}
+.sel{height:32px;background:#18181b;border:1px solid #2a2a2e;border-radius:8px;color:#ececef;font:inherit;padding:0 10px}
+.btn{height:32px;padding:0 12px;border-radius:8px;background:#18181b;border:1px solid #2a2a2e;color:#ececef;display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;font-size:13px;white-space:nowrap}
+.btn.q{background:transparent;color:#c9c9cf}
+.btn.g{background:transparent;border-color:transparent;color:#a6a6ae}
+.btn.p{background:#d79a6b;border:0;color:#1a1209;font-weight:600;padding:0 14px}
+.btn.sm{height:28px;padding:0 10px;font-size:12.5px}
+.btn.g.sm{padding:0 8px}
+.in{height:32px;box-sizing:border-box;background:#141416;border:1px solid #2a2a2e;border-radius:7px;color:#ececef;padding:0 10px;font:inherit;font-size:13px;width:100%;min-width:0}
+.lb{display:flex;flex-direction:column;gap:6px;color:#a6a6ae;font-size:12px;min-width:0}
+.faint{color:#8f8f97;font-size:12px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px}
+.kbd{font-family:'JetBrains Mono',monospace;font-size:10px;color:#8f8f97;padding:1px 5px;border:1px solid #2a2a2e;border-radius:4px}
+.panel{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid #2a2a2e;border-radius:12px;background:#18181b;box-sizing:border-box}
+.panel-title{margin:0;font-size:14px;font-weight:600}
+.lead{margin:0;max-width:70ch;color:#a6a6ae;font-size:12.5px;line-height:1.6}
+.starters{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin:0;padding:0;list-style:none}
+.starters li{display:flex;flex-direction:column;gap:6px;min-width:0}
+.starter{justify-content:flex-start;text-align:left;white-space:normal;height:auto;min-height:34px;padding:7px 12px}
+.sq{font-size:12.5px}
+.sq summary{cursor:pointer;color:#a6a6ae}
+.sq[open] summary{margin-bottom:6px}
+.snip{margin:0;padding:8px 12px;border-radius:6px;background:#141416;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.6;color:#d6d6db;white-space:pre-wrap}
+.foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ext{display:inline-flex;align-items:center;gap:4px;font-size:12.5px}
+.code-editor{margin:0;padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.6;color:#d6d6db;background:#141416}
+.schema{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.schema>li{display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #232327}
+.schema summary{cursor:pointer}
+.fields{list-style:none;margin:6px 0 0;padding:0 0 0 14px;display:flex;flex-direction:column;gap:3px;font-size:12px}
+.fields code{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#c9c9cf}
+.acts{display:flex;flex-wrap:wrap;gap:2px;margin-left:-8px}
+.topic{display:flex;flex-direction:column;gap:8px}
+.topic-title{margin:0;color:#8f8f97;font-size:11.5px;font-weight:600}
+.snippet{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid #2a2a2e;border-radius:10px;background:#1b1b1e}
+.snippet h4{margin:0;font-size:12.5px;font-weight:600}
+.snippet p{margin:0;color:#a6a6ae;font-size:12.5px;line-height:1.5}
+.tip{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid #2a2a2e;border-radius:10px;background:#18181b;color:#a6a6ae;font-size:12.5px;line-height:1.5}
+.tip b{color:#ececef;font-weight:600}
+.hint-card{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid #2a2a2e;border-radius:10px;background:#18181b;font-size:12.5px;line-height:1.55}
+.alarm{display:flex;gap:12px;padding:12px 14px;background:#3a2224;border:0;border-radius:10px;font-size:12.5px;line-height:1.55;color:#c9c9cf}
+.alarm b{color:#ececef;font-weight:600}
+.card{background:#1b1b1e;border:1px solid #2a2a2e;border-radius:14px}
+.row{display:flex;gap:16px;align-items:center;padding:14px 16px;border-bottom:1px solid #232327}
+.row h3{margin:0;font-size:13px;font-weight:500}.row p{margin:4px 0 0;color:#8f8f97;line-height:1.5}
+.seg{display:flex;padding:2px;gap:2px;background:#18181b;border:1px solid #2a2a2e;border-radius:8px;box-sizing:border-box;flex:none}
+.seg button{height:26px;padding:0 10px;border-radius:6px;border:0;background:transparent;color:#a6a6ae;font-size:12.5px}
+.seg button[aria-checked=true]{background:#232327;color:#ffffff;font-weight:500}
 </style>
 </helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; font-size: 13px; min-height: 5140px">
 <div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 1000px; font-size: 13px; display: flex; flex-direction: column">
 
 <header style="height: 52px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 10px; padding: 0 16px; box-sizing: border-box; flex-wrap: wrap">
@@ -62,8 +120,285 @@ button{font:inherit}
 </aside>
 </div>
 </div>
+
+<!-- ============ Guidance (M6): start panel, schema list, cheat sheet, hints, tips ============ -->
+<div style="padding: 48px 40px 48px; display: flex; flex-direction: column; gap: 40px; border-top: 1px solid #222226">
+
+<header style="display: flex; flex-direction: column; gap: 8px; max-width: 980px">
+<h1 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em">Explore: Hilfe für den Einstieg</h1>
+<p style="margin: 0; color: #a6a6ae; line-height: 1.6">Wer die Abfragesprache einer Datenquelle noch nicht kennt, fängt in Explore bei null an und lernt sie unterwegs. Jede Datenquelle hat ihre eigene Hilfe: was sie enthält, Beispiele mit den echten Namen aus ihrem Schema, einen Spickzettel und Hinweise bei Fehlern. Jede Hilfe setzt nur lesende, begrenzte Abfragen in den Editor; ausgeführt wird über denselben Weg und mit denselben Prüfungen wie eine getippte Abfrage.</p>
+<p style="margin: 0; color: #8f8f97; line-height: 1.6">Ruhig und neutral wie der Rest: Haarlinien und leise Flächen, der Akzent nur auf Links und dem Hauptknopf, nie ein Rahmen oder Balken für einen Zustand. Der Spickzettel öffnet und schließt mit <kbd class="kbd">Umschalt F1</kbd> überall und mit <kbd class="kbd">Strg /</kbd> außerhalb des Editors (dort kommentiert Strg / Zeilen aus).</p>
+</header>
+
+<!-- ============ 2A Start here ============ -->
+<div class="fw">
+<div class="fh"><span class="n">2A</span><h2>Hier anfangen</h2><span class="d">Leerer Editor auf einer MongoDB-Datenquelle. Jedes Beispiel setzt seine Abfrage ein und führt sie aus; „Abfrage zeigen“ zeigt sie vorher.</span></div>
+<section aria-label="Explore mit Hier anfangen" class="frame" style="height: 800px; display: flex; flex-direction: column">
+
+<header class="bar">
+<h1 style="margin: 0; font-size: 15px; font-weight: 600">Explore</h1>
+<span style="color: #6f6f77">Unbenannte Abfrage</span>
+<select aria-label="Datenquelle" class="sel"><option>Shop (MongoDB)</option></select>
+<div style="flex: 1"></div>
+<button class="btn q"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>Öffnen</button>
+<button class="btn q">Verlauf</button>
+<button class="btn q" aria-pressed="false" title="Öffnen und schließen mit Strg+/, Umschalt+F1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.4a2.4 2.4 0 014.8.2c0 1.6-2.4 2-2.4 3.6M12 16.8h.01"></path></svg>Spickzettel</button>
+<button class="btn">Letzte 7 Tage</button>
+<button class="btn q">Speichern</button>
+<button class="btn p">Ausführen</button>
+</header>
+
+<div style="display: flex; flex: 1; gap: 12px; padding: 16px; min-height: 0">
+<section aria-label="Abfrage" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e"><span style="font-weight: 600">A</span><span style="color: #8f8f97">Pipeline · Collection „orders“</span></header>
+<pre class="code-editor" style="color: #6f6f77">[ ]</pre>
+</article>
+
+<section aria-labelledby="start-title" class="panel">
+<h2 id="start-title" class="panel-title">Hier anfangen: MongoDB</h2>
+<p class="lead">Diese Datenquelle enthält Dokumente in Sammlungen; ein Dokument kann Objekte und Listen verschachteln. Du fragst mit einer Pipeline: einer Liste von Stufen, die nacheinander laufen, etwa $match zum Filtern, $group zum Zählen und $sort, dann $limit.</p>
+<label class="lb" style="max-width: 280px">Sammlung für die Beispiele<select class="sel" style="width: 100%"><option>orders</option></select></label>
+<ul class="starters">
+<li><button class="btn starter">Die ersten 100 Dokumente zeigen</button><details class="sq"><summary>Abfrage zeigen</summary></details></li>
+<li><button class="btn starter">Dokumente je Wert zählen</button><details class="sq" open><summary>Abfrage zeigen</summary><pre class="snip">[
+  { "$group": { "_id": "$status", "n": { "$sum": 1 } } },
+  { "$sort": { "n": -1 } },
+  { "$limit": 100 }
+]</pre></details></li>
+<li><button class="btn starter">Neueste Dokumente im Zeitraum</button><details class="sq"><summary>Abfrage zeigen</summary></details></li>
+<li><button class="btn starter">Alle Dokumente zählen</button><details class="sq"><summary>Abfrage zeigen</summary></details></li>
+</ul>
+<div class="foot">
+<button class="btn g sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>Ohne Abfrage aufbauen</button>
+<button class="btn g sm" aria-keyshortcuts="Control+/ Shift+F1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4"></path></svg>Spickzettel öffnen</button>
+<button class="btn g sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 5h14v10H9l-4 4z"></path></svg>In eigenen Worten fragen</button>
+<a href="#" class="ext">Einstieg in MongoDB<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"></path></svg></a>
+</div>
+</section>
+</section>
+
+<div style="flex: 1 1 300px; max-width: 340px; display: flex; flex-direction: column; gap: 12px; min-height: 0">
+<section aria-labelledby="schema-title" class="panel" style="gap: 10px">
+<h2 id="schema-title" class="panel-title" style="font-size: 13px">Schema</h2>
+<label class="lb">Schema durchsuchen<input class="in" type="search"></label>
+<ul class="schema">
+<li><details open><summary><span class="mono" style="color: #ececef">orders</span> <span class="faint">Sammlung</span></summary>
+<ul class="fields"><li><code>_id</code> <span class="faint">objectId</span></li><li><code>status</code> <span class="faint">string</span></li><li><code>total</code> <span class="faint">double</span></li><li><code>createdAt</code> <span class="faint">date</span></li><li><code>customer</code> <span class="faint">object</span></li><li><code>items</code> <span class="faint">array</span></li></ul></details>
+<div class="acts"><button class="btn g sm" aria-label="Zeilen zeigen: orders">Zeilen zeigen</button><button class="btn g sm" aria-label="Zählen: orders">Zählen</button><button class="btn g sm" aria-label="Aufbau zeigen: orders">Aufbau zeigen</button></div></li>
+<li><details><summary><span class="mono" style="color: #ececef">customers</span> <span class="faint">Sammlung</span></summary></details>
+<div class="acts"><button class="btn g sm">Zeilen zeigen</button><button class="btn g sm">Zählen</button><button class="btn g sm">Aufbau zeigen</button></div></li>
+<li><details><summary><span class="mono" style="color: #ececef">products</span> <span class="faint">Sammlung</span></summary></details>
+<div class="acts"><button class="btn g sm">Zeilen zeigen</button><button class="btn g sm">Zählen</button><button class="btn g sm">Aufbau zeigen</button></div></li>
+</ul>
+</section>
+<aside aria-label="Analyseschritte" style="background: #111113; border: 1px solid #222226; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Schritte</h2>
+<button style="height: 32px; border-radius: 8px; background: transparent; border: 1px dashed #333338; color: #a6a6ae">+ Schritt hinzufügen</button>
+</aside>
+</div>
+</div>
+</section>
+<p class="note-text">„Hier anfangen“ steht nur bei leerem Editor und verschwindet, sobald eine Abfrage läuft; die Abfrage bleibt im Editor, zum Lernen und Ändern. Die Auswahl zeigt die Tabellen, Sammlungen, Labels oder Metriken der Datenquelle, die Beispiele nehmen ihre echten Feldnamen. „Ohne Abfrage aufbauen“ zeigt die Zeilen und setzt den Fokus in die Schritte. „In eigenen Worten fragen“ öffnet Fragen mit dieser Datenquelle und erscheint nur, wenn der KI-Chat nutzbar ist. Dateien und HTTP-JSON haben keine Sprache: dort fehlen Auswahl und Spickzettel.</p>
+</div>
+
+<!-- ============ 2B Cheat sheet and a tip ============ -->
+<div class="fw">
+<div class="fh"><span class="n">2B</span><h2>Spickzettel und ein Tipp</h2><span class="d">Nach dem ersten Ergebnis. Spickzettel über die Leiste oder Umschalt F1 geöffnet, oben in der rechten Spalte.</span></div>
+<section aria-label="Explore mit Spickzettel" class="frame" style="height: 1000px; display: flex; flex-direction: column">
+
+<header class="bar">
+<h1 style="margin: 0; font-size: 15px; font-weight: 600">Explore</h1>
+<span style="color: #6f6f77">Unbenannte Abfrage</span>
+<select aria-label="Datenquelle" class="sel"><option>Shop (MongoDB)</option></select>
+<div style="flex: 1"></div>
+<button class="btn q">Öffnen</button>
+<button class="btn q">Verlauf</button>
+<button class="btn q" aria-pressed="true" style="background: #232327; color: #ffffff; font-weight: 500"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.4a2.4 2.4 0 014.8.2c0 1.6-2.4 2-2.4 3.6M12 16.8h.01"></path></svg>Spickzettel</button>
+<button class="btn">Letzte 7 Tage</button>
+<button class="btn q">Speichern</button>
+<button class="btn p">Ausführen</button>
+</header>
+
+<div style="display: flex; flex: 1; gap: 12px; padding: 16px; min-height: 0">
+<section aria-label="Abfrage" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e"><span style="font-weight: 600">A</span><span style="color: #8f8f97">Pipeline · Collection „orders“</span></header>
+<pre class="code-editor">[
+  { "$group": { "_id": "$status", "n": { "$sum": 1 } } },
+  { "$sort": { "n": -1 } },
+  { "$limit": 100 }
+]</pre>
+</article>
+
+<div role="note" aria-label="Tipp" class="tip">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="flex: none"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.4a2.4 2.4 0 014.8.2c0 1.6-2.4 2-2.4 3.6M12 16.8h.01"></path></svg>
+<p style="flex: 1; margin: 0"><b>Tipp:</b> Setz eine $match-Stufe an den Anfang, um nur die Dokumente zu behalten, die du brauchst; das macht die Pipeline auch schneller. Der Spickzettel (Strg+/, Umschalt+F1) hat mehr Stufen.</p>
+<button class="btn g sm">Tipps ausschalten</button>
+<button class="btn g sm" aria-label="Tipp schließen" title="Tipp schließen"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+
+<div role="tablist" style="display: flex; gap: 4px; border-bottom: 1px solid #2a2a2e">
+<button role="tab" aria-selected="true" style="padding: 8px 12px; background: transparent; border: 0; border-bottom: 2px solid #ececef; color: #ffffff">Dokumente</button>
+<button role="tab" aria-selected="false" style="padding: 8px 12px; background: transparent; border: 0; color: #a6a6ae">Schema</button>
+<button role="tab" aria-selected="false" style="padding: 8px 12px; background: transparent; border: 0; color: #a6a6ae">Tabelle (Projektion)</button>
+<div style="flex: 1"></div><span style="color: #8f8f97; padding: 8px 0">4 Dokumente · 14 ms</span>
+</div>
+<div style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.8">
+<div><span style="color: #8f8f97">▸</span> <span style="color: #c9c9cf">{</span> _id: <span style="color: #e3a35a">"shipped"</span>, n: <span style="color: #6aa3d8">188</span> }</div>
+<div><span style="color: #8f8f97">▸</span> <span style="color: #c9c9cf">{</span> _id: <span style="color: #e3a35a">"delivered"</span>, n: <span style="color: #6aa3d8">71</span> }</div>
+<div><span style="color: #8f8f97">▸</span> <span style="color: #c9c9cf">{</span> _id: <span style="color: #e3a35a">"open"</span>, n: <span style="color: #6aa3d8">39</span> }</div>
+<div><span style="color: #8f8f97">▸</span> <span style="color: #c9c9cf">{</span> _id: <span style="color: #e3a35a">"cancelled"</span>, n: <span style="color: #6aa3d8">14</span> }</div>
+</div>
+</section>
+
+<div style="flex: 1 1 300px; max-width: 340px; display: flex; flex-direction: column; gap: 12px; min-height: 0">
+<section aria-labelledby="cheat-title" class="panel" style="gap: 10px; min-height: 0">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px"><h2 id="cheat-title" class="panel-title">Spickzettel: MongoDB</h2><button class="btn g sm" aria-label="Spickzettel: MongoDB schließen" title="Öffnen und schließen mit Strg+/, Umschalt+F1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+<p class="lead">Gängige Muster mit Namen aus dieser Datenquelle. Einfügen setzt eines in den Editor; ausgeführt wird erst, wenn du es ausführst.</p>
+<label class="lb">Spickzettel durchsuchen<input class="in" type="search"></label>
+<div style="display: flex; flex-direction: column; gap: 10px; overflow: hidden; max-height: 560px">
+<section aria-label="Grundlagen" class="topic"><h3 class="topic-title">Grundlagen</h3>
+<article class="snippet"><h4>Die ersten Dokumente</h4><p>$limit behält die ersten Dokumente; behalte beim Umsehen eine Grenze.</p><pre class="snip">[ { "$limit": 100 } ]</pre><div><button class="btn sm" aria-label="Einfügen: Die ersten Dokumente">Einfügen</button></div></article>
+<article class="snippet"><h4>Einige Felder</h4><p>$project mit 1 behält ein Feld, mit 0 lässt es weg.</p><pre class="snip">[ { "$project": { "_id": 0, "status": 1, "createdAt": 1 } },
+  { "$limit": 100 } ]</pre><div><button class="btn sm">Einfügen</button></div></article>
+</section>
+<section aria-label="Filtern" class="topic"><h3 class="topic-title">Filtern</h3>
+<article class="snippet"><h4>Passende Dokumente behalten</h4><p>$match behält Dokumente, deren Felder die angegebenen Werte haben.</p><pre class="snip">[ { "$match": { "status": "value" } }, { "$limit": 100 } ]</pre><div><button class="btn sm">Einfügen</button></div></article>
+</section>
+<section aria-label="Gruppieren und zählen" class="topic"><h3 class="topic-title">Gruppieren und zählen</h3>
+<article class="snippet"><h4>Je Wert zählen und summieren</h4><p>$group macht ein Dokument je _id; $sum mit 1 zählt, mit einem Feld addiert es.</p></article>
+</section>
+</div>
+<div class="lead" style="display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px solid #232327"><p style="margin: 0">Zeitraum: Der Schlüssel $__timeFilter mit einem Feldnamen in einer $match-Stufe behält die Dokumente, deren Datum im oben gewählten Zeitraum liegt.</p><p style="margin: 0">Variablen: Auf einem Dashboard nimmt ein Text, der genau ${name} lautet, den Wert der Variable an. Explore hat keine Variablen.</p></div>
+<a href="#" class="ext">Anleitung für den Einstieg<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"></path></svg></a>
+</section>
+<aside aria-label="Analyseschritte" style="background: #111113; border: 1px solid #222226; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Schritte</h2>
+<button style="height: 32px; border-radius: 8px; background: transparent; border: 1px dashed #333338; color: #a6a6ae">+ Schritt hinzufügen</button>
+</aside>
+</div>
+</div>
+</section>
+<p class="note-text">Der Spickzettel liegt über dem Schema und den Schritten in der rechten Spalte; er nimmt den Fokus nicht und verschiebt den Editor nicht. Themen in fester Reihenfolge: Grundlagen, Filtern, Sortieren und begrenzen, Gruppieren und zählen, Verknüpfen und durchlaufen, Zeitraum, Variablen auf Dashboards. Muster mit Dashboard-Variablen werden gezeigt, aber nie eingefügt. Ein Tipp ist eine ruhige Zeile über dem Ergebnis: immer nur einer, jeder erscheint einmal, Schließen oder alle Tipps ausschalten ist ein Klick.</p>
+</div>
+
+<!-- ============ 2C Hint next to an error ============ -->
+<div class="fw">
+<div class="fh"><span class="n">2C</span><h2>Hinweis bei Fehlern</h2><span class="d">Ausschnitt: unter der Fehlermeldung, was wahrscheinlich falsch ist, und wo die Lösung steht.</span></div>
+<section aria-label="Hinweise bei Fehlern" class="frame" style="padding: 20px 16px; display: flex; gap: 12px; align-items: flex-start">
+<div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e"><span style="font-weight: 600">A</span><span style="color: #8f8f97">SQL · Shop (PostgreSQL)</span></header>
+<pre class="code-editor">SELECT status, COUNT(*) AS n
+FROM order
+GROUP BY status</pre>
+</article>
+<div role="alert" class="alarm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f08a8a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 1px"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg><span><b>Abfrage fehlgeschlagen.</b> relation "order" does not exist</span></div>
+<div role="note" aria-label="Hinweis" class="hint-card">
+<p style="margin: 0">Diese Datenquelle hat keine Tabelle order, oder sie liegt in einem anderen Schema. Die Schema-Liste zeigt die Tabellen, die du abfragen kannst.</p>
+<div style="display: flex; gap: 8px; flex-wrap: wrap"><button class="btn sm">Im Spickzettel zeigen</button><button class="btn sm">Im Schema finden</button></div>
+</div>
+<div role="note" aria-label="Hinweis" class="hint-card">
+<p style="margin: 0">Das Ergebnis endet an der Zeilengrenze und zeigt nur einen Teil der Daten. Ergänz in der Abfrage einen Zeitfilter oder eine Zeilengrenze; der Spickzettel zeigt, wie.</p>
+<div style="display: flex; gap: 8px"><button class="btn sm">Im Spickzettel zeigen</button></div>
+</div>
+</div>
+<div style="flex: 1 1 300px; max-width: 340px; display: flex; flex-direction: column; gap: 10px">
+<section aria-label="Zeitraum" class="panel" style="gap: 10px">
+<h3 class="topic-title">Zeitraum</h3>
+<article class="snippet" data-highlighted="true" style="background: #2a2a2f"><h4>Zeilen im Zeitraum</h4><p>$__timeFilter(Spalte) behält die Zeilen im oben gewählten Zeitraum.</p><pre class="snip">SELECT *
+FROM orders
+WHERE $__timeFilter(created_at)
+LIMIT 100</pre><div><button class="btn sm">Einfügen</button></div></article>
+</section>
+</div>
+</section>
+<p class="note-text">Hinweise gibt es für unbekannte Tabellen, Spalten, Indizes und Funktionen, Syntax bei einer Stelle, abgelehnte schreibende Abfragen, fehlende Variablen, offene Anführungszeichen oder Klammern, Zeitüberschreitung und die Zeilengrenze. „Im Spickzettel zeigen“ öffnet den Spickzettel am passenden Eintrag, der eine ruhige Tönung bekommt (rechts), keinen farbigen Rahmen. „Im Schema finden“ setzt den Fokus in die Suche der Schema-Liste. Die Fehlermeldung der Datenbank bleibt unverändert darüber.</p>
+</div>
+
+<!-- ============ 2D The query of a step ============ -->
+<div class="fw">
+<div class="fh"><span class="n">2D</span><h2>Abfrage eines Schritts</h2><span class="d">Ausschnitt der Schritte auf einer SQL-Datenquelle: ein Gruppieren-Schritt und sein SQL.</span></div>
+<section aria-label="Abfrage eines Schritts" class="frame" style="padding: 20px 16px; display: flex; gap: 12px; align-items: flex-start">
+<div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<div role="note" aria-label="Tipp" class="tip">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="flex: none"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.4a2.4 2.4 0 014.8.2c0 1.6-2.4 2-2.4 3.6M12 16.8h.01"></path></svg>
+<p style="flex: 1; margin: 0"><b>Tipp:</b> Schritte rechts gruppieren, zählen und rechnen auf dem Ergebnis, ohne eine Abfrage zu schreiben. Unter einem Gruppieren-Schritt zeigt „Abfrage dieses Schritts zeigen“, wie er in SQL geschrieben wird.</p>
+<button class="btn g sm">Tipps ausschalten</button>
+<button class="btn g sm" aria-label="Tipp schließen"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<p class="note-text" style="margin: 0">Dieser Tipp erscheint nach „Ohne Abfrage aufbauen“. Die beiden anderen: nach dem ersten Ergebnis ein Muster der Sprache der Datenquelle (2B), und nach einem Ausführen mit der Maus „Strg+Eingabe führt die Abfrage direkt aus dem Editor aus.“</p>
+</div>
+<aside aria-label="Analyseschritte" style="flex: 1 1 300px; max-width: 340px; background: #111113; border: 1px solid #222226; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Schritte</h2>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; background: #18181b"><strong style="font-weight: 500">1 · Gruppieren</strong><p style="margin: 6px 0 0; color: #8f8f97">nach status · Anzahl</p></div>
+<button style="height: 32px; border-radius: 8px; background: transparent; border: 1px dashed #333338; color: #a6a6ae">+ Schritt hinzufügen</button>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<details class="sq" open><summary>Abfrage dieses Schritts zeigen</summary><pre class="snip">SELECT status, COUNT(*) AS n
+FROM (
+  SELECT * FROM orders LIMIT 100
+) AS q
+GROUP BY status
+ORDER BY status
+LIMIT 1000</pre></details>
+<button class="btn sm" style="align-self: flex-start">Diese Abfrage statt des Schritts verwenden</button>
+</div>
+</aside>
+</section>
+<p class="note-text">Nur auf SQL-Datenquellen und nur für einen Gruppieren-Schritt am Anfang. „Diese Abfrage statt des Schritts verwenden“ ersetzt die Abfrage, entfernt den Schritt und führt aus; Rückgängig stellt beides wieder her.</p>
+</div>
+
+<!-- ============ 2E Empty states ============ -->
+<div class="fw">
+<div class="fh"><span class="n">2E</span><h2>Leere Zustände</h2><span class="d">Nichts zum Auswählen, Schema nicht lesbar, Suche ohne Treffer.</span></div>
+<section aria-label="Leere Zustände" class="frame" style="padding: 20px 16px; display: flex; gap: 12px; align-items: flex-start">
+<section aria-labelledby="empty-a" class="panel" style="flex: 1; min-width: 0">
+<h2 id="empty-a" class="panel-title">Hier anfangen: PostgreSQL</h2>
+<p class="lead">Diese Datenquelle enthält Tabellen: Zeilen mit Datensätzen, jede mit denselben Spalten. Du fragst in SQL.</p>
+<p class="lead">Diese Datenquelle zeigt noch nichts zum Auswählen. Schreib oben eine Abfrage oder öffne den Spickzettel für Beispiele.</p>
+<div class="foot"><button class="btn g sm">Spickzettel öffnen</button><a href="#" class="ext">Einstieg in PostgreSQL<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"></path></svg></a></div>
+</section>
+<section aria-labelledby="empty-b" class="panel" style="flex: 1; min-width: 0">
+<h2 id="empty-b" class="panel-title">Hier anfangen: Neo4j</h2>
+<p class="lead">Diese Datenquelle enthält einen Graphen: Knoten mit Labels und Eigenschaften, verbunden durch Kanten mit einem Typ.</p>
+<p class="lead">Das Schema der Datenquelle konnte nicht gelesen werden, es gibt also nichts zum Auswählen. Schreib oben eine Abfrage oder öffne den Spickzettel für Beispiele.</p>
+<div class="foot"><button class="btn g sm">Spickzettel öffnen</button><a href="#" class="ext">Einstieg in Neo4j<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 14v5H5V6h5"></path></svg></a></div>
+</section>
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<section aria-label="Spickzettel ohne Treffer" class="panel" style="gap: 10px">
+<label class="lb">Spickzettel durchsuchen<input class="in" type="search" value="$unwind"></label>
+<p role="status" class="lead">Nichts passt zu „$unwind“.</p>
+</section>
+<section aria-label="Schema ohne Treffer" class="panel" style="gap: 10px">
+<label class="lb">Schema durchsuchen<input class="in" type="search" value="invoices"></label>
+<p class="lead">Nichts passt.</p>
+</section>
+</div>
+</section>
+<p class="note-text">Ohne Schema bleiben die Beispiele weg, Spickzettel und Anleitung bleiben. Bei vielen Einträgen zeigt die Schema-Liste die ersten 60 und darunter „{Anzahl} weitere; such, um sie zu finden.“</p>
+</div>
+
+<!-- ============ 2F Tips in the preferences, shortcut ============ -->
+<div class="fw">
+<div class="fh"><span class="n">2F</span><h2>Tipps in den Einstellungen und das Tastenkürzel</h2><span class="d">Konto › Einstellungen, und die Liste der Tastenkürzel (?).</span></div>
+<section aria-label="Tipps und Tastenkürzel" class="frame" style="padding: 20px 16px; display: flex; gap: 12px; align-items: flex-start">
+<div class="card" style="flex: 1; min-width: 0">
+<div class="row" style="border-bottom: 0"><div style="flex: 1; min-width: 0"><h3>Tipps</h3><p>Kurze Hinweise, die einmal erscheinen, wenn sie helfen. Wer sich auskennt, kann sie ausschalten.</p></div>
+<div role="radiogroup" aria-label="Tipps" class="seg"><button type="button" role="radio" aria-checked="true">Tipps anzeigen</button><button type="button" role="radio" aria-checked="false">Keine Tipps anzeigen</button></div></div>
+<div style="padding: 0 16px 14px"><button class="btn q sm">Alle Tipps wieder anzeigen</button></div>
+</div>
+<div class="card" style="flex: 1; min-width: 0">
+<div class="row" style="border-bottom: 0"><span style="flex: 1">Spickzettel öffnen oder schließen</span><span style="display: flex; gap: 6px; align-items: center"><kbd class="kbd">Umschalt</kbd><kbd class="kbd">F1</kbd><span class="faint">oder</span><kbd class="kbd">Strg</kbd><kbd class="kbd">/</kbd></span></div>
+</div>
+</section>
+<p class="note-text">Beide Einstellungen gelten je Person auf dem Server, auf jedem Gerät. „Alle Tipps wieder anzeigen“ steht nur, solange Tipps an sind und schon einer erschienen ist; wie jede Einstellung gilt sie sofort, mit Rückgängig.</p>
+</div>
+
+</div>
+</div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":5140}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }
