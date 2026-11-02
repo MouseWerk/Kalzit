@@ -31,6 +31,9 @@ function undoPatch(patch: PreferencesPatch, previous: Preferences): PreferencesP
   if (patch.theme !== undefined) undo.theme = previous.theme;
   if (patch.timeZone !== undefined) undo.timeZone = previous.timeZone;
   if (patch.weekStart !== undefined) undo.weekStart = previous.weekStart;
+  if (patch.showTips !== undefined) undo.showTips = previous.showTips ? null : false;
+  // Seen tips are added, so undoing "show all again" adds the ones seen before.
+  if (patch.seenTips !== undefined) undo.seenTips = previous.seenTips;
   if (patch.startDashboard !== undefined) {
     undo.startDashboard =
       previous.startDashboard === null
@@ -48,6 +51,8 @@ function savedText(t: Translate, patch: PreferencesPatch): string {
   if (patch.theme !== undefined) return t("shell.preferences.saved.theme");
   if (patch.timeZone !== undefined) return t("shell.preferences.saved.timeZone");
   if (patch.weekStart !== undefined) return t("shell.preferences.saved.weekStart");
+  if (patch.showTips !== undefined) return t("shell.preferences.saved.showTips");
+  if (patch.seenTips !== undefined) return t("shell.preferences.saved.seenTips");
   return t("shell.preferences.saved.startDashboard");
 }
 
@@ -201,6 +206,31 @@ function PreferenceFields({
           onChange({ weekStart: WEEK_STARTS.find((day) => day === value) ?? null })
         }
       />
+      <Choice
+        label={t("shell.preferences.showTips")}
+        hint={t("shell.preferences.showTipsHint")}
+        value={preferences.showTips ? "on" : "off"}
+        disabled={busy}
+        options={[
+          { value: "on", label: t("shell.preferences.tipsOn") },
+          { value: "off", label: t("shell.preferences.tipsOff") },
+        ]}
+        onChange={(value) => onChange({ showTips: value === "on" ? null : false })}
+      />
+      {preferences.showTips && preferences.seenTips.length > 0 ? (
+        <div>
+          <button
+            type="button"
+            className="button button--secondary button--small"
+            aria-disabled={busy}
+            onClick={() => {
+              if (!busy) onChange({ seenTips: null });
+            }}
+          >
+            {t("shell.preferences.resetTips")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

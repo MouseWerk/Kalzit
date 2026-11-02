@@ -15,6 +15,7 @@ import deDatasources from "./de/datasources.json";
 import deDocuments from "./de/documents.json";
 import deExplore from "./de/explore.json";
 import deGraph from "./de/graph.json";
+import deHelp from "./de/help.json";
 import deLibraryPanels from "./de/libraryPanels.json";
 import deLive from "./de/live.json";
 import dePanelPlugins from "./de/panelPlugins.json";
@@ -40,6 +41,7 @@ import enDatasources from "./en/datasources.json";
 import enDocuments from "./en/documents.json";
 import enExplore from "./en/explore.json";
 import enGraph from "./en/graph.json";
+import enHelp from "./en/help.json";
 import enLibraryPanels from "./en/libraryPanels.json";
 import enLive from "./en/live.json";
 import enPanelPlugins from "./en/panelPlugins.json";
@@ -89,6 +91,7 @@ export const en = {
   ...enSecurity,
   ...enUsage,
   ...enSso,
+  ...enHelp,
 };
 export const de = {
   ...deCore,
@@ -113,4 +116,5 @@ export const de = {
   ...deSecurity,
   ...deUsage,
   ...deSso,
+  ...deHelp,
 };

@@ -1,0 +1,243 @@
+@layer components {
+  /*
+   * The shared help layer: help panels, snippets, the start panel and tips. Calm and neutral:
+   * hairline frames and quiet fills, the accent only on links and primary buttons, never a frame
+   * or a bar for a state.
+   */
+
+  .help-panel {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-card);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+
+  .help-panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .help-panel__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .help-panel__lead,
+  .help-panel__notes,
+  .help-panel__empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .help-panel__notes {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .help-panel__notes p {
+    margin: 0;
+  }
+
+  .help-panel__list {
+    display: grid;
+    gap: var(--space-3);
+    max-height: var(--size-result);
+    overflow: auto;
+  }
+
+  .help-panel__topic {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .help-panel__topic-title {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .help-panel__docs {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--font-size-sm);
+  }
+
+  .help-snippet {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  /* The entry an error hint points to: a quiet tint, no colored frame. */
+  .help-snippet[data-highlighted="true"] {
+    background: var(--bg-active);
+  }
+
+  .help-snippet__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .help-snippet__text {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .help-snippet__actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .help-code {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    line-height: var(--line-height);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .help-query {
+    font-size: var(--font-size-sm);
+  }
+
+  .help-query summary {
+    cursor: pointer;
+    color: var(--text-muted);
+  }
+
+  .help-query[open] summary {
+    margin-block-end: var(--space-2);
+  }
+
+  /* A tip: one line beside the work, in the muted text of hints. */
+  .help-tip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .help-tip__text {
+    flex: 1;
+    margin: 0;
+  }
+
+  .help-tip__lead {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .help-tip__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  /* A hint next to an error: what probably went wrong, in plain words. */
+  .help-hint {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-size: var(--font-size-sm);
+  }
+
+  .help-hint__text {
+    margin: 0;
+  }
+
+  .help-hint__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+}
+
+@layer components {
+  /* The start panel: a card with the actions as a list, each with its query folded away. */
+  .help-start {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-card);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+
+  .help-start__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .help-start__lead,
+  .help-start__empty {
+    margin: 0;
+    max-width: 70ch;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .help-start__actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .help-start__action {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .help-start__use {
+    justify-content: flex-start;
+    text-align: start;
+    white-space: normal;
+  }
+
+  .help-start__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .help-start__footer a {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--font-size-sm);
+  }
+}

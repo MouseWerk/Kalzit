@@ -2,7 +2,7 @@
 
 What the app shell needs per user: the command palette's search, starred and recently viewed
 dashboards for the start page, and personal preferences. Implemented in
-`server/src/routes/{home,preferences}.rs`, stored by migrations 0008 and 0011 (pins). The conventions of
+`server/src/routes/{home,preferences}.rs`, stored by migrations 0008, 0011 (pins) and 0038 (tips). The conventions of
 `docs/api/access.md` ("Conventions") apply: paths under `/api`, `Page<T>` lists with `limit` and
 `cursor`, `422 validation` with `field`, unknown fields and query parameters refused.
 
@@ -116,6 +116,8 @@ interface Preferences {
   timeZone: string | null;                                // IANA name; null: the browser's
   weekStart: "monday" | "sunday" | "saturday" | null;     // null: Monday (ISO 8601)
   startDashboard: { orgId: string; dashboardId: string; title: string } | null;
+  showTips: boolean;                                      // false once the user turns tips off
+  seenTips: string[];                                     // tip ids already shown, oldest first
   defaults: { language: string; theme: string };          // appearance.default_language/theme
 }
 ```
@@ -130,7 +132,14 @@ interface Preferences {
 open, not in the trash; another organization's, a hidden or an unknown dashboard are refused
 alike. `timeZone` is checked for the shape of an IANA name only (`Europe/Berlin`, `UTC`); the
 browser knows the zones. Errors: `validation` with `field` `language`, `theme`, `timeZone`,
-`weekStart` or `startDashboard`. Audit `user.preferences_updated` with the changed field names.
+`weekStart`, `startDashboard`, `showTips` or `seenTips`. Audit `user.preferences_updated` with
+the changed field names.
+
+**Tips.** The UI shows small, dismissible tips (`ui/src/help/tips.ts`), each once. `showTips:
+false` turns them all off, `null` turns them on again. `seenTips` in a `PATCH` lists the tips seen
+since: they are added to the stored list (each once, at most 200 per request; ids are lower case,
+up to 64 characters of `a-z 0-9 . - _`). The list keeps the newest 200; `seenTips: null` empties it,
+so every tip shows again. Stored by migration 0038.
 
 **Language and theme in the browser.** The UI decides in this order:
 

@@ -169,5 +169,13 @@
   "shell.start.change": "{actor}: {action}",
   "shell.start.someone": "Jemand",
   "shell.start.starToggle": "Favorit",
-  "shell.start.justNow": "gerade eben"
+  "shell.start.justNow": "gerade eben",
+  "shell.shortcuts.helpPanel": "Spickzettel öffnen oder schließen",
+  "shell.preferences.showTips": "Tipps",
+  "shell.preferences.showTipsHint": "Kurze Hinweise, die einmal erscheinen, wenn sie helfen. Wer sich auskennt, kann sie ausschalten.",
+  "shell.preferences.tipsOn": "Tipps anzeigen",
+  "shell.preferences.tipsOff": "Keine Tipps anzeigen",
+  "shell.preferences.resetTips": "Alle Tipps wieder anzeigen",
+  "shell.preferences.saved.showTips": "Einstellung für Tipps gespeichert.",
+  "shell.preferences.saved.seenTips": "Jeder Tipp erscheint noch einmal."
 }

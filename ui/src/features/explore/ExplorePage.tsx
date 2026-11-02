@@ -37,6 +37,10 @@ import {
   withProjection,
 } from "../../documents/projection";
 import { schemaOf } from "../../documents/schema";
+import { Tip } from "../../help/components/Tip";
+import { helpPanelShortcut, useHelpPanelShortcut } from "../../help/shortcut";
+import { type Hint, hintFor, problemOf } from "../../help/sources/errors";
+import { useTip } from "../../help/tips";
 import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { tabForKey } from "../../lib/tabKeys";
@@ -49,6 +53,7 @@ import { useLiveSubscription } from "../../live/useLive";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
+import { modShortcut } from "../../shell/sidebarState";
 import { AiGate } from "../ai/AiGate";
 import { ExploreAiTools, useExploreAiSummary } from "../ai/ExploreAi";
 import {
@@ -95,8 +100,23 @@ import {
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
-import { emptyQuery, familyOf, hasQuery, normalizeQuery } from "../datasources/queryKinds";
+import {
+  emptyQuery,
+  familyOf,
+  hasQuery,
+  normalizeQuery,
+  queryText,
+} from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
+import {
+  ErrorHelp,
+  ExploreCheatSheet,
+  ExploreStart,
+  SchemaList,
+  StepsQuery,
+  snippetOfTopic,
+  useExploreGuide,
+} from "./ExploreGuide";
 import { HistoryPanel } from "./HistoryPanel";
 import { clearExploreHandoff, peekExploreHandoff } from "./handoff";
 import { HISTORY_KEY, type HistoryEntry } from "./history";
@@ -105,6 +125,9 @@ import "./explore.css";
 
 // Explore always shows a query editor; its editor starts loading with the page.
 preloadCodeEditor();
+
+/** A shortcut with Ctrl (Cmd on macOS), as the reader's keyboard names it. */
+const modShortcutLabel = (key: string) => modShortcut(key).label;
 
 /** The single query of Explore; panels created from it keep this reference id. */
 const REF_ID = "A";
@@ -194,6 +217,15 @@ function Explore({
   const datasources = useQuery(datasourcesQuery(orgId));
   const client = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
+  // The cheat sheet of the source's language, and the entry an error hint points to.
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpFocus, setHelpFocus] = useState<string | undefined>(undefined);
+  useHelpPanelShortcut(() => setHelpOpen((open) => !open));
+  // Moments a tip may follow: a run started with the mouse, a start without writing a query.
+  const [ranWithMouse, setRanWithMouse] = useState(false);
+  const [startedNoCode, setStartedNoCode] = useState(false);
+  const schemaSearch = useRef<HTMLInputElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
   // Bumped when a history entry is loaded, so the editor starts over with its query.
   const [loads, setLoads] = useState(0);
   const kinds = useQuery(kindsQuery(orgId));
@@ -500,6 +532,12 @@ function Explore({
         },
   );
 
+  const guide = useExploreGuide(orgId, datasource ?? { id: "", kind: "" });
+  const succeeded = result.data?.some((outcome) => "result" in outcome) === true;
+  const firstResultTip = useTip("explore.first-result", succeeded);
+  const runShortcutTip = useTip("explore.run-shortcut", succeeded && ranWithMouse);
+  const stepsTip = useTip("explore.steps", succeeded && startedNoCode);
+
   // A query handed over to be saved ("Als Panel speichern" in Fragen) opens the save dialog once
   // it is in the editor, for someone who may save analyses.
   const saveOnArrival = useRef(handoff?.save === true);
@@ -622,7 +660,82 @@ function Explore({
     setLoads((n) => n + 1);
     return target;
   }
+  /**
+   * Puts a query from the guide into the editor (a starter, a schema action, a cheat sheet
+   * entry), runs it when asked, and offers to undo replacing a query that was there.
+   */
+  function applyGuideQuery(
+    value: unknown,
+    how: "run" | "insert",
+    noCode = false,
+    // Puts back what else the change took (a step folded into the query).
+    restore?: () => void,
+  ) {
+    const target = datasource;
+    if (target === undefined) {
+      return;
+    }
+    const before = query;
+    setQueries((current) => ({ ...current, [target.id]: value }));
+    setPendingText((current) => ({ ...current, [target.id]: false }));
+    setFilterError(null);
+    // A new editor, so editors with state of their own (MongoDB stages) start from the query.
+    setLoads((n) => n + 1);
+    if (how === "run") {
+      run(range, value, target, true);
+    }
+    // Whatever was written before can come back, whether the new query runs or not.
+    if (
+      before !== null &&
+      hasQuery(before, target.kind) &&
+      JSON.stringify(before) !== JSON.stringify(value)
+    ) {
+      showToast({
+        message: t("explore.guide.replaced"),
+        undo: () => {
+          setQueries((current) => ({ ...current, [target.id]: before }));
+          setLoads((n) => n + 1);
+          restore?.();
+        },
+      });
+    }
+    if (noCode) {
+      setStartedNoCode(true);
+      // The steps are where the result is shaped without code: the way to add one gets focus.
+      requestAnimationFrame(() => asideRef.current?.querySelector<HTMLElement>("select")?.focus());
+    }
+  }
+  function openCheatSheet(topic?: string) {
+    setHelpFocus(topic === undefined ? undefined : snippetOfTopic(guide, topic));
+    setHelpOpen(true);
+  }
   const kindShapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
+  const kindName = kinds.data?.find((k) => k.kind === datasource.kind)?.name ?? datasource.kind;
+  // Nothing written and nothing run yet: the start panel shows instead of the hint.
+  const blank =
+    (submitted === null || submitted.datasourceId !== datasource.id) &&
+    (!hasQuery(query, datasource.kind) ||
+      JSON.stringify(query) === JSON.stringify(emptyQuery(datasource.kind)));
+  // A hint next to a failed run, else next to a result cut at the row limit without a time filter.
+  const failure =
+    result.error ??
+    outcomes.flatMap((outcome) => ("error" in outcome ? [outcome.error] : []))[0] ??
+    null;
+  const problem = failure === null ? null : problemOf(failure);
+  const truncated = outcomes.some(
+    (outcome) =>
+      "result" in outcome &&
+      outcome.result.shape === "frame" &&
+      outcome.result.frame.meta?.rowsTruncated === true,
+  );
+  const hint: Hint | null =
+    guide.guide === undefined || submitted === null
+      ? null
+      : problem !== null
+        ? hintFor(guide.guide.errors, problem)
+        : truncated && !/\$__time|timeRange/.test(queryText(submitted.query))
+          ? { id: "rowLimit", text: "help.hint.rowLimit", params: {}, topic: "time" }
+          : null;
   const takesDocuments = kindShapes.includes("documents");
   // Paths to suggest for the projection: those of the last result's documents.
   const resultFields = documentsOf(outcomes).flatMap(({ documents }) =>
@@ -958,6 +1071,22 @@ function Explore({
             <Icon name="history" />
             {t("explore.history.button")}
           </button>
+          {guide.guide === undefined ? null : (
+            <button
+              type="button"
+              className="button button--secondary"
+              aria-pressed={helpOpen}
+              aria-keyshortcuts={helpPanelShortcut().aria}
+              title={t("help.panel.shortcut", { keys: helpPanelShortcut().label })}
+              onClick={() => {
+                setHelpFocus(undefined);
+                setHelpOpen((open) => !open);
+              }}
+            >
+              <Icon name="help" />
+              {t("explore.guide.cheatSheet")}
+            </button>
+          )}
           <TimeRangePicker
             value={range}
             onChange={(next) => {
@@ -1023,7 +1152,13 @@ function Explore({
           <button
             type="button"
             className="button button--primary"
-            onClick={() => run()}
+            onClick={(event) => {
+              // A click, not Enter or Space on the focused button: the shortcut is worth a tip.
+              if (event.detail > 0) {
+                setRanWithMouse(true);
+              }
+              run();
+            }}
             disabled={!hasQuery(query, datasource.kind) || queryBlocked}
           >
             {result.isFetching ? t("explore.running") : t("explore.run")}
@@ -1095,8 +1230,26 @@ function Explore({
               }
             />
           ) : null}
+          <Tip tip={firstResultTip}>
+            {t(guide.guide?.tip ?? "help.source.plugin.tip", { keys: helpPanelShortcut().label })}
+          </Tip>
+          <Tip tip={runShortcutTip}>
+            {t("explore.tip.runShortcut", { keys: modShortcutLabel("Enter") })}
+          </Tip>
+          <Tip tip={stepsTip}>{t("explore.tip.steps")}</Tip>
+          {blank ? (
+            <ExploreStart
+              state={guide}
+              source={datasource}
+              kindName={kindName}
+              onUse={(value, options) => applyGuideQuery(value, "run", options.steps)}
+              onCheatSheet={() => openCheatSheet()}
+            />
+          ) : null}
           {submitted === null ? (
-            <p className="explore__hint">{t("explore.hint")}</p>
+            blank ? null : (
+              <p className="explore__hint">{t("explore.hint")}</p>
+            )
           ) : (
             <section
               className="explore__result"
@@ -1235,11 +1388,26 @@ function Explore({
                 </div>
               )}
               {current.error === null ? null : <FormAlert>{current.error}</FormAlert>}
+              {hint === null ? null : (
+                <ErrorHelp
+                  hint={hint}
+                  onCheatSheet={(topic) => openCheatSheet(topic)}
+                  onSchema={() => schemaSearch.current?.focus()}
+                />
+              )}
             </section>
           )}
         </div>
         {/* The steps and what to do with the result, beside it as on the blueprint. */}
         <div className="explore__rail">
+          {helpOpen ? (
+            <ExploreCheatSheet
+              state={guide}
+              focus={helpFocus}
+              onInsert={(value) => applyGuideQuery(value, "insert")}
+              onClose={() => setHelpOpen(false)}
+            />
+          ) : null}
           {historyOpen ? (
             <HistoryPanel
               orgId={orgId}
@@ -1254,7 +1422,12 @@ function Explore({
               }}
             />
           ) : null}
-          <aside className="explore__aside" aria-label={t("explore.aside")}>
+          <SchemaList
+            state={guide}
+            onUse={(value) => applyGuideQuery(value, "run")}
+            searchRef={schemaSearch}
+          />
+          <aside className="explore__aside" aria-label={t("explore.aside")} ref={asideRef}>
             <StepsEditor
               steps={steps}
               onChange={setSteps}
@@ -1266,6 +1439,16 @@ function Explore({
                   ? undefined
                   : list.find((source) => source.id === submitted.datasourceId)?.kind
               }
+            />
+            <StepsQuery
+              kind={datasource.kind}
+              steps={steps}
+              query={submitted?.query ?? query}
+              onTakeOver={(value, stepId) => {
+                const kept = steps;
+                setSteps((all) => all.filter((step) => step.id !== stepId));
+                applyGuideQuery(value, "run", false, () => setSteps(kept));
+              }}
             />
             <div className="explore__aside-actions">
               {permissions.has("data:export") ? (

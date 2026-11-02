@@ -33,6 +33,10 @@ export interface Preferences {
   timeZone: string | null;
   weekStart: WeekStart | null;
   startDashboard: StartDashboard | null;
+  /** Whether tips show (help/tips.ts); on until the user turns them off. */
+  showTips: boolean;
+  /** The tips already shown, oldest first; each tip appears once. */
+  seenTips: string[];
   defaults: { language: string; theme: string };
 }
 
@@ -42,6 +46,10 @@ export interface PreferencesPatch {
   timeZone?: string | null;
   weekStart?: WeekStart | null;
   startDashboard?: { orgId: string; dashboardId: string } | null;
+  /** `null` turns tips on again (the default). */
+  showTips?: boolean | null;
+  /** Tips seen since: added to the stored list. `null` empties it, so every tip shows again. */
+  seenTips?: string[] | null;
 }
 
 const oneOf = <T extends string>(options: readonly T[], value: unknown): T | null =>
@@ -65,6 +73,10 @@ function normalize(value: Preferences): Preferences {
       typeof start.title === "string"
         ? { orgId: start.orgId, dashboardId: start.dashboardId, title: start.title }
         : null,
+    showTips: value.showTips !== false,
+    seenTips: Array.isArray(value.seenTips)
+      ? value.seenTips.filter((id): id is string => typeof id === "string")
+      : [],
     defaults: {
       language: String(value.defaults.language ?? ""),
       theme: String(value.defaults.theme ?? ""),

@@ -21,6 +21,8 @@ pub mod file;
 pub mod frame;
 pub mod graph;
 pub mod gsql;
+#[cfg(test)]
+mod guide_queries;
 pub mod http_json;
 pub mod http_source;
 pub mod influxdb;

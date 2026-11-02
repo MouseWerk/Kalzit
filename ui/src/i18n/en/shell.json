@@ -169,5 +169,13 @@
   "shell.start.change": "{actor}: {action}",
   "shell.start.someone": "Someone",
   "shell.start.starToggle": "Favorite",
-  "shell.start.justNow": "just now"
+  "shell.start.justNow": "just now",
+  "shell.shortcuts.helpPanel": "Open or close the cheat sheet",
+  "shell.preferences.showTips": "Tips",
+  "shell.preferences.showTipsHint": "Short hints that appear once, at the moment they help. Power users can turn them off.",
+  "shell.preferences.tipsOn": "Show tips",
+  "shell.preferences.tipsOff": "Do not show tips",
+  "shell.preferences.resetTips": "Show all tips again",
+  "shell.preferences.saved.showTips": "Tips setting saved.",
+  "shell.preferences.saved.seenTips": "Every tip will show once more."
 }

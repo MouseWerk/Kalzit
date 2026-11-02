@@ -1336,6 +1336,33 @@ mod tests {
     }
 
     #[test]
+    fn backslash_escapes_cannot_hide_a_second_statement() {
+        // MySQL (with the sql_mode mysql.rs pins) and ClickHouse read \' inside a string as a
+        // quote: the string goes on, so the semicolon and the DROP are text in it.
+        let hidden = r"SELECT 'x\'; DROP TABLE y; --' AS a";
+        // \\ is one backslash: the string ends there, and what follows is a second statement.
+        let ended = r"SELECT 'x\\'; DROP TABLE y";
+        let written = r"SELECT 'x\\' AS a; DELETE FROM y";
+        for engine in [Engine::MySql, Engine::ClickHouse] {
+            let p = accepted(hidden, engine);
+            assert_eq!(p.sql, hidden, "{engine:?}");
+            for sql in [ended, written] {
+                let reason = prepare(sql, engine, &ctx(&BTreeMap::new())).expect_err(sql).reason;
+                assert_eq!(reason, "sql.multiple_statements", "{engine:?} {sql}");
+            }
+            // The checker's parser and the scanner end the string at the same place.
+            let p = accepted(r"SELECT 'a\'b' AS a, 'c' AS c", engine);
+            assert!(p.binds.is_empty(), "{engine:?}");
+        }
+        // Engines without backslash escapes end the string at the quote after the backslash, so
+        // the same text is two statements there and refused.
+        for engine in [Engine::Postgres, Engine::Sqlite, Engine::MsSql] {
+            let reason = prepare(hidden, engine, &ctx(&BTreeMap::new())).expect_err(hidden).reason;
+            assert!(["sql.multiple_statements", "sql.parse_error"].contains(&reason), "{engine:?}: {reason}");
+        }
+    }
+
+    #[test]
     fn identifier_variables_need_the_schema_allow_list() {
         let vars = BTreeMap::from([
             ("tabelle".to_string(), json!("public.bestellungen")),

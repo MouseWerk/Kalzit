@@ -602,6 +602,21 @@ describe("preferences", () => {
     );
   });
 
+  it("turns tips off and shows every tip again", async () => {
+    const server = setup();
+    server.state.preferences.showTips = null;
+    server.state.preferences.seenTips = ["explore.first-result"];
+    const { user } = renderApp("/account");
+    const section = await screen.findByRole("region", { name: "Preferences" });
+    await user.click(await within(section).findByRole("button", { name: "Show all tips again" }));
+    await waitFor(() => expect(server.state.preferences.seenTips).toEqual([]));
+    await user.selectOptions(within(section).getByLabelText("Tips"), "off");
+    await waitFor(() => expect(server.state.preferences.showTips).toBe(false));
+    expect(await screen.findByText("Tips setting saved.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(server.state.preferences.showTips).toBeNull());
+  });
+
   it("takes a refused change back and reports it", async () => {
     const server = setup();
     const { user } = renderApp("/account");
