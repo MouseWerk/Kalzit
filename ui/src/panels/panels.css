@@ -146,6 +146,37 @@
     color: var(--danger-text);
   }
 
+  /* Several queries' errors: the list, then Retry under it. */
+  .panel-error.panel-error--list {
+    display: grid;
+    justify-items: start;
+  }
+
+  .panel-error__list {
+    display: grid;
+    gap: var(--space-1);
+    justify-self: stretch;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* Retry runs the queries again; beside a single message, at its end. */
+  .panel-error__retry {
+    flex: none;
+    margin-inline-start: auto;
+  }
+
+  .panel-error--list > .panel-error__retry {
+    margin-inline-start: 0;
+  }
+
+  /* The loading placeholder fills the panel's drawing area. */
+  .panel-skeleton {
+    height: 100%;
+    padding: var(--space-1);
+  }
+
   .panel-error--partial {
     flex: none;
   }
@@ -213,6 +244,34 @@
 
   .ts__probe--grid {
     color: var(--border);
+  }
+
+  /*
+   * Forced colors (Windows high contrast) leave the canvas alone, so the probes hand it system
+   * colors: series in text, link and selection colors in turn, the axis in the text color and
+   * the grid in the quiet gray, all on the system background.
+   */
+  @media (forced-colors: active) {
+    .ts__probes {
+      forced-color-adjust: none;
+    }
+
+    .ts__probe,
+    .ts__probe--axis {
+      color: CanvasText;
+    }
+
+    .ts__probe:is(.series-2, .series-5, .series-8, .tone--warn) {
+      color: LinkText;
+    }
+
+    .ts__probe:is(.series-3, .series-6, .tone--critical) {
+      color: Highlight;
+    }
+
+    .ts__probe--grid {
+      color: GrayText;
+    }
   }
 
   .ts__cursor-line {

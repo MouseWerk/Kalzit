@@ -18,6 +18,7 @@ import { runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { DocumentSet, GraphSet, TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
+import { Skeleton } from "../../components/Skeleton";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { liveNote } from "../../live/text";
@@ -180,6 +181,12 @@ export function PanelCard({
     keepHandleFocus.current = false;
   });
   const results = usePanelResults({ ...query, panel });
+  // Retry after a data source error: the same request again. Stable, so the body is not drawn
+  // again for it.
+  const { refetch } = results;
+  const retry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
   // While the dashboard is live, the panels on screen follow their results.
   const [inView, observe] = useInView(query.live !== undefined);
   const cardRef = useCallback(
@@ -555,6 +562,8 @@ export function PanelCard({
                 revision={results.dataUpdatedAt}
                 variables={variableTexts(query.variables)}
                 kindOf={kindOf}
+                onRetry={retry}
+                fetching={results.isFetching}
                 distribution={panelDistribution(
                   { ...query, panel, manual: query.manual ?? query.run },
                   kindOf,
@@ -708,6 +717,10 @@ interface PanelBodyProps {
    * for a source the caller cannot see) the query's own fields decide.
    */
   kindOf?: ((datasourceId: string) => string | undefined) | undefined;
+  /** Runs the queries again; offered beside a failed request or a query's error. */
+  onRetry?: (() => void) | undefined;
+  /** The queries are running (a retry among them): Retry waits until they are back. */
+  fetching?: boolean | undefined;
 }
 
 /**
@@ -727,6 +740,8 @@ export function PanelBody({
   stepsRun: given,
   variables,
   kindOf = () => undefined,
+  onRetry,
+  fetching = false,
 }: PanelBodyProps) {
   const { t } = useI18n();
   const calendar = useAnalysisCalendar();
@@ -776,11 +791,23 @@ export function PanelBody({
     );
   }
   // A failed request comes first: it must never read as "no query yet".
+  const retry =
+    onRetry === undefined ? null : (
+      <button
+        type="button"
+        className="button button--secondary button--small panel-error__retry"
+        onClick={onRetry}
+        disabled={fetching}
+      >
+        {t("common.retry")}
+      </button>
+    );
   if (error !== null) {
     return (
       <div className="panel-error" role="alert">
         <Icon name="alert" />
         <span>{errorMessage(t, error)}</span>
+        {retry}
       </div>
     );
   }
@@ -795,7 +822,7 @@ export function PanelBody({
     return <p className="panel-empty">{t("dashboards.panel.noQuery")}</p>;
   }
   if (pending) {
-    return <p className="panel-empty">{t("common.loading")}</p>;
+    return <Skeleton variant="panel" className="panel-skeleton" />;
   }
   // The graphs as the steps leave them: a top-N step keeps a smaller graph, a graph step that
   // makes a table leaves none.
@@ -817,19 +844,29 @@ export function PanelBody({
     frames.length === 0 && graphs.length === 0 && documents.length === 0 && errors.length > 0;
   const errorList =
     errors.length === 0 ? null : (
-      <ul className={failedAll ? "panel-error" : "panel-error panel-error--partial"} role="alert">
-        {errors.map((e) => (
-          <li key={e.refId}>
-            <Icon name="alert" />
-            <span>
-              {errors.length > 1 || !failedAll
-                ? `${t("dashboards.inspect.query", { refId: e.refId })}: `
-                : ""}
-              {errorBodyMessage(t, e)}
-            </span>
-          </li>
-        ))}
-      </ul>
+      <div
+        className={
+          failedAll
+            ? "panel-error panel-error--list"
+            : "panel-error panel-error--list panel-error--partial"
+        }
+        role="alert"
+      >
+        <ul className="panel-error__list">
+          {errors.map((e) => (
+            <li key={e.refId}>
+              <Icon name="alert" />
+              <span>
+                {errors.length > 1 || !failedAll
+                  ? `${t("dashboards.inspect.query", { refId: e.refId })}: `
+                  : ""}
+                {errorBodyMessage(t, e)}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {retry}
+      </div>
     );
   if (failedAll) {
     return errorList;

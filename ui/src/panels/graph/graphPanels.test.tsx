@@ -221,10 +221,10 @@ describe("node sheet and keyboard", () => {
     await user.click(screen.getByRole("button", { name: "Show all" }));
     expect(screen.getByRole("table", { name: "Nodes of Shop: 4" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Pin" }));
-    const pinned = screen.getByRole("region", { name: "Pinned" });
+    const pinned = screen.getByRole("group", { name: "Pinned" });
     expect(within(pinned).getByText("query result")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Clear selection" }));
-    expect(screen.queryByRole("region", { name: "Selection" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Selection" })).toBeNull();
   });
 
   it("hides a label from the legend", async () => {

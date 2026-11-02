@@ -9,14 +9,10 @@ import { boltTarget, GRAPH_FIXTURE, MONGO_FIXTURE } from "../support/services";
 import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
 import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
 
-const OUT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "..",
-  "docs",
-  "screenshots",
-);
+// KALZIT_SCREENSHOTS_OUT sends the pictures elsewhere (the devkit's capture_screens scenes).
+const OUT =
+  process.env.KALZIT_SCREENSHOTS_OUT ??
+  resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "docs", "screenshots");
 
 let demo: Demo;
 

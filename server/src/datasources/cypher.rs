@@ -935,3 +935,66 @@ mod tests {
         assert_eq!(refused("MATCH (n:`a``) DELETE n"), "cypher.unclosed_backtick");
     }
 }
+
+/// The checker sees every query text a user can type: it answers with a result or a refusal,
+/// never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Text built from the pieces the lexer cares about, so cases reach past the first token.
+    fn cypher_like() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            prop::sample::select(vec![
+                "MATCH ",
+                "RETURN ",
+                "CALL ",
+                "WITH ",
+                "UNWIND ",
+                "IN TRANSACTIONS ",
+                "LOAD CSV ",
+                "{",
+                "}",
+                "(",
+                ")",
+                "[",
+                "]",
+                "`",
+                "'",
+                "\"",
+                "\\",
+                "$",
+                "//",
+                "/*",
+                "*/",
+                ".",
+                "..",
+                "1e",
+                "0x",
+                ";",
+                "-[",
+                "]->",
+            ])
+            .prop_map(str::to_string),
+            "[a-zA-Z_0-9 .:,-]{0,6}",
+            "\\PC{0,3}",
+        ];
+        prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn check_never_panics_on_any_text(q in "\\PC{0,200}") {
+            let _ = check(&q);
+        }
+
+        #[test]
+        fn check_never_panics_on_cypher_like_text(q in cypher_like()) {
+            let _ = check(&q);
+        }
+    }
+}

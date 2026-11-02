@@ -852,13 +852,14 @@ async fn audit_views_filter_and_page_newest_first(t: TestApp) {
     let editor = t.member("Erika", "editor").await;
     assert_eq!(t.get("~/audit", &editor).await.code(), "forbidden");
 
-    // The server view has every organization's events and sign-ins, and filters by organization.
+    // The server view has every organization's events and sign-ins (setup's included), and filters
+    // by organization.
     sqlx::query("INSERT INTO audit_events (id, action, summary, created_at) VALUES ('x', 'auth.signed_in', '{}', 1)")
         .execute(&t.state.db)
         .await
         .unwrap();
     let server = t.get("/admin/audit?limit=200", &t.owner).await;
-    assert_eq!(server.body["items"].as_array().unwrap().len(), 6);
+    assert_eq!(server.body["items"].as_array().unwrap().len(), 7);
     let one_org = t.get(&format!("/admin/audit?orgId={}", t.org), &t.owner).await;
     assert_eq!(one_org.body["items"].as_array().unwrap().len(), 5);
     let empty = t.get("/admin/audit?orgId=", &t.owner).await;
@@ -875,15 +876,16 @@ async fn old_audit_events_are_deleted_after_the_retention(t: TestApp) {
     .await
     .unwrap();
     assert_eq!(kalzit::routes::audit::purge_expired(&t.state).await.unwrap(), 1);
-    assert_eq!(t.actions().await, ["setup.completed", "audit.expired"]);
+    assert_eq!(t.actions().await, ["setup.completed", "auth.signed_in", "audit.expired"]);
     assert_eq!(kalzit::routes::audit::purge_expired(&t.state).await.unwrap(), 0);
 
     t.patch("/admin/settings/audit.retention_days", json!({ "value": 1, "version": 0 }), &t.owner).await;
     t.clock.advance_ms(DAY_MS - 1);
     assert_eq!(kalzit::routes::audit::purge_expired(&t.state).await.unwrap(), 0, "a day has not passed yet");
     t.clock.advance_ms(2);
-    // Setup, the first purge record and the settings change are now older than a day.
-    assert_eq!(kalzit::routes::audit::purge_expired(&t.state).await.unwrap(), 3);
+    // Setup with its sign-in, the first purge record and the settings change are now older than a
+    // day.
+    assert_eq!(kalzit::routes::audit::purge_expired(&t.state).await.unwrap(), 4);
     assert_eq!(t.actions().await, ["audit.expired"]);
 }
 

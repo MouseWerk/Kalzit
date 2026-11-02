@@ -231,6 +231,7 @@ export function CalciteCrystal() {
     }
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const forced = window.matchMedia?.("(forced-colors: active)");
     let seconds = 0.4;
     let last: number | undefined;
     let frame: number | undefined;
@@ -321,6 +322,7 @@ export function CalciteCrystal() {
     document.addEventListener("visibilitychange", sync);
     reduced?.addEventListener("change", sync);
     dark?.addEventListener("change", restyle);
+    forced?.addEventListener("change", restyle);
     watchResolution();
     resize();
     sync();
@@ -335,6 +337,7 @@ export function CalciteCrystal() {
       document.removeEventListener("visibilitychange", sync);
       reduced?.removeEventListener("change", sync);
       dark?.removeEventListener("change", restyle);
+      forced?.removeEventListener("change", restyle);
       resolution?.removeEventListener("change", onResolution);
     };
   }, []);

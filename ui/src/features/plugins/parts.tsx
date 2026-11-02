@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { kindMonogram } from "../datasources/kindMarks";
@@ -11,6 +11,41 @@ import "./plugins.css";
 /** The installed plugins and the host switches, shared by every plugin page. */
 export function usePlugins() {
   return useQuery({ queryKey: pluginKeys.list, queryFn: ({ signal }) => listPlugins(signal) });
+}
+
+/**
+ * A table that scrolls sideways when the card is narrower than its columns. The scroll box is a
+ * region of its own ("Trusted keys, table"), and while its table is wider than it, it is in the
+ * tab order, so keyboard users can scroll it too (WCAG 2.1.1).
+ */
+export function TableScroll({ title, children }: { title: string; children: ReactNode }) {
+  const { t } = useI18n();
+  const ref = useRef<HTMLElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const box = ref.current;
+    if (box === null || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const check = () => setOverflows(box.scrollWidth > box.clientWidth + 1);
+    const observer = new ResizeObserver(check);
+    observer.observe(box);
+    for (const child of box.children) {
+      observer.observe(child);
+    }
+    check();
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <section
+      ref={ref}
+      className="plugins-table-wrap"
+      aria-label={t("plugins.table.scrollLabel", { title })}
+      tabIndex={overflows ? 0 : undefined}
+    >
+      {children}
+    </section>
+  );
 }
 
 /** The current time, ticking every `every` milliseconds while `active`. */

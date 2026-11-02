@@ -917,3 +917,131 @@ mod tests {
         }
     }
 }
+
+/// Pipelines and filters are user text: binding and checking them answers with stages or a
+/// refusal, never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    fn vars() -> BTreeMap<String, Value> {
+        [
+            ("land".to_string(), json!("Österreich")),
+            ("ids".to_string(), json!([1, 2])),
+            ("n".to_string(), json!(5)),
+            ("leer".to_string(), json!(null)),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    fn binder(vars: &BTreeMap<String, Value>) -> Binder<'_> {
+        Binder {
+            range: TimeRange { from: 1_700_000_000_000, to: 1_800_000_000_000 },
+            interval_ms: 30_000,
+            variables: vars,
+            max_documents: 1_000,
+        }
+    }
+
+    /// JSON whose keys and strings are operators, macros and variables, so binding gets past the
+    /// first stage.
+    fn json_value() -> impl Strategy<Value = Value> {
+        let word = prop::sample::select(vec![
+            "$match",
+            "$project",
+            "$group",
+            "$sort",
+            "$limit",
+            "$sample",
+            "$lookup",
+            "$unionWith",
+            "$graphLookup",
+            "$facet",
+            "$out",
+            "$merge",
+            "$function",
+            "$accumulator",
+            "$where",
+            "$expr",
+            "$in",
+            "$size",
+            "$__timeFilter",
+            "$__timeFrom",
+            "$__timeTo",
+            "$__interval_ms",
+            "$__nix",
+            "${land}",
+            "${ids}",
+            "${n}",
+            "${leer}",
+            "${fehlt}",
+            "$land",
+            "from",
+            "coll",
+            "pipeline",
+            "size",
+            "ts",
+            "a.b",
+            "$",
+            "",
+            "\u{200B}$out",
+            "system.users",
+            "$date",
+            "$oid",
+            "$numberLong",
+        ])
+        .prop_map(str::to_string);
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::from),
+            any::<i64>().prop_map(Value::from),
+            any::<f64>().prop_map(|f| json!(f)),
+            word.clone().prop_map(Value::from),
+            "\\PC{0,8}".prop_map(Value::from),
+        ];
+        leaf.prop_recursive(5, 64, 6, move |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(Value::Array),
+                prop::collection::vec((word.clone(), inner), 0..6)
+                    .prop_map(|entries| Value::Object(entries.into_iter().collect())),
+            ]
+        })
+    }
+
+    fn bind(text: &str) {
+        let vars = vars();
+        let b = binder(&vars);
+        let _ = b.pipeline(text);
+        if let Ok(Some(doc)) = parse_document("filter", Some(text)) {
+            let _ = b.query_document(doc.clone());
+            let _ = b.projection(doc);
+        }
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn binding_never_panics_on_any_text(text in "\\PC{0,200}") {
+            bind(&text);
+        }
+
+        #[test]
+        fn binding_never_panics_on_pipeline_like_json(
+            stages in prop::collection::vec(json_value(), 0..5),
+            doc in json_value(),
+        ) {
+            bind(&Value::Array(stages).to_string());
+            bind(&doc.to_string());
+        }
+
+        #[test]
+        fn collection_check_never_panics(name in "\\PC{0,40}") {
+            let _ = check_collection(&name);
+        }
+    }
+}

@@ -1,7 +1,7 @@
 import { baseUrl, OWNER_CONTRAST } from "./support/api";
 import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
-import { MAIN_PAGES } from "./support/pages";
+import { MAIN_PAGES, openMainPage } from "./support/pages";
 import { expect, signIn, signInOwner, test } from "./support/test";
 
 test("sign-in page: no serious accessibility violations", async ({ browser }) => {
@@ -27,8 +27,7 @@ for (const variant of VARIANTS) {
     for (const main of MAIN_PAGES) {
       test(`${main.name}: no serious accessibility violations`, async ({ page, world }) => {
         await signInOwner(page, variant.language);
-        await page.goto(main.path(world));
-        await main.ready(page, world, variant.language);
+        await openMainPage(page, main, world, variant.language);
         expect(await seriousViolations(page)).toEqual([]);
       });
     }
@@ -45,8 +44,7 @@ test.describe("contrast theme, en, 900 px", () => {
   for (const main of MAIN_PAGES) {
     test(`${main.name}: no serious accessibility violations`, async ({ page, world }) => {
       await signIn(page, OWNER_CONTRAST.email, OWNER_CONTRAST.password, "en");
-      await page.goto(main.path(world));
-      await main.ready(page, world, "en");
+      await openMainPage(page, main, world, "en");
       await expect(page.locator("html")).toHaveAttribute("data-theme", "contrast");
       expect(await seriousViolations(page)).toEqual([]);
     });

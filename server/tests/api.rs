@@ -667,13 +667,18 @@ async fn setup_and_sign_ins_are_audited_without_personal_data() {
             .await
             .unwrap();
     let actions: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
-    assert_eq!(actions, ["setup.completed", "auth.sign_in_failed", "auth.sign_in_failed", "auth.signed_in"]);
+    // Setup signs the owner in, recorded like every other sign-in.
+    assert_eq!(
+        actions,
+        ["setup.completed", "auth.signed_in", "auth.sign_in_failed", "auth.sign_in_failed", "auth.signed_in"]
+    );
     for (_, _, summary) in &rows {
         assert!(!summary.contains('@'), "no email in audit summaries: {summary}");
     }
-    assert!(rows[1].2.contains("userId"), "a failed sign-in of a known account names the account id");
-    assert_eq!(rows[2].2, "{}", "an unknown email leaves no trace of what was typed");
-    assert!(rows[3].1.is_some());
+    assert!(rows[1].1.is_some());
+    assert!(rows[2].2.contains("userId"), "a failed sign-in of a known account names the account id");
+    assert_eq!(rows[3].2, "{}", "an unknown email leaves no trace of what was typed");
+    assert!(rows[4].1.is_some());
     t.finish().await;
 }
 

@@ -31,6 +31,7 @@ import {
 import { ConfirmFactorDialog, isConfirmed, methodsOf } from "./ConfirmFactorDialog";
 import { FactorForm } from "./FactorForm";
 import { RecoveryCodesPanel, TotpSetupPanel } from "./parts";
+import { RecentSignIns } from "./RecentSignIns";
 import { createPasskey, isPasskeyCancelled, passkeysAvailable } from "./webauthn";
 import "../settings/settings.css";
 import "./security.css";
@@ -47,7 +48,8 @@ type Open =
 
 /**
  * Account > Sign-in and security (frame 4A): the policy, the password, and the second factor with
- * the app, passkeys and recovery codes; the dialogs of frames 4B to 4F.
+ * the app, passkeys and recovery codes, with the recent sign-ins beside them; the dialogs of
+ * frames 4B to 4F.
  */
 export function SecuritySection({ email }: { email: string }) {
   const { t, language, timeZone } = useI18n();
@@ -90,7 +92,7 @@ export function SecuritySection({ email }: { email: string }) {
   ].join(" · ");
 
   return (
-    <div className="settings-profile">
+    <div className="settings-profile security-page">
       <Notice notice={notice.notice} onDismiss={notice.clear} />
       {s.required ? (
         <AccessNotice
@@ -117,200 +119,205 @@ export function SecuritySection({ email }: { email: string }) {
         />
       )}
 
-      <section className="security-card" aria-label={t("security.account.signIn")}>
-        <div className="security-row">
-          <div className="security-row__text">
-            <h3 className="security-row__title">{t("security.account.password")}</h3>
-            <p className="security-row__meta">
-              {s.hasPassword
-                ? t("security.account.passwordMeta")
-                : t("security.account.noPassword")}
-            </p>
-          </div>
-          {s.hasPassword ? (
-            <Link
-              to="/settings/$section"
-              params={{ section: "profile" }}
-              className="button button--secondary"
-            >
-              {t("security.account.changePassword")}
-            </Link>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="security-card" aria-label={t("security.account.secondFactor")}>
-        <div className="security-row">
-          <div className="security-row__text">
-            <h3 className="security-row__title">
-              <Icon name="shieldCheck" />
-              {t("security.account.secondFactor")}
-            </h3>
-            <p className="security-row__meta">
-              {count === 0 ? t("security.account.none") : summary}
-            </p>
-          </div>
-        </div>
-
-        <div className="security-row">
-          <div className="security-row__text">
-            <h3 className="security-row__title">
-              <Icon name="phone" />
-              {t("security.setup.app")}
-            </h3>
-            <p className="security-row__meta">
-              {s.totp === null
-                ? t("security.setup.appHint")
-                : s.totp.lastUsedAt === null
-                  ? t("security.account.appSinceUnused", { date: date(s.totp.createdAt) })
-                  : t("security.account.appSince", {
-                      date: date(s.totp.createdAt),
-                      used: date(s.totp.lastUsedAt),
-                    })}
-            </p>
-          </div>
-          <div className="security-row__actions">
-            {s.allowed.totp ? (
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => setOpen({ kind: "totp" })}
-              >
-                {s.totp === null ? t("security.account.setUp") : t("security.account.redo")}
-              </button>
-            ) : null}
-            {s.totp === null ? null : (
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => askRemove({ kind: "removeTotp" }, t("security.setup.app"))}
-              >
-                {t("security.account.remove")}
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="security-passkeys">
-          <div className="security-row__text">
-            <h3 className="security-row__title">
-              <Icon name="passkey" />
-              {t("security.account.passkeys")}
-              <span className="security-row__meta">{s.passkeys.length}</span>
-            </h3>
-            <p className="security-row__meta">{t("security.account.passkeysLead")}</p>
-          </div>
-          {s.allowed.passkey ? (
-            <div className="security-row__actions">
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => setOpen({ kind: "passkey" })}
-              >
-                <Icon name="plus" />
-                {t("security.account.addPasskey")}
-              </button>
+      <div className="security-layout">
+        <div className="security-layout__main">
+          <section className="security-card" aria-label={t("security.account.signIn")}>
+            <div className="security-row">
+              <div className="security-row__text">
+                <h3 className="security-row__title">{t("security.account.password")}</h3>
+                <p className="security-row__meta">
+                  {s.hasPassword
+                    ? t("security.account.passwordMeta")
+                    : t("security.account.noPassword")}
+                </p>
+              </div>
+              {s.hasPassword ? (
+                <Link
+                  to="/settings/$section"
+                  params={{ section: "profile" }}
+                  className="button button--secondary"
+                >
+                  {t("security.account.changePassword")}
+                </Link>
+              ) : null}
             </div>
-          ) : null}
-          {s.passkeys.length === 0 ? null : (
-            <table className="security-passkeys__table">
-              <thead>
-                <tr>
-                  <th scope="col">{t("security.account.colName")}</th>
-                  <th scope="col">{t("security.account.colAdded")}</th>
-                  <th scope="col">{t("security.account.colUsed")}</th>
-                  <th scope="col">
-                    <span className="visually-hidden">{t("security.account.colActions")}</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {s.passkeys.map((passkey) => (
-                  <tr key={passkey.id}>
-                    <td>
-                      {renaming === passkey.id ? (
-                        <RenameField
-                          passkey={passkey}
-                          onDone={async (name) => {
-                            setRenaming(null);
-                            if (name !== null && name !== passkey.name) {
-                              try {
-                                await renamePasskey(passkey.id, name);
-                                await refresh();
-                                notice.show({
-                                  message: t("security.account.passkeyRenamed", { name }),
-                                });
-                              } catch (failure) {
-                                notice.showError(errorText(t, failure));
+          </section>
+
+          <section className="security-card" aria-label={t("security.account.secondFactor")}>
+            <div className="security-row">
+              <div className="security-row__text">
+                <h3 className="security-row__title">
+                  <Icon name="shieldCheck" />
+                  {t("security.account.secondFactor")}
+                </h3>
+                <p className="security-row__meta">
+                  {count === 0 ? t("security.account.none") : summary}
+                </p>
+              </div>
+            </div>
+
+            <div className="security-row">
+              <div className="security-row__text">
+                <h3 className="security-row__title">
+                  <Icon name="phone" />
+                  {t("security.setup.app")}
+                </h3>
+                <p className="security-row__meta">
+                  {s.totp === null
+                    ? t("security.setup.appHint")
+                    : s.totp.lastUsedAt === null
+                      ? t("security.account.appSinceUnused", { date: date(s.totp.createdAt) })
+                      : t("security.account.appSince", {
+                          date: date(s.totp.createdAt),
+                          used: date(s.totp.lastUsedAt),
+                        })}
+                </p>
+              </div>
+              <div className="security-row__actions">
+                {s.allowed.totp ? (
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    onClick={() => setOpen({ kind: "totp" })}
+                  >
+                    {s.totp === null ? t("security.account.setUp") : t("security.account.redo")}
+                  </button>
+                ) : null}
+                {s.totp === null ? null : (
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    onClick={() => askRemove({ kind: "removeTotp" }, t("security.setup.app"))}
+                  >
+                    {t("security.account.remove")}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="security-passkeys">
+              <div className="security-row__text">
+                <h3 className="security-row__title">
+                  <Icon name="passkey" />
+                  {t("security.account.passkeys")}
+                  <span className="security-row__meta">{s.passkeys.length}</span>
+                </h3>
+                <p className="security-row__meta">{t("security.account.passkeysLead")}</p>
+              </div>
+              {s.allowed.passkey ? (
+                <div className="security-row__actions">
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    onClick={() => setOpen({ kind: "passkey" })}
+                  >
+                    <Icon name="plus" />
+                    {t("security.account.addPasskey")}
+                  </button>
+                </div>
+              ) : null}
+              {s.passkeys.length === 0 ? null : (
+                <table className="security-passkeys__table">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t("security.account.colName")}</th>
+                      <th scope="col">{t("security.account.colAdded")}</th>
+                      <th scope="col">{t("security.account.colUsed")}</th>
+                      <th scope="col">
+                        <span className="visually-hidden">{t("security.account.colActions")}</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.passkeys.map((passkey) => (
+                      <tr key={passkey.id}>
+                        <td>
+                          {renaming === passkey.id ? (
+                            <RenameField
+                              passkey={passkey}
+                              onDone={async (name) => {
+                                setRenaming(null);
+                                if (name !== null && name !== passkey.name) {
+                                  try {
+                                    await renamePasskey(passkey.id, name);
+                                    await refresh();
+                                    notice.show({
+                                      message: t("security.account.passkeyRenamed", { name }),
+                                    });
+                                  } catch (failure) {
+                                    notice.showError(errorText(t, failure));
+                                  }
+                                }
+                              }}
+                            />
+                          ) : (
+                            passkey.name
+                          )}
+                        </td>
+                        <td>{date(passkey.createdAt)}</td>
+                        <td>
+                          {passkey.lastUsedAt === null
+                            ? t("security.account.never")
+                            : dateTime(passkey.lastUsedAt)}
+                        </td>
+                        <td>
+                          <div className="security-passkeys__actions">
+                            <button
+                              type="button"
+                              className="button button--ghost"
+                              aria-label={t("security.account.renameNamed", { name: passkey.name })}
+                              onClick={() => setRenaming(passkey.id)}
+                            >
+                              {t("security.account.rename")}
+                            </button>
+                            <button
+                              type="button"
+                              className="button button--ghost"
+                              aria-label={t("security.account.removeNamed", { name: passkey.name })}
+                              onClick={() =>
+                                askRemove({ kind: "removePasskey", passkey }, passkey.name)
                               }
-                            }
-                          }}
-                        />
-                      ) : (
-                        passkey.name
-                      )}
-                    </td>
-                    <td>{date(passkey.createdAt)}</td>
-                    <td>
-                      {passkey.lastUsedAt === null
-                        ? t("security.account.never")
-                        : dateTime(passkey.lastUsedAt)}
-                    </td>
-                    <td>
-                      <div className="security-passkeys__actions">
-                        <button
-                          type="button"
-                          className="button button--ghost"
-                          aria-label={t("security.account.renameNamed", { name: passkey.name })}
-                          onClick={() => setRenaming(passkey.id)}
-                        >
-                          {t("security.account.rename")}
-                        </button>
-                        <button
-                          type="button"
-                          className="button button--ghost"
-                          aria-label={t("security.account.removeNamed", { name: passkey.name })}
-                          onClick={() =>
-                            askRemove({ kind: "removePasskey", passkey }, passkey.name)
-                          }
-                        >
-                          {t("security.account.remove")}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div className="security-row">
-          <div className="security-row__text">
-            <h3 className="security-row__title">{t("security.codes.list")}</h3>
-            <p className="security-row__meta">
-              {s.recoveryCodes === null
-                ? t("security.account.codesNone")
-                : t("security.account.codesMeta", {
-                    remaining: s.recoveryCodes.remaining,
-                    total: s.recoveryCodes.total,
-                    date: date(s.recoveryCodes.createdAt),
-                  })}
-            </p>
-          </div>
-          {count === 0 ? null : (
-            <div className="security-row__actions">
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => setOpen({ kind: "regenerate" })}
-              >
-                {t("security.account.regenerate")}
-              </button>
+                            >
+                              {t("security.account.remove")}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
-          )}
+
+            <div className="security-row">
+              <div className="security-row__text">
+                <h3 className="security-row__title">{t("security.codes.list")}</h3>
+                <p className="security-row__meta">
+                  {s.recoveryCodes === null
+                    ? t("security.account.codesNone")
+                    : t("security.account.codesMeta", {
+                        remaining: s.recoveryCodes.remaining,
+                        total: s.recoveryCodes.total,
+                        date: date(s.recoveryCodes.createdAt),
+                      })}
+                </p>
+              </div>
+              {count === 0 ? null : (
+                <div className="security-row__actions">
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    onClick={() => setOpen({ kind: "regenerate" })}
+                  >
+                    {t("security.account.regenerate")}
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
-      </section>
+        <RecentSignIns />
+      </div>
 
       {open?.kind === "totp" ? (
         <TotpDialog

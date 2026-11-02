@@ -43,6 +43,7 @@
   "plugins.filter.updates": "Updates",
   "plugins.filter.none": "No plugin matches this filter.",
   "plugins.table.label": "Installed plugins",
+  "plugins.table.scrollLabel": "{title}, table",
   "plugins.column.plugin": "Plugin",
   "plugins.column.kind": "Kind",
   "plugins.column.publisher": "Publisher, signature",

@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { DIALOG_BODIES, findOverflow } from "./support/overflow";
-import { MAIN_PAGES } from "./support/pages";
+import { MAIN_PAGES, openMainPage } from "./support/pages";
 import { expect, signInOwner, test } from "./support/test";
 
 async function expectNothingSticksOut(page: Page): Promise<void> {
@@ -20,8 +20,7 @@ for (const variant of [
     for (const main of MAIN_PAGES) {
       test(`${main.name}: nothing sticks out to the right`, async ({ page, world }) => {
         await signInOwner(page, variant.language);
-        await page.goto(main.path(world));
-        await main.ready(page, world, variant.language);
+        await openMainPage(page, main, world, variant.language);
         await expectNothingSticksOut(page);
       });
     }
@@ -61,8 +60,7 @@ for (const viewport of [
     for (const main of MAIN_PAGES.filter((m) => KEY_PAGES.has(m.name))) {
       test(`${main.name}: nothing sticks out to the right`, async ({ page, world }) => {
         await signInOwner(page, "en");
-        await page.goto(main.path(world));
-        await main.ready(page, world, "en");
+        await openMainPage(page, main, world, "en");
         await expectNothingSticksOut(page);
       });
     }
@@ -97,8 +95,7 @@ test.describe("the overflow check itself", () => {
       test(`${name} in the ${main.name} dialog is caught`, async ({ page, world }) => {
         test.fail(true, "the probe makes the dialog too wide on purpose");
         await signInOwner(page);
-        await page.goto(main.path(world));
-        await main.ready(page, world, "en");
+        await openMainPage(page, main, world, "en");
         await page.locator(DIALOG_BODIES).first().evaluate(inject);
         await expectNothingSticksOut(page);
       });

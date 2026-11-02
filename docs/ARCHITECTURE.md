@@ -322,6 +322,18 @@ type QueryResult =
   the same build instead of each opening a pool and logging in. A connection nobody holds closes
   its SQLite file when dropped (also one whose entry was forgotten while it was built), and a
   build that finishes after the server began to stop is closed instead of used.
+  - The sqlx sources use sqlx's pool; SQL Server and Neo4j/Memgraph, whose drivers have none,
+    share `datasources::pool`: at most four open connections per source (one still closing after
+    an abandoned query counts), idle ones closed within seconds of five minutes by a sweep that
+    runs every five seconds while any wait, every idle connection looked at without a
+    round trip before it is handed out (the server closed it, sent something unasked, or it is in
+    an unknown state: closed, and another taken), and no broken connection put back. A lease
+    dropped mid-query stops the query on the server (SQL Server attention, Bolt `RESET`) and
+    closes the connection.
+  - The HTTP sources share `datasources::http_source`: the `Authorization` header (marked
+    sensitive), one `Scrubber` with every stored secret and the base64 of `user:password`, and
+    one mapping from `HttpError` (blocked target, refused hop, unreachable, timed out, `401`).
+    Failures are classified by error codes, never by the text of a message.
 - **Secrets** (passwords, tokens, client keys) never live in plain settings: settings with a URL
   or DSN reject embedded credentials, which go into dedicated secret fields.
   - Stored in `datasource_secrets`, encrypted with AES-256-GCM, a random 96-bit nonce per
@@ -1737,8 +1749,10 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
   the runnable ones. An unsigned plugin starts only while unsigned plugins are allowed, at boot
   (`PluginHost::load`) as in a sync. A package
   not on disk is unpacked from the shared copy into `.partial-<dir>`, checked like an
-  installation (valid package, the stored manifest byte for byte, every file as listed, the
-  binary or the panel bundle), renamed into place and marked complete (`<dir>.complete`, also
+  installation (only a generated directory name; the archive against its stored SHA-256 before
+  anything is written; the stored manifest byte for byte; the signature verified with the keys
+  this server trusts and matching the stored signer and key; every file as listed, the binary or
+  the panel bundle; a refusal is logged and audited as `plugins.package_refused`), renamed into place and marked complete (`<dir>.complete`, also
   written by an installation); a directory without the mark is unpacked again when a shared copy
   exists. Package directories no plugin refers to are removed. A sync that left a plugin out or
   failed is tried again after 5 s, doubling up to 5 minutes. The leader deletes shared copies no
@@ -2079,6 +2093,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
   | `workflows` | `.github/`; turns every flag on (shown in the log only) |
   | `docs_only` | only `docs/`, Markdown files and `LICENSE` changed (shown in the log only) |
   | `installer` | `server` or `packaging/` |
+  | `devkit` | `tools/devkit/` and the shared `.mcp.json` (the developer toolkit, job `devkit`) |
+  | `devgen` | `tools/devgen/` and the shared `.mcp.json` (the developer generators, job `devgen`, which also runs for `server` and `ui`) |
+  | `devgen_proof` | `server/src/routes/`, `server/src/settings*`, `ui/src/i18n/`, `ui/src/features/settings/`, `tools/devgen/src/` (job `devgen proof` on pull requests; weekly by `devgen-proof.yml`) |
+  | `roadmap` | `docs/roadmap/`, `tools/roadmap/`, `README.md`, `ui/src/styles/tokens.css` (job `roadmap`: the README's milestone progress bars match `docs/roadmap/progress.json`) |
 
   `docs/api/` and `docs/glossary.md` count as code because server and UI tests read them;
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test

@@ -24,7 +24,8 @@ use serde_json::{Value, json};
 
 use super::Detail;
 use super::frame::{Charge, Column, FrameBuilder};
-use super::http_json::{basic_auth, header_value, parse_url};
+use super::http_json::parse_url;
+use super::http_source::{self, Auth, Scrubber};
 use super::sql::{self, Bind, Engine};
 use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
@@ -224,7 +225,8 @@ struct Client {
     organization: Option<String>,
     database: Option<String>,
     headers: HeaderMap,
-    basic_token: Option<String>,
+    /// The secrets and the base64 of `user:password`, to scrub from errors.
+    scrubber: Scrubber,
 }
 
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
@@ -242,21 +244,18 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
         .map_err(|e| SourceError::Failed(e.detail()))?;
         let version = s.version.unwrap_or(Version::V2);
         let mut headers = HeaderMap::new();
-        let mut basic_token = None;
-        match (s.user.filter(|u| !u.is_empty()), conn.secret("token")) {
+        let mut scrubber = Scrubber::new(conn);
+        let auth = match (s.user.as_deref().filter(|u| !u.is_empty()), conn.secret("token")) {
+            // 2.x takes `Token`, 3.x `Bearer` (and `Token`); 1.x with authentication on takes a
+            // token as the password of basic auth, sent when a user is set.
             (_, Some(token)) => {
-                // 2.x takes `Token`, 3.x `Bearer` (and `Token`); 1.x with authentication on
-                // takes a token as the password of basic auth, sent below when a user is set.
-                let scheme = if version == Version::V3 { "Bearer" } else { "Token" };
-                headers
-                    .insert(AUTHORIZATION, header_value(&format!("{scheme} {token}"), "influxdb.credentials_invalid")?);
+                Some(Auth::Token { scheme: if version == Version::V3 { "Bearer" } else { "Token" }, token })
             }
-            (Some(user), None) => {
-                let (value, token) = basic_auth(&user, conn.secret("password").unwrap_or(""));
-                headers.insert(AUTHORIZATION, header_value(&value, "influxdb.credentials_invalid")?);
-                basic_token = Some(token);
-            }
-            (None, None) => {}
+            (Some(user), None) => Some(Auth::Basic { user, password: conn.secret("password").unwrap_or("") }),
+            (None, None) => None,
+        };
+        if let Some(auth) = auth {
+            headers.insert(AUTHORIZATION, auth.header("influxdb.credentials_invalid", &mut scrubber)?);
         }
         Ok(Client {
             http,
@@ -265,7 +264,7 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             organization: s.organization.filter(|o| !o.trim().is_empty()),
             database: s.database.filter(|d| !d.trim().is_empty()),
             headers,
-            basic_token,
+            scrubber,
         })
     })
     .await
@@ -273,18 +272,11 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
 
 impl Client {
     fn scrub(&self, text: &str) -> String {
-        match &self.basic_token {
-            Some(t) => text.replace(t, "***"),
-            None => text.to_string(),
-        }
+        self.scrubber.scrub(text)
     }
 
     fn failed(&self, e: HttpError) -> SourceError {
-        match e {
-            HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            HttpError::Refused(d) => SourceError::Rejected(d),
-            other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
-        }
+        http_source::failed(e, &self.scrubber)
     }
 
     fn database(&self) -> Result<&str, SourceError> {
@@ -326,6 +318,9 @@ impl Client {
         }
         let status = response.status();
         let body = crate::http::read_limited(response, MAX_SMALL_RESPONSE).await.map_err(|e| self.failed(e))?;
+        if let Some(e) = http_source::unauthorized(status, &body, &self.scrubber) {
+            return Err(e);
+        }
         let text = String::from_utf8_lossy(&body);
         let message = serde_json::from_slice::<Value>(&body)
             .ok()
@@ -1706,5 +1701,179 @@ mod tests {
         assert_eq!(frame.fields()[0].field_type, FieldType::Time);
         assert_eq!(frame.fields()[0].values[1], json!(1_800_000_030_000_i64));
         assert_eq!(frame.fields()[1].values, [json!("a"), Value::Null]);
+    }
+}
+
+/// InfluxQL, Flux and SQL texts and the server's answers are read by hand-written scanners:
+/// they answer with a result or an error, never a panic.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::datasources::Limits;
+    use crate::datasources::frame::ResponseBudget;
+    use crate::shapes::TimeRange;
+    use proptest::prelude::*;
+
+    fn req() -> SourceQuery {
+        SourceQuery {
+            ref_id: "A".into(),
+            query: json!({}),
+            range: TimeRange { from: 1_800_000_000_000, to: 1_800_003_600_000 },
+            interval_ms: 30_000,
+            max_data_points: None,
+            variables: serde_json::from_value(json!({ "host": "a\"b'c$d", "hosts": ["x.1", "y/z"] })).unwrap(),
+            identifier_variables: None,
+            limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
+            cursor: None,
+        }
+    }
+
+    /// Text built from the pieces the scanners care about.
+    fn query_like() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            prop::sample::select(vec![
+                "SELECT ",
+                "INTO ",
+                "DROP ",
+                "from(bucket: ",
+                "|> ",
+                "to(",
+                "import ",
+                "$host",
+                "${hosts}",
+                "$__timeFilter",
+                "$__interval",
+                "$",
+                "v.timeRangeStart",
+                "\"",
+                "'",
+                "`",
+                "/",
+                "\\",
+                "//",
+                "--",
+                "/*",
+                "*/",
+                ";",
+                "=~",
+                "(",
+                ")",
+                "\n",
+            ])
+            .prop_map(str::to_string),
+            "[a-zA-Z_0-9 .,=-]{0,6}",
+            "\\PC{0,3}",
+        ];
+        prop::collection::vec(piece, 0..24).prop_map(|p| p.concat())
+    }
+
+    fn scan(text: &str) {
+        let r = req();
+        let _ = check_influxql(text);
+        let _ = check_flux(text);
+        for language in [Language::Flux, Language::InfluxQl, Language::Sql] {
+            let _ = expand(text, language, &r, Some("db"));
+        }
+    }
+
+    /// A cell of an answer: times as texts and numbers, values of every JSON type.
+    fn cell() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            prop::sample::select(vec![
+                "2026-10-15T09:00:00Z",
+                "2026-10-15T09:00:00.123456789+02:00",
+                "9999-12-31T23:59:59Z",
+                "0000-01-01T00:00:00Z",
+                "2026-13-45",
+                "cpu0",
+                "",
+            ])
+            .prop_map(Value::from),
+            any::<i64>().prop_map(Value::from),
+            any::<f64>().prop_map(|f| json!(f)),
+            any::<bool>().prop_map(Value::from),
+            Just(Value::Null),
+            Just(json!({ "nested": [1, "a"] })),
+            Just(json!([1, 2])),
+        ]
+    }
+
+    fn column_name() -> impl Strategy<Value = String> {
+        prop::sample::select(vec!["time", "host", "value", "_field", "_value", "usage_idle", ""])
+            .prop_map(str::to_string)
+    }
+
+    /// The rows of an SQL answer as InfluxDB 3 writes them: a JSON array of objects, or one
+    /// object per line.
+    fn sql_answer() -> impl Strategy<Value = String> {
+        let row = prop::collection::vec((column_name(), cell()), 0..6);
+        (prop::collection::vec(row, 0..8), any::<bool>(), "\\PC{0,4}").prop_map(|(rows, as_array, junk)| {
+            let objects: Vec<String> = rows
+                .into_iter()
+                .map(|entries| {
+                    // Written by hand, so a key may repeat as a server could send it.
+                    let fields: Vec<String> = entries.into_iter().map(|(k, v)| format!("{}:{v}", json!(k))).collect();
+                    format!("{{{}}}", fields.join(","))
+                })
+                .collect();
+            if as_array { format!("[{}]", objects.join(",")) } else { format!("{}\n{junk}", objects.join("\n")) }
+        })
+    }
+
+    /// The series of an InfluxQL answer: names, tags, columns and rows that may not match them.
+    fn influxql_series() -> impl Strategy<Value = Vec<Value>> {
+        let one = (
+            prop::sample::select(vec!["cpu", "mem", ""]),
+            prop::collection::btree_map(column_name(), cell(), 0..3),
+            prop::collection::vec(column_name(), 0..5),
+            prop::collection::vec(prop::collection::vec(cell(), 0..6), 0..8),
+        )
+            .prop_map(|(name, tags, columns, values)| {
+                json!({ "name": name, "tags": tags, "columns": columns, "values": values })
+            });
+        prop::collection::vec(one, 0..4)
+    }
+
+    proptest! {
+        // 256 cases (proptest's default), bounded for CI; PROPTEST_CASES raises it locally.
+        #![proptest_config(ProptestConfig::default())]
+
+        #[test]
+        fn scanners_never_panic_on_any_text(text in "\\PC{0,200}") {
+            scan(&text);
+        }
+
+        #[test]
+        fn scanners_never_panic_on_query_like_text(text in query_like()) {
+            scan(&text);
+        }
+
+        /// Annotated CSV and JSON lines come from the server; a broken or hostile answer is an error.
+        #[test]
+        fn answers_never_panic(
+            body in prop::collection::vec(any::<u8>(), 0..400),
+            csv in "(#[a-z,]{0,12}\r?\n|[a-z0-9,\"_:.-]{0,16}\r?\n){0,12}",
+        ) {
+            let r = req();
+            let _ = flux_tables(&body, 10);
+            let _ = flux_tables(csv.as_bytes(), 10);
+            let _ = flux_frame(&body, &r);
+            let _ = flux_frame(csv.as_bytes(), &r);
+            let _ = jsonl_frame(&body, &r);
+            let _ = sql_rows(&body);
+        }
+
+        /// SQL answers shaped like InfluxDB's, with odd values and repeated keys.
+        #[test]
+        fn sql_answers_never_panic(body in sql_answer()) {
+            let _ = sql_rows(body.as_bytes());
+            let _ = jsonl_frame(body.as_bytes(), &req());
+        }
+
+        /// InfluxQL series whose columns, rows and tags need not agree.
+        #[test]
+        fn influxql_answers_never_panic(series in influxql_series()) {
+            let _ = influxql_frame(&series, &req());
+        }
     }
 }

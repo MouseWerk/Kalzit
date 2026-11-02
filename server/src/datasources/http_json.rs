@@ -10,7 +10,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine as _;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Method, Url};
 use serde::Deserialize;
@@ -18,6 +17,7 @@ use serde_json::Value;
 
 use super::Detail;
 use super::frame::ResponseBudget;
+use super::http_source::{self, Auth, Scrubber, header_value};
 use super::json_documents::DocumentsBuilder;
 use super::{
     Connection, DataSourcePlugin, FieldError, Health, Kind, SettingField, SettingType, SourceError, SourceQuery,
@@ -103,21 +103,6 @@ pub(crate) fn parse_url(raw: &str, allow_query: bool) -> Result<Url, Detail> {
     Ok(url)
 }
 
-/// A request header value from credentials, marked sensitive so it never follows a redirect to
-/// another origin. `reason` names the kind's own error.
-pub(crate) fn header_value(text: &str, reason: &'static str) -> Result<HeaderValue, SourceError> {
-    let mut value = HeaderValue::from_str(text)
-        .map_err(|_| SourceError::failed(reason, "the credentials contain characters a header cannot carry"))?;
-    value.set_sensitive(true);
-    Ok(value)
-}
-
-/// `Basic <base64(user:password)>`, and the base64 part to scrub from errors.
-pub(crate) fn basic_auth(user: &str, password: &str) -> (String, String) {
-    let token = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
-    (format!("Basic {token}"), token)
-}
-
 fn check_header_name(name: &str) -> Result<(), FieldError> {
     let valid = HeaderName::from_bytes(name.as_bytes()).is_ok();
     if !valid || RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
@@ -136,7 +121,7 @@ struct Client {
     headers: HeaderMap,
     documents_path: Option<String>,
     /// The stored secrets and the base64 of `user:password`, to scrub from errors.
-    secrets: Vec<String>,
+    scrubber: Scrubber,
 }
 
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
@@ -151,25 +136,22 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
         .map_err(|e| SourceError::Failed(e.detail()))?;
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-        let mut basic_token = None;
         let invalid = "http_json.credentials_invalid";
-        if let Some(user) = s.basic_auth_user.filter(|u| !u.is_empty()) {
-            let (value, token) = basic_auth(&user, conn.secret("basicAuthPassword").unwrap_or(""));
-            headers.insert(AUTHORIZATION, header_value(&value, invalid)?);
-            basic_token = Some(token);
-        } else if let Some(token) = conn.secret("bearerToken") {
-            headers.insert(AUTHORIZATION, header_value(&format!("Bearer {token}"), invalid)?);
+        let mut scrubber = Scrubber::new(conn);
+        let auth = Auth::basic_or_bearer(
+            s.basic_auth_user.as_deref(),
+            conn.secret("basicAuthPassword"),
+            conn.secret("bearerToken"),
+        );
+        if let Some(auth) = auth {
+            headers.insert(AUTHORIZATION, auth.header(invalid, &mut scrubber)?);
         }
         if let (Some(name), Some(key)) = (s.api_key_header.filter(|h| !h.is_empty()), conn.secret("apiKey")) {
             let name = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|_| SourceError::failed("settings.stored_invalid", "the stored settings are not valid"))?;
             headers.insert(name, header_value(key, invalid)?);
         }
-        let mut secrets: Vec<String> = basic_token.into_iter().collect();
-        secrets.extend(
-            ["basicAuthPassword", "bearerToken", "apiKey"].iter().filter_map(|f| conn.secret(f)).map(String::from),
-        );
-        Ok(Client { http, base, headers, documents_path: s.documents_path.filter(|p| !p.is_empty()), secrets })
+        Ok(Client { http, base, headers, documents_path: s.documents_path.filter(|p| !p.is_empty()), scrubber })
     })
     .await
 }
@@ -268,7 +250,7 @@ fn at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
 
 impl Client {
     fn scrub(&self, text: &str) -> String {
-        super::scrub(text, self.secrets.iter().map(String::as_str))
+        self.scrubber.scrub(text)
     }
 
     /// A request (the first or a redirect) must be a GET on the source's origin, at its URL or
@@ -288,10 +270,7 @@ impl Client {
     }
 
     fn failed(&self, e: HttpError) -> SourceError {
-        match e {
-            HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
-        }
+        http_source::failed(e, &self.scrubber)
     }
 
     /// GETs `url` and answers the parsed JSON. With `charge`, the body is charged to the
@@ -315,6 +294,9 @@ impl Client {
             None => crate::http::read_limited(response, max_bytes).await,
         }
         .map_err(|e| self.failed(e))?;
+        if let Some(e) = http_source::unauthorized(status, &body, &self.scrubber) {
+            return Err(e);
+        }
         if !status.is_success() {
             // Scrubbed whole before it is cut, so a secret across the cut is still found.
             let text = self.scrub(&String::from_utf8_lossy(&body));
@@ -721,7 +703,13 @@ mod review_followup_tests {
             policy: Arc::new(policy),
         })
         .unwrap();
-        let c = Client { http, base: base.clone(), headers: HeaderMap::new(), documents_path: None, secrets: vec![] };
+        let c = Client {
+            http,
+            base: base.clone(),
+            headers: HeaderMap::new(),
+            documents_path: None,
+            scrubber: Scrubber::default(),
+        };
         let mut passed = Vec::new();
         for loc in ["/v1/..;/admin", "/v1/%2e%2e%2fadmin", "/v1/%252e%252e/admin", "/v1/a/..%3b/admin"] {
             let url = base.join(loc).unwrap();

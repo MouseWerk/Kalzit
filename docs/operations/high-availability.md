@@ -22,7 +22,10 @@ to several servers, move to PostgreSQL first; Kalzit has no copy tool between th
 ## What every server needs
 
 - **The same database URL** (`database.url` or `KALZIT_DATABASE_URL`), pointing at the primary.
-  The database user needs `LISTEN`/`NOTIFY`, which every PostgreSQL user has.
+  The database user needs `LISTEN`/`NOTIFY`, which every PostgreSQL user has. Protect the
+  database credentials like the credentials of a server admin: whoever may write Kalzit's
+  database can create admins, and admins may install plugins, so such access counts as full
+  control of every server.
 - **The same secrets key** (`KALZIT_SECRETS_KEY`, or the same systemd credential). Data source
   passwords, AI provider keys, the ACME account and certificate and the known-device cookies are
   encrypted or signed with it. A server with another key cannot read them; it logs which stored
@@ -128,7 +131,14 @@ connection for Kalzit, keeps notifications.
   queries are per server too.
 - **Plugins** run as processes on every server. A package installed through one server is kept in
   the database; every other server unpacks it, with the same checks, and starts the plugin when
-  the change reaches it. A plugin's log and status show the server that answered.
+  the change reaches it. A plugin's log and status show the server that answered. Each server
+  checks the package's integrity against the shared trust list in the database: the archive
+  against its stored SHA-256, the manifest against the installed one, the signature against the
+  publisher keys trusted there and the signer recorded at the installation, and only a package
+  directory name Kalzit makes. A package that fails is not started on that server and is
+  recorded as `plugins.package_refused`. These checks catch a damaged or changed archive, a
+  revoked key and a path outside the packages directory; they are no defense against someone who
+  may write the database, who counts as a server admin (above).
 - **TLS certificate files** (`tls.cert_file`, `tls.key_file`) are read from each server's disk:
   deploy the same files to every server, or terminate TLS at the load balancer. Certificates
   Kalzit orders over ACME are shared through the database (encrypted with the secrets key): the

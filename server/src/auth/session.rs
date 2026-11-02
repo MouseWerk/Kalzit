@@ -36,22 +36,37 @@ pub async fn create<'c, E>(db: E, cfg: &SessionConfig, now_ms: i64, user_id: &st
 where
     E: sqlx::Executor<'c, Database = sqlx::Any>,
 {
+    Ok(create_with_id(db, cfg, now_ms, user_id).await?.0)
+}
+
+/// `create`, answering the token and the session's id (the one users see in their sessions and
+/// their recent sign-ins).
+pub async fn create_with_id<'c, E>(
+    db: E,
+    cfg: &SessionConfig,
+    now_ms: i64,
+    user_id: &str,
+) -> ApiResult<(String, String)>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
     let token = hex::encode(rand::random::<[u8; 32]>());
+    // The id users see when they list and end their sessions; the hash never leaves the server.
+    let id = uuid::Uuid::now_v7().to_string();
     let expires = now_ms + cfg.lifetime_hours as i64 * HOUR_MS;
     sqlx::query(
         "INSERT INTO sessions (token_hash, id, user_id, created_at, last_seen_at, expires_at) \
          VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(hash_token(&token))
-    // The id users see when they list and end their sessions; the hash never leaves the server.
-    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(&id)
     .bind(user_id)
     .bind(now_ms)
     .bind(now_ms)
     .bind(expires)
     .execute(db)
     .await?;
-    Ok(token)
+    Ok((token, id))
 }
 
 /// The signed-in user for `token`, or `None` when the session is unknown, expired, idle too long

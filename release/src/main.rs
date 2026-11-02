@@ -26,8 +26,8 @@ use std::process::ExitCode;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use kalzit_release::{
-    BUNDLE_EXTENSION, Channel, DetachedSignature, Manifest, highlights_from_notes, key_id, manifest_message,
-    package_message, parse_public_key, public_key_base64, sha256_hex, sign_manifest, sign_package,
+    BUNDLE_EXTENSION, Channel, DetachedSignature, Manifest, highlights_from_notes, key_id, manifest_json,
+    manifest_message, package_message, parse_public_key, public_key_base64, sha256_hex, sign_manifest, sign_package,
     sign_plugin_manifest, signature_matches, signing_key_from_base64, write_bundle,
 };
 use zeroize::Zeroizing;
@@ -161,7 +161,11 @@ fn release(o: &Options) -> Result<String, String> {
         other => return Err(format!("unknown channel {other}")),
     };
     let notes_text = match o.one("notes") {
-        Some(path) => std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?,
+        // UTF-8 only (`read_to_string` refuses anything else); a byte order mark is dropped.
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+            text.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(text)
+        }
         None => String::new(),
     };
     let notes_url = o.one("notes-url").map(str::to_string);
@@ -186,7 +190,7 @@ fn release(o: &Options) -> Result<String, String> {
         packages,
         installers,
     };
-    let bytes = serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
+    let bytes = manifest_json(&manifest).map_err(|e| e.to_string())?;
     let signature = serde_json::to_vec(&sign_manifest(&key, &bytes)).map_err(|e| e.to_string())?;
     // The tool checks its own output the way a server will.
     let all: Vec<_> = files.iter().chain(&installer_files).cloned().collect();

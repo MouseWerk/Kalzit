@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "kalzit-devkit": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["tools/devkit/dist/server.js"],
+      "env": {
+        "CARGO_BUILD_JOBS": "2"
+      }
+    },
+    "kalzit-devgen": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["tools/devgen/src/mcp.ts"]
+    }
+  }
+}

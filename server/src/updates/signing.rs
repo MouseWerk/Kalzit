@@ -246,6 +246,24 @@ pub(crate) mod tests {
         (bytes, sig)
     }
 
+    /// What the Updates page shows: a shortened highlight with umlauts ends in a real "…",
+    /// from a manifest written by `kalzit-sign` (`manifest_json`, non-ASCII as `\u` escapes).
+    #[test]
+    fn a_shortened_highlight_with_umlauts_reads_back_with_its_ellipsis() {
+        let key = test_key(7);
+        let point = "Übersicht für große Dashboards, schneller geöffnet ".repeat(10);
+        let highlights = highlights_from_notes(&format!("## Improved\n\n- {}\n", point.trim_end()));
+        let (manifest, _) = signed_manifest(&key, "1.2.3", &[("linux", "x64", b"binary")]);
+        let mut m: Manifest = serde_json::from_slice(&manifest).unwrap();
+        m.highlights = highlights;
+        let bytes = kalzit_release::manifest_json(&m).unwrap();
+        let sig = serde_json::to_vec(&sign_manifest(&key, &bytes)).unwrap();
+        let read = verify_manifest(&keys_for(&key), &bytes, &sig).unwrap();
+        let text = &read.highlights[0].text;
+        assert!(text.starts_with("Übersicht für große") && text.ends_with('…'), "{text}");
+        assert!(!text.contains('â') && text.chars().count() <= 300, "{text}");
+    }
+
     #[test]
     fn a_signed_manifest_verifies() {
         let key = test_key(7);

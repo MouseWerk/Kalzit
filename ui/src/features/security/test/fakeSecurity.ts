@@ -1,5 +1,6 @@
 import type { Me } from "../../../api/auth";
 import type { PasskeyInfo, RequiredBy } from "../api";
+import type { SignIn } from "../signIns";
 
 /**
  * The second factor of the fake server (docs/api/access.md, "Second factor"): an authenticator
@@ -21,6 +22,9 @@ export interface FakeSecurity {
   confirmedUntil: number | null;
   /** Resets an admin made, by path, with their body. */
   resets: { path: string; body: unknown }[];
+  /** The recent sign-ins every list answers, and the paths that asked for them. */
+  signIns: SignIn[];
+  signInRequests: string[];
 }
 
 export function fakeSecurityState(): FakeSecurity {
@@ -36,6 +40,8 @@ export function fakeSecurityState(): FakeSecurity {
     lockedUntil: null,
     confirmedUntil: null,
     resets: [],
+    signIns: [],
+    signInRequests: [],
   };
 }
 
@@ -169,6 +175,16 @@ export function handleSecurityRoute(
       return json(200, { me: session.user, recoveryCodes: firstCodes() });
     }
     return undefined;
+  }
+
+  const signInList =
+    path.startsWith("/api/me/sign-ins") || /^\/api\/admin\/users\/[^/]+\/sign-ins/.test(path);
+  if (signInList && method === "GET") {
+    if (!session.signedIn) {
+      return fail(401, "unauthenticated");
+    }
+    s.signInRequests.push(path);
+    return json(200, { items: s.signIns, nextCursor: null });
   }
 
   if (!path.startsWith("/api/me/security")) {

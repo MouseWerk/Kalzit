@@ -214,6 +214,50 @@
     color: var(--ramp-grays-5);
   }
 
+  /*
+   * Forced colors (Windows high contrast) leave the WebGL canvas alone, so the probes hand it
+   * system colors instead of the theme's: nodes and edges in text, link and selection colors on
+   * the system background, labels in the text color. Left to the browser, every probe would turn
+   * into the text color, the label background included, and the labels would vanish.
+   */
+  @media (forced-colors: active) {
+    .graph__probes {
+      forced-color-adjust: none;
+    }
+
+    /*
+     * The ramps collapse to the text color on purpose: high contrast has no system color steps
+     * for a number scale, and the values stay readable in the details and the tables.
+     */
+    .graph__probe--1,
+    .graph__probe--4,
+    .graph__probe--7,
+    .graph__probe--neutral,
+    .graph__probe--edge,
+    .graph__probe--text,
+    [class*="graph__probe--blues-"],
+    [class*="graph__probe--gyr-"],
+    [class*="graph__probe--grays-"] {
+      color: CanvasText;
+    }
+
+    .graph__probe--2,
+    .graph__probe--5,
+    .graph__probe--8 {
+      color: LinkText;
+    }
+
+    .graph__probe--3,
+    .graph__probe--6 {
+      color: Highlight;
+    }
+
+    .graph__probe--bg,
+    .graph__probe--active {
+      color: Canvas;
+    }
+  }
+
   /* The toolbar's layout choice: a label and a compact select on the buttons' line. */
   /*
    * The tool row is pulled left by a ghost button's inset; the layout choice has no inset of its

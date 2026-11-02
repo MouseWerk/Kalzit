@@ -330,7 +330,7 @@ pub async fn finish(
     crate::db::commit(tx).await?;
     // The one plan for the second step, from which both the answer and the enabling follow.
     let sync_run = sync_disabled.as_ref().map(|(_, run)| run.as_str());
-    let first = FirstStep::Directory { sync_run };
+    let first = FirstStep::Directory { provider_id: &provider.id, sync_run };
     let plan = crate::routes::second_factor::plan(state, info, &linked.user, first, now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
     if plan.is_none()

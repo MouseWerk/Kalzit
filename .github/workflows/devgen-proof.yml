@@ -1,0 +1,48 @@
+name: devgen proof
+
+# The developer generators' proof (tools/devgen, `npm run proof`): scaffolds routes and settings
+# into the checkout and runs cargo fmt, clippy, the generated and affected server tests, Biome,
+# the UI typecheck and the affected UI tests, so generated code passes the repository's checks
+# out of the box. Called by ci.yml for pull requests that touch what the scaffolds depend on, and
+# weekly here, so drift on main shows up even without such a pull request.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    # Mondays, 03:17 UTC.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  proof:
+    name: proof
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: devgen-proof
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            tools/devgen/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npm ci
+        working-directory: tools/devgen
+      - run: npm run proof -- --in-place
+        working-directory: tools/devgen

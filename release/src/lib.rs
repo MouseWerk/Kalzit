@@ -251,6 +251,31 @@ fn shortened(text: &str, max: usize) -> String {
     format!("{}…", if kept.is_empty() { room.trim_end() } else { kept })
 }
 
+/// The manifest as a release carries it: pretty JSON in which every character outside ASCII is
+/// a `\u` escape. The file then reads the same in every text encoding, so a highlight's "…" or
+/// "ü" never turns into mojibake ("â€¦") where a tool takes the file for Windows-1252 or
+/// Latin-1; every JSON parser reads the escapes back to the same text.
+pub fn manifest_json(manifest: &Manifest) -> serde_json::Result<Vec<u8>> {
+    Ok(ascii_json(&serde_json::to_string_pretty(manifest)?).into_bytes())
+}
+
+/// `json` with every character outside ASCII as a `\u` escape (two for one outside the Basic
+/// Multilingual Plane). Serialized JSON has such characters only inside strings.
+fn ascii_json(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for c in json.chars() {
+        if c.is_ascii() {
+            out.push(c);
+            continue;
+        }
+        let mut units = [0_u16; 2];
+        for unit in c.encode_utf16(&mut units) {
+            out.push_str(&format!("\\u{unit:04x}"));
+        }
+    }
+    out
+}
+
 /// Writes an offline package of one release package.
 pub fn write_bundle(
     out: &mut impl std::io::Write,
@@ -306,6 +331,42 @@ mod tests {
         assert_eq!(shortened("one two three", 9), "one two…");
         assert_eq!(shortened("one two, three", 10), "one two…");
         assert_eq!(shortened("abcdefghijkl", 6), "abcde…");
+    }
+
+    #[test]
+    fn a_long_point_with_umlauts_is_cut_on_characters_and_written_as_ascii() {
+        let point = "Übersicht für große Dashboards → schneller geöffnet, auch mit Ölpreis-Daten ".repeat(8);
+        let notes = format!("\u{feff}# Kalzit 0.5.1\n\n## Improved\n\n- {}\n", point.trim_end());
+        let h = highlights_from_notes(&notes);
+        let text = &h[0].text;
+        assert!(text.chars().count() <= MAX_HIGHLIGHT_CHARS, "{} characters", text.chars().count());
+        assert!(text.ends_with('…') && !text.contains('â'), "{text}");
+        assert_eq!(shortened("Größe öffnen", 8), "Größe…");
+        assert_eq!(shortened("ÄÖÜäöüßé", 4), "ÄÖÜ…");
+
+        let manifest = Manifest {
+            format: 1,
+            product: "kalzit".into(),
+            version: "0.5.1".into(),
+            channel: Channel::Stable,
+            released_at: None,
+            minimum_version: None,
+            notes: "Größere Übersicht 😀".into(),
+            notes_url: None,
+            highlights: h.clone(),
+            packages: vec![],
+            installers: vec![],
+        };
+        let bytes = manifest_json(&manifest).unwrap();
+        assert!(bytes.is_ascii());
+        let json = String::from_utf8(bytes.clone()).unwrap();
+        assert!(json.contains("\\u2026") && json.contains("\\ud83d\\ude00"), "{json}");
+        // Read back as UTF-8 or as Latin-1 (every byte one character), the text is the same.
+        let latin1: String = bytes.iter().map(|&b| b as char).collect();
+        for read in [serde_json::from_slice::<Manifest>(&bytes).unwrap(), serde_json::from_str(&latin1).unwrap()] {
+            assert_eq!(read, manifest);
+            assert!(read.highlights[0].text.ends_with('…'));
+        }
     }
 
     #[test]

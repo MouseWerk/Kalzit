@@ -338,6 +338,99 @@
     }
   }
 
+  /* Account > Sign-in and security: the cards, and the recent sign-ins in a column beside them. */
+  .security-page {
+    container-type: inline-size;
+  }
+
+  .security-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--size-settings-preview);
+    gap: var(--space-4);
+    align-items: start;
+  }
+
+  .security-layout__main {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .sign-ins-card {
+    gap: var(--space-2);
+    padding: var(--space-4);
+  }
+
+  .sign-ins-card__title {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .sign-ins-card__link {
+    justify-self: start;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .sign-ins {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .sign-ins__item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .sign-ins__item:first-child {
+    border-top: 0;
+  }
+
+  .sign-ins__text {
+    display: grid;
+    flex: 1;
+    gap: var(--space-half);
+    min-width: 0;
+  }
+
+  .sign-ins__title {
+    font-size: var(--font-size-sm);
+    overflow-wrap: anywhere;
+  }
+
+  .sign-ins__detail {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height);
+    overflow-wrap: anywhere;
+  }
+
+  .sign-ins__chip {
+    flex: none;
+    padding: var(--space-half) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    white-space: nowrap;
+  }
+
+  @container (width < 44rem) {
+    .security-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   /* Narrow by the room the component has, not by the window (the sidebar and panes vary it). */
   @container (width < 36rem) {
     .security-passkeys__table thead {

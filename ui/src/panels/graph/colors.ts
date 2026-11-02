@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { GRAPH_COLORS } from "./model";
 
 /**
@@ -34,6 +33,8 @@ export const RAMP_STEPS = 5;
 
 /** How far a dimmed color moves toward the background. */
 const DIM = 0.78;
+/** With forced colors (Windows high contrast) dimmed nodes and edges stay plainly visible. */
+const FORCED_DIM = 0.5;
 
 type Rgb = [number, number, number];
 
@@ -80,6 +81,10 @@ export function readPalette(root: HTMLElement): GraphPalette {
     return element === null ? "" : getComputedStyle(element).color;
   };
   const rgb = (name: string, fallback: Rgb): Rgb => toRgb(probe(name)) ?? fallback;
+  const dim =
+    typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches
+      ? FORCED_DIM
+      : DIM;
   const background = rgb("bg", [255, 255, 255]);
   const series = Array.from({ length: GRAPH_COLORS }, (_, i) => rgb(`${i + 1}`, [102, 102, 102]));
   const neutral = rgb("neutral", [120, 120, 120]);
@@ -93,11 +98,11 @@ export function readPalette(root: HTMLElement): GraphPalette {
   >;
   return {
     series: series.map(hex),
-    dimmed: series.map((c) => hex(mix(c, background, DIM))),
+    dimmed: series.map((c) => hex(mix(c, background, dim))),
     neutral: hex(neutral),
-    neutralDimmed: hex(mix(neutral, background, DIM)),
+    neutralDimmed: hex(mix(neutral, background, dim)),
     edge: hex(edge),
-    edgeDimmed: hex(mix(edge, background, DIM)),
+    edgeDimmed: hex(mix(edge, background, dim)),
     text: hex(rgb("text", [0, 0, 0])),
     background: hex(background),
     selection: hex(rgb("active", [230, 230, 230])),
@@ -106,38 +111,15 @@ export function readPalette(root: HTMLElement): GraphPalette {
       string[]
     >,
     dimmedRamps: Object.fromEntries(
-      RAMPS.map((n) => [n, ramps[n].map((c) => hex(mix(c, background, DIM)))]),
+      RAMPS.map((n) => [n, ramps[n].map((c) => hex(mix(c, background, dim)))]),
     ) as Record<RampName, string[]>,
     font: style.fontFamily || "sans-serif",
     boldWeight: style.getPropertyValue("--font-weight-semibold").trim() || "600",
   };
 }
 
-/**
- * Counts theme changes: the data-theme attribute or the system's light and dark preference.
- * Components that draw on a canvas read their colors again when it changes.
- */
-export function useThemeVersion(): number {
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    const bump = () => setVersion((v) => v + 1);
-    const observer = new MutationObserver(bump);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    const media =
-      typeof window.matchMedia === "function"
-        ? window.matchMedia("(prefers-color-scheme: dark)")
-        : null;
-    media?.addEventListener("change", bump);
-    return () => {
-      observer.disconnect();
-      media?.removeEventListener("change", bump);
-    };
-  }, []);
-  return version;
-}
+/** Canvases read their colors again when the theme, the color scheme or forced colors change. */
+export { useThemeVersion } from "../useThemeVersion";
 
 /** Whether the user asked for less motion; camera moves and the settling layout then jump. */
 export function prefersReducedMotion(): boolean {

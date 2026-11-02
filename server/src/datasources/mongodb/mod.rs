@@ -395,8 +395,10 @@ fn failed(e: &mongodb::error::Error, refusal: Option<Refusal>, timeout: Duration
     }
     match &*e.kind {
         ErrorKind::Command(c) if c.code == 50 => SourceError::Timeout(timeout.as_secs()),
+        // 18: AuthenticationFailed.
+        ErrorKind::Command(c) if c.code == 18 => crate::datasources::connect::auth_failed(&c.message),
         ErrorKind::Command(c) => SourceError::from_source(format!("{} ({})", c.message, c.code_name)),
-        ErrorKind::Authentication { message, .. } => SourceError::from_source(message.clone()),
+        ErrorKind::Authentication { message, .. } => crate::datasources::connect::auth_failed(message),
         ErrorKind::ServerSelection { message, .. } => {
             SourceError::failed("mongodb.no_server", format!("no suitable MongoDB server answered: {message}"))
                 .with("detail", message)
@@ -994,7 +996,13 @@ impl DataSourcePlugin for MongoDb {
             Err(e) => {
                 // Not reachable now, wrong password, ...: saving goes ahead; the check runs again
                 // whenever Kalzit connects.
-                tracing::debug!(datasource = conn.datasource_id(), "MongoDB check on save not completed: {e}");
+                let reason = e.detail().reason;
+                let text = conn.scrub(&e.to_string());
+                tracing::debug!(
+                    datasource = conn.datasource_id(),
+                    reason,
+                    "MongoDB check on save not completed: {text}"
+                );
                 Ok(())
             }
         }

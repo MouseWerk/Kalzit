@@ -1,0 +1,35 @@
+{
+  "name": "kalzit-devgen",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Developer generators for working on Kalzit: migrations, release notes, i18n, route and setting scaffolds, PR overlap, rules lint and storage cleanup. Not part of the product.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "bin": {
+    "devgen": "src/cli.ts"
+  },
+  "scripts": {
+    "devgen": "node src/cli.ts",
+    "mcp": "node src/mcp.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "biome lint --error-on-warnings .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "biome check --error-on-warnings .",
+    "test": "vitest run",
+    "proof": "node src/cli.ts proof"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

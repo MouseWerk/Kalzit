@@ -762,6 +762,43 @@ which signs this browser out). Errors: `404` (unknown, or another user's). Audit
 **`POST /me/sessions/revoke-others`** (no body needed) ends every session but this one. Audit
 `auth.sessions_revoked`.
 
+### Recent sign-ins
+
+Every completed sign-in is recorded as the audit entry `auth.signed_in`, whichever way it came:
+a password, the break-glass form, OpenID Connect, SAML or a directory (LDAP), with or without
+Kalzit's second factor. Its summary holds `method`, the provider's `provider` (slug),
+`providerName` and `providerMfa`, `secondFactor`, the `sessionId` it opened and the browser's
+`userAgent` (without control characters, at most 256 characters); the address is the entry's
+`actorAddress`. The list below reads these entries back, with the refused attempts of the
+account: a wrong password (`auth.sign_in_failed`, which now names the account as its resource),
+a wrong second factor (`auth.second_factor_failed`) and a provider's refusal after it found the
+person (`auth.sso_failed`). They follow the audit log's retention (`audit.retention_days`).
+
+```ts
+interface SignIn {
+  id: string;                  // the audit entry's id
+  at: number;
+  result: "success" | "refused";
+  // credentials, disabled, password_off, second_factor, or a provider's reason (sso.unmapped, ...)
+  reason: string | null;
+  method: "password" | "break_glass" | "oidc" | "saml" | "ldap" | "provider" | null;
+  provider: string | null;     // slug at the time of the sign-in
+  providerName: string | null;
+  secondFactor: "passkey" | "totp" | "recovery" | "provider" | null;
+  address: string | null;
+  userAgent: string | null;
+  current: boolean;            // the sign-in that opened the session of this request
+}
+```
+
+| Method and path | Access | Answer |
+|---|---|---|
+| `GET /me/sign-ins` | signed in | `200 Page<SignIn>`, the caller's own, newest first |
+| `GET /admin/users/{userId}/sign-ins` | server admin | `200 Page<SignIn>`, never `current`; `404` for an unknown account or a service account |
+
+Organization admins see no one's sign-ins here; the audit log of the organization does not hold
+them either, since sign-ins belong to the server.
+
 ## Second factor
 
 `server/src/auth/second_factor.rs` (with `totp.rs`, `passkeys.rs`, `recovery.rs`) and the routes

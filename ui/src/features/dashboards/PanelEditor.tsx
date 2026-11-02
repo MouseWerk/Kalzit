@@ -558,6 +558,11 @@ export function PanelEditor({
     [onMakeLibrary],
   );
   const pending = firstLoad(results);
+  // Runs the preview's queries again after a data source error, as they were last run.
+  const { refetch } = results;
+  const retry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   /** Takes over another panel's or an analysis's queries, steps and look, and runs them. */
   function takeOver(next: PanelModel) {
@@ -765,6 +770,8 @@ export function PanelEditor({
         range={range}
         pending={pending}
         error={results.error}
+        onRetry={retry}
+        fetching={results.isFetching}
         outcomes={outcomes}
         stepsRun={stepsRun}
         variables={texts}
@@ -1247,7 +1254,7 @@ function OptionsPane({
         </div>
       </OptionGroup>
       {plugin === undefined || Editor === undefined ? null : (
-        <OptionGroup id={`${titleId}-options`} title={t("dashboards.editor.panelOptions")}>
+        <OptionGroup id={`${titleId}-panel-options`} title={t("dashboards.editor.panelOptions")}>
           <Editor
             options={plugin.options(look.options)}
             onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}

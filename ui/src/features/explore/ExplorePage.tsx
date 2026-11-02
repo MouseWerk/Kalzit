@@ -26,6 +26,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
+import { Skeleton } from "../../components/Skeleton";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
 import {
   hasProjectionProblems,
@@ -521,10 +522,22 @@ function Explore({
   }, [mayCreateAny, datasource, query]);
 
   if (datasources.isPending) {
-    return <p className="loading">{t("common.loading")}</p>;
+    return <Skeleton lines={4} />;
   }
   if (datasources.isError) {
-    return <FormAlert>{errorMessage(t, datasources.error)}</FormAlert>;
+    return (
+      <FormAlert>
+        <p>{errorMessage(t, datasources.error)}</p>
+        <button
+          type="button"
+          className="button button--secondary button--small notice__action"
+          onClick={() => void datasources.refetch()}
+          disabled={datasources.isFetching}
+        >
+          {t("common.retry")}
+        </button>
+      </FormAlert>
+    );
   }
   if (datasource === undefined || query === null) {
     return (
@@ -1140,6 +1153,8 @@ function Explore({
                       }
                       pending={result.isPending}
                       error={result.error}
+                      onRetry={() => void result.refetch()}
+                      fetching={result.isFetching}
                       outcomes={outcomes}
                       revision={`${submitted.run}:${current.pages.length}:${result.dataUpdatedAt}`}
                       onFilter={

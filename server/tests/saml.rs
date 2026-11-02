@@ -490,6 +490,9 @@ async fn saml_sign_in_with_metadata_mapping_and_replay() {
     let session = session_of(&r);
     let me = app.get("/api/me", &session).await;
     assert_eq!(me.body["email"], "lea.hoffmann@partnerportal.example", "{}", me.body);
+    let r = app.get("/api/me/sign-ins", &session).await;
+    let first = &r.body["items"][0];
+    assert_eq!((&first["method"], &first["current"]), (&json!("saml"), &json!(true)), "{}", r.body);
     let user_id = me.body["id"].as_str().unwrap().to_string();
     let (role,): (String,) = sqlx::query_as("SELECT role FROM org_members WHERE user_id = $1 AND org_id = $2")
         .bind(&user_id)

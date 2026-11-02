@@ -18,14 +18,10 @@ import { DEMO_OWNER, SCREENSHOT_NOW } from "./demo";
  * 5G). Runs after readme.shots.ts (files run in name order), which completed setup and seeded the
  * demo organization; it adds two people of its own and leaves the server's rule off again.
  */
-const OUT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "..",
-  "docs",
-  "screenshots",
-);
+// KALZIT_SCREENSHOTS_OUT sends the pictures elsewhere (the devkit's capture_screens scenes).
+const OUT =
+  process.env.KALZIT_SCREENSHOTS_OUT ??
+  resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "docs", "screenshots");
 
 test.describe.configure({ mode: "serial" });
 
