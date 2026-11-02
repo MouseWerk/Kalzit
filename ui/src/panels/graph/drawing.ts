@@ -1,7 +1,7 @@
 import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
 import type { GraphPalette, RampName } from "./colors";
 import type { LabelMode, ShowWhen } from "./options";
-import { type GraphView, labelAllowed, rampStep, type Visibility } from "./view";
+import { type GraphView, LABEL_BUDGET, labelAllowed, rampStep, type Visibility } from "./view";
 
 /**
  * What the renderer draws, as pure functions of the panel's state, so they are tested without
@@ -62,6 +62,31 @@ function nodeColor(
   );
 }
 
+const NONE: ReadonlySet<number> = new Set();
+
+/**
+ * Whether a node's label shows: "visible" whatever it covers (selected, or labels set to always),
+ * "auto" where there is room for it, "hidden" not at all (dimmed, or not at this zoom level).
+ */
+export function labelWish(
+  index: number,
+  p: Pick<DrawState, "view" | "visibility" | "ranks" | "selected" | "neighbours" | "drawStyle">,
+  ratio: number,
+  budget: number = LABEL_BUDGET,
+): "visible" | "auto" | "hidden" {
+  const node = p.view.nodes[index];
+  if (node === undefined || p.visibility.nodes[index] === 0) return "hidden";
+  if (p.selected.has(index)) return "visible";
+  if (p.selected.size > 0 && !p.neighbours.has(index)) return "hidden";
+  const mode = p.drawStyle.labels;
+  if (mode === "always") return "visible";
+  const rank = p.ranks[index] ?? 0;
+  const allowed =
+    mode === "zoom" &&
+    (rank < p.drawStyle.labelTop || labelAllowed(rank, ratio, node.cluster >= 0, budget));
+  return allowed ? "auto" : "hidden";
+}
+
 /**
  * What the renderer draws for one node, from the panel's state. A selected node is shown quietly:
  * its label always, in the bold weight, on the neutral selection tint; everything that is neither
@@ -72,6 +97,8 @@ export function nodeDisplay(
   data: NodeDisplayData,
   p: DrawState,
   ratio: number,
+  blocked: ReadonlySet<number> = NONE,
+  budget: number = LABEL_BUDGET,
 ): Partial<NodeDisplayData> {
   const node = p.view.nodes[index];
   if (node === undefined || p.visibility.nodes[index] === 0) {
@@ -81,21 +108,10 @@ export function nodeDisplay(
   const selecting = p.selected.size > 0;
   const lit = !selecting || isSelected || p.neighbours.has(index);
   const color = nodeColor(node.group, lit, p);
-  const rank = p.ranks[index] ?? 0;
-  const mode = p.drawStyle.labels;
-  const allowed =
-    mode === "always" ||
-    (mode === "zoom" &&
-      (rank < p.drawStyle.labelTop || labelAllowed(rank, ratio, node.cluster >= 0)));
-  const labelVisibility = isSelected
-    ? "visible"
-    : selecting && !lit
-      ? "hidden"
-      : mode === "always"
-        ? "visible"
-        : allowed
-          ? "auto"
-          : "hidden";
+  const wish = labelWish(index, p, ratio, budget);
+  // A label that would cover another node's circle waits until the camera gives it room
+  // (labelCollisions.ts); a forced one shows anyway.
+  const labelVisibility = wish === "auto" && blocked.has(index) ? "hidden" : wish;
   return {
     ...data,
     color,

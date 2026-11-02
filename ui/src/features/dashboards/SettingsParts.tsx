@@ -54,7 +54,7 @@ export function LinksEditor({
     onChange(links.map((l, i) => (i === index ? link : l)));
   return (
     <fieldset className="settings__group">
-      <legend className="section-title">{t("dashboardTools.links.title")}</legend>
+      <legend className="visually-hidden">{t("dashboardTools.links.title")}</legend>
       <p className="field__hint">{t("dashboardTools.links.hint")}</p>
       {links.map((link, index) => {
         const problem = showErrors ? linkProblem(link) : null;
@@ -165,7 +165,7 @@ export function AnnotationQueriesEditor({
     onChange(queries.map((q, i) => (i === index ? { ...q, ...patch } : q)));
   return (
     <fieldset className="settings__group">
-      <legend className="section-title">{t("annotations.queries.title")}</legend>
+      <legend className="visually-hidden">{t("annotations.queries.title")}</legend>
       <p className="field__hint">{t("annotations.queries.hint")}</p>
       {queries.map((query, index) => {
         const source = datasources.data?.find((d) => d.id === query.datasourceId);
