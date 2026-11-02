@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   type FormEvent,
   type ReactNode,
@@ -36,7 +36,7 @@ import { getTheme, previewTheme, setTheme, THEMES, useSavedTheme, useTheme } fro
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
-import { CodeWhere } from "./SetupCode";
+import { CodeWhere, codeFromFragment } from "./SetupCode";
 import { type SetupChoices, SetupDone } from "./SetupDone";
 import "./auth.css";
 import {
@@ -242,6 +242,21 @@ export function SetupPage() {
   // The second factor the server requires of the first owner, while it is set up.
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const navigate = useNavigate();
+
+  // A link with the code in its fragment (`#code=...`) fills in the field once; the fragment
+  // then leaves the address bar and the history entry, so the code is not kept or shared.
+  const fragment = useLocation({ select: (location) => location.hash });
+  useEffect(() => {
+    if (!new URLSearchParams(fragment.replace(/^#/, "")).has("code")) {
+      return;
+    }
+    const code = codeFromFragment(fragment);
+    if (code !== null) {
+      setValues((current) => (current.token === "" ? { ...current, token: code } : current));
+    }
+    void navigate({ to: "/setup", replace: true });
+  }, [fragment, navigate]);
+
   const setup = useMutation({
     mutationFn: completeSetup,
     retry: false,
@@ -463,7 +478,7 @@ export function SetupPage() {
             {check.isPending ? t("access.setup.code.checking") : t("access.next")}
           </SubmitButton>
         </div>
-        <CodeWhere hint={hint} />
+        <CodeWhere hint={hint} os={status.data?.os} />
       </form>
     );
   } else if (step === 2) {

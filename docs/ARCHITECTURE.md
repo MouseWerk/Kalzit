@@ -1369,7 +1369,14 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
   (`icacls "%ProgramData%\Kalzit\data" /remove <account>`).
 - `setup-token.txt` and the key files are created with their own file ACL (SYSTEM,
   Administrators, owner) on Windows and mode 0600 on Linux, through `data_dir::acl`, which also
-  serves `secrets.rs`.
+  serves `secrets.rs`. The ACL stays restrictive; instead `GET /api/setup` names the system family
+  (`os`) so the setup page shows the reading command (PowerShell as administrator, `sudo`), and
+  `kalzit setup-code` explains a denied file. The MSI's finish page opens the setup page without
+  the code: its UI runs unelevated and cannot read the file, and handing the code over from the
+  elevated steps would need a place anyone can read. `kalzit setup-code --url` puts the code in
+  the fragment (`#code=`), which the page reads into the field and removes from the address (the
+  browser history may keep it until setup is complete, when the code stops working). The link
+  uses the listener's IP when bound to one non-loopback address, else `localhost`.
 - One info line names the data directory and the database. `db::redact` parses the URL (`url`) and
   rebuilds it from scheme, user, `***` for a password, host, port and path; query values are shown
   only for harmless keys (`sslmode`, `application_name`, `connect_timeout`, `mode`, `host`,

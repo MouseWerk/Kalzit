@@ -39,6 +39,8 @@ export interface FakeServerOptions {
   previousSetupToken?: string;
   /** Where the setup page says the code is (`GET /api/setup`, while setup is needed). */
   codeHint?: "file" | "docker" | "fixed";
+  /** The server's system family in `GET /api/setup`; left out, as by servers before 0.5.1. */
+  setupOs?: "windows" | "linux";
   /** Permissions per role name; defaults follow the built-in roles in docs/ARCHITECTURE.md. */
   rolePermissions?: Record<string, string[]>;
 }
@@ -398,7 +400,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       return json(
         200,
         state.setupNeeded
-          ? { needed: true, codeHint: options.codeHint ?? "file" }
+          ? { needed: true, codeHint: options.codeHint ?? "file", os: options.setupOs }
           : { needed: false },
       );
     }
