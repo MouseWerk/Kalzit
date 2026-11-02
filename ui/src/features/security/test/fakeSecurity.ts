@@ -17,6 +17,10 @@ export interface FakeSecurity {
   required: RequiredBy | null;
   allowed: { passkey: boolean; totp: boolean };
   pending: boolean;
+  /** A provider linked the account by email: its password comes first (`linkPassword`). */
+  linkPassword: boolean;
+  /** The account's own password, for `linkPassword`. */
+  accountPassword: string;
   failures: number;
   lockedUntil: number | null;
   confirmedUntil: number | null;
@@ -36,6 +40,8 @@ export function fakeSecurityState(): FakeSecurity {
     required: null,
     allowed: { passkey: true, totp: true },
     pending: false,
+    linkPassword: false,
+    accountPassword: "",
     failures: 0,
     lockedUntil: null,
     confirmedUntil: null,
@@ -103,6 +109,7 @@ export function handleSecurityRoute(
     requiredBy: s.required,
     lockedUntil: s.lockedUntil !== null && s.lockedUntil > now ? s.lockedUntil : null,
     expiresAt: now + 300_000,
+    linkPassword: s.linkPassword,
   });
   /** A code attempt, counted against the lockout. */
   const check = (ok: boolean): Response | null => {
@@ -161,6 +168,20 @@ export function handleSecurityRoute(
         me: session.user,
         ...(input.method === "recovery" ? { recoveryCodesRemaining: s.recoveryCodes.length } : {}),
       });
+    }
+    if (path === "/api/auth/second-factor/password" && method === "POST") {
+      if (input.password !== s.accountPassword) {
+        return json(401, {
+          error: { code: "invalid_credentials", message: "wrong", field: "password" },
+        });
+      }
+      s.linkPassword = false;
+      if (prompt().setup && s.required !== null) {
+        return json(200, { secondFactor: prompt() });
+      }
+      s.pending = false;
+      session.signIn();
+      return json(200, { me: session.user });
     }
     if (path === "/api/auth/second-factor/setup/totp") {
       return json(200, SETUP);

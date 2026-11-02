@@ -3,6 +3,7 @@ import { type DragEvent, type KeyboardEvent, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { ToolbarMenu } from "../../../components/ToolbarMenu";
 import { type Translate, useI18n } from "../../../i18n/i18n";
+import { useConfirmedCalls } from "../../security/ConfirmFactorDialog";
 import { ConfirmDialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
 import { useNotice } from "../components/Notice";
@@ -80,6 +81,8 @@ export function ProvidersTab({
   const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
   const notice = useNotice();
+  // Resuming a provider that trusts addresses or second factors needs a fresh second factor.
+  const confirmed = useConfirmedCalls();
   const [editing, setEditing] = useState<Editing>(null);
   const [removing, setRemoving] = useState<ProviderSummary | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
@@ -145,7 +148,7 @@ export function ProvidersTab({
 
   const enable = useMutation({
     mutationFn: (input: { provider: ProviderSummary; enabled: boolean; undo: boolean }) =>
-      setProviderEnabled(input.provider.id, input.enabled),
+      confirmed.run(() => setProviderEnabled(input.provider.id, input.enabled)),
     onSuccess: async (_, input) => {
       await refresh();
       const name = input.provider.name;
@@ -456,6 +459,7 @@ export function ProvidersTab({
       >
         {t("sso.providers.removeText", { name: removing?.name ?? "" })}
       </ConfirmDialog>
+      {confirmed.dialog}
     </>
   );
 }

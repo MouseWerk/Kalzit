@@ -415,18 +415,32 @@ pub async fn vouches_for_sign_in(
 /// it joined another organization than `keep_org`, or it became a server admin. The SCIM user
 /// stays; only the account is out of SCIM's hands.
 pub async fn release(conn: &mut sqlx::AnyConnection, user_id: &str, keep_org: Option<&str>) -> Result<(), sqlx::Error> {
+    // With the ownership, the membership SCIM made no longer counts as the person's consent: it
+    // binds them to that organization's sign-in rules no more (`authz::CONSENTED_JOINS`).
     match keep_org {
         Some(org_id) => {
             sqlx::query("UPDATE scim_users SET created_account = 0 WHERE user_id = $1 AND org_id <> $2")
                 .bind(user_id)
                 .bind(org_id)
-                .execute(conn)
+                .execute(&mut *conn)
                 .await?;
+            sqlx::query(
+                "UPDATE org_members SET joined_by = 'direct' WHERE user_id = $1 AND org_id <> $2 \
+                 AND joined_by = 'scim_owned'",
+            )
+            .bind(user_id)
+            .bind(org_id)
+            .execute(&mut *conn)
+            .await?;
         }
         None => {
             sqlx::query("UPDATE scim_users SET created_account = 0 WHERE user_id = $1")
                 .bind(user_id)
-                .execute(conn)
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query("UPDATE org_members SET joined_by = 'direct' WHERE user_id = $1 AND joined_by = 'scim_owned'")
+                .bind(user_id)
+                .execute(&mut *conn)
                 .await?;
         }
     }
