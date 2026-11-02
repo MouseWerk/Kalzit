@@ -1,5 +1,5 @@
-//! The signed-in user's personal preferences: language, theme, time zone, week start and start
-//! dashboard (docs/api/shell.md). A preference that is not set follows the server default
+//! The signed-in user's personal preferences: language, theme, time zone, week start, start
+//! dashboard and tips (docs/api/shell.md). A preference that is not set follows the server default
 //! (`appearance.*`), the browser's time zone, or Monday as the first day of the week.
 
 use axum::extract::State;
@@ -30,6 +30,9 @@ pub const LANGUAGES: &[&str] = &["de", "en"];
 pub const THEMES: &[&str] = &["system", "light", "dark", "contrast"];
 pub const WEEK_STARTS: &[&str] = &["monday", "sunday", "saturday"];
 const MAX_TIME_ZONE_CHARS: usize = 64;
+/// How many seen tips are kept; the oldest go first, so a tip seen long ago may show once more.
+pub const MAX_SEEN_TIPS: usize = 200;
+const MAX_TIP_ID_CHARS: usize = 64;
 
 #[derive(Default, sqlx::FromRow)]
 struct Stored {
@@ -39,6 +42,8 @@ struct Stored {
     week_start: Option<String>,
     start_org_id: Option<String>,
     start_dashboard_id: Option<String>,
+    show_tips: Option<i64>,
+    seen_tips: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -70,14 +75,18 @@ pub struct Preferences {
     /// Opens when the user enters Kalzit; `null` when unset, or when the dashboard is gone or no
     /// longer readable for them.
     start_dashboard: Option<StartDashboard>,
+    /// Whether the UI shows tips; `true` until the user turns them off.
+    show_tips: bool,
+    /// The ids of the tips the user has seen, oldest first; each tip appears once.
+    seen_tips: Vec<String>,
     /// What applies where a preference is not set.
     defaults: Defaults,
 }
 
 async fn load(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<Stored> {
     let row: Option<Stored> = sqlx::query_as(
-        "SELECT language, theme, time_zone, week_start, start_org_id, start_dashboard_id \
-         FROM user_preferences WHERE user_id = $1",
+        "SELECT language, theme, time_zone, week_start, start_org_id, start_dashboard_id, show_tips, \
+         seen_tips FROM user_preferences WHERE user_id = $1",
     )
     .bind(user_id)
     .fetch_optional(&mut *conn)
@@ -134,13 +143,21 @@ async fn start_of(state: &AppState, user: &SessionUser, stored: &Stored) -> ApiR
     }))
 }
 
+/// The stored list of seen tips; anything that is not a list of strings reads as none seen.
+fn seen_list(stored: Option<&str>) -> Vec<String> {
+    stored.and_then(|text| serde_json::from_str::<Vec<String>>(text).ok()).unwrap_or_default()
+}
+
 fn answer(stored: Stored, start_dashboard: Option<StartDashboard>, defaults: Defaults) -> Preferences {
+    let seen_tips = seen_list(stored.seen_tips.as_deref());
     Preferences {
         language: stored.language,
         theme: stored.theme,
         time_zone: stored.time_zone,
         week_start: stored.week_start,
         start_dashboard,
+        show_tips: stored.show_tips != Some(0),
+        seen_tips,
         defaults,
     }
 }
@@ -175,6 +192,12 @@ struct PreferencesPatch {
     week_start: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     start_dashboard: Option<Option<StartDashboardRef>>,
+    #[serde(default, deserialize_with = "double_option")]
+    show_tips: Option<Option<bool>>,
+    /// Tips seen since the last answer; they join the stored list. `null` forgets them all, so
+    /// every tip shows again.
+    #[serde(default, deserialize_with = "double_option")]
+    seen_tips: Option<Option<Vec<String>>>,
 }
 
 fn one_of(value: &Option<String>, allowed: &[&str], field: &'static str) -> ApiResult<()> {
@@ -195,6 +218,13 @@ pub fn is_time_zone_name(name: &str) -> bool {
             && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+'))
     };
     name.len() <= MAX_TIME_ZONE_CHARS && name.split('/').count() <= 3 && name.split('/').all(part)
+}
+
+/// A tip id as the UI names its tips (`explore.first-result`): lower case, at most 64 characters.
+pub fn is_tip_id(id: &str) -> bool {
+    id.len() <= MAX_TIP_ID_CHARS
+        && id.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_'))
 }
 
 async fn update_preferences(
@@ -218,6 +248,14 @@ async fn update_preferences(
         return Err(
             ApiError::validation("timeZone must be a time zone name such as Europe/Berlin").with_field("timeZone")
         );
+    }
+    if let Some(Some(ids)) = &patch.seen_tips
+        && (ids.len() > MAX_SEEN_TIPS || !ids.iter().all(|id| is_tip_id(id)))
+    {
+        return Err(ApiError::validation(format!(
+            "seenTips must be at most {MAX_SEEN_TIPS} tip ids such as explore.first-result"
+        ))
+        .with_field("seenTips"));
     }
     // Everything the answer needs besides the row is read before the transaction, so it never
     // waits for a second connection while holding the database. A dashboard the user cannot open
@@ -265,13 +303,35 @@ async fn update_preferences(
         };
         fields.push("startDashboard");
     }
+    if let Some(show) = patch.show_tips {
+        stored.show_tips = show.map(i64::from);
+        fields.push("showTips");
+    }
+    if let Some(seen) = patch.seen_tips {
+        stored.seen_tips = match seen {
+            Some(added) => {
+                let mut all = seen_list(stored.seen_tips.as_deref());
+                for id in added {
+                    if !all.contains(&id) {
+                        all.push(id);
+                    }
+                }
+                let over = all.len().saturating_sub(MAX_SEEN_TIPS);
+                all.drain(..over);
+                Some(serde_json::to_string(&all).map_err(|e| ApiError::internal("storing seen tips", e))?)
+            }
+            None => None,
+        };
+        fields.push("seenTips");
+    }
     let now = state.clock.now_ms();
     sqlx::query(
         "INSERT INTO user_preferences (user_id, language, theme, time_zone, week_start, start_org_id, \
-         start_dashboard_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         start_dashboard_id, show_tips, seen_tips, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
          ON CONFLICT (user_id) DO UPDATE SET language = excluded.language, theme = excluded.theme, \
          time_zone = excluded.time_zone, week_start = excluded.week_start, start_org_id = excluded.start_org_id, \
-         start_dashboard_id = excluded.start_dashboard_id, updated_at = excluded.updated_at",
+         start_dashboard_id = excluded.start_dashboard_id, show_tips = excluded.show_tips, \
+         seen_tips = excluded.seen_tips, updated_at = excluded.updated_at",
     )
     .bind(&user.id)
     .bind(&stored.language)
@@ -280,6 +340,8 @@ async fn update_preferences(
     .bind(&stored.week_start)
     .bind(&stored.start_org_id)
     .bind(&stored.start_dashboard_id)
+    .bind(stored.show_tips)
+    .bind(&stored.seen_tips)
     .bind(now)
     .execute(&mut *tx)
     .await?;
@@ -303,6 +365,16 @@ async fn update_preferences(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tip_ids_are_short_lower_case_names() {
+        for good in ["explore.first-result", "a", "help.cheat_sheet2"] {
+            assert!(is_tip_id(good), "{good}");
+        }
+        for bad in ["", "Explore", "1tip", "tip id", "tip/../x", &"a".repeat(65)] {
+            assert!(!is_tip_id(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn time_zone_names_have_the_iana_shape() {

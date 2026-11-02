@@ -1,0 +1,1834 @@
+[
+  {
+    "kind": "postgres",
+    "id": "starter.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "starter.countBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "starter.latest",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "starter.overTime",
+    "query": {
+      "sql": "SELECT created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "starter.count",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "rows.orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "count.orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'orders'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "rows.customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "count.customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'customers'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.columns",
+    "query": {
+      "sql": "SELECT status, created_at\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.where",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.like",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.and",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.orderBy",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.top",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY amount DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.groupBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.distinct",
+    "query": {
+      "sql": "SELECT DISTINCT status\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.join",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "postgres",
+    "id": "cheat.timeFilter",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "starter.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "starter.countBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "starter.latest",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "starter.overTime",
+    "query": {
+      "sql": "SELECT created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "starter.count",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "rows.orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "count.orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'orders'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "rows.customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "count.customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'customers'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.columns",
+    "query": {
+      "sql": "SELECT status, created_at\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.where",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.like",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.and",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.orderBy",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.top",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY amount DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.groupBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.distinct",
+    "query": {
+      "sql": "SELECT DISTINCT status\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.join",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mysql",
+    "id": "cheat.timeFilter",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "starter.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "starter.countBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "starter.latest",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "starter.overTime",
+    "query": {
+      "sql": "SELECT created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "starter.count",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "rows.orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "count.orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT name, type, \"notnull\", pk\nFROM pragma_table_info('orders')"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "rows.customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "count.customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT name, type, \"notnull\", pk\nFROM pragma_table_info('customers')"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.columns",
+    "query": {
+      "sql": "SELECT status, created_at\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.where",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.like",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.and",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.orderBy",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.top",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY amount DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.groupBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.distinct",
+    "query": {
+      "sql": "SELECT DISTINCT status\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.join",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "sqlite",
+    "id": "cheat.timeFilter",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "starter.rows",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "starter.countBy",
+    "query": {
+      "sql": "SELECT TOP 100 status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "starter.latest",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "starter.overTime",
+    "query": {
+      "sql": "SELECT TOP 1000 created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "starter.count",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "rows.orders",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "count.orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT TOP 500 COLUMN_NAME, DATA_TYPE, IS_NULLABLE\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE TABLE_NAME = 'orders'\nORDER BY ORDINAL_POSITION"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "rows.customers",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM customers"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "count.customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT TOP 500 COLUMN_NAME, DATA_TYPE, IS_NULLABLE\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE TABLE_NAME = 'customers'\nORDER BY ORDINAL_POSITION"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.rows",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.columns",
+    "query": {
+      "sql": "SELECT TOP 100 status, created_at\nFROM orders"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.where",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders\nWHERE status = 'value'"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.like",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders\nWHERE status LIKE '%part%'"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.and",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.orderBy",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders\nORDER BY created_at DESC"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.top",
+    "query": {
+      "sql": "SELECT TOP 10 *\nFROM orders\nORDER BY amount DESC"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.groupBy",
+    "query": {
+      "sql": "SELECT TOP 100 status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.distinct",
+    "query": {
+      "sql": "SELECT TOP 100 DISTINCT status\nFROM orders"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.join",
+    "query": {
+      "sql": "SELECT TOP 100 a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id"
+    }
+  },
+  {
+    "kind": "mssql",
+    "id": "cheat.timeFilter",
+    "query": {
+      "sql": "SELECT TOP 100 *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "starter.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "starter.countBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "starter.latest",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "starter.overTime",
+    "query": {
+      "sql": "SELECT created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "starter.count",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "rows.orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "count.orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT name, type\nFROM system.columns\nWHERE table = 'orders'\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "rows.customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "count.customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT name, type\nFROM system.columns\nWHERE table = 'customers'\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.rows",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.columns",
+    "query": {
+      "sql": "SELECT status, created_at\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.where",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.like",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.and",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.orderBy",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.top",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY amount DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.groupBy",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.distinct",
+    "query": {
+      "sql": "SELECT DISTINCT status\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.join",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "clickhouse",
+    "id": "cheat.timeFilter",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "starter.series",
+    "query": {
+      "expr": "http_requests_total"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "starter.rate",
+    "query": {
+      "expr": "rate(http_requests_total[$__rate_interval])"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "starter.sumBy",
+    "query": {
+      "expr": "sum by (job) (rate(http_requests_total[$__rate_interval]))"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "starter.topk",
+    "query": {
+      "expr": "topk(5, http_requests_total)",
+      "instant": true
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "starter.down",
+    "query": {
+      "expr": "up == 0",
+      "instant": true
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "rows.http_requests_total",
+    "query": {
+      "expr": "http_requests_total"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "count.http_requests_total",
+    "query": {
+      "expr": "count(http_requests_total)",
+      "instant": true
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "structure.http_requests_total",
+    "query": {
+      "expr": "last_over_time(http_requests_total[5m])",
+      "instant": true
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.selector",
+    "query": {
+      "expr": "http_requests_total"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.match",
+    "query": {
+      "expr": "http_requests_total{job=\"value\"}"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.regex",
+    "query": {
+      "expr": "http_requests_total{job=~\"a|b\"}"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.compare",
+    "query": {
+      "expr": "http_requests_total > 0"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.topk",
+    "query": {
+      "expr": "topk(5, http_requests_total)"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.sort",
+    "query": {
+      "expr": "sort_desc(http_requests_total)"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.sumBy",
+    "query": {
+      "expr": "sum by (job) (http_requests_total)"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.count",
+    "query": {
+      "expr": "count by (job) (http_requests_total)"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.rate",
+    "query": {
+      "expr": "rate(http_requests_total[$__rate_interval])"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.avgOverTime",
+    "query": {
+      "expr": "avg_over_time(http_requests_total[$__interval])"
+    }
+  },
+  {
+    "kind": "prometheus",
+    "id": "cheat.ratio",
+    "query": {
+      "expr": "sum(rate(http_requests_total{status=~\"5..\"}[$__rate_interval]))\n/\nsum(rate(http_requests_total[$__rate_interval]))"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "starter.latest",
+    "query": {
+      "influxql": "SELECT * FROM \"cpu\" WHERE $__timeFilter ORDER BY time DESC LIMIT 100"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "starter.mean",
+    "query": {
+      "influxql": "SELECT mean(\"usage_user\") FROM \"cpu\" WHERE $__timeFilter GROUP BY time($__interval) fill(none)"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "starter.byTag",
+    "query": {
+      "influxql": "SELECT mean(\"usage_user\") FROM \"cpu\" WHERE $__timeFilter GROUP BY time($__interval), \"host\" fill(none)"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "starter.measurements",
+    "query": {
+      "influxql": "SHOW MEASUREMENTS LIMIT 100"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "rows.cpu",
+    "query": {
+      "influxql": "SELECT * FROM \"cpu\" WHERE $__timeFilter ORDER BY time DESC LIMIT 100"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "count.cpu",
+    "query": {
+      "influxql": "SELECT count(*) FROM \"cpu\" WHERE $__timeFilter"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "structure.cpu",
+    "query": {
+      "influxql": "SHOW FIELD KEYS FROM \"cpu\""
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "cheat.select",
+    "query": {
+      "influxql": "SELECT \"usage_user\" FROM \"cpu\" WHERE $__timeFilter LIMIT 100"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "cheat.where",
+    "query": {
+      "influxql": "SELECT * FROM \"cpu\" WHERE \"host\" = 'value' AND $__timeFilter LIMIT 100"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "cheat.orderBy",
+    "query": {
+      "influxql": "SELECT * FROM \"cpu\" WHERE $__timeFilter ORDER BY time DESC LIMIT 10"
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "cheat.groupBy",
+    "query": {
+      "influxql": "SELECT mean(\"usage_user\") FROM \"cpu\" WHERE $__timeFilter GROUP BY \"host\""
+    }
+  },
+  {
+    "kind": "influxdb",
+    "id": "cheat.timeBuckets",
+    "query": {
+      "influxql": "SELECT max(\"usage_user\") FROM \"cpu\" WHERE $__timeFilter GROUP BY time($__interval)"
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "starter.latest",
+    "query": {
+      "logql": "{job=\"api\"}",
+      "limit": 100
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "starter.errors",
+    "query": {
+      "logql": "{job=\"api\"} |~ \"(?i)error\"",
+      "limit": 100
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "starter.volume",
+    "query": {
+      "logql": "sum(count_over_time({job=\"api\"}[$__interval]))"
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "starter.byLevel",
+    "query": {
+      "logql": "sum by (job) (count_over_time({job=\"api\"}[$__interval]))"
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "rows.job",
+    "query": {
+      "logql": "{job=\"api\"}",
+      "limit": 100
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "count.job",
+    "query": {
+      "logql": "sum(count_over_time({job=\"api\"}[$__interval]))"
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "structure.job",
+    "query": {
+      "logql": "count by (job) (count_over_time({job=~\".+\"}[$__interval]))"
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "cheat.selector",
+    "query": {
+      "logql": "{job=\"api\"}",
+      "limit": 100
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "cheat.contains",
+    "query": {
+      "logql": "{job=\"api\"} |= \"error\"",
+      "limit": 100
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "cheat.excludes",
+    "query": {
+      "logql": "{job=\"api\"} != \"debug\"",
+      "limit": 100
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "cheat.json",
+    "query": {
+      "logql": "{job=\"api\"} | json | level = \"error\"",
+      "limit": 100
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "cheat.count",
+    "query": {
+      "logql": "sum by (level) (count_over_time({job=\"api\"} | json [$__interval]))"
+    }
+  },
+  {
+    "kind": "loki",
+    "id": "cheat.rate",
+    "query": {
+      "logql": "rate({job=\"api\"}[$__interval])"
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "starter.latest",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "starter.errors",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "error",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "starter.terms",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "dsl": {
+        "aggs": {
+          "status": {
+            "terms": {
+              "field": "status",
+              "size": 10
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "starter.histogram",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "dsl": {
+        "aggs": {
+          "time": {
+            "date_histogram": {
+              "field": "@timestamp",
+              "fixed_interval": "$__interval"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "rows.logs",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "count.logs",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "dsl": {
+        "aggs": {
+          "time": {
+            "date_histogram": {
+              "field": "@timestamp",
+              "fixed_interval": "$__interval"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "structure.logs",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "",
+      "size": 1
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.all",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.field",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "status:value",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.bool",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "status:a OR status:b",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.range",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "bytes:>1000",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.exists",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "_exists_:status",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.wildcard",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "lucene": "status:err*",
+      "size": 100
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.sort",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "dsl": {
+        "query": {
+          "match_all": {}
+        },
+        "sort": [
+          {
+            "bytes": {
+              "order": "desc"
+            }
+          }
+        ],
+        "size": 10
+      }
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.terms",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "dsl": {
+        "aggs": {
+          "status": {
+            "terms": {
+              "field": "status",
+              "size": 10
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "elasticsearch",
+    "id": "cheat.histogram",
+    "query": {
+      "index": "logs",
+      "timeField": "@timestamp",
+      "dsl": {
+        "aggs": {
+          "time": {
+            "date_histogram": {
+              "field": "@timestamp",
+              "fixed_interval": "$__interval"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "file",
+    "id": "starter.read",
+    "query": {}
+  },
+  {
+    "kind": "http_json",
+    "id": "starter.read",
+    "query": {}
+  },
+  {
+    "kind": "mongodb",
+    "id": "starter.rows",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "starter.countBy",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$group\":{\"_id\":\"$status\",\"n\":{\"$sum\":1}}},\n  {\"$sort\":{\"n\":-1}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "starter.latest",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$match\":{\"$__timeFilter\":\"createdAt\"}},\n  {\"$sort\":{\"createdAt\":-1}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "starter.count",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$count\":\"n\"}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "rows.orders",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "count.orders",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$count\":\"n\"}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "structure.orders",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$limit\":1000},\n  {\"$project\":{\"fields\":{\"$objectToArray\":\"$$ROOT\"}}},\n  {\"$unwind\":\"$fields\"},\n  {\"$group\":{\"_id\":\"$fields.k\",\"types\":{\"$addToSet\":{\"$type\":\"$fields.v\"}},\"n\":{\"$sum\":1}}},\n  {\"$sort\":{\"_id\":1}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "rows.customers",
+    "query": {
+      "collection": "customers",
+      "pipeline": "[\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "count.customers",
+    "query": {
+      "collection": "customers",
+      "pipeline": "[\n  {\"$count\":\"n\"}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "structure.customers",
+    "query": {
+      "collection": "customers",
+      "pipeline": "[\n  {\"$limit\":1000},\n  {\"$project\":{\"fields\":{\"$objectToArray\":\"$$ROOT\"}}},\n  {\"$unwind\":\"$fields\"},\n  {\"$group\":{\"_id\":\"$fields.k\",\"types\":{\"$addToSet\":{\"$type\":\"$fields.v\"}},\"n\":{\"$sum\":1}}},\n  {\"$sort\":{\"_id\":1}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.limit",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.match",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$match\":{\"status\":\"value\"}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.in",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$match\":{\"status\":{\"$in\":[\"a\",\"b\"]},\"total\":{\"$gt\":0}}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.project",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$project\":{\"_id\":0,\"status\":1,\"createdAt\":1}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.sort",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$sort\":{\"createdAt\":-1}},\n  {\"$limit\":10}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.group",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$group\":{\"_id\":\"$status\",\"n\":{\"$sum\":1},\"total\":{\"$sum\":\"$total\"}}},\n  {\"$sort\":{\"n\":-1}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.lookup",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$limit\":100},\n  {\"$lookup\":{\"from\":\"customers\",\"localField\":\"customerId\",\"foreignField\":\"_id\",\"as\":\"customers\"}}\n]"
+    }
+  },
+  {
+    "kind": "mongodb",
+    "id": "cheat.time",
+    "query": {
+      "collection": "orders",
+      "pipeline": "[\n  {\"$match\":{\"$__timeFilter\":\"createdAt\"}},\n  {\"$sort\":{\"createdAt\":-1}},\n  {\"$limit\":100}\n]"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "starter.nodes",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "starter.neighbours",
+    "query": {
+      "cypher": "MATCH (n:Person)-[r]-(m)\nRETURN n, r, m\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "starter.labels",
+    "query": {
+      "cypher": "MATCH (n)\nRETURN labels(n) AS label, count(*) AS n\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "starter.edgeTypes",
+    "query": {
+      "cypher": "MATCH ()-[r]->()\nRETURN type(r) AS type, count(*) AS n\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "starter.paths",
+    "query": {
+      "cypher": "MATCH p = (a:Person)-[*1..3]-(b)\nRETURN p\nLIMIT 25"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "rows.Person",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "count.Person",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN count(n) AS n"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "structure.Person",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWITH n LIMIT 100\nUNWIND keys(n) AS key\nRETURN key, count(*) AS n\nORDER BY n DESC"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "rows.KNOWS",
+    "query": {
+      "cypher": "MATCH (a)-[r:KNOWS]->(b)\nRETURN a, r, b\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "count.KNOWS",
+    "query": {
+      "cypher": "MATCH ()-[r:KNOWS]->()\nRETURN count(r) AS n"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "structure.KNOWS",
+    "query": {
+      "cypher": "MATCH ()-[r:KNOWS]->()\nWITH r LIMIT 100\nUNWIND keys(r) AS key\nRETURN key, count(*) AS n\nORDER BY n DESC"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.match",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.where",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWHERE n.name = 'value'\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.contains",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWHERE n.name CONTAINS 'part'\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.orderBy",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n.name AS value\nORDER BY value DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.count",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n.name AS value, count(*) AS n\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.traverse",
+    "query": {
+      "cypher": "MATCH (a:Person)-[r:KNOWS]->(b)\nRETURN a, r, b\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.degree",
+    "query": {
+      "cypher": "MATCH (n:Person)-[r]-()\nRETURN n, count(r) AS degree\nORDER BY degree DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.path",
+    "query": {
+      "cypher": "MATCH p = shortestPath((a:Person)-[*..5]-(b:Person))\nWHERE a <> b\nRETURN p\nLIMIT 1"
+    }
+  },
+  {
+    "kind": "neo4j",
+    "id": "cheat.time",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWHERE n.createdAt >= $__timeFrom AND n.createdAt < $__timeTo\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "starter.nodes",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "starter.neighbours",
+    "query": {
+      "cypher": "MATCH (n:Person)-[r]-(m)\nRETURN n, r, m\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "starter.labels",
+    "query": {
+      "cypher": "MATCH (n)\nRETURN labels(n) AS label, count(*) AS n\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "starter.edgeTypes",
+    "query": {
+      "cypher": "MATCH ()-[r]->()\nRETURN type(r) AS type, count(*) AS n\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "starter.paths",
+    "query": {
+      "cypher": "MATCH p = (a:Person)-[*1..3]-(b)\nRETURN p\nLIMIT 25"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "rows.Person",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "count.Person",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN count(n) AS n"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "structure.Person",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWITH n LIMIT 100\nUNWIND keys(n) AS key\nRETURN key, count(*) AS n\nORDER BY n DESC"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "rows.KNOWS",
+    "query": {
+      "cypher": "MATCH (a)-[r:KNOWS]->(b)\nRETURN a, r, b\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "count.KNOWS",
+    "query": {
+      "cypher": "MATCH ()-[r:KNOWS]->()\nRETURN count(r) AS n"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "structure.KNOWS",
+    "query": {
+      "cypher": "MATCH ()-[r:KNOWS]->()\nWITH r LIMIT 100\nUNWIND keys(r) AS key\nRETURN key, count(*) AS n\nORDER BY n DESC"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.match",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.where",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWHERE n.name = 'value'\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.contains",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWHERE n.name CONTAINS 'part'\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.orderBy",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n.name AS value\nORDER BY value DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.count",
+    "query": {
+      "cypher": "MATCH (n:Person)\nRETURN n.name AS value, count(*) AS n\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.traverse",
+    "query": {
+      "cypher": "MATCH (a:Person)-[r:KNOWS]->(b)\nRETURN a, r, b\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.degree",
+    "query": {
+      "cypher": "MATCH (n:Person)-[r]-()\nRETURN n, count(r) AS degree\nORDER BY degree DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.path",
+    "query": {
+      "cypher": "MATCH p = shortestPath((a:Person)-[*..5]-(b:Person))\nWHERE a <> b\nRETURN p\nLIMIT 1"
+    }
+  },
+  {
+    "kind": "memgraph",
+    "id": "cheat.time",
+    "query": {
+      "cypher": "MATCH (n:Person)\nWHERE n.createdAt >= $__timeFrom AND n.createdAt < $__timeTo\nRETURN n\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "starter.vertices",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s LIMIT 100;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "starter.neighbours",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT t FROM Start:s -(KNOWS:e)- :t LIMIT 100;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "starter.count",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  SumAccum<INT> @@n;\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s ACCUM @@n += 1;\n  PRINT @@n;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "starter.installed",
+    "query": {
+      "installed": "top_customers"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "rows.Person",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s LIMIT 100;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "count.Person",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  SumAccum<INT> @@n;\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s ACCUM @@n += 1;\n  PRINT @@n;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "structure.Person",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s LIMIT 5;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "rows.KNOWS",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {KNOWS.*};\n  Result = SELECT s FROM Start:s LIMIT 100;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "rows.top_customers",
+    "query": {
+      "installed": "top_customers"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "cheat.select",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s LIMIT 100;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "cheat.where",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s WHERE s.name == \"value\" LIMIT 100;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "cheat.orderBy",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s ORDER BY s.name DESC LIMIT 10;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "cheat.accum",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  SumAccum<INT> @degree;\n  Start = {Person.*};\n  Result = SELECT s FROM Start:s -(KNOWS:e)- :t ACCUM s.@degree += 1 ORDER BY s.@degree DESC LIMIT 10;\n  PRINT Result;\n}"
+    }
+  },
+  {
+    "kind": "tigergraph",
+    "id": "cheat.traverse",
+    "query": {
+      "gsql": "INTERPRET QUERY () FOR GRAPH shop {\n  Start = {Person.*};\n  Result = SELECT t FROM Start:s -(KNOWS:e)- :t LIMIT 100;\n  PRINT Result;\n}"
+    }
+  }
+]

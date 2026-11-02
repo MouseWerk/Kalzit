@@ -269,6 +269,7 @@ on_both_databases! {
     stars_page_through_titles_that_differ_in_punctuation;
     recents_keep_the_newest_and_follow_access;
     preferences_are_personal_validated_and_reset;
+    tips_are_seen_once_and_can_be_turned_off;
     start_dashboards_must_be_readable;
     about_names_the_build_to_signed_in_users;
 }
@@ -565,7 +566,7 @@ async fn preferences_are_personal_validated_and_reset(t: TestApp) {
     assert_eq!(
         r.body,
         json!({ "language": null, "theme": null, "timeZone": null, "weekStart": null, "startDashboard": null,
-                "defaults": { "language": "de", "theme": "system" } })
+                "showTips": true, "seenTips": [], "defaults": { "language": "de", "theme": "system" } })
     );
 
     let r = t
@@ -613,6 +614,34 @@ async fn preferences_are_personal_validated_and_reset(t: TestApp) {
     .unwrap();
     assert_eq!(events.len(), 2, "{events:?}");
     assert!(events[0].1.contains("timeZone") && events[1].1.contains("theme"), "{events:?}");
+}
+
+async fn tips_are_seen_once_and_can_be_turned_off(t: TestApp) {
+    // Seen tips join the stored list, each once, in the order they were first seen.
+    let r = t.patch("/me/preferences", json!({ "seenTips": ["explore.first-result"] }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.patch("/me/preferences", json!({ "seenTips": ["explore.cheat-sheet", "explore.first-result"] }), &t.owner);
+    assert_eq!(r.await.body["seenTips"], json!(["explore.first-result", "explore.cheat-sheet"]));
+    assert_eq!(t.get("/me/preferences", &t.owner).await.body["showTips"], true);
+
+    let r = t.patch("/me/preferences", json!({ "showTips": false }), &t.owner).await;
+    assert_eq!((&r.body["showTips"], &r.body["seenTips"][1]), (&json!(false), &json!("explore.cheat-sheet")));
+    // `null` is the default again (tips on); a `null` list shows every tip again.
+    let r = t.patch("/me/preferences", json!({ "showTips": null, "seenTips": null }), &t.owner).await;
+    assert_eq!((&r.body["showTips"], &r.body["seenTips"]), (&json!(true), &json!([])));
+
+    let many: Vec<String> = (0..=200).map(|i| format!("tip.{i}")).collect();
+    for body in [json!({ "seenTips": ["Not An Id"] }), json!({ "seenTips": many }), json!({ "showTips": "no" })] {
+        let r = t.patch("/me/preferences", body.clone(), &t.owner).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    }
+    // The list keeps the newest 200.
+    for chunk in (0..210).collect::<Vec<_>>().chunks(100) {
+        let ids: Vec<String> = chunk.iter().map(|i| format!("tip.{i}")).collect();
+        assert_eq!(t.patch("/me/preferences", json!({ "seenTips": ids }), &t.owner).await.status, StatusCode::OK);
+    }
+    let seen = t.get("/me/preferences", &t.owner).await.body["seenTips"].clone();
+    assert_eq!((seen.as_array().map(Vec::len), &seen[0]), (Some(200), &json!("tip.10")));
 }
 
 async fn start_dashboards_must_be_readable(t: TestApp) {
