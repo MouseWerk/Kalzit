@@ -128,12 +128,14 @@ pub async fn org_requirement(state: &AppState, org_id: &str) -> ApiResult<Requir
     Ok(Requirement::parse(&crate::settings::get_org(state, org_id, POLICY_KEY).await?))
 }
 
-/// The memberships of `user_id` with their rules, read through `db`.
+/// The memberships of `user_id` whose rules bind them, read through `db`: only those the person
+/// consented to (`authz::CONSENTED_JOINS`).
 pub async fn memberships(state: &AppState, db: &AnyPool, user_id: &str) -> ApiResult<Vec<MembershipRule>> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
+    let rows: Vec<(String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = $1 \
-         ORDER BY o.name",
-    )
+         AND m.joined_by IN {} ORDER BY o.name",
+        crate::authz::CONSENTED_JOINS
+    )))
     .bind(user_id)
     .fetch_all(db)
     .await?;
@@ -1096,6 +1098,16 @@ where
     }
 }
 
+/// An organization's second factor rules and its password sign-in rule decide how its members
+/// sign in: a person changes them, never an API token of a service account
+/// (`api_token::refuse_tokens`).
+pub fn refuse_tokens_for_setting(token: Option<&crate::auth::api_token::TokenCaller>, key: &str) -> ApiResult<()> {
+    if key == POLICY_KEY || key == METHODS_KEY || key == "signin.local_password" {
+        crate::auth::api_token::refuse_tokens(token)?;
+    }
+    Ok(())
+}
+
 /// Changing who must have a second factor, or which methods people may set up, weakens or
 /// strengthens every account at once: an admin who has a second factor confirms it first, within
 /// `CONFIRMATION_TTL_MS`, as for their own weakening changes. Other settings pass.
@@ -1133,17 +1145,28 @@ pub enum FirstStep<'a> {
     /// A directory password (LDAP) of the directory `provider_id`: always Kalzit's second factor.
     /// `sync_run` is the run of the directory sync that disabled the account, when it did: the
     /// account is enabled only when the second step succeeds and that very record still stands
-    /// (`take_pending`).
-    Directory { provider_id: &'a str, sync_run: Option<&'a str> },
+    /// (`take_pending`). `confirm_link` as for `Provider`.
+    Directory { provider_id: &'a str, sync_run: Option<&'a str>, confirm_link: bool },
     /// An identity provider. `mfa_done` is the provider's claim (such as OIDC `amr`) and
-    /// `provider_mfa_trusted` the provider's switch in Kalzit, off by default.
-    Provider { provider_id: &'a str, mfa_done: bool, provider_mfa_trusted: bool },
+    /// `provider_mfa_trusted` the provider's switch in Kalzit, off by default. `confirm_link`: the
+    /// provider's identity was linked to the account by its address and is not confirmed yet
+    /// (`sso::signin`), so the person proves the account once, with its second factor or, without
+    /// one, its password.
+    Provider { provider_id: &'a str, mfa_done: bool, provider_mfa_trusted: bool, confirm_link: bool },
 }
 
 impl FirstStep<'_> {
     /// Whether Kalzit asks for its own second factor after this first step.
     pub fn asks_second_factor(&self) -> bool {
-        !matches!(self, FirstStep::Provider { mfa_done: true, provider_mfa_trusted: true, .. })
+        self.confirm_link() || !matches!(self, FirstStep::Provider { mfa_done: true, provider_mfa_trusted: true, .. })
+    }
+
+    /// Whether the person still proves the account a provider's identity was linked to by email.
+    pub fn confirm_link(&self) -> bool {
+        match self {
+            FirstStep::Directory { confirm_link, .. } | FirstStep::Provider { confirm_link, .. } => *confirm_link,
+            FirstStep::Password { .. } => false,
+        }
     }
 
     fn sync_run(&self) -> Option<&str> {
@@ -1208,6 +1231,19 @@ pub struct Prompt {
     pub required_by: Option<RequiredBy>,
     pub locked_until: Option<i64>,
     pub expires_at: i64,
+    /// The account's own password comes first (`POST /auth/second-factor/password`): a provider's
+    /// identity was linked to it by email, and the account has no second factor to prove it with.
+    pub link_password: bool,
+}
+
+/// The second step a person still has to take after the first.
+#[derive(Clone, Debug)]
+pub struct SecondStep {
+    /// The account must set up a second factor.
+    pub setup: bool,
+    /// The account's password first (`Prompt::link_password`).
+    pub link_password: bool,
+    pub required_by: Option<RequiredBy>,
 }
 
 /// The second step a person still has to take after the first, if any.
@@ -1216,19 +1252,23 @@ pub async fn second_step(
     user_id: &str,
     server_admin: bool,
     first: FirstStep<'_>,
-) -> ApiResult<Option<(bool, Option<RequiredBy>)>> {
+) -> ApiResult<Option<SecondStep>> {
     if !first.asks_second_factor() {
         return Ok(None);
     }
     let has = methods(&state.db, user_id).await?;
     let required = required_for(state, user_id, server_admin).await?;
-    if has.any() {
-        Ok(Some((false, required)))
+    let (setup, link_password) = if has.any() {
+        (false, false)
+    } else if first.confirm_link() {
+        // A new factor set up now would prove nothing about the account: its password does.
+        (required.is_some(), true)
     } else if required.is_some() {
-        Ok(Some((true, required)))
+        (true, false)
     } else {
-        Ok(None)
-    }
+        return Ok(None);
+    };
+    Ok(Some(SecondStep { setup, link_password, required_by: required }))
 }
 
 /// The half-signed-in state as stored.
@@ -1243,6 +1283,8 @@ pub struct Pending {
     pub forget_browser: i64,
     pub password_fingerprint: Option<String>,
     pub expires_at: i64,
+    /// The account's password comes first (`Prompt::link_password`).
+    pub link_password: i64,
 }
 
 impl Pending {
@@ -1267,11 +1309,13 @@ pub fn password_fingerprint(hash: Option<&str>) -> Option<String> {
     hash.map(|h| hex::encode(sha2::Sha256::digest(format!("kalzit-pending\0{h}").as_bytes())))
 }
 
-/// Starts the second step for `user_id`; answers the token for the cookie.
+/// Starts the second step for `user_id`; answers the token for the cookie. `link_password`: the
+/// account's password comes first (`Prompt::link_password`).
 pub async fn create_pending(
     conn: &mut sqlx::AnyConnection,
     user_id: &str,
     setup: bool,
+    link_password: bool,
     forget_browser: bool,
     first: FirstStep<'_>,
     now: i64,
@@ -1279,8 +1323,8 @@ pub async fn create_pending(
     let token = hex::encode(rand::random::<[u8; 32]>());
     sqlx::query(
         "INSERT INTO sign_in_challenges (token_hash, user_id, setup, forget_browser, first_step, password_fingerprint, \
-         created_at, expires_at, ldap_sync_run, provider_id, break_glass) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+         created_at, expires_at, ldap_sync_run, provider_id, break_glass, link_password) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
     )
     .bind(session::hash_token(&token))
     .bind(user_id)
@@ -1293,9 +1337,72 @@ pub async fn create_pending(
     .bind(first.sync_run())
     .bind(first.provider_id())
     .bind(i64::from(first.break_glass()))
+    .bind(i64::from(link_password))
     .execute(conn)
     .await?;
     Ok(token)
+}
+
+/// The account's password was confirmed in the second step: what follows is the setup of a
+/// second factor (`Prompt::setup`).
+pub async fn link_password_confirmed<'c, E>(db: E, token_hash: &str) -> ApiResult<()>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
+    sqlx::query("UPDATE sign_in_challenges SET link_password = 0 WHERE token_hash = $1")
+        .bind(token_hash)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Checks the account's own password in the second step of a sign-in whose provider identity was
+/// linked by email (`Prompt::link_password`). It counts like a wrong code against the account's
+/// lockout and the address's budget of failed sign-ins.
+pub async fn verify_link_password(
+    state: &AppState,
+    info: &RequestInfo,
+    user_id: &str,
+    password: String,
+    now: i64,
+) -> ApiResult<()> {
+    use super::ratelimit::{address_key, network_key};
+    let wrong = || {
+        ApiError::new(axum::http::StatusCode::UNAUTHORIZED, "invalid_credentials", "the password is not correct")
+            .with_field("password")
+    };
+    // No password can be this long, so it is refused before it costs a hash or an attempt.
+    if password.chars().count() > super::password::MAX_PASSWORD_CHARS {
+        return Err(wrong());
+    }
+    let ip_key = address_key("login", info.client_ip);
+    let network = network_key(info.client_ip);
+    let mono = state.clock.monotonic_ms();
+    let counted = state
+        .login_limiter
+        .try_acquire(&ip_key, &network, mono)
+        .map_err(|wait| ApiError::rate_limited("too many failed sign-ins, wait a few minutes", wait))?;
+    // A running lockout refuses before the check and gives the attempt back.
+    if let Err(e) = begin_attempt(state, user_id, now).await {
+        state.login_limiter.refund(&ip_key, &counted);
+        return Err(e);
+    }
+    let (stored,): (Option<String>,) =
+        sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(user_id).fetch_one(&state.db).await?;
+    let Some(ok) = super::password::verify(password, stored, &super::password::SHARED).await else {
+        state.login_limiter.refund(&ip_key, &counted);
+        return Err(ApiError::rate_limited("too many sign-ins at once, try again", std::time::Duration::from_secs(1)));
+    };
+    if ok {
+        attempt_succeeded(state, user_id).await?;
+        state.login_limiter.refund(&ip_key, &counted);
+        return Ok(());
+    }
+    // The lockout's answer when this attempt used the budget up, else "wrong password".
+    match attempt_failed(state, info, user_id, "password", now).await {
+        e if e.code == "invalid_code" => Err(wrong()),
+        e => Err(e),
+    }
 }
 
 /// The half-signed-in state of the request, unless it expired or its account was disabled.
@@ -1303,7 +1410,8 @@ pub async fn load_pending(db: &AnyPool, headers: &HeaderMap, secure: bool, now: 
     let Some(token) = read_pending_cookie(headers, secure) else { return Ok(None) };
     let pending: Option<Pending> = sqlx::query_as(
         "SELECT c.token_hash, c.user_id, u.email, u.name, u.is_server_admin, c.setup, c.forget_browser, \
-         c.password_fingerprint, c.expires_at FROM sign_in_challenges c JOIN users u ON u.id = c.user_id \
+         c.password_fingerprint, c.expires_at, c.link_password FROM sign_in_challenges c \
+         JOIN users u ON u.id = c.user_id \
          WHERE c.token_hash = $1 AND (u.disabled = 0 OR (c.first_step = 'directory' AND EXISTS \
          (SELECT 1 FROM ldap_deactivations d WHERE d.user_id = u.id AND d.run_id = c.ldap_sync_run)))",
     )
@@ -1410,6 +1518,7 @@ pub async fn prompt(
         required_by,
         locked_until: locked_until(&state.db, &pending.user_id, now).await?,
         expires_at: pending.expires_at,
+        link_password: pending.link_password != 0,
     })
 }
 
@@ -1526,12 +1635,15 @@ mod tests {
 
     #[test]
     fn a_provider_is_trusted_only_when_its_switch_and_claim_both_say_so() {
-        let ask = |mfa_done, trusted| {
-            FirstStep::Provider { provider_id: "sso", mfa_done, provider_mfa_trusted: trusted }.asks_second_factor()
+        let ask = |mfa_done, trusted, confirm_link| {
+            FirstStep::Provider { provider_id: "sso", mfa_done, provider_mfa_trusted: trusted, confirm_link }
+                .asks_second_factor()
         };
-        assert!(ask(false, false) && ask(true, false) && ask(false, true));
-        assert!(!ask(true, true));
-        assert!(FirstStep::Directory { provider_id: "ldap", sync_run: None }.asks_second_factor());
+        assert!(ask(false, false, false) && ask(true, false, false) && ask(false, true, false));
+        assert!(!ask(true, true, false));
+        // A link by email that is not confirmed yet always asks.
+        assert!(ask(true, true, true));
+        assert!(FirstStep::Directory { provider_id: "ldap", sync_run: None, confirm_link: false }.asks_second_factor());
         assert!(FirstStep::Password { password_hash: None, break_glass: false }.asks_second_factor());
     }
 

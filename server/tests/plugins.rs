@@ -385,6 +385,22 @@ impl TestApp {
                 .unwrap();
         rows.into_iter().map(|(a,)| a).collect()
     }
+
+    /// The data sources the plugin released so far, asked through the source `via`, once at
+    /// least `count` arrived (`Release` runs in the background) or after 10 seconds.
+    async fn released(&self, via: &str, count: usize) -> Vec<String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut asked = 0u32;
+        loop {
+            asked += 1;
+            let doc = self.doc(via, ID, json!({ "do": "released", "asked": asked })).await;
+            let released: Vec<String> = serde_json::from_value(doc["released"].clone()).unwrap();
+            if released.len() >= count || std::time::Instant::now() > deadline {
+                return released;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 fn key(seed: u8) -> SigningKey {
@@ -618,6 +634,45 @@ async fn a_plugin_serves_its_kind_within_the_limits_and_organizations_can_block_
     for action in ["plugins.blocked", "plugins.unblocked", "plugins.disabled", "plugins.removed"] {
         assert!(actions.iter().any(|a| a == action), "{action} is missing from {actions:?}");
     }
+    t.finish().await;
+}
+
+/// A data source that changes or goes to the trash is released by the plugin that served it
+/// (`Release`), once: a source the plugin was not handed since is not released again, also not
+/// when it is purged.
+#[tokio::test]
+async fn changed_and_trashed_sources_are_released_once() {
+    let t = test_app().await;
+    let publisher = key(3);
+    t.trust(&publisher).await;
+    t.ready(&Pkg { key: Some(&publisher), ..Default::default() }).await;
+    let ds = t.datasource(ID, 3).await;
+    let via = t.datasource(ID, 3).await;
+    let path = format!("/orgs/{}/datasources/{ds}", t.org);
+    assert!(t.query(&ds, json!({ "do": "frame" })).await["result"]["frame"].is_object());
+    assert_eq!(t.released(&via, 0).await, Vec::<String>::new());
+
+    // A change: the plugin closes what it kept for the source.
+    let r = t.send(Method::PATCH, &path, Some(json!({ "name": "Umbenannt" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.released(&via, 1).await, std::slice::from_ref(&ds));
+    // Another change before the plugin was handed the source again releases nothing more.
+    let r = t.send(Method::PATCH, &path, Some(json!({ "name": "Noch einmal" }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(t.released(&via, 1).await, std::slice::from_ref(&ds), "exactly one release so far");
+
+    // Handed again, then trashed: released a second time.
+    assert!(t.query(&ds, json!({ "do": "frame" })).await["result"]["frame"].is_object());
+    let r = t.send(Method::DELETE, &path, None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert_eq!(t.released(&via, 2).await, [ds.clone(), ds.clone()]);
+
+    // Purged from the trash: already released, nothing more arrives.
+    let r = t.send(Method::DELETE, &format!("{path}/purge"), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(t.released(&via, 2).await, [ds.clone(), ds]);
     t.finish().await;
 }
 

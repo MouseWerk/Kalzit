@@ -369,13 +369,16 @@ async fn create(
     .bind(now)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)")
-        .bind(&ctx.org_id)
-        .bind(&id)
-        .bind(&role.key)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+    // A service account signs in with tokens only; no sign-in rule applies to it either way.
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, $3, $4, 'direct')",
+    )
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .bind(&role.key)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = json!({ "serviceAccountId": id, "role": role.key });
     audit(&mut tx, &actor, Some(&ctx.org_id), "service_account.created", ("service_account", &id), summary).await?;
