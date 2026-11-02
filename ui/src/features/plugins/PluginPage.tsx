@@ -429,7 +429,7 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
             )}
           </dl>
           <p className="plugins-note">
-            <Icon name="help" />
+            <Icon name="info" />
             <span>
               {t(
                 plugin.kind === "panel"

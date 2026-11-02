@@ -186,6 +186,8 @@
     --brand-neo4j: #4581c3;
     --control-height: 2rem;
     --icon-size: 1rem;
+    /* An icon inside a line of smaller text (a sort mark, a tree toggle): sized with the text. */
+    --icon-size-inline: 1.125em;
     --avatar-size: 1.5rem;
 
     --duration-fast: 120ms;

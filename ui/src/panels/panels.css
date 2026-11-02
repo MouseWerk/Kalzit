@@ -559,8 +559,8 @@
   }
 
   .vt__sort-mark {
+    display: inline-flex;
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
 
   /* Unsorted, the mark is empty; its gap alone pushed end-aligned headings off their numbers. */

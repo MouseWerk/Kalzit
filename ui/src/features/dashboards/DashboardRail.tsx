@@ -186,7 +186,7 @@ export function DashboardRail({
                 label={t("dashboards.versions")}
                 onClick={actions.history}
               />
-              <IconButton icon="help" label={t("toolbar.rail.info")} onClick={actions.info} />
+              <IconButton icon="info" label={t("toolbar.rail.info")} onClick={actions.info} />
             </div>
           </>
         )}

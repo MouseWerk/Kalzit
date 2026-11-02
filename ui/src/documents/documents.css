@@ -119,8 +119,9 @@
   }
 
   .doc-tree__toggle {
+    display: inline-flex;
     flex: none;
-    width: var(--space-3);
+    width: var(--icon-size-inline);
     color: var(--text-muted);
   }
 

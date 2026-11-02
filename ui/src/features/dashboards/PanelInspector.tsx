@@ -420,7 +420,7 @@ function NumberRow({
             disabled={value <= min}
             onClick={() => onChange(within(value - 1))}
           >
-            −
+            <Icon name="minus" />
           </button>
         ) : null}
         <input
@@ -450,7 +450,7 @@ function NumberRow({
             disabled={max !== undefined && value >= max}
             onClick={() => onChange(within(value + 1))}
           >
-            +
+            <Icon name="plus" />
           </button>
         ) : null}
       </span>
