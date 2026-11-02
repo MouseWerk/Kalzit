@@ -382,6 +382,27 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "How often the catalog is loaded again while it is on.",
     },
     SettingDef {
+        key: "network.proxy_url",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "HTTP or HTTPS proxy for Kalzit's own requests to the internet: plugin catalog, updates, ACME and AI providers. Empty: they go out directly. Data sources never use it.",
+    },
+    SettingDef {
+        key: "network.no_proxy",
+        scope: Scope::Server,
+        default: || json!([]),
+        ui_editable: true,
+        description: "Hosts, domains (.example.com), addresses and networks those requests reach directly, past the proxy; * for all.",
+    },
+    SettingDef {
+        key: "network.proxy_username",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "User name for the proxy, if it asks for one; the password is stored encrypted on its own.",
+    },
+    SettingDef {
         key: "dashboards.default_time_range",
         scope: Scope::Org,
         default: || json!({ "from": "now-6h", "to": "now" }),
@@ -741,6 +762,10 @@ enum Rule {
     TimeZone,
     /// Empty, or an `https://` URL with a host and without credentials.
     HttpsUrl,
+    /// Empty, or an `http://` or `https://` proxy address (`outbound::check_url`).
+    ProxyUrl,
+    /// Entries of `network.no_proxy` (`outbound::check_bypass`).
+    NoProxy,
     /// Read from the configuration and never written here; the configuration checks it at start.
     Configuration,
     /// An organization's appearance: `inherit` (the server's value) or what the server accepts.
@@ -858,6 +883,9 @@ fn rule(key: &str) -> Option<Rule> {
         "plugins.catalog_url" => Rule::HttpsUrl,
         // At least hourly, at most weekly; an index is valid for at most 31 days.
         "plugins.catalog_refresh_hours" => Rule::Int { min: 1, max: 168 },
+        "network.proxy_url" => Rule::ProxyUrl,
+        "network.no_proxy" => Rule::NoProxy,
+        "network.proxy_username" => Rule::Text { max_chars: 256, multiline: false, required: false },
         _ => return None,
     })
 }
@@ -904,6 +932,17 @@ fn check_rule(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
             Some(s) if is_https_url(s) => Ok(()),
             _ => Err(format!("{key} must be empty or an https:// address without user name or password")),
         },
+        Rule::ProxyUrl => match value.as_str() {
+            Some(s) => crate::outbound::check_url(s).map_err(|e| format!("{key}: {e}")),
+            None => Err(format!("{key} must be a text")),
+        },
+        Rule::NoProxy => {
+            check_basic(key, &Rule::Strings { max_items: 100, max_chars: 253 }, value)?;
+            for entry in value.as_array().into_iter().flatten().filter_map(Value::as_str) {
+                crate::outbound::check_bypass(entry).map_err(|e| format!("{key}: {e}"))?;
+            }
+            Ok(())
+        }
         Rule::Int { .. } | Rule::OneOf(_) | Rule::Strings { .. } | Rule::TimeRange | Rule::TimeWindow | Rule::Bool => {
             check_basic(key, rule, value)
         }

@@ -1677,6 +1677,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.expected_option` | `options` (comma-separated) | the value must be one of `options` |
 | `settings.control_characters` | | the value contains control characters |
 | `settings.required` | | a required setting is missing |
+| `settings.proxy_password_invalid` | `maxChars` | the outbound proxy password is longer than `maxChars` characters or has control characters |
+| `settings.proxy_url_missing` | | a proxy password was sent while `network.proxy_url` is empty; the password belongs to the address |
 | `settings.out_of_range` | `min`, `max` (when bounded) | `queryTimeoutSecs` 1 to 3600, `maxRows` at least 1, `cacheTtlSecs` 1 to 86,400 |
 | `settings.host_credentials` | | the host contains credentials |
 | `settings.host_invalid` | | the host is not a host name or IP address |
@@ -1982,6 +1984,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | Reason | Params | When |
 |---|---|---|
 | `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes (a dashboard, or a library panel) or the visualization of a saved analysis has options or field options the server refuses: `panel` is its title (else its id, for a library panel its name, for an analysis its title), `detail` names the option |
+| `dashboards.plugin_panel_options` | `panel`, `plugin`, `code`, `detail` | a plugin panel the save adds or changes (a dashboard, a library panel or the visualization of a saved analysis) has an option its manifest does not declare (`code` `panel.option_unknown`) or a value that does not fit the declared option, its type, range or choices (`panel.option_invalid`); checked while the plugin may be shown. `panel` is named as for `dashboards.panel_options`, `plugin` is the panel plugin, `detail` names the option and what fits |
 
 ### Sources and the server (`datasource_error` unless noted)
 

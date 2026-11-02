@@ -31,6 +31,7 @@ pub mod mail;
 pub mod me;
 pub mod members;
 pub mod orgs;
+pub mod outbound_proxy;
 pub mod panel_plugins;
 pub mod panel_state;
 pub mod password_reset;
@@ -72,6 +73,7 @@ pub fn all() -> Vec<table::RouteDef> {
         security::routes(),
         orgs::routes(),
         admin_settings::routes(),
+        outbound_proxy::routes(),
         acme::routes(),
         branding::routes(),
         audit::routes(),
