@@ -115,11 +115,16 @@ impl Grants {
         DraftGrant { grants: self.clone(), id }
     }
 
-    /// Takes back a data source: its connections close, its connects are refused.
-    pub fn revoke(&self, datasource_id: &str) {
+    /// Takes back a data source: its connections close, its connects are refused. Answers whether
+    /// the plugin had been handed it (since the last revoke).
+    pub fn revoke(&self, datasource_id: &str) -> bool {
         let token = self.handed.lock_or_recover().remove(datasource_id);
-        if let Some(token) = token {
-            token.cancel();
+        match token {
+            Some(token) => {
+                token.cancel();
+                true
+            }
+            None => false,
         }
     }
 

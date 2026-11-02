@@ -237,6 +237,58 @@ versions: the previous value for a setting whose `source` was `database`, a `res
 was `default`, so undo never stores a copy of the default. The settings pages undo a single
 change the same way.
 
+### Outbound proxy
+
+Kalzit's own requests to the internet can go through an HTTP or HTTPS proxy: the plugin catalog
+and its packages, update checks and downloads, ACME and the AI providers. Data sources never use
+it; each keeps its own connection. Three ordinary server settings, with undo and lockable by
+`KALZIT_SETTING_*` like any other:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `network.proxy_url` | `""` | `http://host:port` or `https://host:port`, nothing else (no user name, password or path). Empty: requests go out directly. |
+| `network.no_proxy` | `[]` | Up to 100 entries the requests reach directly: a host name, `.example.com` or `*.example.com` (the domain and everything below it), an address, a network (`10.0.0.0/8`), or `*` for all. |
+| `network.proxy_username` | `""` | The user name for the proxy's basic sign-in; empty: no sign-in. |
+
+Before a request goes out, through the proxy or past it, Kalzit resolves the target's name
+itself and checks every address with the same rules as without a proxy (no metadata address,
+`datasources.allowed_targets` where it applies, the catalog's public-only rule, the AI provider's
+"not this Kalzit" rule), so a target must resolve on the Kalzit server. The proxy's own address
+is only kept from metadata addresses, so it may stand in the private network; when
+`network.no_proxy` also names the proxy's host, that host gets the targets' rules like any other.
+
+The proxy resolves the name again, so a name whose answer changes in between (DNS rebinding) is
+only stopped by the proxy's own rules: the proxy must refuse private (RFC 1918), loopback,
+link-local and metadata addresses (docs/guide/administration.md, "Outbound proxy", has a squid
+example). Plain-http requests of guarded clients (the catalog's packages, an organization's AI
+provider) go to the checked address in the absolute URL with the name in `Host`, so the proxy
+does not resolve them. HTTPS goes through `CONNECT` by name, since the certificate is checked
+against the name.
+
+When the proxy setting or its password cannot be read, update checks and downloads, certificate
+orders and the ACME check refuse instead of going out directly: the reason is logged at error
+level and shows as the update check's error or the certificate's last failure
+(`acme.directory_unreachable`). The catalog and AI calls answer with their usual errors.
+
+The sign-in is sent only with a user name and a password stored for the proxy address in force.
+With an `http://` proxy address it travels unencrypted to the proxy; the settings page says so.
+
+#### `GET /admin/network/proxy-password`
+
+Server administrators. `{ "set": bool, "stale": bool, "clearText": bool }`: `set` when a
+password is stored for the proxy address in force, `stale` when one is stored for another address,
+`clearText` when a user name is set and the proxy address is `http://`. The password is never sent
+back.
+
+#### `PUT /admin/network/proxy-password`
+
+Body `{ "password": string | null }`; `null` or `""` removes it. Answers like `GET`. The password is stored encrypted
+(`server_secrets`) together with the proxy address in force, and is only ever sent to that
+address: after `network.proxy_url` changes it is not used (`stale`) until it is set again.
+Refusals: `422 validation` on `password` with `settings.proxy_password_invalid` (`maxChars`, more
+than 1024 characters or control characters) or `settings.proxy_url_missing` (no proxy address
+set). Audited as `settings.updated` with key `network.proxy_password`, never the value.
+
 ## HTTPS certificates
 
 Automatic certificates over ACME (guide: docs/guide/https.md), server administrators only. The

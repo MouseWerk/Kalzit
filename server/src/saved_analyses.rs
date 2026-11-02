@@ -146,8 +146,13 @@ pub fn parse(raw: Value) -> Result<AnalysisModel, String> {
 
 /// Checks the visualization's options and field options, unless they are the same as in
 /// `previous` (the stored model): a stored analysis that predates a rule can still be saved while
-/// its visualization is left as it is, as with dashboards.
-pub fn check_visualization(analysis: &AnalysisModel, previous: Option<&AnalysisModel>) -> ApiResult<()> {
+/// its visualization is left as it is, as with dashboards. A plugin panel is checked against the
+/// options its manifest declares, while the plugin may be shown (`panels`).
+pub fn check_visualization(
+    panels: &crate::plugins::panels::PanelRegistry,
+    analysis: &AnalysisModel,
+    previous: Option<&AnalysisModel>,
+) -> ApiResult<()> {
     let model = analysis.as_dashboard()?;
     let previous = previous.map(AnalysisModel::as_dashboard).transpose()?;
     // The reason of a dashboard panel's options, named after the analysis.
@@ -158,6 +163,10 @@ pub fn check_visualization(analysis: &AnalysisModel, previous: Option<&AnalysisM
             .because("dashboards.panel_options")
             .param("panel", &analysis.title)
             .param("detail", detail)
+    })?;
+    crate::plugins::panels::check_dashboard_options(panels, &model, previous.as_ref()).map_err(|r| {
+        let detail = rename(r.detail.clone());
+        r.into_error(&analysis.title, detail)
     })
 }
 
@@ -462,11 +471,30 @@ mod tests {
         let mut raw = valid();
         raw["visualization"] = json!({ "type": "timeseries", "options": { "lineWidth": 9 } });
         let bad = parse(raw).unwrap();
-        let e = check_visualization(&bad, None).unwrap_err();
+        let panels = crate::plugins::panels::PanelRegistry::default();
+        let e = check_visualization(&panels, &bad, None).unwrap_err();
         assert_eq!(e.field, Some("model"));
         assert!(e.message.starts_with("model.visualization.options.lineWidth"), "{}", e.message);
         // The stored model had it already: a save that leaves it alone passes.
-        assert!(check_visualization(&bad, Some(&bad)).is_ok());
-        assert!(check_visualization(&parse(valid()).unwrap(), None).is_ok());
+        assert!(check_visualization(&panels, &bad, Some(&bad)).is_ok());
+        assert!(check_visualization(&panels, &parse(valid()).unwrap(), None).is_ok());
+    }
+
+    #[test]
+    fn plugin_visualization_options_are_checked_against_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let panels = crate::plugins::panels::PanelRegistry::default();
+        panels.insert("dev.example.tile", crate::plugins::panels::options_panel_for_tests(dir.path()));
+        let mut raw = valid();
+        raw["visualization"] = json!({ "type": "dev.example.tile", "options": { "decimals": 11 } });
+        let bad = parse(raw).unwrap();
+        let e = check_visualization(&panels, &bad, None).unwrap_err();
+        let reason = e.reason.as_ref().unwrap();
+        assert_eq!(reason.code, "dashboards.plugin_panel_options");
+        assert_eq!(reason.params["panel"], "Umsatz je Land");
+        assert_eq!(reason.params["plugin"], "dev.example.tile");
+        assert_eq!(reason.params["code"], "panel.option_invalid");
+        assert!(e.message.starts_with("model.visualization.options.decimals"), "{}", e.message);
+        assert!(check_visualization(&panels, &bad, Some(&bad)).is_ok());
     }
 }

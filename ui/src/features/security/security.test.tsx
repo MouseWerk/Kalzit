@@ -68,6 +68,28 @@ describe("second step of the sign-in", () => {
     await waitFor(() => expect(location().pathname).toBe("/"));
   });
 
+  it("asks for the account’s password once after a provider linked it by email", async () => {
+    const server = installFakeServer();
+    server.security.pending = true;
+    server.security.linkPassword = true;
+    server.security.accountPassword = TEST_PASSWORD;
+    const { user, location } = renderApp("/login?secondFactor=1");
+    expect(await screen.findByRole("heading", { name: "Confirm it’s your account" })).toBeTruthy();
+    const field = screen.getByLabelText("Password of your account");
+    await user.click(field);
+    await user.paste("falsch-falsch");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByText("The password is not correct.")).toBeTruthy();
+    expect(server.state.signedIn).toBe(false);
+
+    await user.clear(field);
+    await user.click(field);
+    await user.paste(TEST_PASSWORD);
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(location().pathname).toBe("/"));
+    expect(server.state.signedIn).toBe(true);
+  });
+
   it("goes back to the password with Sign out", async () => {
     const server = installFakeServer();
     server.security.totp = true;

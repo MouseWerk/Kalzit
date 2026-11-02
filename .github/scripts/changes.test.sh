@@ -9,8 +9,8 @@ trap 'rm -rf "$work"' EXIT
 failures=0
 
 flags() {
-  # The devgen and devkit flags have checks of their own (expect_flag), so the columns below stay as they are.
-  grep -v -e '^devgen' -e '^devkit' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
+  # The devgen, devkit and roadmap flags have checks of their own (expect_flag), so the columns below stay as they are.
+  grep -v -e '^devgen' -e '^devkit' -e '^roadmap' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
 }
 
 # expect_flag <flag> "<true|false>" path...
@@ -105,6 +105,17 @@ expect_flag devkit false  tools/devgen/src/cli.ts server/src/main.rs docs/PLAN.m
 # .mcp.json registers both tools' servers: both jobs run.
 expect_flag devkit true   .mcp.json
 expect_flag devgen true   .mcp.json
+
+# The README's progress bars: their data, script, the README and the tokens they take colors from.
+expect "false false false false false false false false"  tools/roadmap/render-progress.mjs
+expect "false false false false false true false false"   docs/roadmap/progress.json
+expect_flag roadmap true   docs/roadmap/progress.json
+expect_flag roadmap true   tools/roadmap/render-progress.mjs
+expect_flag roadmap true   README.md
+expect_flag roadmap true   ui/src/styles/tokens.css
+expect_flag roadmap true   .github/workflows/ci.yml
+expect_flag roadmap true
+expect_flag roadmap false  docs/PLAN.md server/src/main.rs ui/src/app.tsx
 
 # From commits: a deletion and a move out of server/ into docs/ both count as server changes.
 repo="$work/repo"

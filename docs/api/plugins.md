@@ -131,8 +131,10 @@ What the host checks, in this order, before anything runs:
 ```
 
 `GET /admin/plugins/{pluginId}` answers one item with two more fields: `manifest`, the manifest
-exactly as signed (TOML), and `usedIn`, the data sources of its kind in every organization (not
-in the trash), for "Used in" and the question before removing it:
+exactly as signed (TOML), and `usedIn`, for "Used in" and the question before removing it: for a
+data source plugin the data sources of its kind in every organization (not in the trash), for a
+panel plugin the dashboards in every organization (not in the trash) whose current version shows
+it, directly or through a linked library panel or analysis (`name` is the dashboard's title):
 
 ```json
 { "...": "...", "manifest": "manifest = 1\nid = \"dev.example.redis\"\n...",
@@ -186,7 +188,8 @@ payload_too_large` above). Answers `201` with the plugin.
 Enabling needs the approval (`plugin.not_approved`). Disabling takes the kind out of the registry
 and ends the process: data sources of the kind stay stored and answer
 `datasource.kind_unavailable`. `restart` starts the count of failures afresh after the plugin
-stopped (below); the next call starts it. All three answer the plugin.
+stopped (below); the next call starts it. A panel plugin runs no process, so `restart` refuses it
+with `409 plugin.panel_has_no_process` and records nothing. All three answer the plugin.
 
 ### Remove: `DELETE /admin/plugins/{pluginId}`
 
@@ -452,8 +455,10 @@ visualization picker and the options editor:
 builds the options editor from them, and gives a panel only declared options whose values fit,
 with the defaults for the rest. Creating, saving and restoring a dashboard check the options of
 the plugin panels they add or change against the manifest (`422 validation`,
-`dashboards.panel_options`, naming the panel and the option), while the plugin may be shown;
-library panels and saved analyses keep their options unchecked for now.
+`dashboards.plugin_panel_options` with `panel`, `plugin`, `code` and `detail`, naming the panel
+and the option), while the plugin may be shown. Library panels and the visualization of saved
+analyses are checked the same way. Unchanged panels and panels of plugins that cannot be shown
+are left as they are, so a stored dashboard keeps saving.
 
 ### Frame: `GET /orgs/{orgId}/panel-plugins/{pluginId}/frame?dashboard={dashboardId}`
 
@@ -816,10 +821,15 @@ Rules:
   types and fields it does not know; Kalzit speaks to a bundle in the version its manifest names
   (`[panel] api`) and refuses versions it does not know at install.
 
-## Not here yet
+## Release
 
-- `Release` calls when a data source changes or is deleted (plugins key their pools by
-  `Connection.revision` meanwhile).
+When a data source changes (name, settings or secrets), goes to the trash, or its organization
+blocks the plugin, Kalzit takes back what the plugin was handed for it and calls `Release` with
+its id, on every server of the installation. The call goes only to a running process that was
+handed the source since the last `Release`, in the background with a 5 second deadline: the
+user's change never waits for it, and a failure is only logged (the plugin keys its pools by
+`Connection.revision` anyway). A source purged from the trash was released when it went there,
+so it gets no second call. A plugin answers `Release` for an id it does not know with success.
 
 ## Reasons
 
@@ -858,6 +868,7 @@ Rules:
 | `plugin.nothing_to_approve` | | the version is approved already and no update waits (`409`) |
 | `plugin.version_mismatch` | `version` | the version to approve is neither installed nor waiting (`409`) |
 | `plugin.not_running` | | restarting a plugin that is not enabled or cannot run (`422`) |
+| `plugin.panel_has_no_process` | | restarting a panel plugin, which runs no process (`409`) |
 | `plugin.untrusted` | | the key that signed the plugin is no longer trusted (status, log) |
 | `plugin.key_invalid` | | `publicKey` is not an Ed25519 public key (`422`, `field: publicKey`) |
 | `plugin.key_exists` | | the key is trusted already (`409`) |

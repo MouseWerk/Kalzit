@@ -46,6 +46,8 @@ import "./plugins.css";
 
 const TABS = ["overview", "manifest", "log", "used"] as const;
 type Tab = (typeof TABS)[number];
+/** A panel plugin runs no process, so it has no output to show. */
+const PANEL_TABS: readonly Tab[] = ["overview", "manifest", "used"];
 
 const TAB_LABEL: Record<Tab, MessageKey> = {
   overview: "plugins.details.tab.overview",
@@ -76,7 +78,9 @@ export function PluginRoutePage() {
 /**
  * One plugin (board frame 2, and frame 4 for a crash): who signed it, its manifest, the targets
  * it may reach, the process and its sandbox, its output, the data sources of its kind in every
- * organization, and approve, restart, turn on or off and remove.
+ * organization, and approve, restart, turn on or off and remove. A panel plugin only draws panels
+ * in the browser and runs no process: its page has no restart, process, sandbox or output, and
+ * "Used in" lists the dashboards that show it.
  */
 export function PluginPage({ pluginId }: { pluginId: string }) {
   const { t, language } = useI18n();
@@ -100,7 +104,11 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
     mutationFn: (action: PluginAction) => pluginAction(pluginId, action),
     onSuccess: (plugin, action) => {
       refresh();
-      showToast({ message: t(`plugins.details.done.${action}`, { name: plugin.name }) });
+      const key =
+        action === "disable" && plugin.kind === "panel"
+          ? "plugins.details.done.disablePanel"
+          : (`plugins.details.done.${action}` as const);
+      showToast({ message: t(key, { name: plugin.name }) });
     },
     onError: (error) => showToast({ message: errorMessage(t, error), error: true }),
   });
@@ -127,12 +135,15 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
   }
   const plugin = detail.data;
   const orgs = new Set(plugin.usedIn.map((source) => source.orgId));
+  const panel = plugin.kind === "panel";
+  const tabs = panel ? PANEL_TABS : TABS;
+  const shown: Tab = tabs.includes(tab) ? tab : "overview";
 
   function onTabKey(event: KeyboardEvent<HTMLDivElement>) {
     const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
     if (step === 0) return;
     event.preventDefault();
-    const next = TABS[(TABS.indexOf(tab) + step + TABS.length) % TABS.length] ?? tab;
+    const next = tabs[(tabs.indexOf(shown) + step + tabs.length) % tabs.length] ?? shown;
     setTab(next);
     document.getElementById(`${tabsId}-${next}-tab`)?.focus();
   }
@@ -203,7 +214,7 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
               {t("plugins.details.approve")}
             </button>
           ) : null}
-          {plugin.approved && plugin.enabled ? (
+          {plugin.approved && plugin.enabled && !panel ? (
             <button
               type="button"
               className="button button--secondary"
@@ -242,16 +253,16 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
         aria-label={t("plugins.details.tabs")}
         onKeyDown={onTabKey}
       >
-        {TABS.map((name) => (
+        {tabs.map((name) => (
           <button
             key={name}
             type="button"
             role="tab"
             id={`${tabsId}-${name}-tab`}
             className="tabs__tab"
-            aria-selected={tab === name}
+            aria-selected={shown === name}
             aria-controls={`${tabsId}-${name}`}
-            tabIndex={tab === name ? 0 : -1}
+            tabIndex={shown === name ? 0 : -1}
             onClick={() => setTab(name)}
           >
             {t(TAB_LABEL[name])}
@@ -261,10 +272,10 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
           </button>
         ))}
       </div>
-      <div role="tabpanel" id={`${tabsId}-${tab}`} aria-labelledby={`${tabsId}-${tab}-tab`}>
-        {tab === "overview" ? (
+      <div role="tabpanel" id={`${tabsId}-${shown}`} aria-labelledby={`${tabsId}-${shown}-tab`}>
+        {shown === "overview" ? (
           <Overview plugin={plugin} now={now} />
-        ) : tab === "manifest" ? (
+        ) : shown === "manifest" ? (
           <section className="plugins-card" aria-label={t("plugins.details.tab.manifest")}>
             <div className="plugins-card__head">
               <div className="plugins-card__title">
@@ -277,20 +288,24 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
               {plugin.manifest}
             </pre>
           </section>
-        ) : tab === "log" ? (
+        ) : shown === "log" ? (
           <LogCard plugin={plugin} />
         ) : (
           <section className="plugins-card" aria-label={t("plugins.details.tab.used")}>
             <div className="plugins-card__body">
               {plugin.usedIn.length === 0 ? (
-                <p className="plugins-hint">{t("plugins.details.usedNone")}</p>
+                <p className="plugins-hint">
+                  {t(panel ? "plugins.details.usedNonePanel" : "plugins.details.usedNone")}
+                </p>
               ) : (
                 <>
                   <p className="plugins-hint">
-                    {t("plugins.details.usedCount", {
-                      count: plugin.usedIn.length,
-                      orgs: orgs.size,
-                    })}
+                    {panel
+                      ? dashboardCount(t, plugin)
+                      : t("plugins.details.usedCount", {
+                          count: plugin.usedIn.length,
+                          orgs: orgs.size,
+                        })}
                   </p>
                   <UsedList plugin={plugin} />
                 </>
@@ -313,8 +328,8 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
       >
         <p>
           {plugin.usedIn.length === 0
-            ? t("plugins.details.removeUnused")
-            : t("plugins.details.removeUsed", {
+            ? t(panel ? "plugins.details.removeUnusedPanel" : "plugins.details.removeUnused")
+            : t(panel ? "plugins.details.removeUsedPanel" : "plugins.details.removeUsed", {
                 count: plugin.usedIn.length,
                 orgs: orgs.size,
               })}
@@ -443,114 +458,172 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
           )}
         </div>
       </section>
-      <section className="plugins-card" aria-label={t("plugins.details.state")}>
-        <div className="plugins-card__head">
-          <div className="plugins-card__title">
-            <h3>{t("plugins.details.state")}</h3>
+      {plugin.kind === "panel" ? (
+        <PanelCard plugin={plugin} now={now} />
+      ) : (
+        <section className="plugins-card" aria-label={t("plugins.details.state")}>
+          <div className="plugins-card__head">
+            <div className="plugins-card__title">
+              <h3>{t("plugins.details.state")}</h3>
+            </div>
           </div>
-        </div>
-        <div className="plugins-card__body">
-          {process === undefined ? (
-            <p className="plugins-hint">{t("plugins.details.noProcess")}</p>
-          ) : (
-            <dl className="plugin-defs">
-              <dt>{t("plugins.details.process")}</dt>
-              <dd>
-                <PluginStatusLabel plugin={plugin} now={now} />
-              </dd>
-              {process.pid === undefined ? null : (
-                <>
-                  <dt>{t("plugins.details.pid")}</dt>
-                  <dd className="plugins-mono">{process.pid}</dd>
-                </>
-              )}
-              {process.startedAt === undefined ? null : (
-                <>
-                  <dt>{t("plugins.details.startedAt")}</dt>
-                  <dd>{time.format(process.startedAt)}</dd>
-                </>
-              )}
-              <dt>{t("plugins.details.starts")}</dt>
-              <dd>{process.starts}</dd>
-              <dt>{t("plugins.details.failures")}</dt>
-              <dd>{process.failures}</dd>
-              {process.lastError === undefined ? null : (
-                <>
-                  <dt>{t("plugins.details.lastError")}</dt>
-                  <dd>
-                    {pluginReasonText(t, {
-                      reason: process.lastError.reason,
-                      fallback: process.lastError.message,
-                    })}{" "}
-                    <span className="plugins-muted plugins-small">
-                      {time.format(process.lastError.at)}
-                    </span>
-                  </dd>
-                </>
-              )}
-            </dl>
-          )}
-          <h4 className="plugin-dialog__heading">{t("plugins.details.sandbox")}</h4>
-          {process === undefined || process.sandbox.length === 0 ? (
-            <p className="plugins-hint">{t("plugins.details.sandboxUnknown")}</p>
-          ) : (
-            <ul className="plugins-chips" aria-label={t("plugins.details.sandboxOn")}>
-              {process.sandbox.map((layer) => (
-                <li key={layer} className="plugins-chip plugins-chip--strong">
-                  <Icon name="check" />
-                  {layerText(t, layer)}
-                </li>
-              ))}
-            </ul>
-          )}
-          {process === undefined || process.sandboxMissing.length === 0 ? null : (
-            <>
-              <p className="plugins-hint">{t("plugins.details.sandboxMissing")}</p>
-              <ul className="plugins-chips" aria-label={t("plugins.details.sandboxMissing")}>
-                {process.sandboxMissing.map((layer) => (
-                  <li key={layer} className="plugins-chip">
+          <div className="plugins-card__body">
+            {process === undefined ? (
+              <p className="plugins-hint">{t("plugins.details.noProcess")}</p>
+            ) : (
+              <dl className="plugin-defs">
+                <dt>{t("plugins.details.process")}</dt>
+                <dd>
+                  <PluginStatusLabel plugin={plugin} now={now} />
+                </dd>
+                {process.pid === undefined ? null : (
+                  <>
+                    <dt>{t("plugins.details.pid")}</dt>
+                    <dd className="plugins-mono">{process.pid}</dd>
+                  </>
+                )}
+                {process.startedAt === undefined ? null : (
+                  <>
+                    <dt>{t("plugins.details.startedAt")}</dt>
+                    <dd>{time.format(process.startedAt)}</dd>
+                  </>
+                )}
+                <dt>{t("plugins.details.starts")}</dt>
+                <dd>{process.starts}</dd>
+                <dt>{t("plugins.details.failures")}</dt>
+                <dd>{process.failures}</dd>
+                {process.lastError === undefined ? null : (
+                  <>
+                    <dt>{t("plugins.details.lastError")}</dt>
+                    <dd>
+                      {pluginReasonText(t, {
+                        reason: process.lastError.reason,
+                        fallback: process.lastError.message,
+                      })}{" "}
+                      <span className="plugins-muted plugins-small">
+                        {time.format(process.lastError.at)}
+                      </span>
+                    </dd>
+                  </>
+                )}
+              </dl>
+            )}
+            <h4 className="plugin-dialog__heading">{t("plugins.details.sandbox")}</h4>
+            {process === undefined || process.sandbox.length === 0 ? (
+              <p className="plugins-hint">{t("plugins.details.sandboxUnknown")}</p>
+            ) : (
+              <ul className="plugins-chips" aria-label={t("plugins.details.sandboxOn")}>
+                {process.sandbox.map((layer) => (
+                  <li key={layer} className="plugins-chip plugins-chip--strong">
+                    <Icon name="check" />
                     {layerText(t, layer)}
                   </li>
                 ))}
               </ul>
-            </>
-          )}
-          {plugin.sandboxWarning === undefined ? null : (
-            <p
-              className={
-                plugin.sandboxWarning === "landlock_missing"
-                  ? "plugins-note plugins-note--danger"
-                  : "plugins-note plugins-note--warning"
-              }
-            >
-              <Icon name="alert" />
-              <span>
-                {plugin.sandboxWarning === "landlock_missing"
-                  ? pluginReasonText(t, { reason: "plugin.landlock_missing" })
-                  : t("plugins.sandbox.withoutLandlock")}
-              </span>
-            </p>
-          )}
-          {(process?.warnings ?? [])
-            .filter(
-              (w) =>
-                !(w.reason === "plugin.without_landlock" && plugin.sandboxWarning !== undefined),
-            )
-            .map((w) => (
+            )}
+            {process === undefined || process.sandboxMissing.length === 0 ? null : (
+              <>
+                <p className="plugins-hint">{t("plugins.details.sandboxMissing")}</p>
+                <ul className="plugins-chips" aria-label={t("plugins.details.sandboxMissing")}>
+                  {process.sandboxMissing.map((layer) => (
+                    <li key={layer} className="plugins-chip">
+                      {layerText(t, layer)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {plugin.sandboxWarning === undefined ? null : (
               <p
-                key={`${w.reason}-${w.params.path ?? ""}`}
-                className="plugins-note plugins-note--warning"
+                className={
+                  plugin.sandboxWarning === "landlock_missing"
+                    ? "plugins-note plugins-note--danger"
+                    : "plugins-note plugins-note--warning"
+                }
               >
                 <Icon name="alert" />
                 <span>
-                  {pluginReasonText(t, { reason: w.reason, params: w.params, fallback: w.message })}
+                  {plugin.sandboxWarning === "landlock_missing"
+                    ? pluginReasonText(t, { reason: "plugin.landlock_missing" })
+                    : t("plugins.sandbox.withoutLandlock")}
                 </span>
               </p>
-            ))}
-        </div>
-      </section>
+            )}
+            {(process?.warnings ?? [])
+              .filter(
+                (w) =>
+                  !(w.reason === "plugin.without_landlock" && plugin.sandboxWarning !== undefined),
+              )
+              .map((w) => (
+                <p
+                  key={`${w.reason}-${w.params.path ?? ""}`}
+                  className="plugins-note plugins-note--warning"
+                >
+                  <Icon name="alert" />
+                  <span>
+                    {pluginReasonText(t, {
+                      reason: w.reason,
+                      params: w.params,
+                      fallback: w.message,
+                    })}
+                  </span>
+                </p>
+              ))}
+          </div>
+        </section>
+      )}
     </div>
   );
+}
+
+/**
+ * What applies to a panel plugin in place of the process and its sandbox: it is drawn in an
+ * isolated frame in the browser, its version and signature, and how many dashboards show it.
+ */
+function PanelCard({ plugin, now }: { plugin: PluginDetail; now: number }) {
+  const { t } = useI18n();
+  return (
+    <section className="plugins-card" aria-label={t("plugins.details.state")}>
+      <div className="plugins-card__head">
+        <div className="plugins-card__title">
+          <h3>{t("plugins.details.state")}</h3>
+        </div>
+      </div>
+      <div className="plugins-card__body">
+        <dl className="plugin-defs">
+          <dt>{t("plugins.details.status")}</dt>
+          <dd>
+            <PluginStatusLabel plugin={plugin} now={now} />
+          </dd>
+          <dt>{t("plugins.details.version")}</dt>
+          <dd className="plugins-mono">{plugin.version}</dd>
+          <dt>{t("plugins.details.signature")}</dt>
+          <dd>
+            <SignatureLabel plugin={plugin} />
+          </dd>
+          <dt>{t("plugins.details.tab.used")}</dt>
+          <dd>
+            {plugin.usedIn.length === 0
+              ? t("plugins.details.usedNonePanel")
+              : dashboardCount(t, plugin)}
+          </dd>
+        </dl>
+        <p className="plugins-note">
+          <Icon name="help" />
+          <span>{t("plugins.details.panelRuns")}</span>
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/** "3 dashboards in 2 organizations", in the singular where it applies. */
+function dashboardCount(t: ReturnType<typeof useI18n>["t"], plugin: PluginDetail): string {
+  const count = plugin.usedIn.length;
+  const orgs = new Set(plugin.usedIn.map((use) => use.orgId)).size;
+  if (count === 1) return t("plugins.details.usedCountPanelOne");
+  if (orgs === 1) return t("plugins.details.usedCountPanelOneOrg", { count });
+  return t("plugins.details.usedCountPanel", { count, orgs });
 }
 
 function LogCard({ plugin }: { plugin: Plugin }) {
@@ -666,12 +739,16 @@ function UsedList({ plugin }: { plugin: PluginDetail }) {
     <ul className="plugin-used">
       {plugin.usedIn.map((source) => (
         <li key={source.id}>
-          {org?.id === source.orgId ? (
-            <Link to="/data-sources/$datasourceId" params={{ datasourceId: source.id }}>
+          {org?.id !== source.orgId ? (
+            <span>{source.name}</span>
+          ) : plugin.kind === "panel" ? (
+            <Link to="/dashboards/$dashboardId" params={{ dashboardId: source.id }} search={{}}>
               {source.name}
             </Link>
           ) : (
-            <span>{source.name}</span>
+            <Link to="/data-sources/$datasourceId" params={{ datasourceId: source.id }}>
+              {source.name}
+            </Link>
           )}
           <span className="plugins-muted">{source.orgName}</span>
         </li>

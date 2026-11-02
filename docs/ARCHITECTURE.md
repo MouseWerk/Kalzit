@@ -528,7 +528,7 @@ process, a network target or the gRPC protocol.
 | `Query` | One query; the result streams as parts (below). |
 | `CheckOnSave` | Capability `check_on_save`: checks on the source itself when it is saved (the login may only read). |
 | `Watch` | Capability `watch`: change feed for live updates, positions as opaque resume tokens; `unsupported` as first event means "poll". |
-| `Release` | Kalzit forgets a data source (settings changed, deleted): close its pools. |
+| `Release` | Kalzit forgets a data source (changed, trashed, blocked): close its pools. Sent once per hand-over, in the background; failures are logged (docs/api/plugins.md, "Release"). |
 
 - Every call carries the data source (`Connection`: id, revision, settings, secrets); plugins
   may keep pools per id and revision until `Release`. Secrets are never logged or echoed.
@@ -2096,6 +2096,7 @@ through `settings::get`; new registry entries are requested from the orchestrato
   | `devkit` | `tools/devkit/` and the shared `.mcp.json` (the developer toolkit, job `devkit`) |
   | `devgen` | `tools/devgen/` and the shared `.mcp.json` (the developer generators, job `devgen`, which also runs for `server` and `ui`) |
   | `devgen_proof` | `server/src/routes/`, `server/src/settings*`, `ui/src/i18n/`, `ui/src/features/settings/`, `tools/devgen/src/` (job `devgen proof` on pull requests; weekly by `devgen-proof.yml`) |
+  | `roadmap` | `docs/roadmap/`, `tools/roadmap/`, `README.md`, `ui/src/styles/tokens.css` (job `roadmap`: the README's milestone progress bars match `docs/roadmap/progress.json`) |
 
   `docs/api/` and `docs/glossary.md` count as code because server and UI tests read them;
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test

@@ -30,6 +30,7 @@ pub mod live;
 pub mod locks;
 pub mod mail;
 pub mod net;
+pub mod outbound;
 pub mod plugins;
 pub mod routes;
 pub mod saved_analyses;

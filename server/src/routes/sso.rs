@@ -414,11 +414,13 @@ pub(crate) async fn complete_sign_in(
     }
     crate::db::commit(tx).await?;
     // Kalzit's own second factor, unless the provider's switch says to take its word for one
-    // (`trust_provider_mfa` and the token's `amr`).
+    // (`trust_provider_mfa` and the token's `amr`); never for a link by email that is not
+    // confirmed yet, which proves the account first (`sso::signin`).
     let first = FirstStep::Provider {
         provider_id: &provider.id,
         mfa_done: person.mfa_done,
-        provider_mfa_trusted: provider.trust_provider_mfa != 0,
+        provider_mfa_trusted: provider.trust_provider_mfa != 0 && !linked.email_linked,
+        confirm_link: linked.confirm_link,
     };
     let plan = super::second_factor::plan(state, info, &linked.user, first, now).await?;
     let mut cookies = clear();
@@ -781,6 +783,26 @@ fn validate(body: ProviderBody) -> ApiResult<Valid> {
     Ok(valid)
 }
 
+/// A provider whose word Kalzit takes for addresses (`trustEmail`) or second factors
+/// (`trustProviderMfa`) signs people in to existing accounts on that word. Creating or changing
+/// one while either switch is on, or turning one on, needs a fresh confirmation of the admin's
+/// second factor, when they have one (as `second_factor::require_fresh_for_setting`).
+pub(crate) async fn require_fresh_for_trust(
+    state: &AppState,
+    admin_id: &str,
+    headers: &HeaderMap,
+    secure: bool,
+    trusting: bool,
+    now: i64,
+) -> ApiResult<()> {
+    use crate::auth::second_factor as sf;
+    if !trusting || !sf::methods(&state.db, admin_id).await?.any() {
+        return Ok(());
+    }
+    let token = session::read_cookie(headers, secure).ok_or_else(ApiError::unauthenticated)?;
+    sf::require_fresh(&state.db, &session::hash_token(&token), now).await
+}
+
 /// A route for one kind of provider used with another.
 pub(crate) fn kind_mismatch() -> ApiError {
     ApiError::validation("this route is for another kind of provider").because("sso.kind_mismatch")
@@ -976,6 +998,7 @@ async fn create(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     JsonBody(body): JsonBody<ProviderBody>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let valid = validate(body)?;
@@ -984,6 +1007,8 @@ async fn create(
         return Err(field_error("clientSecret", "sso.client_secret_required", "a new provider needs a client secret"));
     };
     let now = state.clock.now_ms();
+    let trusting = valid.config.trust_email || valid.trust_provider_mfa;
+    require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
     verify_check_token(&state, token.as_deref(), &valid.config, &secret, now)?;
     let id = super::new_id();
     let mut tx = crate::db::begin(&state.db).await?;
@@ -1029,6 +1054,7 @@ async fn update(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     JsonBody(body): JsonBody<ProviderBody>,
 ) -> ApiResult<Json<Value>> {
@@ -1046,6 +1072,9 @@ async fn update(
     }
     let old = current.oidc()?;
     let now = state.clock.now_ms();
+    let trusting =
+        old.trust_email || valid.config.trust_email || current.trust_provider_mfa != 0 || valid.trust_provider_mfa;
+    require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
     let connection_changed =
         old.issuer != valid.config.issuer || old.client_id != valid.config.client_id || valid.secret.is_some();
     if connection_changed {
@@ -1193,11 +1222,22 @@ async fn set_enabled(
     State(state): State<AppState>,
     Extension(admin): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     JsonBody(body): JsonBody<EnabledBody>,
 ) -> ApiResult<Json<Value>> {
     let current = load_provider(&state, &id).await?;
     let now = state.clock.now_ms();
+    // Resuming a provider that takes the provider's word for addresses or second factors lets it
+    // sign people in on that word again: the same fresh confirmation as changing it.
+    if body.enabled && current.enabled == 0 {
+        let trust_email = serde_json::from_str::<Value>(&current.config)
+            .ok()
+            .and_then(|c| c["trustEmail"].as_bool())
+            .unwrap_or(false);
+        let trusting = trust_email || current.trust_provider_mfa != 0;
+        require_fresh_for_trust(&state, &admin.id, &headers, info.https, trusting, now).await?;
+    }
     if (current.enabled != 0) != body.enabled {
         let mut tx = crate::db::begin(&state.db).await?;
         sqlx::query("UPDATE sso_providers SET enabled = $1, version = version + 1, updated_at = $2 WHERE id = $3")

@@ -1,4 +1,12 @@
 @layer components {
+  /* The outbound proxy's password: the field and its buttons in one line that wraps. */
+  .settings-proxy-password {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
   /*
    * The settings page after the design blueprint: a navigation column (search, groups, export at
    * the bottom) a step below the canvas, the section on the right as cards of rows, and on the
