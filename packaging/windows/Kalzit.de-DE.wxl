@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The installer's own texts in German (with "du", terms as in docs/glossary.md); the WixUI dialogs
-  bring theirs. build.ps1 embeds this language as a transform that Windows Installer applies by
+  The installer's texts in German (with "du", terms as in docs/glossary.md). The first block is
+  Kalzit's own pages; the second replaces the WixUI dialogs' wording, which says "Sie", with
+  Kalzit's ("Einrichtung" is the first start in the browser, so the installer says
+  "Installation"). build.ps1 embeds this language as a transform that Windows Installer applies by
   itself when the Windows display language is German.
 -->
 <WixLocalization Culture="de-DE" Codepage="1252" xmlns="http://wixtoolset.org/schemas/v4/wxl">
@@ -24,11 +26,88 @@
   <String Id="KalzitFirewall" Value="Port(s) in der Windows Defender &amp;Firewall öffnen" />
   <String Id="KalzitCertMissing" Value="Gib die Zertifikats- und die Schlüsseldatei an." />
 
+  <String Id="KalzitLicenseTitle" Value="Lizenz" />
+  <String Id="KalzitLicenseDescription" Value="Kalzit ist freie Software unter der GNU Affero General Public License, Version 3." />
+  <String Id="KalzitLicenseNote" Value="Zum Installieren und Ausführen musst du sie nicht annehmen (Abschnitt 9). Eine Kopie liegt als LICENSE.txt im Programmordner." />
+  <String Id="KalzitLicenseText" Value="&amp;Lizenztext:" />
+
+  <!-- The WixUI dialogs in Kalzit's words. -->
+  <String Id="WelcomeDlg_Title" Value="Kalzit-Installation" />
+  <String Id="WelcomeDlgTitle" Value="{\WixUI_Font_Bigger}Kalzit installieren" />
+  <String Id="WelcomeDlgDescription" Value="Damit installierst du Kalzit auf diesem Computer; es läuft als Windows-Dienst „Kalzit“. Eine frühere Version wird ersetzt, ihre Einstellungen und Daten bleiben erhalten.&#13;&#10;&#13;&#10;Geändert wird erst etwas, wenn du „Installieren“ wählst." />
+  <String Id="InstallDirDlg_Title" Value="Kalzit-Installation" />
+  <String Id="InstallDirDlgTitle" Value="{\WixUI_Font_Title}Programmordner" />
+  <String Id="InstallDirDlgDescription" Value="Hierhin kommt kalzit.exe. Kalzits Daten liegen getrennt davon im Datenordner." />
+  <String Id="InstallDirDlgFolderLabel" Value="Kalzit installieren in:" />
+  <String Id="BrowseDlg_Title" Value="Kalzit-Installation" />
+  <String Id="BrowseDlgTitle" Value="{\WixUI_Font_Title}Programmordner wählen" />
+  <String Id="BrowseDlgDescription" Value="Wähle einen Ordner auf einem lokalen Laufwerk." />
+  <String Id="InvalidDirDlg_Title" Value="Kalzit-Installation" />
+  <String Id="InvalidDirDlgText" Value="Der Programmordner muss auf einem lokalen Laufwerk liegen." />
+  <String Id="VerifyReadyDlg_Title" Value="Kalzit-Installation" />
+  <String Id="VerifyReadyDlgInstallTitle" Value="{\WixUI_Font_Title}Bereit zum Installieren" />
+  <String Id="VerifyReadyDlgInstallText" Value="Wähle „Installieren“, um zu beginnen, oder „Zurück“, um Ordner und Einstellungen zu prüfen." />
+  <String Id="VerifyReadyDlgRepairTitle" Value="{\WixUI_Font_Title}Bereit zum Reparieren" />
+  <String Id="VerifyReadyDlgRepairText" Value="Wähle „Reparieren“, um Programm und Dienst wiederherzustellen. Einstellungen und Daten bleiben, wie sie sind." />
+  <String Id="VerifyReadyDlgRemoveTitle" Value="{\WixUI_Font_Title}Bereit zum Entfernen" />
+  <String Id="VerifyReadyDlgRemoveText" Value="Wähle „Entfernen“, um Programm und Dienst zu entfernen. „Zurück“ führt zur Frage nach den Daten." />
+  <String Id="ProgressDlg_Title" Value="Kalzit-Installation" />
+  <String Id="ProgressDlgTitleInstalling" Value="{\WixUI_Font_Title}Kalzit wird installiert" />
+  <String Id="ProgressDlgTextInstalling" Value="Kalzit wird installiert und als Windows-Dienst eingerichtet. Einen Moment bitte." />
+  <String Id="ProgressDlgTitleRepairing" Value="{\WixUI_Font_Title}Kalzit wird repariert" />
+  <String Id="ProgressDlgTextRepairing" Value="Kalzit wird repariert. Einen Moment bitte." />
+  <String Id="ProgressDlgTitleRemoving" Value="{\WixUI_Font_Title}Kalzit wird entfernt" />
+  <String Id="ProgressDlgTextRemoving" Value="Kalzit wird entfernt. Einen Moment bitte." />
+  <String Id="ProgressDlgTitleUpdating" Value="{\WixUI_Font_Title}Kalzit wird aktualisiert" />
+  <String Id="ProgressDlgTextUpdating" Value="Kalzit wird aktualisiert. Einen Moment bitte." />
+  <String Id="ExitDialog_Title" Value="Kalzit-Installation" />
+  <String Id="ExitDialogTitle" Value="{\WixUI_Font_Bigger}Fertig" />
+  <String Id="ExitDialogDescription" Value="Wähle „Fertig stellen“, um die Installation zu schließen." />
+  <String Id="UserExit_Title" Value="Kalzit-Installation" />
+  <String Id="UserExitTitle" Value="{\WixUI_Font_Bigger}Installation abgebrochen" />
+  <String Id="UserExitDescription1" Value="Kalzit wurde nicht installiert, und auf diesem Computer wurde nichts geändert. Du kannst die Installation jederzeit neu starten." />
+  <String Id="UserExitDescription2" Value="Wähle „Fertig stellen“, um die Installation zu schließen." />
+  <String Id="FatalError_Title" Value="Kalzit-Installation" />
+  <String Id="FatalErrorTitle" Value="{\WixUI_Font_Bigger}Installation fehlgeschlagen" />
+  <String Id="FatalErrorDescription1" Value="Ein Fehler hat die Installation beendet, ihre Änderungen wurden zurückgenommen. Fehler aus Kalzits eigenen Einrichtungsschritten stehen in der Windows-Ereignisanzeige (Anwendung, Quelle „Kalzit“)." />
+  <String Id="FatalErrorDescription2" Value="Wähle „Fertig stellen“, um die Installation zu schließen." />
+  <String Id="CancelDlg_Title" Value="Kalzit-Installation" />
+  <String Id="CancelDlgText" Value="Installation abbrechen? Bis jetzt Geändertes wird zurückgenommen." />
+  <String Id="MaintenanceWelcomeDlg_Title" Value="Kalzit-Installation" />
+  <String Id="MaintenanceWelcomeDlgTitle" Value="{\WixUI_Font_Bigger}Kalzit ist installiert" />
+  <String Id="MaintenanceWelcomeDlgDescription" Value="Du kannst Kalzit reparieren oder von diesem Computer entfernen. Wähle „Weiter“, um fortzufahren." />
+  <String Id="MaintenanceTypeDlg_Title" Value="Kalzit-Installation" />
+  <String Id="MaintenanceTypeDlgTitle" Value="{\WixUI_Font_Title}Reparieren oder entfernen" />
+  <String Id="MaintenanceTypeDlgDescription" Value="Wähle, was mit dieser Installation geschehen soll." />
+  <String Id="MaintenanceTypeDlgRepairText" Value="Stellt Programm und Dienst wieder her. Einstellungen und Daten bleiben." />
+  <String Id="MaintenanceTypeDlgRemoveText" Value="Entfernt Programm und Dienst. Die nächste Seite fragt nach den Daten." />
+  <String Id="PrepareDlg_Title" Value="Kalzit-Installation" />
+  <String Id="PrepareDlgTitle" Value="{\WixUI_Font_Bigger}Kalzit-Installation" />
+  <String Id="PrepareDlgDescription" Value="Die Installation wird vorbereitet. Einen Moment bitte." />
+  <String Id="ResumeDlg_Title" Value="Kalzit-Installation" />
+  <String Id="ResumeDlgTitle" Value="{\WixUI_Font_Bigger}Installation fortsetzen" />
+  <String Id="ResumeDlgDescription" Value="Eine frühere Installation von Kalzit wurde nicht abgeschlossen. Wähle „Installieren“, um sie abzuschließen." />
+  <String Id="DiskCostDlg_Title" Value="Kalzit-Installation" />
+  <String Id="DiskCostDlgText" Value="Auf den hervorgehobenen Laufwerken ist nicht genug Platz. Gib Speicher frei oder wähle einen anderen Programmordner." />
+  <String Id="FilesInUse_Title" Value="Kalzit-Installation" />
+  <String Id="FilesInUseText" Value="Diese Anwendungen verwenden Dateien, die ersetzt werden müssen. Schließe sie und wähle „Wiederholen“, oder „Beenden“, um aufzuhören." />
+  <String Id="MsiRMFilesInUse_Title" Value="Kalzit-Installation" />
+  <String Id="MsiRMFilesInUseText" Value="Diese Anwendungen verwenden Dateien, die ersetzt werden müssen. Die Installation kann sie schließen und danach neu starten, oder du startest den Computer später neu." />
+  <String Id="ErrorDlg_Title" Value="Kalzit-Installation" />
+  <String Id="OutOfDiskDlg_Title" Value="Kalzit-Installation" />
+  <String Id="OutOfDiskDlgText" Value="Auf den hervorgehobenen Laufwerken ist nicht genug Platz. Gib Speicher frei oder wähle einen anderen Programmordner." />
+  <String Id="OutOfRbDiskDlg_Title" Value="Kalzit-Installation" />
+  <String Id="OutOfRbDiskDlgText" Value="Auf den hervorgehobenen Laufwerken ist nicht genug Platz. Gib Speicher frei oder wähle einen anderen Programmordner." />
+  <String Id="OutOfRbDiskDlgText2" Value="Du kannst auch ohne Rücknahme installieren: Bricht die Installation dann ab, kann sie den vorherigen Zustand nicht wiederherstellen. Wähle „Ja“, um das in Kauf zu nehmen." />
+  <String Id="WaitForCostingDlg_Title" Value="Kalzit-Installation" />
+  <String Id="WaitForCostingDlgText" Value="Der benötigte Speicherplatz wird ermittelt. Einen Moment bitte." />
+
   <String Id="KalzitRemoveTitle" Value="Kalzit entfernen" />
   <String Id="KalzitRemoveDescription" Value="Programm und Dienst werden entfernt. Deine Daten bleiben erhalten." />
   <String Id="KalzitRemoveText" Value="Kalzit legt Datenbank, Dashboards, Datenquellen, Protokolle und den Schlüssel für gespeicherte Passwörter in seinem Datenordner ab, den [CommonAppDataFolder]Kalzit\kalzit.toml nennt. Bleiben sie erhalten, nutzt Kalzit sie bei einer späteren Installation wieder." />
   <String Id="KalzitRemoveData" Value="Auch Datenordner und Konfiguration &amp;löschen (endgültig)" />
 
-  <String Id="KalzitExitNew" Value="Kalzit läuft als Windows-Dienst „Kalzit“: http://localhost:[PORT]. Den Einrichtungscode für die erste Anmeldung findest du in [DATADIR]\setup-token.txt (nur als Administrator lesbar)." />
+  <String Id="KalzitExitNew" Value="Kalzit läuft als Windows-Dienst „Kalzit“: http://localhost:[PORT]. Den Einrichtungscode liest du in PowerShell als Administrator: kalzit setup-code im Programmordner oder Get-Content &quot;[DATADIR]\setup-token.txt&quot;. Die Einrichtungsseite zeigt den Befehl zum Kopieren." />
+  <String Id="KalzitOpenSetup" Value="Einrichtung im &amp;Browser öffnen" />
   <String Id="KalzitExitKept" Value="Kalzit läuft als Windows-Dienst „Kalzit“ mit den Einstellungen der vorhandenen kalzit.toml." />
 </WixLocalization>

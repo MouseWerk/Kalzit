@@ -37,6 +37,7 @@ $outDir = Split-Path -Parent $Out
 if ($outDir) { New-Item -ItemType Directory -Force $outDir | Out-Null }
 
 . (Join-Path $PSScriptRoot 'language.ps1')
+. (Join-Path $PSScriptRoot 'look.ps1')
 
 # One product code for every language of this build, so a language transform changes only texts.
 $productCode = '{' + [guid]::NewGuid().ToString().ToUpperInvariant() + '}'
@@ -54,12 +55,15 @@ function Build-Package([string] $Culture, [string] $Path) {
         '-d', "ProductCode=$productCode",
         '-d', "ExePath=$exePath",
         '-d', "LicensePath=$license",
+        '-d', "LicenseRtf=$licenseRtf",
         '-o', $Path,
         (Join-Path $PSScriptRoot 'Kalzit.wxs'),
         (Join-Path $PSScriptRoot 'KalzitUI.wxs')
     )
     & $command @arguments
     if ($LASTEXITCODE -ne 0) { throw "wix build ($Culture) failed with exit code $LASTEXITCODE" }
+    # Before the German transform is taken, so both languages carry the same opaque texts.
+    [void] (Set-OpaqueTexts (Resolve-Path $Path).Path)
 }
 
 # English is the package itself; German goes inside it as the transform 1031, which Windows
@@ -68,6 +72,8 @@ function Build-Package([string] $Culture, [string] $Path) {
 $work = Join-Path ([IO.Path]::GetTempPath()) ("kalzit-msi-build-" + [guid]::NewGuid())
 New-Item -ItemType Directory $work | Out-Null
 try {
+    $licenseRtf = Join-Path $work 'LICENSE.rtf'
+    ConvertTo-LicenseRtf $license $licenseRtf
     Build-Package 'en-US' $Out
     $german = Join-Path $work 'kalzit-de-DE.msi'
     Build-Package 'de-DE' $german

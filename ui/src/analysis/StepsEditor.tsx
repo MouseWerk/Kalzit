@@ -35,6 +35,7 @@ import {
 } from "./steps";
 import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
+import { Icon } from "../components/Icon";
 
 /** Rows the preview shows. */
 const PREVIEW_ROWS = 20;
@@ -346,7 +347,7 @@ export function StepsEditor({
                     disabled={index === 0}
                     onClick={() => move(index, -1)}
                   >
-                    <span aria-hidden="true">↑</span>
+                    <Icon name="arrowUp" />
                   </button>
                   <button
                     type="button"
@@ -356,7 +357,7 @@ export function StepsEditor({
                     disabled={index === steps.length - 1}
                     onClick={() => move(index, 1)}
                   >
-                    <span aria-hidden="true">↓</span>
+                    <Icon name="arrowDown" />
                   </button>
                   <button
                     type="button"

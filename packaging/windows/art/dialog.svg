@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 493 312" width="493" height="312">
+  <!--
+    The picture behind the installer's first and last page (WixUIDialogBmp, 493 x 312 at 100 %).
+    build-art.mjs renders it as dialog.bmp at twice the size, for sharp pages at 200 %.
+
+    The right part carries the welcome or finish text and the finish page's check box, which
+    Windows draws in its own colors from x 180 on: it is the dialog background (#f0f0f0), and
+    build.ps1 makes those texts opaque, so a contrast theme never puts them on the picture. Nothing
+    here is text. The ink panel at the left holds the Kalzit mark.
+
+    Colors: the product mark's ink (#2a2520) and paper (#f0ece6), and the accent token of the dark scheme
+    (ui/src/styles/tokens.css, oklch(79% 0.085 68) = #dfb17f). #f0f0f0 is Windows' own dialog
+    background, not a brand color.
+  -->
+  <rect width="493" height="312" fill="#f0f0f0"/>
+  <path d="M0 0H170L158 312H0Z" fill="#2a2520"/>
+  <!-- Double refraction, calcite's own trait: one ray in, two parallel rays out. -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M0 166 52 136" stroke="#f0ece6" stroke-opacity="0.2" stroke-width="1"/>
+    <path d="M114 106 167 75" stroke="#f0ece6" stroke-opacity="0.2" stroke-width="1"/>
+    <path d="M118 122 165 95" stroke="#dfb17f" stroke-opacity="0.42" stroke-width="1"/>
+  </g>
+  <!-- The product mark (MARK in tools/brand/build-icons.mjs): paper lines on ink, the top face in
+       the accent. -->
+  <g transform="translate(82 124) scale(3.6) translate(-12 -12)" stroke="#f0ece6" stroke-width="0.42" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.1 8.25 7.6 3.95 19.1 1.95 14.6 6.35Z" fill="#dfb17f"/>
+    <path d="M3.1 8.25 14.6 6.35 16.9 19.95 5.6 22.05Z" fill="#2a2520"/>
+    <path d="M14.6 6.35 19.1 1.95 20.9 15.55 16.9 19.95Z" fill="#2a2520"/>
+  </g>
+</svg>

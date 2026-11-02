@@ -22,6 +22,7 @@ import { PanelCard, type PanelViewActions } from "./PanelCard";
 import { panelRange } from "./panelTime";
 import type { PanelQueryInput } from "./usePanelResults";
 import "./dashboardTools.css";
+import { Icon } from "../../components/Icon";
 
 /** Fallback cell height in px when the grid cannot be measured (no layout in tests). */
 const FALLBACK_ROW_HEIGHT = 32;
@@ -472,9 +473,7 @@ function RowHeader({
         aria-expanded={!collapsed}
         onClick={onToggle}
       >
-        <span className="dash-row__chevron" aria-hidden="true">
-          {collapsed ? "▸" : "▾"}
-        </span>
+        <Icon name={collapsed ? "chevron" : "chevronDown"} className="dash-row__chevron" />
         <span className="dash-row__title truncate" title={title}>
           {title}
         </span>
@@ -496,7 +495,7 @@ function RowHeader({
             onKeyDown={onKey}
             onPointerDown={startDrag}
           >
-            <span aria-hidden="true">⠿</span>
+            <Icon name="grip" />
           </button>
           <span className="visually-hidden" id={hintId}>
             {t("dashboardTools.rows.moveHint")}

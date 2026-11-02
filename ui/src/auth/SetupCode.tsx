@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
-import type { SetupCodeHint } from "../api/auth";
+import type { ServerOs, SetupCodeHint } from "../api/auth";
 import { Icon, type IconName } from "../components/Icon";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import "./auth.css";
@@ -11,6 +11,21 @@ import "./auth.css";
 export const CODE_PATHS = {
   windows: "C:\\ProgramData\\Kalzit\\data\\setup-token.txt",
   linux: "/var/lib/kalzit/setup-token.txt",
+} as const;
+/**
+ * The file is readable only by administrators (Windows) or root and the service user (Linux), so
+ * each system gets the command that reads it with those rights, and `kalzit setup-code`, which
+ * also finds a data folder of its own.
+ */
+export const READ_COMMANDS = {
+  windows: {
+    file: `Get-Content "${CODE_PATHS.windows}"`,
+    cli: '& "C:\\Program Files\\Kalzit\\kalzit.exe" setup-code',
+  },
+  linux: {
+    file: `sudo cat ${CODE_PATHS.linux}`,
+    cli: "sudo kalzit setup-code",
+  },
 } as const;
 export const DOCKER_COMMAND = "docker exec kalzit kalzit setup-code";
 export const COMPOSE_COMMAND = "docker compose exec kalzit kalzit setup-code";
@@ -51,7 +66,13 @@ const WAYS: readonly { way: Way; icon: IconName; label: MessageKey; short: Messa
  * runs chosen first (the server's hint: container, fixed code, else the file). Tabs follow the
  * tab pattern: arrow keys, Home and End move between them.
  */
-export function CodeWhere({ hint }: { hint: SetupCodeHint | undefined }) {
+export function CodeWhere({
+  hint,
+  os,
+}: {
+  hint: SetupCodeHint | undefined;
+  os?: ServerOs | undefined;
+}) {
   const { t } = useI18n();
   const id = useId();
   const [way, setWay] = useState<Way>(hint ?? "file");
@@ -80,7 +101,20 @@ export function CodeWhere({ hint }: { hint: SetupCodeHint | undefined }) {
   }
 
   let body: ReactNode;
-  if (way === "file") {
+  if (way === "file" && os !== undefined) {
+    // The server's own system: the command that reads the protected file, ready to copy.
+    body = (
+      <>
+        <p className="code-where__text">
+          {t(os === "windows" ? "access.setup.where.windowsText" : "access.setup.where.linuxText")}
+        </p>
+        <CopyWell text={READ_COMMANDS[os].file} />
+        <p className="code-where__text">{t("access.setup.where.cliText")}</p>
+        <CopyWell text={READ_COMMANDS[os].cli} />
+        <p className="field__hint">{t("access.setup.where.commandDefaults")}</p>
+      </>
+    );
+  } else if (way === "file") {
     body = (
       <>
         <p className="code-where__text">{t("access.setup.where.fileText")}</p>
@@ -158,6 +192,16 @@ export function CodeWhere({ hint }: { hint: SetupCodeHint | undefined }) {
       </div>
     </section>
   );
+}
+
+/**
+ * The setup code from an address fragment `#code=...` (a link opened on the server itself, for
+ * example by `kalzit setup-code --url`). The fragment never reaches the server or its logs.
+ * Only letters, digits, dashes and spaces count; anything else is no code.
+ */
+export function codeFromFragment(hash: string): string | null {
+  const code = new URLSearchParams(hash.replace(/^#/, "")).get("code")?.trim() ?? "";
+  return code !== "" && code.length <= 200 && /^[A-Za-z0-9 -]+$/.test(code) ? code : null;
 }
 
 /** A translated text with one placeholder (marked by a NUL) shown as code. */

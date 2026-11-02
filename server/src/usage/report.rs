@@ -443,8 +443,8 @@ async fn dashboards(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) ->
          JOIN dashboards d ON d.id = u.dashboard_id AND d.org_id = u.org_id AND d.deleted_at IS NULL \
          JOIN orgs o ON o.id = u.org_id \
          WHERE u.bucket >= {a} AND u.bucket < {b}{org}{} \
-         GROUP BY u.org_id, o.name, u.dashboard_id, d.title \
-         ORDER BY views DESC, d.title, u.dashboard_id LIMIT {limit}",
+         GROUP BY u.org_id, o.name, u.dashboard_id, d.title, d.sort_title \
+         ORDER BY views DESC, d.sort_title, u.dashboard_id LIMIT {limit}",
         sum("u.views"),
         visible(scope, "d"),
     );
@@ -593,8 +593,7 @@ async fn sources(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) -> Ap
          JOIN datasources s ON s.id = u.datasource_id AND s.org_id = u.org_id AND s.deleted_at IS NULL \
          JOIN orgs o ON o.id = u.org_id \
          WHERE u.bucket >= {a} AND u.bucket < {b}{org}{readable} \
-         GROUP BY u.org_id, o.name, u.datasource_id, s.name, s.kind \
-         ORDER BY queries DESC, s.name, u.datasource_id",
+         GROUP BY u.org_id, o.name, u.datasource_id, s.name, s.kind",
         sum("u.errors"),
         sum("u.errors_timeout"),
         sum("u.errors_rejected"),
@@ -606,7 +605,8 @@ async fn sources(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) -> Ap
         ranges_sum("u"),
         queries = sum("u.queries"),
     );
-    sql.fetch(state)
+    let mut out = sql
+        .fetch(state)
         .await?
         .iter()
         .map(|row| {
@@ -632,7 +632,15 @@ async fn sources(state: &AppState, scope: &Scope<'_>, start: i64, to: i64) -> Ap
                 max_ms,
             })
         })
-        .collect()
+        .collect::<ApiResult<Vec<_>>>()?;
+    // The most asked first, then by name (`collation`) and id.
+    out.sort_by(|x, y| {
+        y.queries
+            .cmp(&x.queries)
+            .then_with(|| crate::collation::compare(&x.name, &y.name))
+            .then_with(|| x.id.cmp(&y.id))
+    });
+    Ok(out)
 }
 
 /// The oldest bucket kept for the scope, in any of the tables.
@@ -688,7 +696,7 @@ pub async fn unused(state: &AppState, scope: Scope<'_>, days: i64, now_ms: i64) 
     items.sort_by(|x, y| {
         x.last_viewed_at
             .cmp(&y.last_viewed_at)
-            .then_with(|| x.title.to_lowercase().cmp(&y.title.to_lowercase()))
+            .then_with(|| crate::collation::compare(&x.title, &y.title))
             .then_with(|| x.id.cmp(&y.id))
     });
     let total = items.len();

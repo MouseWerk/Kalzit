@@ -146,7 +146,7 @@ export function Calendar({ start, end, today, firstDay, onPick, label }: Calenda
           title={t("toolbar.calendar.previousMonth")}
           onClick={() => setShown((s) => normalMonth(s, -1))}
         >
-          <Icon name="chevronLeft" />
+          <Icon name="back" />
         </button>
         <span className="calendar__month" aria-live="polite">
           {monthName}

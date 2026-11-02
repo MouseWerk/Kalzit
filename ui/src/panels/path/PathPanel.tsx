@@ -9,6 +9,7 @@ import type { PanelEditorProps, PanelProps } from "../types";
 import { type PathOptions, parsePathOptions } from "./index";
 import "../graph/graph.css";
 import "../panels.css";
+import { Icon } from "../../components/Icon";
 
 /** The path panel's components, loaded with its first use (lazy.tsx). */
 
@@ -200,7 +201,10 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
                       </li>
                     ) : (
                       <li key={step.key} className="path__edge">
-                        <span aria-hidden="true">{step.forward ? "↓" : "↑"}</span>{" "}
+                        <Icon
+                          name={step.forward ? "arrowDown" : "arrowUp"}
+                          className="icon--inline"
+                        />{" "}
                         <span className="path__type">{step.text}</span>{" "}
                         <span className="visually-hidden">
                           {step.forward ? t("graph.path.forward") : t("graph.path.backward")}

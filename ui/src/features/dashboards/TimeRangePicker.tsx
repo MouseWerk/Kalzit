@@ -670,7 +670,7 @@ export function TimeControls({
     // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a set of form fields
     <div className="time-controls" role="group" aria-label={t("toolbar.time.controls")}>
       <IconButton
-        icon="chevronLeft"
+        icon="chevronsLeft"
         label={t("toolbar.time.back")}
         shortcut={["t", "←"]}
         ariaShortcut="t ArrowLeft"
@@ -686,7 +686,7 @@ export function TimeControls({
         showZone
       />
       <IconButton
-        icon="chevron"
+        icon="chevronsRight"
         label={t("toolbar.time.forward")}
         shortcut={["t", "→"]}
         ariaShortcut="t ArrowRight"

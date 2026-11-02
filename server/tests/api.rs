@@ -162,7 +162,10 @@ async fn setup_is_refused_once_another_server_claimed_it() {
 #[tokio::test]
 async fn setup_creates_owner_once() {
     let t = test_app("127.0.0.1:50000", |_| {}).await;
-    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true, "codeHint": "fixed" }));
+    assert_eq!(
+        t.get("/api/setup", None).await.body,
+        json!({ "needed": true, "codeHint": "fixed", "os": kalzit::routes::setup::OS_FAMILY })
+    );
 
     let r = t.setup().await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
@@ -216,7 +219,10 @@ async fn setup_rejects_wrong_code_and_weak_password() {
     ] {
         assert_eq!(t.post("/api/setup", body).await.body["error"]["field"], field);
     }
-    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true, "codeHint": "fixed" }));
+    assert_eq!(
+        t.get("/api/setup", None).await.body,
+        json!({ "needed": true, "codeHint": "fixed", "os": kalzit::routes::setup::OS_FAMILY })
+    );
     t.finish().await;
 }
 
@@ -1375,7 +1381,10 @@ async fn the_code_of_the_previous_start_is_expired() {
     let file = t.dir.path().join("setup-token.txt");
     let old = std::fs::read_to_string(&file).unwrap().trim().to_string();
     let hint = if kalzit::updates::platform::in_container() { "docker" } else { "file" };
-    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true, "codeHint": hint }));
+    assert_eq!(
+        t.get("/api/setup", None).await.body,
+        json!({ "needed": true, "codeHint": hint, "os": kalzit::routes::setup::OS_FAMILY })
+    );
     // A server without a file from before has no previous code.
     let other = t.post("/api/setup/check", json!({ "token": "0000-0000-0000-0000-0000-0000" })).await;
     assert_eq!(other.code(), "invalid_setup_token");
