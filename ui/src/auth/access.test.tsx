@@ -4,7 +4,7 @@ import { prepareGuide } from "../help/HelpPage";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { formatWait } from "./countdown";
-import { CODE_PATHS, DOCKER_COMMAND } from "./SetupCode";
+import { CODE_PATHS, codeFromFragment, DOCKER_COMMAND, READ_COMMANDS } from "./SetupCode";
 
 type User = ReturnType<typeof renderApp>["user"];
 
@@ -255,6 +255,55 @@ describe("setup, step 1: the setup code", () => {
       "true",
     );
     expect(screen.getByText("KALZIT_SETUP_TOKEN")).toBeTruthy();
+  });
+
+  it("on a Windows server, shows the PowerShell command for administrators", async () => {
+    installFakeServer({ setupNeeded: true, setupOs: "windows" });
+    renderApp("/setup");
+    await screen.findByRole("tab", { name: /File/ });
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.textContent).toContain("Open PowerShell as administrator");
+    const command = 'Get-Content "C:\\ProgramData\\Kalzit\\data\\setup-token.txt"';
+    expect(READ_COMMANDS.windows.file).toBe(command);
+    expect(within(panel).getByRole("button", { name: `Copy ${command}` })).toBeTruthy();
+    expect(
+      within(panel).getByRole("button", { name: `Copy ${READ_COMMANDS.windows.cli}` }),
+    ).toBeTruthy();
+    expect(within(panel).queryByText(READ_COMMANDS.linux.file)).toBeNull();
+    expect(panel.textContent).not.toContain("sudo");
+  });
+
+  it("on a Linux server, shows the commands with sudo", async () => {
+    installFakeServer({ setupNeeded: true, setupOs: "linux" });
+    renderApp("/setup");
+    await screen.findByRole("tab", { name: /File/ });
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.textContent).toContain("only root and the kalzit user can read it");
+    expect(within(panel).getByText("sudo cat /var/lib/kalzit/setup-token.txt")).toBeTruthy();
+    expect(within(panel).getByText("sudo kalzit setup-code")).toBeTruthy();
+    expect(panel.textContent).not.toContain("PowerShell");
+  });
+
+  it("fills in the code from the address fragment and removes it from the address", async () => {
+    const server = installFakeServer({ setupNeeded: true });
+    const { location } = renderApp(`/setup#code=${TEST_SETUP_TOKEN}`);
+    const code = await screen.findByLabelText("Setup code");
+    await waitFor(() => expect((code as HTMLInputElement).value).toBe(TEST_SETUP_TOKEN));
+    await waitFor(() => expect(location().hash).toBe(""));
+    expect(location().pathname).toBe("/setup");
+    expect(location().href).not.toContain(TEST_SETUP_TOKEN);
+    // Filled in, not sent: the person still confirms with Next.
+    expect(server.calls.filter((call) => call.method === "POST")).toHaveLength(0);
+  });
+
+  it("ignores a fragment that is no setup code, and still clears it", async () => {
+    installFakeServer({ setupNeeded: true });
+    const { location } = renderApp("/setup#code=%3Cscript%3E");
+    const code = await screen.findByLabelText("Setup code");
+    await waitFor(() => expect(location().hash).toBe(""));
+    expect((code as HTMLInputElement).value).toBe("");
+    expect(codeFromFragment("#code=1a2b-3c4d")).toBe("1a2b-3c4d");
+    expect(codeFromFragment("#other=1")).toBeNull();
   });
 
   it("asks for a code before checking", async () => {

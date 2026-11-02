@@ -50,7 +50,7 @@ async fn choices(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Vec<
         .map(|(id, name, member, maintainer)| Choice { id, name, member: member > 0, maintainer: maintainer > 0 })
         .collect();
     out.sort_by(|a, b| {
-        b.member.cmp(&a.member).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())).then(a.id.cmp(&b.id))
+        b.member.cmp(&a.member).then_with(|| crate::collation::compare(&a.name, &b.name)).then(a.id.cmp(&b.id))
     });
     Ok(out)
 }
@@ -136,7 +136,7 @@ async fn answer(state: &AppState, ctx: &OrgCtx) -> ApiResult<TeamContext> {
         .filter(|r| r.parent_id.is_none() && r.restricted != 0 && r.deleted_at.is_none() && tree.visible(&r.id))
         .filter_map(|r| r.owner_team_id.as_deref().map(|team| (team, r.name.as_str(), r.id.as_str())))
         .collect();
-    spaces.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()).then(a.2.cmp(b.2)));
+    spaces.sort_by(|a, b| crate::collation::compare(a.1, b.1).then(a.2.cmp(b.2)));
     let default_folder_id = match (&team_id, new_in_space) {
         (Some(team), Some(true)) => spaces
             .iter()

@@ -4,7 +4,7 @@
  */
 const PATHS = {
   // The Kalzit mark from the website: a calcite rhombohedron, three visible faces.
-  logo: "M3.5 8.5 8 4.2l11.5-2 1.8 13.6-4 4.4L6 22.3ZM3.5 8.5 15 6.6l2.3 13.6M15 6.6l4.5-4.4",
+  logo: "M3.1 8.25 7.6 3.95l11.5-2 1.8 13.6-4 4.4L5.6 22.05ZM3.1 8.25 14.6 6.35l2.3 13.6M14.6 6.35l4.5-4.4",
   home: "M3.5 10.5 12 3.5l8.5 7M5.5 9v11h13V9M10 20v-6h4v6",
   dashboards: "M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z",
   // A compass: Explore is finding your way through data, not a search box.
@@ -12,7 +12,6 @@ const PATHS = {
   search: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.25 15.25 20 20",
   dataSources:
     "M4.5 6c0-1.66 3.36-3 7.5-3s7.5 1.34 7.5 3-3.36 3-7.5 3-7.5-1.34-7.5-3zM4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3",
-  admin: "M12 3 19.5 6v5.5c0 4.5-3.2 8.2-7.5 9.5-4.3-1.3-7.5-5-7.5-9.5V6zM9 12l2.25 2.25L15.5 10",
   check: "M5 12.5 10 17.5 19 7",
   alert: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 8v5M12 16.25v.25",
   signOut:
@@ -20,7 +19,7 @@ const PATHS = {
   lock: "M6.5 10.5h11v9.5h-11zM8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5",
   // A person with a key: a passkey (the second factor).
   passkey:
-    "M9 4.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM3 20c0-3.3 2.7-6 6-6 1.2 0 2.3.3 3.2.9M17 12a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM17 17v4M17 19.5h1.6",
+    "M9.75 3.75a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM3.75 19.25c0-3.3 2.7-6 6-6 1.2 0 2.3.3 3.2.9M17.75 11.25a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM17.75 16.25v4M17.75 18.75h1.6",
   // A phone: the authenticator app.
   phone: "M9 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM11 18h2",
   chevron: "M9 6.5 14.5 12 9 17.5",
@@ -35,9 +34,9 @@ const PATHS = {
   arrowDown: "M12 5v14M6 13l6 6 6-6",
   keyboard: "M3.5 6.5h17v11h-17zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8",
   // Themes and languages: sun, moon, a circle split in two shades, a globe.
-  sun: "M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4",
+  sun: "M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM12 3.5V5M12 19v1.5M3.5 12H5M19 12h1.5M6 6l1 1M17 17l1 1M18 6l-1 1M7 17l-1 1",
   moon: "M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z",
-  contrast: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 3.5v17M12 7v10M15 6v12",
+  contrast: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z",
   globe:
     "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5C9.7 18.1 8.6 15.3 8.6 12s1.1-6.1 3.4-8.5z",
   // Opens a menu that lists choices above and below: two chevrons, one up, one down.
@@ -53,11 +52,10 @@ const PATHS = {
   folder:
     "M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z",
   // Show and hide a password; the caps-lock warning next to a password field.
-  eye: "M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  eye: "M3 12s3.25-6.5 9-6.5 9 6.5 9 6.5-3.25 6.5-9 6.5S3 12 3 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   eyeOff:
-    "M4 4l16 16M10.2 5.7A9 9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-2.9 3.7M6.6 6.9C4 8.6 2.5 12 2.5 12S6 18.5 12 18.5a9 9 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2",
+    "M4 4l16 16M10.2 5.7A9 9 0 0 1 12 5.5c5.75 0 9 6.5 9 6.5a16 16 0 0 1-2.9 3.7M6.6 6.9C4.2 8.6 3 12 3 12s3.25 6.5 9 6.5a9 9 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2",
   capsLock: "M12 4.5 4.5 12H8.5v3.5h7V12h4zM8.5 19.5h7",
-  chevronLeft: "M15 6.5 9.5 12 15 17.5",
   chevronDown: "M6.5 9.5 12 15l5.5-5.5",
   zoomOut: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.25 15.25 20 20M7.5 10.5h6",
   share:
@@ -71,17 +69,17 @@ const PATHS = {
   calendar: "M4.5 6h15v14h-15zM4.5 10h15M8.5 3.5v4M15.5 3.5v4",
   code: "M9 7 4.5 12 9 17M15 7l4.5 5-4.5 5",
   rows: "M4.5 5h15v4h-15zM4.5 11.5h15M4.5 15.5h15M4.5 19.5h15",
-  library: "M5 4.5h4v15H5zM11 4.5h4v15h-4zM16.5 5.4l3.4-.9 2.6 14-3.4.9z",
+  library: "M3.25 4.5h4v15h-4zM9.25 4.5h4v15h-4zM14.75 5.4l3.4-.9 2.6 14-3.4.9z",
   outline: "M4.5 6h2M9.5 6h10M6.5 12h2M11.5 12h8M6.5 18h2M11.5 18h8",
   plusSquare: "M4.5 4.5h15v15h-15zM12 8.5v7M8.5 12h7",
   barChart: "M5.5 19.5V11M10 19.5V5.5M14.5 19.5V9M19 19.5V13",
   table: "M4.5 5h15v14h-15zM4.5 10h15M4.5 14.5h15M10 10v9",
-  gauge: "M4.5 16a7.5 7.5 0 1 1 15 0M12 16l3.5-4",
+  gauge: "M4 16a8 8 0 1 1 16 0M12 16l3.5-4",
   pie: "M12 3.5v8.5h8.5A8.5 8.5 0 1 1 12 3.5z",
   network:
-    "M6 4a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM18 6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM9 16a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM8 6.5l8 1M6.5 8l2 8",
-  stat: "M5 19.5h14M7 15.5V8.5l-1.5 1M11 8.5h4l-3.5 7",
-  text: "M5 6h14M5 10.5h14M5 15h9",
+    "M3.75 7a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M15.75 6a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M9.75 18a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 1 0-4.5 0M8.25 6.8l7.5-.6M7.1 9l3.8 7M16.9 8l-3.8 8",
+  stat: "M5 17.5h14M7 13.5v-7l-1.5 1M11 6.5h4l-3.5 7",
+  text: "M5 7.5h14M5 12h14M5 16.5h9",
   filter: "M4.5 5h15l-6 7.5v6l-3 1.5v-7.5z",
   flag: "M6 20.5V4M6 4.5h11l-2.5 4 2.5 4H6",
   link: "M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1",
@@ -95,10 +93,9 @@ const PATHS = {
   upload: "M12 15V4M7 9l5-5 5 5M5 20h14",
   refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
   clock: "M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16zM12 8v4l3 2",
-  shieldCheck: "M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6zM9 12l2 2 4-4",
-  external: "M7 17 17 7M9 7h8v8",
-  database:
-    "M4.5 6c0-1.66 3.36-3 7.5-3s7.5 1.34 7.5 3-3.36 3-7.5 3-7.5-1.34-7.5-3zM4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3",
+  shieldCheck:
+    "M12 3 19.5 6v5.5c0 4.5-3.2 8.2-7.5 9.5-4.3-1.3-7.5-5-7.5-9.5V6zM9 12l2.25 2.25L15.5 10",
+  external: "M6.5 17.5l11-11M8.5 6.5h9v9",
   // Forward in a flow (Next, Open), a file, a terminal and a log of lines (where the setup code is).
   arrowRight: "M5 12h14M13 6l6 6-6 6",
   file: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 16h6",
@@ -106,10 +103,40 @@ const PATHS = {
   log: "M4.5 6h15M4.5 12h15M4.5 18h10",
   /** AI entry points (neutral, never in the accent color). */
   /** "Fragen": a speech bubble with the AI spark inside. */
-  ask: "M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20l1-4.2A7.5 7.5 0 1 1 20 12.5zM12 9l.9 2.1 2.1.9-2.1.9L12 15l-.9-2.1-2.1-.9 2.1-.9z",
+  ask: "M20 11.5a7.5 7.5 0 0 1-11 6.6L4 19l1-4.2A7.5 7.5 0 1 1 20 11.5zM12 8l.9 2.1 2.1.9-2.1.9L12 14l-.9-2.1-2.1-.9 2.1-.9z",
   sparkle:
-    "M11 4.5l1.6 4.4 4.4 1.6-4.4 1.6L11 16.5l-1.6-4.4L5 10.5l4.4-1.6zM17.5 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z",
+    "M10.25 4l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6zM16.75 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z",
+  // Controls that were text characters before: a minus, a sort direction and a drag handle.
+  minus: "M5 12h14",
+  chevronUp: "M6.5 14.5 12 9l5.5 5.5",
+  // Shift the time range a step back or forward (the dashboard toolbar, board Main).
+  chevronsLeft: "M11.5 6.5 6 12l5.5 5.5M18 6.5 12.5 12l5.5 5.5",
+  chevronsRight: "M6 6.5 11.5 12 6 17.5M12.5 6.5 18 12l-5.5 5.5",
+  // About this item: the dashboard's details (board Main), not help.
+  info: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 11v5.25M12 7.75V8",
+  grip: "M8 6a1 1 0 1 0 2 0 1 1 0 1 0-2 0M14 6a1 1 0 1 0 2 0 1 1 0 1 0-2 0M8 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M14 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M8 18a1 1 0 1 0 2 0 1 1 0 1 0-2 0M14 18a1 1 0 1 0 2 0 1 1 0 1 0-2 0",
+  // Families of data sources without a logo (features/datasources/kindMarks.tsx).
+  // Braces: documents with nested fields.
+  documents:
+    "M9 4.5c-1.75 0-2.5.75-2.5 2.5v2.25c0 1.25-.75 2.25-2 2.75 1.25.5 2 1.5 2 2.75V17c0 1.75.75 2.5 2.5 2.5M15 4.5c1.75 0 2.5.75 2.5 2.5v2.25c0 1.25.75 2.25 2 2.75-1.25.5-2 1.5-2 2.75V17c0 1.75-.75 2.5-2.5 2.5",
+  // Lines of text and a magnifier: an index to search.
+  searchIndex:
+    "M3.75 5.5h10M3.75 9.5h6M3.75 13.5h4M15.25 9.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM17.75 16l2.5 2.5",
+  // A file holding a table: a database in one file.
+  fileTable: "M6.5 3.5h7l4 4v13h-11zM13.5 3.5v4h4M9 12h6v5.5H9zM9 14.75h6M12 12v5.5",
+  // A puzzle piece: what a plugin adds.
+  plugin: "M4.5 6.5H9a2 2 0 1 1 4 0h4.5V11a2 2 0 1 1 0 4v4.5h-13z",
 } as const;
+
+export type IconName = keyof typeof PATHS;
+
+/** Every icon's name, for the tests that keep the set in one style. */
+export const ICON_NAMES = Object.keys(PATHS) as readonly IconName[];
+
+/** The outline of an icon, on the 24 px grid. */
+export function iconPath(name: IconName): string {
+  return PATHS[name];
+}
 
 /** The Kalzit mark alone, for drawings that need it at another stroke (the sign-in backdrop). */
 export const LOGO_PATH: string = PATHS.logo;
@@ -117,22 +144,35 @@ export const LOGO_PATH: string = PATHS.logo;
 /** Icons drawn filled instead of outlined (the starred state of a star). */
 const FILLED: ReadonlySet<IconName> = new Set<IconName>(["starFilled"]);
 
-export type IconName = keyof typeof PATHS;
+/**
+ * Parts drawn filled on top of the outline, in the same color: the dark half of the contrast
+ * circle. The outline keeps its stroke, so the filled part lines up with the rest of the icon.
+ */
+const FILLS: Partial<Record<IconName, string>> = {
+  contrast: "M12 3.5a8.5 8.5 0 0 1 0 17z",
+};
 
+/**
+ * One style for every icon: the 24 px grid, the stroke of `--icon-stroke` (components.css; the
+ * attribute holds the same value for drawings without the stylesheet), round caps and joins, the
+ * current text color, and the drawing inside 3 to 21 and centered on 12,12 (Icon.test.tsx).
+ */
 export function Icon({ name, className }: { name: IconName; className?: string }) {
+  const fill = FILLS[name];
   return (
     <svg
       className={className === undefined ? "icon" : `icon ${className}`}
       viewBox="0 0 24 24"
       fill={FILLED.has(name) ? "currentColor" : "none"}
       stroke="currentColor"
-      strokeWidth="1.75"
+      strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
     >
       <path d={PATHS[name]} />
+      {fill === undefined ? null : <path d={fill} fill="currentColor" />}
     </svg>
   );
 }

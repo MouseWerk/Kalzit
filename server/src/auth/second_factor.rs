@@ -131,14 +131,15 @@ pub async fn org_requirement(state: &AppState, org_id: &str) -> ApiResult<Requir
 /// The memberships of `user_id` whose rules bind them, read through `db`: only those the person
 /// consented to (`authz::CONSENTED_JOINS`).
 pub async fn memberships(state: &AppState, db: &AnyPool, user_id: &str) -> ApiResult<Vec<MembershipRule>> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let mut rows: Vec<(String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = $1 \
-         AND m.joined_by IN {} ORDER BY o.name",
+         AND m.joined_by IN {}",
         crate::authz::CONSENTED_JOINS
     )))
     .bind(user_id)
     .fetch_all(db)
     .await?;
+    rows.sort_by(|a, b| crate::collation::compare(&a.1, &b.1).then_with(|| a.0.cmp(&b.0)));
     let mut out = Vec::with_capacity(rows.len());
     for (org_id, org_name, role) in rows {
         let admin = is_admin_role(db, &org_id, &role).await?;

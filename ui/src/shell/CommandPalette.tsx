@@ -197,7 +197,7 @@ export function CommandPalette({
         key: `page:${section.to}`,
         label: t(section.label),
         detail: t("admin.nav"),
-        icon: "admin",
+        icon: "shieldCheck",
         group: "pages",
         score: 0,
         run: goTo(section.to),

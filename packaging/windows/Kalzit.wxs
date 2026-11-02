@@ -46,6 +46,9 @@
     <MajorUpgrade Schedule="afterInstallValidate" IgnoreLanguage="yes" DowngradeErrorMessage="!(loc.KalzitDowngrade)" />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- The icon in Apps and Features: the same file as kalzit.exe's (tools/brand/build-icons.mjs). -->
+    <Icon Id="KalzitIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)kalzit.ico" />
+    <Property Id="ARPPRODUCTICON" Value="KalzitIcon.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/MouseWerk/Kalzit" />
     <Property Id="ARPHELPLINK" Value="https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/installation.md" />
     <Property Id="ARPNOMODIFY" Value="1" />

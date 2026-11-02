@@ -143,6 +143,86 @@ pub fn read_code(data_dir: &Path) -> std::io::Result<Option<String>> {
     }
 }
 
+/// What `kalzit setup-code` prints: the code on standard output, or nothing there and a message
+/// on standard error.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CodeCommand {
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub success: bool,
+}
+
+/// `kalzit setup-code`: reads the code with the rights of whoever runs it, the same rights the
+/// file needs (SYSTEM, the service account and Administrators on Windows, root and the service
+/// user on Linux). `fixed_code` says that `KALZIT_SETUP_TOKEN` is set for this command.
+pub fn code_command(data_dir: &Path, fixed_code: bool) -> CodeCommand {
+    let file = data_dir.join(TOKEN_FILE);
+    let failed = |message: String| CodeCommand { code: None, message: Some(message), success: false };
+    match read_code(data_dir) {
+        Ok(Some(code)) => CodeCommand { code: Some(code), message: None, success: true },
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => failed(denied_message(&file)),
+        Err(e) => failed(format!("kalzit: reading the setup code from {}: {e}", file.display())),
+        Ok(None) if fixed_code => {
+            failed("kalzit: no setup code file: KALZIT_SETUP_TOKEN sets the code, use its value".to_string())
+        }
+        Ok(None) if !data_dir.exists() => failed(format!(
+            "kalzit: no setup code yet: the data folder {} does not exist; start the server first",
+            data_dir.display()
+        )),
+        // The server removes the file once the first owner exists; it may also not have written
+        // it yet, or this command may read another configuration than the service.
+        Ok(None) => CodeCommand {
+            code: None,
+            message: Some(format!(
+                "kalzit: no setup code in {}: setup is finished, or the server has not started yet (or uses \
+                 another data folder)",
+                data_dir.display()
+            )),
+            success: true,
+        },
+    }
+}
+
+/// `kalzit setup-code --url`: the setup page with the code in the fragment, which the browser
+/// keeps to itself (never in a request, so never in a log); the page fills in the code and clears
+/// the fragment. The address is `server.public_url`, else this machine's own listener: its
+/// address when bound to one non-loopback IP, else `localhost`. An HTTPS link to `localhost` or an
+/// IP shows a certificate warning unless the certificate names that host.
+pub fn setup_link(config: &crate::config::Config, code: &str) -> Option<String> {
+    fn host(addr: std::net::SocketAddr) -> String {
+        match addr {
+            a if a.ip().is_unspecified() || a.ip().is_loopback() => format!("localhost:{}", a.port()),
+            a => a.to_string(),
+        }
+    }
+    let base = match &config.server.public_url {
+        Some(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/').to_string(),
+        _ => match (config.http_addr(), config.https_addr()) {
+            (_, Some(addr)) if config.server.redirect_http_to_https => format!("https://{}", host(addr)),
+            (Some(addr), _) => format!("http://{}", host(addr)),
+            (None, Some(addr)) => format!("https://{}", host(addr)),
+            (None, None) => return None,
+        },
+    };
+    Some(format!("{base}/setup#code={code}"))
+}
+
+fn denied_message(file: &Path) -> String {
+    if cfg!(windows) {
+        format!(
+            "kalzit: access to {} is denied; only administrators may read the setup code. Open PowerShell \
+             as administrator (right-click, \"Run as administrator\") and run kalzit setup-code again.",
+            file.display()
+        )
+    } else {
+        format!(
+            "kalzit: permission denied reading {}; only root and the kalzit user may read the setup code. \
+             Run: sudo kalzit setup-code",
+            file.display()
+        )
+    }
+}
+
 fn generate_code() -> String {
     let hex = hex::encode(rand::random::<[u8; 12]>());
     hex.as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap_or_default()).collect::<Vec<_>>().join("-")
@@ -241,12 +321,17 @@ fn setup_done() -> ApiError {
     ApiError::new(StatusCode::CONFLICT, "setup_done", "setup is already complete")
 }
 
+/// While setup is needed: where the code is and the server's system family, so the page can show
+/// the command that reads the protected file there. Never a path.
 pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(match state.setup.code_hint().await {
-        Some(hint) => json!({ "needed": true, "codeHint": hint }),
+        Some(hint) => json!({ "needed": true, "codeHint": hint, "os": OS_FAMILY }),
         None => json!({ "needed": false }),
     })
 }
+
+/// The system family the setup page names (`windows` or `linux`); Kalzit servers run on both.
+pub const OS_FAMILY: &str = if cfg!(windows) { "windows" } else { "linux" };
 
 /// Counts one attempt for the client (IPv4 per address, IPv6 per /48, so a site gets no more
 /// tries by using more of its /64 networks; the sign-in limits, `security.login_*`); the key
@@ -590,5 +675,90 @@ mod tests {
         assert_eq!(read_code(dir.path()).unwrap(), None);
         write_private(&dir.path().join(TOKEN_FILE), "1a2b-3c4d\n").unwrap();
         assert_eq!(read_code(dir.path()).unwrap().as_deref(), Some("1a2b-3c4d"));
+    }
+
+    #[test]
+    fn the_setup_code_command_prints_the_code_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        write_private(&dir.path().join(TOKEN_FILE), "1a2b-3c4d\n").unwrap();
+        let answer = code_command(dir.path(), false);
+        assert_eq!(answer, CodeCommand { code: Some("1a2b-3c4d".into()), message: None, success: true });
+    }
+
+    #[test]
+    fn the_setup_code_command_says_when_setup_is_finished() {
+        let dir = tempfile::tempdir().unwrap();
+        let answer = code_command(dir.path(), false);
+        assert_eq!(answer.code, None, "prints nothing on standard output");
+        assert!(answer.success);
+        let message = answer.message.unwrap();
+        assert!(message.contains("setup is finished, or the server has not started yet"), "{message}");
+        assert!(message.contains(&dir.path().display().to_string()), "{message}");
+
+        let fixed = code_command(dir.path(), true);
+        assert!(!fixed.success);
+        assert!(fixed.message.unwrap().contains("KALZIT_SETUP_TOKEN"));
+
+        let missing = code_command(&dir.path().join("not-started"), false);
+        assert!(!missing.success);
+        assert!(missing.message.unwrap().contains("start the server first"));
+    }
+
+    #[test]
+    fn the_setup_link_carries_the_code_in_the_fragment_only() {
+        let mut config = crate::config::Config::default();
+        config.server.http_addr = "0.0.0.0:3010".into();
+        config.server.https_addr = String::new();
+        assert_eq!(setup_link(&config, "1a2b-3c4d").as_deref(), Some("http://localhost:3010/setup#code=1a2b-3c4d"));
+        config.server.http_addr = "127.0.0.1:3010".into();
+        assert_eq!(setup_link(&config, "1a2b").as_deref(), Some("http://localhost:3010/setup#code=1a2b"));
+        // Bound to one address only: localhost would not reach it.
+        config.server.http_addr = "192.0.2.7:3010".into();
+        assert_eq!(setup_link(&config, "1a2b").as_deref(), Some("http://192.0.2.7:3010/setup#code=1a2b"));
+        config.server.http_addr = "[2001:db8::7]:3010".into();
+        assert_eq!(setup_link(&config, "1a2b").as_deref(), Some("http://[2001:db8::7]:3010/setup#code=1a2b"));
+        config.server.public_url = Some("https://kalzit.example.com/".into());
+        assert_eq!(
+            setup_link(&config, "1a2b-3c4d").as_deref(),
+            Some("https://kalzit.example.com/setup#code=1a2b-3c4d")
+        );
+        config.server.public_url = None;
+        config.server.http_addr = String::new();
+        assert_eq!(setup_link(&config, "1a2b").as_deref(), None);
+    }
+
+    /// The file needs the rights the server gave it; without them the command says how to get
+    /// them instead of a bare system error.
+    #[test]
+    fn the_setup_code_command_explains_a_denied_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(TOKEN_FILE);
+        #[cfg(windows)]
+        {
+            use std::io::Write;
+            // SYSTEM only: the account running the test is neither SYSTEM nor named in it.
+            let mut f = crate::data_dir::acl::create_file(&file, "D:P(A;;FA;;;SY)").unwrap();
+            f.write_all(b"1a2b-3c4d\n").unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            write_private(&file, "1a2b-3c4d\n").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        if std::fs::read(&file).is_ok() {
+            // Root (or SYSTEM) reads every file; there is nothing to deny.
+            return;
+        }
+        let answer = code_command(dir.path(), false);
+        assert_eq!(answer.code, None);
+        assert!(!answer.success);
+        let message = answer.message.unwrap();
+        if cfg!(windows) {
+            assert!(message.contains("as administrator"), "{message}");
+        } else {
+            assert!(message.contains("sudo kalzit setup-code"), "{message}");
+        }
+        assert!(message.contains(TOKEN_FILE), "{message}");
     }
 }

@@ -153,7 +153,7 @@ export function AiServerSection({ section }: { section: SectionDef }) {
         {!enabled && providers.data !== undefined && ready.length === 0 ? (
           <div className="ai-card__body">
             <p className="ai-note">
-              <Icon name="help" />
+              <Icon name="info" />
               <span>
                 <strong>{t("ai.admin.switch.connectFirst")}</strong>{" "}
                 {t("ai.admin.switch.connectFirstText")}

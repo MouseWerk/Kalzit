@@ -245,6 +245,33 @@ async fn service_accounts_are_not_people() {
     t.finish().await;
 }
 
+/// The list orders by name the same on both databases: a hyphen counts as a character before the
+/// digits and letters (PostgreSQL's locales would skip it), and pages keep that order.
+#[tokio::test]
+async fn the_list_orders_by_name_alike_on_every_database() {
+    let mut t = TestApp::new().await;
+    for name in ["ab", "zeta", "a-b", "b", "a1"] {
+        t.account(name, "viewer").await;
+    }
+    let mut seen = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let rest = match &cursor {
+            Some(c) => format!("/service-accounts?limit=1&cursor={c}"),
+            None => "/service-accounts?limit=1".to_string(),
+        };
+        let page = t.owner(Method::GET, &rest, None).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        seen.extend(page.body["items"].as_array().unwrap().iter().map(|i| i["name"].as_str().unwrap().to_string()));
+        match page.body["nextCursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    assert_eq!(seen, ["a-b", "a1", "ab", "b", "zeta"]);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn names_roles_and_expiry_are_checked() {
     let mut t = TestApp::new().await;

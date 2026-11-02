@@ -32,12 +32,14 @@ export const SHORTCUT_AREAS: readonly Area[] = [
     title: "shell.shortcuts.area.sidebar",
     shortcuts: [
       { keys: [["Mod", "B"]], label: "shell.shortcuts.sidebar" },
+      // glyph-ok: arrow keys to press, shown as key caps
       { keys: [["↑"], ["↓"]], label: "shell.shortcuts.menu" },
     ],
   },
   {
     title: "shell.shortcuts.area.palette",
     shortcuts: [
+      // glyph-ok: arrow keys to press, shown as key caps
       { keys: [["↑"], ["↓"]], label: "shell.shortcuts.paletteMove" },
       { keys: [["PgUp"], ["PgDn"]], label: "shell.shortcuts.palettePage" },
       { keys: [["Enter"]], label: "shell.shortcuts.paletteRun" },
@@ -46,7 +48,9 @@ export const SHORTCUT_AREAS: readonly Area[] = [
   {
     title: "shell.shortcuts.area.dashboards",
     shortcuts: [
+      // glyph-ok: arrow keys to press, shown as key caps
       { keys: [["↑"], ["↓"], ["Home"], ["End"]], label: "shell.shortcuts.folders" },
+      // glyph-ok: arrow keys to press, shown as key caps
       { keys: [["←"], ["→"], ["↑"], ["↓"]], label: "shell.shortcuts.panelMove" },
       {
         keys: [

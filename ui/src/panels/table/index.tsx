@@ -33,6 +33,7 @@ import {
   variableText,
 } from "../variableClick";
 import "../viz.css";
+import { Icon } from "../../components/Icon";
 
 export interface TableOptions {
   /** A filter field under every column header. */
@@ -482,7 +483,11 @@ function FrameTable({
                         {column.name}
                       </span>
                       <span className="vt__sort-mark" aria-hidden="true">
-                        {direction === "ascending" ? "▲" : direction === "descending" ? "▼" : ""}
+                        {direction === "ascending" ? (
+                          <Icon name="chevronUp" className="icon--inline" />
+                        ) : direction === "descending" ? (
+                          <Icon name="chevronDown" className="icon--inline" />
+                        ) : null}
                       </span>
                     </button>
                   </th>

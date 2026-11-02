@@ -21,6 +21,7 @@ use super::support::{Actor, PageQuery, QueryParams, audit, decode_cursor, encode
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, AccessIndex, OrgCtx, Permission};
+use crate::collation;
 use crate::dashboards::model;
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -196,7 +197,7 @@ fn check(name: &str, interval: i64, items: &[Item], readable: &Readable) -> ApiR
     Ok(name)
 }
 
-/// Ordered by name, then id.
+/// Ordered by name (`collation`), then id.
 async fn list(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -208,10 +209,12 @@ async fn list(
     let mut conn = state.db.acquire().await?;
     let rows: Vec<PlaylistRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM playlists WHERE org_id = $1 \
-         AND (CAST($2 AS TEXT) IS NULL OR name > $2 OR (name = $2 AND id > $3)) ORDER BY name, id LIMIT $4"
+         AND (CAST($2 AS TEXT) IS NULL OR sort_name > $2 OR (sort_name = $2 AND id > $3)) \
+         ORDER BY sort_name, id LIMIT $4"
     )))
     .bind(&ctx.org_id)
-    .bind(after_name.as_deref())
+    // The cursor names the last name; the database compares its sort key (`collation`).
+    .bind(after_name.as_deref().map(collation::key))
     .bind(after_id.as_deref())
     .bind(limit as i64 + 1)
     .fetch_all(&mut *conn)
@@ -250,7 +253,7 @@ async fn create(
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "INSERT INTO playlists (id, org_id, name, interval_seconds, items, version, created_by, created_at, \
-         updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, $7)",
+         updated_by, updated_at, sort_name) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, $7, $8)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
@@ -259,6 +262,7 @@ async fn create(
     .bind(&items)
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(collation::key(&name))
     .execute(&mut *tx)
     .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
@@ -316,7 +320,7 @@ async fn save(
     let mut tx = crate::db::begin(&state.db).await?;
     let updated = sqlx::query(
         "UPDATE playlists SET name = $1, interval_seconds = $2, items = $3, version = version + 1, updated_by = $4, \
-         updated_at = $5 WHERE org_id = $6 AND id = $7 AND version = $8",
+         updated_at = $5, sort_name = $9 WHERE org_id = $6 AND id = $7 AND version = $8",
     )
     .bind(&name)
     .bind(body.interval_seconds)
@@ -326,6 +330,7 @@ async fn save(
     .bind(&ctx.org_id)
     .bind(&id)
     .bind(row.version)
+    .bind(collation::key(&name))
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -399,7 +404,7 @@ async fn play(
             Item::Tag { tag } => {
                 let tagged: Vec<(String,)> = sqlx::query_as(
                     "SELECT d.id FROM dashboard_tags t JOIN dashboards d ON d.id = t.dashboard_id \
-                     WHERE t.org_id = $1 AND t.tag_key = $2 ORDER BY d.title, d.id",
+                     WHERE t.org_id = $1 AND t.tag_key = $2 ORDER BY d.sort_title, d.id",
                 )
                 .bind(&ctx.org_id)
                 .bind(tag.to_lowercase())
