@@ -194,12 +194,14 @@ pub fn record_use(state: &AppState, caller: &TokenCaller, info: &RequestInfo) {
     }
 }
 
-/// For routes a person must call: managing service accounts and the SCIM token.
+/// For what a person must do: managing service accounts and the SCIM token, and changing an
+/// organization's sign-in rules (`auth::second_factor::require_fresh_for_setting`).
 pub fn refuse_tokens(caller: Option<&TokenCaller>) -> ApiResult<()> {
     match caller {
         None => Ok(()),
-        Some(_) => Err(ApiError::forbidden("API tokens cannot manage service accounts or tokens")
-            .because("token.not_for_this_route")),
+        Some(_) => {
+            Err(ApiError::forbidden("API tokens cannot do this; a person must").because("token.not_for_this_route"))
+        }
     }
 }
 

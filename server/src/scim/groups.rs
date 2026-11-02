@@ -364,6 +364,33 @@ async fn write_members(conn: &mut sqlx::AnyConnection, group_id: &str, members: 
     Ok(before.symmetric_difference(&after).cloned().collect())
 }
 
+/// Locks the rows of the accounts a group change may make members, in id order, before the
+/// organization's row (`authz` lock order): every way of joining an organization takes the account's
+/// row first, so the mapping's check of other memberships cannot race a join elsewhere.
+async fn lock_people<'a>(
+    conn: &mut sqlx::AnyConnection,
+    people: impl IntoIterator<Item = &'a String>,
+) -> ScimResult<()> {
+    let ids: BTreeSet<&String> = people.into_iter().collect();
+    for id in ids {
+        sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(id).execute(&mut *conn).await?;
+    }
+    Ok(())
+}
+
+/// The members of group `id` as stored, read before any lock to find whose rows to lock first.
+async fn members_unlocked(conn: &mut sqlx::AnyConnection, org_id: &str, id: &str) -> ScimResult<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT m.user_id FROM scim_group_members m JOIN scim_groups g ON g.id = m.group_id \
+         WHERE g.id = $1 AND g.org_id = $2",
+    )
+    .bind(id)
+    .bind(org_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(|(u,)| u).collect())
+}
+
 /// Applies the group mapping to `people` and answers the organizations whose rights changed.
 async fn sync_all(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, people: &[String]) -> ScimResult<BTreeSet<String>> {
     let mut touched = BTreeSet::new();
@@ -377,6 +404,7 @@ pub async fn create(ctx: &Ctx<'_>, body: Value) -> ScimResult<Response> {
     let data = GroupData::from_json(&body)?;
     let now = ctx.state.clock.now_ms();
     let mut tx = crate::db::begin(&ctx.state.db).await?;
+    lock_people(&mut tx, &data.members).await?;
     crate::authz::lock_org(&mut tx, ctx.org_id).await?;
     ensure_name_free(&mut tx, ctx.org_id, &data.display_name, None).await?;
     ensure_members_known(&mut tx, ctx.org_id, &data.members).await?;
@@ -410,7 +438,7 @@ pub async fn create(ctx: &Ctx<'_>, body: Value) -> ScimResult<Response> {
 
 pub async fn replace(ctx: &Ctx<'_>, id: &str, body: Value) -> ScimResult<Response> {
     let new = GroupData::from_json(&body)?;
-    let body = save(ctx, id, |_| Ok(new)).await?;
+    let body = save(ctx, id, |_| Ok(new.clone())).await?;
     Ok(scim_json(StatusCode::OK, &body))
 }
 
@@ -433,6 +461,8 @@ pub async fn patch(ctx: &Ctx<'_>, id: &str, body: Value) -> ScimResult<Response>
 pub async fn delete(ctx: &Ctx<'_>, id: &str) -> ScimResult<Response> {
     let now = ctx.state.clock.now_ms();
     let mut tx = crate::db::begin(&ctx.state.db).await?;
+    let before = members_unlocked(&mut tx, ctx.org_id, id).await?;
+    lock_people(&mut tx, &before).await?;
     crate::authz::lock_org(&mut tx, ctx.org_id).await?;
     let row = load(&mut tx, ctx.org_id, id).await?;
     sqlx::query("UPDATE scim_groups SET deactivated_at = $1, updated_at = $2 WHERE id = $3")
@@ -442,6 +472,8 @@ pub async fn delete(ctx: &Ctx<'_>, id: &str) -> ScimResult<Response> {
         .execute(&mut *tx)
         .await?;
     let people: Vec<String> = members_of(&mut tx, id).await?.into_iter().map(|(id, _)| id).collect();
+    // Members added between the read above and the organization's lock (rare): locked now.
+    lock_people(&mut tx, people.iter().filter(|p| !before.contains(p))).await?;
     let summary = json!({ "groupId": id, "displayName": row.display_name, "members": people.len() });
     super::audit(&mut tx, ctx, "scim.group_deactivated", ("scim_group", id), summary).await?;
     let touched = sync_all(&mut tx, ctx, &people).await?;
@@ -450,15 +482,28 @@ pub async fn delete(ctx: &Ctx<'_>, id: &str) -> ScimResult<Response> {
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-async fn save(ctx: &Ctx<'_>, id: &str, change: impl FnOnce(&GroupData) -> ScimResult<GroupData>) -> ScimResult<Value> {
+async fn save(ctx: &Ctx<'_>, id: &str, change: impl Fn(&GroupData) -> ScimResult<GroupData>) -> ScimResult<Value> {
     let now = ctx.state.clock.now_ms();
     let mut tx = crate::db::begin(&ctx.state.db).await?;
+    // Whose rows to lock before the organization's: the members before and after the change, as
+    // read now; the change is worked out again under the lock.
+    let before = members_unlocked(&mut tx, ctx.org_id, id).await?;
+    let mut locked: BTreeSet<String> = before.iter().cloned().collect();
+    if let Ok(row) = load(&mut tx, ctx.org_id, id).await {
+        let guess = GroupData { display_name: row.display_name, external_id: row.external_id, members: before };
+        if let Ok(next) = change(&guess) {
+            locked.extend(next.members);
+        }
+    }
+    lock_people(&mut tx, &locked).await?;
     crate::authz::lock_org(&mut tx, ctx.org_id).await?;
     let row = load(&mut tx, ctx.org_id, id).await?;
     let mut members: Vec<String> = members_of(&mut tx, id).await?.into_iter().map(|(id, _)| id).collect();
     members.sort();
     let current = GroupData { display_name: row.display_name.clone(), external_id: row.external_id.clone(), members };
     let mut next = change(&current)?;
+    // Members a concurrent change brought in after the first read (rare): locked now.
+    lock_people(&mut tx, current.members.iter().chain(next.members.iter()).filter(|p| !locked.contains(*p))).await?;
     next.members.sort();
     next.members.dedup();
     if next == current {

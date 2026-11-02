@@ -29,6 +29,34 @@ describe("own account", () => {
     await waitFor(() => expect(server.state.user.name).toBe("Ada Lovelace"));
   });
 
+  it("leaves another organization, but not one it is the last owner of", async () => {
+    const { user, server } = await openAdmin("/account", {
+      user: {
+        orgs: [
+          { id: "o1", name: "Analytical Engines", role: "tester" },
+          { id: "o2", name: "Difference Works", role: "viewer" },
+          { id: "o3", name: "Lovelace Labs", role: "owner" },
+        ],
+      },
+    });
+    const section = await screen.findByRole("region", { name: "Your organizations" });
+    await user.click(within(section).getByRole("button", { name: "Leave Difference Works" }));
+    const dialog = screen.getByRole("dialog", { name: "Leave organization" });
+    await user.click(within(dialog).getByRole("button", { name: "Leave" }));
+    expect(await screen.findByText("You left Difference Works.")).toBeTruthy();
+    expect(server.state.user.orgs.map((org) => org.id)).toEqual(["o1", "o3"]);
+
+    await user.click(within(section).getByRole("button", { name: "Leave Lovelace Labs" }));
+    const again = screen.getByRole("dialog", { name: "Leave organization" });
+    await user.click(within(again).getByRole("button", { name: "Leave" }));
+    expect(
+      await within(again).findByText(
+        "You are the last owner of this organization. Make another member an owner first; an organization always needs one.",
+      ),
+    ).toBeTruthy();
+    expect(server.state.user.orgs.map((org) => org.id)).toEqual(["o1", "o3"]);
+  });
+
   it("says that changing the password signs out everywhere else", async () => {
     await openAdmin("/account");
     const section = await screen.findByRole("region", { name: "Password" });

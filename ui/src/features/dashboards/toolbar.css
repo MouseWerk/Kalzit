@@ -14,6 +14,20 @@
     /* A grid item of the dashboard: it shrinks to the page instead of widening it. */
     min-width: 0;
     min-height: var(--control-height);
+    container: dash-toolbar / inline-size;
+  }
+
+  /*
+   * Where the row is narrower than its tools with their words (a laptop at 1024 px, German
+   * labels), Refresh and Share keep only their icons and the time range drops its zone, so Edit
+   * stays in the row instead of wrapping onto one of its own. Their names stay as labels and
+   * tooltips.
+   */
+  @container dash-toolbar (max-width: 60rem) {
+    .dash-toolbar__text,
+    .time-picker__zone-tag {
+      display: none;
+    }
   }
 
   /*

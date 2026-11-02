@@ -75,7 +75,8 @@ impl HostError {
             | "plugin.version_mismatch"
             | "plugin.key_exists"
             | "plugin.untrusted"
-            | "plugin.bundle_changed" => (StatusCode::CONFLICT, "conflict"),
+            | "plugin.bundle_changed"
+            | "plugin.panel_has_no_process" => (StatusCode::CONFLICT, "conflict"),
             _ => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
         };
         ApiError::new(status, code, self.message).with_reason(self.reason, self.params)

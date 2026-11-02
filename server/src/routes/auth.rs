@@ -72,6 +72,13 @@ fn rate_limited(wait: std::time::Duration) -> ApiError {
     ApiError::rate_limited("too many failed sign-ins, wait a few minutes", wait)
 }
 
+/// A failed sign-in while a directory could not be asked, whether or not a local account has the
+/// login (docs/api/sso.md, "LDAP and Active Directory").
+fn directory_unreachable_error() -> ApiError {
+    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "busy", "the directory cannot be reached, try again in a moment")
+        .because("ldap.directory_unreachable")
+}
+
 fn invalid_credentials() -> ApiError {
     // Same answer for unknown email, wrong password and disabled account, so the response does
     // not reveal which accounts exist.
@@ -236,6 +243,18 @@ pub async fn login_with(
         };
         match directory::attempt(&state, &info, req.email.trim(), &req.password, &charge).await? {
             Attempt::Confirmed { provider, person } => {
+                // The budgets come back only for a sign-in that goes on (a session, or the second
+                // step). A refusal answers like a wrong password and keeps the attempt counted, so
+                // the directory password cannot be tested here at no cost; the reason is recorded
+                // for the account and in the audit log (`auth.sso_failed`).
+                let finished = directory::finish(&state, &info, &headers, &provider, &person, req.forget_browser).await;
+                let answer = match finished {
+                    Ok(answer) => answer,
+                    Err(e) if e.reason.as_ref().is_some_and(|r| r.code == "ldap.sign_in_refused") => {
+                        return Err(invalid_credentials());
+                    }
+                    Err(e) => return Err(e),
+                };
                 state.pair_limiter.reset(&pair_key);
                 state.login_limiter.refund(&ip_key, &ip_counted);
                 if let Some(counted) = &site_counted {
@@ -247,7 +266,7 @@ pub async fn login_with(
                 for (key, counted) in entry_counted.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter() {
                     state.account_limiter.refund(key, counted);
                 }
-                return directory::finish(&state, &info, &headers, &provider, &person, req.forget_browser).await;
+                return Ok(answer);
             }
             Attempt::Limited => return Err(refuse(window)),
             Attempt::NotConfirmed { unreachable } => directory_unreachable = unreachable,
@@ -306,15 +325,33 @@ pub async fn login_with(
         // A directory could not be asked: said whether or not a local account has this login, so
         // the answer tells nothing about local accounts.
         if directory_unreachable {
-            return Err(ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "busy",
-                "the directory cannot be reached, try again in a moment",
-            )
-            .because("ldap.directory_unreachable"));
+            return Err(directory_unreachable_error());
         }
         return Err(invalid_credentials());
     };
+
+    // Password sign-in may be off for this account (docs/api/sso.md). Then the right password
+    // answers exactly like a wrong one and keeps its attempt counted, so it cannot be used to
+    // test passwords; only the account's own recent sign-ins say why.
+    use crate::sso::PasswordSignIn;
+    let decision = crate::sso::password_sign_in(&state, &row.id, break_glass_form).await?;
+    if decision == PasswordSignIn::Off {
+        tracing::info!(client = %info.client_ip, "failed sign-in");
+        // Recorded for the account's recent sign-ins; the answer stays the same if that fails.
+        let event = audit("auth.sign_in_failed", Some(&row.id), Some("password_off"));
+        let recorded = match state.db.acquire().await {
+            Ok(mut conn) => crate::audit::record(&mut conn, &event).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = recorded {
+            tracing::warn!(client = %info.client_ip, "recording a refused sign-in in the audit log failed: {e}");
+        }
+        // Exactly the answer of a wrong password, also while a directory could not be asked.
+        if directory_unreachable {
+            return Err(directory_unreachable_error());
+        }
+        return Err(invalid_credentials());
+    }
     if known_device {
         state.sign_in_account_limiter.record(&account_key, &network, mono);
         state.sign_in_address_limiter.record(&ip_key, &network, mono);
@@ -326,24 +363,6 @@ pub async fn login_with(
     }
     if let Some((limiter, key, counted)) = &counted_in {
         limiter.refund(key, counted);
-    }
-
-    // Password sign-in may be off for this account (docs/api/sso.md); said only after the right
-    // password, so nobody can probe accounts with it.
-    use crate::sso::PasswordSignIn;
-    let decision = crate::sso::password_sign_in(&state, &row.id, break_glass_form).await?;
-    if decision == PasswordSignIn::Off {
-        // Recorded for the account's recent sign-ins; the answer stays the same if that fails.
-        let event = audit("auth.sign_in_failed", Some(&row.id), Some("password_off"));
-        let recorded = match state.db.acquire().await {
-            Ok(mut conn) => crate::audit::record(&mut conn, &event).await,
-            Err(e) => Err(e),
-        };
-        if let Err(e) = recorded {
-            tracing::warn!(client = %info.client_ip, "recording a refused sign-in in the audit log failed: {e}");
-        }
-        return Err(ApiError::forbidden("password sign-in is off for this account; sign in through a provider")
-            .because("sso.password_sign_in_off"));
     }
     // Whether a second step follows (`second_factor`), read before the transaction so it holds
     // no second connection.
