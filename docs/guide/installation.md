@@ -32,7 +32,8 @@ sudo systemctl enable --now kalzit
 The deb starts the service at once; the rpm follows the system's preset, which on Fedora and RHEL
 leaves new services off, so it is started with `systemctl enable --now kalzit`. Open
 `http://<server>:3000` and enter the setup code, which `sudo kalzit setup-code` prints
-([Getting started](getting-started.md)).
+(`/var/lib/kalzit` belongs to the `kalzit` user with mode 0700, so reading it needs root:
+`sudo cat /var/lib/kalzit/setup-token.txt` works as well; [Getting started](getting-started.md)).
 
 To check a download against the signed manifest, compare its SHA-256 with the `installers` entry
 of the manifest (`sha256sum kalzit-0.5.0-linux-x64.deb`); `kalzit-sign verify --public-key <key>
@@ -353,11 +354,23 @@ without it.
    The wizard is in German when Windows shows German, otherwise in English; to choose German on
    any Windows, start it with `msiexec /i kalzit-<version>-windows-x64.msi TRANSFORMS=:1031`.
 
-3. When it is done, open `http://localhost:3000` (or the port you chose). The setup code for the
-   first sign-in is in `setup-token.txt` in the data folder, which only administrators can open:
-   in PowerShell opened with **Run as administrator**,
-   `Get-Content C:\ProgramData\Kalzit\data\setup-token.txt`. Continue with
-   [Getting started](getting-started.md#first-setup).
+3. The last page of a first installation has **Open setup in the browser**, ticked by default:
+   **Finish** opens `http://localhost:3000/setup` (or the port you chose). The setup code is not
+   part of that link: the finish page runs without administrator rights and cannot read it.
+   The code is in `setup-token.txt` in the data folder, which only administrators can open; an
+   editor or Explorer started normally is refused ("Sie haben keine Berechtigung zum Öffnen
+   dieser Datei"). Open PowerShell with **Run as administrator** and enter one of these (the setup
+   page shows both with a copy button):
+
+   ```powershell
+   Get-Content "C:\ProgramData\Kalzit\data\setup-token.txt"
+   & "C:\Program Files\Kalzit\kalzit.exe" setup-code
+   ```
+
+   `kalzit setup-code` reads the data folder from `kalzit.toml`, so it also works with a data
+   folder of your own; with `--url` it prints the setup page's address with the code in its
+   fragment (`#code=...`), which fills in the code when opened on this computer and never reaches
+   the server. Continue with [Getting started](getting-started.md#first-setup).
 
 What the package sets up:
 

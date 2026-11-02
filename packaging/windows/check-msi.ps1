@@ -66,6 +66,19 @@ try {
             throw "the Upgrade table names the languages '$($upgradeLanguages -join ',')' (transform $id); it must name none"
         }
     }
+    # The finish page opens the setup page (checked by default), never with the setup code in it.
+    $open = @(Get-TransformedValues $Msi 0 "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = 'KalzitOpenSetup'")
+    if ($open.Count -ne 1 -or $open[0] -notlike '*http://localhost:`[PORT`]/setup' -or $open[0] -like '*code*') {
+        throw "the finish page opens '$($open -join ' | ')', expected http://localhost:[PORT]/setup"
+    }
+    $checked = @(Get-TransformedValues $Msi 0 "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'WIXUI_EXITDIALOGOPTIONALCHECKBOX'")
+    if ($checked.Count -ne 1 -or $checked[0] -ne '1') { throw "the option to open setup is not checked by default ('$checked')" }
+    foreach ($case in @(@(0, 'Open setup in the'), @(1031, 'Einrichtung im'))) {
+        $text = @(Get-TransformedValues $Msi $case[0] "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = 'KalzitOpenSetupText'")
+        if ($text.Count -ne 1 -or $text[0] -notlike "$($case[1])*") {
+            throw "the finish page option reads '$($text -join ' | ')' (transform $($case[0])), expected '$($case[1]) ...'"
+        }
+    }
     $files = @(Get-TransformedValues $Msi 1031 "SELECT ``File`` FROM ``File``")
     if ($files.Count -ne 2) { throw "the German transform leaves $($files.Count) files, expected 2" }
     Write-Host "$Msi carries the wizard in English and German (languages $($languages -join ', '))"

@@ -678,13 +678,15 @@ are `Public`.
 
 | Method and path | Answer |
 |---|---|
-| `GET /setup` | `200 { "needed": boolean, "codeHint"?: "file" \| "docker" \| "fixed" }` |
+| `GET /setup` | `200 { "needed": boolean, "codeHint"?: "file" \| "docker" \| "fixed", "os"?: "windows" \| "linux" }` |
 | `POST /setup/check` | `200 { "valid": true }` |
 | `POST /setup` | `200 Me` (as `GET /me`) and the session cookie |
 
 **`GET /setup`** carries `codeHint` only while setup is needed: where the person setting up finds
 the code. `fixed` when it comes from `KALZIT_SETUP_TOKEN`, `docker` when the server runs in a
-container (`/.dockerenv` or `/run/.containerenv`), else `file`. It never names a path. `fixed`
+container (`/.dockerenv` or `/run/.containerenv`), else `file`. `os`, also only while setup is
+needed, is the server's system family, so the page shows the command that reads the protected
+file there (PowerShell as administrator, or `sudo`). It never names a path. `fixed`
 tells a visitor that the code was chosen by a person (at least 16 letters or digits) rather than
 generated; that is acceptable only because of the budgets below, which keep a guess slow however
 many addresses it uses.
