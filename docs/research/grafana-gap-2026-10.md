@@ -7,7 +7,7 @@ gave conflicting availability (for example SQL expressions marked GA in one page
 another), the table says so.
 
 Kalzit reference: `origin/main` at c0068132 (#136, 2026-10-28), read without checking it out: PLAN.md
-section 12 (M0 to M8), README roadmap, `docs/design/depth.md` (dated 2026-10-23), `docs/guide/`,
+section 12 (M0 to M9), README roadmap, `docs/design/depth.md` (dated 2026-10-23), `docs/guide/`,
 `server/src/routes/`, `ui/src/panels/`, `ui/src/features/`, `ui/src/analysis/steps.ts`. The local
 `main` checkout in F:\GITHUB\Granit is behind (#91); nothing there was changed.
 
@@ -86,7 +86,7 @@ Clean-room note: everything below names capabilities in our own words; nothing i
 | PDF export and scheduled reports by mail (PDF, CSV, image; Enterprise). Since 13.0 rendering runs only in the separate renderer service | https://grafana.com/docs/grafana/next/visualizations/dashboards/create-reports.md , https://grafana.com/whats-new/2026-04-14-grafana-image-renderer-plugin-support-removed/ | missing; depth.md only says "a server renderer follows in M7 with reports", PLAN M7 does not list reports | High for business users | L |
 | Data export CSV/Excel | https://grafana.com/docs/grafana/v13.1/visualizations/dashboards/share-dashboards-panels.md | done and ahead: CSV (locale-aware, BOM), Excel, JSON, NDJSON, GraphML; export equals panel; `data:export` right | High | - |
 | Embedding (iframe of panels/dashboards) | https://grafana.com/docs/grafana/v13.1/visualizations/dashboards/share-dashboards-panels.md | missing (depth P3-2: org-internal embed, `frame-ancestors` opt-in) | Med | S |
-| Publish to community dashboard catalog | same | n/a (could come with M8 store) | Low | - |
+| Publish to community dashboard catalog | same | n/a (could come with M9 store) | Low | - |
 
 ### 1.5 Alerting and incident response
 
@@ -115,8 +115,8 @@ Clean-room note: everything below names capabilities in our own words; nothing i
 | Git Sync: dashboards and folders synced with GitHub, GitLab, Bitbucket, plain Git, PR workflow (GA 13.0) | https://grafana.com/blog/grafana-13-release-all-the-latest-features/ , https://grafana.com/blog/grafana-13-1-release-all-the-latest-features/ | missing; M7 provisioning does not say Git | High (GitOps is expected for self-hosted) | L |
 | CLI (grafanactl / gcx), Foundation SDK, Terraform provider, operator | https://grafana.com/docs/grafana/next/as-code/observability-as-code/ | missing; Kalzit has an HTTP API documented in `docs/api/` | Med | M (CLI) / L (Terraform) |
 | Data source breadth: 300+ plugins in catalog | https://grafana.com/blog/grafana-marketplace-pilot | partial: about 14 built-in kinds plus plugin data sources (M4); InfluxDB, Loki, ClickHouse M5; Graphite, Redis, Oracle, Tempo/Jaeger, ArangoDB, Gremlin, Couchbase M7. Not planned: BigQuery, Snowflake, Databricks, CloudWatch, Azure Monitor, Google Sheets, Splunk, DB2 | High (general analysis needs the warehouse sources) | M each |
-| Plugin catalog, signed plugins, app plugins, Scenes framework | https://grafana.com/blog/grafana-marketplace | M4 (sandboxed, signed, catalog off by default), M8 store; no app-plugin page framework planned beyond "App" type in PLAN 7 | Med | - |
-| Commercial Marketplace (GA 20 Oct 2026, Cloud trials) | https://grafana.com/press/2026/10/20/marketplace-ga/ | n/a (AGPL, community store M8) | Low | - |
+| Plugin catalog, signed plugins, app plugins, Scenes framework | https://grafana.com/blog/grafana-marketplace | M4 (sandboxed, signed, catalog off by default), M9 store; no app-plugin page framework planned beyond "App" type in PLAN 7 | Med | - |
+| Commercial Marketplace (GA 20 Oct 2026, Cloud trials) | https://grafana.com/press/2026/10/20/marketplace-ga/ | n/a (AGPL, community store M9) | Low | - |
 | UI languages: about ten languages, browser detection | https://grafana.com/developers/plugin-tools/key-concepts/plugin-i18n-concept | partial: German and English with full parity check, by design | Low | - |
 
 ### 1.7 AI
@@ -141,7 +141,7 @@ Clean-room note: everything below names capabilities in our own words; nothing i
 
 ## 2. Missing from the plan
 
-Features Grafana has that no Kalzit milestone (M0 to M8) names. Items that exist only in
+Features Grafana has that no Kalzit milestone (M0 to M9) names. Items that exist only in
 `docs/design/depth.md` P1 to P3 count as missing from the plan, because depth.md has no milestone
 mapping and M6 cannot take them. Ranked by value for Kalzit's positioning.
 
@@ -155,7 +155,7 @@ mapping and M6 cannot take them. Ranked by value for Kalzit's positioning.
 | 6 | Share links, short links, snapshots, org-internal embedding (depth P3-2 to P3-4) | Everyday collaboration; small to medium effort | M7 (with public links) |
 | 7 | Dashboard tabs, auto grid, show/hide rules (depth P3-1) | Grafana made this GA and default in 13.0; long dashboards get unwieldy without tabs | M7 |
 | 8 | Git-based provisioning (sync folders and dashboards with a Git repository, PR review) and a CLI | Self-hosted teams expect GitOps; M7 "Provisioning als Code" should say file and Git | M7 (spell out in PLAN) |
-| 9 | Warehouse and cloud sources: BigQuery, Snowflake, Databricks, Google Sheets, CloudWatch, Azure Monitor | "All common sources" for general analysis; many could ship as M4-style plugins rather than built-ins | M7 (built-in: BigQuery, Snowflake); others as plugins via M8 |
+| 9 | Warehouse and cloud sources: BigQuery, Snowflake, Databricks, Google Sheets, CloudWatch, Azure Monitor | "All common sources" for general analysis; many could ship as M4-style plugins rather than built-ins | M7 (built-in: BigQuery, Snowflake); others as plugins via M9 |
 | 10 | XY chart and geo map panels (depth P3-5, P3-8; PLAN 2 already promises GeoJSON maps) | Correlation and location are core analysis views; PLAN promises geo without a milestone | M7 |
 | 11 | Queryless drill-down app per shape: pick a table, collection or label set, browse breakdowns by field, drill to records | Kalzit's version of the Drilldown apps, built on schema sampling and field distribution that already exist | M7 or later |
 | 12 | Correlations registry (field in source A opens a query in source B) | Joins worlds (SQL row to graph neighbourhood); data links cover part | M7 |
@@ -166,12 +166,12 @@ mapping and M6 cannot take them. Ranked by value for Kalzit's positioning.
 | 17 | Recording rules (store a query result on a schedule) | Comes almost free with the alerting scheduler | M7 |
 | 18 | View panel sidebar for viewers (legend, stacking without edit rights) | Viewer-side analysis | M7 |
 | 19 | Logs panel independent of Loki (Elasticsearch/OpenSearch hits, SQL log tables) | Kalzit already reads ES; a log view is generic | M5 with Loki (make it source-neutral) |
-| 20 | Canvas, candlestick, trend, flame graph, dashboard/annotation list panels | Long tail | Plugins (M8) or after M7 |
+| 20 | Canvas, candlestick, trend, flame graph, dashboard/annotation list panels | Long tail | Plugins (M9) or after M7 |
 
 Not applicable (self-hosted only, no cloud offering): Adaptive Telemetry (ingestion-side cost
 control and billing in Grafana Cloud), Sift (Cloud, Kubernetes telemetry), IRM/on-call with mobile
 push (Cloud product; OnCall OSS archived), Faro and k6 (separate telemetry products), the commercial
-Marketplace (Kalzit's M8 store is community and AGPL), and the Assistant's Cloud backend (Kalzit's
+Marketplace (Kalzit's M9 store is community and AGPL), and the Assistant's Cloud backend (Kalzit's
 AI is already fully self-hosted with any provider). None of these should enter the plan.
 
 M6 rule respected: nothing above is placed in M6. M6 can still take the polish half of existing

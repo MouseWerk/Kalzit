@@ -522,10 +522,12 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Abfrageplan (EXPLAIN/PROFILE). Das Graph-Board wird vorher erweitert.
    - KI: ein MCP-Server, über den andere KI-Werkzeuge Kalzit mit den Rechten einer Person nur lesend
      nutzen.
-9. **M8 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
-   (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
-   Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
-   Rücknahmen; der signierte Katalog dort ist die Quelle für den Katalog in Kalzit (M4).
+9. **M8**: Geplant, Umfang noch offen.
+10. **M9 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
+    (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
+    Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
+    Rücknahmen; der signierte Katalog dort ist die Quelle für den Katalog in Kalzit (M4). Die
+    Store-Seiten der Website bleiben bis M9 verborgen.
 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
 und einem Durchgang nach `quality/perfection-pass.md`.
