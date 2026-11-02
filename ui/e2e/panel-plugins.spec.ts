@@ -169,4 +169,16 @@ test("a panel plugin draws in its sandboxed frame and is edited with options fro
     await field.fill("missing");
     await expect(options.frameLocator("iframe").locator(".empty")).toHaveText("No number field");
   });
+
+  await test.step("its plugin page shows no restart, process or log, and the dashboard that shows it", async () => {
+    await page.goto(`/settings/plugins/${ID}`);
+    await expect(page.getByRole("heading", { level: 2, name: NAME })).toBeVisible();
+    await expect(page.getByRole("button", { name: t("plugins.details.turnOff") })).toBeVisible();
+    await expect(page.getByRole("button", { name: t("plugins.details.restart") })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: t("plugins.details.tab.log") })).toHaveCount(0);
+    const state = page.getByRole("region", { name: t("plugins.details.state") });
+    await expect(state.getByText(t("plugins.details.sandbox"), { exact: true })).toHaveCount(0);
+    await page.getByRole("tab", { name: new RegExp(`^${t("plugins.details.tab.used")}`) }).click();
+    await expect(page.getByRole("link", { name: "Plugin panel", exact: true })).toBeVisible();
+  });
 });

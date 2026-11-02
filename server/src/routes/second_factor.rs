@@ -30,6 +30,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/auth/second-factor/setup/totp", Public, setup_totp),
         route(Method::POST, "/auth/second-factor/setup/passkey", Public, setup_passkey_options),
         route(Method::POST, "/auth/second-factor/setup", Public, setup),
+        route(Method::POST, "/auth/second-factor/password", Public, confirm_password),
     ]
 }
 
@@ -42,20 +43,21 @@ pub async fn plan(
     first: FirstStep<'_>,
     now: i64,
 ) -> ApiResult<Option<Prompt>> {
-    let Some((setup, required_by)) = sf::second_step(state, &user.id, user.is_server_admin != 0, first).await? else {
+    let Some(step) = sf::second_step(state, &user.id, user.is_server_admin != 0, first).await? else {
         return Ok(None);
     };
     let has = sf::methods(&state.db, &user.id).await?;
     let (methods, last_used) = has.for_prompt();
     Ok(Some(Prompt {
         email: user.email.clone(),
-        setup,
+        setup: step.setup,
         methods,
         last_used,
         allowed: sf::allowed(state, info).await?,
-        required_by,
+        required_by: step.required_by,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         expires_at: now + sf::CHALLENGE_TTL_MS,
+        link_password: step.link_password,
     }))
 }
 
@@ -78,6 +80,7 @@ pub async fn forced_setup(
         required_by,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         expires_at: now + sf::CHALLENGE_TTL_MS,
+        link_password: false,
     })
 }
 
@@ -166,7 +169,8 @@ pub async fn finish_first_step(
             .execute(&mut *tx)
             .await?;
     }
-    let token = sf::create_pending(&mut tx, &user.id, prompt.setup, forget_browser, first, now).await?;
+    let token =
+        sf::create_pending(&mut tx, &user.id, prompt.setup, prompt.link_password, forget_browser, first, now).await?;
     crate::db::commit(tx).await?;
     let mut out = HeaderMap::new();
     out.insert(header::SET_COOKIE, sf::set_pending_cookie(&token, info.https));
@@ -208,10 +212,21 @@ async fn complete(
     info: &RequestInfo,
     headers: &HeaderMap,
     pending: &Pending,
-    method: &str,
+    method: Option<&str>,
     taken: sf::Taken,
     now: i64,
 ) -> ApiResult<(HeaderMap, Me)> {
+    // The account was proven (its second factor, or its password when it has none): a provider's
+    // identity linked to it by email counts as confirmed from now on (`sso::signin`).
+    if let Some(provider_id) = taken.provider_id.as_deref() {
+        sqlx::query(
+            "UPDATE sso_identities SET confirmed = 1 WHERE user_id = $1 AND provider_id = $2 AND confirmed = 0",
+        )
+        .bind(&pending.user_id)
+        .bind(provider_id)
+        .execute(&mut *tx)
+        .await?;
+    }
     let device = if pending.forget_browser != 0 {
         DeviceCookie::Forget
     } else if taken.first_step == "password" && taken.password_hash.is_some() {
@@ -231,7 +246,7 @@ async fn complete(
         Default::default()
     };
     let (mut out, answer) =
-        open_session(&mut tx, state, info, headers, pending.user(), &taken.via(), Some(method), device, now).await?;
+        open_session(&mut tx, state, info, headers, pending.user(), &taken.via(), method, device, now).await?;
     crate::db::commit(tx).await?;
     crate::sso::rights_changed(state, &touched).await;
     out.append(header::SET_COOKIE, sf::clear_pending_cookie(info.https));
@@ -247,13 +262,16 @@ async fn confirm(
 ) -> ApiResult<Response> {
     let now = state.clock.now_ms();
     let pending = pending(&state, &info, &headers, now).await?;
+    if pending.link_password != 0 {
+        return Err(password_first());
+    }
     if pending.setup != 0 {
         return Err(ApiError::validation("set up a second factor first").because("second_factor.setup_needed"));
     }
     let verified = sf::verify(&state, &info, pending.owner(), &pending.user_id, &proof, now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
     let Some(taken) = sf::take_pending(&mut tx, &pending, now).await? else { return Err(sf::pending_expired()) };
-    let (out, me) = complete(tx, &state, &info, &headers, &pending, verified.method(), taken, now).await?;
+    let (out, me) = complete(tx, &state, &info, &headers, &pending, Some(verified.method()), taken, now).await?;
     let remaining = match verified {
         sf::Verified::Recovery { remaining } => Some(remaining),
         _ => None,
@@ -278,7 +296,52 @@ async fn setup_pending(state: &AppState, info: &RequestInfo, headers: &HeaderMap
     if pending.setup == 0 {
         return Err(ApiError::forbidden("this account confirms with its second factor"));
     }
+    // A factor set up before the account's password was confirmed would prove nothing about it.
+    if pending.link_password != 0 {
+        return Err(password_first());
+    }
     Ok(pending)
+}
+
+fn password_first() -> ApiError {
+    ApiError::validation("confirm the account's password first").because("second_factor.password_first")
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasswordProof {
+    password: String,
+}
+
+/// The account's own password, when a provider's identity was linked to it by email and it has
+/// no second factor (`Prompt::link_password`): signs the person in, or leads on to the setup of a
+/// second factor the account must have.
+async fn confirm_password(
+    State(state): State<AppState>,
+    Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
+    JsonBody(proof): JsonBody<PasswordProof>,
+) -> ApiResult<Response> {
+    let now = state.clock.now_ms();
+    let mut pending = pending(&state, &info, &headers, now).await?;
+    if pending.link_password == 0 {
+        return Err(ApiError::validation("this sign-in does not ask for the password")
+            .because("second_factor.password_not_asked"));
+    }
+    sf::verify_link_password(&state, &info, &pending.user_id, proof.password, now).await?;
+    if pending.setup != 0 {
+        sf::link_password_confirmed(&state.db, &pending.token_hash).await?;
+        pending.link_password = 0;
+        let required_by = sf::required_for(&state, &pending.user_id, pending.is_server_admin != 0).await?;
+        let prompt = sf::prompt(&state, &info, &pending, required_by, now).await?;
+        return Ok(Json(json!({ "secondFactor": prompt })).into_response());
+    }
+    let mut tx = crate::db::begin(&state.db).await?;
+    let Some(taken) = sf::take_pending(&mut tx, &pending, now).await? else { return Err(sf::pending_expired()) };
+    // A password is no second factor: the session is not marked as freshly confirmed.
+    let (out, me) = complete(tx, &state, &info, &headers, &pending, None, taken, now).await?;
+    let body = SignedIn { me, recovery_codes_remaining: None, recovery_codes: None };
+    Ok((out, Json(body)).into_response())
 }
 
 fn method_not_allowed() -> ApiError {
@@ -388,7 +451,7 @@ async fn setup(
         at_ms: now,
     };
     crate::audit::record(&mut tx, &event).await?;
-    let (out, me) = complete(tx, &state, &info, &headers, &pending, method, taken, now).await?;
+    let (out, me) = complete(tx, &state, &info, &headers, &pending, Some(method), taken, now).await?;
     // The first setup, which the person just did themselves while signing in, changes nothing they
     // need to be told about by mail.
     let body = SignedIn { me, recovery_codes_remaining: None, recovery_codes: Some(codes) };

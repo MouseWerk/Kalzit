@@ -10,7 +10,10 @@ interface TextFieldProps extends NativeInputProps {
   label: string;
   value: string;
   onValueChange: (value: string) => void;
-  /** Shown up front, before any error, so rules are known before the first attempt. */
+  /**
+   * Shown under the input, before any error, so rules are known before the first attempt; under
+   * the input, so fields with and without a hint keep their inputs on one line side by side.
+   */
   hint?: string | undefined;
   error?: string | undefined;
   mono?: boolean;
@@ -43,11 +46,6 @@ export function TextField({
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
-      {hint === undefined ? null : (
-        <p className="field__hint" id={hintId}>
-          {hint}
-        </p>
-      )}
       <input
         {...inputProps}
         ref={ref}
@@ -58,6 +56,11 @@ export function TextField({
         aria-invalid={error === undefined ? undefined : true}
         aria-describedby={describedBy === "" ? undefined : describedBy}
       />
+      {hint === undefined ? null : (
+        <p className="field__hint" id={hintId}>
+          {hint}
+        </p>
+      )}
       {error === undefined ? null : (
         <p className="field__error" id={errorId}>
           <Icon name="alert" />

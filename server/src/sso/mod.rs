@@ -324,10 +324,14 @@ pub async fn password_sign_in(state: &AppState, user_id: &str, break_glass_form:
         .fetch_one(&state.read_db)
         .await?;
     if !off && server_admin == 0 {
-        let orgs: Vec<(String,)> = sqlx::query_as("SELECT org_id FROM org_members WHERE user_id = $1")
-            .bind(user_id)
-            .fetch_all(&state.read_db)
-            .await?;
+        // Only memberships the person consented to bind them (`authz::CONSENTED_JOINS`).
+        let orgs: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT org_id FROM org_members WHERE user_id = $1 AND joined_by IN {}",
+            crate::authz::CONSENTED_JOINS
+        )))
+        .bind(user_id)
+        .fetch_all(&state.read_db)
+        .await?;
         for (org,) in orgs {
             if crate::settings::get_org(state, &org, "signin.local_password").await?.as_str() == Some("off") {
                 off = true;

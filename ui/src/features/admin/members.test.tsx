@@ -115,6 +115,32 @@ describe("members", () => {
     expect(admin.members.find((member) => member.userId === "u2")?.role).toBe("admin");
   });
 
+  it("hands a person of another organization over to an invitation", async () => {
+    const { user, admin } = await openAdmin("/admin/members");
+    await membersList();
+    admin.members = admin.members.filter((member) => member.userId !== "u2");
+    admin.elsewhere.add("u2");
+    await user.click(screen.getByRole("button", { name: "Add member…" }));
+    const dialog = screen.getByRole("dialog", { name: "Add member" });
+    await user.click(within(dialog).getByLabelText("Email address"));
+    await user.paste("grace@example.com");
+    await user.selectOptions(within(dialog).getByLabelText("Role"), "editor");
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+    expect(
+      await within(dialog).findByText(
+        "This person already belongs to another organization. They join only by accepting an invitation.",
+      ),
+    ).toBeTruthy();
+    expect(admin.members.some((member) => member.userId === "u2")).toBe(false);
+
+    await user.click(within(dialog).getByRole("button", { name: "Send an invitation instead" }));
+    const invite = await screen.findByRole("dialog", { name: "Invite people" });
+    expect((within(invite).getByLabelText("Email addresses") as HTMLTextAreaElement).value).toBe(
+      "grace@example.com",
+    );
+    expect(screen.queryByRole("dialog", { name: "Add member" })).toBeNull();
+  });
+
   it("adds members with users:write, not users:invite", async () => {
     await openAdmin("/admin/members", {
       permissions: ["users:read", "users:invite", "audit:read"],

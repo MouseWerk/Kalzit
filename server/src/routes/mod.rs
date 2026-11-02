@@ -345,6 +345,8 @@ mod access_guard {
         "POST /auth/second-factor/setup/totp",
         "POST /auth/second-factor/setup/passkey",
         "POST /auth/second-factor/setup",
+        // The account's password after a provider linked its identity by email (`second_factor`).
+        "POST /auth/second-factor/password",
         // What the sign-in page shows anyway: product name, logo, sign-in texts and default look.
         "GET /branding",
         "GET /branding/logo",
@@ -367,6 +369,8 @@ mod access_guard {
         "GET /me/sessions",
         "DELETE /me/sessions/{sessionId}",
         "POST /me/sessions/revoke-others",
+        // Leaves one of the user's own organizations (`routes::me`).
+        "DELETE /me/orgs/{orgId}",
         // The user's own recent sign-ins only (`routes::sign_ins`).
         "GET /me/sign-ins",
         "GET /me/preferences",

@@ -3,7 +3,7 @@
 //! switch for unsigned plugins), the catalog (its index and installs from it) and the block list
 //! of an organization. Documented in docs/api/plugins.md.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use axum::Json;
 use axum::body::Body;
@@ -234,7 +234,8 @@ async fn one(state: &AppState, id: &str) -> ApiResult<Json<PluginView>> {
     Ok(Json(view(state, row).await?))
 }
 
-/// A data source of the plugin's kind, for "Used in" and the question before removing it.
+/// A data source of the plugin's kind (for a panel plugin, a dashboard that shows it), for "Used
+/// in" and the question before removing it.
 #[derive(Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 struct UsedIn {
@@ -245,7 +246,7 @@ struct UsedIn {
 }
 
 /// One plugin with what the list leaves out: the manifest as signed and the data sources of its
-/// kind in every organization (not in the trash).
+/// kind (the dashboards that show it, for a panel plugin) in every organization (not in the trash).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginDetail {
@@ -258,16 +259,118 @@ struct PluginDetail {
 async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) -> ApiResult<Json<PluginDetail>> {
     let row = store::get(&state.db, &path.plugin_id).await?.ok_or_else(ApiError::not_found)?;
     let manifest = row.manifest.clone();
-    let used_in: Vec<UsedIn> = sqlx::query_as(
-        "SELECT d.id, d.name, d.org_id, o.name AS org_name \
-         FROM datasources d JOIN orgs o ON o.id = d.org_id \
-         WHERE d.kind = $1 AND d.deleted_at IS NULL \
-         ORDER BY o.name, d.name, d.id",
+    let used_in: Vec<UsedIn> = if row.kind == "panel" {
+        dashboards_showing(&state, &row.id).await?
+    } else {
+        sqlx::query_as(
+            "SELECT d.id, d.name, d.org_id, o.name AS org_name \
+             FROM datasources d JOIN orgs o ON o.id = d.org_id \
+             WHERE d.kind = $1 AND d.deleted_at IS NULL \
+             ORDER BY o.name, d.name, d.id",
+        )
+        .bind(&row.id)
+        .fetch_all(&state.db)
+        .await?
+    };
+    Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
+}
+
+/// The dashboards in every organization (not in the trash) whose current version shows the panel
+/// plugin `id`. Only models that name the plugin or link a library panel or an analysis can show
+/// it, so the others are skipped before they are read.
+async fn dashboards_showing(state: &AppState, id: &str) -> ApiResult<Vec<UsedIn>> {
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT d.id, d.title, d.org_id, o.name, v.model \
+         FROM dashboards d JOIN orgs o ON o.id = d.org_id \
+         JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
+         WHERE d.deleted_at IS NULL \
+           AND (v.model LIKE $1 OR v.model LIKE '%libraryPanelId%' OR v.model LIKE '%analysisId%') \
+         ORDER BY o.name, d.title, d.id",
     )
-    .bind(&row.id)
+    .bind(format!("%{id}%"))
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
+    // Per dashboard: whether a panel of its own has the type, else the library panels and the
+    // analyses it links. The linked ones are read together afterwards, one query per table.
+    struct Candidate {
+        used: UsedIn,
+        own: bool,
+        library: Vec<String>,
+        analyses: Vec<String>,
+    }
+    let mut candidates = Vec::new();
+    let (mut library_ids, mut analysis_ids) = (BTreeSet::new(), BTreeSet::new());
+    for (dashboard, title, org_id, org_name, raw) in rows {
+        let Ok(model) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+        let panels: Vec<&serde_json::Value> = model["panels"].as_array().into_iter().flatten().collect();
+        let own = panels.iter().any(|p| p["type"].as_str() == Some(id));
+        let linked = |key: &str| -> Vec<String> {
+            if own { Vec::new() } else { panels.iter().filter_map(|p| p[key].as_str().map(str::to_string)).collect() }
+        };
+        let (library, analyses) = (linked("libraryPanelId"), linked("analysisId"));
+        library_ids.extend(library.iter().cloned());
+        analysis_ids.extend(analyses.iter().cloned());
+        candidates.push(Candidate {
+            used: UsedIn { id: dashboard, name: title, org_id, org_name },
+            own,
+            library,
+            analyses,
+        });
+    }
+    let library_shows = linked_showing(state, "library_panels", "model", &library_ids, |raw| {
+        crate::dashboards::library::stored_content(raw).ok().and_then(|m| m["type"].as_str().map(str::to_string))
+    })
+    .await?;
+    let analyses_show = linked_showing(state, "analyses", "body", &analysis_ids, |raw| {
+        crate::saved_analyses::stored(raw).ok().map(|m| m.visualization.kind)
+    })
+    .await?;
+    let shows = |set: &BTreeSet<(String, String)>, org: &str, ids: &[String]| {
+        ids.iter().any(|linked| set.contains(&(org.to_string(), linked.clone())))
+    };
+    let library_shows: BTreeSet<_> = library_shows.into_iter().filter(|(_, kind)| kind == id).map(|(k, _)| k).collect();
+    let analyses_show: BTreeSet<_> = analyses_show.into_iter().filter(|(_, kind)| kind == id).map(|(k, _)| k).collect();
+    Ok(candidates
+        .into_iter()
+        .filter(|c| {
+            c.own
+                || shows(&library_shows, &c.used.org_id, &c.library)
+                || shows(&analyses_show, &c.used.org_id, &c.analyses)
+        })
+        .map(|c| c.used)
+        .collect())
+}
+
+/// Ids per query, well below the bind-parameter limits of SQLite and PostgreSQL.
+const IDS_PER_QUERY: usize = 500;
+
+/// The panel type of each row of `table` (library panels or analyses) with one of `ids`, keyed by
+/// (organization, id); `kind_of` reads the type from the stored column `column`. A row that
+/// cannot be read is left out, as a dashboard leaves its slot empty.
+async fn linked_showing(
+    state: &AppState,
+    table: &'static str,
+    column: &'static str,
+    ids: &BTreeSet<String>,
+    kind_of: impl Fn(&str) -> Option<String>,
+) -> ApiResult<Vec<((String, String), String)>> {
+    let ids: Vec<&String> = ids.iter().collect();
+    let mut out = Vec::new();
+    for chunk in ids.chunks(IDS_PER_QUERY) {
+        // One placeholder per id: numbers only, so nothing from a model reaches the SQL.
+        let list = (1..=chunk.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", ");
+        let sql = format!("SELECT org_id, id, {column} FROM {table} WHERE id IN ({list})");
+        let mut query = sqlx::query_as::<_, (String, String, String)>(sqlx::AssertSqlSafe(sql));
+        for linked in chunk {
+            query = query.bind(linked.as_str());
+        }
+        for (org_id, linked, raw) in query.fetch_all(&state.db).await? {
+            if let Some(kind) = kind_of(&raw) {
+                out.push(((org_id, linked), kind));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Removes the uploaded file when the request ends, however it ends.

@@ -67,11 +67,15 @@
     align-content: start;
     gap: var(--space-1);
     padding: var(--space-3) var(--space-4);
+    /*
+     * Every cell draws its end and bottom hairline and reaches one hairline past its track; the
+     * strip's frame clips the ones at its edges. However the cells wrap (two, three or four per
+     * row), each divider then runs the full height of its row, without a cell that has none.
+     */
+    margin-inline-end: calc(var(--space-px) * -1);
+    margin-block-end: calc(var(--space-px) * -1);
     border-inline-end: var(--border-width) solid var(--border);
-  }
-
-  .plugins-strip__cell:last-child {
-    border-inline-end: 0;
+    border-block-end: var(--border-width) solid var(--border);
   }
 
   .plugins-strip__label {
