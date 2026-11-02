@@ -11,7 +11,7 @@ function sectionChildren(sections: readonly AdminSectionLink[], group: MessageKe
 export const adminNav: NavItem = {
   to: "/admin",
   label: "admin.nav",
-  icon: "admin",
+  icon: "shieldCheck",
   visible: canOpenAdministration,
   childrenLabel: "admin.sections",
   // Members has its own entry in the organization group; the overview page still lists it.

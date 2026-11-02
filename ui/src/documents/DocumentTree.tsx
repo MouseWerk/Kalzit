@@ -9,6 +9,7 @@ import { filterPath, mongoPath, type Segment } from "./paths";
 import { entriesOf, typeOf } from "./values";
 import "./documents.css";
 import "../features/dashboards/ui/shared.css";
+import { Icon } from "../components/Icon";
 
 /** Fixed row height in px, which is what lets the tree render only the rows in view. */
 export const TREE_ROW_HEIGHT = 28;
@@ -515,7 +516,9 @@ function TreeRow({
     >
       <span className="doc-tree__indent" aria-hidden="true" />
       <span className="doc-tree__toggle" aria-hidden="true">
-        {row.expandable ? (row.expanded ? "▾" : "▸") : ""}
+        {row.expandable ? (
+          <Icon name={row.expanded ? "chevronDown" : "chevron"} className="icon--inline" />
+        ) : null}
       </span>
       <span className="doc-tree__key">{row.name}</span>
       <span className="doc-tree__type">{type}</span>

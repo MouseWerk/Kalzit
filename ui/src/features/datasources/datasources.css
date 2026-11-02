@@ -670,9 +670,10 @@
     font-size: var(--font-size-sm);
   }
 
+  /* Glyph and logo tiles look equally full side by side (tokens.css). */
   .kind-mark .icon {
-    width: 60%;
-    height: 60%;
+    width: var(--size-kind-glyph);
+    height: var(--size-kind-glyph);
   }
 
   .ds-kinds__link .kind-mark {
@@ -690,7 +691,7 @@
 
   .kind-logo {
     width: auto;
-    height: 70%;
+    height: var(--size-kind-logo);
     aspect-ratio: 1;
   }
 
