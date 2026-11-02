@@ -525,7 +525,7 @@ async fn list(
 
 fn nest(rows: &[&FolderRow], parent: Option<&str>, index: &AccessIndex) -> Vec<FolderNode> {
     let mut level: Vec<&FolderRow> = rows.iter().copied().filter(|r| r.parent_id.as_deref() == parent).collect();
-    level.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
+    level.sort_by(|a, b| crate::collation::compare(&a.name, &b.name).then_with(|| a.id.cmp(&b.id)));
     level
         .into_iter()
         .map(|r| FolderNode { folder: folder(r, r.parent_id.clone(), index), children: nest(rows, Some(&r.id), index) })

@@ -391,14 +391,16 @@ async fn role_sources(
         };
         out.push((source, info.permissions));
     }
-    let team_roles: Vec<(String, String, String)> = sqlx::query_as(
+    let mut team_roles: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT t.id, t.name, r.role FROM team_members m JOIN teams t ON t.id = m.team_id \
-         JOIN team_roles r ON r.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2 ORDER BY t.name, r.role",
+         JOIN team_roles r ON r.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2",
     )
     .bind(user_id)
     .bind(org_id)
     .fetch_all(db)
     .await?;
+    team_roles
+        .sort_by(|a, b| crate::collation::compare(&a.1, &b.1).then_with(|| a.0.cmp(&b.0)).then_with(|| a.2.cmp(&b.2)));
     for (team_id, team_name, key) in team_roles {
         // A custom role deleted in the meantime grants nothing.
         if let Some(info) = resolve_role(db, org_id, &key).await? {

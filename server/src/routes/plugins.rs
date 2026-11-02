@@ -259,7 +259,7 @@ struct PluginDetail {
 async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) -> ApiResult<Json<PluginDetail>> {
     let row = store::get(&state.db, &path.plugin_id).await?.ok_or_else(ApiError::not_found)?;
     let manifest = row.manifest.clone();
-    let used_in: Vec<UsedIn> = if row.kind == "panel" {
+    let mut used_in: Vec<UsedIn> = if row.kind == "panel" {
         dashboards_showing(&state, &row.id).await?
     } else {
         sqlx::query_as(
@@ -272,6 +272,12 @@ async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) ->
         .fetch_all(&state.db)
         .await?
     };
+    used_in.sort_by(|a, b| {
+        crate::collation::compare(&a.org_name, &b.org_name)
+            .then_with(|| a.org_id.cmp(&b.org_id))
+            .then_with(|| crate::collation::compare(&a.name, &b.name))
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
 }
 

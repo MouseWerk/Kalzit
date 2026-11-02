@@ -218,10 +218,9 @@ pub struct KeyRow {
 }
 
 pub async fn keys<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E) -> ApiResult<Vec<KeyRow>> {
-    let rows: Vec<(String, String, String, i64)> =
-        sqlx::query_as("SELECT key_id, public_key, name, added_at FROM plugin_keys ORDER BY name, key_id")
-            .fetch_all(db)
-            .await?;
+    let mut rows: Vec<(String, String, String, i64)> =
+        sqlx::query_as("SELECT key_id, public_key, name, added_at FROM plugin_keys").fetch_all(db).await?;
+    rows.sort_by(|a, b| crate::collation::compare(&a.2, &b.2).then_with(|| a.0.cmp(&b.0)));
     Ok(rows
         .into_iter()
         .map(|(key_id, public_key, name, added_at)| KeyRow { key_id, public_key, name, added_at })

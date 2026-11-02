@@ -118,23 +118,26 @@ pub async fn list<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
     db: E,
     org_id: Option<&str>,
 ) -> Result<Vec<ProviderRow>, sqlx::Error> {
-    match org_id {
+    let mut rows: Vec<ProviderRow> = match org_id {
         None => {
-            sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT {COLUMNS} FROM ai_providers WHERE org_id IS NULL ORDER BY is_default DESC, name, id"
-            )))
-            .fetch_all(db)
-            .await
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM ai_providers WHERE org_id IS NULL")))
+                .fetch_all(db)
+                .await?
         }
         Some(org) => {
-            sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT {COLUMNS} FROM ai_providers WHERE org_id = $1 ORDER BY is_default DESC, name, id"
-            )))
-            .bind(org)
-            .fetch_all(db)
-            .await
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM ai_providers WHERE org_id = $1")))
+                .bind(org)
+                .fetch_all(db)
+                .await?
         }
-    }
+    };
+    rows.sort_by(|a, b| {
+        b.is_default
+            .cmp(&a.is_default)
+            .then_with(|| crate::collation::compare(&a.name, &b.name))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(rows)
 }
 
 /// One provider of the scope, or `None` (another scope's provider is not found either).

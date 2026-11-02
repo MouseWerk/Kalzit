@@ -65,11 +65,12 @@ async fn list(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) 
             created_at: None,
         })
         .collect();
-    let custom: Vec<(String, String, String, i64)> =
-        sqlx::query_as("SELECT id, name, description, created_at FROM roles WHERE org_id = $1 ORDER BY name, id")
+    let mut custom: Vec<(String, String, String, i64)> =
+        sqlx::query_as("SELECT id, name, description, created_at FROM roles WHERE org_id = $1")
             .bind(&ctx.org_id)
             .fetch_all(&state.db)
             .await?;
+    custom.sort_by(|a, b| crate::collation::compare(&a.1, &b.1).then_with(|| a.0.cmp(&b.0)));
     for (id, name, description, created_at) in custom {
         let permissions = resolve_role(&state.db, &ctx.org_id, &id).await?.map(|r| r.permissions).unwrap_or_default();
         items.push(Role {

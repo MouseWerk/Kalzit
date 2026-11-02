@@ -411,13 +411,13 @@ pub struct UsableSource {
 pub async fn visible_sources(state: &AppState, ctx: &OrgCtx) -> ApiResult<Vec<UsableSource>> {
     let mut conn = state.db.acquire().await?;
     let index = AccessIndex::load(&mut conn, ctx).await?;
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id, name, kind FROM datasources WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name, id",
-    )
-    .bind(&ctx.org_id)
-    .fetch_all(&mut *conn)
-    .await?;
+    let mut rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT id, name, kind FROM datasources WHERE org_id = $1 AND deleted_at IS NULL")
+            .bind(&ctx.org_id)
+            .fetch_all(&mut *conn)
+            .await?;
     drop(conn);
+    rows.sort_by(|a, b| crate::collation::compare(&a.1, &b.1).then_with(|| a.0.cmp(&b.0)));
     let open: BTreeSet<String> =
         super::store::readable_datasources(&state.db, &ctx.org_id).await?.into_iter().collect();
     Ok(rows
@@ -756,7 +756,7 @@ async fn find_panels(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecor
     let index = AccessIndex::load(&mut conn, scope.ctx).await?;
     let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT id, title, folder_id FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL \
-         AND search_title LIKE $2 ESCAPE '\\' ORDER BY title, id LIMIT $3",
+         AND search_title LIKE $2 ESCAPE '\\' ORDER BY sort_title, id LIMIT $3",
     )
     .bind(&scope.ctx.org_id)
     .bind(&pattern)

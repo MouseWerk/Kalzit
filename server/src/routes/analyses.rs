@@ -36,6 +36,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
+use crate::collation;
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders::{self, Tree};
@@ -529,8 +530,9 @@ async fn list(
         // Each names the other sort's cursor too, which is NULL then: PostgreSQL needs every bound
         // parameter in the statement to know its type.
         Sort::Title => (
-            "(CAST($8 AS TEXT) IS NULL OR title > $8 OR (title = $8 AND id > $9)) AND CAST($12 AS BIGINT) IS NULL",
-            "title, id",
+            "(CAST($8 AS TEXT) IS NULL OR sort_title > $8 OR (sort_title = $8 AND id > $9)) \
+             AND CAST($12 AS BIGINT) IS NULL",
+            "sort_title, id",
         ),
         Sort::Updated => (
             "(CAST($12 AS BIGINT) IS NULL OR updated_at < $12 OR (updated_at = $12 AND id < $9)) \
@@ -566,7 +568,8 @@ async fn list(
         .bind(q.trashed.unwrap_or(false) as i64)
         .bind(q.folder_id.as_deref())
         .bind(pattern.as_deref())
-        .bind(after_title.as_deref())
+        // The cursor names the last title; the database compares its sort key (`collation`).
+        .bind(after_title.as_deref().map(collation::key))
         .bind(after_id.as_deref())
         .bind(limit as i64 + 1)
         .bind(q.team.as_deref())
@@ -618,7 +621,7 @@ async fn create(
     lock_place(&mut tx, &ctx.org_id, body.folder_id.as_deref()).await?;
     sqlx::query(
         "INSERT INTO analyses (id, org_id, folder_id, title, search_title, body, version, created_by, created_at, \
-         updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $7, $8)",
+         updated_by, updated_at, sort_title) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $7, $8, $9)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
@@ -628,6 +631,7 @@ async fn create(
     .bind(&text)
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(collation::key(&model.title))
     .execute(&mut *tx)
     .await?;
     record_version(&mut tx, &ctx, &id, 1, &model, &text, None, keep, now).await?;
@@ -762,7 +766,7 @@ async fn write_version(
     }
     let updated = sqlx::query(
         "UPDATE analyses SET title = $1, search_title = $2, folder_id = $3, body = $4, version = $5, updated_by = $6, \
-         updated_at = $7 WHERE org_id = $8 AND id = $9 AND version = $10 AND deleted_at IS NULL",
+         updated_at = $7, sort_title = $11 WHERE org_id = $8 AND id = $9 AND version = $10 AND deleted_at IS NULL",
     )
     .bind(&new.model.title)
     .bind(new.model.title.to_lowercase())
@@ -774,6 +778,7 @@ async fn write_version(
     .bind(&ctx.org_id)
     .bind(&row.id)
     .bind(row.version)
+    .bind(collation::key(&new.model.title))
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -1033,7 +1038,7 @@ async fn uses(
     let rows: Vec<(String, Option<String>, String, Option<i64>)> = sqlx::query_as(
         "SELECT d.id, d.folder_id, d.title, d.deleted_at FROM analysis_uses u \
          JOIN dashboards d ON d.id = u.dashboard_id WHERE u.analysis_id = $1 AND d.org_id = $2 \
-         ORDER BY d.title, d.id",
+         ORDER BY d.sort_title, d.id",
     )
     .bind(&id)
     .bind(&ctx.org_id)
