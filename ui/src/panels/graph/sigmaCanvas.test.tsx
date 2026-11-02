@@ -9,8 +9,15 @@ import { DEFAULT_STYLE } from "./drawing";
 import { EDGE_CHUNK, handOver } from "./handover";
 import { seedPositions } from "./layoutEngine";
 import { buildGraphModel, edgeWidths, nodeSizes } from "./model";
-import type { CanvasHandle } from "./SigmaCanvas";
-import { allVisible, buildView, type GraphView, labelRanks } from "./view";
+import type { CanvasHandle, LiveProps } from "./SigmaCanvas";
+import {
+  allVisible,
+  buildView,
+  type GraphView,
+  LABEL_BUDGET,
+  labelBudgetFor,
+  labelRanks,
+} from "./view";
 
 /**
  * The real renderer (Sigma 4 with graphology) under a WebGL stand-in: what it does with edges
@@ -188,5 +195,50 @@ describe("the camera between views", () => {
     second.unmount();
     expect(camera.current?.ratio).toBeCloseTo(0.5, 2);
     expect(camera.current?.x).toBeCloseTo(zoomed?.x ?? Number.NaN, 5);
+  });
+});
+
+describe("the label budget", () => {
+  /** A stage of this size in px, as the browser would lay it out. */
+  function sizedHost(width: number, height: number): HTMLElement {
+    const element = host();
+    Object.defineProperty(element, "offsetWidth", { configurable: true, value: width });
+    Object.defineProperty(element, "offsetHeight", { configurable: true, value: height });
+    return element;
+  }
+
+  function shownLabels(renderer: InstanceType<typeof SigmaClass>): number {
+    return renderer
+      .getGraph()
+      .nodes()
+      .filter((key) => {
+        const data = renderer.getNodeDisplayData(key);
+        return data !== undefined && data.labelVisibility !== "hidden";
+      }).length;
+  }
+
+  it("shows a small panel no more labels than its budget from the first drawing, without zoom", () => {
+    vi.useFakeTimers();
+    try {
+      const view = bigView(10);
+      const live: { current: LiveProps } = {
+        current: { ratioBucket: 0, props: canvasProps(view, { current: null }) },
+      };
+      const handover = handOver(view, live.current.props.positions, (graph) =>
+        createRenderer(graph, sizedHost(320, 160), live),
+      );
+      const budget = labelBudgetFor(320, 160);
+      expect(budget).toBeLessThan(LABEL_BUDGET);
+      expect(live.current.budget).toBe(budget);
+      const first = shownLabels(handover.renderer);
+      expect(first).toBeGreaterThan(0);
+      expect(first).toBeLessThanOrEqual(budget);
+      // Still within it once the drawing has settled.
+      vi.advanceTimersByTime(1_000);
+      expect(shownLabels(handover.renderer)).toBeLessThanOrEqual(budget);
+      handover.renderer.kill();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
