@@ -1541,7 +1541,9 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
     `HKLM\Software\MouseWerk\Kalzit`). A major upgrade removes the previous version completely
     first (`afterInstallValidate`), so a `kalzit.exe` the updater replaced in the meantime does not
     confuse file versioning; the configuration and data are not part of the package and stay. The
-    wizard (WixUI dialogs plus a settings page) asks for the program folder, port, data folder,
+    wizard (WixUI dialogs in Kalzit's words and pictures, plus a license page to read and a
+    settings page; texts drawn opaque so contrast themes stay readable) asks for the program
+    folder, port, data folder,
     HTTPS mode, HTTPS port, certificate and key, and the firewall, and skips the settings when
     `kalzit.toml` exists; removing asks whether the data goes too. Every setting is also an MSI
     property for silent installations.

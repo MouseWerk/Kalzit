@@ -54,6 +54,26 @@ try {
     }
     $german = @(Get-TransformedValues $Msi 1031 "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'ProductLanguage'")
     if ($german.Count -ne 1 -or $german[0] -ne '1031') { throw "the German transform sets ProductLanguage '$german', expected 1031" }
+    # The look: no text drawn transparently on a picture (look.ps1), the license as RTF on its
+    # page, and Kalzit's pictures at twice WixUI's size (art/build-art.mjs).
+    foreach ($id in 0, 1031) {
+        $transparent = @(Get-TransformedValues $Msi $id "SELECT ``Attributes`` FROM ``Control`` WHERE ``Type`` = 'Text'" |
+            Where-Object { [int] $_ -band 0x10000 })
+        if ($transparent.Count -ne 0) { throw "$($transparent.Count) texts are drawn transparently (transform $id)" }
+        $license = @(Get-TransformedValues $Msi $id "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'KalzitLicenseDlg' AND ``Control`` = 'LicenseText'")
+        if ($license.Count -ne 1 -or $license[0] -notlike '{\rtf1*GNU AFFERO GENERAL PUBLIC LICENSE*') {
+            throw "the license page does not show the AGPL as RTF (transform $id)"
+        }
+    }
+    foreach ($picture in @(@('WixUI_Bmp_Banner', 986, 116), @('WixUI_Bmp_Dialog', 986, 624))) {
+        $file = @(Get-ChildItem $export -Recurse -File | Where-Object { $_.Name -like "$($picture[0])*" })
+        if ($file.Count -ne 1) { throw "the package holds $($file.Count) files for $($picture[0]), expected 1" }
+        $header = [IO.File]::ReadAllBytes($file[0].FullName)
+        $size = @([BitConverter]::ToInt32($header, 18), [BitConverter]::ToInt32($header, 22))
+        if ($size[0] -ne $picture[1] -or $size[1] -ne $picture[2]) {
+            throw "$($picture[0]) is $($size -join ' x '), expected Kalzit's $($picture[1]) x $($picture[2])"
+        }
+    }
     $codeQuery = "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'ProductCode'"
     if ("$(Get-TransformedValues $Msi 0 $codeQuery)" -ne "$(Get-TransformedValues $Msi 1031 $codeQuery)") {
         throw 'the German transform changes the product code'
