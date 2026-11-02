@@ -375,7 +375,7 @@ export function ErrorHelp({
   const { t } = useI18n();
   const { topic } = hint;
   return (
-    <aside className="help-hint" aria-label={t("explore.hint.label")}>
+    <div className="help-hint" role="note" aria-label={t("explore.hint.label")}>
       <p className="help-hint__text">{t(hint.text, hint.params)}</p>
       <div className="help-hint__actions">
         {topic === undefined || onCheatSheet === undefined ? null : (
@@ -397,7 +397,7 @@ export function ErrorHelp({
           </button>
         ) : null}
       </div>
-    </aside>
+    </div>
   );
 }
 

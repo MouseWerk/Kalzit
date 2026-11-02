@@ -72,7 +72,8 @@ export function useTip(id: TipId, when: boolean): TipState {
   const { mutate } = change;
 
   useEffect(() => {
-    if (!mayShow) {
+    // Two tips may become due in the same moment; the first to claim the place shows.
+    if (!mayShow || activeStore.get() !== null) {
       return;
     }
     activeStore.set(id);

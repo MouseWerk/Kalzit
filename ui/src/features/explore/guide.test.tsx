@@ -198,7 +198,7 @@ describe("Explore's error hints", () => {
       target: { value: "SELECT * FROM ordrs" },
     });
     await user.click(screen.getByRole("button", { name: "Run query" }));
-    const hint = await screen.findByRole("complementary", { name: "Hint" });
+    const hint = await screen.findByRole("note", { name: "Hint" });
     expect(hint.textContent).toMatch(/There is no table ordrs in this source/);
     await user.click(within(hint).getByRole("button", { name: "Find it in the schema" }));
     expect(document.activeElement).toBe(
@@ -219,7 +219,7 @@ describe("Explore's error hints", () => {
       target: { value: "SELECT * FORM orders" },
     });
     await user.click(screen.getByRole("button", { name: "Run query" }));
-    const hint = await screen.findByRole("complementary", { name: "Hint" });
+    const hint = await screen.findByRole("note", { name: "Hint" });
     expect(hint.textContent).toMatch(/near FORM/);
     await user.click(within(hint).getByRole("button", { name: "Show in the cheat sheet" }));
     const sheet = screen.getByRole("region", { name: "Cheat sheet: SQL" });
@@ -238,7 +238,7 @@ describe("Explore's error hints", () => {
     });
     await user.click(screen.getByRole("button", { name: "Run query" }));
     expect(await screen.findByText(/The data source reported an error/)).toBeTruthy();
-    expect(screen.queryByRole("complementary", { name: "Hint" })).toBeNull();
+    expect(screen.queryByRole("note", { name: "Hint" })).toBeNull();
   });
 });
 
@@ -270,14 +270,14 @@ describe("Explore's tips", () => {
     const { server, user } = await openPg("editor", { tips: true });
     const start = await startPanel();
     await user.click(within(start).getByRole("button", { name: "Count all rows" }));
-    const tip = await screen.findByRole("complementary", { name: "Tip" });
+    const tip = await screen.findByRole("note", { name: "Tip" });
     expect(tip.textContent).toMatch(/Add WHERE after FROM/);
     // Seen as soon as it shows, on the server, so it follows the person.
     await waitFor(() =>
       expect(server.state.preferences.seenTips).toContain("explore.first-result"),
     );
     await user.click(within(tip).getByRole("button", { name: "Turn off tips" }));
-    expect(screen.queryByRole("complementary", { name: "Tip" })).toBeNull();
+    expect(screen.queryByRole("note", { name: "Tip" })).toBeNull();
     await waitFor(() => expect(server.state.preferences.showTips).toBe(false));
   });
 
@@ -286,7 +286,7 @@ describe("Explore's tips", () => {
     const start = await startPanel();
     await user.click(within(start).getByRole("button", { name: "Count all rows" }));
     await screen.findByText("Grace");
-    expect(screen.queryByRole("complementary", { name: "Tip" })).toBeNull();
+    expect(screen.queryByRole("note", { name: "Tip" })).toBeNull();
   });
 });
 

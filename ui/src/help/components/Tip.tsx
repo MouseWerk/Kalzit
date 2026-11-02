@@ -14,7 +14,8 @@ export function Tip({ tip, children }: { tip: TipState; children: ReactNode }) {
     return null;
   }
   return (
-    <aside className="help-tip" aria-label={t("help.tip.label")}>
+    // A note, not a landmark: it belongs to the work beside it.
+    <div className="help-tip" role="note" aria-label={t("help.tip.label")}>
       <Icon name="help" />
       <p className="help-tip__text">
         <span className="help-tip__lead">{t("help.tip.lead")}</span> {children}
@@ -33,6 +34,6 @@ export function Tip({ tip, children }: { tip: TipState; children: ReactNode }) {
           <Icon name="close" />
         </button>
       </div>
-    </aside>
+    </div>
   );
 }
