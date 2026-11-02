@@ -13,7 +13,8 @@ You do not have to start from an empty editor:
 - The **schema list** shows the tables, collections, metrics, indices or labels of the source.
   Next to an entry, **Show rows** fills in a query for its first rows, **Count** counts them and
   **Show structure** lists its columns or fields with their types.
-- **Cheat sheet** (Ctrl+/, Cmd+/ on macOS) opens a short reference of the current language: the
+- **Cheat sheet** (Shift+F1 anywhere, or Ctrl+/ / Cmd+/ outside the editor, where those keys
+  comment lines out) opens a short reference of the current language: the
   common clauses, the macros and how variables are written.
 - When a query fails, the error comes with a **hint** in plain words: what the source did not
   accept and what to try instead.
@@ -34,9 +35,10 @@ query, and Kalzit fills in the range. Prometheus, Loki and the search sources ar
 they always query the selected range. Macros such as `$__interval` give a grouping interval that
 fits the range and the panel width. **Dashboard variables** are written `$name` (or `${name}`)
 and are filled in on a dashboard; Explore has no variables, so try a query with a fixed value
-first and replace it with the variable once the query sits in a panel. Macros and variables always
-reach the database as parameters, never as pasted text, so a value cannot change what the query
-does.
+first and replace it with the variable once the query sits in a panel. A value never changes the
+structure of a query: SQL, Cypher and MongoDB receive values as bound parameters, and PromQL,
+LogQL, InfluxQL and Lucene get them written into the text with every quote and special character
+escaped.
 
 ## PostgreSQL
 

@@ -184,6 +184,35 @@ describe("Explore's cheat sheet", () => {
   });
 });
 
+describe("Explore's guide and the editor", () => {
+  it("leaves Ctrl+/ to the editor and opens the cheat sheet with Shift+F1 there", async () => {
+    await openPg();
+    const editor = await screen.findByRole("textbox", { name: "Query" });
+    fireEvent.keyDown(editor, { key: "/", ctrlKey: true });
+    expect(screen.queryByRole("region", { name: "Cheat sheet: SQL" })).toBeNull();
+    fireEvent.keyDown(editor, { key: "F1", shiftKey: true });
+    expect(screen.getByRole("region", { name: "Cheat sheet: SQL" })).toBeTruthy();
+  });
+
+  it("offers to undo a schema action that replaced the query", async () => {
+    const { user } = await openPg();
+    const editor = await screen.findByRole("textbox", { name: "Query" });
+    fireEvent.change(editor, { target: { value: "SELECT 1" } });
+    const schema = screen.getByRole("region", { name: "Schema" });
+    await user.click(within(schema).getByRole("button", { name: "Count: public.customers" }));
+    expect(await screen.findByText("The query in the editor was replaced.")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Query" }) as HTMLTextAreaElement).value).toMatch(
+      /COUNT/,
+    );
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() =>
+      expect((screen.getByRole("textbox", { name: "Query" }) as HTMLTextAreaElement).value).toBe(
+        "SELECT 1",
+      ),
+    );
+  });
+});
+
 describe("Explore's error hints", () => {
   it("explains an unknown table and leads to the schema", async () => {
     const { server, user } = await openPg();

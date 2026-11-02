@@ -10,6 +10,7 @@ import type { Snippet } from "../../help/registry";
 import { helpPanelShortcut } from "../../help/shortcut";
 import type { Hint } from "../../help/sources/errors";
 import {
+  attempt,
   CHEAT_TOPICS,
   type GuideContext,
   guideDocs,
@@ -117,7 +118,7 @@ export function ExploreStart({
     needsPick && context.object === undefined
       ? []
       : guide.starters.flatMap((starter) => {
-          const value = starter.build(context);
+          const value = attempt(() => starter.build(context));
           return value === null
             ? []
             : [
@@ -130,7 +131,9 @@ export function ExploreStart({
               ];
         });
   const first = actions[0];
-  const firstValue = guide.starters.map((s) => s.build(context)).find((v) => v !== null);
+  const firstValue = guide.starters
+    .map((s) => attempt(() => s.build(context)))
+    .find((v) => v !== null);
   const family = familyOf(source.kind);
   const shortcut = helpPanelShortcut();
   return (
@@ -257,7 +260,7 @@ export function SchemaList({
           const label = objectLabel(object);
           const actions = OBJECT_ACTIONS.flatMap((action) => {
             const build = guide.actions[action];
-            const value = build?.(object, context) ?? null;
+            const value = build === undefined ? null : attempt(() => build(object, context));
             return value === null ? [] : [{ action, value }];
           });
           return (
@@ -340,7 +343,7 @@ export function ExploreCheatSheet({
       title={t("explore.guide.cheatTitle", { language: guide.language })}
       lead={t("explore.guide.cheatLead")}
       topics={CHEAT_TOPICS}
-      snippets={guide.cheats(context)}
+      snippets={attempt(() => guide.cheats(context)) ?? []}
       notes={
         <>
           <p>{t(guide.notes.time)}</p>
@@ -358,8 +361,10 @@ export function ExploreCheatSheet({
 
 /** The first snippet of a cheat sheet topic, which a hint links to. */
 export function snippetOfTopic(state: ExploreGuideState, topic: string): string | undefined {
-  return state.guide?.cheats(state.context).find((s) => s.topic === topic && s.value !== undefined)
-    ?.id;
+  const guide = state.guide;
+  return (guide === undefined ? [] : (attempt(() => guide.cheats(state.context)) ?? [])).find(
+    (s) => s.topic === topic && s.value !== undefined,
+  )?.id;
 }
 
 /** A plain-language hint next to an error, with where the fix is shown. */

@@ -29,8 +29,10 @@ test("someone new to SQL starts in Explore from a starter and sees the rows", as
   await result.getByRole("tab", { name: t("explore.tab.inspect") }).click();
   await expect(result).toContainText(/100 rows/);
 
-  // The cheat sheet opens from the keyboard, also while the editor has the focus.
-  await page.keyboard.press("ControlOrMeta+/");
+  // The cheat sheet opens from the keyboard, also while the editor has the focus (Shift+F1;
+  // there Ctrl+/ stays the editor's comment toggle).
+  await page.locator(".cm-content").first().click();
+  await page.keyboard.press("Shift+F1");
   const sheet = page.getByRole("region", {
     name: t("explore.guide.cheatTitle", { language: "SQL" }),
   });

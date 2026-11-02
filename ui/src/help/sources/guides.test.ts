@@ -7,12 +7,17 @@ import { en } from "../../i18n/catalogs";
 import type { MessageKey } from "../../i18n/i18n";
 import { ERROR_RULES, hintFor, problemOf } from "./errors";
 import {
+  attempt,
+  cypherName,
   type GuideContext,
   guideFor,
+  luceneName,
   OBJECT_ACTIONS,
   PLUGIN_GUIDE,
   SOURCE_GUIDES,
   type SourceGuide,
+  sqlName,
+  sqlText,
 } from "./guides";
 import type { SchemaObject } from "./objects";
 import { groupStepAsSql } from "./steps";
@@ -42,6 +47,14 @@ const table = (name: string, fields: [string, string][], schema?: string): Schem
   schema,
   fields: fields.map(([n, type]) => ({ name: n, type })),
 });
+
+/**
+ * Names that break a query unless they are quoted or escaped: quotes of every kind, a backslash
+ * (also at the end), a space, a reserved word and text that would end a statement.
+ */
+const HOSTILE = ['a"b', "a`b", "x\\", "Order Items", "User", "x; DROP TABLE y"];
+const hostileFields = (types: string[]) =>
+  HOSTILE.map((name, i) => ({ name, type: types[i % types.length] ?? "" }));
 
 /** A small schema per kind, as the source would answer it, for building every query. */
 const SAMPLES: Record<string, SchemaObject[]> = {
@@ -103,6 +116,51 @@ const SAMPLES: Record<string, SchemaObject[]> = {
   ],
 };
 
+const HOSTILE_SAMPLES: Record<string, SchemaObject[]> = {
+  sql: [
+    {
+      kind: "table",
+      name: "Order Items",
+      schema: "Sales Data",
+      fields: [{ name: "Created At", type: "timestamp" }, ...hostileFields(["text", "numeric"])],
+    },
+    { kind: "table", name: "User", fields: [{ name: "select", type: "text" }] },
+    { kind: "table", name: "x; DROP TABLE y", fields: [{ name: "id", type: "bigint" }] },
+    { kind: "table", name: "x\\", fields: hostileFields(["text"]) },
+  ],
+  promql: [
+    { kind: "metric", name: "http.requests", fields: [{ name: "my.label", type: "label" }] },
+  ],
+  influx: [{ kind: "table", name: 'cpu "load"\\', fields: hostileFields(["float", "string"]) }],
+  logql: [
+    { kind: "label", name: "app", fields: [{ name: 'a"b\\', type: "value" }] },
+    { kind: "label", name: "my.label", fields: [{ name: "x", type: "value" }] },
+  ],
+  search: [
+    {
+      kind: "index",
+      name: "logs-hostile",
+      fields: [{ name: "x\\", type: "date" }, ...hostileFields(["keyword", "long"])],
+    },
+  ],
+  mongo: [
+    {
+      kind: "collection",
+      name: "Order Items",
+      fields: [{ name: "User", type: "date" }, ...hostileFields(["string", "double"])],
+    },
+  ],
+  cypher: [
+    { kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) },
+    { kind: "nodeLabel", name: "match", fields: [{ name: "User", type: "" }] },
+    { kind: "edgeType", name: "a`b", fields: [] },
+  ],
+  gsql: [{ kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) }],
+};
+for (const [family, objects] of Object.entries(HOSTILE_SAMPLES)) {
+  SAMPLES[family] = [...(SAMPLES[family] ?? []), ...objects];
+}
+
 function contextOf(guide: SourceGuide): GuideContext {
   const objects = SAMPLES[guide.family] ?? [];
   const kinds = guide.pick?.kinds ?? [];
@@ -115,23 +173,42 @@ interface Built {
   query: unknown;
 }
 
-/** Every query a guide can put into the editor, for the sample schema. */
+/**
+ * Every query a guide can put into the editor, for the sample schema: the starters and cheat
+ * sheet with each object picked in turn, and the actions of every object. A query that needs a
+ * name the source cannot take is left out, as in Explore (`attempt`).
+ */
 function built(guide: SourceGuide): Built[] {
   const context = contextOf(guide);
+  const kinds = guide.pick?.kinds ?? [];
+  const picks = context.objects.filter((o) => kinds.includes(o.kind));
   const out: Built[] = [];
-  for (const starter of guide.starters) {
-    const query = starter.build(context);
-    if (query !== null) out.push({ kind: guide.id, id: `starter.${starter.id}`, query });
+  const add = (id: string, query: unknown) => {
+    if (query !== null && !out.some((b) => JSON.stringify(b.query) === JSON.stringify(query))) {
+      out.push({ kind: guide.id, id, query });
+    }
+  };
+  for (const object of picks.length === 0 ? [undefined] : picks) {
+    const picked = { ...context, object };
+    const at = object === undefined ? "" : ` for ${object.name}`;
+    for (const starter of guide.starters) {
+      add(
+        `starter.${starter.id}${at}`,
+        attempt(() => starter.build(picked)),
+      );
+    }
+    for (const snippet of attempt(() => guide.cheats(picked)) ?? []) {
+      if (snippet.value !== undefined) add(`cheat.${snippet.id}${at}`, snippet.value);
+    }
   }
   for (const object of context.objects) {
     for (const action of OBJECT_ACTIONS) {
-      const query = guide.actions[action]?.(object, context) ?? null;
-      if (query !== null) out.push({ kind: guide.id, id: `${action}.${object.name}`, query });
-    }
-  }
-  for (const snippet of guide.cheats(context)) {
-    if (snippet.value !== undefined) {
-      out.push({ kind: guide.id, id: `cheat.${snippet.id}`, query: snippet.value });
+      const build = guide.actions[action];
+      if (build !== undefined)
+        add(
+          `${action}.${object.name}`,
+          attempt(() => build(object, context)),
+        );
     }
   }
   return out;
@@ -189,7 +266,8 @@ describe("source guides", () => {
     const writes =
       /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|MERGE|TRUNCATE|GRANT|DETACH|REMOVE)\b|\bSET\s|\$out|\$merge|to\(bucket/i;
     for (const { kind, id, query } of all) {
-      const text = JSON.stringify(query);
+      // The hostile sample name holds a DROP as text; the server checks that it stays a name.
+      const text = JSON.stringify(query).replaceAll("x; DROP TABLE y", "");
       expect(writes.test(text), `${kind} ${id}: ${text}`).toBe(false);
       const family = guideFor(kind)?.family;
       const code = queryText(query);
@@ -244,6 +322,52 @@ describe("source guides", () => {
       writeFileSync(FIXTURE, fixture);
     }
     expect(readFileSync(FIXTURE, "utf8").replaceAll("\r\n", "\n")).toBe(fixture);
+  });
+});
+
+describe("quoting", () => {
+  it("quotes SQL names that are not plain lower case, and reserved words, per dialect", () => {
+    expect(sqlName("postgres", "orders")).toBe("orders");
+    expect(sqlName("postgres", "Orders")).toBe('"Orders"');
+    expect(sqlName("postgres", "user")).toBe('"user"');
+    expect(sqlName("postgres", 'a"b')).toBe('"a""b"');
+    expect(sqlName("mysql", "a`b")).toBe("`a``b`");
+    expect(sqlName("mssql", "a]b")).toBe("[a]]b]");
+    expect(sqlName("sqlite", "x; DROP TABLE y")).toBe('"x; DROP TABLE y"');
+    // ClickHouse refuses a backslash in a quoted name: the query is left out instead.
+    expect(attempt(() => sqlName("clickhouse", "x\\"))).toBeNull();
+  });
+
+  it("escapes string literals as each dialect reads them", () => {
+    expect(sqlText("postgres", "it's\\")).toBe("'it''s\\'");
+    expect(sqlText("mysql", "it's\\")).toBe("'it''s\\\\'");
+    expect(sqlText("clickhouse", "x\\")).toBe("'x\\\\'");
+  });
+
+  it("quotes Cypher names and escapes Lucene field names", () => {
+    expect(cypherName("Person")).toBe("Person");
+    expect(cypherName("match")).toBe("`match`");
+    expect(cypherName("a`b")).toBe("`a``b`");
+    expect(luceneName("user name")).toBe("user\\ name");
+    expect(luceneName("a:b\\")).toBe("a\\:b\\\\");
+  });
+
+  it("covers the hostile names in the queries the server checks", () => {
+    const text = JSON.stringify(all);
+    for (const kind of [
+      "postgres",
+      "mysql",
+      "sqlite",
+      "mssql",
+      "neo4j",
+      "mongodb",
+      "influxdb",
+      "prometheus",
+    ]) {
+      const own = JSON.stringify(all.filter((b) => b.kind === kind));
+      expect(own, kind).toMatch(/Order Items|a\\\\"b|http\.requests|load/);
+    }
+    expect(text).toContain("DROP TABLE y");
   });
 });
 

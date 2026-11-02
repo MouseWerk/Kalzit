@@ -664,7 +664,13 @@ function Explore({
    * Puts a query from the guide into the editor (a starter, a schema action, a cheat sheet
    * entry), runs it when asked, and offers to undo replacing a query that was there.
    */
-  function applyGuideQuery(value: unknown, how: "run" | "insert", noCode = false) {
+  function applyGuideQuery(
+    value: unknown,
+    how: "run" | "insert",
+    noCode = false,
+    // Puts back what else the change took (a step folded into the query).
+    restore?: () => void,
+  ) {
     const target = datasource;
     if (target === undefined) {
       return;
@@ -677,7 +683,9 @@ function Explore({
     setLoads((n) => n + 1);
     if (how === "run") {
       run(range, value, target, true);
-    } else if (
+    }
+    // Whatever was written before can come back, whether the new query runs or not.
+    if (
       before !== null &&
       hasQuery(before, target.kind) &&
       JSON.stringify(before) !== JSON.stringify(value)
@@ -687,6 +695,7 @@ function Explore({
         undo: () => {
           setQueries((current) => ({ ...current, [target.id]: before }));
           setLoads((n) => n + 1);
+          restore?.();
         },
       });
     }
@@ -1436,8 +1445,9 @@ function Explore({
               steps={steps}
               query={submitted?.query ?? query}
               onTakeOver={(value, stepId) => {
+                const kept = steps;
                 setSteps((all) => all.filter((step) => step.id !== stepId));
-                applyGuideQuery(value, "run");
+                applyGuideQuery(value, "run", false, () => setSteps(kept));
               }}
             />
             <div className="explore__aside-actions">

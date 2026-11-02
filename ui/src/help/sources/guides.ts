@@ -89,16 +89,53 @@ const snippet = (
 
 export type SqlDialect = "postgres" | "mysql" | "sqlite" | "mssql" | "clickhouse";
 
-const PLAIN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/**
+ * A name a guide cannot write safely for its source (ClickHouse refuses a backslash in a quoted
+ * name, GSQL and LogQL have no quoting): the starter or snippet that needs it is left out.
+ */
+export class Unwritable extends Error {}
 
-/** A name as the dialect quotes it, plain names left as they are. */
+/** The result of a builder, or null when it needs a name it cannot write. */
+export function attempt<T>(build: () => T): T | null {
+  try {
+    return build();
+  } catch (problem) {
+    if (problem instanceof Unwritable) {
+      return null;
+    }
+    throw problem;
+  }
+}
+
+const PLAIN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Lower case only: PostgreSQL folds unquoted names to lower case, the others ignore case. */
+const PLAIN_SQL_NAME = /^[a-z_][a-z0-9_]*$/;
+
+/** Words that are reserved in at least one of the SQL dialects; such names are always quoted. */
+const SQL_RESERVED = new Set(
+  `all alter analyze and any array as asc between both by case cast check collate column
+  constraint create cross current current_date current_time current_timestamp current_user
+  database date day default delete desc describe distinct drop else end except exists explain
+  false fetch filter first for foreign from full function grant group having hour in index inner
+  insert intersect interval into is join key last lateral leading left like limit lock minute
+  month natural not null offset on only or order outer over partition primary range read
+  references returning right row rows schema second select session_user set show some table
+  then time timestamp to top trailing true union unique update user using value values view
+  when where window with write year zone`.split(/\s+/),
+);
+
+/** A name as the dialect quotes it; lower-case names that are no reserved word stay plain. */
 export function sqlName(dialect: SqlDialect, name: string): string {
-  if (PLAIN_NAME.test(name)) {
+  if (PLAIN_SQL_NAME.test(name) && !SQL_RESERVED.has(name)) {
     return name;
   }
   switch (dialect) {
     case "mysql":
+      return `\`${name.replaceAll("`", "``")}\``;
     case "clickhouse":
+      if (name.includes("\\")) {
+        throw new Unwritable(name);
+      }
       return `\`${name.replaceAll("`", "``")}\``;
     case "mssql":
       return `[${name.replaceAll("]", "]]")}]`;
@@ -117,7 +154,12 @@ function sqlTable(dialect: SqlDialect, object: SchemaObject | undefined): string
   return `${sqlName(dialect, schema)}.${name}`;
 }
 
-const sqlText = (text: string) => `'${text.replaceAll("'", "''")}'`;
+/** A string literal; MySQL and ClickHouse also read backslash escapes in strings. */
+export function sqlText(dialect: SqlDialect, text: string): string {
+  const escaped =
+    dialect === "mysql" || dialect === "clickhouse" ? text.replaceAll("\\", "\\\\") : text;
+  return `'${escaped.replaceAll("'", "''")}'`;
+}
 
 /** `SELECT <columns> FROM <rest>` with a row limit in the dialect's form. */
 function select(dialect: SqlDialect, columns: string, rest: string, limit: number): string {
@@ -129,20 +171,23 @@ function select(dialect: SqlDialect, columns: string, rest: string, limit: numbe
 const sql = (text: string) => ({ sql: text });
 
 function sqlStructure(dialect: SqlDialect, object: SchemaObject): string {
-  const name = sqlText(object.name);
+  const name = sqlText(dialect, object.name);
+  const schema = object.schema === undefined || object.schema === "" ? undefined : object.schema;
   switch (dialect) {
     case "sqlite":
       return `SELECT name, type, "notnull", pk\nFROM pragma_table_info(${name})`;
     case "clickhouse":
-      return `SELECT name, type\nFROM system.columns\nWHERE table = ${name}\nLIMIT 500`;
+      return `SELECT name, type\nFROM system.columns\nWHERE table = ${name} AND database = ${
+        schema === undefined ? "currentDatabase()" : sqlText(dialect, schema)
+      }\nLIMIT 500`;
     case "mssql":
-      return `SELECT TOP 500 COLUMN_NAME, DATA_TYPE, IS_NULLABLE\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE TABLE_NAME = ${name}\nORDER BY ORDINAL_POSITION`;
+      return `SELECT TOP 500 COLUMN_NAME, DATA_TYPE, IS_NULLABLE\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE TABLE_NAME = ${name} AND TABLE_SCHEMA = ${
+        schema === undefined ? "SCHEMA_NAME()" : sqlText(dialect, schema)
+      }\nORDER BY ORDINAL_POSITION`;
     default: {
-      const schema =
-        object.schema === undefined || object.schema === ""
-          ? ""
-          : ` AND table_schema = ${sqlText(object.schema)}`;
-      return `SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = ${name}${schema}\nORDER BY ordinal_position\nLIMIT 500`;
+      const inSchema =
+        schema === undefined ? "" : ` AND table_schema = ${sqlText(dialect, schema)}`;
+      return `SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = ${name}${inSchema}\nORDER BY ordinal_position\nLIMIT 500`;
     }
   }
 }
@@ -243,7 +288,11 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
         entry("order", "basics", order, false),
         entry("rows", "basics", rows(c.object)),
         entry("columns", "basics", limited(`${q(field)}, ${q(time)}`, table)),
-        entry("where", "filter", limited("*", `${table}\nWHERE ${q(field)} = 'value'`)),
+        entry(
+          "where",
+          "filter",
+          limited("*", `${table}\nWHERE ${q(field)} = ${sqlText(dialect, "value")}`),
+        ),
         entry("like", "filter", limited("*", `${table}\nWHERE ${q(field)} LIKE '%part%'`)),
         entry(
           "and",
@@ -300,11 +349,25 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
 // Prometheus
 
 const promLabelValue = (value: string) =>
-  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n")}"`;
+
+const PROM_NAME = /^[a-zA-Z_:][a-zA-Z0-9_:]*$/;
+
+/** A label name: plain, or quoted (Prometheus 3 takes any UTF-8 name in quotes). */
+const promLabel = (name: string) => (PLAIN_NAME.test(name) ? name : promLabelValue(name));
+
+/** A series selector: `metric{m}` for a plain name, else the quoted form `{"metric", m}`. */
+function promSelector(metric: string, ...matchers: string[]): string {
+  if (PROM_NAME.test(metric)) {
+    return matchers.length === 0 ? metric : `${metric}{${matchers.join(", ")}}`;
+  }
+  return `{${[promLabelValue(metric), ...matchers].join(", ")}}`;
+}
 
 const promGuide: SourceGuide = (() => {
-  const metric = (c: GuideContext) => c.object?.name ?? "up";
-  const label = (c: GuideContext) => c.object?.fields[0]?.name ?? "job";
+  const name = (c: GuideContext) => c.object?.name ?? "up";
+  const metric = (c: GuideContext) => promSelector(name(c));
+  const label = (c: GuideContext) => promLabel(c.object?.fields[0]?.name ?? "job");
   const isCounter = (name: string) => /_(total|count|sum|bucket)$/.test(name);
   const rate = (name: string) => `rate(${name}[$__rate_interval])`;
   const prom = (expr: string, instant = false) => (instant ? { expr, instant: true } : { expr });
@@ -328,13 +391,13 @@ const promGuide: SourceGuide = (() => {
       {
         id: "rate",
         title: "help.starter.promql.rate",
-        build: (c) => (isCounter(metric(c)) ? prom(rate(metric(c))) : null),
+        build: (c) => (isCounter(name(c)) ? prom(rate(metric(c))) : null),
       },
       {
         id: "sumBy",
         title: "help.starter.promql.sumBy",
         build: (c) =>
-          prom(`sum by (${label(c)}) (${isCounter(metric(c)) ? rate(metric(c)) : metric(c)})`),
+          prom(`sum by (${label(c)}) (${isCounter(name(c)) ? rate(metric(c)) : metric(c)})`),
       },
       {
         id: "topk",
@@ -344,23 +407,23 @@ const promGuide: SourceGuide = (() => {
       { id: "down", title: "help.starter.promql.down", build: () => prom("up == 0", true) },
     ],
     actions: {
-      rows: (o) => prom(o.name),
-      count: (o) => prom(`count(${o.name})`, true),
-      structure: (o) => prom(`last_over_time(${o.name}[5m])`, true),
+      rows: (o) => prom(promSelector(o.name)),
+      count: (o) => prom(`count(${promSelector(o.name)})`, true),
+      structure: (o) => prom(`last_over_time(${promSelector(o.name)}[5m])`, true),
     },
     cheats: (c) => {
       const m = metric(c);
       const l = label(c);
       return [
         entry("selector", "basics", m),
-        entry("match", "filter", `${m}{${l}=${promLabelValue("value")}}`),
-        entry("regex", "filter", `${m}{${l}=~${promLabelValue("a|b")}}`),
+        entry("match", "filter", promSelector(name(c), `${l}=${promLabelValue("value")}`)),
+        entry("regex", "filter", promSelector(name(c), `${l}=~${promLabelValue("a|b")}`)),
         entry("compare", "filter", `${m} > 0`),
         entry("topk", "sort", `topk(5, ${m})`),
         entry("sort", "sort", `sort_desc(${m})`),
         entry("sumBy", "group", `sum by (${l}) (${m})`),
         entry("count", "group", `count by (${l}) (${m})`),
-        entry("rate", "time", rate(isCounter(m) ? m : "http_requests_total")),
+        entry("rate", "time", rate(isCounter(name(c)) ? m : "http_requests_total")),
         entry("avgOverTime", "time", `avg_over_time(${m}[$__interval])`),
         entry(
           "ratio",
@@ -372,7 +435,7 @@ sum(${rate("http_requests_total")})`,
         entry(
           "variable",
           "variables",
-          `${m}{${l}=~${promLabelValue(`$${l.replace(/\W/g, "_")}`)}}`,
+          promSelector(name(c), `${l}=~${promLabelValue(`$${l.replace(/\W/g, "_")}`)}`),
           false,
         ),
       ];
@@ -388,7 +451,13 @@ sum(${rate("http_requests_total")})`,
 // ---------------------------------------------------------------------------------------------
 // InfluxDB (InfluxQL; Flux and SQL in the cheat sheet)
 
-const influxName = (name: string) => `"${name.replaceAll('"', '\\"')}"`;
+/** Backslashes and double quotes escaped, for a quoted InfluxQL name or a Flux string. */
+const backslashed = (text: string) => text.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+const influxName = (name: string) => `"${backslashed(name)}"`;
+/** A Flux string: `${` would start an interpolation, so its `$` is escaped too. */
+const fluxString = (text: string) => `"${backslashed(text).replaceAll("${", "\\${")}"`;
+/** An InfluxQL string literal in single quotes. */
+const influxText = (text: string) => `'${text.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
 const influxGuide: SourceGuide = (() => {
   const m = (c: GuideContext) => influxName(c.object?.name ?? "cpu");
@@ -458,7 +527,7 @@ const influxGuide: SourceGuide = (() => {
       text(
         "where",
         "filter",
-        `SELECT * FROM ${m(c)} WHERE ${influxName(tag(c))} = 'value' AND $__timeFilter LIMIT ${LIMIT}`,
+        `SELECT * FROM ${m(c)} WHERE ${influxName(tag(c))} = ${influxText("value")} AND $__timeFilter LIMIT ${LIMIT}`,
       ),
       text(
         "orderBy",
@@ -478,7 +547,7 @@ const influxGuide: SourceGuide = (() => {
       entry(
         "flux",
         "basics",
-        `from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == "${(c.object?.name ?? "cpu").replaceAll('"', '\\"')}")\n  |> limit(n: ${LIMIT})`,
+        `from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == ${fluxString(c.object?.name ?? "cpu")})\n  |> limit(n: ${LIMIT})`,
         undefined,
       ),
       text(
@@ -499,9 +568,17 @@ const influxGuide: SourceGuide = (() => {
 // ---------------------------------------------------------------------------------------------
 // Loki
 
+/** A Loki label name; Loki has no quoting for names that are not plain. */
+function lokiLabel(name: string): string {
+  if (!PLAIN_NAME.test(name)) {
+    throw new Unwritable(name);
+  }
+  return name;
+}
+
 const lokiGuide: SourceGuide = (() => {
   const selector = (c: GuideContext) => {
-    const label = c.object?.name ?? "job";
+    const label = lokiLabel(c.object?.name ?? "job");
     const value = c.object?.fields[0]?.name ?? "value";
     return `{${label}=${promLabelValue(value)}}`;
   };
@@ -539,7 +616,7 @@ const lokiGuide: SourceGuide = (() => {
         title: "help.starter.logql.byLevel",
         build: (c) =>
           metric(
-            `sum by (${c.object?.name ?? "job"}) (count_over_time(${selector(c)}[$__interval]))`,
+            `sum by (${lokiLabel(c.object?.name ?? "job")}) (count_over_time(${selector(c)}[$__interval]))`,
           ),
       },
     ],
@@ -548,7 +625,9 @@ const lokiGuide: SourceGuide = (() => {
       count: (o, c) =>
         metric(`sum(count_over_time(${selector({ ...c, object: o })}[$__interval]))`),
       structure: (o) =>
-        metric(`count by (${o.name}) (count_over_time({${o.name}=~".+"}[$__interval]))`),
+        metric(
+          `count by (${lokiLabel(o.name)}) (count_over_time({${lokiLabel(o.name)}=~".+"}[$__interval]))`,
+        ),
     },
     cheats: (c) => {
       const s = selector(c);
@@ -572,7 +651,7 @@ const lokiGuide: SourceGuide = (() => {
         entry(
           "variable",
           "variables",
-          `{${c.object?.name ?? "job"}=~"$${(c.object?.name ?? "job").replace(/\W/g, "_")}"}`,
+          `{${lokiLabel(c.object?.name ?? "job")}=~"$${(c.object?.name ?? "job").replace(/\W/g, "_")}"}`,
         ),
       ];
     },
@@ -586,6 +665,11 @@ const lokiGuide: SourceGuide = (() => {
 
 // ---------------------------------------------------------------------------------------------
 // Elasticsearch and OpenSearch
+
+/** A field name in Lucene text, with the characters of the query syntax escaped. */
+export function luceneName(name: string): string {
+  return name.replace(/[\\+\-=&|><!(){}[\]^"~*?:/\s]/g, (c) => `\\${c}`);
+}
 
 const searchGuide: SourceGuide = (() => {
   const index = (c: GuideContext) => c.object?.name;
@@ -640,8 +724,11 @@ const searchGuide: SourceGuide = (() => {
       structure: (o, c) => at({ ...c, object: o }, { lucene: "", size: 1 }),
     },
     cheats: (c) => {
-      const k = keyword(c) ?? "status";
-      const n = numberField(c.object) ?? "bytes";
+      const keywordName = keyword(c) ?? "status";
+      const numberName = numberField(c.object) ?? "bytes";
+      // In Lucene text the names are escaped; in a Query DSL body they are JSON strings.
+      const k = luceneName(keywordName);
+      const n = luceneName(numberName);
       return [
         entry("all", "basics", "*", lucene(c, "")),
         entry("field", "filter", `${k}:value`, lucene(c, `${k}:value`)),
@@ -653,17 +740,25 @@ const searchGuide: SourceGuide = (() => {
           "sort",
           "sort",
           JSON.stringify(
-            { query: { match_all: {} }, sort: [{ [n]: { order: "desc" } }], size: 10 },
+            { query: { match_all: {} }, sort: [{ [numberName]: { order: "desc" } }], size: 10 },
             null,
             2,
           ),
-          dsl(c, { query: { match_all: {} }, sort: [{ [n]: { order: "desc" } }], size: 10 }),
+          dsl(c, {
+            query: { match_all: {} },
+            sort: [{ [numberName]: { order: "desc" } }],
+            size: 10,
+          }),
         ),
         entry(
           "terms",
           "group",
-          JSON.stringify({ aggs: { [k]: { terms: { field: k, size: 10 } } } }, null, 2),
-          dsl(c, { aggs: { [k]: { terms: { field: k, size: 10 } } } }),
+          JSON.stringify(
+            { aggs: { [keywordName]: { terms: { field: keywordName, size: 10 } } } },
+            null,
+            2,
+          ),
+          dsl(c, { aggs: { [keywordName]: { terms: { field: keywordName, size: 10 } } } }),
         ),
         entry(
           "histogram",
@@ -671,7 +766,7 @@ const searchGuide: SourceGuide = (() => {
           JSON.stringify(searchTemplate("histogram", time(c), fields(c)), null, 2),
           dsl(c, searchTemplate("histogram", time(c), fields(c))),
         ),
-        entry("variable", "variables", `${k}:$${k.replace(/\W/g, "_")}`),
+        entry("variable", "variables", `${k}:$${keywordName.replace(/\W/g, "_")}`),
       ];
     },
     errors: ERROR_RULES.search,
@@ -815,8 +910,20 @@ const mongoGuide: SourceGuide = (() => {
 // ---------------------------------------------------------------------------------------------
 // Cypher (Neo4j, Memgraph)
 
+/** Cypher's reserved words, compared without case; such names are quoted. */
+const CYPHER_RESERVED = new Set(
+  `all and as asc ascending by call case contains count create delete desc descending detach
+  distinct else end ends exists false foreach in is limit load match merge not null on optional
+  or order remove return set skip starts then true union unwind use when where with xor yield`.split(
+    /\s+/,
+  ),
+);
+
+/** A label, edge type or property key: plain, or in backticks. */
 export function cypherName(name: string): string {
-  return PLAIN_NAME.test(name) ? name : `\`${name.replaceAll("`", "``")}\``;
+  return PLAIN_NAME.test(name) && !CYPHER_RESERVED.has(name.toLowerCase())
+    ? name
+    : `\`${name.replaceAll("`", "``")}\``;
 }
 
 function cypherGuide(kind: "neo4j" | "memgraph"): SourceGuide {
@@ -951,6 +1058,14 @@ function cypherGuide(kind: "neo4j" | "memgraph"): SourceGuide {
 // ---------------------------------------------------------------------------------------------
 // TigerGraph (GSQL)
 
+/** A GSQL name; GSQL has no quoting, so a name that is not plain cannot be written. */
+function gsqlName(name: string): string {
+  if (!PLAIN_NAME.test(name)) {
+    throw new Unwritable(name);
+  }
+  return name;
+}
+
 /** An interpreted query around `body`, for the source's graph. */
 export function interpret(graph: string, body: string): string {
   return `INTERPRET QUERY () FOR GRAPH ${graph} {\n${body
@@ -960,9 +1075,9 @@ export function interpret(graph: string, body: string): string {
 }
 
 const gsqlGuide: SourceGuide = (() => {
-  const vertex = (c: GuideContext) => c.object?.name ?? "Person";
+  const vertex = (c: GuideContext) => gsqlName(c.object?.name ?? "Person");
   const edgeType = (c: GuideContext) =>
-    c.objects.find((o) => o.kind === "edgeType")?.name ?? "KNOWS";
+    gsqlName(c.objects.find((o) => o.kind === "edgeType")?.name ?? "KNOWS");
   const gsql = (graph: string, body: string) => ({ gsql: interpret(graph, body) });
   const vertices = (name: string, n = LIMIT) =>
     `Start = {${name}.*};\nResult = SELECT s FROM Start:s LIMIT ${n};\nPRINT Result;`;
@@ -1016,20 +1131,21 @@ const gsqlGuide: SourceGuide = (() => {
     ],
     actions: {
       rows: (o, c) =>
-        o.kind === "installed" ? { installed: o.name } : gsql(c.graph, vertices(o.name)),
+        o.kind === "installed" ? { installed: o.name } : gsql(c.graph, vertices(gsqlName(o.name))),
       count: (o, c) =>
         o.kind === "nodeLabel"
           ? gsql(
               c.graph,
-              `SumAccum<INT> @@n;\nStart = {${o.name}.*};\nResult = SELECT s FROM Start:s ACCUM @@n += 1;\nPRINT @@n;`,
+              `SumAccum<INT> @@n;\nStart = {${gsqlName(o.name)}.*};\nResult = SELECT s FROM Start:s ACCUM @@n += 1;\nPRINT @@n;`,
             )
           : null,
-      structure: (o, c) => (o.kind === "nodeLabel" ? gsql(c.graph, vertices(o.name, 5)) : null),
+      structure: (o, c) =>
+        o.kind === "nodeLabel" ? gsql(c.graph, vertices(gsqlName(o.name), 5)) : null,
     },
     cheats: (c) => {
       const v = vertex(c);
       const e = edgeType(c);
-      const key = c.object?.fields[0]?.name ?? "name";
+      const key = gsqlName(c.object?.fields[0]?.name ?? "name");
       return [
         entry("select", "basics", c, vertices(v)),
         entry(

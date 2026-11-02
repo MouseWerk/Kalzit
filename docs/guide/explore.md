@@ -15,7 +15,7 @@ their stored queries, and open saved analyses to view and run them under **Analy
 New to the query language of a source? **Start here** shows while the editor is empty: its
 starter actions fill in a safe, read-only query, and **Show the query** shows how a starter or
 step is written. In the schema list, **Show rows**, **Count** and **Show structure** next to a
-table, collection or label do the same for that entry. **Cheat sheet** (Ctrl+/, Cmd+/ on macOS)
+table, collection or label do the same for that entry. **Cheat sheet** (Shift+F1, or Ctrl+/ / Cmd+/ outside the editor)
 lists the common clauses, macros and variables of the current language, and a failed query comes
 with a hint on what to change. Small tips appear once and can be dismissed; turn them off under
 **Account** > **Preferences** > **Show tips**. Examples per source kind:
