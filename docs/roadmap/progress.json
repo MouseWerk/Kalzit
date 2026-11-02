@@ -89,6 +89,7 @@
       ]
     },
     { "id": "M7", "name": "Expansion", "status": "planned" },
-    { "id": "M8", "name": "Plugin store", "status": "planned" }
+    { "id": "M8", "name": "To be defined", "status": "planned" },
+    { "id": "M9", "name": "Plugin store", "status": "planned" }
   ]
 }

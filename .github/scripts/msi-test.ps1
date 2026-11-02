@@ -170,6 +170,8 @@ if (-not (Test-Path $token) -or -not (Get-Content $token -Raw).Trim()) { Fail "n
 $exeInstalled = Join-Path ${env:ProgramFiles} 'Kalzit\kalzit.exe'
 $code = & $exeInstalled setup-code --config $configFile
 if ($LASTEXITCODE -ne 0 -or -not $code) { Fail 'kalzit setup-code printed no code' }
+$link = & $exeInstalled setup-code --url --config $configFile
+if ($LASTEXITCODE -ne 0 -or $link -notlike "http://localhost:*/setup#code=$code") { Fail "kalzit setup-code --url printed '$link'" }
 Write-Host 'setup code readable from an elevated prompt'
 EndStep
 

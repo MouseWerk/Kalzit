@@ -532,7 +532,7 @@ export function PanelCard({
                   title={t("dashboards.panel.arrangeHint")}
                   onKeyDown={onHandleKey}
                 >
-                  <span aria-hidden="true">⠿</span>
+                  <Icon name="grip" />
                 </button>
                 <span className="visually-hidden" id={hintId}>
                   {t("dashboards.panel.arrangeHint")}
@@ -1035,7 +1035,7 @@ function PanelDescription({ title, description }: { title: string; description: 
           }
         }}
       >
-        <Icon name="help" />
+        <Icon name="info" />
       </button>
       <span className="panel-card__about-text" id={id} role="tooltip">
         {description}

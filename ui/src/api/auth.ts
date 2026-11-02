@@ -29,9 +29,13 @@ export interface Me {
 /** Where the setup code can be found on this server; sent only while setup is needed. */
 export type SetupCodeHint = "file" | "docker" | "fixed";
 
+/** The server's system family, sent only while setup is needed; never a path. */
+export type ServerOs = "windows" | "linux";
+
 export interface SetupStatus {
   needed: boolean;
   codeHint?: SetupCodeHint | undefined;
+  os?: ServerOs | undefined;
 }
 
 export interface SetupInput {
@@ -76,13 +80,15 @@ export function isMe(value: unknown): value is Me {
 }
 
 const CODE_HINTS: readonly string[] = ["file", "docker", "fixed"];
+const SERVER_OS: readonly string[] = ["windows", "linux"];
 
 function isSetupStatus(value: unknown): value is SetupStatus {
   return (
     isRecord(value) &&
     typeof value.needed === "boolean" &&
     (value.codeHint === undefined ||
-      (typeof value.codeHint === "string" && CODE_HINTS.includes(value.codeHint)))
+      (typeof value.codeHint === "string" && CODE_HINTS.includes(value.codeHint))) &&
+    (value.os === undefined || (typeof value.os === "string" && SERVER_OS.includes(value.os)))
   );
 }
 

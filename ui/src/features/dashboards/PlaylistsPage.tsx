@@ -321,7 +321,7 @@ function PlaylistDialog({
                     onClick={() => move(index, -1)}
                     aria-label={t("playlists.up", { name: itemLabel(item) })}
                   >
-                    ↑
+                    <Icon name="arrowUp" />
                   </button>
                   <button
                     type="button"
@@ -330,7 +330,7 @@ function PlaylistDialog({
                     onClick={() => move(index, 1)}
                     aria-label={t("playlists.down", { name: itemLabel(item) })}
                   >
-                    ↓
+                    <Icon name="arrowDown" />
                   </button>
                   <button
                     type="button"

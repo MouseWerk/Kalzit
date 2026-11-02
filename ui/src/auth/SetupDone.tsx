@@ -39,7 +39,7 @@ export function SetupDone({ me, choices }: { me: Me; choices: SetupChoices }) {
       <div className="setup-done__tiles">
         <Link to="/data-sources/new" search={{}} className="next-tile next-tile--lead">
           <span className="next-tile__icon">
-            <Icon name="database" />
+            <Icon name="dataSources" />
           </span>
           <h3>{t("access.setup.done.sourceTitle")}</h3>
           <p>{t("access.setup.done.sourceText")}</p>

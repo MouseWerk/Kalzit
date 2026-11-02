@@ -29,8 +29,14 @@ enum Command {
     /// Ask the running server on this machine whether it is ready (exit code 0), for container
     /// health checks. Uses the plain HTTP listener.
     Healthcheck,
-    /// Print the one-time setup code of the first start from the data directory.
-    SetupCode,
+    /// Print the one-time setup code of the first start from the data directory. Needs the rights
+    /// of the file: an elevated prompt on Windows, sudo on Linux. Prints nothing once setup is done.
+    SetupCode {
+        /// Print the setup page's address with the code in its fragment instead, to open in a
+        /// browser on this machine; the page fills in the code.
+        #[arg(long)]
+        url: bool,
+    },
     /// Manage the key that encrypts data source secrets.
     Secrets {
         #[command(subcommand)]
@@ -165,24 +171,24 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::SetupCode => match kalzit::routes::setup::read_code(&config.paths.data_dir) {
-            Ok(Some(code)) => {
-                println!("{code}");
-                ExitCode::SUCCESS
+        Command::SetupCode { url } => {
+            let fixed = std::env::var("KALZIT_SETUP_TOKEN").is_ok_and(|v| !v.trim().is_empty());
+            let answer = kalzit::routes::setup::code_command(&config.paths.data_dir, fixed);
+            if let Some(code) = &answer.code {
+                if !url {
+                    println!("{code}");
+                } else if let Some(link) = kalzit::routes::setup::setup_link(&config, code) {
+                    println!("{link}");
+                } else {
+                    eprintln!("kalzit: no listener (server.http_addr or server.https_addr) for a setup link");
+                    return ExitCode::FAILURE;
+                }
             }
-            Ok(None) => {
-                eprintln!(
-                    "kalzit: no setup code in {}: setup is complete, the server has not started yet, or \
-                     KALZIT_SETUP_TOKEN sets the code",
-                    config.paths.data_dir.display()
-                );
-                ExitCode::FAILURE
+            if let Some(message) = &answer.message {
+                eprintln!("{message}");
             }
-            Err(e) => {
-                eprintln!("kalzit: reading the setup code: {e}");
-                ExitCode::FAILURE
-            }
-        },
+            if answer.success { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
         Command::Secrets { action: SecretsCommand::Rotate } => {
             init_logging(&config.log);
             let Some(runtime) = runtime() else { return ExitCode::FAILURE };

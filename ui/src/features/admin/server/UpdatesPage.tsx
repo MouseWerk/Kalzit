@@ -1188,7 +1188,7 @@ function Backups({
         <ul className="updates-backups__list" aria-label={t("admin.updates.backups.title")}>
           {data.backups.map((b) => (
             <li key={b.file} className="updates-backups__item">
-              <Icon name="database" />
+              <Icon name="dataSources" />
               <div className="updates-backups__text">
                 <div>{label(b)}</div>
                 <div className="updates-muted">

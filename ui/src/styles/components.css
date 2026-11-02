@@ -9,6 +9,12 @@
     stroke-width: var(--icon-stroke);
   }
 
+  .icon--inline {
+    width: var(--icon-size-inline);
+    height: var(--icon-size-inline);
+    vertical-align: middle;
+  }
+
   /* Skip link: hidden until it receives keyboard focus. */
 
   .skip-link {

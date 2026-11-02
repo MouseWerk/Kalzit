@@ -15,7 +15,23 @@ default `http://localhost:3000`. Setup has four steps; **Back** keeps everything
    fits this server first:
    - **File**: `setup-token.txt` in the data directory, by default
      `C:\ProgramData\Kalzit\data\setup-token.txt` on Windows and
-     `/var/lib/kalzit/setup-token.txt` on Linux.
+     `/var/lib/kalzit/setup-token.txt` on Linux. The file is protected, so opening it in an
+     editor or Explorer is refused. The tab shows the command for the server's system with a copy
+     button:
+     - Windows: open PowerShell with **Run as administrator** and enter
+       `Get-Content "C:\ProgramData\Kalzit\data\setup-token.txt"`, or
+       `& "C:\Program Files\Kalzit\kalzit.exe" setup-code`. After a first installation the MSI's
+       finish page opens the setup page for you (**Open setup in the browser**).
+     - Linux (deb and rpm): `sudo cat /var/lib/kalzit/setup-token.txt` or
+       `sudo kalzit setup-code`; the data directory belongs to the `kalzit` user.
+
+     `kalzit setup-code` finds a data directory of your own through `kalzit.toml`. Without the
+     needed rights it says so ("run as administrator", "use sudo"). Without a file it prints no
+     code and says that setup is finished, or the server has not started yet (or uses another
+     data folder). `kalzit setup-code --url` prints the setup page's address with the code in its
+     fragment (`#code=...`): opened in a browser, the page fills in the code and removes it from
+     the address bar. The fragment never reaches the server or its logs, but the browser history
+     may keep the address until setup is complete; after that the code no longer works.
    - **Server log**: the log says at start where the file is; it never contains the code.
    - **Docker**: `docker exec kalzit kalzit setup-code` (with Compose:
      `docker compose exec kalzit kalzit setup-code`).

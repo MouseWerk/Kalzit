@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The installer's wizard: Welcome, license, program folder, Kalzit's settings (port, data folder,
-  HTTPS, firewall; skipped when a kalzit.toml exists), ready, progress, done. Removing asks whether
-  the data goes too. Built on the WixUI dialogs of WixToolset.UI.wixext (the InstallDir set; the
+  HTTPS, firewall; skipped when a kalzit.toml exists), ready, progress, done (after a first
+  installation with "Open setup in the browser", checked by default). Removing asks whether the
+  data goes too. Built on the WixUI dialogs of WixToolset.UI.wixext (the InstallDir set; the
   license page only shows the license, since the AGPL needs no acceptance to install). The texts
   are in Kalzit.en-US.wxl and Kalzit.de-DE.wxl.
 
@@ -32,6 +33,7 @@
 
       <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_X64" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
       <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="KalzitOpenSetup" Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed" />
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
 
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="KalzitLicenseDlg" Condition="NOT Installed" />
@@ -166,5 +168,27 @@
         After="CostFinalize"
         Sequence="ui"
         Condition="NOT Installed AND CONFIGEXISTS" />
+
+    <!-- After a first installation the finish page offers to open the setup page (checked by
+         default). It opens the page without the setup code: this dialog runs in the installer's
+         unelevated client process, which cannot read setup-token.txt (SYSTEM, the service account
+         and Administrators only), and the elevated steps could hand the code over only through a
+         place anyone can read. The setup page shows the PowerShell command that reads the code
+         as administrator. The browser opens with the rights of the person installing. -->
+    <SetProperty
+        Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
+        Action="KalzitOpenSetupText"
+        Value="!(loc.KalzitOpenSetup)"
+        After="CostFinalize"
+        Sequence="ui"
+        Condition="NOT Installed AND NOT CONFIGEXISTS" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction
+        Id="KalzitOpenSetup"
+        Directory="INSTALLFOLDER"
+        ExeCommand="&quot;[System64Folder]rundll32.exe&quot; url.dll,FileProtocolHandler http://localhost:[PORT]/setup"
+        Execute="immediate"
+        Impersonate="yes"
+        Return="asyncNoWait" />
   </Fragment>
 </Wix>

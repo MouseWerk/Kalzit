@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="340" viewBox="0 0 880 340" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="370" viewBox="0 0 880 370" role="img" aria-labelledby="title desc">
 <title id="title">Kalzit milestone progress</title>
-<desc id="desc">Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 15 of 68 plan items done. M7 Expansion: planned. M8 Plugin store: planned.</desc>
+<desc id="desc">Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 15 of 68 plan items done. M7 Expansion: planned. M8 To be defined: planned. M9 Plugin store: planned.</desc>
 <defs>
 <linearGradient id="sweep" x1="0" x2="1" y1="0" y2="0">
 <stop offset="0" stop-color="#17171a" stop-opacity="0"/>
@@ -20,7 +20,7 @@ text{font-family:"Instrument Sans","Segoe UI",system-ui,-apple-system,"Helvetica
 .sweep-m6{animation:sweep-m6 4.8s ease-in-out 1.74s infinite}
 @media (prefers-reduced-motion:reduce){.fill,.sweep{animation:none}}
 </style>
-<rect x="0.5" y="0.5" width="879" height="339" rx="12" fill="#ffffff" stroke="#e1e1e4"/>
+<rect x="0.5" y="0.5" width="879" height="369" rx="12" fill="#ffffff" stroke="#e1e1e4"/>
 <text class="title" x="24" y="36">Milestones</text>
 <g class="row">
 <text class="id" x="24" y="72">M0</text>
@@ -81,8 +81,14 @@ text{font-family:"Instrument Sans","Segoe UI",system-ui,-apple-system,"Helvetica
 </g>
 <g class="row">
 <text class="id" x="24" y="312">M8</text>
-<text class="name" x="64" y="312">Plugin store</text>
+<text class="name" x="64" y="312">To be defined</text>
 <rect class="track" x="210" y="305" width="540" height="6" rx="3"/>
 <text class="status" x="856" y="312" text-anchor="end">Planned</text>
+</g>
+<g class="row">
+<text class="id" x="24" y="342">M9</text>
+<text class="name" x="64" y="342">Plugin store</text>
+<rect class="track" x="210" y="335" width="540" height="6" rx="3"/>
+<text class="status" x="856" y="342" text-anchor="end">Planned</text>
 </g>
 </svg>
