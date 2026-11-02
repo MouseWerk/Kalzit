@@ -250,10 +250,13 @@
 
   /* Dialog contents */
 
+  /* A fieldset without its own frame: its content lines up with the heading above it. */
   .settings__group {
     display: grid;
     gap: var(--space-3);
     min-width: 0;
+    margin: 0;
+    padding: 0;
     border: 0;
   }
 

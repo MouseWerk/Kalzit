@@ -126,7 +126,7 @@ export function TimeOptionsEditor({ draft, onChange, problems }: TimeOptionsEdit
   }));
   return (
     <fieldset className="settings__time">
-      <legend className="section-title">{t("toolbar.settings.time")}</legend>
+      <legend className="visually-hidden">{t("toolbar.settings.time")}</legend>
       <div className="settings__time-grid">
         <div className="field">
           <label className="field__label" htmlFor={`${id}-zone`}>

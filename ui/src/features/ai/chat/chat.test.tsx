@@ -462,7 +462,14 @@ describe("Fragen: from the board", () => {
       fakeChat({ id: "c-ts", title: "Verlauf", messages: chatMessages("Verlauf?", series) }),
     ];
     const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
-    expect(within(answer).getByRole("table")).toBeTruthy();
+    const table = within(answer).getByRole("table");
+    // Number columns are marked to be end-aligned; the others are not.
+    expect(within(table).getByRole("columnheader", { name: "umsatz" }).dataset.numeric).toBe(
+      "true",
+    );
+    expect(
+      within(table).getByRole("columnheader", { name: "tag" }).dataset.numeric,
+    ).toBeUndefined();
     await user.click(within(answer).getByRole("button", { name: "Time series" }));
     expect(within(answer).getByRole("img", { name: /^umsatz from / })).toBeTruthy();
     expect(within(answer).queryByRole("table")).toBeNull();
