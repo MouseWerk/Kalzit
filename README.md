@@ -555,7 +555,7 @@ instance.
 
 The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (German).
 
-<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 15 of 68 plan items done. M7 Expansion: planned. M8 To be defined: planned. M9 Plugin store: planned."></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 19 of 68 plan items done. M7 Expansion: planned. M8 To be defined: planned. M9 Plugin store: planned."></picture>
 
 The bars come from [docs/roadmap/progress.json](docs/roadmap/progress.json); M6 counts the items of
 its plan that are merged.
