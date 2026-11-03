@@ -1455,7 +1455,7 @@ async fn audit_filters_are_at_most_256_characters() {
     for field in ["actor", "action", "resourceType", "resourceId"] {
         let r = t.post("/audit/export", json!({ "format": "json", field: long }), &t.owner).await;
         assert_eq!((r.status, r.json()["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some(field)));
-        assert_eq!(r.reason(), "audit.filter_too_long", "{}", r.text());
+        assert_eq!(r.reason(), "request.filter_too_long", "{}", r.text());
         let r = t.post("/audit/export", json!({ "format": "json", field: fits }), &t.owner).await;
         assert_eq!(r.status, StatusCode::OK, "{field}: {}", r.text());
         let query = format!("/api/orgs/{}/audit?{field}={long}", t.org);

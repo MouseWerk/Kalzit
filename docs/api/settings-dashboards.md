@@ -460,7 +460,7 @@ Query parameters (all optional): `actor` (user id), `action` (prefix: `dashboard
 `dashboard.saved`), `resourceType`, `resourceId`, `from` (inclusive), `to` (exclusive), `limit`,
 `cursor`. `from` after `to` is `422 validation` (field `from`); a non-number time is
 `422 validation`; `actor`, `action`, `resourceType` or `resourceId` longer than 256 characters is
-`422 validation` with that field and reason `audit.filter_too_long` (param `max`).
+`422 validation` with that field and reason `request.filter_too_long` (param `max`).
 
 ### `GET /orgs/{orgId}/audit`
 

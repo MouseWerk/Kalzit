@@ -565,7 +565,7 @@ fn check_query(q: &AuditQuery) -> ApiResult<()> {
         if value.as_deref().is_some_and(|v| v.chars().count() > MAX_FILTER_CHARS) {
             return Err(ApiError::validation(format!("{field} is longer than {MAX_FILTER_CHARS} characters"))
                 .with_field(field)
-                .because("audit.filter_too_long")
+                .because("request.filter_too_long")
                 .param("max", MAX_FILTER_CHARS));
         }
     }

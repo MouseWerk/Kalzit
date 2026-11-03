@@ -1212,6 +1212,8 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.org_required` | `403 org_second_factor_required` | the organization requires a second factor of this member and the session proved none; `params.orgId` |
 | `second_factor.confirm_password` | `403 confirmation_required` | the first method of an account with a password, without a fresh password confirmation |
 | `second_factor.sign_in_again` | `403 confirmation_required` | the first method of an account without a password, in a session signed in more than 5 minutes ago |
+| `second_factor.has_factor` | `409 conflict` | `POST /me/security/confirm/password` on an account that has a method; it confirms with the method |
+| `second_factor.no_password` | `409 conflict` | `POST /me/security/confirm/password` on an account without a password |
 | `second_factor.setup_first` | `409 conflict` | saving an organization's second factor rule that would refuse the saving member, who has none; `params.setupPath` |
 | `sso.org_local_off_blocked` | `409 conflict` | an organization's password sign-in `off` would lock people out; `params.check` is `providerReady` or `selfViaProvider` |
 | `sso.org_password_off` | `403 org_provider_sign_in_required` | the organization turned password sign-in off and the session was signed in with a password; `params.orgId` |

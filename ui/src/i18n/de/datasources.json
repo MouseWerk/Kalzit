@@ -435,7 +435,7 @@
   "datasources.reason.export.format_unsupported": "Ein Ergebnis der Form „{shape}“ lässt sich nicht als {format} exportieren.",
   "datasources.reason.export.too_many_events": "Der Export hätte mehr als {max} Ereignisse. Wähle einen kürzeren Zeitraum oder einen Filter.",
   "datasources.reason.export.too_slow": "Der Export hat zu lange gedauert. Wähle einen kürzeren Zeitraum oder einen Filter.",
-  "datasources.reason.audit.filter_too_long": "Ein Filter darf höchstens {max} Zeichen lang sein.",
+  "datasources.reason.request.filter_too_long": "Ein Filter darf höchstens {max} Zeichen lang sein.",
   "datasources.reason.export.too_many_rows": "Excel nimmt höchstens {max} Zeilen. Exportiere stattdessen als CSV.",
   "datasources.reason.export.too_many_columns": "Excel nimmt höchstens {max} Spalten. Exportiere stattdessen als CSV.",
   "datasources.reason.export.failed": "Die Datei ließ sich nicht schreiben: {detail}",
