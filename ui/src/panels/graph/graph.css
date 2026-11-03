@@ -611,43 +611,67 @@
     outline-offset: var(--focus-ring-offset);
   }
 
+  /* The node's shape in the label's color; currentColor keeps it visible with forced colors. */
   .graph-legend__swatch {
-    width: var(--space-2);
-    height: var(--space-2);
-    border-radius: var(--radius-pill);
-    background: var(--text-muted);
+    flex: none;
+    width: var(--space-3);
+    height: var(--space-3);
+    color: var(--text-muted);
+    fill: currentColor;
   }
 
   .graph-legend__swatch--1 {
-    background: var(--chart-1);
+    color: var(--chart-1);
   }
 
   .graph-legend__swatch--2 {
-    background: var(--chart-2);
+    color: var(--chart-2);
   }
 
   .graph-legend__swatch--3 {
-    background: var(--chart-3);
+    color: var(--chart-3);
   }
 
   .graph-legend__swatch--4 {
-    background: var(--chart-4);
+    color: var(--chart-4);
   }
 
   .graph-legend__swatch--5 {
-    background: var(--chart-5);
+    color: var(--chart-5);
   }
 
   .graph-legend__swatch--6 {
-    background: var(--chart-6);
+    color: var(--chart-6);
   }
 
   .graph-legend__swatch--7 {
-    background: var(--chart-7);
+    color: var(--chart-7);
   }
 
   .graph-legend__swatch--8 {
-    background: var(--chart-8);
+    color: var(--chart-8);
+  }
+
+  /*
+   * With forced colors the swatches take the system colors the drawing's nodes take (the probes
+   * above), so a label's swatch keeps matching its nodes.
+   */
+  @media (forced-colors: active) {
+    .graph-legend__swatch {
+      forced-color-adjust: none;
+      color: CanvasText;
+    }
+
+    .graph-legend__swatch--2,
+    .graph-legend__swatch--5,
+    .graph-legend__swatch--8 {
+      color: LinkText;
+    }
+
+    .graph-legend__swatch--3,
+    .graph-legend__swatch--6 {
+      color: Highlight;
+    }
   }
 
   .graph-legend__count,
@@ -717,6 +741,11 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: center;
     gap: var(--space-2);
+  }
+
+  /* Name, color and shape. */
+  .graph-options__label-row--both {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .graph-options__label-name {

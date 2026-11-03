@@ -637,6 +637,152 @@ test.describe("Neo4j drawing", () => {
   });
 });
 
+interface DrawnFrame {
+  nodes: { index: number; x: number; y: number; radius: number; shape?: string }[];
+  labels: { index: number; box: { minX: number; minY: number; maxX: number; maxY: number } }[];
+}
+
+/**
+ * What the drawing's last frame drew, from the canvas' test hook (SigmaCanvas.tsx): the labels
+ * Sigma displays and every visible node with the shape it is drawn with, read from the renderer
+ * itself rather than from the label check.
+ */
+async function drawnFrame(scope: Locator): Promise<DrawnFrame | null> {
+  return scope
+    .locator(".graph__canvas")
+    .evaluate(
+      (element) =>
+        (
+          element as HTMLElement & { kalzitLabelRoom?: () => DrawnFrame | null }
+        ).kalzitLabelRoom?.() ?? null,
+    );
+}
+
+/** Labels of a frame that cover another node's shape or another label (none should). */
+function coveringLabels(frame: DrawnFrame): string[] {
+  const found: string[] = [];
+  const inside = (node: DrawnFrame["nodes"][number], box: DrawnFrame["labels"][number]["box"]) => {
+    const dx = Math.max(box.minX - node.x, 0, node.x - box.maxX);
+    const dy = Math.max(box.minY - node.y, 0, node.y - box.maxY);
+    if (node.shape === "square") return dx < node.radius - 0.5 && dy < node.radius - 0.5;
+    if (node.shape === "diamond") return dx + dy < node.radius - 0.5;
+    return dx * dx + dy * dy < (node.radius - 0.5) ** 2;
+  };
+  for (const label of frame.labels) {
+    for (const node of frame.nodes) {
+      if (node.index !== label.index && inside(node, label.box)) {
+        found.push(`label ${label.index} over node ${node.index}`);
+      }
+    }
+    for (const other of frame.labels) {
+      if (
+        other.index > label.index &&
+        overlaps(
+          {
+            x: label.box.minX,
+            y: label.box.minY,
+            width: label.box.maxX - label.box.minX,
+            height: label.box.maxY - label.box.minY,
+          },
+          {
+            x: other.box.minX,
+            y: other.box.minY,
+            width: other.box.maxX - other.box.minX,
+            height: other.box.maxY - other.box.minY,
+          },
+        )
+      ) {
+        found.push(`label ${label.index} over label ${other.index}`);
+      }
+    }
+  }
+  return found;
+}
+
+test.describe("Neo4j labels and shapes", () => {
+  test.use({ viewport: { width: 1024, height: 900 } });
+
+  test("a short panel draws no label over a node or a label, from the first frame on", async ({
+    page,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const title = "Shop in a short row";
+    const owner = await Api.owner();
+    let dashboardId = "";
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, labels)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      dashboardId = await owner.createDashboard({
+        schemaVersion: 1,
+        title: unique("Shop labels"),
+        timeRange: { from: "now-6h", to: "now" },
+        panels: [
+          {
+            id: "short",
+            type: "network",
+            title,
+            // Half the width and a short row, as the gallery's all-sources panel.
+            grid: { x: 0, y: 0, w: 12, h: 8 },
+            targets: [{ refId: "A", datasourceId: sourceId, query: { cypher: SHOP } }],
+            // Every label wants to show; the ones without room wait for the zoom.
+            options: { labelTop: 200 },
+          },
+        ],
+      });
+    } finally {
+      await owner.dispose();
+    }
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = page.getByRole("article", { name: title, exact: true });
+    const drawing = panel.getByRole("application", { name: title, exact: true });
+    const noWebgl = panel.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+    // Every frame from the first one on, while the layout settles and after it did.
+    let frames = 0;
+    let labelled = 0;
+    for (let tries = 0; tries < 40; tries++) {
+      const frame = await drawnFrame(panel);
+      if (frame !== null && frame.nodes.length > 0) {
+        frames++;
+        labelled = Math.max(labelled, frame.labels.length);
+        expect(coveringLabels(frame)).toEqual([]);
+      }
+      await page.waitForTimeout(100);
+    }
+    expect(frames).toBeGreaterThan(0);
+    expect(labelled).toBeGreaterThan(0);
+
+    // Zoomed in, more labels find room, and still none covers anything.
+    const zoomIn = panel.getByRole("button", { name: t("graph.zoomIn"), exact: true });
+    await zoomIn.click();
+    await zoomIn.click();
+    await page.waitForTimeout(600);
+    const zoomed = await drawnFrame(panel);
+    expect(zoomed).not.toBeNull();
+    if (zoomed !== null) expect(coveringLabels(zoomed)).toEqual([]);
+
+    // Customers, orders and products each have a shape of their own, drawn and in the legend.
+    const last = await drawnFrame(panel);
+    expect(new Set(last?.nodes.map((n) => n.shape)).size).toBe(3);
+    const legend = panel.getByRole("list", { name: t("graph.legend.title"), exact: true });
+    const shapes = await legend
+      .locator("svg[data-shape]")
+      .evaluateAll((list) => list.map((svg) => svg.getAttribute("data-shape")));
+    expect(new Set(shapes)).toEqual(new Set(["circle", "square", "diamond"]));
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+});
+
 /**
  * ELK in a hierarchy panel, under the server's CSP. The graph comes from the test plugin (a graph
  * of two nodes, `a` KNOWS `b`) instead of Neo4j, so this runs on the Windows runners too, which

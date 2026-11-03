@@ -48,6 +48,8 @@ pub const MAX_NODE_SIZE: u32 = 40;
 pub const MAX_LABEL_TOP: u32 = 200;
 /// Labels with a color of their own (`MAX_LABEL_COLORS` in the UI).
 pub const MAX_LABEL_COLORS: usize = 50;
+/// Labels with a node shape of their own (`MAX_LABEL_SHAPES` in the UI).
+pub const MAX_LABEL_SHAPES: usize = 50;
 /// ELK's gaps in the hierarchy panel, in px (`ELK_NODE_SPACING`, `ELK_LAYER_SPACING` in the UI).
 pub const MIN_ELK_NODE_SPACING: u32 = 5;
 pub const MAX_ELK_NODE_SPACING: u32 = 200;
@@ -297,6 +299,7 @@ choice!(NodeColorScheme { Blues = "blues", Gyr = "gyr", Grays = "grays", Values 
 choice!(ColorRange { Auto = "auto", Fixed = "fixed" });
 choice!(ShowWhen { Selection = "selection", Always = "always", Never = "never" });
 choice!(LabelMode { Zoom = "zoom", Always = "always", Selection = "selection" });
+choice!(NodeShape { Circle = "circle", Square = "square", Diamond = "diamond" });
 choice!(ClickAction { Details = "details", Variable = "variable", Expand = "expand" });
 choice!(ClusterMode { Auto = "auto", Label = "label", Off = "off" });
 choice!(HierarchyLayout { Kalzit = "kalzit", Elk = "elk" });
@@ -501,6 +504,8 @@ struct GraphOptions {
     color_max: Option<f64>,
     /// A palette tone per node label.
     label_colors: Option<std::collections::BTreeMap<String, Tone>>,
+    /// A node shape per node label (`shapes.ts` in the UI).
+    label_shapes: Option<std::collections::BTreeMap<String, NodeShape>>,
     size_by: Option<String>,
     size_min: Option<u32>,
     size_max: Option<u32>,
@@ -883,6 +888,14 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                     check_text("options.labelColors", label, MAX_GRAPH_TEXT_CHARS, false)?;
                 }
             }
+            if let Some(shapes) = &o.label_shapes {
+                if shapes.len() > MAX_LABEL_SHAPES {
+                    return Err(format!("options.labelShapes takes at most {MAX_LABEL_SHAPES} labels"));
+                }
+                for label in shapes.keys() {
+                    check_text("options.labelShapes", label, MAX_GRAPH_TEXT_CHARS, false)?;
+                }
+            }
             Ok(())
         }
         "path" => {
@@ -969,6 +982,7 @@ mod tests {
                 json!({
                     "colorBy": "property", "colorProperty": "umsatz", "colorScheme": "gyr", "colorRange": "fixed",
                     "colorMin": 0, "colorMax": 24800.5, "labelColors": { "Kunde": "chart-3", "Händler": "chart-8" },
+                    "labelShapes": { "Kunde": "diamond", "Händler": "circle", "Produkt": "square" },
                     "sizeMin": MIN_NODE_SIZE, "sizeMax": MAX_NODE_SIZE, "arrows": "selection", "edgeLabels": "always",
                     "labels": "selection", "labelTop": MAX_LABEL_TOP, "clickAction": "expand", "clickDetails": false
                 }),
@@ -1037,6 +1051,8 @@ mod tests {
     #[test]
     fn invalid_graph_options_are_refused_with_the_place() {
         let long = "x".repeat(MAX_GRAPH_TEXT_CHARS + 1);
+        let too_many_shapes: serde_json::Map<String, Value> =
+            (0..=MAX_LABEL_SHAPES).map(|i| (format!("L{i}"), json!("circle"))).collect();
         for (kind, options, expect) in [
             ("network", json!({ "nodeLimit": 0 }), "options.nodeLimit"),
             ("network", json!({ "nodeLimit": MAX_NODE_LIMIT + 1 }), "options.nodeLimit"),
@@ -1069,6 +1085,9 @@ mod tests {
             ("network", json!({ "clickAction": "delete" }), "options"),
             ("network", json!({ "labelColors": { "Kunde": "#ff0000" } }), "options"),
             ("network", json!({ "labelColors": { long.clone(): "chart-1" } }), "options.labelColors"),
+            ("network", json!({ "labelShapes": { "Kunde": "star" } }), "options"),
+            ("network", json!({ "labelShapes": { long.clone(): "square" } }), "options.labelShapes"),
+            ("network", json!({ "labelShapes": too_many_shapes }), "options.labelShapes"),
             ("network", json!({ "colorProperty": long }), "options.colorProperty"),
             ("path", json!({ "caption": long }), "options.caption"),
             ("path", json!({ "variable": long }), "options.variable"),

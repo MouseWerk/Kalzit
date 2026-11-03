@@ -44,6 +44,9 @@ export const LABEL_TONES = [
   "chart-8",
 ] as const;
 export type LabelTone = (typeof LABEL_TONES)[number];
+/** The shapes a node can take, a second cue next to its color (shapes.ts). */
+export const NODE_SHAPES = ["circle", "square", "diamond"] as const;
+export type NodeShape = (typeof NODE_SHAPES)[number];
 
 /**
  * How the hierarchy lays out: Kalzit's own layered layout (the default), or ELK's layered
@@ -69,6 +72,8 @@ export const DEFAULT_SIZE_MAX = 14;
 export const MAX_LABEL_TOP = 200;
 /** At most this many labels carry a color of their own. */
 export const MAX_LABEL_COLORS = 50;
+/** At most this many labels carry a shape of their own. */
+export const MAX_LABEL_SHAPES = 50;
 
 export interface GraphPanelOptions {
   /** Node property shown as its name; empty picks name, title and the like. */
@@ -83,6 +88,8 @@ export interface GraphPanelOptions {
   colorMax: number | null;
   /** A palette color per label, instead of the palette's order. */
   labelColors: Record<string, LabelTone>;
+  /** A shape per label, instead of the one its order gives it (shapes.ts). */
+  labelShapes: Record<string, NodeShape>;
   /** "degree", "" for one size, or a node property key. */
   sizeBy: string;
   sizeMin: number;
@@ -145,17 +152,41 @@ function finiteOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function labelColors(value: unknown): Record<string, LabelTone> {
+/**
+ * A value per label from stored options: known values only, at most `max` labels. Built with
+ * `Object.fromEntries`, so a label named like an object's own key (`__proto__`, `constructor`)
+ * stays a label.
+ */
+function perLabel<T extends string>(
+  value: unknown,
+  known: readonly T[],
+  max: number,
+): Record<string, T> {
   if (!isRecord(value)) return {};
-  const out: Record<string, LabelTone> = {};
-  for (const [label, tone] of Object.entries(value)) {
+  const out: [string, T][] = [];
+  for (const [label, choice] of Object.entries(value)) {
     const name = text(label);
-    const known = LABEL_TONES.find((t) => t === tone);
-    if (name !== "" && known !== undefined && Object.keys(out).length < MAX_LABEL_COLORS) {
-      out[name] = known;
+    const found = known.find((k) => k === choice);
+    if (name !== "" && found !== undefined && out.length < max && !out.some(([n]) => n === name)) {
+      out.push([name, found]);
     }
   }
-  return out;
+  return Object.fromEntries(out);
+}
+
+/** A per-label option with `label` set to `value`, or taken out without one. */
+export function withEntry<T>(
+  options: Readonly<Record<string, T>>,
+  label: string,
+  value: T | undefined,
+): Record<string, T> {
+  const rest = Object.entries(options).filter(([name]) => name !== label);
+  return Object.fromEntries(value === undefined ? rest : [...rest, [label, value]]);
+}
+
+/** A label's own entry in a per-label option; never one an object inherits. */
+export function ownEntry<T>(options: Readonly<Record<string, T>>, label: string): T | undefined {
+  return Object.hasOwn(options, label) ? options[label] : undefined;
 }
 
 export function parseGraphOptions(stored: unknown): GraphPanelOptions {
@@ -174,7 +205,8 @@ export function parseGraphOptions(stored: unknown): GraphPanelOptions {
     colorRange: choice(COLOR_RANGES, value.colorRange, "auto"),
     colorMin: finiteOrNull(value.colorMin),
     colorMax: finiteOrNull(value.colorMax),
-    labelColors: labelColors(value.labelColors),
+    labelColors: perLabel(value.labelColors, LABEL_TONES, MAX_LABEL_COLORS),
+    labelShapes: perLabel(value.labelShapes, NODE_SHAPES, MAX_LABEL_SHAPES),
     sizeBy: text(value.sizeBy, "degree"),
     sizeMin: Math.min(sizeMin, sizeMax),
     sizeMax: Math.max(sizeMin, sizeMax),

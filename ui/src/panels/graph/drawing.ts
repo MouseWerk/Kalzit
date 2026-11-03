@@ -1,6 +1,8 @@
 import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
 import type { GraphPalette, RampName } from "./colors";
+import { LABEL_PAD } from "./labelCollisions";
 import type { LabelMode, ShowWhen } from "./options";
+import { SHAPE_SCALE } from "./shapes";
 import { type GraphView, LABEL_BUDGET, labelAllowed, rampStep, type Visibility } from "./view";
 
 /**
@@ -41,8 +43,8 @@ export interface DrawState {
   drawStyle: DrawStyle;
 }
 
-/** Space around a label's text on its background, in px. */
-const LABEL_BACKGROUND_PADDING = 2;
+/** Space around a label's text on its background, in px (what the label check counts with). */
+const LABEL_BACKGROUND_PADDING = LABEL_PAD;
 
 function nodeColor(
   group: number,
@@ -62,7 +64,8 @@ function nodeColor(
   );
 }
 
-const NONE: ReadonlySet<number> = new Set();
+/** A selected node is drawn this much larger. */
+export const SELECTED_SCALE = 1.4;
 
 /**
  * Whether a node's label shows: "visible" whatever it covers (selected, or labels set to always),
@@ -90,15 +93,18 @@ export function labelWish(
 /**
  * What the renderer draws for one node, from the panel's state. A selected node is shown quietly:
  * its label always, in the bold weight, on the neutral selection tint; everything that is neither
- * selected nor a neighbour is dimmed. No ring, glow or accent color.
+ * selected nor a neighbour is dimmed. No ring, glow or accent color. The node takes its label's
+ * shape (shapes.ts), scaled so every shape covers about the area of the circle, and all nodes by
+ * `nodeScale` in a panel too short for their size (spread.ts). Whether a label that may show has
+ * room for it is decided per frame (labelRoom.ts).
  */
 export function nodeDisplay(
   index: number,
   data: NodeDisplayData,
   p: DrawState,
   ratio: number,
-  blocked: ReadonlySet<number> = NONE,
   budget: number = LABEL_BUDGET,
+  nodeScale = 1,
 ): Partial<NodeDisplayData> {
   const node = p.view.nodes[index];
   if (node === undefined || p.visibility.nodes[index] === 0) {
@@ -108,10 +114,8 @@ export function nodeDisplay(
   const selecting = p.selected.size > 0;
   const lit = !selecting || isSelected || p.neighbours.has(index);
   const color = nodeColor(node.group, lit, p);
-  const wish = labelWish(index, p, ratio, budget);
-  // A label that would cover another node's circle waits until the camera gives it room
-  // (labelCollisions.ts); a forced one shows anyway.
-  const labelVisibility = wish === "auto" && blocked.has(index) ? "hidden" : wish;
+  const labelVisibility = labelWish(index, p, ratio, budget);
+  const size = data.size * SHAPE_SCALE[node.shape] * nodeScale;
   return {
     ...data,
     color,
@@ -120,7 +124,8 @@ export function nodeDisplay(
     // selected node's label sits on the selection tint.
     labelBackgroundColor: isSelected ? p.palette.selection : p.palette.background,
     labelBackgroundPadding: LABEL_BACKGROUND_PADDING,
-    size: isSelected ? data.size * 1.4 : data.size,
+    shape: node.shape,
+    size: isSelected ? size * SELECTED_SCALE : size,
     labelVisibility,
     // A hidden label is dropped, not only hidden: the renderer lays out the glyphs of every
     // label it has, which for thousands of nodes takes seconds.

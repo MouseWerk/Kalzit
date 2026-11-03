@@ -227,6 +227,26 @@ describe("node sheet and keyboard", () => {
     expect(screen.queryByRole("group", { name: "Selection" })).toBeNull();
   });
 
+  it("shows each label's node shape in the legend, its own shape where the panel sets one", async () => {
+    const shapesOf = (root: HTMLElement) =>
+      Object.fromEntries(
+        [...root.querySelectorAll(".graph-legend__item")].map((item) => [
+          item.querySelector("span")?.textContent ?? "",
+          item.querySelector("svg")?.getAttribute("data-shape"),
+        ]),
+      );
+    const first = await renderGraph("network", FAKE_GRAPH);
+    // By the labels' order in the result: Customer, then Product.
+    expect(shapesOf(first.container)).toEqual({ Customer: "circle", Product: "square" });
+    // The swatch is decoration: the button names the label.
+    expect(
+      first.container.querySelector(".graph-legend__swatch")?.getAttribute("aria-hidden"),
+    ).toBe("true");
+    first.unmount();
+    const own = await renderGraph("network", FAKE_GRAPH, { labelShapes: { Product: "diamond" } });
+    expect(shapesOf(own.container)).toEqual({ Customer: "circle", Product: "diamond" });
+  });
+
   it("hides a label from the legend", async () => {
     const user = userEvent.setup();
     await renderGraph("network", FAKE_GRAPH);
@@ -367,7 +387,7 @@ describe("option texts", () => {
 });
 
 describe("graph panel editor", () => {
-  it("offers colors per label, color by property and the click action", async () => {
+  it("offers colors and shapes per label, color by property and the click action", async () => {
     const user = userEvent.setup();
     const plugin = getPanel("network") as AnyPanelPlugin;
     const { Editor } = plugin;
@@ -379,14 +399,34 @@ describe("graph panel editor", () => {
         graphLabels={[{ label: "Customer", count: 2 }]}
       />,
     );
-    await user.selectOptions(await screen.findByRole("combobox", { name: /^Customer/ }), "chart-4");
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Color for Customer" }),
+      "chart-4",
+    );
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ labelColors: { Customer: "chart-4" } }),
     );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Shape for Customer" }),
+      "square",
+    );
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ labelShapes: { Customer: "square" } }),
+    );
     await user.selectOptions(screen.getByRole("combobox", { name: "Action" }), "expand");
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ clickAction: "expand" }));
-    view.rerender(<Editor options={plugin.options({ colorBy: "property" })} onChange={onChange} />);
+    view.rerender(
+      <Editor
+        options={plugin.options({ colorBy: "property" })}
+        onChange={onChange}
+        graphLabels={[{ label: "Customer", count: 2 }]}
+      />,
+    );
     expect(screen.getByRole("combobox", { name: "Color scheme" })).toBeTruthy();
+    // Colored by a property, a label keeps its shape and has no color of its own.
+    expect(screen.getByRole("group", { name: "Shape per label" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Shape for Customer" })).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Color for Customer" })).toBeNull();
     await user.selectOptions(screen.getByRole("combobox", { name: "Range" }), "fixed");
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ colorRange: "fixed" }));
   });
