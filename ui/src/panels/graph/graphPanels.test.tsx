@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: link placeholders such as ${__value} are typed by users, not template literals
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -382,7 +383,104 @@ describe("option texts", () => {
       caption: "titlekey",
       variable: "",
       variableProperty: "",
+      dataLinks: [],
     });
+  });
+});
+
+describe("data links of graph panels", () => {
+  const links = [
+    {
+      field: "customerId",
+      title: "Customer dashboard",
+      url: "/dashboards/d-cust?var-customer=${__value}&region=${region}",
+    },
+    {
+      field: "quantity",
+      title: "Order lines",
+      url: "https://erp.example/q/${__value}",
+      newTab: true,
+    },
+    { field: "id", title: "Element", url: "/explore?id=${__value}" },
+    { field: "name", title: "Unsafe", url: "javascript:alert('${__value}')" },
+  ];
+
+  it("offers a node's links in its details and an edge's with the neighbour it leads to", async () => {
+    const user = userEvent.setup();
+    await renderGraph(
+      "network",
+      FAKE_GRAPH,
+      { dataLinks: links },
+      { linkValues: { region: "eu west" } },
+    );
+    await user.click(screen.getByRole("button", { name: "Ada" }));
+    const details = screen.getByRole("region", { name: "Details of Ada" });
+    const own = within(details).getByRole("list", { name: "Data links of Ada" });
+    const customer = within(own).getByRole("link", { name: "Customer dashboard" });
+    expect(customer.getAttribute("href")).toBe(
+      "/dashboards/d-cust?var-customer=42&region=eu%20west",
+    );
+    expect(customer.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(customer.getAttribute("target")).toBeNull();
+    // `id` falls back to the element's own id, encoded.
+    expect(within(own).getByRole("link", { name: "Element" }).getAttribute("href")).toBe(
+      `/explore?id=${encodeURIComponent(ID.ada)}`,
+    );
+    // Only the node falls back to its own id; its edges have no `id` property, so no link.
+    expect(within(details).getAllByRole("link", { name: "Element" })).toHaveLength(1);
+    // A link whose address is not allowed never shows.
+    expect(within(details).queryByRole("link", { name: "Unsafe" })).toBeNull();
+    const edge = within(details).getAllByRole("link", { name: "Order lines" });
+    expect(edge.map((a) => a.getAttribute("href")).sort()).toEqual([
+      "https://erp.example/q/1",
+      "https://erp.example/q/2",
+    ]);
+    expect(edge[0]?.getAttribute("target")).toBe("_blank");
+    expect(edge[0]?.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it("offers the links of each node and edge of a path", async () => {
+    const withPath: GraphSet = {
+      ...FAKE_GRAPH,
+      paths: [{ nodes: [ID.grace, ID.lamp], edges: [ID.b3] }],
+    };
+    await renderGraph("path", withPath, { dataLinks: links });
+    expect(
+      within(screen.getByRole("list", { name: "Data links of Grace" }))
+        .getByRole("link", { name: "Customer dashboard" })
+        .getAttribute("href"),
+    ).toBe("/dashboards/d-cust?var-customer=43&region=${region}");
+    expect(
+      within(screen.getByRole("list", { name: "Data links of BOUGHT" }))
+        .getByRole("link", { name: "Order lines" })
+        .getAttribute("href"),
+    ).toBe("https://erp.example/q/5");
+  });
+
+  it("edits the links of a graph panel and says when an address is not allowed", async () => {
+    const plugin = getPanel("network") as AnyPanelPlugin;
+    const { Editor } = plugin;
+    const onChange = vi.fn();
+    const options = plugin.options({
+      dataLinks: [{ field: "customerId", title: "Open", url: "javascript:x" }],
+    });
+    render(<Editor options={options} onChange={onChange} />);
+    expect(
+      await screen.findByText("The address must start with https://, http:// or /."),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Address" }), {
+      target: { value: "/dashboards/d-1?var-c=${__value}" },
+    });
+    expect(onChange.mock.lastCall?.[0].dataLinks).toEqual([
+      {
+        field: "customerId",
+        title: "Open",
+        url: "/dashboards/d-1?var-c=${__value}",
+        newTab: false,
+      },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Add data link" }));
+    expect(onChange.mock.lastCall?.[0].dataLinks).toHaveLength(2);
   });
 });
 

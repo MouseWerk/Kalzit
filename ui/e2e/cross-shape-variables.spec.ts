@@ -141,3 +141,104 @@ test("a Mongo document click drives a Cypher graph panel through a dashboard var
     await expect(panel.getByRole("button", { name: "Ana", exact: true })).toHaveCount(0);
   });
 });
+
+// A data link on the order's customer.city opens another dashboard with $city filled in from the
+// field's value (`?var-city=Leipzig`); that dashboard's Cypher panel then shows the customers of
+// Leipzig. The link is stored through the server's option checks like any panel option.
+test("a data link on a document field opens another dashboard with the value as its variable", async ({
+  page,
+}) => {
+  const neo4j = serviceAddress("KALZIT_E2E_NEO4J");
+  const mongo = serviceAddress("KALZIT_E2E_MONGODB");
+  const owner = await Api.owner();
+  let ordersId = "";
+  let cityId = "";
+  try {
+    const orders = await owner.createSource(
+      unique("Bestellungen"),
+      "mongodb",
+      { hosts: mongo, database: MONGO_FIXTURE.database, user: MONGO_FIXTURE.user },
+      { password: MONGO_FIXTURE.password },
+    );
+    const graph = await owner.createSource(
+      unique("Shop graph"),
+      "neo4j",
+      { ...boltTarget(neo4j), user: GRAPH_FIXTURE.neo4jUser },
+      { password: GRAPH_FIXTURE.neo4jPassword },
+    );
+    cityId = await owner.createDashboard({
+      schemaVersion: 1,
+      title: unique("City"),
+      timeRange: { from: "now-1h", to: "now" },
+      variables: [{ name: "city", type: "textbox", current: "Hamburg" }],
+      panels: [
+        {
+          id: "graph",
+          type: "network",
+          title: GRAPH_PANEL,
+          grid: { x: 0, y: 0, w: 24, h: 12 },
+          targets: [{ refId: "A", datasourceId: graph, query: { cypher: ORDERS_IN_CITY } }],
+        },
+      ],
+    });
+    ordersId = await owner.createDashboard({
+      schemaVersion: 1,
+      title: unique("Orders"),
+      timeRange: { from: "now-1h", to: "now" },
+      panels: [
+        {
+          id: "order",
+          type: "documents",
+          title: "Order",
+          grid: { x: 0, y: 0, w: 24, h: 12 },
+          targets: [
+            {
+              refId: "A",
+              datasourceId: orders,
+              query: { collection: MONGO_FIXTURE.collection, filter: '{"number": "A-1003"}' },
+            },
+          ],
+          options: {
+            dataLinks: [
+              {
+                field: "customer.city",
+                title: "Orders in this city",
+                url: `/dashboards/${cityId}?var-city=\${__value}`,
+              },
+            ],
+          },
+        },
+      ],
+    });
+  } finally {
+    await owner.dispose();
+  }
+
+  await signInOwner(page);
+  await page.goto(`/dashboards/${ordersId}`, { timeout: STEP_MS });
+  const link = page.getByRole("link", { name: "Orders in this city", exact: true });
+
+  await test.step("selecting the order offers the link with its city filled in", async () => {
+    await page
+      .getByRole("treeitem")
+      .filter({ hasText: t("documents.tree.document", { number: 1 }) })
+      .first()
+      .click({ timeout: STEP_MS });
+    await expect(link).toHaveAttribute("href", `/dashboards/${cityId}?var-city=Leipzig`, {
+      timeout: STEP_MS,
+    });
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  await test.step("the link opens the other dashboard with $city set", async () => {
+    await link.click({ timeout: STEP_MS });
+    await expect(page.getByRole("textbox", { name: "city" })).toHaveValue("Leipzig", {
+      timeout: STEP_MS,
+    });
+    const panel = page.getByRole("article", { name: GRAPH_PANEL, exact: true });
+    await expect(panel).toContainText(summary(2, 1), { timeout: STEP_MS });
+    await showTables(panel, GRAPH_PANEL);
+    await expect(nodeTable(panel, GRAPH_PANEL, 2)).toBeVisible({ timeout: STEP_MS });
+    await expect(panel.getByRole("button", { name: "David", exact: true })).toBeVisible();
+  });
+});

@@ -231,7 +231,10 @@ Annotations mark points or spans in time on every time chart.
 **Links** appear under the dashboard's title. A link goes to an **Address** (starting with
 `https://`, `http://`, `mailto:` or `/` for a page of this server, variables such as `${name}`
 allowed) or lists **Dashboards with a tag**. Add tags to a dashboard in its settings (comma
-separated). Links can open in a new tab. Data links on panels work the same way.
+separated). Links can open in a new tab. Data links on panels work the same way. Document and
+graph panels also take links on a field or property, filled in with its value (see
+[Data links](panels.md#data-links-from-fields-nodes-and-edges)). A dashboard address can carry
+starting values for its variables: `/dashboards/<id>?var-region=eu` sets `$region` to `eu`.
 
 ## Library panels
 

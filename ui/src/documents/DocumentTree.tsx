@@ -10,6 +10,8 @@ import { entriesOf, typeOf } from "./values";
 import "./documents.css";
 import "../features/dashboards/ui/shared.css";
 import { Icon } from "../components/Icon";
+import { DataLinkList } from "../panels/DataLinkViews";
+import type { OpenLink } from "../panels/dataLinks";
 
 /** Fixed row height in px, which is what lets the tree render only the rows in view. */
 export const TREE_ROW_HEIGHT = 28;
@@ -147,6 +149,8 @@ export interface DocumentTreeProps {
    */
   onActivate?: ((item: number, segments: Segment[], value: unknown) => void) | undefined;
   activateLabel?: string | undefined;
+  /** The data links of a row, which the bar offers while the row is the active one. */
+  linksOf?: ((item: number, segments: Segment[], value: unknown) => OpenLink[]) | undefined;
 }
 
 /**
@@ -164,6 +168,7 @@ export function DocumentTree({
   onOpenList,
   onActivate,
   activateLabel,
+  linksOf,
 }: DocumentTreeProps) {
   const { t, language } = useI18n();
   const baseId = useId();
@@ -355,6 +360,10 @@ export function DocumentTree({
     hasPath && onOpenList !== undefined && Array.isArray(active.value) && active.value.length > 0;
   const canActivate =
     onActivate !== undefined && activateLabel !== undefined && active?.more === undefined;
+  const links =
+    linksOf !== undefined && active !== undefined && active.more === undefined
+      ? linksOf(active.item, active.segments, active.value)
+      : [];
 
   return (
     <div className="doc-tree">
@@ -423,6 +432,12 @@ export function DocumentTree({
             ) : null}
           </div>
         ) : null}
+        <DataLinkList
+          links={links}
+          label={t("panels.dataLinks.of", {
+            name: hasPath ? path : itemLabel(active?.item ?? 0),
+          })}
+        />
         <span className="visually-hidden" id={hintId}>
           {t("documents.tree.keys")}
         </span>

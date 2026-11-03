@@ -186,6 +186,29 @@ For `documents` results (see [Explore](explore.md#documents)):
   field** names the card. With **Clicking a value sets**, each value is a button that sets the
   variable to the value at the field path in the shown document, or to the clicked value.
 
+### Data links from fields, nodes and edges
+
+The document explorer, the document card and the graph panels take **Data links**: a link on a
+**Field path** (`customer.id`) or, in graph panels, on a **Property of the node or edge**
+(`customerId`; `id` falls back to the element's own id). A link has a **Title**, an **Address**
+and **Open in a new tab**. The address starts with `https://`, `http://` or `/` for a page of
+Kalzit; `${__value}` is the field's value and `${__field}` its name, dashboard variables such as
+`${region}` work too, and every value is URL-encoded. To open another dashboard with the value as
+its variable, write `/dashboards/<id>?var-customer=${__value}`: a dashboard takes `var-name`
+parameters as the starting values of its variables (a fixed-values variable only one of its
+values, a single-value variable the first of several; a constant keeps its own) and then takes
+them out of the address. The host of a web address is written out: placeholders and variables
+go in the path, query or fragment, never in the host. The panel editor keeps **Apply** until
+every data link has a field, a title and an allowed address.
+
+Where links show: the document explorer offers a field's links while its value is selected (with
+a whole document selected, the links of all its fields), the document card under its title, the
+network and hierarchy panels in the node's details (and an edge's with the neighbour it leads to),
+and the path panel with each node and edge of a path. A link shows only where the field has a
+plain value. The server refuses other addresses (`javascript:`, `data:`, `mailto:` or another
+site without a scheme) when the dashboard is saved, at most 20 links per panel, and links always
+open with `rel="noopener noreferrer"`.
+
 ![Documents as a tree, schema and distribution](../screenshots/dashboard-documents-dark.png)
 
 ## Graph panels
@@ -215,6 +238,8 @@ The options are grouped as in the panel editor:
 - **Layout** (hierarchy only): **Kalzit layers (default)** or **ELK layered**, see below.
 - **Explorer**, **Limits and groups** (**Node limit**, **Group nodes by label**) and **Time**
   (an edge property with a timestamp adds a time slider).
+- **Data links**: links from a node or edge property, see
+  [Data links](#data-links-from-fields-nodes-and-edges).
 
 Selecting a node opens its details beside the drawing (over it in narrow panels): labels, typed
 properties, edges and component, and its neighbours grouped by edge type and direction, with **Load
