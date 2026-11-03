@@ -13,6 +13,8 @@ import {
 } from "./dataLinks";
 import { usePanelHost } from "./host";
 import "./dataLinks.css";
+// `settings__item`, the frame of each link in the editor, as for the panel links.
+import "../features/dashboards/dashboardTools.css";
 
 const NO_VALUES: VariableValues = {};
 
