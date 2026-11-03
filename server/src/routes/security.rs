@@ -71,6 +71,9 @@ pub struct Status {
     /// Until when this session's last confirmation of the password allows setting up the first
     /// factor.
     password_confirmed_until: Option<i64>,
+    /// Until when this session counts as just signed in, which the first factor of an account
+    /// without a password needs.
+    fresh_sign_in_until: Option<i64>,
     /// Wrong codes locked the second step until then.
     locked_until: Option<i64>,
     /// The account has a local password.
@@ -95,6 +98,7 @@ async fn status(
         methods: sf::methods(&state.db, &user.id).await?,
         confirmed_until: sf::confirmed_until(&state.db, &hash, now).await?,
         password_confirmed_until: password_confirmed_until(&state, &hash, now).await?,
+        fresh_sign_in_until: fresh_sign_in_until(&state, &hash, now).await?,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         has_password: password.is_some(),
     }))
@@ -182,10 +186,21 @@ fn method_off() -> ApiError {
     ApiError::forbidden("this method is turned off on this server").because("second_factor.method_off")
 }
 
+/// Until when the session counts as just signed in: its sign-in within `CONFIRMATION_TTL_MS`.
+async fn fresh_sign_in_until(state: &AppState, hash: &str, now: i64) -> ApiResult<Option<i64>> {
+    let row: Option<(i64,)> = sqlx::query_as("SELECT created_at FROM sessions WHERE token_hash = $1")
+        .bind(hash)
+        .fetch_optional(&state.db)
+        .await?;
+    Ok(row.map(|(at,)| at + sf::CONFIRMATION_TTL_MS).filter(|until| *until > now))
+}
+
 /// A stolen session must not plant a factor of its own: adding to an account that already has a
 /// factor, or replacing one, needs a fresh confirmation with it; the first factor of an account
 /// with a password needs a fresh confirmation of the password (`confirmation_required`, reason
-/// `second_factor.confirm_password`). An account with neither has nothing to confirm with.
+/// `second_factor.confirm_password`); the first factor of an account without one (it signs in
+/// through a provider or a directory) needs a session signed in within the last minutes (reason
+/// `second_factor.sign_in_again`), so the person signs in again first.
 async fn require_fresh_to_enroll(state: &AppState, user_id: &str, hash: &str, now: i64) -> ApiResult<Methods> {
     let has = sf::methods(&state.db, user_id).await?;
     if has.any() {
@@ -201,6 +216,14 @@ async fn require_fresh_to_enroll(state: &AppState, user_id: &str, hash: &str, no
             "confirm your password first (POST /me/security/confirm/password)",
         )
         .because("second_factor.confirm_password"));
+    }
+    if password.is_none() && fresh_sign_in_until(state, hash, now).await?.is_none() {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "confirmation_required",
+            "sign in again first; the first second factor needs a sign-in from the last minutes",
+        )
+        .because("second_factor.sign_in_again"));
     }
     Ok(has)
 }

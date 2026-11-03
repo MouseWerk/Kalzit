@@ -24,7 +24,9 @@ Kalzit asks for one of these.
   safely" to go on. **Make new ones** replaces the whole set.
 
 Your first method asks for your password first, so that nobody who took over a signed-in
-browser of yours can set up a second factor of their own. Setting it up signs you out on every
+browser of yours can set up a second factor of their own. If you sign in only through a provider
+or directory and have no password, it asks you to sign in again first unless you signed in within
+the last five minutes. Setting it up signs you out on every
 other device and browser; sign in there again with the new second factor.
 
 Removing a method, making new recovery codes, adding another method and changing your password

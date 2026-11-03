@@ -28,6 +28,10 @@ export interface FakeSecurity {
   ownPassword: string;
   /** This session's confirmation of the password, which the first factor needs. */
   passwordConfirmedUntil: number | null;
+  /** The account has a local password; without one the first factor needs a fresh sign-in. */
+  hasPassword: boolean;
+  /** Until when the session counts as just signed in. */
+  freshSignInUntil: number | null;
   /** Resets an admin made, by path, with their body. */
   resets: { path: string; body: unknown }[];
   /** The recent sign-ins every list answers, and the paths that asked for them. */
@@ -51,6 +55,8 @@ export function fakeSecurityState(): FakeSecurity {
     confirmedUntil: null,
     ownPassword: "correct horse battery",
     passwordConfirmedUntil: null,
+    hasPassword: true,
+    freshSignInUntil: null,
     resets: [],
     signIns: [],
     signInRequests: [],
@@ -224,11 +230,16 @@ export function handleSecurityRoute(
   const fresh = s.confirmedUntil !== null && s.confirmedUntil > now;
   const passwordFresh = s.passwordConfirmedUntil !== null && s.passwordConfirmedUntil > now;
   // The first factor needs the password, the others the factor, confirmed in the last minutes.
-  const mayEnroll = has ? fresh : passwordFresh;
+  const signInFresh = s.freshSignInUntil !== null && s.freshSignInUntil > now;
+  const mayEnroll = has ? fresh : s.hasPassword ? passwordFresh : signInFresh;
   const enrollRefused = () =>
     has
       ? fail(403, "confirmation_required")
-      : fail(403, "confirmation_required", "second_factor.confirm_password");
+      : fail(
+          403,
+          "confirmation_required",
+          s.hasPassword ? "second_factor.confirm_password" : "second_factor.sign_in_again",
+        );
   if (path === "/api/me/security" && method === "GET") {
     return json(200, {
       required: s.required !== null,
@@ -242,8 +253,9 @@ export function handleSecurityRoute(
           : null,
       confirmedUntil: fresh ? s.confirmedUntil : null,
       passwordConfirmedUntil: passwordFresh ? s.passwordConfirmedUntil : null,
+      freshSignInUntil: signInFresh ? s.freshSignInUntil : null,
       lockedUntil: s.lockedUntil !== null && s.lockedUntil > now ? s.lockedUntil : null,
-      hasPassword: true,
+      hasPassword: s.hasPassword,
     });
   }
   if (path === "/api/me/security/confirm" && method === "POST") {

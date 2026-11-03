@@ -763,7 +763,7 @@ function handleOrg(
     return json(200, { permission, allowed: sources.length > 0, sources });
   }
   if (area === "sign-in" && id === "password-only" && method === "GET") {
-    needs(state, "users:read");
+    needs(state, "settings:write");
     return json(200, state.passwordOnly);
   }
   if (area === "settings") {

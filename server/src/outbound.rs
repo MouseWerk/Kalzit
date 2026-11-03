@@ -244,6 +244,36 @@ fn check_addresses(host: &str, port: u16, ips: &[IpAddr], own: &OwnAddresses, db
     Ok(())
 }
 
+/// How long `current` keeps the result of `check_not_own_resolved` for a proxy address, so a
+/// proxy in use is not resolved for every request through it. Saving the setting checks afresh.
+const OWN_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The last results of `check_not_own_resolved` by proxy address and Kalzit's own addresses.
+type OwnCheckCache = std::collections::HashMap<String, (std::time::Instant, Result<(), String>)>;
+static OWN_CHECKS: std::sync::Mutex<Option<OwnCheckCache>> = std::sync::Mutex::new(None);
+
+/// `check_not_own_resolved`, answered from a result at most `OWN_CHECK_TTL` old.
+async fn check_not_own_cached(text: &str, own: &OwnAddresses) -> Result<(), String> {
+    let key = format!("{text} {own:?}");
+    let now = std::time::Instant::now();
+    let fresh = |seen: &OwnCheckCache| {
+        seen.get(&key).filter(|(at, _)| now.duration_since(*at) < OWN_CHECK_TTL).map(|(_, r)| r.clone())
+    };
+    {
+        let guard = OWN_CHECKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(result) = guard.as_ref().and_then(fresh) {
+            return result;
+        }
+    }
+    let result = check_not_own_resolved(text, own).await;
+    let mut guard = OWN_CHECKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let seen = guard.get_or_insert_with(std::collections::HashMap::new);
+    // Only a few proxy addresses are ever in use; old ones go.
+    seen.retain(|_, (at, _)| now.duration_since(*at) < OWN_CHECK_TTL);
+    seen.insert(key, (now, result.clone()));
+    result
+}
+
 /// Checks a `network.no_proxy` entry.
 pub fn check_bypass(text: &str) -> Result<(), String> {
     parse_bypass(text)
@@ -349,7 +379,7 @@ pub async fn current(state: &AppState) -> ApiResult<Option<Arc<OutboundProxy>>> 
         _ => None,
     };
     // A proxy stored before this check existed, or set through the environment, is refused too.
-    check_not_own_resolved(url, &OwnAddresses::of(&state.config))
+    check_not_own_cached(url, &OwnAddresses::of(&state.config))
         .await
         .map_err(|e| ApiError::internal("outbound proxy", e))?;
     let proxy =
@@ -509,6 +539,16 @@ mod tests {
         assert!(check_not_own_resolved("http://localhost:3000", &own).await.is_err());
         assert!(check_not_own_resolved("http://0x7f.1:3000", &own).await.is_err());
         assert!(check_not_own_resolved("http://localhost:3128", &own).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_check_of_a_proxy_in_use_is_kept_for_a_minute() {
+        let own = OwnAddresses { listeners: vec!["127.0.0.1:3999".parse().unwrap()], database: None };
+        assert!(check_not_own_cached("http://localhost:3999", &own).await.is_err());
+        assert!(check_not_own_cached("http://localhost:3998", &own).await.is_ok());
+        let key = format!("http://localhost:3999 {own:?}");
+        let guard = OWN_CHECKS.lock().unwrap();
+        assert!(guard.as_ref().unwrap().get(&key).is_some_and(|(_, r)| r.is_err()), "kept");
     }
 
     #[test]

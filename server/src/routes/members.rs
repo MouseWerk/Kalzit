@@ -23,7 +23,12 @@ use crate::shapes::Page;
 pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/orgs/{orgId}/members", Access::Org(Permission::UsersRead), list),
-        route(Method::GET, "/orgs/{orgId}/sign-in/password-only", Access::Org(Permission::UsersRead), password_only),
+        route(
+            Method::GET,
+            "/orgs/{orgId}/sign-in/password-only",
+            Access::Org(Permission::SettingsWrite),
+            password_only,
+        ),
         route(Method::POST, "/orgs/{orgId}/members", Access::Org(Permission::UsersWrite), add).changes_rights(),
         route(Method::PATCH, "/orgs/{orgId}/members/{userId}", Access::Org(Permission::UsersWrite), change_role)
             .changes_rights(),

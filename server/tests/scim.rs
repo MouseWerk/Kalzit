@@ -1200,3 +1200,29 @@ async fn scim_never_rewrites_an_account_someone_signs_in_to_or_a_protected_one()
     assert_eq!(t.account(&pit).await.0, "pit@mueller.example");
     t.finish().await;
 }
+
+#[tokio::test]
+async fn a_changed_address_of_another_account_gets_the_neutral_answer() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    let uwe = t.scim(Method::POST, "/Users", Some(json!({ "userName": "uwe@mueller.example" })), &token).await.id();
+    t.person("Lea Hoffmann", "lea@mueller.example").await;
+    // The answer for a new user whose account cannot be linked.
+    let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "joerg@example.de" })), &token).await;
+    let neutral = r.body.clone();
+    let ops = patch(
+        json!([{ "op": "replace", "path": "emails", "value": [{ "value": "lea@mueller.example", "primary": true }] }]),
+    );
+    let r = t.scim(Method::PATCH, &format!("/Users/{uwe}"), Some(ops), &token).await;
+    assert_eq!((r.status, &r.body), (StatusCode::CONFLICT, &neutral), "the answer does not say the address is taken");
+    let refused: Vec<(Value, Value)> = t
+        .audit_actions()
+        .await
+        .into_iter()
+        .filter(|(a, _)| a == "scim.request_refused")
+        .map(|(_, s)| (s["reason"].clone(), s["why"].clone()))
+        .collect();
+    assert_eq!(refused.last(), Some(&(json!("scim.account_not_linkable"), json!("email_taken"))));
+    t.finish().await;
+}

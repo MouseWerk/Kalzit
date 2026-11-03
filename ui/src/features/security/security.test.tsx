@@ -132,6 +132,29 @@ describe("forced setup", () => {
 });
 
 describe("account: sign-in and security", () => {
+  it("asks an account without a password to sign in again before its first factor", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.hasPassword = false;
+    const { user } = renderApp("/settings/account-security");
+    expect(await screen.findByText(/Protect your account with a second factor/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Set up" }));
+    const dialog = await screen.findByRole("dialog", { name: "Set up an authenticator app" });
+    expect(within(dialog).getByText(/Sign in again first/)).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Sign in again" })).toBeTruthy();
+    expect(within(dialog).queryByLabelText("Six-digit code")).toBeNull();
+  });
+
+  it("sets up the app right after a sign-in when the account has no password", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.hasPassword = false;
+    server.security.freshSignInUntil = Date.now() + 300_000;
+    const { user } = renderApp("/settings/account-security");
+    await user.click(await screen.findByRole("button", { name: "Set up" }));
+    const dialog = await screen.findByRole("dialog", { name: "Set up an authenticator app" });
+    await user.type(await within(dialog).findByLabelText("Six-digit code"), server.security.code);
+    expect(await screen.findByRole("dialog", { name: "Your recovery codes" })).toBeTruthy();
+  });
+
   it("sets up the app and shows the first recovery codes once", async () => {
     const server = installFakeServer({ signedIn: true });
     const { user } = renderApp("/settings/account-security");

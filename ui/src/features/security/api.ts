@@ -64,6 +64,8 @@ export interface SecurityStatus {
   confirmedUntil: number | null;
   /** This session's fresh confirmation of the password, which the first factor needs. */
   passwordConfirmedUntil: number | null;
+  /** Until when this session counts as just signed in (the first factor without a password). */
+  freshSignInUntil: number | null;
   lockedUntil: number | null;
   hasPassword: boolean;
 }
@@ -150,6 +152,7 @@ function isStatus(value: unknown): value is SecurityStatus {
       (isRecord(value.recoveryCodes) && isNumber(value.recoveryCodes.remaining))) &&
     isNullableNumber(value.confirmedUntil) &&
     isNullableNumber(value.passwordConfirmedUntil) &&
+    isNullableNumber(value.freshSignInUntil) &&
     isNullableNumber(value.lockedUntil) &&
     typeof value.hasPassword === "boolean"
   );

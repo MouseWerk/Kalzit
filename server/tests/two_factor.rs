@@ -1307,6 +1307,53 @@ async fn check_a_stolen_password_session_never_passes_a_required_second_factor(t
     t.finish().await;
 }
 
+/// An account without a password (it signs in through a provider or a directory) sets up its
+/// first second factor only in a session signed in within the last minutes: a stolen session that
+/// is older cannot plant one.
+async fn check_a_passwordless_account_enrolls_only_right_after_a_sign_in(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let sina_id = direct_member(&t, &owner, &org, "sina@example.de").await;
+    let (stolen, _) = t.password("sina@example.de").await;
+    let (own, _) = t.password("sina@example.de").await;
+    // From here on the account signs in only through its provider.
+    sqlx::query("UPDATE users SET password_hash = NULL WHERE id = $1")
+        .bind(&sina_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    t.clock.advance_ms(kalzit::auth::second_factor::CONFIRMATION_TTL_MS + 1_000);
+    for path in ["/api/me/security/totp/setup", "/api/me/security/passkeys/setup"] {
+        let r = t.post(path, json!({}), &stolen).await;
+        assert_eq!(
+            (r.status, r.code(), r.reason()),
+            (StatusCode::FORBIDDEN, "confirmation_required", "second_factor.sign_in_again"),
+            "{path}: {}",
+            r.body
+        );
+    }
+    let r = t.get("/api/me/security", &stolen).await;
+    assert_eq!((r.body["hasPassword"].clone(), r.body["freshSignInUntil"].clone()), (json!(false), Value::Null));
+    // As if Sina had just signed in again through the provider.
+    let token = own.session.as_deref().unwrap().split_once('=').unwrap().1;
+    sqlx::query("UPDATE sessions SET created_at = $1 WHERE token_hash = $2")
+        .bind(t.clock.now_ms())
+        .bind(kalzit::auth::session::hash_token(token))
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.get("/api/me/security", &own).await;
+    assert!(r.body["freshSignInUntil"].is_number(), "{}", r.body);
+    let (_, codes) = t.enroll_totp(&own).await;
+    assert_eq!(codes.len(), 10);
+    assert_eq!(t.get("/api/me", &stolen).await.status, StatusCode::UNAUTHORIZED, "the older session ended");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn a_passwordless_account_enrolls_only_right_after_a_sign_in() {
+    check_a_passwordless_account_enrolls_only_right_after_a_sign_in(test_app().await).await;
+}
+
 /// A provider's word for a second factor counts only while that provider is enabled and Kalzit
 /// still takes its word for one.
 async fn check_a_providers_second_factor_counts_while_it_is_trusted(t: TestApp) {
@@ -1339,14 +1386,14 @@ async fn check_the_owners_without_a_provider_sign_in_are_listed(t: TestApp) {
     let (owner, org) = t.setup().await;
     let owner_id = member_id(&t, "joerg@example.de").await;
     let ada = t.member(&owner, &org, "ada@example.de", "admin").await;
-    t.member(&owner, &org, "vera@example.de", "viewer").await;
+    t.member(&owner, &org, "vera@example.de", "editor").await;
     let path = format!("/api/orgs/{org}/sign-in/password-only");
     let emails = |r: &Reply| -> Vec<String> {
         r.body.as_array().unwrap().iter().map(|p| p["email"].as_str().unwrap().to_string()).collect()
     };
     let r = t.get(&path, &ada).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(emails(&r), ["ada@example.de", "joerg@example.de"], "viewers are not listed: {}", r.body);
+    assert_eq!(emails(&r), ["ada@example.de", "joerg@example.de"], "editors are not listed: {}", r.body);
     // The owner signs in through a provider whose rule for people without a group leads here.
     insert_provider(&t, false).await;
     sqlx::query(
@@ -1362,9 +1409,9 @@ async fn check_the_owners_without_a_provider_sign_in_are_listed(t: TestApp) {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = t.get(&path, &ada).await;
     assert_eq!(emails(&r), ["ada@example.de"], "{}", r.body);
-    // A viewer may not read it.
-    let (viewer, _) = t.password("vera@example.de").await;
-    assert_eq!(t.get(&path, &viewer).await.status, StatusCode::FORBIDDEN);
+    // Only who may change the organization's settings reads it, not an editor.
+    let (editor, _) = t.password("vera@example.de").await;
+    assert_eq!(t.get(&path, &editor).await.status, StatusCode::FORBIDDEN);
     t.finish().await;
 }
 
@@ -1405,4 +1452,5 @@ async fn postgres_two_factor() {
     check_a_stolen_password_session_never_passes_a_required_second_factor(postgres_app(&base).await).await;
     check_a_providers_second_factor_counts_while_it_is_trusted(postgres_app(&base).await).await;
     check_the_owners_without_a_provider_sign_in_are_listed(postgres_app(&base).await).await;
+    check_a_passwordless_account_enrolls_only_right_after_a_sign_in(postgres_app(&base).await).await;
 }

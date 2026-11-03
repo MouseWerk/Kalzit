@@ -131,6 +131,8 @@
   "security.dialog.passwordLabel": "Passwort deines Kontos",
   "security.dialog.passwordRequired": "Gib das Passwort deines Kontos ein.",
   "security.dialog.passwordWrong": "Das Passwort stimmt nicht.",
+  "security.dialog.signInAgainText": "Du meldest dich über einen Anbieter oder ein LDAP-Verzeichnis an. Melde dich zuerst neu an: Der erste zweite Faktor braucht eine Anmeldung aus den letzten Minuten, damit niemand, der diese Sitzung übernommen hat, einen einrichten kann.",
+  "security.dialog.signInAgain": "Neu anmelden",
   "security.dialog.settingText": "Wer einen zweiten Faktor braucht und welche Methoden man einrichten darf, ändert sich für alle auf einmal; deshalb fragt Kalzit zuerst nach deinem eigenen zweiten Faktor.",
   "security.dialog.passwordText": "Ein neues Passwort schwächt, was dein Konto schützt; deshalb fragt Kalzit zuerst nach deinem zweiten Faktor.",
   "security.dialog.appTitle": "Authenticator-App einrichten",

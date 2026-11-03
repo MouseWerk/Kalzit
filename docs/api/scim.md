@@ -142,7 +142,8 @@ as `active`, `name.givenName`, `emails[type eq "work"].value` and
 `urn:ietf:params:scim:schemas:core:2.0:User:userName`, and an object of attributes without a path
 (`{"op": "replace", "value": {"active": false}}`). SCIM changes the name and address of an
 account only while it owns it (see "Accounts"); a new address must not belong to another account
-(`409`, `scim.email_taken`). For any other account, the directory's name and emails are kept on the
+(`409 uniqueness`, `scim.account_not_linkable`, the same neutral answer as for a new user; the
+audit entry's `why` is `email_taken`). For any other account, the directory's name and emails are kept on the
 SCIM user only.
 
 **Deactivating** (`active: false` or `DELETE`): an account this organization's SCIM owns is
@@ -294,7 +295,6 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | `scim.user_name_missing` | `400 invalidValue`, `mutability` | a user without `userName`, or removing it |
 | `scim.user_name_taken` | `409 uniqueness` | another user of the organization has this `userName` |
 | `scim.email_missing` | `400 invalidValue` | a new user without an address |
-| `scim.email_taken` | `409 uniqueness` | a changed address of a user belongs to another account |
 | `scim.account_linked` | `409 uniqueness` | the account with the address is already a SCIM user of this organization |
 | `scim.account_not_linkable` | `409 uniqueness` | a new user's address names an account that cannot be linked (several accounts or a service account, a server admin or the break-glass admin, an unconfirmed address, or another organization's member; the answer does not say which, the audit entry's `why` does); invite the person instead |
 | `scim.account_protected` | `403` | deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |

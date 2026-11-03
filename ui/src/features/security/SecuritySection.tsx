@@ -1,6 +1,7 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { forgetAccountData, logout, meQuery } from "../../api/auth";
 import { isApiError } from "../../api/client";
 import { AccessNotice } from "../../auth/AccessLayout";
 import { PasswordField } from "../../auth/PasswordField";
@@ -466,7 +467,11 @@ function ConfirmFirst({
   const { t } = useI18n();
   const queryClient = useQueryClient();
   if (!hasFactor(status)) {
-    return <ConfirmPasswordFirst onConfirmed={onConfirmed} />;
+    return status.hasPassword ? (
+      <ConfirmPasswordFirst onConfirmed={onConfirmed} />
+    ) : (
+      <SignInAgain />
+    );
   }
   return (
     <>
@@ -492,8 +497,54 @@ function needsConfirmation(status: SecurityStatus): boolean {
   if (hasFactor(status)) {
     return !isConfirmed(status);
   }
-  const until = status.passwordConfirmedUntil;
-  return status.hasPassword && (until === null || until - 5_000 <= Date.now());
+  const until = status.hasPassword ? status.passwordConfirmedUntil : status.freshSignInUntil;
+  return until === null || until - 5_000 <= Date.now();
+}
+
+/**
+ * The first second factor of an account without a password (it signs in through a provider or a
+ * directory) needs a sign-in from the last minutes: the person signs out and in again, and comes
+ * back here.
+ */
+function SignInAgain() {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const signIn = useMutation({
+    mutationFn: async () => {
+      await queryClient.cancelQueries();
+      await logout();
+    },
+    onSuccess: () => {
+      forgetAccountData(queryClient);
+      queryClient.setQueryData(meQuery.queryKey, null);
+      const back = `${window.location.pathname}${window.location.search}`;
+      window.location.assign(`/login?redirect=${encodeURIComponent(back)}`);
+    },
+  });
+  return (
+    <>
+      <p className="admin-dialog__text">{t("security.dialog.signInAgainText")}</p>
+      {signIn.isError ? (
+        <p className="admin-error" role="alert">
+          {errorText(t, signIn.error)}
+        </p>
+      ) : null}
+      <div className="admin-dialog__footer">
+        <button
+          type="button"
+          className="button button--primary"
+          aria-disabled={signIn.isPending}
+          onClick={() => {
+            if (!signIn.isPending) {
+              signIn.mutate();
+            }
+          }}
+        >
+          {t("security.dialog.signInAgain")}
+        </button>
+      </div>
+    </>
+  );
 }
 
 /**

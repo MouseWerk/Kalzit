@@ -827,7 +827,10 @@ async fn update_account(
     {
         let others = crate::routes::all_accounts_with_email(&mut *conn, &email).await?;
         if others.iter().any(|(other, _)| other != id) {
-            return Err(ScimError::taken("another account has this email").because("scim.email_taken"));
+            // The same neutral answer as for a new user's address (`existing_account`).
+            return Err(ScimError::taken("an account with this email cannot be linked; invite the person instead")
+                .because("scim.account_not_linkable")
+                .why("email_taken"));
         }
         sqlx::query("UPDATE users SET email = $1, email_confirmed = 0 WHERE id = $2")
             .bind(&email)

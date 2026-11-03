@@ -88,7 +88,7 @@ its `scim_owned` memberships become `direct`.
 | Method and path | Access | Answer |
 |---|---|---|
 | `GET /orgs/{orgId}/members` | `users:read` | `200 Page<Member>`, newest member first |
-| `GET /orgs/{orgId}/sign-in/password-only` | `users:read` | `200 [{ "userId", "name", "email", "role" }]` |
+| `GET /orgs/{orgId}/sign-in/password-only` | `settings:write` | `200 [{ "userId", "name", "email", "role" }]` |
 | `POST /orgs/{orgId}/members` | `users:write` | `201 Member` |
 | `PATCH /orgs/{orgId}/members/{userId}` | `users:write` | `200 Member` |
 | `DELETE /orgs/{orgId}/members/{userId}` | `users:write` | `204` |
@@ -1059,6 +1059,7 @@ interface SecurityStatus {
   recoveryCodes: { remaining: number; total: number; createdAt: number } | null;
   confirmedUntil: number | null;   // this session's fresh confirmation, while it lasts
   passwordConfirmedUntil: number | null;   // this session's fresh password confirmation
+  freshSignInUntil: number | null;   // this session counts as just signed in until then
   lockedUntil: number | null;
   hasPassword: boolean;
 }
@@ -1088,11 +1089,17 @@ confirmation_required` without it. A sign-in with a second factor counts as one.
 **The first method.** On an account with a password and no method yet, `/totp/setup`, `/totp`,
 `/passkeys/setup` and `/passkeys` need a fresh confirmation of the password: `POST
 /me/security/confirm/password` `{ "password" }` (wrong: `422 validation` with `field`
-`password`; it shares the budget of `POST /me/password`) lets this session set up the first
+`password`; it shares the budget of `POST /me/password`, and like a failed check there, each
+failure counts toward the account's sign-in lockout from all addresses) lets this session set up
+the first
 method for 5 minutes; without it they answer `403 confirmation_required` with reason
 `second_factor.confirm_password`. A session someone took over cannot plant a factor of its own
 that way. An account with neither a password nor a method (one that signs in only through a
-provider) sets up its first method without it. Saving the first method ends every other session
+provider or a directory) sets up its first method only in a session that signed in within the
+last 5 minutes (`sessions.created_at`); an older one answers `403 confirmation_required` with
+reason `second_factor.sign_in_again`, and the UI offers "Sign in again" (sign out, then the
+provider's sign-in). `SecurityStatus.freshSignInUntil` says until when the session counts as
+just signed in. Saving the first method ends every other session
 of the account (`sessionsEnded` in the audit entry), as a new password does, also when it is set
 up during a sign-in; the session that set it up counts as having proved it for the organization
 sign-in rules, but not as a fresh confirmation for weakening changes.
@@ -1186,6 +1193,7 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.reset_needs_server_admin` | `403 forbidden` | the account belongs to another organization or is a server admin |
 | `second_factor.org_required` | `403 org_second_factor_required` | the organization requires a second factor of this member and the session proved none; `params.orgId` |
 | `second_factor.confirm_password` | `403 confirmation_required` | the first method of an account with a password, without a fresh password confirmation |
+| `second_factor.sign_in_again` | `403 confirmation_required` | the first method of an account without a password, in a session signed in more than 5 minutes ago |
 | `second_factor.setup_first` | `409 conflict` | saving an organization's second factor rule that would refuse the saving member, who has none; `params.setupPath` |
 | `sso.org_local_off_blocked` | `409 conflict` | an organization's password sign-in `off` would lock people out; `params.check` is `providerReady` or `selfViaProvider` |
 | `sso.org_password_off` | `403 org_provider_sign_in_required` | the organization turned password sign-in off and the session was signed in with a password; `params.orgId` |
