@@ -234,7 +234,6 @@
   "graph.options.colorRange.fixed": "Fixed",
   "graph.options.colorMin": "From (optional)",
   "graph.options.colorMax": "To (optional)",
-  "graph.options.labelColors": "Color per label",
   "graph.options.labelColorsHint": "Colors from the palette in the order of the labels; a color of its own stays with the label.",
   "graph.options.labelColorAuto": "Automatic",
   "graph.options.labelColor": "Color {number}",

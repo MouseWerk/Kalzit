@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
 import { buildGraphModel, edgeWidths, nodeSizes } from "./model";
-import { parseGraphOptions } from "./options";
+import { NODE_SHAPES, parseGraphOptions, withEntry } from "./options";
+import { labelGroupOf } from "./paint";
 import { labelShapeOf, shapeByPlace } from "./shapes";
 import { buildView } from "./view";
 
@@ -57,6 +58,30 @@ describe("a node shape per label", () => {
     expect(nodes.map((n) => n.shape)).toEqual(["diamond", "diamond", "square"]);
     const clusters = buildView(model, { ...input, cluster: true }).nodes;
     expect(clusters.map((n) => n.shape)).toEqual(["diamond", "square"]);
+  });
+
+  it("never takes an object's own keys for a label's shape or color", () => {
+    const model = buildGraphModel([graph(["constructor", "toString", "__proto__", "A"])], {
+      nodeLimit: 100,
+      caption: "",
+    });
+    const shape = labelShapeOf(model, {});
+    for (const i of [0, 1, 2]) expect(NODE_SHAPES).toContain(shape(i));
+    expect(labelGroupOf(model, {})(0)).toBe(0);
+    // Stored per-label options keep such labels as labels.
+    const stored = JSON.parse('{"__proto__": "diamond", "constructor": "square"}');
+    const options = parseGraphOptions({
+      labelShapes: stored,
+      labelColors: { toString: "chart-3" },
+    });
+    expect(Object.hasOwn(options.labelShapes, "__proto__")).toBe(true);
+    const own = labelShapeOf(model, options.labelShapes);
+    expect([own(0), own(2)]).toEqual(["square", "diamond"]);
+    expect(labelGroupOf(model, options.labelColors)(1)).toBe(2);
+    // Setting and clearing a label's entry in the editor.
+    const set = withEntry({}, "__proto__", "circle");
+    expect(Object.hasOwn(set, "__proto__")).toBe(true);
+    expect(withEntry<string>(set, "__proto__", undefined)).toEqual({});
   });
 
   it("keeps only known shapes from stored options, at most fifty", () => {

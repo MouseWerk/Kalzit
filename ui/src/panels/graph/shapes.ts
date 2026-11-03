@@ -1,5 +1,5 @@
 import type { GraphModel } from "./model";
-import { NODE_SHAPES, type NodeShape } from "./options";
+import { NODE_SHAPES, type NodeShape, ownEntry } from "./options";
 
 /**
  * The shape of a node, a second cue next to its color: color alone fails readers who do not tell
@@ -41,6 +41,6 @@ export function labelShapeOf(
 ): (label: number) => NodeShape {
   return (label) => {
     if (label < 0) return "circle";
-    return labelShapes[model.labels[label] ?? ""] ?? shapeByPlace(label);
+    return ownEntry(labelShapes, model.labels[label] ?? "") ?? shapeByPlace(label);
   };
 }

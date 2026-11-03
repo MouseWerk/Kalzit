@@ -1,4 +1,4 @@
-import { Grid, LABEL_MARGIN, LABEL_PAD } from "./labelCollisions";
+import { LABEL_MARGIN, LABEL_PAD } from "./labelCollisions";
 
 /**
  * Makes room for nodes and their labels in the panel they are drawn in. The force layout works
@@ -14,6 +14,11 @@ import { Grid, LABEL_MARGIN, LABEL_PAD } from "./labelCollisions";
  * (labelRoom.ts). The result also gives the box the renderer frames (its custom bounding box),
  * which reaches around the nodes and labels, so labels at the edge stay inside the panel.
  * Pure and deterministic, on flat arrays, so it is tested without a renderer.
+ *
+ * It runs on the main thread, for the layout's final positions and again after a resize, so its
+ * work is bounded: no pushing where the boxes cannot fit the panel anyway, at most PAIR_BUDGET
+ * pair tests, and an end once a few passes make no progress. Whatever still overlaps then is left
+ * to the per-frame label check (labelRoom.ts).
  */
 
 /** Space kept around the drawing in the panel, in px (the renderer's `stagePadding`). */
@@ -28,12 +33,18 @@ const NODE_FILL = 0.2;
 export const MIN_NODE_SCALE = 0.5;
 /** Passes of pushing apart. Each pass resolves every overlap it finds, by half on each side. */
 const PASSES = 200;
+/** Passes in a row without fewer overlaps after which the pushing stops. */
+const STALE_PASSES = 10;
+/** Pair tests in all passes together: about 30 ms of work on a slow laptop. */
+export const PAIR_BUDGET = 1_500_000;
+/** Above this share of the drawing area the boxes cannot be parted; nothing is pushed. */
+const MAX_PACKING = 0.6;
 /** Passes of framing (the fitted box depends on the scale and the scale on the box). */
 const FIT_PASSES = 8;
 /** A force layout is about round; it is stretched at most this much towards the panel's shape. */
 const MAX_STRETCH = 2.5;
 /** Above this many nodes nothing is pushed apart: the labels are a few among thousands. */
-export const SPREAD_LIMIT = 1_500;
+export const SPREAD_LIMIT = 1_000;
 
 export interface SpreadInput {
   /** Interleaved x, y in graph units. */
@@ -49,8 +60,12 @@ export interface SpreadInput {
   /** The panel's size in px. */
   width: number;
   height: number;
-  /** Whether nodes may move (false: only the box is fitted, as for a hierarchy's layers). */
-  move?: boolean;
+  /**
+   * Whether nodes may move: "spread" stretches and pushes apart, "stretch" only stretches (while
+   * the layout still moves the nodes), "keep" only fits the box (a hierarchy's layers). Default
+   * "spread".
+   */
+  move?: "spread" | "stretch" | "keep";
 }
 
 export interface BBox {
@@ -69,6 +84,8 @@ export interface Spread {
    * them; at least MIN_NODE_SCALE).
    */
   nodeScale: number;
+  /** Passes of pushing apart that ran (0 when nothing was pushed). */
+  passes: number;
 }
 
 /**
@@ -126,6 +143,7 @@ function extentOf(positions: Float32Array): BBox {
   for (let i = 0; i < positions.length; i += 2) {
     const x = positions[i] as number;
     const y = positions[i + 1] as number;
+    if (!(Number.isFinite(x) && Number.isFinite(y))) continue;
     if (x < x0) x0 = x;
     if (x > x1) x1 = x;
     if (y < y0) y0 = y;
@@ -152,6 +170,8 @@ function frameOf(
     reach.forEach((r, i) => {
       const x = positions[2 * i] as number;
       const y = positions[2 * i + 1] as number;
+      // A node without a place (a layout that failed for it) does not stretch the frame.
+      if (!(Number.isFinite(x) && Number.isFinite(y))) return;
       x0 = Math.min(x0, x - r.left / scale);
       x1 = Math.max(x1, x + r.right / scale);
       y0 = Math.min(y0, y - r.up / scale);
@@ -230,12 +250,14 @@ export function drawingArea(width: number, height: number): { width: number; hei
  * renderer frames. Nodes too large for a short panel are drawn smaller (nodeScaleFor). The
  * layout is stretched towards the panel's shape and framed; in that framing, boxes that overlap
  * are pushed apart in pixels, within the panel's drawing area, and the result goes back to graph
- * units at the same scale. Since it stays within the area, the renderer frames it at that scale or larger, so
- * nothing comes closer again. Positions stay as they are when nothing overlaps, when the input
- * says they may not move, and for graphs above SPREAD_LIMIT nodes (whose box is still fitted).
+ * units at the same scale. Since it stays within the area, the renderer frames it at that scale
+ * or larger, so nothing comes closer again. Positions stay as they are when nothing overlaps,
+ * when the input says they may not move, when the boxes cannot fit the area, and for graphs above
+ * SPREAD_LIMIT nodes (whose box is still fitted).
  */
 export function spreadNodes(given: SpreadInput): Spread {
   const { labelHeight, width, height } = given;
+  const move = given.move ?? "spread";
   // A large graph keeps its sizes: its nodes are dots among thousands either way.
   const nodeScale =
     given.radii.length > SPREAD_LIMIT ? 1 : nodeScaleFor(given.radii, width, height);
@@ -247,22 +269,28 @@ export function spreadNodes(given: SpreadInput): Spread {
     reachOf(radii[i] as number, labels[i] as number, labelHeight),
   );
   const positions = input.positions.slice();
-  if (input.move === false || count < 2 || count > SPREAD_LIMIT || !(width > 0 && height > 0)) {
-    return {
-      positions,
-      bbox: frameOf(positions, reach, width, height).bbox,
-      labelled,
-      nodeScale,
-    };
+  const sized = width > 0 && height > 0;
+  if (move !== "keep" && count >= 2 && count <= SPREAD_LIMIT && sized) {
+    stretch(positions, width, height);
   }
-  stretch(positions, width, height);
   const { bbox, scale } = frameOf(positions, reach, width, height);
+  const kept = { positions, bbox, labelled, nodeScale, passes: 0 };
+  if (move !== "spread" || count < 2 || count > SPREAD_LIMIT || !sized) return kept;
   const area = drawingArea(width, height);
+  // Boxes that together take most of the area cannot be parted: no pushing.
+  let packed = 0;
+  for (const r of reach) packed += (r.left + r.right + GAP) * (2 * r.up + GAP);
+  if (packed > MAX_PACKING * area.width * area.height) return kept;
+
   const cx = ((bbox.x[0] + bbox.x[1]) / 2) * scale;
   const cy = ((bbox.y[0] + bbox.y[1]) / 2) * scale;
-  // Where each centre may go so that its box stays in the drawing area (a box larger than the
-  // area keeps its centre in the middle).
   const half = GAP / 2;
+  // Flat arrays, filled once: the boxes' reach, the bounds of each centre (so that its box stays
+  // in the drawing area; a box larger than the area keeps its centre in the middle) and the
+  // centres in px.
+  const left = new Float64Array(count);
+  const right = new Float64Array(count);
+  const up = new Float64Array(count);
   const lowX = new Float64Array(count);
   const highX = new Float64Array(count);
   const lowY = new Float64Array(count);
@@ -270,59 +298,64 @@ export function spreadNodes(given: SpreadInput): Spread {
   const x = new Float64Array(count);
   const y = new Float64Array(count);
   reach.forEach((r, i) => {
+    left[i] = r.left + half;
+    right[i] = r.right + half;
+    up[i] = r.up + half;
     lowX[i] = cx - area.width / 2 + r.left;
     highX[i] = Math.max(lowX[i] as number, cx + area.width / 2 - r.right);
     lowY[i] = cy - area.height / 2 + r.up;
     highY[i] = Math.max(lowY[i] as number, cy + area.height / 2 - r.up);
-    x[i] = (positions[2 * i] as number) * scale;
-    y[i] = (positions[2 * i + 1] as number) * scale;
+    const px = (positions[2 * i] as number) * scale;
+    const py = (positions[2 * i + 1] as number) * scale;
+    x[i] = Number.isFinite(px) ? Math.min(highX[i] as number, Math.max(lowX[i] as number, px)) : cx;
+    y[i] = Number.isFinite(py) ? Math.min(highY[i] as number, Math.max(lowY[i] as number, py)) : cy;
   });
-  const clampX = (i: number, value: number) =>
-    Math.min(highX[i] as number, Math.max(lowX[i] as number, value));
-  const clampY = (i: number, value: number) =>
-    Math.min(highY[i] as number, Math.max(lowY[i] as number, value));
-  const boxOf = (i: number) => {
-    const r = reach[i] as Reach;
-    return {
-      minX: (x[i] as number) - r.left - half,
-      maxX: (x[i] as number) + r.right + half,
-      minY: (y[i] as number) - r.up - half,
-      maxY: (y[i] as number) + r.up + half,
-    };
-  };
-  /**
-   * Moves node `i` by `by` along an axis as far as the drawing area lets it, and returns how far
-   * it went.
-   */
+  /** Moves node `i` along an axis as far as the area lets it; returns how far it went. */
   const shift = (i: number, alongX: boolean, by: number) => {
     const pos = alongX ? x : y;
-    const before = pos[i] as number;
-    pos[i] = alongX ? clampX(i, before + by) : clampY(i, before + by);
-    return (pos[i] as number) - before;
+    const was = pos[i] as number;
+    const low = (alongX ? lowX : lowY)[i] as number;
+    const high = (alongX ? highX : highY)[i] as number;
+    pos[i] = Math.min(high, Math.max(low, was + by));
+    return Math.abs((pos[i] as number) - was);
   };
-  let moved = false;
+  /** How far the boxes of `i` and `j` overlap along an axis (0 or less: apart). */
+  const overlapX = (i: number, j: number) =>
+    Math.min((x[i] as number) + (right[i] as number), (x[j] as number) + (right[j] as number)) -
+    Math.max((x[i] as number) - (left[i] as number), (x[j] as number) - (left[j] as number));
+  const overlapY = (i: number, j: number) =>
+    Math.min((y[i] as number) + (up[i] as number), (y[j] as number) + (up[j] as number)) -
+    Math.max((y[i] as number) - (up[i] as number), (y[j] as number) - (up[j] as number));
+  // Pairs are found by sweeping along x: the nodes sorted by their box's left edge, each tested
+  // against the ones whose box starts before it ends. The order changes little from pass to pass.
+  const order = Array.from({ length: count }, (_, i) => i);
+  const startOf = (i: number) => (x[i] as number) - (left[i] as number);
+  let tests = 0;
+  let passes = 0;
+  let best = Number.POSITIVE_INFINITY;
+  let stale = 0;
   // Pairs that overlapped in the pass before: a pair that still does is pushed the other way,
   // since its neighbours keep pushing it back the short way (a chain of labels from the top of
   // the panel to the bottom can only part sideways).
   let before = new Set<number>();
-  for (let pass = 0; pass < PASSES; pass++) {
+  let moved = false;
+  for (let pass = 0; pass < PASSES && tests < PAIR_BUDGET; pass++) {
+    passes++;
     const now = new Set<number>();
-    // Pairs are found from where the nodes stand at the start of the pass, and each overlap is
-    // resolved at once, so the next pair sees the moved nodes (pushes do not pile up and
-    // overshoot).
-    const grid = new Grid<number>(64);
-    for (let i = 0; i < count; i++) grid.add(boxOf(i), i);
+    order.sort((a, b) => startOf(a) - startOf(b) || a - b);
     let overlaps = 0;
-    for (let i = 0; i < count; i++) {
-      for (const j of grid.near(boxOf(i))) {
-        if (j <= i) continue;
-        const a = boxOf(i);
-        const b = boxOf(j);
-        const ox = Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
-        const oy = Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY);
+    for (let k = 0; k < count && tests < PAIR_BUDGET; k++) {
+      const i = order[k] as number;
+      for (let m = k + 1; m < count; m++) {
+        const j = order[m] as number;
+        // Each pair is resolved at once, so the next one sees the moved nodes.
+        if (startOf(j) >= (x[i] as number) + (right[i] as number)) break;
+        tests++;
+        const ox = overlapX(i, j);
+        const oy = overlapY(i, j);
         if (ox <= 0 || oy <= 0) continue;
         overlaps++;
-        const key = i * count + j;
+        const key = Math.min(i, j) * count + Math.max(i, j);
         now.add(key);
         const dx = (x[j] as number) - (x[i] as number);
         const dy = (y[j] as number) - (y[i] as number);
@@ -331,37 +364,32 @@ export function spreadNodes(given: SpreadInput): Spread {
         const sx = dx > 0 || (dx === 0 && j > i) ? 1 : -1;
         const sy = dy > 0 || (dy === 0 && j > i) ? 1 : -1;
         const push = (alongX: boolean) => {
-          const p = boxOf(i);
-          const q = boxOf(j);
-          const way = alongX
-            ? Math.min(p.maxX, q.maxX) - Math.max(p.minX, q.minX)
-            : Math.min(p.maxY, q.maxY) - Math.max(p.minY, q.minY);
+          const way = alongX ? overlapX(i, j) : overlapY(i, j);
           if (way <= 0) return;
           const sign = alongX ? sx : sy;
-          const wentI = Math.abs(shift(i, alongX, (-sign * way) / 2));
-          const wentJ = Math.abs(shift(j, alongX, sign * (way - wentI)));
+          const wentI = shift(i, alongX, (-sign * way) / 2);
+          const wentJ = shift(j, alongX, sign * (way - wentI));
           if (wentI + wentJ < way) shift(i, alongX, -sign * (way - wentI - wentJ));
-        };
-        const meet = () => {
-          const p = boxOf(i);
-          const q = boxOf(j);
-          return (
-            Math.min(p.maxX, q.maxX) - Math.max(p.minX, q.minX) > 1e-6 &&
-            Math.min(p.maxY, q.maxY) - Math.max(p.minY, q.minY) > 1e-6
-          );
         };
         const short = ox < oy;
         const way = before.has(key) ? !short : short;
         push(way);
         // Held by the area's edge: the other way.
-        if (meet()) push(!way);
+        if (overlapX(i, j) > 1e-6 && overlapY(i, j) > 1e-6) push(!way);
       }
     }
     if (overlaps === 0) break;
     moved = true;
+    // Passes that part no more pairs than the best one before end the pushing.
+    if (overlaps < best) {
+      best = overlaps;
+      stale = 0;
+    } else if (++stale >= STALE_PASSES) {
+      break;
+    }
     before = now;
   }
-  if (!moved) return { positions, bbox, labelled, nodeScale };
+  if (!moved) return { ...kept, passes };
   for (let i = 0; i < count; i++) {
     positions[2 * i] = (x[i] as number) / scale;
     positions[2 * i + 1] = (y[i] as number) / scale;
@@ -371,5 +399,6 @@ export function spreadNodes(given: SpreadInput): Spread {
     bbox: frameOf(positions, reach, width, height).bbox,
     labelled,
     nodeScale,
+    passes,
   };
 }

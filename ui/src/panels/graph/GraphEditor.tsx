@@ -24,8 +24,10 @@ import {
   MAX_SIZE,
   MIN_SIZE,
   NODE_SHAPES,
+  ownEntry,
   parseGraphOptions,
   SHOW_WHEN,
+  withEntry,
 } from "./options";
 import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
@@ -566,13 +568,10 @@ function LabelStyles({
             <select
               className="select"
               aria-label={t("graph.options.labelColorFor", { name: label })}
-              value={colors[label] ?? ""}
+              value={ownEntry(colors, label) ?? ""}
               onChange={(event) => {
                 const tone = LABEL_TONES.find((x) => x === event.currentTarget.value);
-                const next = { ...colors };
-                if (tone === undefined) delete next[label];
-                else next[label] = tone;
-                onColors(next);
+                onColors(withEntry(colors, label, tone));
               }}
             >
               <option value="">{t("graph.options.labelColorAuto")}</option>
@@ -586,13 +585,10 @@ function LabelStyles({
           <select
             className="select"
             aria-label={t("graph.options.labelShapeFor", { name: label })}
-            value={shapes[label] ?? ""}
+            value={ownEntry(shapes, label) ?? ""}
             onChange={(event) => {
               const shape = NODE_SHAPES.find((x) => x === event.currentTarget.value);
-              const next = { ...shapes };
-              if (shape === undefined) delete next[label];
-              else next[label] = shape;
-              onShapes(next);
+              onShapes(withEntry(shapes, label, shape));
             }}
           >
             <option value="">{t("graph.options.labelShapeAuto")}</option>

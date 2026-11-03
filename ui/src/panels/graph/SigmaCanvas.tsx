@@ -24,7 +24,7 @@ import {
 } from "./drawing";
 import { handOver } from "./handover";
 import { installLabelPickingFix } from "./labelPicking";
-import { installLabelRoom, type LabelFrame } from "./labelRoom";
+import { drawnFrame, installLabelRoom, type LabelFrame } from "./labelRoom";
 import { refreshVisibility } from "./refresh";
 import { SHAPE_SCALE } from "./shapes";
 import { type Spread, STAGE_PADDING, spreadNodes } from "./spread";
@@ -66,7 +66,7 @@ export type NodePosition = (caption: string) => { x: number; y: number } | null;
 
 export interface CanvasHost extends HTMLDivElement {
   kalzitNodePosition?: NodePosition;
-  /** What the last frame drew: nodes with their shapes, and the labels that kept their room. */
+  /** What the last frame drew, read from the renderer: nodes with their shapes, and its labels. */
   kalzitLabelRoom?: () => LabelFrame | null;
 }
 
@@ -89,6 +89,11 @@ export interface SigmaCanvasProps {
    * force layout; a hierarchy keeps its layers.
    */
   spread?: boolean;
+  /**
+   * Whether the layout still moves the nodes: until it settles they are only stretched to the
+   * panel, and pushed apart once, on its final positions.
+   */
+  settling?: boolean;
   /**
    * Where the camera is kept between renderers. It belongs to the panel, not to the canvas: a
    * view with other nodes mounts a new canvas, and the zoom and centre must survive that.
@@ -114,8 +119,6 @@ export interface LiveProps {
   budget?: number;
   /** Where the nodes are drawn, with the box the renderer frames (spread.ts). */
   placed?: Spread;
-  /** The label check of the renderer (labelRoom.ts), for the end-to-end tests' hook. */
-  room?: { last: () => LabelFrame | null } | null;
 }
 
 /** The renderer's label size in px (sigma's default). */
@@ -172,7 +175,7 @@ export function placement(
     labelHeight: LABEL_SIZE,
     width,
     height,
-    move: p.spread !== false,
+    move: p.spread === false ? "keep" : p.settling === true ? "stretch" : "spread",
   });
 }
 
@@ -265,7 +268,7 @@ export function createRenderer(
     renderer.refresh();
   }
   // No label covers a node or another label, checked on every frame (labelRoom.ts).
-  live.current.room = installLabelRoom(renderer, {
+  installLabelRoom(renderer, {
     rank: (i) => live.current.props.ranks[i] ?? 0,
     shape: (i) => live.current.props.view.nodes[i]?.shape ?? "circle",
   });
@@ -425,7 +428,10 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
       const box = host.getBoundingClientRect();
       return { x: box.left + point.x, y: box.top + point.y };
     };
-    host.kalzitLabelRoom = () => live.current.room?.last() ?? null;
+    host.kalzitLabelRoom = () => {
+      const renderer = sigmaRef.current;
+      return renderer === null ? null : drawnFrame(renderer);
+    };
     return () => {
       delete host.kalzitNodePosition;
       delete host.kalzitLabelRoom;

@@ -225,8 +225,8 @@ values of all selected nodes (**Set $customers (2 values)**). **Pin** (P) keeps 
 back explorer steps. Your pins and selection are kept for you on that dashboard panel, on the
 server; they change neither the panel nor its query. The legend under the drawing hides and shows
 labels, and **Layout** switches between forces and layers for this view. The network spreads its
-nodes over the panel so that no node lies on another and the names that fit show beside their
-node; a name that would cover a node, another name or the panel's edge shows once zooming in
+nodes over the panel, as far as the panel has room, so that nodes do not lie on each other and
+the names that fit show beside their node; a name that would cover a node, another name or the panel's edge shows once zooming in
 gives it room, and a short panel draws its nodes smaller. A selection gives a
 multi-value variable at most 100 values and says so; a click on a node whose neighbours cannot be
 loaded opens its details instead.

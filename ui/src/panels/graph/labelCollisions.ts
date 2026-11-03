@@ -38,8 +38,8 @@ export interface WantedLabel {
 
 /** Space between a node and its label, as the renderer draws it (sigma's label margin). */
 export const LABEL_MARGIN = 5;
-/** The label's background reaches this far around its text (sigma's default padding). */
-export const LABEL_PAD = 3;
+/** The label's background reaches this far around its text (drawing.ts gives it this padding). */
+export const LABEL_PAD = 2;
 
 const CELL = 48;
 
@@ -104,6 +104,20 @@ export class Grid<T> {
     }
   }
 
+  /** Whether anything lies in a cell this box reaches (no allocation). */
+  reaches(minX: number, minY: number, maxX: number, maxY: number): boolean {
+    const x0 = Math.floor(minX / this.cell);
+    const x1 = Math.floor(maxX / this.cell);
+    const y0 = Math.floor(minY / this.cell);
+    const y1 = Math.floor(maxY / this.cell);
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        if (this.cells.has(((x & 0xffff) << 16) | (y & 0xffff))) return true;
+      }
+    }
+    return false;
+  }
+
   near(box: Box): Set<T> {
     const out = new Set<T>();
     for (const key of this.keys(box)) {
@@ -114,6 +128,13 @@ export class Grid<T> {
 }
 
 /**
+ * Tests of a label against a node or another label per call. Nodes clumped into a few grid cells
+ * would otherwise cost every label a test against each of them; beyond this budget the labels
+ * still to place are left out (until zooming spreads the clump).
+ */
+export const MAX_TESTS = 200_000;
+
+/**
  * The labels (node indexes) to leave out: each that would cover another node, a label placed
  * before it, or reach out of `bounds` (the panel) when given. `labels` comes in order of
  * priority; forced labels are always placed, before the others.
@@ -122,7 +143,9 @@ export function blockedLabels(
   nodes: readonly DrawnNode[],
   labels: readonly WantedLabel[],
   bounds?: Box,
+  maxTests = MAX_TESTS,
 ): Set<number> {
+  let tests = 0;
   const shapes = new Grid<DrawnNode>();
   for (const node of nodes) {
     shapes.add(
@@ -146,9 +169,10 @@ export function blockedLabels(
           box.maxX > bounds.maxX ||
           box.minY < bounds.minY ||
           box.maxY > bounds.maxY);
-      let hit = outside;
+      let hit = outside || tests >= maxTests;
       if (!hit) {
         for (const node of shapes.near(box)) {
+          tests++;
           if (node.index !== index && nodeHitsBox(node, box)) {
             hit = true;
             break;
@@ -157,6 +181,7 @@ export function blockedLabels(
       }
       if (!hit) {
         for (const other of placed.near(box)) {
+          tests++;
           if (boxesMeet(other, box)) {
             hit = true;
             break;

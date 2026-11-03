@@ -1,6 +1,6 @@
 import type Sigma from "sigma";
 import type { NodeDisplayData } from "sigma/types";
-import { type Box, blockedLabels, type DrawnNode, type WantedLabel } from "./labelCollisions";
+import { type Box, blockedLabels, type DrawnNode, Grid, type WantedLabel } from "./labelCollisions";
 import type { NodeShape } from "./shapes";
 
 /**
@@ -44,9 +44,6 @@ function notice(what: string): void {
   }
 }
 
-/** Nodes this far outside the panel can still reach into it, in px. */
-const OUTSIDE = 240;
-
 export interface LabelRoomSource {
   /** The order labels are placed in: lower first (the node's label rank). */
   rank: (node: number) => number;
@@ -54,106 +51,151 @@ export interface LabelRoomSource {
   shape: (node: number) => NodeShape;
 }
 
-/** What one frame drew: the nodes and the labels that kept their place, in viewport px. */
-export interface LabelFrame {
-  nodes: DrawnNode[];
-  labels: { index: number; box: Box }[];
+/** At most this many labels are checked per frame, the best ranked first; the rest wait. */
+export const MAX_CHECKED_LABELS = 400;
+
+/** A box in the renderer's viewport around a drawn label, from Sigma's own label box. */
+function viewportBox(x: number, y: number, box: Box): Box {
+  return { minX: x + box.minX, maxX: x + box.maxX, minY: y + box.minY, maxY: y + box.maxY };
 }
 
 /**
  * The labels of the frame that would collide, from the renderer's display data: `displayed` in
- * the renderer's keys (view indexes as strings), with the frame as drawn once they are left out.
- * Exported for the tests.
+ * the renderer's keys (view indexes as strings). Only nodes whose shape reaches a cell of the
+ * grid around the wanted labels are taken in, so a large graph costs one projection per visible
+ * node and nothing more. Exported for the tests.
  */
 export function collidingLabels(
   renderer: Sigma,
   displayed: ReadonlySet<string>,
   labelBox: LabelRendererLike["nodeLabelBox"],
   source: LabelRoomSource,
-): { blocked: number[]; frame: LabelFrame } {
+): number[] {
   const { width, height } = renderer.getDimensions();
-  const nodes: DrawnNode[] = [];
-  const at = new Map<number, DrawnNode>();
-  for (const key of renderer.getGraph().nodes()) {
-    const data = renderer.getNodeDisplayData(key);
-    if (data === undefined || data.visibility === "hidden") continue;
-    const point = renderer.framedGraphToViewport(data);
-    if (
-      point.x < -OUTSIDE ||
-      point.y < -OUTSIDE ||
-      point.x > width + OUTSIDE ||
-      point.y > height + OUTSIDE
-    ) {
-      continue;
-    }
-    const index = Number(key);
-    const drawn = {
-      index,
-      x: point.x,
-      y: point.y,
-      radius: renderer.scaleSize(data.size),
-      shape: source.shape(index),
-    };
-    nodes.push(drawn);
-    at.set(index, drawn);
-  }
-  const labels: (WantedLabel & { rank: number })[] = [];
+  // The wanted labels first, best ranked first; beyond MAX_CHECKED_LABELS they wait.
+  const wanted: (WantedLabel & { rank: number })[] = [];
   for (const key of displayed) {
     const index = Number(key);
     const data = renderer.getNodeDisplayData(key);
-    const node = at.get(index);
-    if (data === undefined || node === undefined) continue;
-    const box = labelBox(data, node.radius);
+    if (data === undefined) continue;
+    const point = renderer.framedGraphToViewport(data);
+    const box = labelBox(data, renderer.scaleSize(data.size));
     if (box === null) continue;
-    labels.push({
+    wanted.push({
       index,
-      box: {
-        minX: node.x + box.minX,
-        maxX: node.x + box.maxX,
-        minY: node.y + box.minY,
-        maxY: node.y + box.maxY,
-      },
+      box: viewportBox(point.x, point.y, box),
       forced: data.labelVisibility === "visible",
       rank: source.rank(index),
     });
   }
-  labels.sort((a, b) => a.rank - b.rank);
+  wanted.sort((a, b) => Number(b.forced) - Number(a.forced) || a.rank - b.rank);
+  const over = wanted.slice(MAX_CHECKED_LABELS).filter((l) => !l.forced);
+  const labels = wanted.filter((l, i) => i < MAX_CHECKED_LABELS || l.forced);
+  const near = new Grid<true>();
+  for (const label of labels) near.add(label.box, true);
+  const nodes: DrawnNode[] = [];
+  for (const key of renderer.getGraph().nodes()) {
+    const data = renderer.getNodeDisplayData(key);
+    if (data === undefined || data.visibility === "hidden") continue;
+    const point = renderer.framedGraphToViewport(data);
+    const radius = renderer.scaleSize(data.size);
+    if (
+      point.x + radius < 0 ||
+      point.y + radius < 0 ||
+      point.x - radius > width ||
+      point.y - radius > height ||
+      !near.reaches(point.x - radius, point.y - radius, point.x + radius, point.y + radius)
+    ) {
+      continue;
+    }
+    const index = Number(key);
+    nodes.push({ index, x: point.x, y: point.y, radius, shape: source.shape(index) });
+  }
   const blocked = blockedLabels(nodes, labels, { minX: 0, minY: 0, maxX: width, maxY: height });
-  return {
-    blocked: [...blocked],
-    frame: {
-      nodes,
-      labels: labels.filter((l) => !blocked.has(l.index)).map(({ index, box }) => ({ index, box })),
-    },
-  };
+  return [...blocked, ...over.map((l) => l.index)];
+}
+
+/** What a frame drew: the nodes and the labels Sigma displays, in viewport px. */
+export interface LabelFrame {
+  nodes: DrawnNode[];
+  labels: { index: number; box: Box }[];
 }
 
 /**
- * Hooks the label check into one renderer. Returns what the last frame drew (for the end-to-end
- * tests' hook), or null when Sigma no longer has the label renderer this expects.
+ * What the renderer's last frame drew, read from Sigma itself: the labels it displays (after the
+ * check) with its own label boxes, and every visible node in the panel with the shape it is drawn
+ * with. For the end-to-end tests' hook only; null when Sigma no longer looks as expected.
  */
-export function installLabelRoom(
-  renderer: Sigma,
-  source: LabelRoomSource,
-): { last: () => LabelFrame | null } | null {
+export function drawnFrame(renderer: Sigma): LabelFrame | null {
+  const labels = (renderer as unknown as { labelRenderer?: unknown }).labelRenderer;
+  if (!isLabelRenderer(labels)) return null;
+  const { width, height } = renderer.getDimensions();
+  const nodes: DrawnNode[] = [];
+  for (const key of renderer.getGraph().nodes()) {
+    const data = renderer.getNodeDisplayData(key);
+    if (data === undefined || data.visibility === "hidden") continue;
+    const point = renderer.framedGraphToViewport(data);
+    const radius = renderer.scaleSize(data.size);
+    if (
+      point.x < -radius ||
+      point.y < -radius ||
+      point.x > width + radius ||
+      point.y > height + radius
+    ) {
+      continue;
+    }
+    const shape = data.shape === "square" || data.shape === "diamond" ? data.shape : "circle";
+    nodes.push({ index: Number(key), x: point.x, y: point.y, radius, shape });
+  }
+  const shown: LabelFrame["labels"] = [];
+  // While the camera moves the renderer draws no labels.
+  if (renderer.getSetting("hideLabelsOnMove") && moving(renderer)) return { nodes, labels: shown };
+  for (const key of labels.displayedNodeLabels) {
+    const data = renderer.getNodeDisplayData(key);
+    if (data === undefined) continue;
+    const point = renderer.framedGraphToViewport(data);
+    const box = labels.nodeLabelBox(data, renderer.scaleSize(data.size));
+    if (box !== null) shown.push({ index: Number(key), box: viewportBox(point.x, point.y, box) });
+  }
+  return { nodes, labels: shown };
+}
+
+/** Whether the renderer is moving the camera or following a gesture (its own test). */
+function moving(renderer: Sigma): boolean {
+  const captor = renderer.getMouseCaptor() as unknown as {
+    isMoving?: boolean;
+    draggedEvents?: number;
+    currentWheelDirection?: number;
+  };
+  return (
+    renderer.getCamera().isAnimating() ||
+    captor.isMoving === true ||
+    (captor.draggedEvents ?? 0) > 0 ||
+    (captor.currentWheelDirection ?? 0) !== 0
+  );
+}
+
+/**
+ * Hooks the label check into one renderer. Returns whether it is in place (false when Sigma no
+ * longer has the label renderer this expects).
+ */
+export function installLabelRoom(renderer: Sigma, source: LabelRoomSource): boolean {
   const labels = (renderer as unknown as { labelRenderer?: unknown }).labelRenderer;
   if (!isLabelRenderer(labels)) {
     notice("Sigma has no label renderer with computeDisplayedNodeLabels");
-    return null;
+    return false;
   }
   const original = labels.computeDisplayedNodeLabels.bind(labels);
   const box = labels.nodeLabelBox.bind(labels);
-  let last: LabelFrame | null = null;
   labels.computeDisplayedNodeLabels = () => {
     original();
     const displayed = labels.displayedNodeLabels;
-    if (displayed.size === 0) {
-      last = { nodes: [], labels: [] };
-      return;
+    // While the camera moves the renderer draws no labels (hideLabelsOnMove): nothing to check.
+    if (displayed.size === 0) return;
+    if (renderer.getSetting("hideLabelsOnMove") && moving(renderer)) return;
+    for (const index of collidingLabels(renderer, displayed, box, source)) {
+      displayed.delete(String(index));
     }
-    const { blocked, frame } = collidingLabels(renderer, displayed, box, source);
-    for (const index of blocked) displayed.delete(String(index));
-    last = frame;
   };
-  return { last: () => last };
+  return true;
 }

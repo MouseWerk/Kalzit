@@ -555,7 +555,11 @@ interface DrawnFrame {
   labels: { index: number; box: { minX: number; minY: number; maxX: number; maxY: number } }[];
 }
 
-/** What the drawing's last frame drew, from the canvas' test hook (SigmaCanvas.tsx). */
+/**
+ * What the drawing's last frame drew, from the canvas' test hook (SigmaCanvas.tsx): the labels
+ * Sigma displays and every visible node with the shape it is drawn with, read from the renderer
+ * itself rather than from the label check.
+ */
 async function drawnFrame(scope: Locator): Promise<DrawnFrame | null> {
   return scope
     .locator(".graph__canvas")

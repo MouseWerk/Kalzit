@@ -1165,6 +1165,7 @@ function DrawnGraph({ view, mode, elk, ref, drawStyle, ...rest }: DrawnGraphProp
         reducedMotion={reduced}
         drawStyle={drawStyle}
         spread={mode === "force"}
+        settling={layout.running}
         {...rest}
       />
       <LayoutNotes

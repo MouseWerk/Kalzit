@@ -1,7 +1,7 @@
 import { propertyText, readNumber } from "./adapter";
 import { RAMP_STEPS } from "./colors";
 import { GRAPH_COLORS, type GraphModel } from "./model";
-import { type GraphPanelOptions, LABEL_TONES } from "./options";
+import { type GraphPanelOptions, LABEL_TONES, ownEntry } from "./options";
 import { rampGroup } from "./view";
 
 /**
@@ -17,7 +17,7 @@ export function labelGroupOf(
 ): (label: number) => number {
   return (label) => {
     if (label < 0) return -1;
-    const tone = labelColors[model.labels[label] ?? ""];
+    const tone = ownEntry(labelColors, model.labels[label] ?? "");
     const own = tone === undefined ? -1 : LABEL_TONES.indexOf(tone);
     return own >= 0 ? own : label % GRAPH_COLORS;
   };

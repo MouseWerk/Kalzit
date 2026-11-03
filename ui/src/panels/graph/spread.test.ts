@@ -5,6 +5,7 @@ import {
   drawingArea,
   MIN_NODE_SCALE,
   nodeScaleFor,
+  PAIR_BUDGET,
   pixelsPerUnit,
   SPREAD_LIMIT,
   type SpreadInput,
@@ -169,7 +170,7 @@ describe("making room for nodes and labels in the panel", () => {
 
   it("leaves the layers of a hierarchy and very large graphs where they are", () => {
     const input = crowded(24, 8);
-    expect([...spreadNodes({ ...input, move: false }).positions]).toEqual([...input.positions]);
+    expect([...spreadNodes({ ...input, move: "keep" }).positions]).toEqual([...input.positions]);
     const large = crowded(SPREAD_LIMIT + 1, 0);
     expect([...spreadNodes(large).positions]).toEqual([...large.positions]);
   });
@@ -213,6 +214,60 @@ describe("node sizes in a short panel", () => {
       const drawn = { ...input, radii: input.radii.map((r) => r * spread.nodeScale) };
       expect(overlapping(boxes(drawn, spread.positions, spread.bbox))).toBe(0);
     }
+  });
+});
+
+describe("bounded work on the main thread", () => {
+  /** `count` nodes on the layout's sunflower start, with a label for each of the first 40. */
+  function many(count: number, width: number, height: number): SpreadInput {
+    return {
+      positions: seedPositions(count),
+      radii: Float32Array.from({ length: count }, (_, i) => 4 + (i % 7)),
+      labels: Float32Array.from({ length: count }, (_, i) => (i < 40 ? 70 : 0)),
+      ranks: Int32Array.from({ length: count }, (_, i) => i),
+      labelHeight: 14,
+      width,
+      height,
+    };
+  }
+
+  /** The best of three runs in ms, so a busy machine does not decide the result. */
+  function timed(input: SpreadInput): { ms: number; passes: number } {
+    let ms = Number.POSITIVE_INFINITY;
+    let passes = 0;
+    for (let run = 0; run < 3; run++) {
+      const start = performance.now();
+      passes = spreadNodes(input).passes;
+      ms = Math.min(ms, performance.now() - start);
+    }
+    process.stdout.write(`spread: ${input.radii.length} nodes in ${input.width} x ${input.height}: ${ms.toFixed(1)} ms, ${passes} passes
+`);
+    return { ms, passes };
+  }
+
+  it("spreads a thousand nodes in a dashboard panel within a frame budget", () => {
+    // Without a bound this took about half a second per layout update.
+    expect(timed(many(1_000, 800, 235)).ms).toBeLessThan(150);
+    // A large panel where the boxes do fit: pushing runs, within its pair budget.
+    const large = timed(many(1_000, 1800, 1000));
+    expect(large.passes).toBeGreaterThan(0);
+    expect(large.ms).toBeLessThan(150);
+  });
+
+  it("gives up at once where the boxes cannot fit the panel", () => {
+    const tiny = many(1_000, 400, 100);
+    const { ms, passes } = timed(tiny);
+    expect(passes).toBe(0);
+    expect(ms).toBeLessThan(50);
+  });
+
+  it("stops when passes make no progress, and never tests more pairs than its budget", () => {
+    // Crowded but not hopeless: some passes run, far fewer than the maximum.
+    const input = many(400, 900, 260);
+    const { passes } = timed(input);
+    expect(passes).toBeGreaterThan(0);
+    expect(passes).toBeLessThan(200);
+    expect(PAIR_BUDGET).toBeLessThanOrEqual(1_500_000);
   });
 });
 

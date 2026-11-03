@@ -54,6 +54,21 @@ describe("label collisions", () => {
     expect(blockedLabels([a], [label(a, 48, true)], panel).size).toBe(0);
   });
 
+  it("bounds the work where nodes clump into one spot: labels beyond the budget wait", () => {
+    // Two thousand nodes on one spot, and labels far from them: placing each label would test
+    // it against every node of the clump's cell.
+    const clump = Array.from({ length: 2_000 }, (_, i) => node(i, 10 + (i % 3), 10, 3));
+    const far = Array.from({ length: 50 }, (_, i) => node(5_000 + i, 15, 10 + 20 * i, 3));
+    const labels = [...far].map((n) => label(n, 20));
+    const blocked = blockedLabels([...clump, ...far], labels, undefined, 3_000);
+    // The first labels were tested; once the budget is spent the rest are left out.
+    expect(blocked.size).toBeGreaterThan(0);
+    expect(blocked.has(5_049)).toBe(true);
+    // A forced label is placed whatever the budget.
+    const forced = blockedLabels(clump, [label(node(9_999, 400, 400), 20, true)], undefined, 0);
+    expect(forced.size).toBe(0);
+  });
+
   it("tests a label against the shape a node is drawn with", () => {
     // A box just off the corner of a node of radius 10 at the origin.
     const corner = { minX: 8, maxX: 20, minY: 8, maxY: 20 };

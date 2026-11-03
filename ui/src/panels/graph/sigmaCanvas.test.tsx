@@ -29,6 +29,7 @@ let restore: () => void;
 let SigmaClass: typeof import("sigma").default;
 let createRenderer: typeof import("./SigmaCanvas").createRenderer;
 let collidingLabels: typeof import("./labelRoom").collidingLabels;
+let drawnFrame: typeof import("./labelRoom").drawnFrame;
 let SigmaCanvas: typeof import("./SigmaCanvas").SigmaCanvas;
 
 beforeAll(async () => {
@@ -36,7 +37,7 @@ beforeAll(async () => {
   // Sigma reads WebGL constants while its module loads, so it loads after the stand-in.
   SigmaClass = (await import("sigma")).default;
   ({ createRenderer, SigmaCanvas } = await import("./SigmaCanvas"));
-  ({ collidingLabels } = await import("./labelRoom"));
+  ({ collidingLabels, drawnFrame } = await import("./labelRoom"));
 });
 
 afterAll(() => restore());
@@ -297,7 +298,7 @@ describe("labels with room, on every frame", () => {
       minY: -7,
       maxY: 7,
     });
-    const { blocked, frame } = collidingLabels(renderer, new Set(["0", "1", "2"]), box, {
+    const blocked = collidingLabels(renderer, new Set(["0", "1", "2"]), box, {
       rank: (i) => i,
       shape: (i) => view.nodes[i]?.shape ?? "circle",
     });
@@ -305,9 +306,9 @@ describe("labels with room, on every frame", () => {
     // unless it runs out of the panel.
     expect(blocked).toContain(1);
     expect(blocked).not.toContain(0);
-    // The frame holds what stays: every node with its shape, and the labels that kept room.
-    expect(frame.nodes.map((n) => n.shape)).toEqual(["circle", "circle", "square"]);
-    expect(frame.labels.map((l) => l.index)).not.toContain(1);
+    // The test hook reads the frame from the renderer: every node with the shape it is drawn
+    // with.
+    expect(drawnFrame(renderer)?.nodes.map((n) => n.shape)).toEqual(["circle", "circle", "square"]);
     renderer.kill();
   });
 });

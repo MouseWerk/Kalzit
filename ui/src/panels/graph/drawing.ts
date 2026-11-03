@@ -1,5 +1,6 @@
 import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
 import type { GraphPalette, RampName } from "./colors";
+import { LABEL_PAD } from "./labelCollisions";
 import type { LabelMode, ShowWhen } from "./options";
 import { SHAPE_SCALE } from "./shapes";
 import { type GraphView, LABEL_BUDGET, labelAllowed, rampStep, type Visibility } from "./view";
@@ -42,8 +43,8 @@ export interface DrawState {
   drawStyle: DrawStyle;
 }
 
-/** Space around a label's text on its background, in px. */
-const LABEL_BACKGROUND_PADDING = 2;
+/** Space around a label's text on its background, in px (what the label check counts with). */
+const LABEL_BACKGROUND_PADDING = LABEL_PAD;
 
 function nodeColor(
   group: number,
