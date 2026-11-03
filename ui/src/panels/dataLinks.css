@@ -14,6 +14,16 @@
     margin-block: var(--space-1) var(--space-2);
   }
 
+  /* Inside a step of a path, links read as the step's other actions do: text, no button frame. */
+  .path__node .data-links .button,
+  .path__edge .data-links .button {
+    min-height: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+  }
+
   .data-links-editor {
     display: grid;
     gap: var(--space-2);
