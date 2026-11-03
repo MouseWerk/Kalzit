@@ -290,10 +290,15 @@ test.describe("Neo4j", () => {
       summary(GRAPH_FIXTURE.categories.nodes, GRAPH_FIXTURE.categories.edges),
       { timeout: STEP_MS },
     );
-    const menu = () =>
-      tree
-        .getByRole("button", { name: t("dashboards.panel.menuNamed", { title: PANELS.tree }) })
-        .click({ timeout: STEP_MS });
+    // The menu button shows on hover or focus; the keyboard reaches it without the pointer
+    // crossing the drawing.
+    const menu = async () => {
+      const button = tree.getByRole("button", {
+        name: t("dashboards.panel.menuNamed", { title: PANELS.tree }),
+      });
+      await button.focus({ timeout: STEP_MS });
+      await button.press("Enter");
+    };
 
     await test.step("GraphML keeps the graph's nodes and edges", async () => {
       await menu();
