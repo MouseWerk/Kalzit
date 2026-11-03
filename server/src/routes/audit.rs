@@ -658,6 +658,10 @@ enum Arg<'a> {
     Int(i64),
 }
 
+/// Server-level entries about one organization (`resource_type` `org`, `resource_id` its id):
+/// what lies behind its neutral refusals, which only server administrators read.
+const ABOUT_ORG_ACTIONS: [&str; 2] = ["member.add_refused_reason", "scim.request_refused_reason"];
+
 /// The audit query for `viewer` with only the filters that are set, so the database can use
 /// the indexes on the organization, the resource and the time (`audit_events_org_time_id`,
 /// `audit_events_org_resource`); a condition like `($n IS NULL OR column = $n)` would make SQLite
@@ -672,8 +676,15 @@ fn list_sql<'a>(viewer: &Viewer<'a>, q: &'a AuditQuery, paging: &'a Paging) -> (
         Arg::Int(viewer.sees_every_folder),
     ];
     let mut conditions: Vec<String> = Vec::new();
-    if viewer.org_id.is_some() {
+    if viewer.org_id.is_some() && viewer.org_view {
         conditions.push("e.org_id = $1".into());
+    } else if viewer.org_id.is_some() {
+        // A server administrator's view of one organization also holds the server-level entries
+        // about it that its own log must not show (`ABOUT_ORG_ACTIONS`).
+        conditions.push(format!(
+            "(e.org_id = $1 OR (e.org_id IS NULL AND e.resource_type = 'org' AND e.resource_id = $1              AND e.action IN ({})))",
+            ABOUT_ORG_ACTIONS.iter().map(|a| format!("'{a}'")).collect::<Vec<_>>().join(", ")
+        ));
     }
     let mut add = |args: &mut Vec<Arg<'a>>, condition: &str, arg: Arg<'a>| {
         args.push(arg);

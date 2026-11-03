@@ -1342,6 +1342,33 @@ async fn why_an_address_was_refused_stays_in_the_server_log() {
     assert!(t.audit_summaries().await.iter().all(|s| !s.contains('@')), "no emails in audit summaries");
     let old = items.iter().find(|e| e["id"] == "alt").unwrap();
     assert_eq!(old["summary"]["why"], "other_organization", "the server's view keeps older entries whole");
+    // Narrowed to the organization, the server's view and export keep that entry about it.
+    let narrowed = t.get(&format!("/api/admin/audit?orgId={org}&action=member.add_refused"), &owner).await;
+    let actions: Vec<&str> =
+        narrowed.body["items"].as_array().unwrap().iter().map(|e| e["action"].as_str().unwrap()).collect();
+    assert!(actions.contains(&"member.add_refused_reason") && actions.contains(&"member.add_refused"), "{actions:?}");
+    let export = t
+        .post(
+            "/api/admin/audit/export",
+            json!({ "format": "json", "orgId": org, "action": "member.add_refused" }),
+            &owner,
+        )
+        .await;
+    assert_eq!(export.status, StatusCode::OK, "{}", export.body);
+    assert!(
+        export.body.as_array().unwrap().iter().any(|e| e["action"] == "member.add_refused_reason"),
+        "{}",
+        export.body
+    );
+    // Another organization's narrowed view does not.
+    let other = uuid();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+        .bind(&other)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let elsewhere = t.get(&format!("/api/admin/audit?orgId={other}&action=member.add_refused"), &owner).await;
+    assert_eq!(elsewhere.body["items"], json!([]), "{}", elsewhere.body);
     assert_eq!(t.get("/api/admin/audit", &admin).await.status, StatusCode::FORBIDDEN);
     t.finish().await;
 }

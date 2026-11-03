@@ -481,6 +481,9 @@ out: that detail is for server administrators and stands in server-level entries
 
 Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included), newest first;
 `?orgId=` narrows it to one organization; an empty `orgId` is `422 validation` (field `orgId`).
+Narrowed, it also holds the server-level entries about that organization (`orgId` `null`,
+resource `org` with its id): `member.add_refused_reason` and `scim.request_refused_reason`. The
+server export's `orgId` filter does the same.
 
 ### `POST /orgs/{orgId}/audit/export` and `POST /admin/audit/export`
 

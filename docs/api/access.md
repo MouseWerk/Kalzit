@@ -1112,7 +1112,9 @@ identity at an enabled provider or directory may instead set up its first method
 minutes of signing in through it (`sessions.created_at`; `SecurityStatus.providerSignInUntil`).
 Without either they answer `403 confirmation_required` with reason
 `second_factor.confirm_password`. A session someone took over cannot plant a factor of its own
-that way. An account with neither a password nor a method (one that signs in only through a
+that way once those 5 minutes are over. Within 5 minutes of a sign-in through a provider or
+directory it can, as for an account without a password (below): that window is an accepted
+residual risk, since such a session just proved the provider's or directory's sign-in. An account with neither a password nor a method (one that signs in only through a
 provider or a directory) sets up its first method only in a session that signed in within the
 last 5 minutes (`sessions.created_at`); an older one answers `403 confirmation_required` with
 reason `second_factor.sign_in_again`, and the UI offers "Sign in again" (sign out, then the
