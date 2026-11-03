@@ -2048,7 +2048,7 @@ through `settings::get`; new registry entries are requested from the orchestrato
   (`.github/scripts/e2e-services.ps1`: versions and SHA-256 pinned, unpacked once and kept in the
   Actions cache, OpenSearch without its plugins); in CI a missing service fails on both systems.
   Graph sources run the same way: the job also starts Neo4j (community; on Windows its zip
-  distribution on the runner's Java 21) and Memgraph, seeds both from
+  distribution on the Java 25 that OpenSearch brings) and Memgraph, seeds both from
   `ui/e2e/fixtures/graph-shop.cypher` and names them in `KALZIT_E2E_NEO4J` and
   `KALZIT_E2E_MEMGRAPH` (`host:port`). Memgraph has no Windows build, so its one spec skips on
   Windows with that reason.

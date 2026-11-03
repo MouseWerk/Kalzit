@@ -7,7 +7,7 @@
 # connection and Memgraph's privilege check are covered by the server tests (fake Bolt servers)
 # on both systems and by the Linux e2e job against a real Memgraph.
 #
-# The same commands run on a Windows machine with Java 21 or later (JAVA_HOME) for the specs.
+# The same commands run on a developer's Windows machine for the specs.
 #
 #   e2e-services.ps1 install   downloads and unpacks the servers into -Tools, unless a complete
 #                              copy is there (ci.yml keeps it in the Actions cache)
@@ -80,12 +80,11 @@ function Get-Home([string] $Name) {
     Join-Path (Join-Path $Tools $Name) $package.Folder
 }
 
-# Java for Neo4j: the runner's Java 21 when it names one, otherwise the JAVA_HOME in effect.
-# OpenSearch brings its own (jdk in its folder).
+# Java for Neo4j and cypher-shell: the JDK that comes with OpenSearch (Java 25, pinned by
+# OpenSearch's hash above), which Neo4j supports. The runner's default Java is 17, too old for
+# both, and a Java 21 or 25 home is not named on every runner image.
 function Get-JavaHome {
-    if ($env:JAVA_HOME_21_X64) { return $env:JAVA_HOME_21_X64 }
-    if ($env:JAVA_HOME) { return $env:JAVA_HOME }
-    throw 'no Java for Neo4j: set JAVA_HOME (Java 21 or later)'
+    Join-Path (Get-Home 'opensearch') 'jdk'
 }
 
 function Install-Package($Package) {
@@ -220,7 +219,10 @@ function Test-Ready([string] $Name) {
             } catch { $false }
         }
         'neo4j' {
-            Invoke-Quiet (Join-Path (Get-Home 'neo4j') 'bin\cypher-shell.bat') @('-a', 'neo4j://127.0.0.1:7687', '-u', 'neo4j', '-p', $Neo4jPassword, 'RETURN 1;')
+            # The answer itself, not the exit status: cypher-shell ends with 0 also when it refuses
+            # to run (an unsupported Java, say).
+            $answer = Invoke-CypherShell @('--format', 'plain', 'RETURN 41 + 1 AS answer;') 2>&1
+            "$answer" -match '(^|\s)42(\s|$)'
         }
     }
 }
@@ -271,6 +273,11 @@ function Wait-Servers {
     $graph = Join-Path $Data 'graph-shop.cypher'
     Get-Content (Join-Path $Fixtures 'graph-shop.cypher') | Where-Object { $_ -notmatch '^//' } | Set-Content $graph
     Invoke-Seed 'Neo4j' { Invoke-CypherShell @('--file', $graph) }
+    # Checked by its content, as the exit status alone can pass a run that wrote nothing: the shop
+    # and the category tree of GRAPH_FIXTURE (ui/e2e/support/services.ts), 17 + 5 nodes.
+    $nodes = "$(Invoke-CypherShell @('--format', 'plain', 'MATCH (n) RETURN count(n) AS nodes;') 2>&1)"
+    if ($nodes -notmatch '\b22\b') { throw "the Neo4j fixture is not in place: $nodes" }
+    Write-Host 'Neo4j: 22 nodes'
 
     if ($env:GITHUB_ENV) {
         Add-Content $env:GITHUB_ENV @(
