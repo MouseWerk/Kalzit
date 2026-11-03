@@ -1,6 +1,6 @@
 // The time picker's popover: quick ranges with a search, recently used ranges, an absolute range
-// typed or picked on a calendar, copy and paste. Its own chunk, loaded when the picker first
-// opens (TimeRangePicker.tsx), so a dashboard's toolbar loads only the button.
+// typed or picked on a calendar, copy and paste. Its own chunk, fetched in the background once a
+// picker shows (TimeRangePicker.tsx), so a page with a picker does not wait for it.
 import {
   type KeyboardEvent,
   type RefObject,
