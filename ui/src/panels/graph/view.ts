@@ -1,5 +1,6 @@
 import type { GraphModel } from "./model";
 import { MAX_EDGE_WIDTH, MAX_NODE_SIZE, MIN_EDGE_WIDTH, MIN_NODE_SIZE, scaleValues } from "./model";
+import type { NodeShape } from "./shapes";
 
 /**
  * What a graph panel draws: the model's nodes one by one, or, for large graphs, groups of nodes
@@ -20,6 +21,8 @@ export interface ViewNode {
    */
   group: number;
   size: number;
+  /** The shape of the node's (or the cluster's) label (shapes.ts). */
+  shape: NodeShape;
   /** Nodes a cluster stands for (1 for a node). */
   members: number;
 }
@@ -63,6 +66,8 @@ export interface ViewInput {
   unlabelled: string;
   /** The palette group of a cluster, by its label index (default: the label index). */
   labelGroup?: (label: number) => number;
+  /** The shape of a label, by its label index (default: a circle for every label). */
+  labelShape?: (label: number) => NodeShape;
 }
 
 /** The group of a ramp step (0 to 4): below -1, so it is neither a palette index nor neutral. */
@@ -92,6 +97,7 @@ export function buildView(model: GraphModel, input: ViewInput): GraphView {
         caption: node.caption,
         group: input.groups[i] ?? -1,
         size: input.sizes[i] ?? MIN_NODE_SIZE,
+        shape: input.labelShape?.(node.label) ?? "circle",
         members: 1,
       });
       return;
@@ -108,6 +114,7 @@ export function buildView(model: GraphModel, input: ViewInput): GraphView {
         caption: "",
         group: node.label < 0 ? -1 : (input.labelGroup?.(node.label) ?? node.label),
         size: MIN_NODE_SIZE,
+        shape: input.labelShape?.(node.label) ?? "circle",
         members: 0,
       });
     }

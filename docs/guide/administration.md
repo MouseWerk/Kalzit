@@ -118,6 +118,13 @@ folders you cannot see are left out. Events are deleted after the retention time
 default, setting `audit.retention_days`). Server admins also have a server-wide audit log under
 **Server**.
 
+**Export...** under the list saves every event that matches the filters, not only the page you
+see, as **CSV** (for Excel and other spreadsheets, with German or English separators) or
+**JSON**. Times are in UTC; text that a spreadsheet would read as a formula gets a leading `'`.
+Exporting needs the same right as reading the log, and each export is recorded in the log itself
+(**Audit log exported**, with the format, the filters and the number of events). One file holds
+at most 100,000 events; for more, choose a shorter date range or a filter.
+
 ## Usage
 
 **Administration** > **Usage** (**Verwaltung** > **Nutzung**) shows how your organization uses
@@ -234,7 +241,12 @@ link-local and cloud metadata addresses itself.** Since plain-http requests are 
 checked address (IPv4 first), the proxy sees that address, not the name: name-based virtual hosts
 still get the name in `Host`, but rules on the proxy that allow domains by name do not match them;
 allow those targets by address or use `https://`. The proxy address cannot be Kalzit's own
-listener or the server of its own database. For squid, for example:
+listener or the server of its own database: Kalzit compares the name as written and every
+address it resolves to, when the setting is saved and whenever the proxy is used, with the
+loopback addresses, its listeners (a listener on `0.0.0.0` or `::` with every address of this
+computer) and the addresses of its own PostgreSQL server; numeric forms such as `2130706433` or
+`0x7f000001` count as the address they mean. A name whose answer changes between that check and
+the request is not caught. For squid, for example:
 
 ```
 acl to_private dst 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 169.254.0.0/16 100.64.0.0/10 ::1 fc00::/7 fe80::/10

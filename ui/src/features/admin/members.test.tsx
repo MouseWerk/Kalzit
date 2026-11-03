@@ -91,11 +91,11 @@ describe("members", () => {
     const email = within(dialog).getByLabelText("Email address");
     expect(document.activeElement).toBe(email);
 
-    // No account has it: 422 validation with field email.
+    // No account has it: the same answer as for an account that cannot be added directly.
     await user.click(email);
     await user.paste("nobody@example.com");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
-    expect(await within(dialog).findByText(/No account uses this email address/)).toBeTruthy();
+    expect(await within(dialog).findByText(/This person cannot be added directly/)).toBeTruthy();
     expect(email.getAttribute("aria-invalid")).toBe("true");
 
     // Already a member: 409 conflict with field email.
@@ -128,7 +128,7 @@ describe("members", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(
       await within(dialog).findByText(
-        "This person cannot be added directly. Anyone who already belongs to an organization or has not confirmed their address joins only through an invitation.",
+        "This person cannot be added directly and joins only through an invitation. That is the case for an address without an account, for anyone who already belongs to an organization and for an address that is not confirmed.",
       ),
     ).toBeTruthy();
     expect(admin.members.some((member) => member.userId === "u2")).toBe(false);

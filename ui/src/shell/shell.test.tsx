@@ -89,6 +89,26 @@ describe("app shell", () => {
     expect(screen.queryByRole("heading", { name: title })).toBeNull();
   });
 
+  it("asks a member who has a second factor to confirm it in this session", async () => {
+    const server = installFakeServer({ signedIn: true, user: TEST_USER });
+    server.security.totp = true;
+    server.state.gates.o1 = "org_second_factor_required";
+    const { user } = renderApp("/");
+    const title = "This organization requires a second factor";
+    expect(await screen.findByRole("heading", { level: 2, name: title })).toBeTruthy();
+    expect(
+      await screen.findByText(/To work in Analytical Engines, confirm your second factor/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Set up now" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Confirm your second factor" }));
+    const dialog = await screen.findByRole("dialog", { name: "Confirm with your second factor" });
+    // The server lets the session in once it confirmed the factor.
+    delete server.state.gates.o1;
+    await user.type(within(dialog).getByLabelText("Six-digit code"), server.security.code);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: title })).toBeNull());
+    expect(server.security.confirmedUntil).not.toBeNull();
+  });
+
   it("offers the sign-in through a provider when the organization refuses passwords", async () => {
     const server = installFakeServer({ signedIn: true, user: TEST_USER });
     server.state.gates.o1 = "org_provider_sign_in_required";

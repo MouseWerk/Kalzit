@@ -63,6 +63,14 @@ function useShownValue(): (key: string, value: unknown) => string {
  * change: the conflict dialog shows both values and lets the user keep the stored one or
  * overwrite it on purpose.
  */
+/** A change the person called off before it was sent (a warning they did not confirm). */
+export class ChangeCancelled extends Error {
+  constructor() {
+    super("change cancelled");
+    this.name = "ChangeCancelled";
+  }
+}
+
 export function useSettingChanges({
   queryKey,
   patch,
@@ -175,6 +183,9 @@ export function useSettingChanges({
       // A later change of the same setting would go over what this error (or the conflict
       // dialog) is about.
       forget(key);
+      if (error instanceof ChangeCancelled) {
+        return;
+      }
       if (isApiError(error, "validation") && error.field === "value") {
         notice.clear();
         setRejected({ key, message: errorText(t, error, SETTING_ERRORS) });

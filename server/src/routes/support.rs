@@ -83,6 +83,14 @@ impl Paging {
         Ok(Self { limit, before_time: time.parse().map_err(|_| bad())?, before_id: id.to_string() })
     }
 
+    /// Paging for the server's own batches (an export reading a whole list), which may be larger
+    /// than the API's `MAX_LIMIT`.
+    pub fn batch(limit: u32, cursor: Option<&str>) -> ApiResult<Self> {
+        let mut paging = Self::new(None, cursor)?;
+        paging.limit = limit.max(1);
+        Ok(paging)
+    }
+
     pub fn before_time(&self) -> i64 {
         self.before_time
     }

@@ -4,7 +4,8 @@
  * follow the server's API documents (docs/api/access.md, docs/api/settings-dashboards.md); every
  * response is checked, so a mismatch fails as `invalid_response` instead of rendering half a page.
  */
-import { expectShape, isRecord, request } from "../../api/client";
+import { type DownloadedFile, expectShape, isRecord, request, requestFile } from "../../api/client";
+import type { ExportLanguage } from "../../api/generated/shapes";
 import { isSummary, type SecondFactorSummary } from "../security/api";
 
 // Small shape checks, combined per type below.
@@ -655,6 +656,37 @@ export async function listOrgSettings(orgId: string): Promise<Setting[]> {
   return (await getPage(orgPath(orgId, "/settings"), isSetting, "settings")).items;
 }
 
+/** An owner or administrator with no sign-in through a provider or directory into the org. */
+export interface PasswordOnlyAdmin {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+function isPasswordOnlyAdmin(value: unknown): value is PasswordOnlyAdmin {
+  return (
+    isRecord(value) &&
+    typeof value.userId === "string" &&
+    typeof value.name === "string" &&
+    typeof value.email === "string" &&
+    typeof value.role === "string"
+  );
+}
+
+/**
+ * The owners and administrators who could no longer enter the organization once its password
+ * sign-in is off (docs/api/access.md, "Organization sign-in rules").
+ */
+export async function listPasswordOnlyAdmins(orgId: string): Promise<PasswordOnlyAdmin[]> {
+  return expectShape(
+    await request("GET", orgPath(orgId, "/sign-in/password-only")),
+    (value): value is PasswordOnlyAdmin[] =>
+      Array.isArray(value) && value.every(isPasswordOnlyAdmin),
+    "password-only admins",
+  );
+}
+
 export function updateOrgSetting(orgId: string, key: string, value: unknown, version: number) {
   const path = orgPath(orgId, `/settings/${enc(key)}`);
   return send("PATCH", path, { value, version }, isSetting, "setting");
@@ -725,6 +757,29 @@ export function listAudit(
   const params = orgId === null ? filter : { ...filter, orgId: undefined };
   const path = `${base}${query({ ...params, cursor, limit: options.limit })}`;
   return getPage(path, isAuditEvent, "audit", options.signal);
+}
+
+export type AuditExportFormat = "csv" | "json";
+
+/**
+ * Every event the filters match, as a file (the list's rights: `audit:read`, or a server
+ * administrator for the server's log). The server records the export in the log itself.
+ */
+export function exportAudit(
+  orgId: string | null,
+  filter: AuditFilter,
+  format: AuditExportFormat,
+  language: ExportLanguage,
+  signal?: AbortSignal,
+): Promise<DownloadedFile> {
+  const path = orgId === null ? "/api/admin/audit/export" : orgPath(orgId, "/audit/export");
+  const body: Record<string, unknown> = { format };
+  if (format === "csv") body.language = language;
+  const filters = orgId === null ? filter : { ...filter, orgId: undefined };
+  for (const [name, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") body[name] = value;
+  }
+  return requestFile(path, body, { signal });
 }
 
 // Server administration

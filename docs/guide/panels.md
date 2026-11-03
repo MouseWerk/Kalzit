@@ -198,11 +198,14 @@ layout, WebGL; groups and an explorer), **Hierarchy** (directed structures in la
 
 The options are grouped as in the panel editor:
 
-- **Nodes**: **Node name property**; **Color by** Label (with **Color per label** from the palette),
-  Property (a number along a **Color scheme**: blue, green-yellow-red or gray ramp, with an
-  automatic or fixed **Range**; or **By value (text)**, a palette color per value; nodes without
-  the property are gray), Community or Component; **Node size** by edges, a property or all the
-  same, with the smallest and largest size in px.
+- **Nodes**: **Node name property**; **Color by** Label (with **Color and shape per label**: a
+  palette color and a shape for each label), Property (a number along a **Color scheme**: blue,
+  green-yellow-red or gray ramp, with an automatic or fixed **Range**; or **By value (text)**, a
+  palette color per value; nodes without the property are gray), Community or Component; **Node
+  size** by edges, a property or all the same, with the smallest and largest size in px. Each label
+  also gives its nodes a shape, circle, square or diamond, in the order of the labels unless the
+  panel sets one (**Shape per label**, whatever colors the nodes), so labels stay apart without
+  colors too, as with Windows high contrast; the legend shows the shapes.
 - **Edges**: **Edge width property**, **Arrows for the direction** and **Edge type labels**, each
   always, at the selection or never.
 - **Labels on the drawing**: by zoom level (with **Always label the largest** N), always, or only
@@ -214,16 +217,20 @@ The options are grouped as in the panel editor:
   (an edge property with a timestamp adds a time slider).
 
 Selecting a node opens its details beside the drawing (over it in narrow panels): labels, typed
-properties, edges and component, and its neighbours grouped by edge type and direction, with
-**Load neighbours** and **Set $variable**. The selection is shown quietly: the node's name in bold
-on a neutral tint, everything else dimmed. Shift+click (or Space on the keyboard) adds nodes to the
+properties, edges and component, and its neighbours grouped by edge type and direction, with **Load
+neighbours** and **Set $variable**. The selection is shown quietly: the node's name in bold on a
+neutral tint, everything else dimmed. Shift+click (or Space on the keyboard) adds nodes to the
 selection; **Show only the selection** (S) hides the rest, and a multi-value variable takes the
 values of all selected nodes (**Set $customers (2 values)**). **Pin** (P) keeps a node when you take
 back explorer steps. Your pins and selection are kept for you on that dashboard panel, on the
 server; they change neither the panel nor its query. The legend under the drawing hides and shows
-labels, and **Layout** switches between forces and layers for this view. A selection gives a
-multi-value variable at most 100 values and says so; a click on a node whose neighbours cannot be
-loaded opens its details instead.
+labels, and **Layout** switches between forces and layers for this view. The network spreads its
+nodes over the panel, as far as the panel has room, so that nodes do not lie on each other and the
+names that fit show beside their node; a name that would cover a node, another name or the panel's
+edge shows once zooming in gives it room, and a short panel draws its nodes smaller. Labels shown
+always (the **Always** mode) and the labels of selected nodes are drawn whatever they cover, so they
+may lie over each other. A selection gives a multi-value variable at most 100 values and says so; a
+click on a node whose neighbours cannot be loaded opens its details instead.
 
 ![A network panel with a customer selected and the details beside the drawing](../screenshots/graph-inspector-dark.png)
 

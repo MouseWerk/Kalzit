@@ -6,9 +6,9 @@
 //! - `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: a panel's stored
 //!   queries and steps, for whoever may read the dashboard.
 //!
-//! Every export is written to the audit log, a refused one too. The format is chosen per result
-//! shape: frames today; documents (NDJSON) and graphs (GraphML) add their encoders here with M2
-//! and M3.
+//! Every export is written to the audit log, a refused one too. The file keeps the shape of the
+//! result after the steps: a frame as CSV, JSON or Excel, documents as JSON or NDJSON, a graph as
+//! GraphML or JSON; a format that does not fit the shape is refused (`export.format_unsupported`).
 //!
 //! Resources: at most `MAX_EXPORTS` exports make files at once on a server (more answer `busy`);
 //! steps and encoding run off the request threads, stop when the client goes away (a drop guard
@@ -60,7 +60,7 @@ use crate::locks::{MutexExt, RwLockExt};
 use crate::net::RequestInfo;
 use crate::shapes::{
     ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse,
-    QueryResult, Shape, TimeRange,
+    QueryResult, TimeRange,
 };
 
 /// Exports that make their file at the same time, per server (`AppState::exports`).
@@ -70,7 +70,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Chunks waiting between the sending task and the response body.
 const QUEUED_CHUNKS: usize = 2;
 /// Where an export's temporary files go, inside the data directory.
-const SPOOL_DIR: &str = "export-tmp";
+pub(crate) const SPOOL_DIR: &str = "export-tmp";
 /// Free disk space an export leaves, besides its own estimate.
 const KEEP_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 /// The size of one chunk sent.
@@ -87,6 +87,8 @@ pub struct Limits {
     pub file_bytes: usize,
     /// Free disk space kept besides the estimate of the file.
     pub keep_free: u64,
+    /// The most events an audit log export holds (`routes::audit`).
+    pub audit_events: usize,
 }
 
 impl Default for Limits {
@@ -96,6 +98,7 @@ impl Default for Limits {
             download: Duration::from_secs(15 * 60),
             file_bytes: export::MAX_FILE_BYTES,
             keep_free: KEEP_FREE_BYTES,
+            audit_events: super::audit::MAX_EXPORT_EVENTS,
         }
     }
 }
@@ -111,7 +114,7 @@ pub fn clear_spool(data_dir: &FsPath) {
 }
 
 /// One export per user at a time, from making the file to the last byte sent.
-struct UserSlot {
+pub(crate) struct UserSlot {
     users: Arc<Mutex<HashSet<String>>>,
     id: String,
 }
@@ -123,15 +126,21 @@ impl Drop for UserSlot {
 }
 
 /// What a running export holds: a slot of the server while the file is made, its user's slot.
-struct Slots {
-    permit: tokio::sync::OwnedSemaphorePermit,
-    user: UserSlot,
+pub(crate) struct Slots {
+    pub(crate) permit: tokio::sync::OwnedSemaphorePermit,
+    pub(crate) user: UserSlot,
 }
 
 fn acquire(state: &AppState, ctx: &OrgCtx) -> ApiResult<Slots> {
+    acquire_for(state, &ctx.user.id)
+}
+
+/// The export slots for `user_id`: one export per user, at most `MAX_EXPORTS` making files on
+/// the server. Every export takes them, the audit log's too.
+pub(crate) fn acquire_for(state: &AppState, user_id: &str) -> ApiResult<Slots> {
     let user = {
         let mut users = state.export_users.lock_or_recover();
-        if !users.insert(ctx.user.id.clone()) {
+        if !users.insert(user_id.to_string()) {
             return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "busy",
@@ -139,7 +148,7 @@ fn acquire(state: &AppState, ctx: &OrgCtx) -> ApiResult<Slots> {
             )
             .because("export.user_busy"));
         }
-        UserSlot { users: state.export_users.clone(), id: ctx.user.id.clone() }
+        UserSlot { users: state.export_users.clone(), id: user_id.to_string() }
     };
     let permit = state.exports.clone().try_acquire_owned().map_err(|_| too_busy())?;
     Ok(Slots { permit, user })
@@ -231,7 +240,8 @@ enum Msg {
 struct Spooled {
     path: tempfile::TempPath,
     len: u64,
-    rows: usize,
+    /// What the audit entry counts (rows, documents, nodes and edges) and the shape.
+    counts: Vec<(&'static str, Value)>,
     kind: export::Kind,
     user: UserSlot,
 }
@@ -439,8 +449,6 @@ async fn produce(
         .and_then(|v| v.as_u64())
         .unwrap_or(DEFAULT_TIMEOUT_SECS);
     let mut inputs = Vec::new();
-    // Results that are no frame: exported only after a projection or a graph step made one.
-    let mut other_shapes = Vec::new();
     // Graph steps that ran with their query (in the database or on the server); their results
     // are the inputs here.
     let mut done = BTreeSet::new();
@@ -448,17 +456,12 @@ async fn produce(
         match response.results.remove(ref_id) {
             Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                 done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
-                match result {
-                    QueryResult::Frame { frame } => inputs.push((ref_id.clone(), Input::Frame(frame))),
-                    QueryResult::Documents { documents } => {
-                        other_shapes.push((ref_id.clone(), Shape::Documents));
-                        inputs.push((ref_id.clone(), Input::Documents(documents)));
-                    }
-                    QueryResult::Graph { graph } => {
-                        other_shapes.push((ref_id.clone(), Shape::Graph));
-                        inputs.push((ref_id.clone(), Input::Graph(graph)));
-                    }
-                }
+                let input = match result {
+                    QueryResult::Frame { frame } => Input::Frame(frame),
+                    QueryResult::Documents { documents } => Input::Documents(documents),
+                    QueryResult::Graph { graph } => Input::Graph(graph),
+                };
+                inputs.push((ref_id.clone(), input));
             }
             Some(QueryOutcome::Err { error }) => return Err(api_error(error)),
             None => return Err(ApiError::internal("export", format!("no outcome for {ref_id}"))),
@@ -476,42 +479,16 @@ async fn produce(
         let permit = permit;
         #[cfg(test)]
         tests::hold_if_asked(&steps);
-        let (frames, _) = steps::run_shapes(&steps, inputs, &control, &done).map_err(|f| {
+        let outputs = steps::run_outputs(&steps, inputs, &control, &done).map_err(|f| {
             let message = format!("step {}: {}", f.index + 1, f.detail.message);
             step_error(message, f.detail)
         })?;
-        let chosen = match &frame {
-            Some(name) => frames.iter().find(|f| &f.name == name),
-            None => frames.first(),
-        };
-        let Some(chosen) = chosen else {
-            let shape = other_shapes.iter().find(|(r, _)| frame.as_ref().is_none_or(|f| f == r)).map(|(_, s)| *s);
-            return Err(match shape {
-                Some(shape) => {
-                    let shape =
-                        serde_json::to_value(shape).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
-                    refused(
-                        Detail::new("export.shape_unsupported", format!("{shape} results cannot be exported yet"))
-                            .with("shape", shape),
-                    )
-                }
-                None => {
-                    let name = frame.unwrap_or_default();
-                    refused(
-                        Detail::new("export.frame_missing", format!("there is no table {name} to export"))
-                            .with("frame", &name),
-                    )
-                    .with_field("frame")
-                }
-            });
-        };
-        let frame = &chosen.frame;
+        let (name, content) = choose(&outputs, frame.as_deref(), format)?;
         let io = |e: std::io::Error| ApiError::internal("export", format!("the spool file: {e}"));
         std::fs::create_dir_all(&spool).map_err(io)?;
-        // The file may be as large as its cells suggest, up to the limit; the disk keeps what
+        // The file may be as large as its content suggests, up to the limit; the disk keeps what
         // the data directory's other users (the databases) need.
-        let size =
-            (frame.rows().saturating_mul(frame.fields().len()).saturating_mul(24) as u64).min(limits.file_bytes as u64);
+        let size = content.estimate().min(limits.file_bytes as u64);
         // An Excel file takes three copies at once: the sheet, the workbook and the spool file.
         let estimate = if format == ExportFormat::Xlsx { size.saturating_mul(3) } else { size };
         let free = crate::updates::platform::free_space(&spool);
@@ -541,16 +518,59 @@ async fn produce(
                 .map_err(|e| Detail::new("export.failed", format!("the file could not be written: {e}")))
         };
         let caps = export::Caps { file_bytes: limits.file_bytes };
-        export::encode_to(frame, &chosen.name, format, language, &control, caps, &spool, true, &mut write)
+        export::encode_content_to(content, name, format, language, &control, caps, &spool, true, &mut write)
             .map_err(|d| if d.reason.starts_with("steps.") { step_error(d.message.clone(), d) } else { refused(d) })?;
         let file = out.into_inner().map_err(|e| io(e.into_error()))?;
         let len = file.metadata().map_err(io)?.len();
         drop(file);
         // Complete: the server's slot is free for the next export while this one is sent.
         drop(permit);
-        Ok(Spooled { path, len, rows: frame.rows(), kind: export::kind(format), user })
+        let mut counts: Vec<(&'static str, Value)> = content.counts().into_iter().map(|(k, n)| (k, json!(n))).collect();
+        counts.push(("shape", json!(export::shape_name(content.shape()))));
+        Ok(Spooled { path, len, counts, kind: export::kind(format), user })
     };
     tokio::task::spawn_blocking(work).await.map_err(|e| ApiError::internal("export", e))?
+}
+
+/// The result the file holds, with its name. A named result is looked for among the frames, the
+/// documents and the graphs after the steps; without a name, the first result the format writes,
+/// frames before documents before graphs (a CSV, JSON or Excel file of a request that names
+/// nothing holds the first table, as before documents and graphs had formats). A format that
+/// does not write the result's shape is refused, never converted: that is a step.
+fn choose<'a>(
+    outputs: &'a steps::Outputs,
+    name: Option<&str>,
+    format: ExportFormat,
+) -> ApiResult<(&'a str, export::Content<'a>)> {
+    use export::Content;
+    let all = outputs
+        .frames
+        .iter()
+        .map(|f| (f.name.as_str(), Content::Frame(&f.frame)))
+        .chain(outputs.documents.iter().map(|(n, d)| (n.as_str(), Content::Documents(d))))
+        .chain(outputs.graphs.iter().map(|(n, g)| (n.as_str(), Content::Graph(g))));
+    let found = match name {
+        Some(name) => all.into_iter().find(|(n, _)| *n == name),
+        None => {
+            let all: Vec<_> = all.collect();
+            match all.iter().find(|(_, c)| export::fits(c.shape(), format)) {
+                Some(fitting) => Some(*fitting),
+                // Nothing fits: the refusal names the shape of the first result.
+                None => all.first().copied(),
+            }
+        }
+    };
+    let Some((found_name, content)) = found else {
+        let name = name.unwrap_or_default();
+        return Err(refused(
+            Detail::new("export.frame_missing", format!("there is no result {name} to export")).with("frame", name),
+        )
+        .with_field("frame"));
+    };
+    if !export::fits(content.shape(), format) {
+        return Err(refused(export::format_unsupported(content.shape(), format)).with_field("format"));
+    }
+    Ok((found_name, content))
 }
 
 /// A step's failure as an answer: the time limit as `query_timeout`, anything else as a
@@ -634,7 +654,7 @@ fn stopped(reason: &'static str, message: &str) -> Detail {
 async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limits: Limits) {
     use tokio::io::AsyncReadExt;
     let started = Instant::now();
-    let Spooled { path, len, rows, user: _user, .. } = file;
+    let Spooled { path, len, counts, user: _user, .. } = file;
     let mut sent: u64 = 0;
     // Set once `data.exported` is written: the file was complete on the server then, and a client
     // that drops at the last chunk does not turn it into an aborted export.
@@ -642,7 +662,10 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
     let outcome: Result<(), (Detail, &'static str)> = async {
         // A file without bytes still gets its entry.
         if len == 0 {
-            pending.record_exported(rows).await.map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
+            pending
+                .record_exported(&counts)
+                .await
+                .map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
             recorded = true;
         }
         let mut source = tokio::fs::File::open(&path)
@@ -662,7 +685,7 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
             // not get a file that was not recorded.
             if sent + n as u64 >= len {
                 pending
-                    .record_exported(rows)
+                    .record_exported(&counts)
                     .await
                     .map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
                 recorded = true;
@@ -714,7 +737,7 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
 }
 
 impl Pending {
-    async fn record_exported(&self, rows: usize) -> ApiResult<()> {
+    async fn record_exported(&self, counts: &[(&'static str, Value)]) -> ApiResult<()> {
         let copy = Pending {
             state: self.state.clone(),
             ctx: self.ctx.clone(),
@@ -722,7 +745,7 @@ impl Pending {
             dashboard_id: self.dashboard_id.clone(),
             summary: self.summary.clone(),
         };
-        copy.record("data.exported", vec![("rows", json!(rows))]).await
+        copy.record("data.exported", counts.to_vec()).await
     }
 }
 
@@ -732,6 +755,68 @@ fn attachment(file: Spooled, pending: Pending, title: &str) -> Response {
     let kind = file.kind;
     let limits = *pending.state.export_limits.read_or_recover();
     tokio::spawn(send_file(file, tx, pending, limits));
+    body_of(rx, kind.content_type, &name)
+}
+
+/// Sends a finished spool file that needs no audit entry of its own at the end (the caller wrote
+/// it before), with the same bounds as an export's download: chunks of 1 MiB, a client that takes
+/// nothing for `Limits::stall` or needs longer than `Limits::download` loses it. The user's slot
+/// and the file are held until the sending ends.
+pub(crate) fn send_spooled(
+    path: tempfile::TempPath,
+    len: u64,
+    user: UserSlot,
+    limits: Limits,
+    content_type: &'static str,
+    name: &str,
+) -> Response {
+    let (tx, rx) = mpsc::channel::<Msg>(QUEUED_CHUNKS);
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let _user = user;
+        let started = Instant::now();
+        let mut sent: u64 = 0;
+        let failed = |message: &str| Msg::Failed(message.to_string());
+        let mut source = match tokio::fs::File::open(&path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = tx.try_send(failed(&format!("the spool file: {e}")));
+                return;
+            }
+        };
+        while sent < len {
+            let mut chunk = Vec::with_capacity(CHUNK);
+            match (&mut source).take(CHUNK as u64).read_to_end(&mut chunk).await {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = tx.try_send(failed(&format!("the spool file: {e}")));
+                    return;
+                }
+            }
+            let n = chunk.len() as u64;
+            let left = limits.download.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                let _ = tx.try_send(failed("the download took too long"));
+                return;
+            }
+            match tokio::time::timeout(limits.stall.min(left), tx.send(Msg::Chunk(chunk))).await {
+                Ok(Ok(())) => sent += n,
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    let _ = tx.try_send(failed("the client stopped taking the file"));
+                    return;
+                }
+            }
+        }
+        let _ = tokio::time::timeout(limits.stall, tx.send(Msg::Done)).await;
+        drop(path);
+    });
+    body_of(rx, content_type, name)
+}
+
+/// The response that hands over the chunks the sending task puts into `rx`.
+fn body_of(rx: mpsc::Receiver<Msg>, content_type: &'static str, name: &str) -> Response {
     let chunks = futures_util::stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {
             Some(Msg::Chunk(c)) => Some((Ok::<_, std::io::Error>(axum::body::Bytes::from(c)), rx)),
@@ -743,7 +828,7 @@ fn attachment(file: Spooled, pending: Pending, title: &str) -> Response {
     let mut response = Response::new(Body::from_stream(chunks));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(kind.content_type));
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(content_type));
     // `file_name` leaves only ASCII letters, digits, `-`, `_` and the dot: always a valid header.
     if let Ok(value) = header::HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
         headers.insert(header::CONTENT_DISPOSITION, value);

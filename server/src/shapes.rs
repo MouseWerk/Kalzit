@@ -732,8 +732,8 @@ pub struct DistributionBin {
     pub count: u64,
 }
 
-/// Export file formats (docs/api/datasources.md, "Export"). Frames export as CSV, JSON or Excel; documents
-/// (NDJSON) and graphs (GraphML) follow with their milestones.
+/// Export file formats (docs/api/datasources.md, "Export"), per result shape: frames as CSV, JSON
+/// or Excel, documents as JSON or NDJSON, graphs as GraphML or JSON.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -741,6 +741,8 @@ pub enum ExportFormat {
     Csv,
     Json,
     Xlsx,
+    Ndjson,
+    Graphml,
 }
 
 /// Decides the CSV separator and decimal mark: German `;` and `,`, English `,` and `.`.
@@ -775,7 +777,8 @@ pub struct ExportRequest {
     pub steps: Vec<Value>,
     pub format: ExportFormat,
     pub language: ExportLanguage,
-    /// The frame to export, by `refId`; the first frame when absent.
+    /// The result to export, by `refId`: a frame, documents or a graph after the steps. Absent:
+    /// the first result the format fits, frames before documents before graphs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub frame: Option<String>,
@@ -813,6 +816,7 @@ pub struct PanelExportRequest {
     pub variables: BTreeMap<String, Value>,
     pub format: ExportFormat,
     pub language: ExportLanguage,
+    /// The result to export, by `refId`, as for the free export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub frame: Option<String>,

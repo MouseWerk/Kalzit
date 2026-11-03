@@ -1,8 +1,10 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { forgetAccountData, logout, meQuery } from "../../api/auth";
 import { isApiError } from "../../api/client";
 import { AccessNotice } from "../../auth/AccessLayout";
+import { PasswordField } from "../../auth/PasswordField";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
@@ -13,6 +15,7 @@ import { errorText } from "../admin/errors";
 import {
   confirmFactor,
   confirmPasskeyOptions,
+  confirmPassword,
   fetchSecurity,
   newRecoveryCodes,
   type PasskeyInfo,
@@ -450,8 +453,9 @@ function RenameField({
 }
 
 /**
- * Adding to an account that has a factor needs a fresh confirmation first; the dialogs ask for it
- * in place before they start.
+ * Adding to an account that has a factor needs a fresh confirmation with it first; the first
+ * factor of an account with a password needs the password. The dialogs ask for it in place
+ * before they start.
  */
 function ConfirmFirst({
   status,
@@ -462,6 +466,13 @@ function ConfirmFirst({
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  if (!hasFactor(status)) {
+    return status.hasPassword ? (
+      <ConfirmPasswordFirst onConfirmed={onConfirmed} />
+    ) : (
+      <SignInAgain />
+    );
+  }
   return (
     <>
       <p className="admin-dialog__text">{t("security.dialog.confirmFirst")}</p>
@@ -478,8 +489,126 @@ function ConfirmFirst({
   );
 }
 
+function hasFactor(status: SecurityStatus): boolean {
+  return status.totp !== null || status.passkeys.length > 0;
+}
+
 function needsConfirmation(status: SecurityStatus): boolean {
-  return (status.totp !== null || status.passkeys.length > 0) && !isConfirmed(status);
+  if (hasFactor(status)) {
+    return !isConfirmed(status);
+  }
+  const until = status.hasPassword ? status.passwordConfirmedUntil : status.freshSignInUntil;
+  return until === null || until - 5_000 <= Date.now();
+}
+
+/**
+ * The first second factor of an account without a password (it signs in through a provider or a
+ * directory) needs a sign-in from the last minutes: the person signs out and in again, and comes
+ * back here.
+ */
+function SignInAgain() {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const signIn = useMutation({
+    mutationFn: async () => {
+      await queryClient.cancelQueries();
+      await logout();
+    },
+    onSuccess: () => {
+      forgetAccountData(queryClient);
+      queryClient.setQueryData(meQuery.queryKey, null);
+      const back = `${window.location.pathname}${window.location.search}`;
+      window.location.assign(`/login?redirect=${encodeURIComponent(back)}`);
+    },
+  });
+  return (
+    <>
+      <p className="admin-dialog__text">{t("security.dialog.signInAgainText")}</p>
+      {signIn.isError ? (
+        <p className="admin-error" role="alert">
+          {errorText(t, signIn.error)}
+        </p>
+      ) : null}
+      <div className="admin-dialog__footer">
+        <button
+          type="button"
+          className="button button--primary"
+          aria-disabled={signIn.isPending}
+          onClick={() => {
+            if (!signIn.isPending) {
+              signIn.mutate();
+            }
+          }}
+        >
+          {t("security.dialog.signInAgain")}
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The account's password before its first second factor: a session someone took over cannot set
+ * up a factor of its own and keep the account.
+ */
+function ConfirmPasswordFirst({ onConfirmed }: { onConfirmed: () => void }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const fieldRef = useRef<HTMLInputElement>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) {
+      return;
+    }
+    if (password === "") {
+      setError(t("security.dialog.passwordRequired"));
+      fieldRef.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      await confirmPassword(password);
+      await queryClient.invalidateQueries({ queryKey: securityKeys.status });
+      onConfirmed();
+    } catch (failure) {
+      setError(
+        isApiError(failure, "validation")
+          ? t("security.dialog.passwordWrong")
+          : errorText(t, failure),
+      );
+      fieldRef.current?.focus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="form" noValidate onSubmit={(event) => void submit(event)}>
+      <p className="admin-dialog__text">{t("security.dialog.passwordFirst")}</p>
+      <PasswordField
+        ref={fieldRef}
+        label={t("security.dialog.passwordLabel")}
+        name="password"
+        autoComplete="current-password"
+        value={password}
+        onValueChange={(value) => {
+          setPassword(value);
+          setError(undefined);
+        }}
+        error={error}
+        readOnly={busy}
+      />
+      <div className="admin-dialog__footer">
+        <button type="submit" className="button button--primary" aria-disabled={busy}>
+          {t("security.factor.confirm")}
+        </button>
+      </div>
+    </form>
+  );
 }
 
 /** Setting up the app (frame 4B). */

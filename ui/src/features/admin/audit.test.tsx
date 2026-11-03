@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { openAdmin } from "./test/openAdmin";
 
 function auditCalls(server: { calls: { path: string }[] }, base: string) {
@@ -102,6 +102,48 @@ describe("audit log", () => {
     await user.selectOptions(await within(filters).findByLabelText("Organization"), "o1");
     await waitFor(() => expect(within(events()).getAllByRole("listitem")).toHaveLength(3));
     expect(auditCalls(server, "/api/admin/audit").at(-1)).toBe("/api/admin/audit?orgId=o1");
+  });
+
+  it("exports every event of the filters as CSV or JSON", async () => {
+    const { user } = await openAdmin("/admin/audit");
+    await screen.findByRole("list", { name: "Events" });
+    const filters = screen.getByRole("search", { name: "Filter the audit log" });
+    await user.selectOptions(within(filters).getByLabelText("Action"), "settings.");
+    await waitFor(() => expect(within(events()).getAllByRole("listitem")).toHaveLength(1));
+    // The export answers a file; the fake server has no such route, so it is caught here.
+    const sent: { path: string; body: unknown }[] = [];
+    const fakeFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/audit/export")) {
+        sent.push({ path: String(input), body: JSON.parse(String(init?.body)) });
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: { code: "validation", message: "too many" } }), {
+            status: 422,
+          }),
+        );
+      }
+      return fakeFetch(input, init);
+    });
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    await user.click(screen.getByRole("button", { name: "Export…" }));
+    const dialog = screen.getByRole("dialog", { name: "Export audit log" });
+    expect(within(dialog).getByText(/every event that matches the filters/)).toBeTruthy();
+    await user.click(within(dialog).getByRole("radio", { name: /German/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    // The list's filters, not its page.
+    expect(sent[0]).toEqual({
+      path: "/api/orgs/o1/audit/export",
+      body: { format: "csv", language: "de", action: "settings." },
+    });
+    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    await user.click(within(dialog).getByRole("radio", { name: "JSON" }));
+    expect(within(dialog).queryByRole("radio", { name: /German/ })).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]?.body).toEqual({ format: "json", action: "settings." });
   });
 
   it("shows no access to the org audit log without audit:read", async () => {

@@ -572,23 +572,29 @@ struct Existing {
 /// The account a new SCIM user with `email` is: `Some(id)` to link, `None` to make one.
 async fn existing_account(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, email: &str) -> ScimResult<Option<String>> {
     let matches = crate::routes::all_accounts_with_email(&mut *conn, email).await?;
-    let taken = || ScimError::taken("another account has this email").because("scim.email_taken");
+    // Every account that cannot be linked gets the same answer, so the directory learns nothing
+    // about it (several accounts, a service account, a server admin, an unconfirmed address,
+    // another organization); what lies behind it goes to the audit log only.
+    let not_linkable = |why: &'static str| {
+        ScimError::taken("an account with this email cannot be linked; invite the person instead")
+            .because("scim.account_not_linkable")
+            .why(why)
+    };
     // A service account's made-up address names no person; it is never linked.
     if matches.iter().any(|(_, service)| *service) || matches.len() > 1 {
-        return Err(taken());
+        return Err(not_linkable("email_taken"));
     }
     let Some((id, _)) = matches.into_iter().next() else { return Ok(None) };
     let account: Existing = sqlx::query_as("SELECT id, is_server_admin, email_confirmed FROM users WHERE id = $1")
         .bind(&id)
         .fetch_one(&mut *conn)
         .await?;
+    // A server admin's account is never linked through SCIM.
     if account.is_server_admin != 0 || ctx.policy.break_glass() == Some(account.id.as_str()) {
-        return Err(ScimError::protected("a server admin's account is never linked through SCIM")
-            .because("scim.account_protected"));
+        return Err(not_linkable("account_protected"));
     }
     if account.email_confirmed == 0 {
-        return Err(ScimError::taken("an account has this email, but its owner has not confirmed it")
-            .because("scim.email_unconfirmed"));
+        return Err(not_linkable("email_unconfirmed"));
     }
     let linked: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM scim_users WHERE org_id = $1 AND user_id = $2")
         .bind(ctx.org_id)
@@ -611,11 +617,8 @@ async fn existing_account(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, email: 
     .bind(ctx.org_id)
     .fetch_one(&mut *conn)
     .await?;
-    // The refusal names no other organization: the directory learns only that the account cannot
-    // be linked.
     if here == 0 && elsewhere > 0 {
-        return Err(ScimError::taken("an account with this email cannot be linked; invite the person instead")
-            .because("scim.account_not_linkable"));
+        return Err(not_linkable("other_organization"));
     }
     Ok(Some(account.id))
 }
@@ -824,7 +827,10 @@ async fn update_account(
     {
         let others = crate::routes::all_accounts_with_email(&mut *conn, &email).await?;
         if others.iter().any(|(other, _)| other != id) {
-            return Err(ScimError::taken("another account has this email").because("scim.email_taken"));
+            // The same neutral answer as for a new user's address (`existing_account`).
+            return Err(ScimError::taken("an account with this email cannot be linked; invite the person instead")
+                .because("scim.account_not_linkable")
+                .why("email_taken"));
         }
         sqlx::query("UPDATE users SET email = $1, email_confirmed = 0 WHERE id = $2")
             .bind(&email)

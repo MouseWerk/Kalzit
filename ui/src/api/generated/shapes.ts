@@ -262,7 +262,7 @@ export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 
 export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, changeTarget: boolean, };
 
-export type ExportFormat = "csv" | "json" | "xlsx";
+export type ExportFormat = "csv" | "json" | "xlsx" | "ndjson" | "graphml";
 
 export type ExportLanguage = "de" | "en";
 
@@ -272,7 +272,8 @@ export type ExportRequest = { queries: Array<QueryItem>, timeRange: TimeRange, i
  */
 steps: unknown[], format: ExportFormat, language: ExportLanguage, 
 /**
- * The frame to export, by `refId`; the first frame when absent.
+ * The result to export, by `refId`: a frame, documents or a graph after the steps. Absent:
+ * the first result the format fits, frames before documents before graphs.
  */
 frame?: string, 
 /**
@@ -289,7 +290,11 @@ timeZone?: string,
  */
 weekStart?: "monday" | "sunday" | "saturday", };
 
-export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, frame?: string, 
+export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, 
+/**
+ * The result to export, by `refId`, as for the free export.
+ */
+frame?: string, 
 /**
  * The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
  * dashboard's, else the viewer's, as the UI shows them. Absent: UTC.

@@ -872,7 +872,10 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         json!("breakGlassReady"),
         "the break-glass admin needs a second factor"
     );
-    // The break-glass admin sets up the app, whose codes finish the break-glass sign-in below.
+    // The break-glass admin sets up the app, whose codes finish the break-glass sign-in below;
+    // the first factor of an account with a password confirms the password first.
+    let r = app.post("/api/me/security/confirm/password", json!({ "password": PASSWORD }), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = app.post("/api/me/security/totp/setup", json!({}), &admin).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let secret = kalzit::auth::totp::decode_secret(&r.body["secret"].as_str().unwrap().replace(' ', "")).unwrap();
@@ -1489,6 +1492,15 @@ async fn scim_accounts_link_at_sign_in_and_stay_unconfirmed_for_everything_else(
     let who = Who { sub: "sub-sina", email: "sina@example.de", verified: true, groups: &["alle"] };
     let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
     assert_eq!(outcome_of(&r), "link_refused", "no mapping into the organization: {}", r.location());
+    // The rule for people without a mapped group leads into the organization too, but it is no
+    // mapping: anyone the provider names with the address would get the account.
+    let unmapped = json!({ "rule": "default", "defaultOrgId": org, "defaultRole": "viewer" });
+    let r = app.put("/api/admin/sign-in/unmapped", unmapped, &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let (r, _) = sign_in(&app, &idp, &who, |_| {}).await;
+    assert_eq!(outcome_of(&r), "link_refused", "only the default organization's rule: {}", r.location());
+    let r = app.put("/api/admin/sign-in/unmapped", json!({ "rule": "default", "defaultRole": "viewer" }), &admin).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     map_into(&app, &provider_id, &org, &admin).await;
     // Same provider, but the person is not in the mapped group: still refused.
     let outsider = Who { sub: "sub-sina", email: "sina@example.de", verified: true, groups: &["andere"] };

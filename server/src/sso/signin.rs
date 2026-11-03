@@ -95,11 +95,12 @@ async fn has_own_proof(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResu
 
 /// Whether an account with nothing of its own to prove it with (no password, no second factor)
 /// may be linked to `provider_id` by its address without a proof (docs/api/sso.md, "Linking by
-/// email"). Only an account SCIM made and still owns may, and only when this provider's group
-/// mapping, for this person's `groups`, gives a membership in that organization (as `decide`
-/// would, the rule for unmapped people included). An account that signs in through another provider or a
-/// directory is refused: the person signs in the way they already do. Inside the sign-in's
-/// transaction.
+/// email"). Only an account SCIM made and still owns may, and only when one of this provider's
+/// group mappings, for this person's `groups`, leads into that organization explicitly. The rule
+/// for people without a mapped group (`signin.default_org`) does not count: it would let anyone
+/// the provider names with the address into a SCIM account of the default organization. An
+/// account that signs in through another provider or a directory is refused: the person signs in
+/// the way they already do. Inside the sign-in's transaction.
 async fn link_without_proof(
     conn: &mut sqlx::AnyConnection,
     state: &AppState,
@@ -128,7 +129,7 @@ async fn link_without_proof(
     {
         let rules = mapping::rules(&mut *conn, provider_id).await?;
         let outcome = mapping::resolve(&rules, groups, &super::unmapped(state).await?);
-        if !outcome.refused && outcome.orgs.iter().any(|o| o.org_id == org_id) {
+        if !outcome.refused && outcome.orgs.iter().any(|o| o.org_id == org_id && !o.default && o.group.is_some()) {
             return Ok(Ok(()));
         }
     }

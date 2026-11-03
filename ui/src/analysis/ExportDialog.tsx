@@ -6,22 +6,55 @@ import { Dialog } from "../features/dashboards/ui/Dialog";
 import { errorMessage } from "../features/dashboards/ui/errors";
 import { useI18n } from "../i18n/i18n";
 import { saveFile } from "./api";
+import type { StepsRun } from "./steps";
 import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
 
 export interface ExportChoice {
   format: ExportFormat;
   language: ExportLanguage;
-  /** The table to export, by reference id; absent for the first. */
+  /** The result to export, by reference id; absent when there is only one. */
   frame?: string;
 }
 
-const FORMATS: readonly ExportFormat[] = ["csv", "xlsx", "json"];
+/** The shape a result has after the steps; it decides the formats a file can have. */
+export type ExportShape = "frame" | "documents" | "graph";
+
+/** One result after the steps that can be exported, by the reference id of its query. */
+export interface ExportResult {
+  name: string;
+  shape: ExportShape;
+}
+
+/**
+ * The formats of each shape, as the server writes them (docs/api/datasources.md, "Export"). A
+ * format never turns one shape into another: a table of documents or of a graph is a step.
+ */
+export const EXPORT_FORMATS: Readonly<Record<ExportShape, readonly ExportFormat[]>> = {
+  frame: ["csv", "xlsx", "json"],
+  documents: ["ndjson", "json"],
+  graph: ["graphml", "json"],
+};
+
+/**
+ * The results the steps left, in the order the server picks from when the request names none:
+ * the tables, then the documents no projection read, then the graphs no step made a table of.
+ */
+export function exportResults(
+  run: Pick<StepsRun, "frames" | "documents" | "graphs">,
+): ExportResult[] {
+  return [
+    ...run.frames.map((f) => ({ name: f.name, shape: "frame" as const })),
+    ...run.documents.map((d) => ({ name: d.name, shape: "documents" as const })),
+    ...run.graphs.map((g) => ({ name: g.name, shape: "graph" as const })),
+  ];
+}
+
 const LANGUAGES: readonly ExportLanguage[] = ["de", "en"];
 
 interface ExportDialogProps {
-  /** The tables after the steps, by reference id, to choose from when there are several. */
-  frames: readonly string[];
+  /** The results after the steps, to choose from when there are several. */
+  results: readonly ExportResult[];
   /** A note under the choices, such as that the saved panel is exported. */
   note?: string | undefined;
   /** Asks the server for the file; the server decides whether the caller may export. */
@@ -29,13 +62,17 @@ interface ExportDialogProps {
   onClose: () => void;
 }
 
-/** Choose format, number style and table, then download the file the server makes. */
-export function ExportDialog({ frames, note, run, onClose }: ExportDialogProps) {
+/** Choose result, format and number style, then download the file the server makes. */
+export function ExportDialog({ results, note, run, onClose }: ExportDialogProps) {
   const { t, language } = useI18n();
   const id = useId();
-  const [format, setFormat] = useState<ExportFormat>("csv");
+  const [frame, setFrame] = useState(results[0]?.name ?? "");
+  const shape = results.find((r) => r.name === frame)?.shape ?? results[0]?.shape ?? "frame";
+  const formats = EXPORT_FORMATS[shape];
+  const [picked, setFormat] = useState<ExportFormat>(formats[0] ?? "csv");
+  // A format the chosen result cannot have falls back to the result's first one.
+  const format = formats.includes(picked) ? picked : (formats[0] ?? "csv");
   const [numbers, setNumbers] = useState<ExportLanguage>(language === "de" ? "de" : "en");
-  const [frame, setFrame] = useState(frames[0] ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   // The export that runs; closing the dialog or leaving the page cancels it, which also lets the
@@ -56,7 +93,7 @@ export function ExportDialog({ frames, note, run, onClose }: ExportDialogProps) 
     running.current = controller;
     try {
       const choice: ExportChoice = { format, language: numbers };
-      if (frames.length > 1 && frame !== "") choice.frame = frame;
+      if (results.length > 1 && frame !== "") choice.frame = frame;
       saveFile(await run(choice, controller.signal));
       running.current = null;
       onClose();
@@ -90,9 +127,31 @@ export function ExportDialog({ frames, note, run, onClose }: ExportDialogProps) 
       }
     >
       <div className="export-form">
+        {results.length > 1 ? (
+          <div className="field">
+            <label className="field__label" htmlFor={`${id}-frame`}>
+              {t("analysis.export.frame")}
+            </label>
+            <select
+              id={`${id}-frame`}
+              className="select"
+              value={frame}
+              onChange={(event) => setFrame(event.currentTarget.value)}
+            >
+              {results.map((r) => (
+                <option key={r.name} value={r.name}>
+                  {t("analysis.export.result", {
+                    name: r.name,
+                    shape: t(`analysis.export.shape.${r.shape}`),
+                  })}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <fieldset className="radio-group">
           <legend className="field__label">{t("analysis.export.format")}</legend>
-          {FORMATS.map((f) => (
+          {formats.map((f) => (
             <label key={f} className="radio">
               <input
                 type="radio"
@@ -122,26 +181,9 @@ export function ExportDialog({ frames, note, run, onClose }: ExportDialogProps) 
             ))}
           </fieldset>
         ) : null}
-        {frames.length > 1 ? (
-          <div className="field">
-            <label className="field__label" htmlFor={`${id}-frame`}>
-              {t("analysis.export.frame")}
-            </label>
-            <select
-              id={`${id}-frame`}
-              className="select"
-              value={frame}
-              onChange={(event) => setFrame(event.currentTarget.value)}
-            >
-              {frames.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
-        <p className="field__hint">{t("analysis.export.hint")}</p>
+        <p className="field__hint">
+          {shape === "frame" ? t("analysis.export.hint") : t("analysis.export.hintShape")}
+        </p>
         {note === undefined ? null : <p className="field__hint">{note}</p>}
         {error === null ? null : <FormAlert>{errorMessage(t, error)}</FormAlert>}
       </div>

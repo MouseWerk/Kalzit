@@ -66,12 +66,14 @@ pub struct ScimError {
     pub scim_type: Option<&'static str>,
     pub detail: String,
     pub reason: Option<&'static str>,
+    /// What lies behind a neutral refusal, for the audit log only; the answer never carries it.
+    pub why: Option<&'static str>,
     retry_after_secs: Option<u32>,
 }
 
 impl ScimError {
     pub fn new(status: StatusCode, detail: impl Into<String>) -> Self {
-        Self { status, scim_type: None, detail: detail.into(), reason: None, retry_after_secs: None }
+        Self { status, scim_type: None, detail: detail.into(), reason: None, why: None, retry_after_secs: None }
     }
 
     pub fn scim_type(mut self, scim_type: &'static str) -> Self {
@@ -81,6 +83,12 @@ impl ScimError {
 
     pub fn because(mut self, reason: &'static str) -> Self {
         self.reason = Some(reason);
+        self
+    }
+
+    /// What lies behind a neutral refusal, written to the audit log only.
+    pub fn why(mut self, why: &'static str) -> Self {
+        self.why = Some(why);
         self
     }
 
@@ -531,6 +539,10 @@ async fn record_refused(ctx: &Ctx<'_>, method: &Method, resource: &[&str], e: &S
         "reason": e.reason,
         "detail": e.detail,
     });
+    let mut summary = summary;
+    if let Some(why) = e.why {
+        summary["why"] = json!(why);
+    }
     let event = crate::audit::AuditEvent {
         org_id: Some(ctx.org_id),
         actor_user_id: None,

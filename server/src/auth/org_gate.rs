@@ -2,9 +2,12 @@
 //! sign-in rules"). Whoever enters an organization through a session meets its rules, however
 //! they joined it (`org_members.joined_by`):
 //!
-//! - a required second factor (`security.two_factor_required`, never laxer than the server's): an
-//!   account without one is refused with `org_second_factor_required` until it sets one up, unless
-//!   the session's sign-in took a provider's word for one (`trustProviderMfa`);
+//! - a required second factor (`security.two_factor_required`, never laxer than the server's): a
+//!   session is refused with `org_second_factor_required` until it proved one itself: its sign-in
+//!   asked for Kalzit's second factor, it confirmed one later (`POST /me/security/confirm`) or set
+//!   one up, or its sign-in took a provider's word for one (`trustProviderMfa`) and that provider is
+//!   still enabled and trusted for it. An account that has a factor does not let a session in that
+//!   never proved it: a stolen password session stays out;
 //! - password sign-in off (`signin.local_password` = `off`): a session signed in with a password
 //!   is refused with `org_provider_sign_in_required`; the person signs in through a provider or a
 //!   directory instead. The break-glass admin's sign-in, which always has Kalzit's second factor,
@@ -35,15 +38,50 @@ fn signed_in_with_password(method: &str) -> bool {
     matches!(method, "password" | "")
 }
 
-/// How the session `session_hash` was established: its method and second factor.
-async fn session_of(state: &AppState, session_hash: &str) -> ApiResult<(String, Option<String>)> {
-    let session: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT sign_in_method, sign_in_second_factor FROM sessions WHERE token_hash = $1")
-            .bind(session_hash)
-            .fetch_optional(&state.read_db)
-            .await?;
+/// How a session was established and what it proved since.
+#[derive(sqlx::FromRow)]
+struct Session {
+    /// `sessions.sign_in_method`.
+    method: String,
+    /// `sessions.sign_in_second_factor`: Kalzit's method of the sign-in, or `provider`.
+    factor: Option<String>,
+    /// The identity provider or directory of the sign-in.
+    provider_id: Option<String>,
+    /// When the session last proved Kalzit's second factor (at the sign-in or a confirmation).
+    second_factor_at: Option<i64>,
+}
+
+/// How the session `session_hash` was established.
+async fn session_of(state: &AppState, session_hash: &str) -> ApiResult<Session> {
+    let session: Option<Session> = sqlx::query_as(
+        "SELECT sign_in_method AS method, sign_in_second_factor AS factor, sign_in_provider_id AS provider_id, \
+         second_factor_at FROM sessions WHERE token_hash = $1",
+    )
+    .bind(session_hash)
+    .fetch_optional(&state.read_db)
+    .await?;
     // The session was looked up for this very request; one that ended since is refused anyway.
     session.ok_or_else(ApiError::unauthenticated)
+}
+
+/// Whether the session proved a second factor: Kalzit's own at the sign-in or since, or the
+/// provider's of the sign-in while that provider is enabled and Kalzit still takes its word for
+/// one. A session from before migration 0040 with a provider's factor names no provider and
+/// proves nothing here; its person confirms or signs in again.
+async fn proved_second_factor(state: &AppState, session: &Session) -> ApiResult<bool> {
+    if session.second_factor_at.is_some() || matches!(session.factor.as_deref(), Some("totp" | "passkey" | "recovery"))
+    {
+        return Ok(true);
+    }
+    let (Some("provider"), Some(provider_id)) = (session.factor.as_deref(), session.provider_id.as_deref()) else {
+        return Ok(false);
+    };
+    let (trusted,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sso_providers WHERE id = $1 AND enabled = 1 AND trust_provider_mfa = 1")
+            .bind(provider_id)
+            .fetch_one(&state.read_db)
+            .await?;
+    Ok(trusted > 0)
 }
 
 /// Whether the organization's rules let this session in; `session_hash` names the session
@@ -55,30 +93,30 @@ pub async fn check(
     org_id: &str,
     role: &str,
 ) -> ApiResult<()> {
-    let (method, session_factor) = session_of(state, session_hash).await?;
+    let session = session_of(state, session_hash).await?;
     let password_off = crate::settings::get_org(state, org_id, "signin.local_password").await?.as_str() == Some("off");
-    if password_off && signed_in_with_password(&method) {
+    if password_off && signed_in_with_password(&session.method) {
         return Err(provider_sign_in_required(org_id));
     }
     let own = sf::org_requirement(state, org_id).await?;
-    if needs_second_factor(state, user, session_factor.as_deref(), org_id, role, own).await? {
+    if needs_second_factor(state, user, &session, org_id, role, own).await? {
         return Err(second_factor_required(org_id));
     }
     Ok(())
 }
 
-/// Whether the organization's second factor rule `own` (with the server's) refuses this account
-/// and session there.
+/// Whether the organization's second factor rule `own` (with the server's) refuses this session
+/// there: the rule binds the member and the session proved no second factor.
 async fn needs_second_factor(
     state: &AppState,
     user: &SessionUser,
-    session_factor: Option<&str>,
+    session: &Session,
     org_id: &str,
     role: &str,
     own: sf::Requirement,
 ) -> ApiResult<bool> {
     let server = sf::server_requirement(state).await?;
-    if server.max(own) == sf::Requirement::Off || session_factor == Some("provider") {
+    if server.max(own) == sf::Requirement::Off || proved_second_factor(state, session).await? {
         return Ok(false);
     }
     // As at the sign-in (`second_factor::resolve`): the server's "admins" are server admins and
@@ -86,10 +124,7 @@ async fn needs_second_factor(
     let admin_here = sf::is_admin_role(&state.read_db, org_id, role).await?;
     let rule =
         sf::MembershipRule { org_id: org_id.to_string(), org_name: String::new(), requirement: own, admin: admin_here };
-    if sf::resolve(server, user.is_server_admin != 0, std::slice::from_ref(&rule)).is_none() {
-        return Ok(false);
-    }
-    Ok(!sf::methods(&state.read_db, &user.id).await?.any())
+    Ok(sf::resolve(server, user.is_server_admin != 0, std::slice::from_ref(&rule)).is_some())
 }
 
 /// Whether an enabled identity provider or directory leads into `org_id`: a group mapping into
@@ -135,14 +170,14 @@ pub async fn check_change(
         .bind(&user.id)
         .fetch_optional(&state.read_db)
         .await?;
-    let (method, session_factor) = session_of(state, session_hash).await?;
+    let session = session_of(state, session_hash).await?;
     if key == "signin.local_password" {
         if value.as_str() != Some("off") {
             return Ok(());
         }
         let check = if !provider_leads_into(state, org_id).await? {
             Some("providerReady")
-        } else if matches!(method.as_str(), "password" | "break_glass" | "") {
+        } else if matches!(session.method.as_str(), "password" | "break_glass" | "") {
             Some("selfViaProvider")
         } else {
             None
@@ -161,7 +196,7 @@ pub async fn check_change(
     // A server admin who is no member here is not refused by the organization's rule.
     let Some((role,)) = role else { return Ok(()) };
     let own = sf::Requirement::parse(value);
-    if needs_second_factor(state, user, session_factor.as_deref(), org_id, &role, own).await? {
+    if needs_second_factor(state, user, &session, org_id, &role, own).await? {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "conflict",
@@ -177,7 +212,7 @@ pub fn second_factor_required(org_id: &str) -> ApiError {
     ApiError::new(
         StatusCode::FORBIDDEN,
         "org_second_factor_required",
-        "this organization requires a second factor; set one up on your account (POST /me/security/totp/setup or /me/security/passkeys/setup)",
+        "this organization requires a second factor; confirm yours in this session (POST /me/security/confirm) or set one up (POST /me/security/totp/setup or /me/security/passkeys/setup)",
     )
     .because("second_factor.org_required")
     .param("orgId", org_id)
@@ -196,4 +231,68 @@ pub fn provider_sign_in_required(org_id: &str) -> ApiError {
 /// Whether `e` is one of the gate's refusals.
 pub fn is_gate_error(e: &ApiError) -> bool {
     matches!(e.code, "org_second_factor_required" | "org_provider_sign_in_required")
+}
+
+/// An owner or administrator of an organization who would have no way into it once password
+/// sign-in is off there (`password_only_admins`).
+#[derive(serde::Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordOnly {
+    pub user_id: String,
+    pub name: String,
+    pub email: String,
+    pub role: String,
+}
+
+/// The owners and administrators of `org_id` (`second_factor::is_admin_role`) with no identity
+/// provider or directory sign-in into it: no confirmed identity at an enabled provider whose group
+/// mapping, for the groups of the identity's last sign-in, or the server's rule for people without
+/// a mapped group leads into the organization. With password sign-in off there, they are refused
+/// until they sign in through a provider; the break-glass admin is not listed, as their sign-in
+/// passes. Recovery then runs through a server admin (`PATCH /admin/orgs/{orgId}/sign-in-rules`).
+pub async fn password_only_admins(state: &AppState, org_id: &str) -> ApiResult<Vec<PasswordOnly>> {
+    let members: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.email, m.role FROM org_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.org_id = $1 AND u.service_account = 0 AND u.disabled = 0",
+    )
+    .bind(org_id)
+    .fetch_all(&state.read_db)
+    .await?;
+    let break_glass = crate::sso::local_policy(state).await?.break_glass;
+    let unmapped = crate::sso::unmapped(state).await?;
+    let mut out = Vec::new();
+    for (user_id, name, email, role) in members {
+        if break_glass.as_deref() == Some(user_id.as_str()) || !sf::is_admin_role(&state.read_db, org_id, &role).await?
+        {
+            continue;
+        }
+        let identities: Vec<(String, String)> = sqlx::query_as(
+            "SELECT i.provider_id, i.subject FROM sso_identities i JOIN sso_providers p ON p.id = i.provider_id \
+             WHERE i.user_id = $1 AND i.confirmed = 1 AND p.enabled = 1",
+        )
+        .bind(&user_id)
+        .fetch_all(&state.read_db)
+        .await?;
+        let mut leads = false;
+        for (provider_id, subject) in identities {
+            let groups: Vec<(String,)> =
+                sqlx::query_as("SELECT group_name FROM sso_identity_groups WHERE provider_id = $1 AND subject = $2")
+                    .bind(&provider_id)
+                    .bind(&subject)
+                    .fetch_all(&state.read_db)
+                    .await?;
+            let groups: Vec<String> = groups.into_iter().map(|(g,)| g).collect();
+            let rules = crate::sso::mapping::rules(&state.read_db, &provider_id).await?;
+            let outcome = crate::sso::mapping::resolve(&rules, &groups, &unmapped);
+            if !outcome.refused && outcome.orgs.iter().any(|o| o.org_id == org_id) {
+                leads = true;
+                break;
+            }
+        }
+        if !leads {
+            out.push(PasswordOnly { user_id, name, email, role });
+        }
+    }
+    out.sort_by(|a, b| crate::collation::compare(&a.name, &b.name).then_with(|| a.user_id.cmp(&b.user_id)));
+    Ok(out)
 }

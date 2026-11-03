@@ -183,7 +183,9 @@ The dashboard's history records the save as "Panel added from Explore".
 
 ## Export
 
-**Export...** downloads the result with all active steps applied; see [Export](export.md).
+**Export...** downloads the result with all active steps applied, in its own shape: a table as
+CSV, Excel or JSON, documents as NDJSON or JSON, a graph as GraphML or JSON; see
+[Export](export.md).
 
 ## Query history
 

@@ -277,11 +277,18 @@ export interface StepOutcome {
   skipped: boolean;
 }
 
+export interface NamedDocuments {
+  name: string;
+  documents: DocumentSet;
+}
+
 export interface StepsRun {
   /** The frames after the last step that ran; the error, if any, is in `failed`. */
   frames: NamedFrame[];
   /** The graphs no step turned into a frame, as the last step that ran left them. */
   graphs: NamedGraph[];
+  /** The documents no projection turned into a frame (an export writes them as they are). */
+  documents: NamedDocuments[];
   steps: StepOutcome[];
   failed?: { index: number; error: Detail };
 }
@@ -384,8 +391,8 @@ export function runSteps(
     }
   });
   return failed === undefined
-    ? { frames: current, graphs, steps: outcomes }
-    : { frames: current, graphs, steps: outcomes, failed };
+    ? { frames: current, graphs, documents, steps: outcomes }
+    : { frames: current, graphs, documents, steps: outcomes, failed };
 }
 
 /** `frames` with `added` in the place of its query, so the order stays the queries' order. */

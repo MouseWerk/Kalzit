@@ -126,6 +126,24 @@ describe("reason texts", () => {
     ).toBe("Fields of type whole number and text cannot be matched.");
   });
 
+  it("names shape and format of a refused export, and the step only where a table helps", () => {
+    const refused = (shape: string, format: string, translate = t) =>
+      reasonText(translate, { reason: "export.format_unsupported", params: { shape, format } });
+    expect(refused("documents", "csv")).toBe(
+      "A result of the kind “documents” cannot be exported as CSV. Add a step that makes a table of it first.",
+    );
+    expect(refused("graph", "xlsx", de)).toBe(
+      "Ein Ergebnis der Form „Graph“ lässt sich nicht als Excel exportieren. Füge zuerst einen Schritt hinzu, der eine Tabelle daraus macht.",
+    );
+    // A table asked for NDJSON: no step makes it documents.
+    expect(refused("frame", "ndjson")).toBe(
+      "A result of the kind “table” cannot be exported as NDJSON.",
+    );
+    expect(refused("graph", "ndjson")).toBe(
+      "A result of the kind “graph” cannot be exported as NDJSON.",
+    );
+  });
+
   it("says “at least” for a range without an upper bound", () => {
     expect(reasonText(t, { reason: "settings.out_of_range", params: { min: "1" } })).toBe(
       "Enter a value of at least 1.",

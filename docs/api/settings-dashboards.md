@@ -478,13 +478,46 @@ Counts in summaries (`folder.trashed`: `{"folders", "dashboards"}`) are not narr
 Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included), newest first;
 `?orgId=` narrows it to one organization; an empty `orgId` is `422 validation` (field `orgId`).
 
+### `POST /orgs/{orgId}/audit/export` and `POST /admin/audit/export`
+
+The audit log as a file: every event the filters match, newest first, as the list routes show
+them to the caller, not one page. The same rights as the lists: `audit:read` for an
+organization's log (events about folders and dashboards the member cannot see left out, folder
+ids in summaries hidden), server administrators for the server's.
+
+Body: `format` (`csv` or `json`), `language` (CSV only: `de` separates with `;`, `en`, the
+default, with `,`), and the list's filters `actor`, `action`, `resourceType`, `resourceId`,
+`from`, `to`; `orgId` on the server route only (an empty one, one that names no organization,
+or `orgId` on the organization route, is `422 validation`, field `orgId`). `from` after `to` is `422 validation` (field `from`).
+
+- `csv`: RFC 4180, UTF-8 with a byte order mark, CRLF line ends, the columns `createdAt` (ISO 8601
+  UTC), `id`, `orgId`, `actorUserId`, `actorName`, `actorAddress`, `actorTokenId`,
+  `actorTokenPrefix`, `action`, `resourceType`, `resourceId`, `summary` (compact JSON). Text a
+  spreadsheet would read as a formula gets a leading `'`, as in data exports.
+- `json`: an array of `AuditEvent`.
+
+The answer is the file (`kalzit-audit.csv` or `.json`) with `Cache-Control: no-store`. At most
+100,000 events: more answer `422 validation` with reason `export.too_many_events` (param `max`);
+a shorter time range or a filter makes a smaller file. The events are read 1,000 at a time and
+written to a spool file in `export-tmp`, so memory holds one batch whatever the file's size; the
+file is at most 256 MiB (`export.too_large`) and is then sent from disk as a data export's file
+is. An audit export takes the same slots as data exports: one export per user at a time
+(`503 busy`, reason `export.user_busy`) and at most 3 files being made on the server
+(`export.busy`), and it needs 1 GiB of free disk space (`export.disk_space`).
+
+Each export records `audit.exported` with the format, the filters that were set and the number
+of `events`, before the file is sent: when the entry cannot be written, there is no file. An
+organization's export is recorded in that organization's log; a server administrator's is
+recorded in the server's log (`orgId` `null`), also when it was narrowed to one organization,
+whose id the summary's `orgId` names.
+
 Events older than `audit.retention_days` are deleted every hour; each run that deleted something
 records `audit.expired` with `{"deleted": n, "before": ms}`.
 
 Actions written by these routes: `settings.updated`, `branding.logo_updated`, `branding.logo_removed`, `branding.logo_restored`, `folder.created`, `folder.updated`,
 `folder.trashed`, `folder.restored`, `folder.purged`, `dashboard.created`, `dashboard.saved`,
 `dashboard.version_restored`, `dashboard.trashed`, `dashboard.restored`, `dashboard.purged`,
-`audit.expired`.
+`audit.expired`, `audit.exported`.
 
 ## List order
 

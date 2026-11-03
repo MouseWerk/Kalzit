@@ -109,10 +109,13 @@ extension, ...) are accepted and not kept, so a directory's full attribute mappi
 **Creating a user** links it to the account with its address when there is exactly one, it is a
 person's account, its address is confirmed and it is not a server admin or the break-glass admin;
 it then joins the organization through the group mapping. An account that is already a SCIM user
-of this organization answers `409` (`scim.account_linked`), one with an unconfirmed address `409`
-(`scim.email_unconfirmed`), a server admin's `403` (`scim.account_protected`), and an account
-that belongs to another organization `409` (`scim.account_not_linkable`, which names no other
-organization): a person who is already
+of this organization answers `409` (`scim.account_linked`). Every other account that cannot be
+linked gets one neutral answer, `409 uniqueness` (`scim.account_not_linkable`, always the same
+detail), so the directory learns nothing about it: several accounts or a service account with the
+address, a server admin or the break-glass admin, an unconfirmed address, or an account that
+belongs to another organization. Which of them it was is written only to the audit log
+(`scim.request_refused`, `why`: `email_taken`, `account_protected`, `email_unconfirmed` or
+`other_organization`). A person who is already
 in an organization joins another one only by accepting an invitation, since the new
 organization's sign-in rules (password sign-in off, a required second factor) would bind their
 account. SCIM refuses instead of inviting, so a directory sync never sends mail on its own; an
@@ -139,7 +142,8 @@ as `active`, `name.givenName`, `emails[type eq "work"].value` and
 `urn:ietf:params:scim:schemas:core:2.0:User:userName`, and an object of attributes without a path
 (`{"op": "replace", "value": {"active": false}}`). SCIM changes the name and address of an
 account only while it owns it (see "Accounts"); a new address must not belong to another account
-(`409`, `scim.email_taken`). For any other account, the directory's name and emails are kept on the
+(`409 uniqueness`, `scim.account_not_linkable`, the same neutral answer as for a new user; the
+audit entry's `why` is `email_taken`). For any other account, the directory's name and emails are kept on the
 SCIM user only.
 
 **Deactivating** (`active: false` or `DELETE`): an account this organization's SCIM owns is
@@ -291,11 +295,9 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | `scim.user_name_missing` | `400 invalidValue`, `mutability` | a user without `userName`, or removing it |
 | `scim.user_name_taken` | `409 uniqueness` | another user of the organization has this `userName` |
 | `scim.email_missing` | `400 invalidValue` | a new user without an address |
-| `scim.email_taken` | `409 uniqueness` | another account (or several, or a service account) has the address |
-| `scim.email_unconfirmed` | `409 uniqueness` | the account with the address has not confirmed it |
 | `scim.account_linked` | `409 uniqueness` | the account with the address is already a SCIM user of this organization |
-| `scim.account_not_linkable` | `409 uniqueness` | the account with the address cannot be linked (it belongs to another organization, which the answer does not say); invite the person instead |
-| `scim.account_protected` | `403` | linking a server admin's account, or deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |
+| `scim.account_not_linkable` | `409 uniqueness` | a new user's address names an account that cannot be linked (several accounts or a service account, a server admin or the break-glass admin, an unconfirmed address, or another organization's member; the answer does not say which, the audit entry's `why` does); invite the person instead |
+| `scim.account_protected` | `403` | deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |
 | `scim.group_name_missing` | `400 invalidValue`, `mutability` | a group without `displayName`, or removing it |
 | `scim.group_name_taken` | `409 uniqueness` | another active group of the organization has this `displayName` |
 | `scim.member_unknown` | `400 invalidValue` | a member that is not a SCIM user of this organization |

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Locator, Page } from "@playwright/test";
 import { Api, unique } from "./support/api";
 import { seriousViolations } from "./support/axe";
@@ -281,6 +282,92 @@ test.describe("Neo4j", () => {
     expect(await seriousViolations(page)).toEqual([]);
   });
 
+  test("a graph panel exports as GraphML and saves a PNG of what it draws", async ({ page }) => {
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const tree = page.getByRole("article", { name: PANELS.tree, exact: true });
+    await expect(tree).toContainText(
+      summary(GRAPH_FIXTURE.categories.nodes, GRAPH_FIXTURE.categories.edges),
+      { timeout: STEP_MS },
+    );
+    // The menu button shows on hover or focus; the keyboard reaches it without the pointer
+    // crossing the drawing.
+    const menu = async () => {
+      const button = tree.getByRole("button", {
+        name: t("dashboards.panel.menuNamed", { title: PANELS.tree }),
+      });
+      await button.focus({ timeout: STEP_MS });
+      await button.press("Enter");
+    };
+
+    await test.step("GraphML keeps the graph's nodes and edges", async () => {
+      await menu();
+      await page
+        .getByRole("menuitem", { name: t("analysis.export.buttonNamed", { title: PANELS.tree }) })
+        .click({ timeout: STEP_MS });
+      const dialog = page.getByRole("dialog", { name: t("analysis.export.title") });
+      // A graph is no table: its own formats only.
+      await expect(
+        dialog.getByRole("radio", { name: t("analysis.export.format.csv") }),
+      ).toHaveCount(0);
+      await dialog.getByRole("radio", { name: t("analysis.export.format.graphml") }).check();
+      const download = page.waitForEvent("download", { timeout: STEP_MS });
+      await dialog.getByRole("button", { name: t("analysis.export.submit"), exact: true }).click();
+      const file = await download;
+      expect(file.suggestedFilename()).toBe("Category-tree.graphml");
+      const text = await readFile(await file.path(), "utf8");
+      expect(text).toContain('<graphml xmlns="http://graphml.graphdrawing.org/xmlns"');
+      expect(text.match(/<node /g)).toHaveLength(GRAPH_FIXTURE.categories.nodes);
+      expect(text.match(/<edge /g)).toHaveLength(GRAPH_FIXTURE.categories.edges);
+    });
+
+    await test.step("the image is a PNG at twice the panel's size or more", async () => {
+      const box = await tree.boundingBox();
+      await menu();
+      const download = page.waitForEvent("download", { timeout: STEP_MS });
+      await page
+        .getByRole("menuitem", { name: t("dashboards.panel.imageNamed", { title: PANELS.tree }) })
+        .click({ timeout: STEP_MS });
+      const file = await download;
+      expect(file.suggestedFilename()).toBe("Category-tree.png");
+      const png = await readFile(await file.path());
+      expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+      // The IHDR chunk holds the width and height.
+      expect(png.readUInt32BE(16)).toBeGreaterThanOrEqual(Math.floor((box?.width ?? 0) * 2));
+      expect(png.readUInt32BE(20)).toBeGreaterThanOrEqual(Math.floor((box?.height ?? 0) * 2));
+      // A drawn panel, not an empty card: title, nodes and labels make the file this large.
+      expect(png.length).toBeGreaterThan(5_000);
+      // It looks like the panel on screen: scaled to the panel's size, its pixels differ from a
+      // screenshot of the panel by little on average (an image without the styles would not).
+      await page.mouse.move(0, 0);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      const shot = await tree.screenshot({ animations: "disabled" });
+      const difference = await page.evaluate(
+        async ([image, screen]) => {
+          const load = async (base64: string) => {
+            const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+            return createImageBitmap(new Blob([bytes], { type: "image/png" }));
+          };
+          const [a, b] = await Promise.all([load(image), load(screen)]);
+          const pixels = (bitmap: ImageBitmap) => {
+            const canvas = new OffscreenCanvas(b.width, b.height);
+            const context = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+            context.drawImage(bitmap, 0, 0, b.width, b.height);
+            return context.getImageData(0, 0, b.width, b.height).data;
+          };
+          const [pa, pb] = [pixels(a), pixels(b)];
+          let sum = 0;
+          for (let i = 0; i < pa.length; i += 4) {
+            for (let c = 0; c < 3; c++) sum += Math.abs((pa[i + c] ?? 0) - (pb[i + c] ?? 0));
+          }
+          return sum / ((pa.length / 4) * 3);
+        },
+        [png.toString("base64"), shot.toString("base64")] as const,
+      );
+      expect(difference).toBeLessThan(24);
+    });
+  });
+
   test("graph steps in Explore: counts per label and orders that share products", async ({
     page,
   }) => {
@@ -546,6 +633,152 @@ test.describe("Neo4j drawing", () => {
         exact: true,
       }),
     ).toBeVisible({ timeout: STEP_MS });
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+});
+
+interface DrawnFrame {
+  nodes: { index: number; x: number; y: number; radius: number; shape?: string }[];
+  labels: { index: number; box: { minX: number; minY: number; maxX: number; maxY: number } }[];
+}
+
+/**
+ * What the drawing's last frame drew, from the canvas' test hook (SigmaCanvas.tsx): the labels
+ * Sigma displays and every visible node with the shape it is drawn with, read from the renderer
+ * itself rather than from the label check.
+ */
+async function drawnFrame(scope: Locator): Promise<DrawnFrame | null> {
+  return scope
+    .locator(".graph__canvas")
+    .evaluate(
+      (element) =>
+        (
+          element as HTMLElement & { kalzitLabelRoom?: () => DrawnFrame | null }
+        ).kalzitLabelRoom?.() ?? null,
+    );
+}
+
+/** Labels of a frame that cover another node's shape or another label (none should). */
+function coveringLabels(frame: DrawnFrame): string[] {
+  const found: string[] = [];
+  const inside = (node: DrawnFrame["nodes"][number], box: DrawnFrame["labels"][number]["box"]) => {
+    const dx = Math.max(box.minX - node.x, 0, node.x - box.maxX);
+    const dy = Math.max(box.minY - node.y, 0, node.y - box.maxY);
+    if (node.shape === "square") return dx < node.radius - 0.5 && dy < node.radius - 0.5;
+    if (node.shape === "diamond") return dx + dy < node.radius - 0.5;
+    return dx * dx + dy * dy < (node.radius - 0.5) ** 2;
+  };
+  for (const label of frame.labels) {
+    for (const node of frame.nodes) {
+      if (node.index !== label.index && inside(node, label.box)) {
+        found.push(`label ${label.index} over node ${node.index}`);
+      }
+    }
+    for (const other of frame.labels) {
+      if (
+        other.index > label.index &&
+        overlaps(
+          {
+            x: label.box.minX,
+            y: label.box.minY,
+            width: label.box.maxX - label.box.minX,
+            height: label.box.maxY - label.box.minY,
+          },
+          {
+            x: other.box.minX,
+            y: other.box.minY,
+            width: other.box.maxX - other.box.minX,
+            height: other.box.maxY - other.box.minY,
+          },
+        )
+      ) {
+        found.push(`label ${label.index} over label ${other.index}`);
+      }
+    }
+  }
+  return found;
+}
+
+test.describe("Neo4j labels and shapes", () => {
+  test.use({ viewport: { width: 1024, height: 900 } });
+
+  test("a short panel draws no label over a node or a label, from the first frame on", async ({
+    page,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const title = "Shop in a short row";
+    const owner = await Api.owner();
+    let dashboardId = "";
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, labels)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      dashboardId = await owner.createDashboard({
+        schemaVersion: 1,
+        title: unique("Shop labels"),
+        timeRange: { from: "now-6h", to: "now" },
+        panels: [
+          {
+            id: "short",
+            type: "network",
+            title,
+            // Half the width and a short row, as the gallery's all-sources panel.
+            grid: { x: 0, y: 0, w: 12, h: 8 },
+            targets: [{ refId: "A", datasourceId: sourceId, query: { cypher: SHOP } }],
+            // Every label wants to show; the ones without room wait for the zoom.
+            options: { labelTop: 200 },
+          },
+        ],
+      });
+    } finally {
+      await owner.dispose();
+    }
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = page.getByRole("article", { name: title, exact: true });
+    const drawing = panel.getByRole("application", { name: title, exact: true });
+    const noWebgl = panel.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+    // Every frame from the first one on, while the layout settles and after it did.
+    let frames = 0;
+    let labelled = 0;
+    for (let tries = 0; tries < 40; tries++) {
+      const frame = await drawnFrame(panel);
+      if (frame !== null && frame.nodes.length > 0) {
+        frames++;
+        labelled = Math.max(labelled, frame.labels.length);
+        expect(coveringLabels(frame)).toEqual([]);
+      }
+      await page.waitForTimeout(100);
+    }
+    expect(frames).toBeGreaterThan(0);
+    expect(labelled).toBeGreaterThan(0);
+
+    // Zoomed in, more labels find room, and still none covers anything.
+    const zoomIn = panel.getByRole("button", { name: t("graph.zoomIn"), exact: true });
+    await zoomIn.click();
+    await zoomIn.click();
+    await page.waitForTimeout(600);
+    const zoomed = await drawnFrame(panel);
+    expect(zoomed).not.toBeNull();
+    if (zoomed !== null) expect(coveringLabels(zoomed)).toEqual([]);
+
+    // Customers, orders and products each have a shape of their own, drawn and in the legend.
+    const last = await drawnFrame(panel);
+    expect(new Set(last?.nodes.map((n) => n.shape)).size).toBe(3);
+    const legend = panel.getByRole("list", { name: t("graph.legend.title"), exact: true });
+    const shapes = await legend
+      .locator("svg[data-shape]")
+      .evaluateAll((list) => list.map((svg) => svg.getAttribute("data-shape")));
+    expect(new Set(shapes)).toEqual(new Set(["circle", "square", "diamond"]));
     expect(await seriousViolations(page)).toEqual([]);
   });
 });

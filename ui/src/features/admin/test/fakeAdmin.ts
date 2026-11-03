@@ -128,6 +128,8 @@ export interface FakeAdminState {
   users: WireAdminUser[];
   /** Accounts that belong to another organization: they join only by invitation. */
   elsewhere: Set<string>;
+  /** Owners and admins without a provider sign-in into the organization (`/sign-in/password-only`). */
+  passwordOnly: { userId: string; name: string; email: string; role: string }[];
   orgs: WireAdminOrg[];
   serverSettings: WireSetting[];
   sessions: WireSession[];
@@ -349,6 +351,7 @@ function initialState(server: FakeServer): FakeAdminState {
       },
     ],
     elsewhere: new Set(),
+    passwordOnly: [],
     users: [
       {
         id: me.id,
@@ -759,6 +762,10 @@ function handleOrg(
     const sources = state.callerPermissions.has(permission) ? state.explain : [];
     return json(200, { permission, allowed: sources.length > 0, sources });
   }
+  if (area === "sign-in" && id === "password-only" && method === "GET") {
+    needs(state, "settings:write");
+    return json(200, state.passwordOnly);
+  }
   if (area === "settings") {
     needs(state, id === undefined ? "settings:read" : "settings:write");
     if (id === undefined && method === "GET") {
@@ -797,17 +804,19 @@ function members(
     const fields = body(input, ["email", "role"]);
     const email = String(fields.email).trim().toLowerCase();
     const user = state.users.find((candidate) => candidate.email === email);
-    if (!email.includes("@") || user === undefined) {
+    if (!email.includes("@")) {
       refuse("validation", "email");
     }
     const permissions = roleKeyPermissions(state, String(fields.role));
     if (permissions === undefined) {
       refuse("validation", "role");
     }
-    if (state.members.some((member) => member.userId === user.id)) {
+    if (user !== undefined && state.members.some((member) => member.userId === user.id)) {
       refuse("conflict", "email");
     }
-    if (state.elsewhere.has(user.id)) {
+    // No account answers as one that cannot be added directly: the answer does not tell which
+    // addresses have an account.
+    if (user === undefined || state.elsewhere.has(user.id)) {
       return json(409, {
         error: {
           code: "conflict",

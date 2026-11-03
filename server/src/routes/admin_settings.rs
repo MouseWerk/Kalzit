@@ -171,7 +171,7 @@ async fn patch(
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", reason));
     }
     settings::validate(def, &body.value).map_err(|e| ApiError::validation(e).with_field("value"))?;
-    check_not_own(state, def.key, &body.value).map_err(|e| e.with_field("value"))?;
+    check_not_own(state, def.key, &body.value).await.map_err(|e| e.with_field("value"))?;
     check_org_change(state, user, info, headers, org_id, def.key, &body.value)
         .await
         .map_err(|e| e.with_field("value"))?;
@@ -217,13 +217,14 @@ async fn check_org_change(
 }
 
 /// Refuses an outbound proxy address that names Kalzit's own listener or database
-/// (`outbound::check_not_own`).
-fn check_not_own(state: &AppState, key: &str, value: &Value) -> ApiResult<()> {
+/// (`outbound::check_not_own_resolved`), by name and by the addresses it resolves to.
+async fn check_not_own(state: &AppState, key: &str, value: &Value) -> ApiResult<()> {
     if key != crate::outbound::URL_KEY {
         return Ok(());
     }
     let own = crate::outbound::OwnAddresses::of(&state.config);
-    crate::outbound::check_not_own(value.as_str().unwrap_or_default(), &own)
+    crate::outbound::check_not_own_resolved(value.as_str().unwrap_or_default(), &own)
+        .await
         .map_err(|e| ApiError::validation(format!("{key}: {e}")))
 }
 
@@ -477,7 +478,7 @@ async fn batch(
         match (&change.value, change.reset) {
             (Some(value), false) => {
                 settings::validate(def, value).map_err(|e| ApiError::validation(e).with_field("changes"))?;
-                check_not_own(state, def.key, value).map_err(|e| e.with_field("changes"))?;
+                check_not_own(state, def.key, value).await.map_err(|e| e.with_field("changes"))?;
                 check_org_change(state, user, info, headers, org_id, def.key, value)
                     .await
                     .map_err(|e| e.with_field("changes"))?;

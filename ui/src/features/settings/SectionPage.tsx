@@ -33,6 +33,7 @@ import { AcmeSection } from "./AcmeSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { resetSetting } from "./api";
 import { MailSection } from "./MailSection";
+import { usePasswordOffWarning } from "./PasswordOffWarning";
 import { ProxyPasswordCard } from "./ProxyPasswordCard";
 import { QueryCacheCard } from "./QueryCacheCard";
 import { type Changes, SettingRow } from "./rows";
@@ -345,13 +346,17 @@ function OrgSettings({ section }: { section: SectionDef }) {
     enabled: orgId !== "",
   });
   const confirmed = useConfirmedCalls();
+  // Turning password sign-in off names the owners and admins it would shut out, first.
+  const passwordOff = usePasswordOffWarning(orgId);
   const changes = useSettingChanges({
     queryKey,
-    patch: async (key, value, version) =>
-      refreshLook(
+    patch: async (key, value, version) => {
+      await passwordOff.check(key, value);
+      return refreshLook(
         queryClient,
         await confirmed.run(() => updateOrgSetting(orgId, key, value, version)),
-      ),
+      );
+    },
     reset: async (key, version) =>
       refreshLook(
         queryClient,
@@ -369,7 +374,12 @@ function OrgSettings({ section }: { section: SectionDef }) {
       changes={changes}
       canWrite={access.permissions.has("settings:write")}
       inheritable
-      before={confirmed.dialog}
+      before={
+        <>
+          {confirmed.dialog}
+          {passwordOff.dialog}
+        </>
+      }
     />
   );
 }
