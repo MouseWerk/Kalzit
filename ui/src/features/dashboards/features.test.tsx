@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
@@ -735,6 +735,35 @@ describe("links", () => {
     // Taken once: the address no longer names them, the rest of it stays.
     await waitFor(() => expect(location().searchStr).not.toContain("var-"));
     expect(location().searchStr).toContain("from=now-6h");
+  });
+
+  it("takes the values of a new address also on a dashboard seen before and on the same one", async () => {
+    const { server } = setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [{ name: "land", type: "custom", options: ["at", "de", "ch"] }],
+      links: [{ type: "url", title: "Wiki", url: "https://wiki.example/$land" }],
+    });
+    addDashboard(server.areas.dashboards, "d-other", emptyModel("Other"));
+    const { app, user } = renderApp("/dashboards/d-main");
+    const href = async () =>
+      (await screen.findByRole("link", { name: "Wiki" })).getAttribute("href");
+    expect(await href()).toBe("https://wiki.example/at");
+    // A pick of the viewer's own, kept for this dashboard.
+    await user.selectOptions(screen.getByRole("combobox", { name: "land" }), "ch");
+    expect(await href()).toBe("https://wiki.example/ch");
+
+    // A -> B -> A with a value in the address: the address wins over the earlier pick.
+    await act(() => app.router.navigate({ href: "/dashboards/d-other" }));
+    await screen.findByRole("heading", { name: "Other" });
+    await act(() => app.router.navigate({ href: "/dashboards/d-main?var-land=de" }));
+    await waitFor(async () => expect(await href()).toBe("https://wiki.example/de"));
+
+    // A link to the same dashboard, without a new view.
+    await act(() => app.router.navigate({ href: "/dashboards/d-main?var-land=at" }));
+    await waitFor(async () => expect(await href()).toBe("https://wiki.example/at"));
+    // A later pick stays: the taken address does not apply again.
+    await user.selectOptions(screen.getByRole("combobox", { name: "land" }), "ch");
+    expect(await href()).toBe("https://wiki.example/ch");
   });
 
   it("leaves a fixed-values variable as stored when the address names a value it does not offer", async () => {
