@@ -132,18 +132,8 @@ function Install-Package($Package) {
 # the Actions runner ends every process a step started when the step ends (they belong to the
 # step's job object), and a process created by WMI belongs to none, so the servers outlive the
 # `start` step. Such a process does not inherit this one's environment, so cmd sets it first.
-# -Direct starts it as a child instead: Neo4j's own launcher (neo4j.bat) hands Java to a process
-# of its own that outlives the step, and under WMI it stalled on the runner after "Starting".
-function Start-Server([string] $Name, [string] $Program, [string[]] $Arguments, [hashtable] $Environment = @{}, [switch] $Direct) {
+function Start-Server([string] $Name, [string] $Program, [string[]] $Arguments, [hashtable] $Environment = @{}) {
     $logs = Join-Path $Data 'logs'
-    if ($Direct) {
-        foreach ($variable in $Environment.GetEnumerator()) { Set-Item "env:$($variable.Key)" $variable.Value }
-        $process = Start-Process -FilePath $Program -ArgumentList $Arguments -WindowStyle Hidden -PassThru `
-            -RedirectStandardOutput (Join-Path $logs "$Name.out.log") -RedirectStandardError (Join-Path $logs "$Name.err.log")
-        Add-Content (Join-Path $Data 'pids.txt') "$Name $($process.Id)"
-        Write-Host "started $Name (PID $($process.Id))"
-        return
-    }
     $quote = { param($text) '"' + $text + '"' }
     $settings = @($Environment.GetEnumerator() | ForEach-Object { 'set ' + (& $quote "$($_.Key)=$($_.Value)") + ' && ' }) -join ''
     $command = (@(& $quote $Program) + @($Arguments | ForEach-Object { & $quote $_ })) -join ' '
@@ -199,7 +189,12 @@ function Start-Servers {
     Set-Content (Join-Path $env:NEO4J_CONF 'neo4j.conf') $lines
     & (Join-Path $neo4j 'bin\neo4j-admin.bat') dbms set-initial-password $Neo4jPassword
     if ($LASTEXITCODE -ne 0) { throw "setting Neo4j's password failed with exit code $LASTEXITCODE" }
-    Start-Server 'neo4j' (Join-Path $neo4j 'bin\neo4j.bat') @('console') -Direct
+    # Its Java command as neo4j.bat builds it (Invoke-Neo4jUtility.ps1), without the Windows
+    # PowerShell in between, which stalled after "Starting" when started through WMI.
+    Start-Server 'neo4j' (Join-Path $env:JAVA_HOME 'bin\java.exe') @('-cp', "$neo4j/lib/*", "-Dbasedir=$neo4j",
+        'org.neo4j.server.startup.Neo4jCommand', 'console') @{
+        JAVA_HOME = $env:JAVA_HOME; NEO4J_HOME = $neo4j; NEO4J_CONF = $env:NEO4J_CONF
+    }
     # The configuration folder for `ready`, which runs in a later step.
     Set-Content (Join-Path $Data 'neo4j-conf.txt') $env:NEO4J_CONF
 }
