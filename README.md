@@ -213,7 +213,7 @@ never returned by the API. Plugins add further kinds (see below).
 
 - Windows installer (MSI) that sets up the Windows service with its own service account, in German
   or English; deb and rpm packages with a hardened systemd service for Debian, Ubuntu, Fedora and
-  RHEL; a Docker image.
+  RHEL on x86-64 and 64-bit ARM (arm64); a Docker image for amd64 and arm64.
 - HTTPS with your own certificate files or automatic certificates from Let's Encrypt or another
   ACME authority (HTTP-01 or TLS-ALPN-01), renewed without a restart.
 - High availability: several Kalzit servers on one PostgreSQL database behind a load balancer,
@@ -343,9 +343,11 @@ Your sign-ins, with this session marked and refused attempts with their reason.
 
 Run the container image (below), install the Windows service with the MSI package from the
 [releases](https://github.com/MouseWerk/Kalzit/releases) (see
-[the installation guide](docs/guide/installation.md#windows)), or build Kalzit from source. The
-result of a build is one binary, `kalzit` (`kalzit.exe` on Windows), with the web interface
-embedded.
+[the installation guide](docs/guide/installation.md#windows)), install the deb or rpm package
+on Linux, or build Kalzit from source. Each release has the Windows program for x64 and the
+Linux program with its deb and rpm for x64 and arm64
+([Linux packages](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm)). The result
+of a build is one binary, `kalzit` (`kalzit.exe` on Windows), with the web interface embedded.
 
 ### Docker
 

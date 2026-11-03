@@ -91,7 +91,7 @@ fn refuse_packaged(exe: &Path, what: &str) -> Result<()> {
         bail!(
             "Kalzit was installed from the {kind} package, so the package manager replaces it: download the {kind} \
              of {what} from the release and install it, e.g. {}",
-            package.command("<version>")
+            package.command("<version>", platform::Platform::current().arch)
         );
     }
     Ok(())
