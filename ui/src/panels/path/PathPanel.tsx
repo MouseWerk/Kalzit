@@ -1,9 +1,11 @@
 import { useId, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { DataLinkList, DataLinksEditor, useLinkValues } from "../DataLinkViews";
+import { graphValue, linksForRecord } from "../dataLinks";
 import { propertyText } from "../graph/adapter";
 import { VariableOptions } from "../graph/GraphEditor";
 import { buildGraphModel, type GraphModel } from "../graph/model";
-import { MAX_NODE_LIMIT } from "../graph/options";
+import { MAX_NODE_LIMIT, MAX_OPTION_TEXT } from "../graph/options";
 import { isMultiVariable, setVariableFromClick, usePanelHost } from "../host";
 import type { PanelEditorProps, PanelProps } from "../types";
 import { type PathOptions, parsePathOptions } from "./index";
@@ -29,6 +31,8 @@ export interface PathStep {
   node?: number;
   /** Its properties as "key value" texts: a node's first two besides its name, an edge's all. */
   details?: string[];
+  /** The node or edge as the result has it, for its data links; absent when it was not in it. */
+  record?: { id: string; properties: Record<string, unknown> };
 }
 
 function details(properties: Record<string, unknown>, skip: string, max: number): string[] {
@@ -56,6 +60,7 @@ export function pathSteps(model: GraphModel, path: { nodes: string[]; edges: str
       labels: node?.labels ?? [],
       node: at ?? -1,
       details: node === undefined ? [] : details(node.properties, node.caption, NODE_PROPERTIES),
+      ...(node === undefined ? {} : { record: { id: node.id, properties: node.properties } }),
     });
     const edgeId = path.edges[i];
     if (edgeId !== undefined && i < path.nodes.length - 1) {
@@ -67,6 +72,7 @@ export function pathSteps(model: GraphModel, path: { nodes: string[]; edges: str
         text: edge?.type ?? edgeId,
         forward: from === undefined || from === id,
         details: edge === undefined ? [] : details(edge.properties, "", Number.POSITIVE_INFINITY),
+        ...(edge === undefined ? {} : { record: { id: edge.id, properties: edge.properties } }),
       });
     }
   });
@@ -76,6 +82,7 @@ export function pathSteps(model: GraphModel, path: { nodes: string[]; edges: str
 export function PathPanel({ graphs = [], options, title }: PanelProps<PathOptions>) {
   const { t, language } = useI18n();
   const host = usePanelHost();
+  const linkValues = useLinkValues();
   const [announcement, setAnnouncement] = useState("");
   const [asTable, setAsTable] = useState(false);
   const number = new Intl.NumberFormat(language);
@@ -108,6 +115,19 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
   };
   const shown = model.paths.slice(0, MAX_PATHS);
   const all = shown.map((path) => ({ path, steps: pathSteps(model, path) }));
+  const stepLinks = (step: PathStep) => {
+    const record = step.record;
+    return record === undefined ? null : (
+      <DataLinkList
+        links={linksForRecord(
+          options.dataLinks,
+          (field) => graphValue(record.properties, record.id, field),
+          linkValues,
+        )}
+        label={t("panels.dataLinks.of", { name: step.text })}
+      />
+    );
+  };
   const chain = (steps: PathStep[]) =>
     steps.flatMap((s) => (s.kind === "node" ? [s.text] : [])).join(" → ");
   return (
@@ -198,6 +218,7 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
                         {step.details === undefined || step.details.length === 0 ? null : (
                           <span className="path__details">{step.details.join(" · ")}</span>
                         )}
+                        {stepLinks(step)}
                       </li>
                     ) : (
                       <li key={step.key} className="path__edge">
@@ -212,6 +233,7 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
                         {step.details === undefined || step.details.length === 0 ? null : (
                           <span className="path__details"> {step.details.join(" · ")}</span>
                         )}
+                        {stepLinks(step)}
                       </li>
                     ),
                   )}
@@ -257,6 +279,14 @@ export function PathEditor({ options, onChange }: PanelEditorProps<PathOptions>)
         names={[...new Set([...(host.variables?.names ?? []), ...(host.variables?.multi ?? [])])]}
         options={options}
         onChange={(patch) => onChange(parsePathOptions({ ...options, ...patch }))}
+      />
+      <p className="field__label">{t("panels.dataLinks.title")}</p>
+      <DataLinksEditor
+        links={options.dataLinks}
+        fieldLabel={t("panels.dataLinks.property")}
+        fieldHint={t("panels.dataLinks.fieldHintGraph")}
+        maxField={MAX_OPTION_TEXT}
+        onChange={(dataLinks) => onChange({ ...options, dataLinks })}
       />
     </>
   );

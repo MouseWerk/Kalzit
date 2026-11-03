@@ -49,6 +49,29 @@ export function fillVariables(
   });
 }
 
+/** Prefix of a variable's value in a dashboard's address: `?var-customer=42`. */
+export const VARIABLE_PARAM = "var-";
+
+/**
+ * Variable values a dashboard address carries (`?var-region=eu&var-hosts=a&var-hosts=b`), as a
+ * link from another dashboard sets them. Read from the raw query text, so a value stays the text
+ * it was (`007`, `1e3`); a name given twice holds both values. Only names a variable can have.
+ */
+export function variablesFromSearch(search: string): VariableValues {
+  const params = new URLSearchParams(search);
+  const values: [string, string | string[]][] = [];
+  for (const key of new Set(params.keys())) {
+    const name = key.slice(VARIABLE_PARAM.length);
+    if (!key.startsWith(VARIABLE_PARAM) || !/^[A-Za-z_]\w*$/.test(name)) {
+      continue;
+    }
+    const all = params.getAll(key);
+    values.push([name, all.length === 1 ? (all[0] ?? "") : all]);
+  }
+  // Built with `Object.fromEntries`, so a name like `__proto__` stays a plain entry.
+  return Object.fromEntries(values);
+}
+
 /** The address to open, or null when the filled-in link is not allowed. */
 export function linkHref(
   url: string,

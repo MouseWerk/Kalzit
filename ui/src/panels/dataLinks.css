@@ -1,0 +1,21 @@
+@layer components {
+  /* Data links of a document field or a graph node: quiet ghost buttons in a row that wraps. */
+  .data-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* Under a document card's title, before its fields. */
+  .doc-card__title + .data-links {
+    margin-block: var(--space-1) var(--space-2);
+  }
+
+  .data-links-editor {
+    display: grid;
+    gap: var(--space-2);
+  }
+}

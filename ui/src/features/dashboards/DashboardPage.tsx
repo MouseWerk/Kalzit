@@ -83,6 +83,7 @@ import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson, missingAnalyses } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
+import { variablesFromSearch } from "./links";
 import {
   BROWSER_ZONE,
   clickTargets,
@@ -193,6 +194,9 @@ export function DashboardPage() {
   // Set on the editor's child routes only.
   const { panelId } = useParams({ strict: false });
   const adding = useLocation({ select: (location) => location.pathname.endsWith("/panels/new") });
+  // Values a link brought along (`?var-customer=42`, from a data link of another dashboard).
+  const searchText = useLocation({ select: (location) => location.searchStr });
+  const linked = useMemo(() => variablesFromSearch(searchText), [searchText]);
   if (org === undefined) {
     return (
       <EmptyState icon="dashboards" title={t("dashboards.noOrg.title")}>
@@ -204,6 +208,7 @@ export function DashboardPage() {
     <DashboardScreen
       orgId={org.id}
       dashboardId={dashboardId}
+      linked={linked}
       display={{
         from: search.from,
         to: search.to,
@@ -259,10 +264,19 @@ interface ScreenProps {
   onDisplay: (patch: Partial<DisplayState>) => void;
   /** Extra controls (the playlist's), shown in the bar. */
   controls?: ReactNode;
+  /** Variable values from the address (`var-name`), taken when the dashboard opens. */
+  linked?: VariableValues;
 }
 
 /** Loads one dashboard and shows it; also used by the playlist player. */
-export function DashboardScreen({ orgId, dashboardId, display, onDisplay, controls }: ScreenProps) {
+export function DashboardScreen({
+  orgId,
+  dashboardId,
+  display,
+  onDisplay,
+  controls,
+  linked,
+}: ScreenProps) {
   const { t } = useI18n();
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
   useRecordView(orgId, dashboardId);
@@ -270,7 +284,12 @@ export function DashboardScreen({ orgId, dashboardId, display, onDisplay, contro
   usePanelPluginTypes(orgId);
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
-  const picked = useRef(new Map<string, VariableValues>());
+  // Values from the address count as picked, so they apply to the variables the dashboard has.
+  const picked = useRef(
+    new Map<string, VariableValues>(
+      linked === undefined || Object.keys(linked).length === 0 ? [] : [[dashboardId, linked]],
+    ),
+  );
 
   useEffect(() => {
     if (dashboard.data !== undefined) {
@@ -507,7 +526,13 @@ function DashboardView({
   const analyses = { ...dashboard.analyses, ...extraAnalyses };
   const [values, setValues] = useState<VariableValues>(() => {
     const start = initialVariables(dashboard.model.variables);
-    const kept = Object.entries(picked.get(dashboard.id) ?? {}).filter(([name]) => name in start);
+    // A constant keeps the dashboard's own value, whatever an address says.
+    const constants = new Set(
+      dashboard.model.variables.filter((v) => v.type === "constant").map((v) => v.name),
+    );
+    const kept = Object.entries(picked.get(dashboard.id) ?? {}).filter(
+      ([name]) => Object.hasOwn(start, name) && !constants.has(name),
+    );
     return { ...start, ...Object.fromEntries(kept) };
   });
   useEffect(() => {
@@ -1175,6 +1200,7 @@ function DashboardView({
   const host = {
     orgId,
     dashboardId: dashboard.id,
+    linkValues: values,
     openInExplore: (datasourceId: string, query: unknown) => {
       handOffToExplore({ datasourceId, query });
       void navigate({ to: "/explore", search: {} });

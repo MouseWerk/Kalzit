@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { VariableValues } from "../features/dashboards/model";
 
 /**
  * What the page around a panel offers it, beyond its data: the organization (for panels that
@@ -21,6 +22,11 @@ export interface PanelHost {
     multi?: readonly string[];
     setMany?: (name: string, values: readonly string[]) => void;
   };
+  /**
+   * The dashboard's current variable values (a repeat copy's own value included), which data
+   * links of document and graph panels fill in (`${region}`). Absent outside a dashboard.
+   */
+  linkValues?: VariableValues;
   /**
    * The dashboard panel the panel is drawn for, where a viewer's own state of it is kept on the
    * server (a graph panel's pins and selection). Absent in Explore and the panel editor.

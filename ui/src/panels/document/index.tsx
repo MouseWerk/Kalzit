@@ -6,6 +6,8 @@ import { MAX_PATH_CHARS } from "../../documents/projection";
 import { SetPicker } from "../../documents/shared";
 import { entriesOf, isContainer, typeOf, unwrap } from "../../documents/values";
 import { useI18n } from "../../i18n/i18n";
+import { DataLinkList, DataLinksEditor, useLinkValues } from "../DataLinkViews";
+import { type DataLink, linksForRecord, parseDataLinks } from "../dataLinks";
 import { usePanelHost } from "../host";
 import { EmptyPanel } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
@@ -27,6 +29,8 @@ export interface CardOptions {
   variable: string;
   /** Path in the shown document the variable takes; empty takes the clicked value. */
   variablePath: string;
+  /** Links from a field of the shown document, offered under its title. */
+  dataLinks: DataLink[];
 }
 
 export function parseCardOptions(stored: unknown): CardOptions {
@@ -35,6 +39,7 @@ export function parseCardOptions(stored: unknown): CardOptions {
     titlePath: typeof value.titlePath === "string" ? value.titlePath : "",
     variable: clickOption(value.variable, MAX_VARIABLE_CHARS, true),
     variablePath: clickOption(value.variablePath, MAX_PATH_CHARS),
+    dataLinks: parseDataLinks(value.dataLinks, MAX_PATH_CHARS),
   };
 }
 
@@ -123,6 +128,7 @@ function Fields({
 function CardPanel({ documents = [], options }: PanelProps<CardOptions>) {
   const { t, language } = useI18n();
   const clicked = useClickVariable(options.variable);
+  const linkValues = useLinkValues();
   const headingId = useId();
   const [index, setIndex] = useState(0);
   const [page, setPage] = useState(0);
@@ -189,6 +195,10 @@ function CardPanel({ documents = [], options }: PanelProps<CardOptions>) {
         <h3 className="doc-card__title" id={headingId}>
           {heading}
         </h3>
+        <DataLinkList
+          links={linksForRecord(options.dataLinks, (field) => valueAt(document, field), linkValues)}
+          label={t("panels.dataLinks.of", { name: heading })}
+        />
         {isRecord(unwrap(document)) ? (
           <Fields value={unwrap(document) as Record<string, unknown>} depth={0} pick={pick} />
         ) : (
@@ -249,6 +259,13 @@ function CardEditor({ options, onChange }: PanelEditorProps<CardOptions>) {
             }),
           )
         }
+      />
+      <DataLinksEditor
+        links={options.dataLinks}
+        fieldLabel={t("panels.dataLinks.field")}
+        fieldHint={t("panels.dataLinks.fieldHintDocuments")}
+        maxField={MAX_PATH_CHARS}
+        onChange={(dataLinks) => onChange({ ...options, dataLinks })}
       />
     </>
   );

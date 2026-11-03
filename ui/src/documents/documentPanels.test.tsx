@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: link placeholders such as ${__value} are typed by users, not template literals
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -576,6 +577,58 @@ describe("review follow-ups", () => {
     expect(screen.getByText("Int64 100%")).toBeTruthy();
     expect(screen.getByText("Binary 100%")).toBeTruthy();
     expect(screen.getByText("JavaScript with scope 100%")).toBeTruthy();
+  });
+});
+
+describe("data links of document panels", () => {
+  const links = [
+    { field: "customer.name", title: "Customer", url: "/dashboards/d-c?var-name=${__value}" },
+    {
+      field: "items.sku",
+      title: "Product",
+      url: "https://shop.example/p/${__value}",
+      newTab: true,
+    },
+    { field: "status", title: "Unsafe", url: "javascript:alert(1)" },
+  ];
+
+  it("offers the links of the selected value, and of every field for a whole document", async () => {
+    const user = userEvent.setup();
+    renderPanel("documents", [orders()], { dataLinks: links });
+    await user.click(treeItems()[0] as HTMLElement);
+    const document1 = screen.getByRole("list", { name: "Data links of Document 1" });
+    expect(within(document1).getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
+      "/dashboards/d-c?var-name=Ada",
+    );
+    // items.sku is an array path: a whole document has no one value for it.
+    expect(within(document1).queryByRole("link", { name: "Product" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Unsafe" })).toBeNull();
+
+    // A value inside an array: the path without indexes names the field.
+    await user.click(treeRow("items"));
+    await user.click(treeRow("[1]"));
+    await user.click(treeRow("sku"));
+    const product = screen.getByRole("link", { name: "Product" });
+    expect(product.getAttribute("href")).toBe("https://shop.example/p/B-2");
+    expect(product.getAttribute("target")).toBe("_blank");
+    expect(product.getAttribute("rel")).toBe("noopener noreferrer");
+    // Another field offers none.
+    await user.click(treeRow("price"));
+    expect(screen.queryByRole("link", { name: "Product" })).toBeNull();
+  });
+
+  it("shows the links of the shown document under the card's title, encoded", () => {
+    const set: DocumentSet = {
+      documents: [{ _id: "1", customer: { name: "Ada & Co/1" }, status: "paid" }],
+      schema: [],
+      notices: [],
+    };
+    renderPanel("document", [set], { titlePath: "customer.name", dataLinks: links });
+    const card = screen.getByRole("article", { name: "Ada & Co/1" });
+    expect(within(card).getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
+      "/dashboards/d-c?var-name=Ada%20%26%20Co%2F1",
+    );
+    expect(within(card).queryByRole("link", { name: "Unsafe" })).toBeNull();
   });
 });
 

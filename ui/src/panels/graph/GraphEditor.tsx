@@ -1,5 +1,6 @@
 import { type ReactNode, useId, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { DataLinksEditor } from "../DataLinkViews";
 import { usePanelHost } from "../host";
 import type { PanelEditorProps } from "../types";
 import { ClickVariableOptions } from "../variableClick";
@@ -21,6 +22,7 @@ import {
   LABEL_TONES,
   MAX_LABEL_TOP,
   MAX_NODE_LIMIT,
+  MAX_OPTION_TEXT,
   MAX_SIZE,
   MIN_SIZE,
   NODE_SHAPES,
@@ -520,6 +522,15 @@ export function GraphEditor({
           hint={t("graph.options.timePropertyHint")}
           value={options.timeProperty}
           onChange={(timeProperty) => set({ timeProperty })}
+        />
+      </Group>
+      <Group title={t("panels.dataLinks.title")}>
+        <DataLinksEditor
+          links={options.dataLinks}
+          fieldLabel={t("panels.dataLinks.property")}
+          fieldHint={t("panels.dataLinks.fieldHintGraph")}
+          maxField={MAX_OPTION_TEXT}
+          onChange={(dataLinks) => set({ dataLinks })}
         />
       </Group>
     </>

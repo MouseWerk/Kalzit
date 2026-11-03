@@ -16,6 +16,8 @@ import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { useEscapeLayer } from "../../lib/layers";
+import { useLinkValues } from "../DataLinkViews";
+import { graphValue, linksForRecord } from "../dataLinks";
 import { isMultiVariable, setVariableFromClick, setVariableValues, usePanelHost } from "../host";
 import { EmptyPanel } from "../shared";
 import type { PanelGraph, PanelProps } from "../types";
@@ -231,6 +233,7 @@ function useGraph(
 function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const { t, language } = useI18n();
   const host = usePanelHost();
+  const linkValues = useLinkValues();
   const hintId = useId();
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<CanvasHandle>(null);
@@ -720,6 +723,24 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const primaryModel = primary === null ? null : modelIndex(primary);
   const primaryData = primaryModel === null ? undefined : model.nodes[primaryModel];
   const primaryStep = primaryData === undefined ? undefined : lastStepOf(primaryData.id);
+  const primaryLinks =
+    primaryData === undefined
+      ? []
+      : linksForRecord(
+          options.dataLinks,
+          (field) => graphValue(primaryData.properties, primaryData.id, field),
+          linkValues,
+        );
+  const edgeLinksOf = (edge: number) => {
+    const data = model.edges[edge];
+    return data === undefined
+      ? []
+      : linksForRecord(
+          options.dataLinks,
+          (field) => graphValue(data.properties, data.id, field),
+          linkValues,
+        );
+  };
   const expandText =
     !explorerOn || primaryData === undefined
       ? null
@@ -1015,6 +1036,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             capped={capped}
             expandText={expandText}
             moreText={moreText}
+            links={primaryLinks}
+            edgeLinksOf={edgeLinksOf}
             actions={{
               select: (index) => select(index),
               deselect: (index) => select(index, true),

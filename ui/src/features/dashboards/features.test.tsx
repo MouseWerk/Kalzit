@@ -714,6 +714,23 @@ describe("links", () => {
     expect(await screen.findByRole("link", { name: "Sales EU" })).toBeTruthy();
   });
 
+  it("takes variable values from the address, as a data link of another dashboard sets them", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [
+        { name: "land", type: "custom", options: ["at", "de"] },
+        { name: "kunde", type: "textbox", current: "1" },
+        { name: "fix", type: "constant", current: "own" },
+      ],
+      links: [{ type: "url", title: "Wiki", url: "https://wiki.example/$land/$kunde/$fix" }],
+    });
+    renderApp("/dashboards/d-main?var-land=de&var-kunde=007&var-fix=other&var-unknown=x");
+    const wiki = await screen.findByRole("link", { name: "Wiki" });
+    // Text stays text ("007"), and a constant keeps the dashboard's own value.
+    expect(wiki.getAttribute("href")).toBe("https://wiki.example/de/007/own");
+    expect((screen.getByRole("combobox", { name: "land" }) as HTMLSelectElement).value).toBe("de");
+  });
+
   it("keeps up to two links in the bar and counts only the ones that are shown", async () => {
     setup("viewer", {
       ...emptyModel("Main"),
