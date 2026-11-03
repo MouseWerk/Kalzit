@@ -4,6 +4,7 @@ import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
+import { useConfirmedCalls } from "../../security/ConfirmFactorDialog";
 import {
   type AdminOrg,
   adminKeys,
@@ -12,8 +13,9 @@ import {
   listUsers,
   MAX_PAGE_SIZE,
   renameOrg,
+  resetOrgSignInRules,
 } from "../api";
-import { Dialog } from "../components/Dialog";
+import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { usePagedList } from "../components/lists";
 import { NameDialog } from "../components/NameDialog";
 import { Notice, useNotice } from "../components/Notice";
@@ -33,6 +35,17 @@ export function OrgsPage() {
   const notice = useNotice();
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<AdminOrg | null>(null);
+  // Putting an organization's sign-in rules back to the server's: the way back in when they shut
+  // out everyone who could change them. It needs a fresh confirmation of the admin's own factor.
+  const [resetting, setResetting] = useState<AdminOrg | null>(null);
+  const confirmed = useConfirmedCalls();
+  const resetRules = useMutation({
+    mutationFn: (org: AdminOrg) => confirmed.run(() => resetOrgSignInRules(org.id)),
+    onSuccess: (_, org) => {
+      setResetting(null);
+      notice.show({ message: t("admin.orgs.rulesReset", { name: org.name }) });
+    },
+  });
   const orgs = list.items ?? [];
   const keys = useRowKeys(orgs.length);
 
@@ -73,6 +86,17 @@ export function OrgsPage() {
                 >
                   {t("admin.common.rename")}
                 </button>
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  aria-label={t("admin.orgs.resetRulesNamed", { name: org.name })}
+                  onClick={() => {
+                    resetRules.reset();
+                    setResetting(org);
+                  }}
+                >
+                  {t("admin.orgs.resetRules")}
+                </button>
               </div>
             </li>
           ))}
@@ -83,6 +107,22 @@ export function OrgsPage() {
           {t("admin.common.showMore")}
         </button>
       ) : null}
+      {confirmed.dialog}
+      <ConfirmDialog
+        open={resetting !== null}
+        title={t("admin.orgs.resetRulesTitle", { name: resetting?.name ?? "" })}
+        confirmLabel={t("admin.orgs.resetRulesConfirm")}
+        busy={resetRules.isPending}
+        error={resetRules.error === null ? null : errorText(t, resetRules.error)}
+        onClose={() => setResetting(null)}
+        onConfirm={() => {
+          if (resetting !== null) {
+            resetRules.mutate(resetting);
+          }
+        }}
+      >
+        {t("admin.orgs.resetRulesText")}
+      </ConfirmDialog>
       {creating ? (
         <CreateOrgDialog
           onClose={() => setCreating(false)}

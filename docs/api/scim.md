@@ -111,7 +111,8 @@ person's account, its address is confirmed and it is not a server admin or the b
 it then joins the organization through the group mapping. An account that is already a SCIM user
 of this organization answers `409` (`scim.account_linked`), one with an unconfirmed address `409`
 (`scim.email_unconfirmed`), a server admin's `403` (`scim.account_protected`), and an account
-that belongs to another organization `409` (`scim.account_in_other_org`): a person who is already
+that belongs to another organization `409` (`scim.account_not_linkable`, which names no other
+organization): a person who is already
 in an organization joins another one only by accepting an invitation, since the new
 organization's sign-in rules (password sign-in off, a required second factor) would bind their
 account. SCIM refuses instead of inviting, so a directory sync never sends mail on its own; an
@@ -179,7 +180,7 @@ break-glass admin, a service account).
   keeps the directory's name and address on the SCIM user only, so it can never give a signed-in
   account another person's address.
 - Nothing else takes SCIM's word for the address: the account stays unconfirmed, it cannot be added
-  to another organization by its address (`mail.email_unconfirmed`), and it is never linked by
+  to another organization by its address (`members.invite_instead`), and it is never linked by
   another organization's SCIM.
 - **No squatting.** An account SCIM made that nobody ever used (no password, no provider identity,
   unconfirmed) never blocks a mailed invitation of another organization: the invited person takes
@@ -293,7 +294,7 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | `scim.email_taken` | `409 uniqueness` | another account (or several, or a service account) has the address |
 | `scim.email_unconfirmed` | `409 uniqueness` | the account with the address has not confirmed it |
 | `scim.account_linked` | `409 uniqueness` | the account with the address is already a SCIM user of this organization |
-| `scim.account_in_other_org` | `409 uniqueness` | the account with the address belongs to another organization; invite the person instead |
+| `scim.account_not_linkable` | `409 uniqueness` | the account with the address cannot be linked (it belongs to another organization, which the answer does not say); invite the person instead |
 | `scim.account_protected` | `403` | linking a server admin's account, or deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |
 | `scim.group_name_missing` | `400 invalidValue`, `mutability` | a group without `displayName`, or removing it |
 | `scim.group_name_taken` | `409 uniqueness` | another active group of the organization has this `displayName` |

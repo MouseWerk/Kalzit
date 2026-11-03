@@ -598,6 +598,8 @@ async fn an_account_in_another_organization_is_linked_only_after_it_joined() {
     // The directory's word does not bind her account to this organization's sign-in rules.
     let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "pia@mueller.example" })), &token).await;
     assert_eq!((r.status, r.scim_type()), (StatusCode::CONFLICT, "uniqueness"), "{}", r.body);
+    // The refusal names no other organization, so the directory learns nothing about them.
+    assert!(!r.body.to_string().contains("organization"), "{}", r.body);
     assert_eq!(t.role_of(&org, &pia).await, None);
     let reasons: Vec<Value> = t
         .audit_actions()
@@ -606,7 +608,7 @@ async fn an_account_in_another_organization_is_linked_only_after_it_joined() {
         .filter(|(a, _)| a == "scim.request_refused")
         .map(|(_, s)| s["reason"].clone())
         .collect();
-    assert_eq!(reasons, [json!("scim.account_in_other_org")]);
+    assert_eq!(reasons, [json!("scim.account_not_linkable")]);
 
     // Once she accepted an invitation here, the directory links her account.
     sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, 'viewer', 0)")
@@ -978,7 +980,7 @@ async fn scim_owns_an_account_only_until_it_joins_elsewhere_is_confirmed_or_beco
             "application/json",
         )
         .await;
-    assert_eq!(r.body["error"]["reason"], "mail.email_unconfirmed", "{}", r.body);
+    assert_eq!(r.body["error"]["reason"], "members.invite_instead", "{}", r.body);
     // Kim owns another organization now: SCIM no longer changes or locks the account, also after
     // Kim leaves it again.
     let r = t.admin(Method::POST, "/api/admin/orgs", Some(json!({ "name": "Kims Firma", "ownerUserId": kim }))).await;

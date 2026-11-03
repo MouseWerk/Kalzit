@@ -7,13 +7,13 @@
 //! resolves names itself, so the target check could not see the address it connects to.
 //! Kalzit's own requests to the internet (catalog, updates, ACME, AI providers) may use the
 //! outbound proxy (`client_proxied`, `outbound`). The client resolves and checks every target
-//! before the request goes to the proxy, but the proxy resolves the name again, so a name whose
-//! answer changes in between (DNS rebinding) is checked by the proxy's own rules only: the proxy
-//! must refuse private, loopback, link-local and metadata addresses itself
-//! (docs/guide/administration.md, "Outbound proxy"). Plain-http requests of guarded clients (the
-//! catalog's packages, an organization's AI provider) leave no room for that: they go to the
-//! checked address, with the name in `Host`. HTTPS goes through `CONNECT` by name, because the
-//! certificate is checked against the name.
+//! before the request goes to the proxy. Every plain-http request through the proxy, of every
+//! client (an organization's AI provider, the catalog and its packages, update and ACME sources),
+//! goes to the checked address, with the name in `Host`, so the proxy has no name to resolve
+//! again and a name whose answer changes in between (DNS rebinding) cannot lead it elsewhere.
+//! HTTPS goes through `CONNECT` by name, because the certificate is checked against the name: there
+//! the proxy resolves the name again, so it must refuse private, loopback, link-local and metadata
+//! addresses itself (docs/guide/administration.md, "Outbound proxy").
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -430,8 +430,8 @@ impl HttpClient {
     /// resolved here and every address checked, through the proxy or past it (`no_proxy`), so a
     /// name that leads somewhere refused is refused before anything is sent.
     ///
-    /// Answers the address a plain-http request of a guarded client must go to through the proxy
-    /// (`request`), so the proxy cannot resolve the name to another address.
+    /// Answers the address a plain-http request through the proxy must go to (`request`), for
+    /// every client, so the proxy cannot resolve the name to another address.
     async fn check_url(&self, url: &Url) -> Result<Option<std::net::IpAddr>, HttpError> {
         if !matches!(url.scheme(), "http" | "https") {
             let detail = crate::datasources::Detail::new(
@@ -466,8 +466,11 @@ impl HttpClient {
                 guard.check(addr.ip())?;
             }
         }
-        let pin = self.guard.is_some() && url.scheme() == "http" && !proxy.bypasses(url);
-        Ok(pin.then(|| addrs[0].ip()))
+        let pin = url.scheme() == "http" && !proxy.bypasses(url);
+        // Every address was checked; an IPv4 one first, which a proxy reaches in more networks
+        // than IPv6. The proxy sees the address, not the name (docs/guide/administration.md).
+        let chosen = addrs.iter().find(|a| a.is_ipv4()).unwrap_or(&addrs[0]);
+        Ok(pin.then(|| chosen.ip()))
     }
 }
 
@@ -897,7 +900,9 @@ mod tests {
         let r = c.send(Method::GET, url("http://release.proxy-test.example/latest"), HeaderMap::new()).await.unwrap();
         assert_eq!(r.text().await.unwrap(), "via proxy");
         let head = seen.lock().unwrap().last().cloned().unwrap();
-        assert!(head.starts_with("GET http://release.proxy-test.example/latest HTTP/1.1"), "{head}");
+        // A client without a guard (update and ACME sources) is pinned to the checked address too.
+        assert!(head.starts_with("GET http://93.184.216.34/latest HTTP/1.1"), "{head}");
+        assert!(head.to_ascii_lowercase().contains("host: release.proxy-test.example\r\n"), "{head}");
         let auth = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "kalzit:geheim");
         assert!(
             head.to_ascii_lowercase().contains(&format!("proxy-authorization: basic {}", auth.to_ascii_lowercase())),

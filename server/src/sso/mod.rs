@@ -324,7 +324,9 @@ pub async fn password_sign_in(state: &AppState, user_id: &str, break_glass_form:
         .fetch_one(&state.read_db)
         .await?;
     if !off && server_admin == 0 {
-        // Only memberships the person consented to bind them (`authz::CONSENTED_JOINS`).
+        // Only memberships the person consented to apply here, at the sign-in
+        // (`authz::CONSENTED_JOINS`); every member meets the rule on entering the organization
+        // (`auth::org_gate`).
         let orgs: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT org_id FROM org_members WHERE user_id = $1 AND joined_by IN {}",
             crate::authz::CONSENTED_JOINS

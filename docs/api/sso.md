@@ -120,10 +120,18 @@ provider's word for a second factor (`trustProviderMfa`) in that sign-in, and as
 account's second factor, or, when it has none, its password (`linkPassword`, docs/api/access.md,
 "Second factor"); a factor set up in its place would prove nothing. The link counts as
 confirmed once that second step completes; a sign-in left unfinished asks again next time. An
-account without a password and a second factor (one SCIM owns, see above) links at once, as
-before. Such an account has nothing of its own to prove it with, so whoever controls its verified
-address at a trusted provider signs in to it; it is protected only as well as that address and
-provider are. Links made before 0.5.1 count as confirmed. The same holds for LDAP (step 2 of
+account without a password and a second factor has nothing of its own to prove it with. It is
+not linked by email (`sso=link_refused`) when it signs in through another provider or a directory
+(a confirmed identity of another provider, cause `sso.email_link_other_sign_in`): the person signs
+in the way they already do. Otherwise it links at once only when an organization's SCIM made and
+still owns it (see above) and this provider's group mapping, for the person's groups (or the rule
+for people without a mapped group), gives a membership in that organization; whoever
+controls its verified address at that provider signs in to it, so it is protected only as well
+as that address and provider are. Any other such account is refused too
+(`sso.email_link_no_proof`). Links made before 0.5.1 count as confirmed. Such a provider-only
+account is stranded when its provider is gone: a password reset by mail gives it no password (the
+mail says where its password lives, docs/api/mail.md); a server admin sets one under Verwaltung >
+Benutzer (`PATCH /admin/users/{userId}`), and with it the person confirms a new provider's link. The same holds for LDAP (step 2 of
 "LDAP and Active Directory").
 
 A disabled account answers `sso=disabled`, the unmapped rule `refuse` answers `sso=unmapped`
@@ -156,6 +164,7 @@ names configuration details. `ref` is the error id (`7Q2K-91XD`) that leads admi
 | `unmapped` | no group matches and the rule is `refuse` |
 | `no_account` | there is no account and the provider does not create accounts |
 | `email_taken` | an account has this email but it is not confirmed, or the provider did not verify the email |
+| `link_refused` | the account with this email has no password and no second factor to prove it with: it signs in through another provider or directory, or no directory of this provider owns it ("Linking by email") |
 
 ## Local sign-in and break-glass
 
@@ -171,11 +180,15 @@ With password sign-in off (for the server, or for one of the person's organizati
 `POST /auth/login` answers like a wrong password, `401 invalid_credentials`, also for the right
 one, and the attempt stays counted against the sign-in limits, so a password cannot be tested
 while it signs nobody in; the account's own recent sign-ins record it as `password_off`. The
-sign-in page shows the providers either way. An organization's `off` never applies to server
-admins, and binds only members who joined by their own consent: `joinedBy` `invitation`,
-`creator`, `scim_owned` or `mapping` (a group mapping of a provider a server admin set up). It
-never binds a `direct` or `legacy` member (docs/api/access.md, "Members"), whose password keeps
-signing them in. A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`);
+sign-in page shows the providers either way. At the sign-in, an organization's `off` never
+applies to server admins, and refuses the password only of members who joined by their own
+consent: `joinedBy` `invitation`, `creator`, `scim_owned` or `mapping` (a group mapping of a
+provider a server admin set up). A `direct` or `legacy` member's password still signs them in,
+but inside the organization the rule applies to every member, server admins included: a session
+signed in with a password is refused there with `403 org_provider_sign_in_required`
+(docs/api/access.md, "Organization sign-in rules"); only the break-glass admin's session passes.
+Turning it `off` needs a provider or directory that leads into the organization and a session
+signed in through one (`409 conflict`, `sso.org_local_off_blocked`). A member can leave the organization with any session (`DELETE /me/orgs/{orgId}`);
 a group mapping that still names the organization adds them again, as `mapping`, at their next
 sign-in through that provider. With password sign-in off for the server or the inviting organization,
 an invitation is accepted through a provider only: `POST /auth/invitation` answers
@@ -445,7 +458,7 @@ and the attempt counts against the same sign-in limits. When a directory could n
 and the sign-in failed, the answer is `503 busy` with the reason `ldap.directory_unreachable`, whether
 or not a local account has the login, so the answer tells nothing about local accounts.
 A person the directory confirmed but Kalzit refuses (the outcomes of the provider sign-in:
-`disabled`, `unmapped`, `no_account`, `email_taken`, `failed`) gets the answer of a wrong
+`disabled`, `unmapped`, `no_account`, `email_taken`, `link_refused`, `failed`) gets the answer of a wrong
 password, `401 invalid_credentials`, and the attempt stays counted, so the directory password
 cannot be tested through Kalzit; the outcome is in the `auth.sso_failed` entry and the account's
 recent sign-ins. The sign-in limits come back only for a sign-in that goes on to a session or
@@ -895,6 +908,8 @@ outcome. They are not answered as API errors.
 | `sso.identity_issuer_mismatch` | the identity was linked through another issuer than the provider has now |
 | `sso.email_ambiguous` | two accounts have the address in two forms of its domain, left from before the forms were compared as one (new accounts with another form of a taken address are refused) |
 | `sso.email_link_admin` | the email belongs to a server admin or the break-glass admin, who are never linked by email |
+| `sso.email_link_other_sign_in` | the account with the email has no password and no second factor and signs in through another provider or directory (`sso=link_refused`) |
+| `sso.email_link_no_proof` | the account with the email has no password and no second factor, and no SCIM of an organization the provider's mapping gives this person owns it (`sso=link_refused`) |
 | `sso.service_account` | the identity is linked to a service account, or a service account has the email; service accounts never sign in through a provider |
 | `ldap.unreachable` | a directory could not be reached at sign-in (`detail` says why) |
 | `ldap.service_bind_failed` | the service account's bind was refused at sign-in |

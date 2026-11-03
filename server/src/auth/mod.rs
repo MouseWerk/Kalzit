@@ -1,5 +1,6 @@
 pub mod api_token;
 pub mod device;
+pub mod org_gate;
 pub mod passkeys;
 pub mod password;
 pub mod ratelimit;

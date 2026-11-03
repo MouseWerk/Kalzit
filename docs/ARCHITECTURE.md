@@ -38,7 +38,8 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   field of a `validation` error. The list lives in `error::ERROR_CODES`; the UI's `ErrorCode`
   type is generated from it and every code has a translation (tested). Codes: `validation`, `unauthenticated`, `forbidden`,
   `not_found`, `method_not_allowed`, `payload_too_large`, `conflict`, `version_conflict`,
-  `rate_limited`, `cross_origin`, `invalid_credentials`, `invalid_code`, `confirmation_required`, `setup_done`, `invalid_setup_token`,
+  `rate_limited`, `cross_origin`, `invalid_credentials`, `invalid_code`, `confirmation_required`, `org_second_factor_required`,
+  `org_provider_sign_in_required`, `setup_done`, `invalid_setup_token`,
   `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `busy`, `internal`.
   `busy` (503, with `Retry-After`) means the database could not give the request its lock in time
   (SQLite `SQLITE_BUSY`; PostgreSQL serialization failure, lock timeout or deadlock, the last also

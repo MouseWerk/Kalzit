@@ -76,9 +76,11 @@ owns), `mapping` (a group mapping of an identity provider a server admin set up)
 admin added the account, or SCIM linked an existing account that belonged to no organization;
 service accounts too) or `legacy` (every membership from before 0.5.1). The organization's sign-in
 rules, password sign-in off (`signin.local_password`, docs/api/sso.md) and its second factor
-requirement (`security.two_factor_required`, "Second factor" below), bind a member only for
-`invitation`, `creator`, `scim_owned` and `mapping`: the person's consent. They never bind a
-`direct` or `legacy` member, for whom only the server's rules count. Accepting a mailed invitation
+requirement (`security.two_factor_required`, "Second factor" below), apply to every member on
+entering the organization, however they joined ("Organization sign-in rules" below). Only for
+`invitation`, `creator`, `scim_owned` and `mapping`, the person's consent, do they also apply at
+the sign-in itself: a required second factor is set up during the sign-in, and a password that
+the organization turned off does not sign the person in. Accepting a mailed invitation
 of an organization one is already a member of turns the membership into `invitation`; a copied
 link leaves it as it is. When SCIM's ownership of an account ends (docs/api/scim.md, "Accounts"),
 its `scim_owned` memberships become `direct`.
@@ -94,13 +96,16 @@ its `scim_owned` memberships become `direct`.
 organization yet (any case and surrounding spaces in the email are fine). A person who already
 belongs to an organization joins another one only by accepting an invitation
 (docs/api/mail.md, "Invitations"), so the person decides. The new membership is `direct`: this
-organization's sign-in rules do not bind it. The account's row is locked before the
+organization's sign-in rules apply to it on entering the organization, not at the sign-in. The
+account's row is locked before the
 organization's, as on every way of joining, so two organizations cannot add one account at the
 same time. Errors:
 `validation` `email` (not an address, or no account has it), `validation` `role` (no such role
-key), `409 conflict` `email` (already a member; reason `mail.email_unconfirmed` for an address
-its owner has not confirmed; reason `members.invite_instead` for an account in another
-organization), `403` (role exceeds the caller's permissions). Audit `member.added`.
+key), `409 conflict` `email` (already a member; reason `members.invite_instead` for any other
+account that cannot be added directly: one that belongs to another organization, or one whose
+owner has not confirmed its address; the answer is the same for both, so it tells nothing about
+the account's other organizations), `403` (role exceeds the caller's permissions). Audit
+`member.added`.
 Memberships from before 0.5.1 stay as they are (`legacy`); their members can leave on their own
 (below).
 
@@ -131,6 +136,52 @@ adds the person back (docs/api/scim.md, "Users"), until they accept an invitatio
 admin adds them. A provider whose group mapping a server admin set up adds the person again, as
 `mapping`, at their next sign-in through it when the mapping still names the organization: the
 server admin's mapping decides, not the organization.
+
+### Organization sign-in rules
+
+An organization's rules gate every request into it, for every member, whatever `joinedBy` says:
+each organization route (`/orgs/{orgId}/...`, the live connection included) checks the session
+of the request first.
+
+- **Second factor.** When the server's or the organization's `security.two_factor_required`
+  applies to the member there (`everyone`, or `admins` for its administrators; the server's
+  `admins` also for server admins), an account without a second factor is refused with
+  `403 org_second_factor_required` (reason `second_factor.org_required`, `params.orgId`). A
+  session whose sign-in took a provider's word for a second factor (`trustProviderMfa`) passes.
+- **Password sign-in off.** When the organization set `signin.local_password` to `off`, a session
+  signed in with a password (not the break-glass admin's, see below) is refused with
+  `403 org_provider_sign_in_required` (reason `sso.org_password_off`, `params.orgId`). Sessions
+  signed in through an identity provider or a directory pass. Sessions from before 0.5.2 count as
+  signed in with a password.
+
+Saving the rules is refused when they would lock people out (`409 conflict`): `off` while no
+enabled identity provider or directory leads into the organization (a group mapping, or the
+server's rule for people without one; reason `sso.org_local_off_blocked`, `check` =
+`providerReady`), or while the saving session was itself signed in with a password or as the
+break-glass admin (`check` = `selfViaProvider`: sign in through the provider first); a second
+factor rule that would refuse the saving member (reason `second_factor.setup_first`,
+`params.setupPath`: set up your own second factor first). The break-glass admin's session, which
+always has Kalzit's second factor, passes an organization's `off` inside it.
+
+`PATCH /admin/orgs/{orgId}/sign-in-rules` (server admins) puts the rules back to the server's
+when they shut out everyone who could change them: `{ "localPassword"?: "inherit",
+"twoFactorRequired"?: "inherit" }`, at least one. It needs the admin's own second factor,
+confirmed within the last minutes (`403 confirmation_required`; without one `403`
+`second_factor.admin_needs_factor`), answers `200 { "localPassword", "twoFactorRequired" }` (the
+values in force now) or `404`, and is audited as `org.sign_in_rules_reset`
+(`{ "orgId", "keys" }`, only the rules that changed).
+
+Only that organization is refused. The person's other organizations, their account (`/me`),
+the setup of a second factor (`/me/security/...`), leaving the organization ("Leaving an
+organization") and signing out stay open; the UI shows a page that explains the rule and offers
+the setup or the sign-in through a provider. Server admins are members like everyone else here;
+server administration (`/admin/...`) answers to the server's rules alone. API tokens of service
+accounts are not gated by an organization's sign-in rules: they have no session and no second
+factor, and they never sign in with a password; limit them with their role, expiry and allowed
+addresses ("Service accounts"), and they can never change these rules. Each session records how it was established (`password`, `break_glass`,
+`directory` or `provider`, and its second factor) for this check. The members list
+(`secondFactor.required`) and the server's overview (`missing`) count every member the rule
+applies to.
 
 ## Teams
 
@@ -882,11 +933,12 @@ Codes are compared in constant time. Audit summaries name methods and ids, never
 The server's rule is the minimum everywhere; an organization can only add to it (`off` is not
 accepted there). `admins` on the server means server admins and the administrators of any
 organization; in an organization, its administrators. An administrator is a member whose role
-holds `users:write`, `roles:write` or `settings:write`. A person needs a second factor when the
-server's rule or the rule of any organization they joined by consent (`joinedBy` `invitation`,
-`creator`, `scim_owned` or `mapping`, "Members") applies to them; an organization's rule never
-binds a `direct` or `legacy` member. Everyone can leave an organization ("Leaving an
-organization"). A method turned off
+holds `users:write`, `roles:write` or `settings:write`. At the sign-in, a person needs a second
+factor when the server's rule or the rule of any organization they joined by consent (`joinedBy`
+`invitation`, `creator`, `scim_owned` or `mapping`, "Members") applies to them. Every other member
+meets an organization's rule on entering it: without a second factor, that organization answers
+`403 org_second_factor_required` until they set one up ("Organization sign-in rules"). Everyone
+can leave an organization ("Leaving an organization"). A method turned off
 keeps working for those who have it; it can no longer be set up. Where passkeys cannot work (Kalzit opened by an IP address), the authenticator app is offered instead even when only passkeys are allowed (`allowed` says so), so a required setup, the first owner's included, never dead-ends. Changing these settings (also by import or reset) needs a fresh confirmation (`403 confirmation_required`) when the admin has a second factor. There is no grace period: whoever
 must have a second factor and has none sets one up at the next sign-in, before a session opens.
 The break-glass administrator signs in through the same steps; nothing bypasses the policy.
@@ -1072,7 +1124,7 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 
 | Reason | Code | When |
 |---|---|---|
-| `members.invite_instead` | `409 conflict` | adding an account that belongs to another organization: invite the person instead |
+| `members.invite_instead` | `409 conflict` | adding an account that cannot be added directly (it belongs to another organization, or its address is unconfirmed): invite the person instead |
 | `members.last_owner` | `409 conflict` | the last owner of an organization leaving it |
 
 ### Second factor
@@ -1098,6 +1150,10 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.admin_needs_factor` | `403 forbidden` | a reset by an admin without a second factor of their own |
 | `second_factor.reset_self` | `403 forbidden` | an admin's reset of their own second factor |
 | `second_factor.reset_needs_server_admin` | `403 forbidden` | the account belongs to another organization or is a server admin |
+| `second_factor.org_required` | `403 org_second_factor_required` | the organization requires a second factor of this member and the account has none; `params.orgId` |
+| `second_factor.setup_first` | `409 conflict` | saving an organization's second factor rule that would refuse the saving member, who has none; `params.setupPath` |
+| `sso.org_local_off_blocked` | `409 conflict` | an organization's password sign-in `off` would lock people out; `params.check` is `providerReady` or `selfViaProvider` |
+| `sso.org_password_off` | `403 org_provider_sign_in_required` | the organization turned password sign-in off and the session was signed in with a password; `params.orgId` |
 
 `invalid_code` (`422`) is a wrong or used code; `confirmation_required` (`403`) a change that
 needs a fresh confirmation.
