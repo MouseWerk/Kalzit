@@ -71,8 +71,9 @@ Automatic installation needs a restart Kalzit can do safely by itself:
   as well: the package manager owns `/usr/bin/kalzit` (marker `/usr/lib/kalzit/package`), and a
   binary replaced behind its back would leave the package database at the old version and be
   overwritten by the next package. The Updates page shows the release with its notes and the
-  command (`sudo apt install ./kalzit-<version>-linux-x64.deb`, `sudo dnf install
-  ./kalzit-<version>-linux-x64.rpm`); the package restarts the service. Back up
+  command for the server's processor (`sudo apt install ./kalzit-<version>-linux-x64.deb`,
+  `sudo dnf install ./kalzit-<version>-linux-x64.rpm`, `arm64` in place of `x64` on ARM); the
+  package restarts the service. Back up
   `/var/lib/kalzit` first. To go back, install the older package (`apt install
   ./kalzit-<older>.deb --allow-downgrades`, `dnf downgrade ./kalzit-<older>.rpm`) with the backup
   taken before the update, since an older version cannot open a database a newer one migrated
@@ -121,7 +122,7 @@ it reads from the data directory, which the service account can write, is truste
 For servers without internet access:
 
 1. On a machine with access, download `kalzit-<version>-<platform>-<arch>.kalzit-update` from the
-   GitHub release (`windows-x64` or `linux-x64`).
+   GitHub release (`windows-x64`, `linux-x64` or `linux-arm64`).
 2. Carry it over and drop it on Administration, Updates, "Offline update". Kalzit verifies it
    exactly like a download. One upload runs at a time, and only when the data directory's disk has
    room for twice its size.

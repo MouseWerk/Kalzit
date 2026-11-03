@@ -279,7 +279,7 @@ mod linux {
 
     /// The system calls the filter refuses with `EPERM`.
     fn denied() -> Vec<libc::c_long> {
-        let mut calls = vec![
+        let calls = vec![
             libc::SYS_ptrace,
             libc::SYS_process_vm_readv,
             libc::SYS_process_vm_writev,
@@ -325,8 +325,13 @@ mod linux {
             libc::SYS_setpgid,
             libc::SYS_setsid,
         ];
+        // Port I/O exists only on x86-64.
         #[cfg(target_arch = "x86_64")]
-        calls.extend([libc::SYS_iopl, libc::SYS_ioperm]);
+        let calls = {
+            let mut calls = calls;
+            calls.extend([libc::SYS_iopl, libc::SYS_ioperm]);
+            calls
+        };
         calls
     }
 
