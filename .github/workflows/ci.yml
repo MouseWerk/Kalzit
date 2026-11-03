@@ -999,8 +999,10 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: e2e-profile
-          save-if: false
+          # x64 reads the e2e cache the `e2e` job saves; arm64 has no other job on its processor,
+          # so its leg saves a cache of its own, on main only.
+          key: ${{ matrix.arch == 'arm64' && 'e2e-profile-arm64' || 'e2e-profile' }}
+          save-if: ${{ matrix.arch == 'arm64' && github.ref == 'refs/heads/main' }}
       - run: npm ci
         working-directory: ui
       - run: npm run build

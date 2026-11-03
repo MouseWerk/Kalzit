@@ -16,10 +16,10 @@ Every release has the packages for x86-64 (`kalzit-<version>-linux-x64.deb`,
 Pi 4 or 5 with a 64-bit system (`kalzit-<version>-linux-arm64.deb`,
 `kalzit-<version>-linux-arm64.rpm`); `uname -m` says which one a machine needs (`x86_64` or
 `aarch64`). The plain binaries `kalzit-<version>-linux-x64` and `kalzit-<version>-linux-arm64` are
-in the release too. The packages need the glibc the release binary was built against (the package says which and refuses an
-older system): Debian 13, Ubuntu 24.04, Fedora 41, RHEL, Rocky and AlmaLinux 10 or newer. Both
-are listed with their size, SHA-256 and signature in the release's signed manifest
-(`kalzit-<version>-manifest.json`), next to the binaries.
+in the release too. The packages need the glibc the release binary was built against (the package
+says which and refuses an older system): Debian 13, Ubuntu 24.04, Fedora 41, RHEL, Rocky and
+AlmaLinux 10 or newer. All of them are listed with their size, SHA-256 and signature in the
+release's signed manifest (`kalzit-<version>-manifest.json`), next to the binaries.
 
 ### Install
 
