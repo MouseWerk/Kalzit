@@ -88,6 +88,7 @@ its `scim_owned` memberships become `direct`.
 | Method and path | Access | Answer |
 |---|---|---|
 | `GET /orgs/{orgId}/members` | `users:read` | `200 Page<Member>`, newest member first |
+| `GET /orgs/{orgId}/sign-in/password-only` | `settings:write` | `200 [{ "userId", "name", "email", "role" }]` |
 | `POST /orgs/{orgId}/members` | `users:write` | `201 Member` |
 | `PATCH /orgs/{orgId}/members/{userId}` | `users:write` | `200 Member` |
 | `DELETE /orgs/{orgId}/members/{userId}` | `users:write` | `204` |
@@ -100,12 +101,14 @@ organization's sign-in rules apply to it on entering the organization, not at th
 account's row is locked before the
 organization's, as on every way of joining, so two organizations cannot add one account at the
 same time. Errors:
-`validation` `email` (not an address, or no account has it), `validation` `role` (no such role
-key), `409 conflict` `email` (already a member; reason `members.invite_instead` for any other
-account that cannot be added directly: one that belongs to another organization, or one whose
-owner has not confirmed its address; the answer is the same for both, so it tells nothing about
-the account's other organizations), `403` (role exceeds the caller's permissions). Audit
-`member.added`.
+`validation` `email` (not an address), `validation` `role` (no such role key), `409 conflict`
+`email` (already a member; reason `members.invite_instead` for every other address that cannot be
+added directly: one no account has, one whose account belongs to another organization, or one
+whose owner has not confirmed it; the answer is the same for all three, after the same check of
+the role, so it tells neither whether an account has the address nor anything about its other
+organizations), `403` (role exceeds the caller's permissions). Audit `member.added`; a refusal
+with `members.invite_instead` is audited as `member.add_refused` (`{ "why" }`: `no_account`,
+`other_organization` or `email_unconfirmed`), the only place that says which.
 Memberships from before 0.5.1 stay as they are (`legacy`); their members can leave on their own
 (below).
 
@@ -145,9 +148,15 @@ of the request first.
 
 - **Second factor.** When the server's or the organization's `security.two_factor_required`
   applies to the member there (`everyone`, or `admins` for its administrators; the server's
-  `admins` also for server admins), an account without a second factor is refused with
-  `403 org_second_factor_required` (reason `second_factor.org_required`, `params.orgId`). A
-  session whose sign-in took a provider's word for a second factor (`trustProviderMfa`) passes.
+  `admins` also for server admins), a session that proved no second factor is refused with
+  `403 org_second_factor_required` (reason `second_factor.org_required`, `params.orgId`). The
+  check is per session, not per account: a session proved one when its sign-in asked for Kalzit's
+  second factor, when it confirmed one since (`POST /me/security/confirm`), or when it set one up
+  itself. A session whose sign-in took a provider's word for one (`trustProviderMfa`) passes
+  while that provider is enabled and still has the switch on; sessions from before 0.5.3 name no
+  provider and need a confirmation or a new sign-in. A password session of an account that has
+  a second factor, which never proved it, stays out until it confirms it; the UI offers "Confirm
+  your second factor" for it and "Set up now" for an account without one.
 - **Password sign-in off.** When the organization set `signin.local_password` to `off`, a session
   signed in with a password (not the break-glass admin's, see below) is refused with
   `403 org_provider_sign_in_required` (reason `sso.org_password_off`, `params.orgId`). Sessions
@@ -162,6 +171,16 @@ break-glass admin (`check` = `selfViaProvider`: sign in through the provider fir
 factor rule that would refuse the saving member (reason `second_factor.setup_first`,
 `params.setupPath`: set up your own second factor first). The break-glass admin's session, which
 always has Kalzit's second factor, passes an organization's `off` inside it.
+
+Turning password sign-in off is not refused when other owners or admins of the organization
+have only a password. `GET /orgs/{orgId}/sign-in/password-only` lists them: the owners and
+administrators (a role holding `users:write`, `roles:write` or `settings:write`) with no confirmed
+identity at an enabled provider or directory whose group mapping, for the groups of their last
+sign-in through it, or the server's rule for people without a mapped group leads into the
+organization; the break-glass admin is not listed. The UI shows them before it saves `off`. Once
+it is off they are refused (`org_provider_sign_in_required`) until they sign in through a
+provider. Recovery runs through a server admin: `PATCH /admin/orgs/{orgId}/sign-in-rules` below
+puts the rule back to the server's.
 
 `PATCH /admin/orgs/{orgId}/sign-in-rules` (server admins) puts the rules back to the server's
 when they shut out everyone who could change them: `{ "localPassword"?: "inherit",
@@ -179,7 +198,8 @@ server administration (`/admin/...`) answers to the server's rules alone. API to
 accounts are not gated by an organization's sign-in rules: they have no session and no second
 factor, and they never sign in with a password; limit them with their role, expiry and allowed
 addresses ("Service accounts"), and they can never change these rules. Each session records how it was established (`password`, `break_glass`,
-`directory` or `provider`, and its second factor) for this check. The members list
+`directory` or `provider`, its second factor and its provider or directory) and when it last
+proved a second factor, for this check. The members list
 (`secondFactor.required`) and the server's overview (`missing`) count every member the rule
 applies to.
 
@@ -1038,6 +1058,8 @@ interface SecurityStatus {
   passkeys: { id: string; name: string; createdAt: number; lastUsedAt: number | null }[];
   recoveryCodes: { remaining: number; total: number; createdAt: number } | null;
   confirmedUntil: number | null;   // this session's fresh confirmation, while it lasts
+  passwordConfirmedUntil: number | null;   // this session's fresh password confirmation
+  freshSignInUntil: number | null;   // this session counts as just signed in until then
   lockedUntil: number | null;
   hasPassword: boolean;
 }
@@ -1048,6 +1070,7 @@ interface SecurityStatus {
 | `GET /me/security` | `200 SecurityStatus` |
 | `POST /me/security/confirm` | `200 { "confirmedUntil": number }` |
 | `POST /me/security/confirm/passkey` | `200 { "publicKey": ... }` (request options) |
+| `POST /me/security/confirm/password` | `200 { "passwordConfirmedUntil": number }` |
 | `POST /me/security/totp/setup` | `200 TotpSetup` |
 | `POST /me/security/totp` | `200 { "recoveryCodes": string[] \| null }` |
 | `DELETE /me/security/totp` | `204` |
@@ -1062,6 +1085,24 @@ interface SecurityStatus {
 count against the account's lockout; a confirmation is audited (`user.second_factor_confirmed`, the method). Removing a method, new recovery codes, `POST /me/password`
 and, on an account that already has a method, adding or replacing one answer `403
 confirmation_required` without it. A sign-in with a second factor counts as one.
+
+**The first method.** On an account with a password and no method yet, `/totp/setup`, `/totp`,
+`/passkeys/setup` and `/passkeys` need a fresh confirmation of the password: `POST
+/me/security/confirm/password` `{ "password" }` (wrong: `422 validation` with `field`
+`password`; it shares the budget of `POST /me/password`, and like a failed check there, each
+failure counts toward the account's sign-in lockout from all addresses) lets this session set up
+the first
+method for 5 minutes; without it they answer `403 confirmation_required` with reason
+`second_factor.confirm_password`. A session someone took over cannot plant a factor of its own
+that way. An account with neither a password nor a method (one that signs in only through a
+provider or a directory) sets up its first method only in a session that signed in within the
+last 5 minutes (`sessions.created_at`); an older one answers `403 confirmation_required` with
+reason `second_factor.sign_in_again`, and the UI offers "Sign in again" (sign out, then the
+provider's sign-in). `SecurityStatus.freshSignInUntil` says until when the session counts as
+just signed in. Saving the first method ends every other session
+of the account (`sessionsEnded` in the audit entry), as a new password does, also when it is set
+up during a sign-in; the session that set it up counts as having proved it for the organization
+sign-in rules, but not as a fresh confirmation for weakening changes.
 
 **`POST /me/security/totp`** `{ "code" }` checks the first code of the key from
 `/totp/setup` (valid 10 minutes) and stores it, replacing an app set up before. A wrong code
@@ -1124,7 +1165,7 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 
 | Reason | Code | When |
 |---|---|---|
-| `members.invite_instead` | `409 conflict` | adding an account that cannot be added directly (it belongs to another organization, or its address is unconfirmed): invite the person instead |
+| `members.invite_instead` | `409 conflict` | adding an address that cannot be added directly (no account has it, it belongs to another organization, or it is unconfirmed; the answer does not say which): invite the person instead |
 | `members.last_owner` | `409 conflict` | the last owner of an organization leaving it |
 
 ### Second factor
@@ -1150,7 +1191,9 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 | `second_factor.admin_needs_factor` | `403 forbidden` | a reset by an admin without a second factor of their own |
 | `second_factor.reset_self` | `403 forbidden` | an admin's reset of their own second factor |
 | `second_factor.reset_needs_server_admin` | `403 forbidden` | the account belongs to another organization or is a server admin |
-| `second_factor.org_required` | `403 org_second_factor_required` | the organization requires a second factor of this member and the account has none; `params.orgId` |
+| `second_factor.org_required` | `403 org_second_factor_required` | the organization requires a second factor of this member and the session proved none; `params.orgId` |
+| `second_factor.confirm_password` | `403 confirmation_required` | the first method of an account with a password, without a fresh password confirmation |
+| `second_factor.sign_in_again` | `403 confirmation_required` | the first method of an account without a password, in a session signed in more than 5 minutes ago |
 | `second_factor.setup_first` | `409 conflict` | saving an organization's second factor rule that would refuse the saving member, who has none; `params.setupPath` |
 | `sso.org_local_off_blocked` | `409 conflict` | an organization's password sign-in `off` would lock people out; `params.check` is `providerReady` or `selfViaProvider` |
 | `sso.org_password_off` | `403 org_provider_sign_in_required` | the organization turned password sign-in off and the session was signed in with a password; `params.orgId` |

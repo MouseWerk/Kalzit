@@ -32,7 +32,7 @@ export const MEMBER_ERRORS: ErrorTexts = {
 
 /** Adding a member by email address. */
 export const ADD_MEMBER_ERRORS: ErrorTexts = {
-  "validation:email": "admin.members.noAccount",
+  "validation:email": "validation.emailInvalid",
   "validation:role": "admin.members.unknownRole",
   "conflict:email": "admin.members.alreadyMember",
   conflict: "admin.members.alreadyMember",

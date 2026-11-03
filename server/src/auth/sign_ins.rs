@@ -90,14 +90,18 @@ pub async fn record(
         summary.insert("userAgent".into(), json!(agent));
     }
     // The session keeps how it was established, for the sign-in rules of the organizations it
-    // enters (`auth::org_gate`).
+    // enters (`auth::org_gate`): a provider's second factor counts there only while that provider
+    // is enabled and still trusted for one.
     let session_factor = second_factor.or(via.provider_mfa.then_some("provider"));
-    sqlx::query("UPDATE sessions SET sign_in_method = $1, sign_in_second_factor = $2 WHERE id = $3")
-        .bind(via.session_method())
-        .bind(session_factor)
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE sessions SET sign_in_method = $1, sign_in_second_factor = $2, sign_in_provider_id = $3 WHERE id = $4",
+    )
+    .bind(via.session_method())
+    .bind(session_factor)
+    .bind(via.provider_id.as_deref())
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?;
     let event = crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: Some(user_id),

@@ -429,7 +429,7 @@ async fn setup(
             conflict("the account has a second factor already; sign in with it").because("second_factor.setup_done")
         );
     }
-    let (method, summary) = match &new {
+    let (method, mut summary) = match &new {
         New::Totp(secret, step) => {
             sf::save_totp(&mut tx, &state, &pending.user_id, secret, *step, now).await?;
             ("totp", json!({ "userId": pending.user_id, "method": "totp" }))
@@ -440,6 +440,9 @@ async fn setup(
         }
     };
     let codes = sf::new_recovery_codes(&mut tx, &pending.user_id, now).await?;
+    // The account's first factor ends its other sessions, as at a setup under Account: sessions
+    // that never proved it do not go on (the new one opens below).
+    summary["sessionsEnded"] = json!(session::delete_for_user(&mut *tx, &pending.user_id, None).await?);
     let event = crate::audit::AuditEvent {
         org_id: None,
         actor_user_id: Some(&pending.user_id),

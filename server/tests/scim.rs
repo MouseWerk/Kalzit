@@ -789,6 +789,7 @@ async fn service_accounts_admins_and_the_last_owner_are_protected() {
         .scim(Method::POST, "/Users", Some(json!({ "userName": format!("{account}@service-account.invalid") })), &token)
         .await;
     assert_eq!((r.status, r.scim_type()), (StatusCode::CONFLICT, "uniqueness"), "{}", r.body);
+    let neutral = r.body.clone();
     assert_eq!(t.scim(Method::GET, &format!("/Users/{account}"), None, &token).await.status, StatusCode::NOT_FOUND);
     assert_eq!(t.scim(Method::DELETE, &format!("/Users/{account}"), None, &token).await.status, StatusCode::NOT_FOUND);
     let r = t
@@ -796,9 +797,10 @@ async fn service_accounts_admins_and_the_last_owner_are_protected() {
         .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.body);
 
-    // A server admin's account (here also the only owner) is never linked.
+    // A server admin's account (here also the only owner) is never linked; the answer is the same
+    // as for any account that cannot be linked, so the directory learns nothing about it.
     let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "joerg@example.de" })), &token).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert_eq!((r.status, &r.body), (StatusCode::CONFLICT, &neutral));
 
     // An account whose owner never confirmed its address is never linked.
     let id = uuid::Uuid::now_v7().to_string();
@@ -811,7 +813,7 @@ async fn service_accounts_admins_and_the_last_owner_are_protected() {
     .await
     .unwrap();
     let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "neu@mueller.example" })), &token).await;
-    assert_eq!((r.status, r.scim_type()), (StatusCode::CONFLICT, "uniqueness"), "{}", r.body);
+    assert_eq!((r.status, &r.body), (StatusCode::CONFLICT, &neutral));
 
     // No owner is ever deactivated, also not one of several, and also not with a token an admin
     // (not an owner) made.
@@ -853,21 +855,22 @@ async fn service_accounts_admins_and_the_last_owner_are_protected() {
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     assert_eq!(t.role_of(&org, &lea).await.as_deref(), Some("owner"));
 
-    let reasons: Vec<Value> = t
+    // The audit log keeps what lies behind the neutral answers.
+    let reasons: Vec<(Value, Value)> = t
         .audit_actions()
         .await
         .into_iter()
         .filter(|(a, _)| a == "scim.request_refused")
-        .map(|(_, s)| s["reason"].clone())
+        .map(|(_, s)| (s["reason"].clone(), s["why"].clone()))
         .collect();
     assert_eq!(
         reasons,
         [
-            json!("scim.email_taken"),
-            json!("scim.member_unknown"),
-            json!("scim.account_protected"),
-            json!("scim.email_unconfirmed"),
-            json!("scim.account_protected"),
+            (json!("scim.account_not_linkable"), json!("email_taken")),
+            (json!("scim.member_unknown"), Value::Null),
+            (json!("scim.account_not_linkable"), json!("account_protected")),
+            (json!("scim.account_not_linkable"), json!("email_unconfirmed")),
+            (json!("scim.account_protected"), Value::Null),
         ]
     );
     t.finish().await;
@@ -1195,5 +1198,31 @@ async fn scim_never_rewrites_an_account_someone_signs_in_to_or_a_protected_one()
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     t.scim(Method::PATCH, &format!("/Users/{pit}"), Some(new_mail("mallory4")), &token).await;
     assert_eq!(t.account(&pit).await.0, "pit@mueller.example");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn a_changed_address_of_another_account_gets_the_neutral_answer() {
+    let mut t = TestApp::new().await;
+    let org = t.org.clone();
+    let token = t.scim_token(&org).await;
+    let uwe = t.scim(Method::POST, "/Users", Some(json!({ "userName": "uwe@mueller.example" })), &token).await.id();
+    t.person("Lea Hoffmann", "lea@mueller.example").await;
+    // The answer for a new user whose account cannot be linked.
+    let r = t.scim(Method::POST, "/Users", Some(json!({ "userName": "joerg@example.de" })), &token).await;
+    let neutral = r.body.clone();
+    let ops = patch(
+        json!([{ "op": "replace", "path": "emails", "value": [{ "value": "lea@mueller.example", "primary": true }] }]),
+    );
+    let r = t.scim(Method::PATCH, &format!("/Users/{uwe}"), Some(ops), &token).await;
+    assert_eq!((r.status, &r.body), (StatusCode::CONFLICT, &neutral), "the answer does not say the address is taken");
+    let refused: Vec<(Value, Value)> = t
+        .audit_actions()
+        .await
+        .into_iter()
+        .filter(|(a, _)| a == "scim.request_refused")
+        .map(|(_, s)| (s["reason"].clone(), s["why"].clone()))
+        .collect();
+    assert_eq!(refused.last(), Some(&(json!("scim.account_not_linkable"), json!("email_taken"))));
     t.finish().await;
 }

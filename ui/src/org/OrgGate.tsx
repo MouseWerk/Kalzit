@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { forgetAccountData, logout, meQuery } from "../api/auth";
 import { type ErrorCode, isApiError } from "../api/client";
 import { orgQuery } from "../api/orgs";
 import { EmptyState } from "../components/EmptyState";
+import { fetchSecurity, securityKeys } from "../features/security/api";
+import { ConfirmFactorDialog } from "../features/security/ConfirmFactorDialog";
 import { useI18n } from "../i18n/i18n";
 import { useCurrentOrg } from "./useOrg";
 
@@ -52,6 +55,13 @@ export function useOrgGate(): OrgGateCode | undefined {
 export function OrgGatePage({ code, orgName }: { code: OrgGateCode; orgName: string }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  // A member who has a second factor confirms it in this session; one without sets one up.
+  const security = useQuery({
+    queryKey: securityKeys.status,
+    queryFn: fetchSecurity,
+    enabled: code === "org_second_factor_required",
+  });
+  const [confirming, setConfirming] = useState(false);
   const signIn = useMutation({
     mutationFn: async () => {
       await queryClient.cancelQueries();
@@ -76,25 +86,57 @@ export function OrgGatePage({ code, orgName }: { code: OrgGateCode; orgName: str
     </Link>
   );
   if (code === "org_second_factor_required") {
+    const status = security.data;
+    const hasFactor = status !== undefined && (status.totp !== null || status.passkeys.length > 0);
     return (
-      <EmptyState
-        icon="lock"
-        title={t("shell.orgGate.secondFactor.title")}
-        actions={
-          <>
-            <Link
-              to="/settings/$section"
-              params={{ section: "account-security" }}
-              className="button button--primary"
-            >
-              {t("shell.orgGate.secondFactor.setUp")}
-            </Link>
-            {leave}
-          </>
-        }
-      >
-        {t("shell.orgGate.secondFactor.text", { name: orgName })}
-      </EmptyState>
+      <>
+        <EmptyState
+          icon="lock"
+          title={t("shell.orgGate.secondFactor.title")}
+          actions={
+            <>
+              {hasFactor ? (
+                <button
+                  type="button"
+                  className="button button--primary"
+                  onClick={() => setConfirming(true)}
+                >
+                  {t("shell.orgGate.secondFactor.confirm")}
+                </button>
+              ) : (
+                <Link
+                  to="/settings/$section"
+                  params={{ section: "account-security" }}
+                  className="button button--primary"
+                >
+                  {t("shell.orgGate.secondFactor.setUp")}
+                </Link>
+              )}
+              {leave}
+            </>
+          }
+        >
+          {hasFactor
+            ? t("shell.orgGate.secondFactor.confirmText", { name: orgName })
+            : t("shell.orgGate.secondFactor.text", { name: orgName })}
+        </EmptyState>
+        {status !== undefined && hasFactor && confirming ? (
+          <ConfirmFactorDialog
+            open
+            title={t("security.dialog.confirmTitle")}
+            confirmLabel={t("security.factor.confirm")}
+            status={status}
+            onClose={() => setConfirming(false)}
+            action={async () => {
+              // The organization lets this session in now: its pages load again.
+              setConfirming(false);
+              await queryClient.invalidateQueries();
+            }}
+          >
+            {t("shell.orgGate.secondFactor.confirmDialog", { name: orgName })}
+          </ConfirmFactorDialog>
+        ) : null}
+      </>
     );
   }
   return (

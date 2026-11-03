@@ -47,6 +47,8 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # Started first, so they are up once the build is done (as in the e2e job of ci.yml).
       - name: Start MongoDB, OpenSearch, Neo4j and Memgraph
         timeout-minutes: 5

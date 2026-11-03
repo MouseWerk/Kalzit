@@ -289,8 +289,18 @@ async fn members_are_listed_added_changed_and_removed() {
     assert_eq!(t.get(&members, &bob).await.status, StatusCode::NOT_FOUND);
 
     // Validation and conflicts.
+    // An address no account has answers as one that cannot be added directly, so the answer does
+    // not tell which addresses have an account; the audit log keeps why.
     let r = t.post(&members, json!({ "email": "niemand@example.de", "role": "viewer" }), &owner).await;
-    assert_eq!((r.code(), r.field()), ("validation", "email"));
+    assert_eq!((r.status, r.code(), r.field()), (StatusCode::CONFLICT, "conflict", "email"));
+    assert_eq!(r.body["error"]["reason"], "members.invite_instead", "{}", r.body);
+    let refused: (String,) = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'member.add_refused'")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&refused.0).unwrap()["why"], "no_account");
+    let r = t.post(&members, json!({ "email": "niemand@example.de", "role": "superuser" }), &owner).await;
+    assert_eq!((r.code(), r.field()), ("validation", "role"), "the role is checked as for an account");
     let r = t.post(&members, json!({ "email": "bob@example.de", "role": "superuser" }), &owner).await;
     assert_eq!((r.code(), r.field()), ("validation", "role"));
     let r = t.post(&members, json!({ "email": "ADA@example.de", "role": "viewer" }), &owner).await;

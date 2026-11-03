@@ -12,6 +12,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCert;
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::config::TlsConfig;
 
@@ -20,10 +21,11 @@ pub fn server_config(cfg: &TlsConfig) -> Result<Arc<ServerConfig>> {
 }
 
 /// The certificate and key files as read once: a reload hashes and parses the same bytes, so a
-/// file replaced in between cannot mix into what was compared.
+/// file replaced in between cannot mix into what was compared. The private key is wiped from
+/// memory when the read is dropped.
 struct Files {
     cert: Vec<u8>,
-    key: Vec<u8>,
+    key: Zeroizing<Vec<u8>>,
 }
 
 fn read_files(cfg: &TlsConfig) -> Result<Files> {
@@ -32,8 +34,9 @@ fn read_files(cfg: &TlsConfig) -> Result<Files> {
     };
     let cert =
         std::fs::read(cert_file).with_context(|| format!("reading certificates from {}", cert_file.display()))?;
-    let key =
-        std::fs::read(key_file).with_context(|| format!("reading the private key from {}", key_file.display()))?;
+    let key = Zeroizing::new(
+        std::fs::read(key_file).with_context(|| format!("reading the private key from {}", key_file.display()))?,
+    );
     Ok(Files { cert, key })
 }
 
@@ -45,7 +48,7 @@ fn config_from(cfg: &TlsConfig, files: &Files) -> Result<Arc<ServerConfig>> {
     if certs.is_empty() {
         anyhow::bail!("{} contains no certificate", name(&cfg.cert_file));
     }
-    let key = PrivateKeyDer::from_pem_slice(&files.key)
+    let key = PrivateKeyDer::from_pem_slice(files.key.as_slice())
         .with_context(|| format!("reading the private key from {}", name(&cfg.key_file)))?;
 
     let mut config =
@@ -128,7 +131,7 @@ impl Watch {
 /// change it too.
 fn content_hash(files: &Files) -> [u8; 32] {
     let mut hash = Sha256::new();
-    for bytes in [&files.cert, &files.key] {
+    for bytes in [files.cert.as_slice(), files.key.as_slice()] {
         hash.update((bytes.len() as u64).to_le_bytes());
         hash.update(bytes);
     }

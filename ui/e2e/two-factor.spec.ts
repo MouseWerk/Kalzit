@@ -44,6 +44,11 @@ test("signs in with the code of an authenticator app after the password", async 
     data: { email: person.email, password: person.password },
   });
   expect(login.ok()).toBe(true);
+  // The first factor of an account with a password confirms the password first.
+  const confirmed = await own.post("/api/me/security/confirm/password", {
+    data: { password: person.password },
+  });
+  expect(confirmed.ok()).toBe(true);
   const setup = await (await own.post("/api/me/security/totp/setup", { data: {} })).json();
   const secret = base32Decode(String(setup.secret));
   const first = step();

@@ -112,10 +112,52 @@ impl OwnAddresses {
         let url = config.database_url();
         let database =
             Url::parse(&url).ok().filter(|u| matches!(u.scheme(), "postgres" | "postgresql")).and_then(|u| {
-                let host = normalize(u.host_str()?.trim_matches(['[', ']']));
+                let host = normalize_numeric(&normalize(u.host_str()?.trim_matches(['[', ']'])));
                 (!host.is_empty()).then_some((host, u.port().unwrap_or(5432)))
             });
         Self { listeners, database }
+    }
+}
+
+/// A host as an `http://` address would name it: numeric IPv4 forms that are not dotted quads
+/// (`2130706433`, `0x7f000001`, `0177.1`) become the address they mean. Addresses of other schemes
+/// (`postgres://`) keep their host as written, which still reaches the same address.
+fn normalize_numeric(host: &str) -> String {
+    if host.is_empty()
+        || parse_ip_literal(host).is_some()
+        || !host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
+    {
+        return host.to_string();
+    }
+    match Url::parse(&format!("http://{host}/")).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
+        Some(url::Host::Ipv4(ip)) => ip.to_string(),
+        _ => host.to_string(),
+    }
+}
+
+/// Whether `ip` is an address of this computer: a socket can be bound to it. Cheap, needs no list
+/// of interfaces, and works the same on Windows and Linux.
+fn is_local_address(ip: IpAddr) -> bool {
+    let ip = crate::datasources::targets::canonical_ip(ip);
+    if ip.is_loopback() {
+        return true;
+    }
+    if ip.is_unspecified() || ip.is_multicast() {
+        return false;
+    }
+    std::net::UdpSocket::bind(std::net::SocketAddr::new(ip, 0)).is_ok()
+}
+
+/// The addresses `host` resolves to, canonical; empty when it does not resolve within a few
+/// seconds (the names were compared already).
+async fn resolve(host: &str, port: u16) -> Vec<IpAddr> {
+    if let Some(ip) = parse_ip_literal(host) {
+        return vec![crate::datasources::targets::canonical_ip(ip)];
+    }
+    let lookup = tokio::net::lookup_host((host.to_string(), port));
+    match tokio::time::timeout(std::time::Duration::from_secs(3), lookup).await {
+        Ok(Ok(addrs)) => addrs.map(|a| crate::datasources::targets::canonical_ip(a.ip())).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -128,7 +170,8 @@ fn is_loopback_host(host: &str) -> bool {
 
 /// Refuses a proxy address (`network.proxy_url`) that names Kalzit itself: one of its listeners or
 /// its own database server. Requests sent there would reach Kalzit's own API or database with
-/// Kalzit's requests and the proxy's sign-in. Names are compared as written, without resolving.
+/// Kalzit's requests and the proxy's sign-in. Names are compared as written here;
+/// `check_not_own_resolved` also compares the addresses they resolve to.
 pub fn check_not_own(text: &str, own: &OwnAddresses) -> Result<(), String> {
     let Ok(url) = Url::parse(text) else { return Ok(()) };
     let Some(host) = url.host_str() else { return Ok(()) };
@@ -154,6 +197,81 @@ pub fn check_not_own(text: &str, own: &OwnAddresses) -> Result<(), String> {
         return Err(format!("{host}:{port} is Kalzit's own database server"));
     }
     Ok(())
+}
+
+/// `check_not_own`, and then by address: every address the proxy's host resolves to is compared
+/// with the loopback addresses and Kalzit's listeners (an unspecified listener, `0.0.0.0` or `::`,
+/// with every address of this computer), and with the addresses of its own database server.
+///
+/// The limit: the proxy's name is resolved here, when the setting is saved and whenever the proxy
+/// is taken into use (`current`); a name whose answer changes between this check and the request
+/// is not caught. An address of this computer that is no listener's and a database reached through
+/// another computer's port forwarding are not either.
+pub async fn check_not_own_resolved(text: &str, own: &OwnAddresses) -> Result<(), String> {
+    check_not_own(text, own)?;
+    let Ok(url) = Url::parse(text) else { return Ok(()) };
+    let Some(host) = url.host_str() else { return Ok(()) };
+    let host = normalize(host.trim_matches(['[', ']']));
+    let Some(port) = url.port_or_known_default() else { return Ok(()) };
+    let ips = resolve(&host, port).await;
+    let db_ips = match &own.database {
+        Some((db_host, db_port)) if *db_port == port => resolve(db_host, *db_port).await,
+        _ => Vec::new(),
+    };
+    check_addresses(&host, port, &ips, own, &db_ips)
+}
+
+/// The comparison of `check_not_own_resolved`: `ips` are the proxy's addresses, `db_ips` those of
+/// Kalzit's own database server.
+fn check_addresses(host: &str, port: u16, ips: &[IpAddr], own: &OwnAddresses, db_ips: &[IpAddr]) -> Result<(), String> {
+    for listener in own.listeners.iter().filter(|l| l.port() == port) {
+        let at = crate::datasources::targets::canonical_ip(listener.ip());
+        let hit = ips.iter().any(|ip| {
+            *ip == at
+                || ((at.is_loopback() || at.is_unspecified()) && ip.is_loopback())
+                || (at.is_unspecified() && is_local_address(*ip))
+        });
+        if hit {
+            return Err(format!("{host}:{port} resolves to Kalzit's own listener"));
+        }
+    }
+    if own.database.as_ref().is_some_and(|(_, db_port)| *db_port == port) {
+        let db_local = db_ips.iter().any(|ip| is_local_address(*ip));
+        if ips.iter().any(|ip| db_ips.contains(ip) || (db_local && is_local_address(*ip))) {
+            return Err(format!("{host}:{port} resolves to Kalzit's own database server"));
+        }
+    }
+    Ok(())
+}
+
+/// How long `current` keeps the result of `check_not_own_resolved` for a proxy address, so a
+/// proxy in use is not resolved for every request through it. Saving the setting checks afresh.
+const OWN_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The last results of `check_not_own_resolved` by proxy address and Kalzit's own addresses.
+type OwnCheckCache = std::collections::HashMap<String, (std::time::Instant, Result<(), String>)>;
+static OWN_CHECKS: std::sync::Mutex<Option<OwnCheckCache>> = std::sync::Mutex::new(None);
+
+/// `check_not_own_resolved`, answered from a result at most `OWN_CHECK_TTL` old.
+async fn check_not_own_cached(text: &str, own: &OwnAddresses) -> Result<(), String> {
+    let key = format!("{text} {own:?}");
+    let now = std::time::Instant::now();
+    let fresh = |seen: &OwnCheckCache| {
+        seen.get(&key).filter(|(at, _)| now.duration_since(*at) < OWN_CHECK_TTL).map(|(_, r)| r.clone())
+    };
+    {
+        let guard = OWN_CHECKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(result) = guard.as_ref().and_then(fresh) {
+            return result;
+        }
+    }
+    let result = check_not_own_resolved(text, own).await;
+    let mut guard = OWN_CHECKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let seen = guard.get_or_insert_with(std::collections::HashMap::new);
+    // Only a few proxy addresses are ever in use; old ones go.
+    seen.retain(|_, (at, _)| now.duration_since(*at) < OWN_CHECK_TTL);
+    seen.insert(key, (now, result.clone()));
+    result
 }
 
 /// Checks a `network.no_proxy` entry.
@@ -261,7 +379,9 @@ pub async fn current(state: &AppState) -> ApiResult<Option<Arc<OutboundProxy>>> 
         _ => None,
     };
     // A proxy stored before this check existed, or set through the environment, is refused too.
-    check_not_own(url, &OwnAddresses::of(&state.config)).map_err(|e| ApiError::internal("outbound proxy", e))?;
+    check_not_own_cached(url, &OwnAddresses::of(&state.config))
+        .await
+        .map_err(|e| ApiError::internal("outbound proxy", e))?;
     let proxy =
         OutboundProxy::new(url, &no_proxy, username, password).map_err(|e| ApiError::internal("outbound proxy", e))?;
     Ok(proxy.map(Arc::new))
@@ -377,6 +497,73 @@ mod tests {
         // A database on this computer: any loopback name of the same port.
         let local = OwnAddresses { listeners: Vec::new(), database: Some(("localhost".into(), 5432)) };
         assert!(check_not_own("http://127.0.0.1:5432", &local).is_err());
+    }
+
+    #[test]
+    fn a_proxy_is_compared_with_kalzit_by_the_addresses_it_resolves_to() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let own = OwnAddresses {
+            listeners: vec!["0.0.0.0:3000".parse().unwrap(), "10.0.0.7:3443".parse().unwrap()],
+            database: Some(("db.example.test".into(), 5432)),
+        };
+        // A name that resolves to a loopback address, to the listener's address, or (for an
+        // unspecified listener) to any address of this computer.
+        assert!(check_addresses("proxy.test", 3000, &[ip("127.0.0.1")], &own, &[]).is_err());
+        assert!(check_addresses("proxy.test", 3000, &[ip("::ffff:127.0.0.1")], &own, &[]).is_err());
+        assert!(check_addresses("proxy.test", 3443, &[ip("192.0.2.1"), ip("10.0.0.7")], &own, &[]).is_err());
+        assert!(check_addresses("proxy.test", 3443, &[ip("10.0.0.8")], &own, &[]).is_ok());
+        assert!(check_addresses("proxy.test", 3128, &[ip("127.0.0.1")], &own, &[]).is_ok());
+        // The database: the same address, or both on this computer.
+        assert!(check_addresses("proxy.test", 5432, &[ip("192.0.2.9")], &own, &[ip("192.0.2.9")]).is_err());
+        assert!(check_addresses("proxy.test", 5432, &[ip("192.0.2.9")], &own, &[ip("192.0.2.10")]).is_ok());
+        assert!(check_addresses("proxy.test", 5432, &[ip("127.0.0.1")], &own, &[ip("127.0.0.1")]).is_err());
+        assert!(check_addresses("proxy.test", 5432, &[ip("127.0.0.2")], &own, &[ip("::1")]).is_err());
+        // An address of this computer that is not loopback, where the computer has one.
+        if let Some(local) = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|s| s.connect("192.0.2.1:9").map(|()| s))
+            .and_then(|s| s.local_addr())
+            .ok()
+            .map(|a| a.ip())
+            .filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
+        {
+            assert!(is_local_address(local), "{local}");
+            assert!(check_addresses("proxy.test", 3000, &[local], &own, &[]).is_err(), "{local}");
+        }
+        assert!(!is_local_address(ip("192.0.2.200")));
+    }
+
+    #[tokio::test]
+    async fn a_name_of_this_computer_is_refused_by_address() {
+        let own = OwnAddresses { listeners: vec!["127.0.0.1:3000".parse().unwrap()], database: None };
+        assert!(resolve("localhost", 3000).await.iter().all(|ip| ip.is_loopback()));
+        assert!(check_not_own_resolved("http://localhost:3000", &own).await.is_err());
+        assert!(check_not_own_resolved("http://0x7f.1:3000", &own).await.is_err());
+        assert!(check_not_own_resolved("http://localhost:3128", &own).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_check_of_a_proxy_in_use_is_kept_for_a_minute() {
+        let own = OwnAddresses { listeners: vec!["127.0.0.1:3999".parse().unwrap()], database: None };
+        assert!(check_not_own_cached("http://localhost:3999", &own).await.is_err());
+        assert!(check_not_own_cached("http://localhost:3998", &own).await.is_ok());
+        let key = format!("http://localhost:3999 {own:?}");
+        let guard = OWN_CHECKS.lock().unwrap();
+        assert!(guard.as_ref().unwrap().get(&key).is_some_and(|(_, r)| r.is_err()), "kept");
+    }
+
+    #[test]
+    fn numeric_hosts_of_the_database_are_normalized() {
+        assert_eq!(normalize_numeric("2130706433"), "127.0.0.1");
+        assert_eq!(normalize_numeric("0x7f000001"), "127.0.0.1");
+        assert_eq!(normalize_numeric("0177.0.0.1"), "127.0.0.1");
+        assert_eq!(normalize_numeric("127.1"), "127.0.0.1");
+        assert_eq!(normalize_numeric("db.example.test"), "db.example.test");
+        assert_eq!(normalize_numeric("::1"), "::1");
+        let mut config = crate::config::Config::default();
+        config.database.url = Some("postgres://kalzit@0x7f000001:5432/kalzit".into());
+        let own = OwnAddresses::of(&config);
+        assert_eq!(own.database, Some(("127.0.0.1".into(), 5432)));
+        assert!(check_not_own("http://localhost:5432", &own).is_err());
     }
 
     #[test]
