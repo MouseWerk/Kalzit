@@ -118,12 +118,26 @@ export class Grid<T> {
     return false;
   }
 
-  near(box: Box): Set<T> {
-    const out = new Set<T>();
+  /**
+   * Walks what lies in the cells a box reaches, cell by cell and without collecting it (an item in
+   * several cells comes once per cell), until `test` answers true or `budget` items were visited.
+   * Returns whether a test answered true, how many items were visited, and whether the budget
+   * cut the walk short.
+   */
+  some(
+    box: Box,
+    test: (item: T) => boolean,
+    budget: number,
+  ): { hit: boolean; visited: number; cut: boolean } {
+    let visited = 0;
     for (const key of this.keys(box)) {
-      for (const item of this.cells.get(key) ?? []) out.add(item);
+      for (const item of this.cells.get(key) ?? []) {
+        if (visited >= budget) return { hit: false, visited, cut: true };
+        visited++;
+        if (test(item)) return { hit: true, visited, cut: false };
+      }
     }
-    return out;
+    return { hit: false, visited, cut: false };
   }
 }
 
@@ -170,23 +184,21 @@ export function blockedLabels(
           box.minY < bounds.minY ||
           box.maxY > bounds.maxY);
       let hit = outside || tests >= maxTests;
+      // Every node and label visited counts towards the budget, also where they clump into one
+      // cell; a label whose test the budget cut short is left out.
       if (!hit) {
-        for (const node of shapes.near(box)) {
-          tests++;
-          if (node.index !== index && nodeHitsBox(node, box)) {
-            hit = true;
-            break;
-          }
-        }
+        const found = shapes.some(
+          box,
+          (node) => node.index !== index && nodeHitsBox(node, box),
+          maxTests - tests,
+        );
+        tests += found.visited;
+        hit = found.hit || found.cut;
       }
       if (!hit) {
-        for (const other of placed.near(box)) {
-          tests++;
-          if (boxesMeet(other, box)) {
-            hit = true;
-            break;
-          }
-        }
+        const found = placed.some(box, (other) => boxesMeet(other, box), maxTests - tests);
+        tests += found.visited;
+        hit = found.hit || found.cut;
       }
       if (hit) {
         blocked.add(index);

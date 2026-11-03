@@ -267,7 +267,7 @@ describe("bounded work on the main thread", () => {
     const { passes } = timed(input);
     expect(passes).toBeGreaterThan(0);
     expect(passes).toBeLessThan(200);
-    expect(PAIR_BUDGET).toBeLessThanOrEqual(1_500_000);
+    expect(PAIR_BUDGET).toBeLessThanOrEqual(750_000);
   });
 });
 

@@ -35,8 +35,11 @@ export const MIN_NODE_SCALE = 0.5;
 const PASSES = 200;
 /** Passes in a row without fewer overlaps after which the pushing stops. */
 const STALE_PASSES = 10;
-/** Pair tests in all passes together: about 30 ms of work on a slow laptop. */
-export const PAIR_BUDGET = 1_500_000;
+/**
+ * Pair tests in all passes together. The worst case measured, 1,000 nodes in one column, took
+ * 66 ms for twice this budget; this one keeps it near 30 ms.
+ */
+export const PAIR_BUDGET = 750_000;
 /** Above this share of the drawing area the boxes cannot be parted; nothing is pushed. */
 const MAX_PACKING = 0.6;
 /** Passes of framing (the fitted box depends on the scale and the scale on the box). */

@@ -4,6 +4,7 @@ import {
   type DrawnNode,
   LABEL_MARGIN,
   labelBox,
+  MAX_TESTS,
   nodeHitsBox,
   type WantedLabel,
 } from "./labelCollisions";
@@ -67,6 +68,27 @@ describe("label collisions", () => {
     // A forced label is placed whatever the budget.
     const forced = blockedLabels(clump, [label(node(9_999, 400, 400), 20, true)], undefined, 0);
     expect(forced.size).toBe(0);
+  });
+
+  it("walks a clump without collecting it, and counts every visit towards the budget", () => {
+    // 6,000 nodes in one grid cell and 400 labels in that cell. Over the clump, a label is left
+    // out at its first node, without gathering the whole clump first; beside it, each label
+    // would visit the whole clump, and the cap of MAX_TESTS visits holds the work.
+    const clump = Array.from({ length: 6_000 }, (_, i) => node(i, 2 + (i % 2), 24, 2));
+    const labelsAt = (minX: number) =>
+      Array.from({ length: 400 }, (_, i) => ({
+        index: 10_000 + i,
+        box: { minX, maxX: 46, minY: 20 + (i % 4), maxY: 28 + (i % 4) },
+        forced: false,
+      }));
+    let start = performance.now();
+    expect(blockedLabels(clump, labelsAt(0)).size).toBe(400);
+    expect(performance.now() - start).toBeLessThan(15);
+    start = performance.now();
+    const beside = blockedLabels(clump, labelsAt(30));
+    expect(performance.now() - start).toBeLessThan(40);
+    // At most MAX_TESTS / 6,000 labels were tested against the clump; the others wait.
+    expect(beside.size).toBeGreaterThanOrEqual(400 - Math.ceil(MAX_TESTS / 6_000) - 1);
   });
 
   it("tests a label against the shape a node is drawn with", () => {
