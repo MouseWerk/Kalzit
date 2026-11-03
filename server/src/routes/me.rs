@@ -81,7 +81,7 @@ async fn change_password(
         let token = session::read_cookie(&headers, info.https).ok_or_else(ApiError::unauthenticated)?;
         crate::auth::second_factor::require_fresh(&state.db, &session::hash_token(&token), now).await?;
     }
-    let stored = check_own_password(&state, &user, &info, req.current, "current").await?;
+    let stored = check_own_password(&state, &user, req.current, "current").await?;
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
     let hash = password::hash(req.new).await?;
 
@@ -116,7 +116,6 @@ fn wrong_password(field: &'static str) -> ApiError {
 pub(crate) async fn check_own_password(
     state: &AppState,
     user: &SessionUser,
-    info: &RequestInfo,
     given: String,
     field: &'static str,
 ) -> ApiResult<Option<String>> {
@@ -124,9 +123,10 @@ pub(crate) async fn check_own_password(
     if given.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(wrong_password(field));
     }
-    // A failure also counts for the account's sign-ins from all addresses
-    // (`AppState::account_limiter`), which does not refuse here: the caller has a session.
-    use crate::auth::ratelimit::{account_key, network_key};
+    // Only the session's own budget (`AppState::password_limiter`, per account) counts here, never
+    // the account's sign-ins (`AppState::account_limiter`): guesses of a stolen session must not
+    // lock the owner out of signing in on a new device.
+    use crate::auth::ratelimit::account_key;
     let mono = state.clock.monotonic_ms();
     let limit_key = format!("password:{}", user.id);
     let refused = |wait| ApiError::rate_limited("too many attempts, wait a few minutes", wait);
@@ -152,7 +152,6 @@ pub(crate) async fn check_own_password(
     };
     drop(checking);
     if !matched {
-        state.account_limiter.record(&account_key(&user.email), &network_key(info.client_ip), mono);
         return Err(wrong_password(field));
     }
     state.password_limiter.reset(&limit_key);

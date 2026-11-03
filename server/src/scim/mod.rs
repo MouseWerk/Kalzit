@@ -66,8 +66,9 @@ pub struct ScimError {
     pub scim_type: Option<&'static str>,
     pub detail: String,
     pub reason: Option<&'static str>,
-    /// What lies behind a neutral refusal, for the audit log only; the answer never carries it.
-    pub why: Option<&'static str>,
+    /// What lies behind a neutral refusal and the address it is about, for the server's audit
+    /// log only; the answer never carries them.
+    pub why: Option<(&'static str, String)>,
     retry_after_secs: Option<u32>,
 }
 
@@ -86,9 +87,9 @@ impl ScimError {
         self
     }
 
-    /// What lies behind a neutral refusal, written to the audit log only.
-    pub fn why(mut self, why: &'static str) -> Self {
-        self.why = Some(why);
+    /// What lies behind a neutral refusal about `email`, written to the server's audit log only.
+    pub fn why(mut self, why: &'static str, email: &str) -> Self {
+        self.why = Some((why, email.to_string()));
         self
     }
 
@@ -527,9 +528,11 @@ fn method_not_allowed() -> ScimError {
 }
 
 /// Writes `scim.request_refused` for a change the server refused (not for a token refusal, which
-/// `auth::api_token` records): the method, the resource, the status and the reason. Outside the
-/// refused change's transaction, which was rolled back; a busy database does not change the
-/// answer.
+/// `auth::api_token` records): the method, the resource, the status and the reason. What lies
+/// behind a neutral refusal (`why`) and its address's hash go to the server's log as
+/// `scim.request_refused_reason`, for server administrators only: the organization's admins read
+/// its log. Outside the refused change's transaction, which was rolled back; a busy database does
+/// not change the answer.
 async fn record_refused(ctx: &Ctx<'_>, method: &Method, resource: &[&str], e: &ScimError) {
     let summary = json!({
         "method": method.as_str(),
@@ -539,11 +542,8 @@ async fn record_refused(ctx: &Ctx<'_>, method: &Method, resource: &[&str], e: &S
         "reason": e.reason,
         "detail": e.detail,
     });
-    let mut summary = summary;
-    if let Some(why) = e.why {
-        summary["why"] = json!(why);
-    }
-    let event = crate::audit::AuditEvent {
+    let at_ms = ctx.state.clock.now_ms();
+    let mut events = vec![crate::audit::AuditEvent {
         org_id: Some(ctx.org_id),
         actor_user_id: None,
         actor_address: Some(ctx.info.client_ip.to_string()),
@@ -551,12 +551,27 @@ async fn record_refused(ctx: &Ctx<'_>, method: &Method, resource: &[&str], e: &S
         resource_type: Some("api_token"),
         resource_id: Some(&ctx.caller.token_id),
         summary,
-        at_ms: ctx.state.clock.now_ms(),
-    };
-    let recorded = match ctx.state.db.acquire().await {
-        Ok(mut conn) => crate::audit::with_token(ctx.caller.acting(), crate::audit::record(&mut conn, &event)).await,
-        Err(e) => Err(e),
-    };
+        at_ms,
+    }];
+    if let Some((why, email)) = &e.why {
+        events.push(crate::audit::AuditEvent {
+            org_id: None,
+            actor_user_id: None,
+            actor_address: Some(ctx.info.client_ip.to_string()),
+            action: "scim.request_refused_reason",
+            resource_type: Some("org"),
+            resource_id: Some(ctx.org_id),
+            summary: json!({
+                "orgId": ctx.org_id,
+                "reason": e.reason,
+                "emailHash": crate::audit::email_hash(ctx.state, email),
+                "why": why,
+            }),
+            at_ms,
+        });
+    }
+    let recorded =
+        crate::audit::with_token(ctx.caller.acting(), crate::audit::record_all(&ctx.state.db, &events)).await;
     if let Err(err) = recorded {
         tracing::warn!(client = %ctx.info.client_ip, "recording a refused SCIM request in the audit log failed: {err}");
     }

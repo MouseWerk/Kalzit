@@ -88,7 +88,7 @@ its `scim_owned` memberships become `direct`.
 | Method and path | Access | Answer |
 |---|---|---|
 | `GET /orgs/{orgId}/members` | `users:read` | `200 Page<Member>`, newest member first |
-| `GET /orgs/{orgId}/sign-in/password-only` | `settings:write` | `200 [{ "userId", "name", "email", "role" }]` |
+| `GET /orgs/{orgId}/sign-in/password-only` | `settings:write` | `200 { "count", "people": [{ "userId", "name", "email", "role" }] \| null }` (`people` needs `users:read` too) |
 | `POST /orgs/{orgId}/members` | `users:write` | `201 Member` |
 | `PATCH /orgs/{orgId}/members/{userId}` | `users:write` | `200 Member` |
 | `DELETE /orgs/{orgId}/members/{userId}` | `users:write` | `204` |
@@ -106,9 +106,17 @@ same time. Errors:
 added directly: one no account has, one whose account belongs to another organization, or one
 whose owner has not confirmed it; the answer is the same for all three, after the same check of
 the role, so it tells neither whether an account has the address nor anything about its other
-organizations), `403` (role exceeds the caller's permissions). Audit `member.added`; a refusal
-with `members.invite_instead` is audited as `member.add_refused` (`{ "why" }`: `no_account`,
-`other_organization` or `email_unconfirmed`), the only place that says which.
+organizations), `403` (role exceeds the caller's permissions). The answer also takes the same
+time: an address without an account takes the same row lock and runs the same counts as one with
+an account. Audit `member.added`; a refusal with `members.invite_instead` is audited in the
+organization's log as `member.add_refused` with only the neutral `{ "reason":
+"members.invite_instead" }`, since the organization's admins read that log. Which it was goes
+only to the server's log (`orgId` `null`, for server administrators) as
+`member.add_refused_reason` (resource `org`, `{ "orgId", "emailHash", "why" }`, `why`:
+`no_account`, `other_organization` or `email_unconfirmed`; `emailHash` is an HMAC of the address
+with the server's secrets key, 32 hex digits, the same for the same address while the key stays,
+since no summary holds an address). An organization's view of the log never shows a
+summary's `why` (docs/api/settings-dashboards.md, "Audit log").
 Memberships from before 0.5.1 stay as they are (`legacy`); their members can leave on their own
 (below).
 
@@ -173,11 +181,13 @@ factor rule that would refuse the saving member (reason `second_factor.setup_fir
 always has Kalzit's second factor, passes an organization's `off` inside it.
 
 Turning password sign-in off is not refused when other owners or admins of the organization
-have only a password. `GET /orgs/{orgId}/sign-in/password-only` lists them: the owners and
+have only a password. `GET /orgs/{orgId}/sign-in/password-only` counts them (`count`) and, for a
+caller who also holds `users:read`, lists them (`people`; `null` without it): the owners and
 administrators (a role holding `users:write`, `roles:write` or `settings:write`) with no confirmed
 identity at an enabled provider or directory whose group mapping, for the groups of their last
 sign-in through it, or the server's rule for people without a mapped group leads into the
-organization; the break-glass admin is not listed. The UI shows them before it saves `off`. Once
+organization; the break-glass admin is not listed. The UI shows them, or their number, before it
+saves `off`. Once
 it is off they are refused (`org_provider_sign_in_required`) until they sign in through a
 provider. Recovery runs through a server admin: `PATCH /admin/orgs/{orgId}/sign-in-rules` below
 puts the rule back to the server's.
@@ -712,7 +722,9 @@ applies to each of:
 
 - the client address (IPv4 per address, IPv6 per /64), whatever the email;
 - the account at that address. Wrong passwords from other addresses never use it up;
-- the account from all addresses together (sign-ins and failed `POST /me/password` checks).
+- the account from all addresses together (sign-ins only: a signed-in session's password checks,
+  `POST /me/password` and `POST /me/security/confirm/password`, use their own budget below and
+  never this one, so a stolen session cannot lock the owner out of a new device).
   Used up, it refuses every sign-in of the account from a browser without a known device
   cookie, the right password included, with the whole window as the wait (it tells nothing
   about the account). A guess spread over many addresses so gets this one budget, not the
@@ -1060,6 +1072,7 @@ interface SecurityStatus {
   confirmedUntil: number | null;   // this session's fresh confirmation, while it lasts
   passwordConfirmedUntil: number | null;   // this session's fresh password confirmation
   freshSignInUntil: number | null;   // this session counts as just signed in until then
+  providerSignInUntil: number | null;   // this session's provider sign-in stands in for the password
   lockedUntil: number | null;
   hasPassword: boolean;
 }
@@ -1089,10 +1102,15 @@ confirmation_required` without it. A sign-in with a second factor counts as one.
 **The first method.** On an account with a password and no method yet, `/totp/setup`, `/totp`,
 `/passkeys/setup` and `/passkeys` need a fresh confirmation of the password: `POST
 /me/security/confirm/password` `{ "password" }` (wrong: `422 validation` with `field`
-`password`; it shares the budget of `POST /me/password`, and like a failed check there, each
-failure counts toward the account's sign-in lockout from all addresses) lets this session set up
-the first
-method for 5 minutes; without it they answer `403 confirmation_required` with reason
+`password`; it shares the budget of `POST /me/password`, `login_max_failures` per window for the
+account's sessions, and never counts toward the account's sign-in lockout) lets this session set
+up the first method for 5 minutes. It is only for that: an account that has a method answers
+`409 conflict` with reason `second_factor.has_factor` without checking the password (it confirms
+with its method), and an account without a password answers `409 conflict` with reason
+`second_factor.no_password` at once. An account with a password that also has a confirmed
+identity at an enabled provider or directory may instead set up its first method within 5
+minutes of signing in through it (`sessions.created_at`; `SecurityStatus.providerSignInUntil`).
+Without either they answer `403 confirmation_required` with reason
 `second_factor.confirm_password`. A session someone took over cannot plant a factor of its own
 that way. An account with neither a password nor a method (one that signs in only through a
 provider or a directory) sets up its first method only in a session that signed in within the

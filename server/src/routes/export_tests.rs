@@ -1444,3 +1444,99 @@ async fn an_audit_export_takes_the_users_export_slot() {
     };
     tokio::time::timeout(std::time::Duration::from_secs(10), freed).await.expect("the user's slot comes back");
 }
+
+/// Text filters longer than 256 characters are refused, in the list as in the export, before
+/// anything is read or recorded.
+#[tokio::test]
+async fn audit_filters_are_at_most_256_characters() {
+    let t = T::new().await;
+    let fits = "a".repeat(super::super::audit::MAX_FILTER_CHARS);
+    let long = "ä".repeat(super::super::audit::MAX_FILTER_CHARS + 1);
+    for field in ["actor", "action", "resourceType", "resourceId"] {
+        let r = t.post("/audit/export", json!({ "format": "json", field: long }), &t.owner).await;
+        assert_eq!((r.status, r.json()["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some(field)));
+        assert_eq!(r.reason(), "audit.filter_too_long", "{}", r.text());
+        let r = t.post("/audit/export", json!({ "format": "json", field: fits }), &t.owner).await;
+        assert_eq!(r.status, StatusCode::OK, "{field}: {}", r.text());
+        let query = format!("/api/orgs/{}/audit?{field}={long}", t.org);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(query.replace('ä', "%C3%A4"))
+            .header(header::HOST, "kalzit.test")
+            .header(header::COOKIE, &t.owner)
+            .body(Body::empty())
+            .unwrap();
+        let res = t.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY, "{field}");
+    }
+    assert_eq!(t.audit_exports().await.len(), 4, "the refused ones record nothing");
+    t.slots_free().await;
+}
+
+/// An audit export refused for its number of events or its size, or cut off at its deadline, is
+/// recorded as `audit.export_failed`, with the filters and the reason; the slots come back.
+#[tokio::test]
+async fn a_refused_audit_export_is_recorded() {
+    let t = T::new().await;
+    for i in 0..4_i64 {
+        t.audit_event(&format!("f{i}"), Some(&t.org), "dashboard.saved", "d", 1_700_000_000_000 + i).await;
+    }
+    let failures = || async {
+        let rows: Vec<(Option<String>, String)> = sqlx::query_as(
+            "SELECT org_id, summary FROM audit_events WHERE action = 'audit.export_failed' ORDER BY created_at, id",
+        )
+        .fetch_all(&t.state.db)
+        .await
+        .unwrap();
+        rows.into_iter().map(|(org, s)| (org, serde_json::from_str::<Value>(&s).unwrap())).collect::<Vec<_>>()
+    };
+    t.state.export_limits.write().unwrap().audit_events = 3;
+    let r = t.post("/audit/export", json!({ "format": "csv", "action": "dashboard." }), &t.owner).await;
+    assert_eq!(r.reason(), "export.too_many_events", "{}", r.text());
+    t.state.export_limits.write().unwrap().audit_events = 1_000;
+    t.state.export_limits.write().unwrap().file_bytes = 64;
+    let r = t.send("/api/admin/audit/export", json!({ "format": "json" }), Some(&t.owner)).await;
+    assert_eq!(r.reason(), "export.too_large", "{}", r.text());
+    t.state.export_limits.write().unwrap().file_bytes = 1024 * 1024;
+    t.state.export_limits.write().unwrap().make = std::time::Duration::ZERO;
+    let r = t.post("/audit/export", json!({ "format": "json" }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::SERVICE_UNAVAILABLE, "export.too_slow".into()), "{}", r.text());
+
+    let failed = failures().await;
+    assert_eq!(failed.len(), 3, "{failed:?}");
+    assert_eq!(
+        failed[0],
+        (Some(t.org.clone()), json!({ "format": "csv", "action": "dashboard.", "reason": "export.too_many_events" }))
+    );
+    assert_eq!(
+        failed[1],
+        (None, json!({ "format": "json", "reason": "export.too_large" })),
+        "a server export's at server level"
+    );
+    assert_eq!(failed[2].1["reason"], "export.too_slow");
+    assert!(t.audit_exports().await.is_empty());
+    t.slots_free().await;
+    assert!(t.state.export_users.lock().unwrap().is_empty(), "the user's slot came back");
+    t.spool_empty().await;
+}
+
+/// An organization's export leaves out what lies behind a neutral refusal (`why`), also from an
+/// entry written before 0.5.4; the server's export keeps it.
+#[tokio::test]
+async fn an_organizations_audit_export_leaves_out_why() {
+    let t = T::new().await;
+    sqlx::query(
+        "INSERT INTO audit_events (id, org_id, action, summary, created_at) \
+         VALUES ('w1', $1, 'member.add_refused', '{\"why\":\"no_account\"}', 1700000000000)",
+    )
+    .bind(&t.org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let r = t.post("/audit/export", json!({ "format": "csv", "action": "member." }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains(",w1,") && !r.text().contains("no_account"), "{}", r.text());
+    let r = t.send("/api/admin/audit/export", json!({ "format": "csv", "action": "member." }), Some(&t.owner)).await;
+    assert!(r.text().contains("no_account"), "{}", r.text());
+    t.slots_free().await;
+}

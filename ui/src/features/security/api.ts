@@ -66,6 +66,11 @@ export interface SecurityStatus {
   passwordConfirmedUntil: number | null;
   /** Until when this session counts as just signed in (the first factor without a password). */
   freshSignInUntil: number | null;
+  /**
+   * Until when this session's sign-in through a provider or directory stands in for the password
+   * (the first factor of an account that has both).
+   */
+  providerSignInUntil: number | null;
   lockedUntil: number | null;
   hasPassword: boolean;
 }
@@ -153,6 +158,7 @@ function isStatus(value: unknown): value is SecurityStatus {
     isNullableNumber(value.confirmedUntil) &&
     isNullableNumber(value.passwordConfirmedUntil) &&
     isNullableNumber(value.freshSignInUntil) &&
+    isNullableNumber(value.providerSignInUntil) &&
     isNullableNumber(value.lockedUntil) &&
     typeof value.hasPassword === "boolean"
   );

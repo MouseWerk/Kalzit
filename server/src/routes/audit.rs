@@ -123,6 +123,7 @@ async fn export_org(
         role: &ctx.role,
         sees_every_folder: folders::sees_every_folder(&ctx),
         scrub: (folders::sees_every_folder(&ctx) == 0).then_some(&ctx),
+        org_view: true,
     };
     export(&state, viewer, Scope::Org(&ctx.org_id), &ctx.user, &info, req).await
 }
@@ -145,7 +146,8 @@ async fn export_server(
         }
     }
     // Server administrators see every event; no folder is hidden from this view.
-    let viewer = Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None };
+    let viewer =
+        Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None, org_view: false };
     export(&state, viewer, Scope::Server, &admin, &info, req).await
 }
 
@@ -161,7 +163,8 @@ enum Scope<'a> {
 /// into a spool file (memory holds one batch), records `audit.exported` once the file is complete
 /// and sends the file from disk. When the entry cannot be written, there is no file. The export
 /// takes the same slots as a data export: one per user, and one of the server's while the file
-/// is made.
+/// is made, which ends at `Limits::make`; a file refused for its size, its number of events or
+/// that deadline is recorded as `audit.export_failed`. It reads through the read pool.
 async fn export(
     state: &AppState,
     viewer: Viewer<'_>,
@@ -171,10 +174,98 @@ async fn export(
     req: AuditExportRequest,
 ) -> ApiResult<Response> {
     let q = req.query();
-    check_range(&q)?;
+    check_query(&q)?;
     let limits = *state.export_limits.read_or_recover();
     let slots = crate::routes::export::acquire_for(state, &actor.id)?;
-    let unnamed = unnamed_folders(state, &viewer).await?;
+    let collected = tokio::time::timeout(limits.make, collect(state, &viewer, &q, req.format, req.language, limits))
+        .await
+        .unwrap_or_else(|_| Err(too_slow()));
+    let (path, len, count) = match collected {
+        Ok(made) => made,
+        Err(e) => {
+            // The slots go with this answer, the spool file went with the collection.
+            drop(slots);
+            let failed = e.reason.as_ref().map(|r| r.code.clone()).filter(|code| {
+                matches!(code.as_str(), "export.too_many_events" | "export.too_large" | "export.too_slow")
+            });
+            if let Some(reason) = failed {
+                let mut summary = req.summary();
+                summary.insert("reason".into(), json!(reason));
+                let event = export_event(state, scope, actor, info, "audit.export_failed", summary);
+                // The refusal is what the caller needs to hear; a failed audit write is logged.
+                let recorded = match state.db.acquire().await {
+                    Ok(mut conn) => audit::record(&mut conn, &event).await,
+                    Err(e) => Err(e),
+                };
+                if let Err(err) = recorded {
+                    tracing::warn!("audit entry of a refused audit export: {err}");
+                }
+            }
+            return Err(e);
+        }
+    };
+    // Complete: the server's slot is free for the next export while this one is sent.
+    let crate::routes::export::Slots { permit, user } = slots;
+    drop(permit);
+    let mut summary = req.summary();
+    summary.insert("events".into(), json!(count));
+    let mut tx = crate::db::begin(&state.db).await?;
+    let event = export_event(state, scope, actor, info, "audit.exported", summary);
+    audit::record(&mut tx, &event).await?;
+    crate::db::commit(tx).await?;
+    let (content_type, extension) = match req.format {
+        AuditFormat::Csv => ("text/csv; charset=utf-8", "csv"),
+        AuditFormat::Json => ("application/json", "json"),
+    };
+    let name = file_name("kalzit-audit", extension);
+    Ok(crate::routes::export::send_spooled(path, len, user, limits, content_type, &name))
+}
+
+/// The entry of an audit export or of its refusal, in the scope of the export.
+fn export_event<'a>(
+    state: &AppState,
+    scope: Scope<'a>,
+    actor: &'a SessionUser,
+    info: &RequestInfo,
+    action: &'a str,
+    summary: serde_json::Map<String, Value>,
+) -> AuditEvent<'a> {
+    AuditEvent {
+        org_id: match scope {
+            Scope::Org(org) => Some(org),
+            Scope::Server => None,
+        },
+        actor_user_id: Some(&actor.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action,
+        resource_type: None,
+        resource_id: None,
+        summary: Value::Object(summary),
+        at_ms: state.clock.now_ms(),
+    }
+}
+
+fn too_slow() -> ApiError {
+    ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "busy",
+        "the export took too long; choose a shorter time range or a filter",
+    )
+    .because("export.too_slow")
+}
+
+/// Collects the events into a spool file: its path, its size and the number of events. Dropped
+/// before the end (at the deadline), it takes the file with it.
+async fn collect(
+    state: &AppState,
+    viewer: &Viewer<'_>,
+    q: &AuditQuery,
+    format: AuditFormat,
+    language: Option<ExportLanguage>,
+    limits: crate::routes::export::Limits,
+) -> ApiResult<(tempfile::TempPath, u64, usize)> {
+    let db = &state.read_db;
+    let unnamed = unnamed_folders(db, viewer).await?;
     let spool = state.config.paths.data_dir.join(crate::routes::export::SPOOL_DIR);
     let io = |e: std::io::Error| ApiError::internal("audit", format!("the spool file: {e}"));
     std::fs::create_dir_all(&spool).map_err(io)?;
@@ -192,13 +283,13 @@ async fn export(
     }
     let (file, path) =
         tempfile::Builder::new().prefix("audit-").suffix(".part").tempfile_in(&spool).map_err(io)?.into_parts();
-    let language = req.language.unwrap_or(ExportLanguage::En);
-    let mut writer = Some(AuditWriter::new(file, req.format, language, limits.file_bytes));
+    let language = language.unwrap_or(ExportLanguage::En);
+    let mut writer = Some(AuditWriter::new(file, format, language, limits.file_bytes));
     let mut count = 0usize;
     let mut cursor: Option<String> = None;
     loop {
         let paging = Paging::batch(EXPORT_BATCH, cursor.as_deref())?;
-        let rows = fetch(state, &viewer, &q, &paging, &unnamed).await?;
+        let rows = fetch(db, viewer, q, &paging, &unnamed).await?;
         let page = paging.page(rows, |e| (e.created_at, e.id.as_str()));
         count += page.items.len();
         if count > limits.audit_events {
@@ -224,33 +315,7 @@ async fn export(
     let writer = writer.ok_or_else(|| ApiError::internal("audit", "the writer is gone"))?;
     let len =
         tokio::task::spawn_blocking(move || writer.finish()).await.map_err(|e| ApiError::internal("audit", e))??;
-    // Complete: the server's slot is free for the next export while this one is sent.
-    let crate::routes::export::Slots { permit, user } = slots;
-    drop(permit);
-    let mut summary = req.summary();
-    summary.insert("events".into(), json!(count));
-    let mut tx = crate::db::begin(&state.db).await?;
-    let event = AuditEvent {
-        org_id: match scope {
-            Scope::Org(org) => Some(org),
-            Scope::Server => None,
-        },
-        actor_user_id: Some(&actor.id),
-        actor_address: Some(info.client_ip.to_string()),
-        action: "audit.exported",
-        resource_type: None,
-        resource_id: None,
-        summary: Value::Object(summary),
-        at_ms: state.clock.now_ms(),
-    };
-    audit::record(&mut tx, &event).await?;
-    crate::db::commit(tx).await?;
-    let (content_type, extension) = match req.format {
-        AuditFormat::Csv => ("text/csv; charset=utf-8", "csv"),
-        AuditFormat::Json => ("application/json", "json"),
-    };
-    let name = file_name("kalzit-audit", extension);
-    Ok(crate::routes::export::send_spooled(path, len, user, limits, content_type, &name))
+    Ok((path, len, count))
 }
 
 /// The columns of the CSV file, named as the API names the fields.
@@ -443,6 +508,7 @@ async fn list_org(
         role: &ctx.role,
         sees_every_folder: folders::sees_every_folder(&ctx),
         scrub: (folders::sees_every_folder(&ctx) == 0).then_some(&ctx),
+        org_view: true,
     };
     list(&state, viewer, q).await
 }
@@ -456,7 +522,8 @@ async fn list_server(
         return Err(ApiError::validation("orgId must not be empty").with_field("orgId"));
     }
     // Server administrators see every event; no folder is hidden from this view.
-    let viewer = Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None };
+    let viewer =
+        Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None, org_view: false };
     list(&state, viewer, q).await
 }
 
@@ -469,19 +536,39 @@ struct Viewer<'a> {
     sees_every_folder: i64,
     /// The member whose hidden folders are not named in summaries; `None` names everything.
     scrub: Option<&'a OrgCtx>,
+    /// An organization's own view (`audit:read`), not a server administrator's.
+    org_view: bool,
 }
 
 /// Newest first. Events about folders and dashboards the viewer cannot see are left out, as the
 /// resources themselves are, also once restricted content is purged (`restricted_tombstones`).
 async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<Json<Page<AuditItem>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
-    check_range(&q)?;
-    let unnamed = unnamed_folders(state, &viewer).await?;
-    let items = fetch(state, &viewer, &q, &paging, &unnamed).await?;
+    check_query(&q)?;
+    let unnamed = unnamed_folders(&state.db, &viewer).await?;
+    let items = fetch(&state.db, &viewer, &q, &paging, &unnamed).await?;
     Ok(Json(paging.page(items, |e| (e.created_at, e.id.as_str()))))
 }
 
-fn check_range(q: &AuditQuery) -> ApiResult<()> {
+/// The longest text filter (`actor`, `action`, `resourceType`, `resourceId`): no id or action is
+/// longer, and the export's entry keeps its filters.
+pub const MAX_FILTER_CHARS: usize = 256;
+
+fn check_query(q: &AuditQuery) -> ApiResult<()> {
+    let texts = [
+        ("actor", &q.actor),
+        ("action", &q.action),
+        ("resourceType", &q.resource_type),
+        ("resourceId", &q.resource_id),
+    ];
+    for (field, value) in texts {
+        if value.as_deref().is_some_and(|v| v.chars().count() > MAX_FILTER_CHARS) {
+            return Err(ApiError::validation(format!("{field} is longer than {MAX_FILTER_CHARS} characters"))
+                .with_field(field)
+                .because("audit.filter_too_long")
+                .param("max", MAX_FILTER_CHARS));
+        }
+    }
     if let (Some(from), Some(to)) = (q.from, q.to)
         && from > to
     {
@@ -492,10 +579,10 @@ fn check_range(q: &AuditQuery) -> ApiResult<()> {
 
 /// Summaries name folders (`parentId`, `folderId`); those the viewer cannot see, or that were
 /// restricted when they were purged, are not named.
-async fn unnamed_folders(state: &AppState, viewer: &Viewer<'_>) -> ApiResult<HashSet<String>> {
+async fn unnamed_folders(db: &sqlx::AnyPool, viewer: &Viewer<'_>) -> ApiResult<HashSet<String>> {
     Ok(match viewer.scrub {
         Some(ctx) => {
-            let mut conn = state.db.acquire().await?;
+            let mut conn = db.acquire().await?;
             let mut ids = folders::hidden_folder_ids(&mut conn, ctx).await?;
             let gone: Vec<(String,)> = sqlx::query_as(
                 "SELECT resource_id FROM restricted_tombstones WHERE org_id = $1 AND resource_type = 'folder'",
@@ -512,7 +599,7 @@ async fn unnamed_folders(state: &AppState, viewer: &Viewer<'_>) -> ApiResult<Has
 
 /// One page of events (`paging.fetch_limit()` rows) as the viewer may see them.
 async fn fetch(
-    state: &AppState,
+    db: &sqlx::AnyPool,
     viewer: &Viewer<'_>,
     q: &AuditQuery,
     paging: &Paging,
@@ -526,7 +613,7 @@ async fn fetch(
             Arg::Int(i) => query.bind(i),
         };
     }
-    let rows: Vec<AuditRow> = query.fetch_all(&state.db).await?;
+    let rows: Vec<AuditRow> = query.fetch_all(db).await?;
     let mut items = Vec::with_capacity(rows.len());
     for r in rows {
         let mut summary: Value = serde_json::from_str(&r.summary)
@@ -536,6 +623,15 @@ async fn fetch(
             if summary.get(key).and_then(Value::as_str).is_some_and(|id| unnamed.contains(id)) {
                 summary[key] = Value::Null;
             }
+        }
+        // What lies behind a neutral refusal (`why`) is for server administrators only: it stands
+        // in server-level entries, and an organization's view never shows it, also not from an
+        // entry written before 0.5.4.
+        if viewer.org_view
+            && r.org_id.is_some()
+            && let Some(fields) = summary.as_object_mut()
+        {
+            fields.remove("why");
         }
         items.push(AuditItem {
             id: r.id,
@@ -765,7 +861,14 @@ mod tests {
                 query.fetch_all(&db).await.unwrap().into_iter().map(|r| r.3).collect::<Vec<_>>()
             }
         };
-        let member = || Viewer { org_id: Some("o"), user_id: "u", role: "viewer", sees_every_folder: 0, scrub: None };
+        let member = || Viewer {
+            org_id: Some("o"),
+            user_id: "u",
+            role: "viewer",
+            sees_every_folder: 0,
+            scrub: None,
+            org_view: true,
+        };
         let admin = || Viewer { sees_every_folder: 1, ..member() };
         let events = |plan: &[String]| {
             plan.iter().filter(|l| l.starts_with("SCAN e") || l.starts_with("SEARCH e")).cloned().collect::<Vec<_>>()
@@ -824,7 +927,14 @@ mod tests {
         }
         let ids = |page: Page<AuditItem>| page.items.into_iter().map(|e| e.id).collect::<Vec<_>>();
         let query = || serde_json::from_value::<AuditQuery>(serde_json::json!({})).unwrap();
-        let viewer = || Viewer { org_id: Some("o"), user_id: "u", role: "viewer", sees_every_folder: 0, scrub: None };
+        let viewer = || Viewer {
+            org_id: Some("o"),
+            user_id: "u",
+            role: "viewer",
+            sees_every_folder: 0,
+            scrub: None,
+            org_view: true,
+        };
         let limited = list(&state, viewer(), query()).await.unwrap().0;
         assert_eq!(ids(limited), ["6", "5", "4"]);
         let admin = Viewer { sees_every_folder: 1, ..viewer() };

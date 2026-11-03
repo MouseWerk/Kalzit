@@ -764,7 +764,8 @@ function handleOrg(
   }
   if (area === "sign-in" && id === "password-only" && method === "GET") {
     needs(state, "settings:write");
-    return json(200, state.passwordOnly);
+    const people = state.callerPermissions.has("users:read") ? state.passwordOnly : null;
+    return json(200, { count: state.passwordOnly.length, people });
   }
   if (area === "settings") {
     needs(state, id === undefined ? "settings:read" : "settings:write");

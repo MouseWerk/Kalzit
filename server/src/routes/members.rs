@@ -147,13 +147,25 @@ async fn list(
     Ok(Json(paging.page(rows, |m| (m.joined_at, m.user_id.as_str()))))
 }
 
-/// The owners and administrators who could not enter the organization any more once its
-/// password sign-in is off (`auth::org_gate::password_only_admins`): the UI warns before saving.
+/// The answer of `password_only`: how many, and who for a caller who may read the members.
+#[derive(Serialize)]
+struct PasswordOnlyAnswer {
+    count: usize,
+    people: Option<Vec<crate::auth::org_gate::PasswordOnly>>,
+}
+
+/// How many owners and administrators could not enter the organization any more once its
+/// password sign-in is off, and who (`auth::org_gate::password_only_admins`): the UI warns before
+/// saving. Names and addresses only for a caller who may also read the members (`users:read`);
+/// otherwise the count alone.
 async fn password_only(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
-) -> ApiResult<Json<Vec<crate::auth::org_gate::PasswordOnly>>> {
-    Ok(Json(crate::auth::org_gate::password_only_admins(&state, &ctx.org_id).await?))
+) -> ApiResult<Json<PasswordOnlyAnswer>> {
+    let people = crate::auth::org_gate::password_only_admins(&state, &ctx.org_id).await?;
+    let count = people.len();
+    let people = ctx.permissions.contains(&Permission::UsersRead).then_some(people);
+    Ok(Json(PasswordOnlyAnswer { count, people }))
 }
 
 #[derive(Deserialize)]
@@ -177,25 +189,25 @@ async fn add(
             .fetch_optional(&mut *tx)
             .await?;
     // Adding works for existing accounts only; invitations by mail come with `users:invite`. No
-    // account answers as one that cannot be added (below), after the same check of the role, so
-    // the answer does not tell whether an account has the address.
-    let Some((user_id, confirmed)) = user else {
-        lock_org(&mut tx, &ctx.org_id).await?;
-        assignable_role(&mut tx, &ctx, &req.role).await?;
-        drop(tx);
-        return Err(refuse_add(&state, &ctx, &info, "no_account").await);
+    // account answers as one that cannot be added (below), after the same work as for an account
+    // (the row lock, the role, both counts, with an id no account has), so neither the answer nor
+    // its time tells whether an account has the address.
+    let (user_id, confirmed) = match user {
+        Some((id, confirmed)) => (Some(id), confirmed),
+        None => (None, 0),
     };
+    let subject = user_id.as_deref().unwrap_or(NO_ACCOUNT);
     // The account's row first (user rows come before organization rows in the lock order): every
     // way of joining an organization takes it, so the check below that the account belongs to no
     // organization cannot race another organization's join on PostgreSQL.
-    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(&user_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(subject).execute(&mut *tx).await?;
     // Then the organization, so that two requests adding the same account run one after the other
     // and the second finds the membership.
     lock_org(&mut tx, &ctx.org_id).await?;
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     let (existing,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&ctx.org_id)
-        .bind(&user_id)
+        .bind(subject)
         .fetch_one(&mut *tx)
         .await?;
     if existing > 0 {
@@ -206,14 +218,16 @@ async fn add(
     // invitation, so they decide themselves; an address nobody proved to read (an account from a
     // copied invitation link) names nobody for sure (docs/api/mail.md, "Email confirmation").
     // Both answer the same, so the answer tells nothing about the account's other organizations.
-    let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1")
-        .bind(&user_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (elsewhere,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1").bind(subject).fetch_one(&mut *tx).await?;
+    let Some(user_id) = user_id else {
+        drop(tx);
+        return Err(refuse_add(&state, &ctx, &info, &email, "no_account").await);
+    };
     if elsewhere > 0 || confirmed == 0 {
         drop(tx);
         let why = if confirmed == 0 { "email_unconfirmed" } else { "other_organization" };
-        return Err(refuse_add(&state, &ctx, &info, why).await);
+        return Err(refuse_add(&state, &ctx, &info, &email, why).await);
     }
     let now = state.clock.now_ms();
     // Added by an admin, not by the person: this organization's sign-in rules apply to them on
@@ -237,11 +251,17 @@ async fn add(
     Ok((StatusCode::CREATED, Json(member)))
 }
 
-/// The one answer to an address that cannot be added directly (`members.invite_instead`); `why`
-/// (`no_account`, `other_organization`, `email_unconfirmed`) goes to the audit log only, as
-/// `member.add_refused`, outside the rolled back transaction. A busy database does not change the
-/// answer.
-async fn refuse_add(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, why: &str) -> ApiError {
+/// The user id the no-account path of `add` locks and counts with: no account has it.
+const NO_ACCOUNT: &str = "";
+
+/// The one answer to an address that cannot be added directly (`members.invite_instead`),
+/// recorded outside the rolled back transaction: the organization's log gets
+/// `member.add_refused` with that neutral reason only, since its admins read the log; why
+/// (`no_account`, `other_organization`, `email_unconfirmed`) and the address's hash go to the server's
+/// log as `member.add_refused_reason`, for server administrators. A busy database does not change
+/// the answer.
+async fn refuse_add(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, email: &str, why: &str) -> ApiError {
+    let now = state.clock.now_ms();
     let event = crate::audit::AuditEvent {
         org_id: Some(&ctx.org_id),
         actor_user_id: Some(&ctx.user.id),
@@ -249,13 +269,20 @@ async fn refuse_add(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, why: &st
         action: "member.add_refused",
         resource_type: None,
         resource_id: None,
-        summary: json!({ "why": why }),
-        at_ms: state.clock.now_ms(),
+        summary: json!({ "reason": "members.invite_instead" }),
+        at_ms: now,
     };
-    let recorded = match state.db.acquire().await {
-        Ok(mut conn) => crate::audit::record(&mut conn, &event).await,
-        Err(e) => Err(e),
+    let detail = crate::audit::AuditEvent {
+        org_id: None,
+        actor_user_id: Some(&ctx.user.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action: "member.add_refused_reason",
+        resource_type: Some("org"),
+        resource_id: Some(&ctx.org_id),
+        summary: json!({ "orgId": ctx.org_id, "emailHash": crate::audit::email_hash(state, email), "why": why }),
+        at_ms: now,
     };
+    let recorded = crate::audit::record_all(&state.db, &[event, detail]).await;
     if let Err(err) = recorded {
         tracing::warn!("recording a refused member addition in the audit log failed: {err}");
     }

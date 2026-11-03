@@ -459,7 +459,8 @@ interface AuditEvent {
 Query parameters (all optional): `actor` (user id), `action` (prefix: `dashboard.` or
 `dashboard.saved`), `resourceType`, `resourceId`, `from` (inclusive), `to` (exclusive), `limit`,
 `cursor`. `from` after `to` is `422 validation` (field `from`); a non-number time is
-`422 validation`.
+`422 validation`; `actor`, `action`, `resourceType` or `resourceId` longer than 256 characters is
+`422 validation` with that field and reason `audit.filter_too_long` (param `max`).
 
 ### `GET /orgs/{orgId}/audit`
 
@@ -471,7 +472,10 @@ parameter is `422 validation`. For members without access to restricted folders:
 - a summary's `parentId` or `folderId` that names a folder they cannot see (or a purged restricted
   one) reads `null`.
 
-Counts in summaries (`folder.trashed`: `{"folders", "dashboards"}`) are not narrowed.
+Counts in summaries (`folder.trashed`: `{"folders", "dashboards"}`) are not narrowed. A
+summary's `why` (what lies behind a neutral refusal, written by versions before 0.5.4) is left
+out: that detail is for server administrators and stands in server-level entries
+(`member.add_refused_reason`, `scim.request_refused_reason`).
 
 ### `GET /admin/audit`
 
@@ -488,7 +492,7 @@ ids in summaries hidden), server administrators for the server's.
 Body: `format` (`csv` or `json`), `language` (CSV only: `de` separates with `;`, `en`, the
 default, with `,`), and the list's filters `actor`, `action`, `resourceType`, `resourceId`,
 `from`, `to`; `orgId` on the server route only (an empty one, one that names no organization,
-or `orgId` on the organization route, is `422 validation`, field `orgId`). `from` after `to` is `422 validation` (field `from`).
+or `orgId` on the organization route, is `422 validation`, field `orgId`). `from` after `to` is `422 validation` (field `from`), and the text filters have the list's limit of 256 characters.
 
 - `csv`: RFC 4180, UTF-8 with a byte order mark, CRLF line ends, the columns `createdAt` (ISO 8601
   UTC), `id`, `orgId`, `actorUserId`, `actorName`, `actorAddress`, `actorTokenId`,
@@ -503,13 +507,17 @@ written to a spool file in `export-tmp`, so memory holds one batch whatever the 
 file is at most 256 MiB (`export.too_large`) and is then sent from disk as a data export's file
 is. An audit export takes the same slots as data exports: one export per user at a time
 (`503 busy`, reason `export.user_busy`) and at most 3 files being made on the server
-(`export.busy`), and it needs 1 GiB of free disk space (`export.disk_space`).
+(`export.busy`), and it needs 1 GiB of free disk space (`export.disk_space`). Making the file
+takes at most 5 minutes; a longer one stops, frees its slots and answers `503 busy` with reason
+`export.too_slow`. The events are read through the read connections, not those of changes.
 
 Each export records `audit.exported` with the format, the filters that were set and the number
 of `events`, before the file is sent: when the entry cannot be written, there is no file. An
 organization's export is recorded in that organization's log; a server administrator's is
 recorded in the server's log (`orgId` `null`), also when it was narrowed to one organization,
-whose id the summary's `orgId` names.
+whose id the summary's `orgId` names. An export refused for its number of events, its size or
+its time (`export.too_many_events`, `export.too_large`, `export.too_slow`) records
+`audit.export_failed` in the same place, with the format, the filters and the `reason`.
 
 Events older than `audit.retention_days` are deleted every hour; each run that deleted something
 records `audit.expired` with `{"deleted": n, "before": ms}`.
@@ -517,7 +525,7 @@ records `audit.expired` with `{"deleted": n, "before": ms}`.
 Actions written by these routes: `settings.updated`, `branding.logo_updated`, `branding.logo_removed`, `branding.logo_restored`, `folder.created`, `folder.updated`,
 `folder.trashed`, `folder.restored`, `folder.purged`, `dashboard.created`, `dashboard.saved`,
 `dashboard.version_restored`, `dashboard.trashed`, `dashboard.restored`, `dashboard.purged`,
-`audit.expired`, `audit.exported`.
+`audit.expired`, `audit.exported`, `audit.export_failed`.
 
 ## List order
 

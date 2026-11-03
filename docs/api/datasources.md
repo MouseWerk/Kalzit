@@ -2007,6 +2007,8 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.too_many_events` | `max` | an audit log export would hold more than `max` events (docs/api/settings-dashboards.md) |
 | `export.failed` | `detail` | the file could not be written |
 | `export.too_large` | `max` | the file would be larger than `max` bytes |
+| `export.too_slow` | | `503 busy`: an audit log export took longer than 5 minutes to make its file |
+| `audit.filter_too_long` | `max` | an audit log filter is longer than `max` characters (`field` names it) |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
 | `export.user_busy` | | `503 busy`: the user has an export running (making or sending its file) |
 | `export.disk_space` | `free`, `needed` | `503 busy`: too little free disk space to make the file |

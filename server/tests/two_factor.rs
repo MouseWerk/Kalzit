@@ -1389,11 +1389,12 @@ async fn check_the_owners_without_a_provider_sign_in_are_listed(t: TestApp) {
     t.member(&owner, &org, "vera@example.de", "editor").await;
     let path = format!("/api/orgs/{org}/sign-in/password-only");
     let emails = |r: &Reply| -> Vec<String> {
-        r.body.as_array().unwrap().iter().map(|p| p["email"].as_str().unwrap().to_string()).collect()
+        r.body["people"].as_array().unwrap().iter().map(|p| p["email"].as_str().unwrap().to_string()).collect()
     };
     let r = t.get(&path, &ada).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(emails(&r), ["ada@example.de", "joerg@example.de"], "editors are not listed: {}", r.body);
+    assert_eq!(r.body["count"], 2, "{}", r.body);
     // The owner signs in through a provider whose rule for people without a group leads here.
     insert_provider(&t, false).await;
     sqlx::query(
@@ -1412,6 +1413,28 @@ async fn check_the_owners_without_a_provider_sign_in_are_listed(t: TestApp) {
     // Only who may change the organization's settings reads it, not an editor.
     let (editor, _) = t.password("vera@example.de").await;
     assert_eq!(t.get(&path, &editor).await.status, StatusCode::FORBIDDEN);
+    // Who may change the settings but not read the members learns how many, not who.
+    let role = t
+        .post(
+            &format!("/api/orgs/{org}/roles"),
+            json!({ "name": "Einstellungen", "permissions": ["settings:write"] }),
+            &owner,
+        )
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    let r = t
+        .send(
+            Method::PATCH,
+            &format!("/api/orgs/{org}/members/{}", member_id(&t, "vera@example.de").await),
+            Some(json!({ "role": role.body["id"] })),
+            &owner,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.get(&path, &editor).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // Ada and Vera herself, whose role now holds `settings:write`.
+    assert_eq!((r.body["count"].as_i64(), &r.body["people"]), (Some(2), &Value::Null), "{}", r.body);
     t.finish().await;
 }
 
@@ -1453,4 +1476,90 @@ async fn postgres_two_factor() {
     check_a_providers_second_factor_counts_while_it_is_trusted(postgres_app(&base).await).await;
     check_the_owners_without_a_provider_sign_in_are_listed(postgres_app(&base).await).await;
     check_a_passwordless_account_enrolls_only_right_after_a_sign_in(postgres_app(&base).await).await;
+}
+
+/// The password confirmation is for the first factor of an account with a password only: an
+/// account with a factor confirms with it, an account without a password is answered at once, and
+/// wrong guesses use up the session's own budget, never the account's sign-ins, so a stolen
+/// session cannot lock the owner out of a new device.
+async fn check_the_password_confirmation_is_only_for_a_first_factor(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let sina = direct_member(&t, &owner, &org, "sina@example.de").await;
+    direct_member(&t, &owner, &org, "vera@example.de").await;
+    let path = "/api/me/security/confirm/password";
+    t.enroll_totp(&owner).await;
+    let r = t.post(path, json!({ "password": PASSWORD }), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "second_factor.has_factor"), "{}", r.body);
+    let r = t.post(path, json!({ "password": "geraten" }), &owner).await;
+    assert_eq!(r.reason(), "second_factor.has_factor", "no guess is checked: {}", r.body);
+
+    let (sina_session, _) = t.password("sina@example.de").await;
+    sqlx::query("UPDATE users SET password_hash = NULL WHERE id = $1").bind(&sina).execute(&t.state.db).await.unwrap();
+    let r = t.post(path, json!({ "password": "geraten" }), &sina_session).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "second_factor.no_password"), "{}", r.body);
+
+    let (stolen, _) = t.password("vera@example.de").await;
+    let limit = t.state.config.security.login_max_failures;
+    for _ in 0..limit {
+        let r = t.post(path, json!({ "password": "geraten" }), &stolen).await;
+        assert_eq!(r.body["error"]["field"], "password", "{}", r.body);
+    }
+    let r = t.post(path, json!({ "password": PASSWORD }), &stolen).await;
+    assert_eq!(r.code(), "rate_limited", "the session's budget is used up: {}", r.body);
+    // Vera still signs in in a new browser.
+    let (fresh, r) = t.password("vera@example.de").await;
+    assert!(r.body["id"].is_string() && fresh.session.is_some(), "{}", r.body);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn the_password_confirmation_is_only_for_a_first_factor() {
+    check_the_password_confirmation_is_only_for_a_first_factor(test_app().await).await;
+}
+
+/// An account with a password that signs in through a provider sets up its first second factor
+/// right after a sign-in through it, without its password: only through a provider that is
+/// enabled and where the account's identity is confirmed, and only for the first minutes.
+async fn check_a_fresh_provider_sign_in_confirms_the_first_factor(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let lea = direct_member(&t, &owner, &org, "lea@example.de").await;
+    insert_provider(&t, false).await;
+    // Linked by its address and not proved yet.
+    sqlx::query(
+        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, created_at, last_sign_in_at, confirmed) \
+         VALUES ('idp', 'sub-lea', 'https://idp.example', $1, 0, 0, 0)",
+    )
+    .bind(&lea)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let (session, _) = t.password("lea@example.de").await;
+    set_session_method(&t, &session, "provider").await;
+    set_session_proof(&t, &session, None, Some("idp")).await;
+    let setup = "/api/me/security/totp/setup";
+    let needs_password = |r: &Reply| r.reason() == "second_factor.confirm_password";
+    assert!(needs_password(&t.post(setup, json!({}), &session).await), "an unconfirmed link does not count");
+
+    sqlx::query("UPDATE sso_identities SET confirmed = 1").execute(&t.state.db).await.unwrap();
+    sqlx::query("UPDATE sso_providers SET enabled = 0").execute(&t.state.db).await.unwrap();
+    assert!(needs_password(&t.post(setup, json!({}), &session).await), "a paused provider does not count");
+    sqlx::query("UPDATE sso_providers SET enabled = 1").execute(&t.state.db).await.unwrap();
+    let status = t.get("/api/me/security", &session).await;
+    assert!(status.body["providerSignInUntil"].is_number(), "{}", status.body);
+    let r = t.post(setup, json!({}), &session).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    // A sign-in with the password does not count, nor one older than five minutes.
+    let (by_password, _) = t.password("lea@example.de").await;
+    assert!(needs_password(&t.post(setup, json!({}), &by_password).await));
+    t.clock.advance_ms(kalzit::auth::second_factor::CONFIRMATION_TTL_MS + 1_000);
+    let status = t.get("/api/me/security", &session).await;
+    assert_eq!(status.body["providerSignInUntil"], Value::Null, "{}", status.body);
+    assert!(needs_password(&t.post(setup, json!({}), &session).await));
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn a_fresh_provider_sign_in_confirms_the_first_factor() {
+    check_a_fresh_provider_sign_in_confirms_the_first_factor(test_app().await).await;
 }

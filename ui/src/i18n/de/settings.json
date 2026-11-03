@@ -343,6 +343,7 @@
   "settings.orgRules.setupFirst": "Richte zuerst unter Anmeldung und Sicherheit deinen eigenen zweiten Faktor ein; sonst würde dich diese Regel aus der Organisation aussperren.",
   "settings.orgRules.passwordOffTitle": "Anmeldung mit Passwort abschalten?",
   "settings.orgRules.passwordOffText": "Diese Eigentümer und Admins haben keine Anmeldung über einen Identitätsanbieter oder ein LDAP-Verzeichnis, die in diese Organisation führt. Ist die Anmeldung mit Passwort aus, können sie hier nicht mehr arbeiten:",
+  "settings.orgRules.passwordOffCount": "Eigentümer und Admins ohne Anmeldung über einen Identitätsanbieter oder ein LDAP-Verzeichnis, die in diese Organisation führt: {count}. Ist die Anmeldung mit Passwort aus, können sie hier nicht mehr arbeiten.",
   "settings.orgRules.passwordOffList": "Eigentümer und Admins ohne Anmeldung über einen Anbieter",
   "settings.orgRules.passwordOffPerson": "{name} ({email})",
   "settings.orgRules.passwordOffRecovery": "Kann niemand die Regel mehr ändern, setzt ein Server-Admin sie unter Verwaltung > Organisationen zurück.",

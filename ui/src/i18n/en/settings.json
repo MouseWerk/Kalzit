@@ -343,6 +343,7 @@
   "settings.orgRules.setupFirst": "Set up your own second factor first under Sign-in and security; this rule would otherwise shut you out of the organization.",
   "settings.orgRules.passwordOffTitle": "Turn password sign-in off?",
   "settings.orgRules.passwordOffText": "These owners and admins have no sign-in through an identity provider or directory that leads into this organization. Once password sign-in is off, they can no longer work here:",
+  "settings.orgRules.passwordOffCount": "Owners and admins without a sign-in through an identity provider or directory that leads into this organization: {count}. Once password sign-in is off, they can no longer work here.",
   "settings.orgRules.passwordOffList": "Owners and admins without a provider sign-in",
   "settings.orgRules.passwordOffPerson": "{name} ({email})",
   "settings.orgRules.passwordOffRecovery": "If nobody can change the rule any more, a server admin puts it back under Administration > Organizations.",

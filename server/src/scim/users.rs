@@ -578,7 +578,7 @@ async fn existing_account(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, email: 
     let not_linkable = |why: &'static str| {
         ScimError::taken("an account with this email cannot be linked; invite the person instead")
             .because("scim.account_not_linkable")
-            .why(why)
+            .why(why, email)
     };
     // A service account's made-up address names no person; it is never linked.
     if matches.iter().any(|(_, service)| *service) || matches.len() > 1 {
@@ -830,7 +830,7 @@ async fn update_account(
             // The same neutral answer as for a new user's address (`existing_account`).
             return Err(ScimError::taken("an account with this email cannot be linked; invite the person instead")
                 .because("scim.account_not_linkable")
-                .why("email_taken"));
+                .why("email_taken", &email));
         }
         sqlx::query("UPDATE users SET email = $1, email_confirmed = 0 WHERE id = $2")
             .bind(&email)
