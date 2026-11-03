@@ -155,6 +155,17 @@ describe("account: sign-in and security", () => {
     expect(await screen.findByRole("dialog", { name: "Your recovery codes" })).toBeTruthy();
   });
 
+  it("sets up the app without the password right after a provider sign-in", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.providerSignInUntil = Date.now() + 300_000;
+    const { user } = renderApp("/settings/account-security");
+    await user.click(await screen.findByRole("button", { name: "Set up" }));
+    const dialog = await screen.findByRole("dialog", { name: "Set up an authenticator app" });
+    expect(within(dialog).queryByLabelText("Password of your account")).toBeNull();
+    await user.type(await within(dialog).findByLabelText("Six-digit code"), server.security.code);
+    expect(await screen.findByRole("dialog", { name: "Your recovery codes" })).toBeTruthy();
+  });
+
   it("sets up the app and shows the first recovery codes once", async () => {
     const server = installFakeServer({ signedIn: true });
     const { user } = renderApp("/settings/account-security");

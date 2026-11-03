@@ -675,14 +675,23 @@ function isPasswordOnlyAdmin(value: unknown): value is PasswordOnlyAdmin {
 }
 
 /**
- * The owners and administrators who could no longer enter the organization once its password
- * sign-in is off (docs/api/access.md, "Organization sign-in rules").
+ * How many owners and administrators could no longer enter the organization once its password
+ * sign-in is off, and who; `people` is `null` for a caller without `users:read`
+ * (docs/api/access.md, "Organization sign-in rules").
  */
-export async function listPasswordOnlyAdmins(orgId: string): Promise<PasswordOnlyAdmin[]> {
+export interface PasswordOnlyAdmins {
+  count: number;
+  people: PasswordOnlyAdmin[] | null;
+}
+
+export async function listPasswordOnlyAdmins(orgId: string): Promise<PasswordOnlyAdmins> {
   return expectShape(
     await request("GET", orgPath(orgId, "/sign-in/password-only")),
-    (value): value is PasswordOnlyAdmin[] =>
-      Array.isArray(value) && value.every(isPasswordOnlyAdmin),
+    (value): value is PasswordOnlyAdmins =>
+      isRecord(value) &&
+      typeof value.count === "number" &&
+      (value.people === null ||
+        (Array.isArray(value.people) && value.people.every(isPasswordOnlyAdmin))),
     "password-only admins",
   );
 }

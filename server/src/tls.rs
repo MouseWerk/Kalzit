@@ -21,8 +21,10 @@ pub fn server_config(cfg: &TlsConfig) -> Result<Arc<ServerConfig>> {
 }
 
 /// The certificate and key files as read once: a reload hashes and parses the same bytes, so a
-/// file replaced in between cannot mix into what was compared. The private key is wiped from
-/// memory when the read is dropped.
+/// file replaced in between cannot mix into what was compared. This read of the key file is
+/// wiped from memory when it is dropped; that is all it promises. The parsed key
+/// (`PrivateKeyDer`) and the signing key rustls makes from it are copies of their own, which
+/// rustls keeps as long as a configuration uses them and does not wipe.
 struct Files {
     cert: Vec<u8>,
     key: Zeroizing<Vec<u8>>,

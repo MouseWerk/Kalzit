@@ -46,6 +46,25 @@ pub async fn record(conn: &mut sqlx::AnyConnection, event: &AuditEvent<'_>) -> R
     record_with_id(conn, &uuid::Uuid::now_v7().to_string(), event).await
 }
 
+/// What stands for an email address in a summary, which never holds one: an HMAC of the
+/// address (lowercase, trimmed) with the server's signing key, as 32 hex digits. The same address
+/// gives the same value while the secrets key stays, so entries about it can be found together.
+pub fn email_hash(state: &crate::app::AppState, email: &str) -> String {
+    let normal = email.trim().to_lowercase();
+    let mac = state.secrets.sign(format!("kalzit-audit-email\0{normal}").as_bytes());
+    hex::encode(&mac[..16])
+}
+
+/// Records `events` together in a transaction of their own, for entries outside a change's
+/// transaction (a refusal whose transaction was rolled back): all of them or none.
+pub async fn record_all(db: &sqlx::AnyPool, events: &[AuditEvent<'_>]) -> Result<(), sqlx::Error> {
+    let mut tx = crate::db::begin(db).await?;
+    for event in events {
+        record(&mut tx, event).await?;
+    }
+    crate::db::commit(tx).await
+}
+
 /// `record` with the entry's id chosen by the caller, for an entry a later one names (the closing
 /// entry of a rate-limited address's refused API tokens, `auth::api_token`).
 pub async fn record_with_id(

@@ -113,9 +113,12 @@ of this organization answers `409` (`scim.account_linked`). Every other account 
 linked gets one neutral answer, `409 uniqueness` (`scim.account_not_linkable`, always the same
 detail), so the directory learns nothing about it: several accounts or a service account with the
 address, a server admin or the break-glass admin, an unconfirmed address, or an account that
-belongs to another organization. Which of them it was is written only to the audit log
-(`scim.request_refused`, `why`: `email_taken`, `account_protected`, `email_unconfirmed` or
-`other_organization`). A person who is already
+belongs to another organization. Which of them it was is written only to the server's audit log
+(`scim.request_refused_reason`, `orgId` `null`, for server administrators: `{ "orgId", "reason",
+"emailHash", "why" }`, the address as an HMAC as for `member.add_refused_reason`, `why`:
+`email_taken`, `account_protected`, `email_unconfirmed` or `other_organization`); the
+organization's `scim.request_refused` has the neutral reason only,
+since the organization's admins read its log. A person who is already
 in an organization joins another one only by accepting an invitation, since the new
 organization's sign-in rules (password sign-in off, a required second factor) would bind their
 account. SCIM refuses instead of inviting, so a directory sync never sends mail on its own; an
@@ -143,7 +146,7 @@ as `active`, `name.givenName`, `emails[type eq "work"].value` and
 (`{"op": "replace", "value": {"active": false}}`). SCIM changes the name and address of an
 account only while it owns it (see "Accounts"); a new address must not belong to another account
 (`409 uniqueness`, `scim.account_not_linkable`, the same neutral answer as for a new user; the
-audit entry's `why` is `email_taken`). For any other account, the directory's name and emails are kept on the
+server's `scim.request_refused_reason` has `why` `email_taken`). For any other account, the directory's name and emails are kept on the
 SCIM user only.
 
 **Deactivating** (`active: false` or `DELETE`): an account this organization's SCIM owns is
@@ -296,7 +299,7 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | `scim.user_name_taken` | `409 uniqueness` | another user of the organization has this `userName` |
 | `scim.email_missing` | `400 invalidValue` | a new user without an address |
 | `scim.account_linked` | `409 uniqueness` | the account with the address is already a SCIM user of this organization |
-| `scim.account_not_linkable` | `409 uniqueness` | a new user's address names an account that cannot be linked (several accounts or a service account, a server admin or the break-glass admin, an unconfirmed address, or another organization's member; the answer does not say which, the audit entry's `why` does); invite the person instead |
+| `scim.account_not_linkable` | `409 uniqueness` | a new user's address names an account that cannot be linked (several accounts or a service account, a server admin or the break-glass admin, an unconfirmed address, or another organization's member; the answer does not say which, the server's `scim.request_refused_reason` does); invite the person instead |
 | `scim.account_protected` | `403` | deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |
 | `scim.group_name_missing` | `400 invalidValue`, `mutability` | a group without `displayName`, or removing it |
 | `scim.group_name_taken` | `409 uniqueness` | another active group of the organization has this `displayName` |

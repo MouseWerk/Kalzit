@@ -89,6 +89,9 @@ pub struct Limits {
     pub keep_free: u64,
     /// The most events an audit log export holds (`routes::audit`).
     pub audit_events: usize,
+    /// The longest an audit log export takes to make its file, holding a slot of the server; a
+    /// data export's work ends at the query timeout instead.
+    pub make: Duration,
 }
 
 impl Default for Limits {
@@ -99,6 +102,7 @@ impl Default for Limits {
             file_bytes: export::MAX_FILE_BYTES,
             keep_free: KEEP_FREE_BYTES,
             audit_events: super::audit::MAX_EXPORT_EVENTS,
+            make: Duration::from_secs(5 * 60),
         }
     }
 }

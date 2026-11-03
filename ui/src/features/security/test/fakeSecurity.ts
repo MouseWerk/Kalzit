@@ -32,6 +32,8 @@ export interface FakeSecurity {
   hasPassword: boolean;
   /** Until when the session counts as just signed in. */
   freshSignInUntil: number | null;
+  /** Until when the session's provider sign-in stands in for the password. */
+  providerSignInUntil: number | null;
   /** Resets an admin made, by path, with their body. */
   resets: { path: string; body: unknown }[];
   /** The recent sign-ins every list answers, and the paths that asked for them. */
@@ -57,6 +59,7 @@ export function fakeSecurityState(): FakeSecurity {
     passwordConfirmedUntil: null,
     hasPassword: true,
     freshSignInUntil: null,
+    providerSignInUntil: null,
     resets: [],
     signIns: [],
     signInRequests: [],
@@ -231,7 +234,8 @@ export function handleSecurityRoute(
   const passwordFresh = s.passwordConfirmedUntil !== null && s.passwordConfirmedUntil > now;
   // The first factor needs the password, the others the factor, confirmed in the last minutes.
   const signInFresh = s.freshSignInUntil !== null && s.freshSignInUntil > now;
-  const mayEnroll = has ? fresh : s.hasPassword ? passwordFresh : signInFresh;
+  const providerFresh = s.providerSignInUntil !== null && s.providerSignInUntil > now;
+  const mayEnroll = has ? fresh : s.hasPassword ? passwordFresh || providerFresh : signInFresh;
   const enrollRefused = () =>
     has
       ? fail(403, "confirmation_required")
@@ -254,6 +258,7 @@ export function handleSecurityRoute(
       confirmedUntil: fresh ? s.confirmedUntil : null,
       passwordConfirmedUntil: passwordFresh ? s.passwordConfirmedUntil : null,
       freshSignInUntil: signInFresh ? s.freshSignInUntil : null,
+      providerSignInUntil: providerFresh ? s.providerSignInUntil : null,
       lockedUntil: s.lockedUntil !== null && s.lockedUntil > now ? s.lockedUntil : null,
       hasPassword: s.hasPassword,
     });
@@ -267,6 +272,12 @@ export function handleSecurityRoute(
     return json(200, { confirmedUntil: s.confirmedUntil });
   }
   if (path === "/api/me/security/confirm/password" && method === "POST") {
+    if (has) {
+      return fail(409, "conflict", "second_factor.has_factor");
+    }
+    if (!s.hasPassword) {
+      return fail(409, "conflict", "second_factor.no_password");
+    }
     if (input.password !== s.ownPassword) {
       const error = {
         code: "validation",

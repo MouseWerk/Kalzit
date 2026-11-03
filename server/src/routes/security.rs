@@ -6,8 +6,9 @@
 //! new password) and adding a method to an account that has one need a fresh confirmation with a
 //! factor the account has (`POST /me/security/confirm`), at most five minutes old. The first
 //! factor of an account with a password needs a fresh confirmation of the password
-//! (`POST /me/security/confirm/password`), so a stolen session cannot plant a factor of its own;
-//! it ends the account's other sessions.
+//! (`POST /me/security/confirm/password`) or, for an account that also signs in through a provider
+//! or directory, a sign-in through it within the last minutes, so a stolen session cannot plant a
+//! factor of its own; it ends the account's other sessions.
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -74,6 +75,9 @@ pub struct Status {
     /// Until when this session counts as just signed in, which the first factor of an account
     /// without a password needs.
     fresh_sign_in_until: Option<i64>,
+    /// Until when this session's sign-in through a provider or directory the account has a
+    /// confirmed identity at stands in for the password's confirmation of the first factor.
+    provider_sign_in_until: Option<i64>,
     /// Wrong codes locked the second step until then.
     locked_until: Option<i64>,
     /// The account has a local password.
@@ -99,6 +103,7 @@ async fn status(
         confirmed_until: sf::confirmed_until(&state.db, &hash, now).await?,
         password_confirmed_until: password_confirmed_until(&state, &hash, now).await?,
         fresh_sign_in_until: fresh_sign_in_until(&state, &hash, now).await?,
+        provider_sign_in_until: provider_sign_in_until(&state, &user.id, &hash, now).await?,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         has_password: password.is_some(),
     }))
@@ -153,7 +158,11 @@ struct PasswordConfirmed {
     password_confirmed_until: i64,
 }
 
-/// A fresh confirmation of the account's own password, which setting up the first factor needs.
+/// A fresh confirmation of the account's own password, which setting up the first factor needs,
+/// and nothing else: an account that has a factor confirms with it (`409`
+/// `second_factor.has_factor`), so a stolen session gets no way to guess the password here, and
+/// an account without a password is answered at once (`409` `second_factor.no_password`). A
+/// wrong password counts in the session's password budget (`check_own_password`).
 async fn confirm_password(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
@@ -163,7 +172,17 @@ async fn confirm_password(
 ) -> ApiResult<Json<PasswordConfirmed>> {
     let now = state.clock.now_ms();
     let hash = session_hash(&headers, &info)?;
-    super::me::check_own_password(&state, &user, &info, proof.password, "password").await?;
+    if sf::methods(&state.db, &user.id).await?.any() {
+        return Err(
+            conflict("the account has a second factor; confirm with it instead").because("second_factor.has_factor")
+        );
+    }
+    let (password,): (Option<String>,) =
+        sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
+    if password.is_none() {
+        return Err(conflict("the account has no password; sign in again instead").because("second_factor.no_password"));
+    }
+    super::me::check_own_password(&state, &user, proof.password, "password").await?;
     sqlx::query("UPDATE sessions SET password_confirmed_at = $1 WHERE token_hash = $2")
         .bind(now)
         .bind(&hash)
@@ -186,6 +205,24 @@ fn method_off() -> ApiError {
     ApiError::forbidden("this method is turned off on this server").because("second_factor.method_off")
 }
 
+/// Until when the session's sign-in through a provider or directory confirms the first factor of
+/// an account that also has a password: the session signed in through it within
+/// `CONFIRMATION_TTL_MS`, the provider is enabled, and the account's identity there is confirmed
+/// (a link made by email address counts once the account proved it, `sso::signin`).
+async fn provider_sign_in_until(state: &AppState, user_id: &str, hash: &str, now: i64) -> ApiResult<Option<i64>> {
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT s.created_at FROM sessions s WHERE s.token_hash = $1 AND s.user_id = $2 \
+         AND s.sign_in_method IN ('provider', 'directory') AND EXISTS (SELECT 1 FROM sso_identities i \
+         JOIN sso_providers p ON p.id = i.provider_id WHERE i.user_id = s.user_id \
+         AND i.provider_id = s.sign_in_provider_id AND i.confirmed = 1 AND p.enabled = 1)",
+    )
+    .bind(hash)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(row.map(|(at,)| at + sf::CONFIRMATION_TTL_MS).filter(|until| *until > now))
+}
+
 /// Until when the session counts as just signed in: its sign-in within `CONFIRMATION_TTL_MS`.
 async fn fresh_sign_in_until(state: &AppState, hash: &str, now: i64) -> ApiResult<Option<i64>> {
     let row: Option<(i64,)> = sqlx::query_as("SELECT created_at FROM sessions WHERE token_hash = $1")
@@ -197,10 +234,12 @@ async fn fresh_sign_in_until(state: &AppState, hash: &str, now: i64) -> ApiResul
 
 /// A stolen session must not plant a factor of its own: adding to an account that already has a
 /// factor, or replacing one, needs a fresh confirmation with it; the first factor of an account
-/// with a password needs a fresh confirmation of the password (`confirmation_required`, reason
-/// `second_factor.confirm_password`); the first factor of an account without one (it signs in
-/// through a provider or a directory) needs a session signed in within the last minutes (reason
-/// `second_factor.sign_in_again`), so the person signs in again first.
+/// with a password needs a fresh confirmation of the password or a sign-in within the last
+/// minutes through a provider or directory the account has a confirmed identity at
+/// (`confirmation_required`, reason `second_factor.confirm_password`); the first factor of an
+/// account without one (it signs in through a provider or a directory) needs a session signed in
+/// within the last minutes (reason `second_factor.sign_in_again`), so the person signs in again
+/// first. The saving transaction checks again (`first_method`).
 async fn require_fresh_to_enroll(state: &AppState, user_id: &str, hash: &str, now: i64) -> ApiResult<Methods> {
     let has = sf::methods(&state.db, user_id).await?;
     if has.any() {
@@ -209,7 +248,10 @@ async fn require_fresh_to_enroll(state: &AppState, user_id: &str, hash: &str, no
     }
     let (password,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(user_id).fetch_one(&state.db).await?;
-    if password.is_some() && password_confirmed_until(state, hash, now).await?.is_none() {
+    if password.is_some()
+        && password_confirmed_until(state, hash, now).await?.is_none()
+        && provider_sign_in_until(state, user_id, hash, now).await?.is_none()
+    {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "confirmation_required",
@@ -256,6 +298,34 @@ struct Saved {
     #[serde(skip_serializing_if = "Option::is_none")]
     passkey: Option<sf::PasskeyInfo>,
     recovery_codes: Option<Vec<String>>,
+}
+
+/// Before a method is saved, inside its transaction and under the account's row lock: whether it
+/// is the account's first. Two first setups at once run one after the other here; the second
+/// finds the first one's method, and like any addition to an account with a factor it then needs
+/// a fresh confirmation with it (`require_fresh_to_enroll` checked the password or the sign-in
+/// only).
+async fn first_method(
+    tx: &mut sqlx::AnyConnection,
+    user_id: &str,
+    hash: &str,
+    had_any: bool,
+    now: i64,
+) -> ApiResult<bool> {
+    lock_account(tx, user_id).await?;
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM user_totp WHERE user_id = $1) + (SELECT COUNT(*) FROM user_passkeys WHERE user_id = $1)",
+    )
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if count == 0 {
+        return Ok(true);
+    }
+    if !had_any {
+        sf::require_fresh(&mut *tx, hash, now).await?;
+    }
+    Ok(false)
 }
 
 /// After a method was saved, inside its transaction: the session that set it up just proved it,
@@ -312,10 +382,13 @@ async fn totp_save(
     let (secret, step) =
         sf::check_totp_setup(&state, &info, sf::Owner::Session(&hash), &user.id, &req.code, now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    let first = first_method(&mut tx, &user.id, &hash, has.any(), now).await?;
+    let (replaced,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM user_totp WHERE user_id = $1").bind(&user.id).fetch_one(&mut *tx).await?;
     sf::save_totp(&mut tx, &state, &user.id, &secret, step, now).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
-    let summary = json!({ "userId": user.id, "method": "totp", "replaced": has.totp.is_some() });
-    let codes = enrolled(&mut tx, &actor, &user.id, &hash, "totp", !has.any(), summary).await?;
+    let summary = json!({ "userId": user.id, "method": "totp", "replaced": replaced > 0 });
+    let codes = enrolled(&mut tx, &actor, &user.id, &hash, "totp", first, summary).await?;
     crate::db::commit(tx).await?;
     sf::notify(&state, &user.id, sf::Notice::Changed);
     Ok(Json(Saved { passkey: None, recovery_codes: codes }))
@@ -429,10 +502,11 @@ async fn passkey_save(
     let has = require_fresh_to_enroll(&state, &user.id, &hash, now).await?;
     let key = sf::finish_passkey_setup(&state, &info, sf::Owner::Session(&hash), &req.credential, now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    let first = first_method(&mut tx, &user.id, &hash, has.any(), now).await?;
     let id = sf::save_passkey(&mut tx, &user.id, &name, &key, now).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user.id, "method": "passkey", "passkeyId": id });
-    let codes = enrolled(&mut tx, &actor, &user.id, &hash, "passkey", !has.any(), summary).await?;
+    let codes = enrolled(&mut tx, &actor, &user.id, &hash, "passkey", first, summary).await?;
     crate::db::commit(tx).await?;
     sf::notify(&state, &user.id, sf::Notice::Changed);
     let passkey = sf::PasskeyInfo { id, name, created_at: now, last_used_at: None };
@@ -718,4 +792,45 @@ async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
         out.push(OrgPolicy { id, name, policy, effective: server.max(own), missing });
     }
     Ok(Json(Overview { server, orgs: out }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two first setups at once: the one that saves second finds the other's method under the
+    /// account's row lock and needs a fresh confirmation with it, as any addition does; a session
+    /// that confirmed it goes on, as an addition and not as the first method.
+    #[tokio::test]
+    async fn a_second_first_setup_meanwhile_needs_the_factor_of_the_first() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        for sql in [
+            "INSERT INTO users (id, email, name, password_hash, created_at) VALUES ('u', 'u@example.de', 'U', 'x', 0)",
+            "INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) VALUES ('s', 'u', 0, 0, 1000000)",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let mut tx = crate::db::begin(&db).await.unwrap();
+        assert!(first_method(&mut tx, "u", "s", false, 10).await.unwrap(), "no method yet: the first");
+        drop(tx);
+        // The other setup saved its app meanwhile.
+        sqlx::query(
+            "INSERT INTO user_totp (user_id, key_id, nonce, ciphertext, last_step, created_at) VALUES ('u', 'k', 'n', 'c', 0, 5)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let mut tx = crate::db::begin(&db).await.unwrap();
+        let refused = first_method(&mut tx, "u", "s", false, 10).await.unwrap_err();
+        assert_eq!(refused.code, "confirmation_required");
+        drop(tx);
+        sqlx::query("UPDATE sessions SET second_factor_at = 8 WHERE token_hash = 's'").execute(&db).await.unwrap();
+        let mut tx = crate::db::begin(&db).await.unwrap();
+        assert!(!first_method(&mut tx, "u", "s", false, 10).await.unwrap(), "confirmed: an addition");
+        drop(tx);
+        // An addition the handler already knew of needs nothing more here.
+        sqlx::query("UPDATE sessions SET second_factor_at = NULL WHERE token_hash = 's'").execute(&db).await.unwrap();
+        let mut tx = crate::db::begin(&db).await.unwrap();
+        assert!(!first_method(&mut tx, "u", "s", true, 10).await.unwrap());
+    }
 }

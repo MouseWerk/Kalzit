@@ -434,6 +434,8 @@
   "datasources.reason.export.frame_missing": "There is no table {frame} to export.",
   "datasources.reason.export.format_unsupported": "A result of the kind “{shape}” cannot be exported as {format}.",
   "datasources.reason.export.too_many_events": "The export would hold more than {max} events. Choose a shorter time range or a filter.",
+  "datasources.reason.export.too_slow": "The export took too long. Choose a shorter time range or a filter.",
+  "datasources.reason.request.filter_too_long": "A filter can be at most {max} characters long.",
   "datasources.reason.export.too_many_rows": "Excel takes at most {max} rows. Export as CSV instead.",
   "datasources.reason.export.too_many_columns": "Excel takes at most {max} columns. Export as CSV instead.",
   "datasources.reason.export.failed": "The file could not be written: {detail}",

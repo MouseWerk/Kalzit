@@ -497,8 +497,10 @@ function needsConfirmation(status: SecurityStatus): boolean {
   if (hasFactor(status)) {
     return !isConfirmed(status);
   }
-  const until = status.hasPassword ? status.passwordConfirmedUntil : status.freshSignInUntil;
-  return until === null || until - 5_000 <= Date.now();
+  const fresh = (until: number | null) => until !== null && until - 5_000 > Date.now();
+  return status.hasPassword
+    ? !fresh(status.passwordConfirmedUntil) && !fresh(status.providerSignInUntil)
+    : !fresh(status.freshSignInUntil);
 }
 
 /**

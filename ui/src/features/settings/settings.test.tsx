@@ -555,6 +555,37 @@ describe("organization settings", () => {
     );
   });
 
+  it("counts the owners and admins it would shut out for an admin who may not read the members", async () => {
+    const { user } = await openAdmin("/settings/organization", {
+      permissions: ["settings:read", "settings:write"],
+      setup: (state) => {
+        state.orgSettings.push({
+          key: "signin.local_password",
+          scope: "org",
+          value: "inherit",
+          default: "inherit",
+          source: "default",
+          editable: true,
+          version: 0,
+          description: "Password sign-in in this organization",
+          updatedAt: null,
+          updatedBy: null,
+        });
+        state.passwordOnly = [
+          { userId: "u2", name: "Grace Hopper", email: "grace@example.com", role: "admin" },
+          { userId: "u3", name: "Ada Lovelace", email: "ada@example.com", role: "owner" },
+        ];
+      },
+    });
+    const local = within(await row("org.signin.local_password"));
+    await user.selectOptions(local.getByRole("combobox"), "off");
+    const dialog = await screen.findByRole("dialog", { name: "Turn password sign-in off?" });
+    expect(
+      within(dialog).getByText(/directory that leads into this organization: 2\./),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(/Grace Hopper/)).toBeNull();
+  });
+
   it("shows settings read-only without settings:write", async () => {
     await openAdmin("/settings/organization", { permissions: ["settings:read"] });
     await screen.findByRole("heading", { level: 2, name: "Organization Analytical Engines" });

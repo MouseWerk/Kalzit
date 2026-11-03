@@ -272,23 +272,25 @@ export interface DownloadedFile {
 }
 
 /**
- * POSTs a JSON body and returns the file the server answers with (exports). Failures are
- * ApiErrors from the JSON error body, as with `request`.
- */
-/**
  * A file of the app itself (a bundled font for a panel image), as a blob; `null` when it cannot
- * be read. Only addresses of this origin are fetched.
+ * be read. Only addresses of this origin are fetched, a redirect is never followed, and the
+ * answer must come from this origin too.
  */
 export async function fetchOwnFile(url: string): Promise<Blob | null> {
   if (new URL(url, window.location.href).origin !== window.location.origin) return null;
   try {
-    const response = await fetch(url, { credentials: "same-origin" });
-    return response.ok ? await response.blob() : null;
+    const response = await fetch(url, { credentials: "same-origin", redirect: "error" });
+    if (!response.ok || new URL(response.url).origin !== window.location.origin) return null;
+    return await response.blob();
   } catch {
     return null;
   }
 }
 
+/**
+ * POSTs a JSON body and returns the file the server answers with (exports). Failures are
+ * ApiErrors from the JSON error body, as with `request`.
+ */
 export async function requestFile(
   path: string,
   body: unknown,

@@ -50,8 +50,12 @@ allow lists and the audit log rely on.
   that wrote it is trusted. The client is the first address that is not in
   `security.trusted_proxies`; entries a client put in front are never read. Scheme and host come
   from the entry the outermost trusted proxy wrote. List every proxy of yours in the chain.
-- **`X-Forwarded-Proto`.** Configure the proxy to **overwrite** this header with the scheme the
-  client used (nginx: `proxy_set_header X-Forwarded-Proto $scheme;`), not to append to it. A
+- **`X-Forwarded-Proto`.** The proxy **must set this header on every request and overwrite**
+  whatever the client sent, with the scheme the client used (nginx:
+  `proxy_set_header X-Forwarded-Proto $scheme;`), not append to it or pass it through. Kalzit
+  takes a trusted proxy's word for the scheme: it decides whether session cookies are marked
+  `Secure` and whether the request counts as HTTPS. Check your proxy's documentation; one that
+  only adds the header when it is missing is not enough. A
   single value counts as it is. When there are several, Kalzit takes the one next to the client's
   address in `X-Forwarded-For` if both lists have the same length (each proxy appended to both),
   and otherwise the last one, written by the proxy in front of Kalzit, so a scheme a client sent

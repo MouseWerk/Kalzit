@@ -238,6 +238,8 @@ async function embedUrls(value: string, base = document.baseURI): Promise<string
   let text = value;
   for (const match of [...value.matchAll(URL_PATTERN)]) {
     const raw = match[2] ?? "";
+    // An empty address would read the page itself.
+    if (raw.trim() === "") return null;
     if (raw.startsWith("data:")) continue;
     const data = await cachedData(raw, base);
     if (data === null) return null;
@@ -255,6 +257,11 @@ export async function embedResources(copy: Element): Promise<void> {
   for (const image of Array.from(copy.querySelectorAll("img"))) {
     const src = image.getAttribute("src") ?? "";
     image.removeAttribute("srcset");
+    // An empty address would read the page itself; such an image shows nothing anyway.
+    if (src.trim() === "") {
+      image.remove();
+      continue;
+    }
     if (src.startsWith("data:")) continue;
     work.push(
       cachedData(src).then((data) => {

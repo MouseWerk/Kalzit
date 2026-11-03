@@ -855,24 +855,41 @@ async fn service_accounts_admins_and_the_last_owner_are_protected() {
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     assert_eq!(t.role_of(&org, &lea).await.as_deref(), Some("owner"));
 
-    // The audit log keeps what lies behind the neutral answers.
-    let reasons: Vec<(Value, Value)> = t
-        .audit_actions()
-        .await
-        .into_iter()
+    // The organization's log has the neutral answers; the server's log keeps what lies behind
+    // them, with the organization and the address.
+    let actions = t.audit_actions().await;
+    let reasons: Vec<(Value, Value)> = actions
+        .iter()
         .filter(|(a, _)| a == "scim.request_refused")
         .map(|(_, s)| (s["reason"].clone(), s["why"].clone()))
         .collect();
     assert_eq!(
         reasons,
         [
-            (json!("scim.account_not_linkable"), json!("email_taken")),
+            (json!("scim.account_not_linkable"), Value::Null),
             (json!("scim.member_unknown"), Value::Null),
-            (json!("scim.account_not_linkable"), json!("account_protected")),
-            (json!("scim.account_not_linkable"), json!("email_unconfirmed")),
+            (json!("scim.account_not_linkable"), Value::Null),
+            (json!("scim.account_not_linkable"), Value::Null),
             (json!("scim.account_protected"), Value::Null),
         ]
     );
+    let behind: Vec<Value> = actions
+        .iter()
+        .filter(|(a, _)| a == "scim.request_refused_reason")
+        .map(|(_, s)| {
+            assert_eq!((&s["orgId"], &s["reason"]), (&json!(org), &json!("scim.account_not_linkable")), "{s}");
+            assert!(s["emailHash"].as_str().is_some_and(|h| h.len() == 32), "{s}");
+            s["why"].clone()
+        })
+        .collect();
+    assert_eq!(behind, [json!("email_taken"), json!("account_protected"), json!("email_unconfirmed")]);
+    let (server_level,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM audit_events WHERE action = 'scim.request_refused_reason' AND org_id IS NULL",
+    )
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(server_level, 3);
     t.finish().await;
 }
 
@@ -1220,9 +1237,10 @@ async fn a_changed_address_of_another_account_gets_the_neutral_answer() {
         .audit_actions()
         .await
         .into_iter()
-        .filter(|(a, _)| a == "scim.request_refused")
-        .map(|(_, s)| (s["reason"].clone(), s["why"].clone()))
+        .filter(|(a, _)| a == "scim.request_refused_reason")
+        .map(|(_, s)| (s["emailHash"].clone(), s["why"].clone()))
         .collect();
-    assert_eq!(refused.last(), Some(&(json!("scim.account_not_linkable"), json!("email_taken"))));
+    let hash = kalzit::audit::email_hash(&t.state, "lea@mueller.example");
+    assert_eq!(refused.last(), Some(&(json!(hash), json!("email_taken"))));
     t.finish().await;
 }

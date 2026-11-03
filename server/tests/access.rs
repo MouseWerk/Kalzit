@@ -294,10 +294,12 @@ async fn members_are_listed_added_changed_and_removed() {
     let r = t.post(&members, json!({ "email": "niemand@example.de", "role": "viewer" }), &owner).await;
     assert_eq!((r.status, r.code(), r.field()), (StatusCode::CONFLICT, "conflict", "email"));
     assert_eq!(r.body["error"]["reason"], "members.invite_instead", "{}", r.body);
-    let refused: (String,) = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'member.add_refused'")
-        .fetch_one(&t.state.db)
-        .await
-        .unwrap();
+    let refused: (String,) = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'member.add_refused_reason' AND org_id IS NULL",
+    )
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
     assert_eq!(serde_json::from_str::<Value>(&refused.0).unwrap()["why"], "no_account");
     let r = t.post(&members, json!({ "email": "niemand@example.de", "role": "superuser" }), &owner).await;
     assert_eq!((r.code(), r.field()), ("validation", "role"), "the role is checked as for an account");
@@ -1290,8 +1292,89 @@ async fn ended_sessions_are_not_listed() {
     t.finish().await;
 }
 
+/// Why an address could not be added is for server administrators only: the organization's log
+/// has the neutral reason, in its list and in its export, also for an entry written before 0.5.4
+/// with the reason in it; the server's log has why, with the organization and the address.
 #[tokio::test]
-async fn password_checks_count_for_the_account_but_are_not_refused_by_it() {
+async fn why_an_address_was_refused_stays_in_the_server_log() {
+    let t = test_app(None).await;
+    let (owner, org) = t.setup().await;
+    t.state.export_limits.write().unwrap().keep_free = 0;
+    let admin = t.member(&owner, &org, "Ada Lovelace", "ada@example.de", "admin").await;
+    sqlx::query(
+        "INSERT INTO audit_events (id, org_id, action, summary, created_at)          VALUES ('alt', $1, 'member.add_refused', '{\"why\":\"other_organization\"}', 1)",
+    )
+    .bind(&org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let r = t
+        .post(&format!("/api/orgs/{org}/members"), json!({ "email": "niemand@example.de", "role": "viewer" }), &admin)
+        .await;
+    assert_eq!((r.status, r.body["error"]["reason"].as_str()), (StatusCode::CONFLICT, Some("members.invite_instead")));
+
+    let list = t.get(&format!("/api/orgs/{org}/audit?limit=200"), &admin).await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+    let refused: Vec<&Value> =
+        list.body["items"].as_array().unwrap().iter().filter(|e| e["action"] == "member.add_refused").collect();
+    assert_eq!(refused.len(), 2, "{}", list.body);
+    assert_eq!(refused[0]["summary"], json!({ "reason": "members.invite_instead" }));
+    assert_eq!(refused[1]["summary"], json!({}), "the reason of an older entry is left out");
+    let export = t.post(&format!("/api/orgs/{org}/audit/export"), json!({ "format": "json" }), &admin).await;
+    assert_eq!(export.status, StatusCode::OK, "{}", export.body);
+    for text in [list.body.to_string(), export.body.to_string()] {
+        assert!(
+            !text.contains("\"why\"") && !text.contains("no_account") && !text.contains("other_organization"),
+            "{text}"
+        );
+        assert!(!text.contains("niemand@example.de"), "{text}");
+    }
+
+    // The server's log keeps why, for its administrators only.
+    let server = t.get("/api/admin/audit?action=member.add_refused", &owner).await;
+    assert_eq!(server.status, StatusCode::OK, "{}", server.body);
+    let items = server.body["items"].as_array().unwrap();
+    let detail = items.iter().find(|e| e["action"] == "member.add_refused_reason").expect("the reason");
+    assert_eq!(detail["orgId"], Value::Null);
+    let hash = kalzit::audit::email_hash(&t.state, "niemand@example.de");
+    assert_eq!(hash.len(), 32);
+    assert_eq!(detail["summary"], json!({ "orgId": org, "emailHash": hash, "why": "no_account" }));
+    assert!(t.audit_summaries().await.iter().all(|s| !s.contains('@')), "no emails in audit summaries");
+    let old = items.iter().find(|e| e["id"] == "alt").unwrap();
+    assert_eq!(old["summary"]["why"], "other_organization", "the server's view keeps older entries whole");
+    // Narrowed to the organization, the server's view and export keep that entry about it.
+    let narrowed = t.get(&format!("/api/admin/audit?orgId={org}&action=member.add_refused"), &owner).await;
+    let actions: Vec<&str> =
+        narrowed.body["items"].as_array().unwrap().iter().map(|e| e["action"].as_str().unwrap()).collect();
+    assert!(actions.contains(&"member.add_refused_reason") && actions.contains(&"member.add_refused"), "{actions:?}");
+    let export = t
+        .post(
+            "/api/admin/audit/export",
+            json!({ "format": "json", "orgId": org, "action": "member.add_refused" }),
+            &owner,
+        )
+        .await;
+    assert_eq!(export.status, StatusCode::OK, "{}", export.body);
+    assert!(
+        export.body.as_array().unwrap().iter().any(|e| e["action"] == "member.add_refused_reason"),
+        "{}",
+        export.body
+    );
+    // Another organization's narrowed view does not.
+    let other = uuid();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+        .bind(&other)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let elsewhere = t.get(&format!("/api/admin/audit?orgId={other}&action=member.add_refused"), &owner).await;
+    assert_eq!(elsewhere.body["items"], json!([]), "{}", elsewhere.body);
+    assert_eq!(t.get("/api/admin/audit", &admin).await.status, StatusCode::FORBIDDEN);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn password_checks_of_a_session_neither_count_for_the_account_nor_are_refused_by_it() {
     let t = test_app(None).await;
     let (owner, _) = t.setup().await;
     let limit = t.state.config.security.login_max_failures;
@@ -1313,8 +1396,8 @@ async fn password_checks_count_for_the_account_but_are_not_refused_by_it() {
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
     t.finish().await;
 
-    // Wrong current passwords of a session count for the account: a sign-in from a browser the
-    // account does not know is refused once they used it up.
+    // Wrong current passwords of a session use up the session's own budget only: a stolen
+    // session cannot lock the owner out of signing in from a browser the account does not know.
     let mut t = test_app(None).await;
     let (owner, _) = t.setup().await;
     for _ in 0..limit {
@@ -1327,7 +1410,7 @@ async fn password_checks_count_for_the_account_but_are_not_refused_by_it() {
     let r = t
         .send(Method::POST, "/api/auth/login", Some(json!({ "email": "joerg@example.de", "password": PASSWORD })), None)
         .await;
-    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     t.finish().await;
 }
 

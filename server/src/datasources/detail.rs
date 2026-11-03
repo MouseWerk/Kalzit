@@ -203,6 +203,7 @@ mod tests {
         "scim.group_updated",
         "scim.memberships_changed",
         "scim.request_refused",
+        "scim.request_refused_reason",
         "scim.token_created",
         "scim.token_revoked",
         "scim.turned_off",

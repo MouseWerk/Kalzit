@@ -108,12 +108,15 @@ describe("panel image", () => {
 
   it("embeds images and CSS images of its own origin, and leaves out the others", async () => {
     const asked: string[] = [];
-    vi.stubGlobal("fetch", (url: string) => {
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
       asked.push(url);
-      return Promise.resolve(new Response(new Blob(["x"], { type: "image/png" })));
+      expect(init?.redirect).toBe("error");
+      const response = new Response(new Blob(["x"], { type: "image/png" }));
+      Object.defineProperty(response, "url", { value: new URL(url, window.location.href).href });
+      return Promise.resolve(response);
     });
     const copy = document.createElement("div");
-    copy.innerHTML = `<img src="/assets/logo.png" srcset="/a.png 2x"><img src="https://example.com/x.png"><span></span><i></i>`;
+    copy.innerHTML = `<img src="/assets/logo.png" srcset="/a.png 2x"><img src="https://example.com/x.png"><img src=""><span></span><i></i>`;
     const [span, mark] = [copy.querySelector("span"), copy.querySelector("i")] as HTMLElement[];
     span?.style.setProperty("background-image", 'url("/assets/icon.svg")');
     mark?.style.setProperty("mask-image", 'url("https://example.com/m.svg")');
@@ -126,6 +129,18 @@ describe("panel image", () => {
     expect(mark?.style.getPropertyValue("mask-image")).toBe("");
     // Only Kalzit's own files are read.
     expect(asked.every((url) => url.startsWith(window.location.origin))).toBe(true);
+  });
+
+  it("takes no file that answers from another origin", async () => {
+    vi.stubGlobal("fetch", () => {
+      const response = new Response(new Blob(["x"], { type: "image/png" }));
+      Object.defineProperty(response, "url", { value: "https://example.com/elsewhere.png" });
+      return Promise.resolve(response);
+    });
+    const copy = document.createElement("div");
+    copy.innerHTML = `<img src="/assets/moved.png">`;
+    await embedResources(copy);
+    expect(copy.querySelectorAll("img")).toHaveLength(0);
   });
 
   it("names the file after the panel", () => {
