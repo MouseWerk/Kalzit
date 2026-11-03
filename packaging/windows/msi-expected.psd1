@@ -24,6 +24,10 @@
             Action = 'KalzitOpenSetup'; Type = 226; Source = 'INSTALLFOLDER'
             Target = '"[System64Folder]rundll32.exe" url.dll,FileProtocolHandler http://localhost:[PORT]/setup'
         }
+        @{
+            Action = 'KalzitOpenSetupHttps'; Type = 226; Source = 'INSTALLFOLDER'
+            Target = '"[System64Folder]rundll32.exe" url.dll,FileProtocolHandler https://localhost:[HTTPSPORT]/setup'
+        }
         # WixUI's check of the folder typed on the folder page, from WiX's own signed DLL.
         @{ Action = 'WixUIValidatePath_X64'; Type = 65; Source = 'WixUiCa_X64'; Target = 'ValidatePath' }
     )

@@ -128,13 +128,24 @@ function Install-Package($Package) {
     }
 }
 
-# Starts a program in the background, its output in the log folder, and records its PID.
-function Start-Server([string] $Name, [string] $Program, [string[]] $Arguments) {
+# Starts a program in the background, its output in the log folder, with the given environment
+# variables, and records its PID. Through WMI (Win32_Process.Create) rather than Start-Process:
+# the Actions runner ends every process a step started when the step ends (they belong to the
+# step's job object), and a process created by WMI belongs to none, so the servers outlive the
+# `start` step. Such a process does not inherit this one's environment, so cmd sets it first.
+function Start-Server([string] $Name, [string] $Program, [string[]] $Arguments, [hashtable] $Environment = @{}) {
     $logs = Join-Path $Data 'logs'
-    $process = Start-Process -FilePath $Program -ArgumentList $Arguments -WindowStyle Hidden -PassThru `
-        -RedirectStandardOutput (Join-Path $logs "$Name.out.log") -RedirectStandardError (Join-Path $logs "$Name.err.log")
-    Add-Content (Join-Path $Data 'pids.txt') "$Name $($process.Id)"
-    Write-Host "started $Name (PID $($process.Id))"
+    $quote = { param($text) '"' + $text + '"' }
+    $settings = @($Environment.GetEnumerator() | ForEach-Object { 'set ' + (& $quote "$($_.Key)=$($_.Value)") + ' && ' }) -join ''
+    $command = (@(& $quote $Program) + @($Arguments | ForEach-Object { & $quote $_ })) -join ' '
+    $line = 'cmd.exe /d /s /c "' + $settings + $command + ' > ' + (& $quote (Join-Path $logs "$Name.out.log")) +
+        ' 2> ' + (& $quote (Join-Path $logs "$Name.err.log")) + '"'
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine = $line; CurrentDirectory = (Split-Path $Program)
+    }
+    if ($result.ReturnValue -ne 0) { throw "starting $Name failed (Win32_Process.Create returned $($result.ReturnValue))" }
+    Add-Content (Join-Path $Data 'pids.txt') "$Name $($result.ProcessId)"
+    Write-Host "started $Name (PID $($result.ProcessId))"
 }
 
 function Start-Servers {
@@ -149,9 +160,8 @@ function Start-Servers {
         '--bind_ip', '127.0.0.1', '--auth', '--logpath', (Join-Path $Data 'logs\mongod.log'))
 
     $opensearch = Get-Home 'opensearch'
-    $env:OPENSEARCH_JAVA_HOME = Join-Path $opensearch 'jdk'
-    $env:OPENSEARCH_JAVA_OPTS = '-Xms512m -Xmx512m'
-    Start-Server 'opensearch' (Join-Path $opensearch 'bin\opensearch.bat') @(
+    $javaOptions = @{ OPENSEARCH_JAVA_HOME = (Join-Path $opensearch 'jdk'); OPENSEARCH_JAVA_OPTS = '-Xms512m -Xmx512m' }
+    Start-Server 'opensearch' (Join-Path $opensearch 'bin\opensearch.bat') -Environment $javaOptions -Arguments @(
         '-Ediscovery.type=single-node', '-Enetwork.host=127.0.0.1', '-Ehttp.port=9201',
         '-Ecluster.routing.allocation.disk.threshold_enabled=false',
         "-Epath.data=$(Join-Path $Data 'opensearch')", "-Epath.logs=$(Join-Path $Data 'logs')")
@@ -180,7 +190,7 @@ function Start-Servers {
     Set-Content (Join-Path $env:NEO4J_CONF 'neo4j.conf') $lines
     & (Join-Path $neo4j 'bin\neo4j-admin.bat') dbms set-initial-password $Neo4jPassword
     if ($LASTEXITCODE -ne 0) { throw "setting Neo4j's password failed with exit code $LASTEXITCODE" }
-    Start-Server 'neo4j' (Join-Path $neo4j 'bin\neo4j.bat') @('console')
+    Start-Server 'neo4j' (Join-Path $neo4j 'bin\neo4j.bat') @('console') @{ JAVA_HOME = $env:JAVA_HOME; NEO4J_CONF = $env:NEO4J_CONF }
     # The configuration folder for `ready`, which runs in a later step.
     Set-Content (Join-Path $Data 'neo4j-conf.txt') $env:NEO4J_CONF
 }
