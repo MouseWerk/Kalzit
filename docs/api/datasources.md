@@ -1290,7 +1290,9 @@ Elasticsearch and OpenSearch hits, and JSON array and NDJSON files. `cursor` on 
 sealed with the server's key over the organization, the user, the data source and the query it
 continues (query, graph steps, `timeRange` and variables), so it continues only the same query
 for the same caller. Any other, changed or made-up cursor is `query_rejected` with reason
-`query.cursor_invalid`, before the source is asked. A cursor never widens what the caller may
+`query.cursor_invalid`, before the source is asked. The cursor also carries the time range the
+first page ran with (the query cache may round a range that ends now), and every later page
+reads that same window from the source itself, past the query cache. A cursor never widens what the caller may
 run: on the panel route it continues a stored query of a dashboard the caller may read, and
 with `cursors` only the targets they name run. Elasticsearch and OpenSearch page with `from`
 inside the query's own `size` and `from`, up to the 10,000 window; a query with
@@ -1898,7 +1900,6 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `mongodb.variable_type` | `name` | a variable that is not text, a number, a boolean or a list of them |
 | `mongodb.variable_in_text` | | `${...}` inside longer text |
 | `mongodb.variable_in_key` | | `${...}` in a key |
-| `mongodb.cursor_invalid` | | the cursor does not belong to this query |
 | `cypher.empty` | | the Cypher query is empty |
 | `cypher.multiple_statements` | | more than one statement |
 | `cypher.not_read_query` | `keyword` | the query does not start with a reading clause (`MATCH`, `WITH`, `RETURN`, ...) |

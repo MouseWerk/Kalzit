@@ -73,4 +73,27 @@ describe("load more in a dashboard's document panel", () => {
     );
     expect(server.areas.dashboards.panelQueries.at(-1)?.body.cursors).toEqual({});
   });
+  it("waits while the panel reloads, and pages continue the answer's own request", async () => {
+    const { server, user } = open();
+    const orders = await screen.findByRole("article", { name: "Orders" }, { timeout: 4000 });
+    await within(orders).findByText(/Cut off at 1,000 documents/);
+    // A refresh keeps the old answer on screen until the new one is there: its cursor belongs
+    // to the old request, so no page can be asked for meanwhile.
+    server.areas.dashboards.holdPanelQueries = true;
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(within(orders).getByRole("button", { name: "Load more documents" })).toHaveProperty(
+        "disabled",
+        true,
+      ),
+    );
+    server.areas.dashboards.release();
+    const more = within(orders).getByRole("button", { name: "Load more documents" });
+    await waitFor(() => expect(more).toHaveProperty("disabled", false));
+    const answered = server.areas.dashboards.panelQueries.at(-1)?.body.timeRange;
+    await user.click(more);
+    await within(orders).findByText("1,200 documents.");
+    // The page went out with the time range of the answer it continues.
+    expect(server.areas.dashboards.panelQueries.at(-1)?.body.timeRange).toEqual(answered);
+  });
 });

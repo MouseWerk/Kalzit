@@ -753,8 +753,8 @@ impl Paging {
     /// The position of the page after one that kept `kept` hits, while the query wants more and
     /// the search window (`from` + `size` up to 10,000) still reaches them.
     fn next(self, kept: usize) -> Option<String> {
-        let next = self.offset + kept as u64;
-        (next < self.wanted && self.from + next < MAX_WINDOW).then(|| next.to_string())
+        let next = self.offset.saturating_add(kept as u64);
+        (next < self.wanted && self.from.saturating_add(next) < MAX_WINDOW).then(|| next.to_string())
     }
 }
 
@@ -820,16 +820,23 @@ fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, S
         // A later page starts `offset` hits further into the query's own window.
         let offset = super::cursor::offset(req.cursor.as_deref())?;
         let wanted = body.get("size").and_then(Value::as_u64).or(q.size).unwrap_or(DEFAULT_SIZE);
-        let from = body.get("from").and_then(Value::as_u64).unwrap_or(0);
+        // A `from` that is no whole number is the cluster's to refuse; such a query has no pages.
+        let own_from = match body.get("from") {
+            None => Some(0),
+            Some(v) => v.as_u64(),
+        };
+        let from = own_from.unwrap_or(0);
         let left = wanted.saturating_sub(offset);
         let mut size = left.min(max);
         if offset > 0 {
             // A later page stays inside the window the cluster answers (`Paging::next`).
-            size = size.min(MAX_WINDOW.saturating_sub(from + offset));
-            body.insert("from".into(), json!(from + offset));
+            let start = from.saturating_add(offset);
+            size = size.min(MAX_WINDOW.saturating_sub(start));
+            body.insert("from".into(), json!(start));
         }
         // `search_after` pages on its own; `from` cannot be added to it.
-        let paging = (!body.contains_key("search_after")).then_some(Paging { from, offset, wanted });
+        let paging =
+            (own_from.is_some() && !body.contains_key("search_after")).then_some(Paging { from, offset, wanted });
         (size, left > size, paging)
     };
     body.insert("size".into(), json!(size));
@@ -1608,6 +1615,12 @@ mod tests {
         let s = page(json!({ "dsl": { "size": 20_000 } }), Some("9950"), 1000);
         assert_eq!((s.body["from"].as_u64(), s.body["size"].as_u64()), (Some(9950), Some(50)));
         assert_eq!(s.paging.unwrap().next(50), None);
+        // Positions near the end of the number range do not overflow.
+        let far = Paging { from: u64::MAX - 1, offset: u64::MAX - 1, wanted: u64::MAX };
+        assert_eq!(far.next(5), None);
+        // A `from` that is no whole number gives no pages.
+        assert!(page(json!({ "dsl": { "from": "zehn" } }), None, 100).paging.is_none());
+        assert!(page(json!({ "dsl": { "from": -1 } }), None, 100).paging.is_none());
         // search_after pages on its own; aggregations answer a frame.
         assert!(page(json!({ "dsl": { "search_after": [1], "sort": ["a"] } }), None, 100).paging.is_none());
         assert!(page(json!({ "dsl": { "aggs": { "t": { "terms": { "field": "a" } } } } }), None, 100).paging.is_none());

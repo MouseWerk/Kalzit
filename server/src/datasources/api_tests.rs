@@ -3413,7 +3413,9 @@ async fn document_cursors_continue_only_their_caller_and_query() {
     t.set("datasources.file_dirs", json!([files.to_string_lossy()]));
     let mut ids = Vec::new();
     for name in ["Log", "Log 2"] {
-        let settings = json!({ "path": files.join("log.ndjson").to_string_lossy(), "format": "ndjson" });
+        // With the query cache on: later pages pass it by.
+        let settings =
+            json!({ "path": files.join("log.ndjson").to_string_lossy(), "format": "ndjson", "cacheEnabled": true });
         let r = t.post("/datasources", json!({ "name": name, "kind": "file", "settings": settings })).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
         ids.push(r.body["id"].as_str().unwrap().to_string());
@@ -3431,12 +3433,23 @@ async fn document_cursors_continue_only_their_caller_and_query() {
     let set = &first.body["results"]["A"]["result"]["documents"];
     assert_eq!(set["documents"], json!([{ "n": 1 }, { "n": 2 }]), "{}", first.text);
     assert_eq!(set["truncated"]["limit"], 2);
+    assert_eq!(first.body["results"]["A"]["cache"]["status"], "miss", "{}", first.text);
     let cursor = set["nextCursor"].as_str().unwrap().to_string();
     assert_ne!(cursor, "2", "the caller never sees the source's own position");
-    let second = t.query(&t.owner, item(&ids[0], Some(&cursor))).await;
-    let set = &second.body["results"]["A"]["result"]["documents"];
-    assert_eq!(set["documents"], json!([{ "n": 3 }]), "{}", second.text);
-    assert!(set.get("nextCursor").is_none(), "{}", second.text);
+    for _ in 0..2 {
+        let second = t.query(&t.owner, item(&ids[0], Some(&cursor))).await;
+        let set = &second.body["results"]["A"]["result"]["documents"];
+        assert_eq!(set["documents"], json!([{ "n": 3 }]), "{}", second.text);
+        assert!(set.get("nextCursor").is_none(), "{}", second.text);
+        // Read from the source each time, never kept in or served from the cache.
+        assert!(second.body["results"]["A"].get("cache").is_none(), "{}", second.text);
+    }
+    // The first page again is a hit, and its cursor continues it all the same.
+    let again = t.query(&t.owner, item(&ids[0], None)).await;
+    assert_eq!(again.body["results"]["A"]["cache"]["status"], "hit", "{}", again.text);
+    let hit = again.body["results"]["A"]["result"]["documents"]["nextCursor"].as_str().unwrap().to_string();
+    let next = t.query(&t.owner, item(&ids[0], Some(&hit))).await;
+    assert_eq!(next.body["results"]["A"]["result"]["documents"]["documents"], json!([{ "n": 3 }]), "{}", next.text);
 
     // Another data source, another user, a changed or a made-up cursor: refused unrun.
     let refused = t.query(&t.owner, item(&ids[1], Some(&cursor))).await;

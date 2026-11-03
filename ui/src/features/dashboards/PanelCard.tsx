@@ -188,7 +188,7 @@ export function PanelCard({
   });
   const results = usePanelResults({ ...query, panel });
   // Pages loaded after the answer through its document sets' cursors.
-  const paged = usePanelPages({ ...query, panel }, results.data);
+  const paged = usePanelPages({ ...query, panel }, results);
   // Retry after a data source error: the same request again. Stable, so the body is not drawn
   // again for it.
   const { refetch } = results;
@@ -1041,7 +1041,7 @@ function MoreButtons({
           key={refId}
           type="button"
           className="button button--secondary button--small"
-          disabled={more.loading !== null}
+          disabled={more.loading !== null || more.disabled}
           onClick={() => more.load(refId, cursor)}
         >
           {more.loading === refId

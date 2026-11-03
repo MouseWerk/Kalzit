@@ -759,7 +759,6 @@
   "datasources.reason.mongodb.variable_in_text": "Eine Variable muss der ganze Wert sein; in längeren Text wird sie nie eingesetzt.",
   "datasources.reason.mongodb.variable_in_key": "Variablen können nur für Werte stehen, nicht für Schlüssel.",
   "datasources.reason.query.cursor_invalid": "Die Seitenmarke gehört nicht zu dieser Abfrage oder diesem Konto. Führe die Abfrage von vorn aus.",
-  "datasources.reason.mongodb.cursor_invalid": "Die Seitenmarke gehört nicht zu dieser Abfrage. Führe sie von vorn aus.",
   "datasources.reason.mongodb.database_reserved": "Das ist eine Datenbank des Servers selbst. Wähle die Datenbank mit deinen Daten.",
   "datasources.reason.mongodb.socket_member": "Der Server nennt einen Unix-Socket als Mitglied des Verbunds. Kalzit verbindet sich nur mit Hosts im Netzwerk.",
   "datasources.reason.mongodb.privileges_unknown": "Der Server nennt die Rechte des Logins nicht, deshalb kann Kalzit nicht prüfen, dass er nur lesen darf.",
