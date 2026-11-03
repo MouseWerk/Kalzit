@@ -11,15 +11,21 @@ is described in [HTTPS and certificates](https.md).
 
 ## Debian, Ubuntu, Fedora, RHEL (deb and rpm)
 
-Every release has `kalzit-<version>-linux-x64.deb` and `kalzit-<version>-linux-x64.rpm` for x86-64.
-They need the glibc the release binary was built against (the package says which and refuses an
+Every release has the packages for x86-64 (`kalzit-<version>-linux-x64.deb`,
+`kalzit-<version>-linux-x64.rpm`) and for 64-bit ARM such as AWS Graviton, Ampere or a Raspberry
+Pi 4 or 5 with a 64-bit system (`kalzit-<version>-linux-arm64.deb`,
+`kalzit-<version>-linux-arm64.rpm`); `uname -m` says which one a machine needs (`x86_64` or
+`aarch64`). The plain binaries `kalzit-<version>-linux-x64` and `kalzit-<version>-linux-arm64` are
+in the release too. The packages need the glibc the release binary was built against (the package says which and refuses an
 older system): Debian 13, Ubuntu 24.04, Fedora 41, RHEL, Rocky and AlmaLinux 10 or newer. Both
 are listed with their size, SHA-256 and signature in the release's signed manifest
 (`kalzit-<version>-manifest.json`), next to the binaries.
 
 ### Install
 
-Download the package from the [releases](https://github.com/MouseWerk/Kalzit/releases), then:
+Download the package for your processor from the
+[releases](https://github.com/MouseWerk/Kalzit/releases), then (on ARM, `arm64` in place of
+`x64`):
 
 ```sh
 # Debian, Ubuntu
@@ -91,7 +97,7 @@ service stopped, the new key in `KALZIT_SECRETS_NEW_KEY`, then the credential fi
 Installed from a package, the package manager owns `/usr/bin/kalzit`: **Administration**
 (Verwaltung) > **Updates** shows a new release with its notes and the command that installs it,
 and neither the web interface nor `kalzit update apply` replaces the program. Download the new
-package and install it like the first one:
+package for the same processor and install it like the first one:
 
 ```sh
 sudo apt install ./kalzit-0.5.1-linux-x64.deb   # or: sudo dnf install ./kalzit-0.5.1-linux-x64.rpm

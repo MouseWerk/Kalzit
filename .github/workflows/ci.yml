@@ -964,14 +964,27 @@ jobs:
 
   # The deb and rpm (deploy/linux): built with nfpm from a Linux binary (the faster e2e profile),
   # then installed, started, checked and removed on the runner under its own systemd and in
-  # Debian and Fedora containers (.github/scripts/package-smoke.sh). Release tags build them
-  # from the release binary (release.yml).
+  # Debian and Fedora containers (.github/scripts/package-smoke.sh). Once for x64 and once for
+  # arm64, each built natively on a runner of that processor, as release.yml builds the release
+  # binaries and packages from them. The x64 check keeps its name `packages`.
   packages:
-    name: packages
+    name: packages${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            nfpm-archive: Linux_x86_64
+            nfpm-sha256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            nfpm-archive: Linux_arm64
+            nfpm-sha256: 1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -993,24 +1006,44 @@ jobs:
       - run: npm run build
         working-directory: ui
       - run: cargo build --profile e2e --locked -p kalzit --bin kalzit
+      # The binary names its version and the processor it was built for, as the About page and
+      # the update check see it.
+      - name: The binary runs
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          target/e2e/kalzit --version
+          case "$(uname -m)-$ARCH" in
+            x86_64-x64 | aarch64-arm64) ;;
+            *) echo "::error::runner $(uname -m) does not build $ARCH"; exit 1 ;;
+          esac
       - name: Install nfpm
         env:
           NFPM_VERSION: 2.47.0
-          NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+          NFPM_ARCHIVE: ${{ matrix.nfpm-archive }}
+          NFPM_SHA256: ${{ matrix.nfpm-sha256 }}
         run: |
           set -euo pipefail
-          archive="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          archive="nfpm_${NFPM_VERSION}_${NFPM_ARCHIVE}.tar.gz"
           curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/$archive"
           echo "$NFPM_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" nfpm
           sudo install -m 0755 "$RUNNER_TEMP/nfpm" /usr/local/bin/nfpm
       - name: Build the packages
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
+          set -euo pipefail
           version="$(grep -m1 '^version = ' server/Cargo.toml | cut -d'"' -f2)"
           deploy/linux/package.sh "$version" target/e2e/kalzit dist
           ls -l dist
-          dpkg-deb --info dist/*.deb
-          dpkg-deb --contents dist/*.deb
+          dpkg-deb --info "dist/kalzit-$version-linux-$ARCH.deb"
+          dpkg-deb --contents "dist/kalzit-$version-linux-$ARCH.deb"
+          want=amd64
+          [ "$ARCH" = arm64 ] && want=arm64
+          [ "$(dpkg-deb -f "dist/kalzit-$version-linux-$ARCH.deb" Architecture)" = "$want" ] \
+            || { echo "::error::the deb is not for $want"; exit 1; }
       - run: .github/scripts/package-smoke.sh dist
 
   # Ordering certificates from pebble, Let's Encrypt's ACME test server, built from its source at

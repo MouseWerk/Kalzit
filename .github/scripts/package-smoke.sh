@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test of the Linux packages (package-smoke.sh DIST_DIR, on an Ubuntu runner with sudo
-# and Docker; DIST_DIR holds one kalzit-*-linux-x64.deb and one .rpm):
+# and Docker; DIST_DIR holds one kalzit-*-linux-<arch>.deb and one .rpm, x64 or arm64, built for
+# the runner's processor):
 #
 # 1. the deb on the runner itself, under its real systemd: the service starts as `kalzit` with
 #    the hardened unit, answers /readyz, uses the secrets key from the credential store (no key
@@ -16,8 +17,8 @@
 set -euo pipefail
 
 dist=$(cd "${1:?usage: package-smoke.sh DIST_DIR}" && pwd)
-deb=$(ls "$dist"/kalzit-*-linux-x64.deb)
-rpm=$(ls "$dist"/kalzit-*-linux-x64.rpm)
+deb=$(ls "$dist"/kalzit-*-linux-*.deb)
+rpm=$(ls "$dist"/kalzit-*-linux-*.rpm)
 
 fail() {
   echo "::error::$1"

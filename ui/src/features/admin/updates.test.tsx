@@ -296,6 +296,21 @@ describe("updates page", () => {
     expect(screen.queryByRole("button", { name: "Install now" })).toBeNull();
   });
 
+  it("names the package for the server's processor when a package manager owns the binary", async () => {
+    await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: () =>
+        updatesRoutes(
+          status({
+            installed: { version: "0.1.0", platform: "linux", arch: "arm64", since: null },
+            mode: { automatic: false, reason: "updates.mode_deb" },
+          }),
+        ),
+    });
+    expect(await screen.findByText("sudo apt install ./kalzit-0.2.0-linux-arm64.deb")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Install now" })).toBeNull();
+  });
+
   it("uploads an offline package", async () => {
     let calls: Call[] = [];
     const { user } = await openAdmin("/admin/server/updates", {

@@ -17,7 +17,7 @@
 //! Installed from the deb or rpm package, the package manager owns `/usr/bin/kalzit`: Kalzit
 //! neither replaces it itself nor through `kalzit update apply`, which would leave the package
 //! database behind the installed version. The status says to install the release's package
-//! instead (`apt install ./kalzit-<version>-linux-x64.deb`, `dnf install ./...rpm`); the
+//! instead (`apt install ./kalzit-<version>-linux-<arch>.deb`, `dnf install ./...rpm`); the
 //! package's scripts restart the service.
 
 use std::path::Path;
@@ -129,11 +129,12 @@ pub enum Package {
 }
 
 impl Package {
-    /// How to install a release's package of this kind.
-    pub fn command(self, version: &str) -> String {
+    /// How to install a release's package of this kind for the processor `arch` (`x64` or
+    /// `arm64`).
+    pub fn command(self, version: &str, arch: &str) -> String {
         match self {
-            Package::Deb => format!("sudo apt install ./kalzit-{version}-linux-x64.deb"),
-            Package::Rpm => format!("sudo dnf install ./kalzit-{version}-linux-x64.rpm"),
+            Package::Deb => format!("sudo apt install ./kalzit-{version}-linux-{arch}.deb"),
+            Package::Rpm => format!("sudo dnf install ./kalzit-{version}-linux-{arch}.rpm"),
         }
     }
 }
@@ -291,8 +292,10 @@ mod tests {
         assert_eq!(package_from_marker("rpm"), Some(Package::Rpm));
         assert_eq!(package_from_marker(""), None);
         assert_eq!(package_from_marker("snap"), None);
-        assert_eq!(Package::Deb.command("0.5.0"), "sudo apt install ./kalzit-0.5.0-linux-x64.deb");
-        assert_eq!(Package::Rpm.command("0.5.0"), "sudo dnf install ./kalzit-0.5.0-linux-x64.rpm");
+        assert_eq!(Package::Deb.command("0.5.0", "x64"), "sudo apt install ./kalzit-0.5.0-linux-x64.deb");
+        assert_eq!(Package::Rpm.command("0.5.0", "x64"), "sudo dnf install ./kalzit-0.5.0-linux-x64.rpm");
+        assert_eq!(Package::Deb.command("0.5.0", "arm64"), "sudo apt install ./kalzit-0.5.0-linux-arm64.deb");
+        assert_eq!(Package::Rpm.command("0.5.0", "arm64"), "sudo dnf install ./kalzit-0.5.0-linux-arm64.rpm");
         // A binary somewhere else is not the package's, whatever the marker says.
         assert_eq!(installed_package(Path::new("/opt/kalzit/kalzit")), None);
     }
@@ -302,6 +305,9 @@ mod tests {
         let p = Platform::current();
         if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
             assert_eq!(p.name(), "linux-x64");
+        }
+        if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+            assert_eq!(p.name(), "linux-arm64");
         }
         if cfg!(all(windows, target_arch = "x86_64")) {
             assert_eq!(p.name(), "windows-x64");
