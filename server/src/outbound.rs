@@ -92,6 +92,70 @@ pub fn check_url(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Kalzit's own addresses, which a proxy address must never name: its listeners
+/// (`server.http_addr`, `server.https_addr`) and the server of its own database (PostgreSQL).
+#[derive(Clone, Debug, Default)]
+pub struct OwnAddresses {
+    /// The listeners; an unspecified address (`0.0.0.0`, `::`) listens on every address of this
+    /// computer, so its loopback names and addresses count.
+    pub listeners: Vec<std::net::SocketAddr>,
+    /// The host (lowercase, without brackets) and port of Kalzit's own database server.
+    pub database: Option<(String, u16)>,
+}
+
+impl OwnAddresses {
+    pub fn of(config: &crate::config::Config) -> Self {
+        let listeners = [&config.server.http_addr, &config.server.https_addr]
+            .into_iter()
+            .filter_map(|a| a.trim().parse::<std::net::SocketAddr>().ok())
+            .collect();
+        let url = config.database_url();
+        let database =
+            Url::parse(&url).ok().filter(|u| matches!(u.scheme(), "postgres" | "postgresql")).and_then(|u| {
+                let host = normalize(u.host_str()?.trim_matches(['[', ']']));
+                (!host.is_empty()).then_some((host, u.port().unwrap_or(5432)))
+            });
+        Self { listeners, database }
+    }
+}
+
+/// Whether `host` names this computer by its loopback name or address.
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || parse_ip_literal(host).is_some_and(|ip| crate::datasources::targets::canonical_ip(ip).is_loopback())
+}
+
+/// Refuses a proxy address (`network.proxy_url`) that names Kalzit itself: one of its listeners or
+/// its own database server. Requests sent there would reach Kalzit's own API or database with
+/// Kalzit's requests and the proxy's sign-in. Names are compared as written, without resolving.
+pub fn check_not_own(text: &str, own: &OwnAddresses) -> Result<(), String> {
+    let Ok(url) = Url::parse(text) else { return Ok(()) };
+    let Some(host) = url.host_str() else { return Ok(()) };
+    let host = normalize(host.trim_matches(['[', ']']));
+    let Some(port) = url.port_or_known_default() else { return Ok(()) };
+    let ip = parse_ip_literal(&host).map(crate::datasources::targets::canonical_ip);
+    for listener in &own.listeners {
+        if listener.port() != port {
+            continue;
+        }
+        let at = crate::datasources::targets::canonical_ip(listener.ip());
+        let same = ip == Some(at)
+            || ((at.is_unspecified() || at.is_loopback())
+                && (is_loopback_host(&host) || ip.is_some_and(|i| i.is_unspecified())));
+        if same {
+            return Err(format!("{host}:{port} is Kalzit's own listener"));
+        }
+    }
+    if let Some((db_host, db_port)) = &own.database
+        && *db_port == port
+        && (*db_host == host || (is_loopback_host(db_host) && is_loopback_host(&host)))
+    {
+        return Err(format!("{host}:{port} is Kalzit's own database server"));
+    }
+    Ok(())
+}
+
 /// Checks a `network.no_proxy` entry.
 pub fn check_bypass(text: &str) -> Result<(), String> {
     parse_bypass(text)
@@ -196,6 +260,8 @@ pub async fn current(state: &AppState) -> ApiResult<Option<Arc<OutboundProxy>>> 
         Some(u) if !u.is_empty() => load_password(&state.db, &state.secrets, url).await?,
         _ => None,
     };
+    // A proxy stored before this check existed, or set through the environment, is refused too.
+    check_not_own(url, &OwnAddresses::of(&state.config)).map_err(|e| ApiError::internal("outbound proxy", e))?;
     let proxy =
         OutboundProxy::new(url, &no_proxy, username, password).map_err(|e| ApiError::internal("outbound proxy", e))?;
     Ok(proxy.map(Arc::new))
@@ -287,6 +353,30 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn a_proxy_never_names_kalzits_own_listener_or_database() {
+        let own = OwnAddresses {
+            listeners: vec!["0.0.0.0:3000".parse().unwrap(), "10.0.0.7:3443".parse().unwrap()],
+            database: Some(("db.example.test".into(), 5432)),
+        };
+        for bad in [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+            "http://0.0.0.0:3000",
+            "https://10.0.0.7:3443",
+            "http://DB.example.test:5432",
+        ] {
+            assert!(check_not_own(bad, &own).is_err(), "{bad}");
+        }
+        for good in ["", "http://localhost:3128", "http://proxy.example.test:5432", "http://db.example.test:3128"] {
+            assert!(check_not_own(good, &own).is_ok(), "{good}");
+        }
+        // A database on this computer: any loopback name of the same port.
+        let local = OwnAddresses { listeners: Vec::new(), database: Some(("localhost".into(), 5432)) };
+        assert!(check_not_own("http://127.0.0.1:5432", &local).is_err());
     }
 
     #[test]

@@ -534,6 +534,8 @@ async fn people_in_another_organization_are_invited_not_added() {
     let r = app.post(&members, json!({ "email": "paul@example.com", "role": "viewer" }), &owner).await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "members.invite_instead"), "{}", r.body);
     assert_eq!(r.body["error"]["field"], "email");
+    // The answer does not say that the account belongs to another organization.
+    assert!(!r.body.to_string().contains("organization"), "{}", r.body);
     // An account in no organization yet is still added directly.
     app.user(&owner, "Nora Neu", "nora@example.com").await;
     let r = app.post(&members, json!({ "email": "nora@example.com", "role": "viewer" }), &owner).await;
@@ -562,21 +564,6 @@ impl TestApp {
         .await
         .unwrap();
         joined
-    }
-
-    /// Sets an organization setting through the API.
-    async fn set_org(&self, org: &str, key: &str, value: Value, who: &Session) {
-        let settings = self.get(&format!("/api/orgs/{org}/settings"), who).await;
-        let version = settings.body["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|s| s["key"] == key)
-            .map(|s| s["version"].as_i64().unwrap())
-            .unwrap();
-        let path = format!("/api/orgs/{org}/settings/{key}");
-        let r = self.send(Method::PATCH, &path, Some(json!({ "value": value, "version": version })), Some(who)).await;
-        assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
     }
 
     /// A SCIM user of `org` made through its SCIM token; answers the account id.
@@ -623,7 +610,7 @@ async fn scim_ownership_ending_ends_the_binding_of_its_membership() {
     assert_eq!(app.joined_by(&org, "sina@example.com").await, "direct");
     assert_eq!(app.joined_by(&second, "sina@example.com").await, "invitation");
     // The first organization turns password sign-in off: her password still signs her in.
-    app.set_org(&org, "signin.local_password", json!("off"), &owner).await;
+    store_org_setting(&app.state, &org, "signin.local_password", "off").await;
     assert_eq!(app.login("sina@example.com", PASSWORD).await.status, StatusCode::OK);
     app.finish().await;
 }
@@ -1055,7 +1042,7 @@ async fn a_copied_link_makes_an_unconfirmed_account_until_it_confirms_by_mail() 
     let r = app
         .post(&format!("/api/orgs/{other}/members"), json!({ "email": "nora@example.com", "role": "viewer" }), &owner)
         .await;
-    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "mail.email_unconfirmed"));
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "members.invite_instead"));
     // Without a mail server the address cannot be confirmed.
     let r = app.post("/api/me/email-confirmation", json!({}), &nora).await;
     assert_eq!(r.reason(), "mail.reset_unavailable");
@@ -1180,17 +1167,11 @@ async fn a_team_with_a_team_space_takes_invitations_from_maintainers_and_admins_
 async fn a_new_account_from_an_invitation_sets_up_a_required_second_factor_first() {
     let app = test_app(Setup::NoMail).await;
     let (owner, org) = app.setup().await;
-    let r = app
-        .send(
-            Method::PATCH,
-            &format!("/api/orgs/{org}/settings/security.two_factor_required"),
-            Some(json!({ "value": "everyone", "version": 0 })),
-            Some(&owner),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // Invited first: once the rule holds, the owner (without a second factor) is refused inside
+    // the organization too (docs/api/access.md, "Organization sign-in rules").
     let r = app.invite(&org, &["nora@example.com"], "viewer", &owner).await;
     let link = r.body["items"][0]["link"].as_str().unwrap().to_string();
+    store_org_setting(&app.state, &org, "security.two_factor_required", "everyone").await;
     let token = link.rsplit('#').next().unwrap();
     let r = app
         .public("/api/auth/invitation/accept", json!({ "token": token, "name": "Nora", "password": PASSWORD }))
@@ -1341,4 +1322,21 @@ async fn service_accounts_get_no_invitations_or_password_links() {
         sqlx::query_as("SELECT COUNT(*) FROM invitations").fetch_one(&app.state.db).await.unwrap();
     assert_eq!((links, invitations), (0, 0));
     app.finish().await;
+}
+
+/// Stores an organization setting directly, as an admin signed in through a provider (and with a
+/// second factor) would; the API refuses rules that would lock out the password session saving
+/// them (docs/api/access.md, "Organization sign-in rules").
+async fn store_org_setting(state: &kalzit::app::AppState, org: &str, key: &str, value: &str) {
+    sqlx::query(
+        "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at) VALUES ($1, $2, $3, 1, NULL, 0) \
+         ON CONFLICT (org_id, key) DO UPDATE SET value = excluded.value, version = org_settings.version + 1",
+    )
+    .bind(org)
+    .bind(key)
+    .bind(serde_json::Value::from(value).to_string())
+    .execute(&state.db)
+    .await
+    .unwrap();
+    kalzit::settings::cache(state).invalidate(Some(org));
 }

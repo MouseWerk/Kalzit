@@ -33,7 +33,10 @@
 
       <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_X64" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
       <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
-      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="KalzitOpenSetup" Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed" />
+      <!-- The setup page opens only for a port that is a whole number from 1 to 65535 (a property
+           that is no number compares false), over HTTPS when that was chosen as the listener. -->
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="KalzitOpenSetup" Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed AND HTTPS = &quot;off&quot; AND PORT &gt;= 1 AND PORT &lt;= 65535" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="KalzitOpenSetupHttps" Order="2" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed AND HTTPS &lt;&gt; &quot;off&quot; AND HTTPSPORT &gt;= 1 AND HTTPSPORT &lt;= 65535" />
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
 
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="KalzitLicenseDlg" Condition="NOT Installed" />
@@ -187,6 +190,13 @@
         Id="KalzitOpenSetup"
         Directory="INSTALLFOLDER"
         ExeCommand="&quot;[System64Folder]rundll32.exe&quot; url.dll,FileProtocolHandler http://localhost:[PORT]/setup"
+        Execute="immediate"
+        Impersonate="yes"
+        Return="asyncNoWait" />
+    <CustomAction
+        Id="KalzitOpenSetupHttps"
+        Directory="INSTALLFOLDER"
+        ExeCommand="&quot;[System64Folder]rundll32.exe&quot; url.dll,FileProtocolHandler https://localhost:[HTTPSPORT]/setup"
         Execute="immediate"
         Impersonate="yes"
         Return="asyncNoWait" />

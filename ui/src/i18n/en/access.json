@@ -158,6 +158,8 @@
   "access.sso.outcome.no_account.detail": "{provider} recognized you, but new accounts are only created here with an invitation. Ask an admin of your organization for one.",
   "access.sso.outcome.email_taken.title": "Your account cannot be linked.",
   "access.sso.outcome.email_taken.detail": "The email address is not confirmed here yet, or {provider} did not confirm it. Ask an admin of your organization.",
+  "access.sso.outcome.link_refused.title": "Your account is not linked to {provider}.",
+  "access.sso.outcome.link_refused.detail": "Your account here signs in another way and has nothing to prove it with, so it is not linked by its email address. Sign in the way you usually do.",
   "access.ssoTest.title": "Test sign-in finished",
   "access.ssoTest.text": "Test sign-in finished. You can close this window.",
   "access.invite.pageTitle": "Invitation",

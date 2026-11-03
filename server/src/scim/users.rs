@@ -611,11 +611,11 @@ async fn existing_account(conn: &mut sqlx::AnyConnection, ctx: &Ctx<'_>, email: 
     .bind(ctx.org_id)
     .fetch_one(&mut *conn)
     .await?;
+    // The refusal names no other organization: the directory learns only that the account cannot
+    // be linked.
     if here == 0 && elsewhere > 0 {
-        return Err(ScimError::taken(
-            "an account with this email belongs to another organization; invite the person instead",
-        )
-        .because("scim.account_in_other_org"));
+        return Err(ScimError::taken("an account with this email cannot be linked; invite the person instead")
+            .because("scim.account_not_linkable"));
     }
     Ok(Some(account.id))
 }

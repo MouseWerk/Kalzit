@@ -360,7 +360,8 @@ function AddMemberDialog({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("viewer");
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
-  // The person belongs to another organization: they join only by accepting an invitation.
+  // The account cannot be added directly (another organization, or an unconfirmed address):
+  // the person joins only by accepting an invitation.
   const [inviteInstead, setInviteInstead] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const roleId = useId();
@@ -373,15 +374,13 @@ function AddMemberDialog({
         const reason = errorReason(error)?.reason;
         setInviteInstead(reason === "members.invite_instead");
         setEmailError(
-          reason === "mail.email_unconfirmed"
-            ? t("admin.members.unconfirmed")
-            : reason === "members.invite_instead"
-              ? t(
-                  onInvite === undefined
-                    ? "admin.members.inviteInsteadNoRight"
-                    : "admin.members.inviteInstead",
-                )
-              : errorText(t, error, ADD_MEMBER_ERRORS),
+          reason === "members.invite_instead"
+            ? t(
+                onInvite === undefined
+                  ? "admin.members.inviteInsteadNoRight"
+                  : "admin.members.inviteInstead",
+              )
+            : errorText(t, error, ADD_MEMBER_ERRORS),
         );
         emailRef.current?.focus();
       }

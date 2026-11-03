@@ -337,5 +337,8 @@
   "settings.mail.sends.reset": "Passwort zurücksetzen",
   "settings.mail.sends.resetNote": "Link, 60 Minuten gültig",
   "settings.mail.sends.tests": "Testmails",
-  "settings.mail.sends.testsNote": "Von dieser Seite"
+  "settings.mail.sends.testsNote": "Von dieser Seite",
+  "settings.orgRules.signInFirst": "Melde dich zuerst über den Anbieter an: Du bist mit Passwort angemeldet und würdest dich sonst aus der Organisation aussperren.",
+  "settings.orgRules.noProvider": "Noch führt kein Anmeldeanbieter in diese Organisation. Richte zuerst einen mit Gruppenzuordnung ein, sonst könnte sich hier niemand anmelden.",
+  "settings.orgRules.setupFirst": "Richte zuerst unter Anmeldung und Sicherheit deinen eigenen zweiten Faktor ein; sonst würde dich diese Regel aus der Organisation aussperren."
 }

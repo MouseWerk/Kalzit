@@ -172,8 +172,8 @@ impl TestApp {
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
         let r = self.post(&format!("/api/orgs/{org}/members"), json!({ "email": email, "role": role }), owner).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
-        // As if the person had accepted an invitation: the organization's rules bind only members
-        // who joined by consent (docs/api/access.md, "Members").
+        // As if the person had accepted an invitation: the organization's rules apply at the
+        // sign-in only to members who joined by consent (docs/api/access.md, "Members").
         sqlx::query("UPDATE org_members SET joined_by = 'invitation' WHERE org_id = $1 AND user_id = $2")
             .bind(org)
             .bind(r.body["userId"].as_str().unwrap())
@@ -420,13 +420,26 @@ async fn check_organizations_can_only_be_stricter_than_the_server(t: TestApp) {
     let path = format!("/api/orgs/{org}/settings/security.two_factor_required");
     let r = t.put_setting(&owner, &path, json!("off")).await;
     assert_eq!(r.code(), "validation", "an organization cannot turn the server's rule off");
+    // The owner has no second factor, so the rule is not saved through the API (it would shut
+    // them out); stored as if another admin with a second factor had set it.
     let r = t.put_setting(&owner, &path, json!("admins")).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.reason(), "second_factor.setup_first", "{}", r.body);
+    store_org_setting(&t, &org, "security.two_factor_required", json!("admins")).await;
 
     let (_, r) = t.password("ada@example.de").await;
     assert_eq!(r.body["secondFactor"]["requiredBy"]["kind"], "org", "{}", r.body);
     let (viewer, r) = t.password("vera@example.de").await;
     assert!(r.body["id"].is_string() && viewer.session.is_some(), "viewers need none here");
+
+    let overview = t.get("/api/admin/security/two-factor", &owner).await;
+    assert_eq!(overview.status, StatusCode::OK, "{}", overview.body);
+    assert_eq!(overview.body["orgs"][0]["effective"], "admins");
+    // The owner (also a server admin) and Ada.
+    assert_eq!(overview.body["orgs"][0]["missing"], 2);
+    // The owner has none either: the organization lets them in only once they set one up.
+    let r = t.get(&format!("/api/orgs/{org}/members"), &owner).await;
+    assert_eq!(r.code(), "org_second_factor_required", "{}", r.body);
+    t.enroll_totp(&owner).await;
 
     // The members list shows who must set one up.
     let r = t.get(&format!("/api/orgs/{org}/members"), &owner).await;
@@ -435,11 +448,6 @@ async fn check_organizations_can_only_be_stricter_than_the_server(t: TestApp) {
         (ada["secondFactor"]["required"].as_bool(), ada["secondFactor"]["methods"].clone()),
         (Some(true), json!([]))
     );
-    let overview = t.get("/api/admin/security/two-factor", &owner).await;
-    assert_eq!(overview.status, StatusCode::OK, "{}", overview.body);
-    assert_eq!(overview.body["orgs"][0]["effective"], "admins");
-    // The owner (also a server admin) and Ada.
-    assert_eq!(overview.body["orgs"][0]["missing"], 2);
     t.finish().await;
 }
 
@@ -620,6 +628,199 @@ async fn check_the_rule_changes_only_with_a_fresh_confirmation(t: TestApp) {
     assert!(actions.contains(&"user.second_factor_confirmed".to_string()), "{actions:?}");
     t.finish().await;
 }
+/// An account of `email` with the test password, added to `org` directly by `owner` (joined
+/// `direct`); answers its id.
+async fn direct_member(t: &TestApp, owner: &Browser, org: &str, email: &str) -> String {
+    let r = t.post("/api/admin/users", json!({ "name": email, "email": email, "password": PASSWORD }), owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let r = t.post(&format!("/api/orgs/{org}/members"), json!({ "email": email, "role": "viewer" }), owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    r.body["userId"].as_str().unwrap().to_string()
+}
+
+/// An organization's sign-in rules apply to every member on entering it (docs/api/access.md,
+/// "Organization sign-in rules"), whether they joined before 0.5.1 (`legacy`) or were added
+/// directly: their other organizations, their account and leaving stay open.
+async fn check_organization_rules_apply_to_every_member_on_entering_it(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let owner_id = member_id(&t, "joerg@example.de").await;
+    let (secret, _) = t.enroll_totp(&owner).await;
+    let r = t.post("/api/me/security/confirm", json!({ "method": "totp", "code": t.code(&secret) }), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.post("/api/admin/orgs", json!({ "name": "Zweite GmbH", "ownerUserId": owner_id }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let other = r.body["id"].as_str().unwrap().to_string();
+    let legacy_id = direct_member(&t, &owner, &org, "lea@example.de").await;
+    let direct_id = direct_member(&t, &owner, &org, "dirk@example.de").await;
+    // Lea's membership is from before 0.5.1; both are in the second organization too.
+    sqlx::query("UPDATE org_members SET joined_by = 'legacy' WHERE org_id = $1 AND user_id = $2")
+        .bind(&org)
+        .bind(&legacy_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    for id in [&legacy_id, &direct_id] {
+        sqlx::query(
+            "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, 'viewer', 0, 'legacy')",
+        )
+        .bind(&other)
+        .bind(id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    }
+    let r = t
+        .put_setting(&owner, &format!("/api/orgs/{org}/settings/security.two_factor_required"), json!("everyone"))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    // Neither consented, so the sign-in itself asks for nothing; the organization refuses them.
+    let (lea, r) = t.password("lea@example.de").await;
+    assert!(r.body["id"].is_string() && lea.session.is_some(), "{}", r.body);
+    let (dirk, _) = t.password("dirk@example.de").await;
+    for who in [&lea, &dirk] {
+        let r = t.get(&format!("/api/orgs/{org}"), who).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+        assert_eq!((r.code(), r.reason()), ("org_second_factor_required", "second_factor.org_required"));
+        assert_eq!(r.body["error"]["params"]["orgId"], json!(org));
+        // The other organization, the account and its security stay open.
+        assert_eq!(t.get(&format!("/api/orgs/{other}"), who).await.status, StatusCode::OK);
+        assert_eq!(t.get("/api/me", who).await.status, StatusCode::OK);
+        assert_eq!(t.get("/api/me/security", who).await.status, StatusCode::OK);
+    }
+    // The owner has a second factor and gets in; the lists count both as missing one.
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &owner).await.status, StatusCode::OK);
+    let r = t.get(&format!("/api/orgs/{org}/members"), &owner).await;
+    for email in ["lea@example.de", "dirk@example.de"] {
+        let m = r.body["items"].as_array().unwrap().iter().find(|m| m["email"] == email).unwrap();
+        assert_eq!(m["secondFactor"]["required"], json!(true), "{email}");
+    }
+    let overview = t.get("/api/admin/security/two-factor", &owner).await;
+    let row = overview.body["orgs"].as_array().unwrap().iter().find(|o| o["id"] == json!(org)).unwrap().clone();
+    assert_eq!(row["missing"], 2, "{}", overview.body);
+
+    // Dirk leaves; Lea sets up a second factor and is let in.
+    let r = t.send(Method::DELETE, &format!("/api/me/orgs/{org}"), None, &dirk).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &dirk).await.status, StatusCode::NOT_FOUND);
+    t.enroll_totp(&lea).await;
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &lea).await.status, StatusCode::OK);
+
+    // Password sign-in off in the second organization: sessions signed in with a password are
+    // refused there, however the members joined; the first organization stays open to Lea.
+    // (Stored directly: the API takes "off" only from a session signed in through a provider.)
+    store_org_setting(&t, &other, "signin.local_password", json!("off")).await;
+    for who in [&lea, &dirk, &owner] {
+        let r = t.get(&format!("/api/orgs/{other}/members"), who).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+        assert_eq!((r.code(), r.reason()), ("org_provider_sign_in_required", "sso.org_password_off"));
+    }
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &lea).await.status, StatusCode::OK);
+    let r = t.send(Method::DELETE, &format!("/api/me/orgs/{other}"), None, &lea).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    t.finish().await;
+}
+
+/// Sets an organization setting the way an admin signed in through a provider would, past the
+/// checks that refuse a password session (the rules apply from the next request on).
+async fn store_org_setting(t: &TestApp, org: &str, key: &str, value: Value) {
+    sqlx::query(
+        "INSERT INTO org_settings (org_id, key, value, version, updated_by, updated_at) VALUES ($1, $2, $3, 1, NULL, 0)          ON CONFLICT (org_id, key) DO UPDATE SET value = excluded.value, version = org_settings.version + 1",
+    )
+    .bind(org)
+    .bind(key)
+    .bind(value.to_string())
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    kalzit::settings::cache(&t.state).invalidate(Some(org));
+}
+
+/// How the session of `who` was signed in, as the sign-in records it (`sessions.sign_in_method`).
+async fn set_session_method(t: &TestApp, who: &Browser, method: &str) {
+    let token = who.session.as_deref().unwrap().split_once('=').unwrap().1;
+    sqlx::query("UPDATE sessions SET sign_in_method = $1 WHERE token_hash = $2")
+        .bind(method)
+        .bind(kalzit::auth::session::hash_token(token))
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+}
+
+/// An organization's rules never lock out the admin who saves them or everyone at once; the
+/// break-glass admin passes a password "off"; a server admin puts the rules back when they shut
+/// everyone out (docs/api/access.md, "Organization sign-in rules").
+async fn check_organization_rules_never_lock_everyone_out(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let path = |key: &str| format!("/api/orgs/{org}/settings/{key}");
+
+    // The owner has no second factor: a rule that would refuse them is not saved.
+    let r = t.put_setting(&owner, &path("security.two_factor_required"), json!("admins")).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "second_factor.setup_first"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["setupPath"], "/settings/account-security");
+    let batch = json!({ "changes": [{ "key": "security.two_factor_required", "value": "everyone", "version": 0 }] });
+    let r = t.post(&format!("/api/orgs/{org}/settings/batch"), batch, &owner).await;
+    assert_eq!(r.reason(), "second_factor.setup_first", "{}", r.body);
+
+    // Password sign-in off: not without a provider that leads into the organization, and not from
+    // a session signed in with a password or as the break-glass admin.
+    let r = t.put_setting(&owner, &path("signin.local_password"), json!("off")).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "sso.org_local_off_blocked"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["check"], "providerReady");
+    sqlx::query(
+        "INSERT INTO sso_providers (id, slug, kind, name, position, enabled, config, created_at, updated_at)          VALUES ('p-1', 'firma', 'oidc', 'Firma', 1, 1, '{}', 0, 0)",
+    )
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO sso_group_mappings (id, provider_id, group_name, org_id, role, idp_decides, created_at, updated_at)          VALUES ('m-1', 'p-1', 'alle', $1, 'viewer', 0, 0, 0)",
+    )
+    .bind(&org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    for method in ["password", "break_glass"] {
+        set_session_method(&t, &owner, method).await;
+        let r = t.put_setting(&owner, &path("signin.local_password"), json!("off")).await;
+        assert_eq!(r.reason(), "sso.org_local_off_blocked", "{method}: {}", r.body);
+        assert_eq!(r.body["error"]["params"]["check"], "selfViaProvider", "{method}");
+    }
+    set_session_method(&t, &owner, "provider").await;
+    let r = t.put_setting(&owner, &path("signin.local_password"), json!("off")).await;
+    assert_eq!(r.status, StatusCode::OK, "signed in through the provider: {}", r.body);
+
+    // The break-glass admin's session passes the organization's "off"; a password session not.
+    set_session_method(&t, &owner, "break_glass").await;
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &owner).await.status, StatusCode::OK);
+    set_session_method(&t, &owner, "password").await;
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &owner).await.code(), "org_provider_sign_in_required");
+
+    // Everyone is shut out now (and a second factor rule on top): a server admin puts the rules
+    // back, with their own second factor confirmed.
+    store_org_setting(&t, &org, "security.two_factor_required", json!("everyone")).await;
+    let reset = format!("/api/admin/orgs/{org}/sign-in-rules");
+    let both = json!({ "localPassword": "inherit", "twoFactorRequired": "inherit" });
+    let r = t.send(Method::PATCH, &reset, Some(both.clone()), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "second_factor.admin_needs_factor"), "{}", r.body);
+    let (secret, _) = t.enroll_totp(&owner).await;
+    t.clock.advance_ms(6 * 60_000);
+    let r = t.send(Method::PATCH, &reset, Some(both.clone()), &owner).await;
+    assert_eq!(r.code(), "confirmation_required", "{}", r.body);
+    let r = t.send(Method::PATCH, &reset, Some(json!({ "localPassword": "off" })), &owner).await;
+    assert_eq!(r.code(), "validation", "{}", r.body);
+    let r = t.post("/api/me/security/confirm", json!({ "method": "totp", "code": t.code(&secret) }), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.send(Method::PATCH, &reset, Some(both.clone()), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body, json!({ "localPassword": "inherit", "twoFactorRequired": "inherit" }));
+    assert!(t.audit_actions().await.contains(&"org.sign_in_rules_reset".to_string()));
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &owner).await.status, StatusCode::OK);
+    let unknown = "/api/admin/orgs/00000000-0000-0000-0000-000000000000/sign-in-rules";
+    assert_eq!(t.send(Method::PATCH, unknown, Some(both), &owner).await.status, StatusCode::NOT_FOUND);
+    t.finish().await;
+}
+
 // ---------------------------------------------------------------------------------------------
 // A software authenticator: one P-256 key, "none" attestation, user present and verified.
 
@@ -989,6 +1190,16 @@ async fn recent_sign_ins_are_listed_for_their_owner_and_server_admins() {
 }
 
 #[tokio::test]
+async fn organization_rules_apply_to_every_member_on_entering_it() {
+    check_organization_rules_apply_to_every_member_on_entering_it(test_app().await).await;
+}
+
+#[tokio::test]
+async fn organization_rules_never_lock_everyone_out() {
+    check_organization_rules_never_lock_everyone_out(test_app().await).await;
+}
+
+#[tokio::test]
 async fn postgres_two_factor() {
     let Some(base) = common::postgres_url("PostgreSQL test") else { return };
     check_totp_sign_in_and_the_half_signed_in_state_reaches_no_api(postgres_app(&base).await).await;
@@ -1005,4 +1216,6 @@ async fn postgres_two_factor() {
     check_passkeys_need_a_host_name_and_the_app_is_offered_instead(postgres_app(&base).await).await;
     check_the_rule_changes_only_with_a_fresh_confirmation(postgres_app(&base).await).await;
     check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(postgres_app(&base).await).await;
+    check_organization_rules_apply_to_every_member_on_entering_it(postgres_app(&base).await).await;
+    check_organization_rules_never_lock_everyone_out(postgres_app(&base).await).await;
 }

@@ -3,7 +3,7 @@
 //! (`appearance.*`), the browser's time zone, or Monday as the first day of the week.
 
 use axum::extract::State;
-use axum::http::Method;
+use axum::http::{HeaderMap, Method};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -94,22 +94,40 @@ async fn load(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<Stored
     Ok(row.unwrap_or_default())
 }
 
+/// The session of a request (`session::hash_token` of its cookie), for the sign-in rules of the
+/// organizations it reaches into (`auth::org_gate`).
+fn session_hash(headers: &HeaderMap, info: &RequestInfo) -> ApiResult<String> {
+    let token = crate::auth::session::read_cookie(headers, info.https).ok_or_else(ApiError::unauthenticated)?;
+    Ok(crate::auth::session::hash_token(&token))
+}
+
 /// The user's membership in `org_id` as a context for resource checks, or `None` when they are
-/// not a member.
-async fn member_ctx(state: &AppState, user: &SessionUser, org_id: &str) -> ApiResult<Option<OrgCtx>> {
+/// not a member or the organization's sign-in rules refuse the session `session`.
+async fn member_ctx(state: &AppState, user: &SessionUser, session: &str, org_id: &str) -> ApiResult<Option<OrgCtx>> {
     let role: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(org_id)
         .bind(&user.id)
         .fetch_optional(&state.db)
         .await?;
     let Some((role,)) = role else { return Ok(None) };
+    match crate::auth::org_gate::check(state, user, session, org_id, &role).await {
+        Ok(()) => {}
+        Err(e) if crate::auth::org_gate::is_gate_error(&e) => return Ok(None),
+        Err(e) => return Err(e),
+    }
     let permissions = authz::effective_permissions(&state.db, &user.id, org_id, &role).await?;
     Ok(Some(OrgCtx { user: user.clone(), org_id: org_id.to_string(), role, permissions, at_ms: state.clock.now_ms() }))
 }
 
 /// The title of the dashboard if the user may read it and it is not in the trash.
-async fn readable_title(state: &AppState, user: &SessionUser, org_id: &str, id: &str) -> ApiResult<Option<String>> {
-    let Some(ctx) = member_ctx(state, user, org_id).await? else { return Ok(None) };
+async fn readable_title(
+    state: &AppState,
+    user: &SessionUser,
+    session: &str,
+    org_id: &str,
+    id: &str,
+) -> ApiResult<Option<String>> {
+    let Some(ctx) = member_ctx(state, user, session, org_id).await? else { return Ok(None) };
     let row: Option<(String, Option<i64>)> =
         sqlx::query_as("SELECT title, deleted_at FROM dashboards WHERE org_id = $1 AND id = $2")
             .bind(org_id)
@@ -132,11 +150,16 @@ async fn defaults(state: &AppState) -> ApiResult<Defaults> {
 }
 
 /// The start dashboard with its title, if the user may still open it.
-async fn start_of(state: &AppState, user: &SessionUser, stored: &Stored) -> ApiResult<Option<StartDashboard>> {
+async fn start_of(
+    state: &AppState,
+    user: &SessionUser,
+    session: &str,
+    stored: &Stored,
+) -> ApiResult<Option<StartDashboard>> {
     let (Some(org_id), Some(dashboard_id)) = (&stored.start_org_id, &stored.start_dashboard_id) else {
         return Ok(None);
     };
-    Ok(readable_title(state, user, org_id, dashboard_id).await?.map(|title| StartDashboard {
+    Ok(readable_title(state, user, session, org_id, dashboard_id).await?.map(|title| StartDashboard {
         org_id: org_id.clone(),
         dashboard_id: dashboard_id.clone(),
         title,
@@ -165,9 +188,12 @@ fn answer(stored: Stored, start_dashboard: Option<StartDashboard>, defaults: Def
 async fn get_preferences(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
 ) -> ApiResult<Json<Preferences>> {
+    let session = session_hash(&headers, &info)?;
     let stored = load(&mut *state.db.acquire().await?, &user.id).await?;
-    let start = start_of(&state, &user, &stored).await?;
+    let start = start_of(&state, &user, &session, &stored).await?;
     Ok(Json(answer(stored, start, defaults(&state).await?)))
 }
 
@@ -231,8 +257,10 @@ async fn update_preferences(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     JsonBody(patch): JsonBody<PreferencesPatch>,
 ) -> ApiResult<Json<Preferences>> {
+    let session = session_hash(&headers, &info)?;
     if let Some(language) = &patch.language {
         one_of(language, LANGUAGES, "language")?;
     }
@@ -270,7 +298,7 @@ async fn update_preferences(
         }
     };
     let start_title = match &start_ref {
-        Some((org_id, dashboard_id)) => readable_title(&state, &user, org_id, dashboard_id).await?,
+        Some((org_id, dashboard_id)) => readable_title(&state, &user, &session, org_id, dashboard_id).await?,
         None => None,
     };
     if matches!(patch.start_dashboard, Some(Some(_))) && start_title.is_none() {

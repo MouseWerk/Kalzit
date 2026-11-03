@@ -57,6 +57,51 @@ describe("app shell", () => {
     }
   });
 
+  it("shows the second factor an organization requires in place of its pages", async () => {
+    const server = installFakeServer({ signedIn: true, user: TEST_USER });
+    server.state.gates.o1 = "org_second_factor_required";
+    const { user } = renderApp("/");
+    const title = "This organization requires a second factor";
+    expect(await screen.findByRole("heading", { level: 2, name: title })).toBeTruthy();
+    expect(screen.getByText(/To work in Analytical Engines, set up a second factor/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Leave organization" }).getAttribute("href")).toBe(
+      "/settings/profile#organizations",
+    );
+    // The account's own pages stay open: setting up the second factor is one of them.
+    const setUp = screen.getByRole("link", { name: "Set up now" });
+    expect(setUp.getAttribute("href")).toBe("/settings/account-security");
+    await user.click(setUp);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: title })).toBeNull());
+    // Once the organization lets the session in again, its pages come back.
+    delete server.state.gates.o1;
+    await user.click(
+      within(screen.getByRole("navigation", { name: "Main navigation" })).getByRole("link", {
+        name: "Home",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("navigation", { name: "Main navigation" })).getByRole("link", {
+          name: "Explore",
+        }),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByRole("heading", { name: title })).toBeNull();
+  });
+
+  it("offers the sign-in through a provider when the organization refuses passwords", async () => {
+    const server = installFakeServer({ signedIn: true, user: TEST_USER });
+    server.state.gates.o1 = "org_provider_sign_in_required";
+    renderApp("/");
+    const title = "This organization requires a sign-in through its provider";
+    expect(await screen.findByRole("heading", { level: 2, name: title })).toBeTruthy();
+    expect(
+      screen.getByText(/Analytical Engines does not accept a sign-in with a password/),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in through the provider" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Leave organization" })).toBeTruthy();
+  });
+
   it("shows the empty states of an organization without data", async () => {
     // Empty before the first render: the app caches the data source list for a while.
     const server = installFakeServer({ signedIn: true, user: TEST_USER });

@@ -704,6 +704,11 @@ async fn service_accounts_are_outside_the_second_factor_rules() {
     let id = t.account("bot", "admin").await;
     let (token, _) = t.token(&id, json!({ "name": "x" })).await;
     let cookie = t.owner.clone();
+    // The organization's reset knows no service account. Asked before the rule holds: then the
+    // owner, who has no second factor, is refused inside the organization.
+    let reset = t.path(&format!("/members/{id}/second-factor/reset"));
+    let r = t.send(Method::POST, &reset, Some(json!({})), Some(Who::Cookie(&cookie))).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
     let required = json!({ "value": "everyone", "version": 0 });
     let path = "/api/admin/settings/security.two_factor_required";
     let r = t.send(Method::PATCH, path, Some(required), Some(Who::Cookie(&cookie))).await;
@@ -711,9 +716,8 @@ async fn service_accounts_are_outside_the_second_factor_rules() {
     assert_eq!(t.with_token(Method::GET, &t.path("/dashboards"), None, &token).await.status, StatusCode::OK);
     let overview = t.send(Method::GET, "/api/admin/security/two-factor", None, Some(Who::Cookie(&cookie))).await;
     assert_eq!(overview.body["orgs"][0]["missing"], 1, "only the owner lacks one: {}", overview.body);
-    let reset = t.path(&format!("/members/{id}/second-factor/reset"));
-    let r = t.send(Method::POST, &reset, Some(json!({})), Some(Who::Cookie(&cookie))).await;
-    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let r = t.send(Method::GET, &t.path("/dashboards"), None, Some(Who::Cookie(&cookie))).await;
+    assert_eq!(r.body["error"]["code"], "org_second_factor_required", "{}", r.body);
     let reset = format!("/api/admin/users/{id}/second-factor/reset");
     let r = t.send(Method::POST, &reset, Some(json!({})), Some(Who::Cookie(&cookie))).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);

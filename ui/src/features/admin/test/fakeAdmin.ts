@@ -1388,7 +1388,7 @@ function handleServerAdmin(
   input: unknown,
   search: URLSearchParams,
 ): Response {
-  const [, , , area = "", id] = path.split("/").map(decodeURIComponent);
+  const [, , , area = "", id, part] = path.split("/").map(decodeURIComponent);
   if (area === "instances" && id === undefined && method === "GET") {
     return json(200, state.instances);
   }
@@ -1479,6 +1479,11 @@ function handleServerAdmin(
     const org = state.orgs.find((candidate) => candidate.id === id);
     if (org === undefined || method !== "PATCH") {
       refuse("not_found");
+    }
+    if (part === "sign-in-rules") {
+      // Puts the organization's sign-in rules back to the server's (docs/api/access.md).
+      body(input, ["localPassword", "twoFactorRequired"]);
+      return json(200, { localPassword: "inherit", twoFactorRequired: "inherit" });
     }
     org.name = name(body(input, ["name"]).name);
     return json(200, org);

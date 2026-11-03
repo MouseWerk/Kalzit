@@ -158,6 +158,8 @@
   "access.sso.outcome.no_account.detail": "{provider} hat dich erkannt, aber neue Konten entstehen hier nur mit einer Einladung. Bitte einen Admin deiner Organisation darum.",
   "access.sso.outcome.email_taken.title": "Dein Konto lässt sich nicht verbinden.",
   "access.sso.outcome.email_taken.detail": "Die E-Mail-Adresse ist hier noch nicht bestätigt, oder {provider} hat sie nicht bestätigt. Wende dich an einen Admin deiner Organisation.",
+  "access.sso.outcome.link_refused.title": "Dein Konto ist nicht mit {provider} verbunden.",
+  "access.sso.outcome.link_refused.detail": "Du meldest dich hier auf einem anderen Weg an, und dein Konto hat nichts, womit es sich ausweisen könnte. Deshalb wird es nicht über die E-Mail-Adresse verbunden. Melde dich so an wie bisher.",
   "access.ssoTest.title": "Testanmeldung abgeschlossen",
   "access.ssoTest.text": "Testanmeldung abgeschlossen. Du kannst dieses Fenster schließen.",
   "access.invite.pageTitle": "Einladung",

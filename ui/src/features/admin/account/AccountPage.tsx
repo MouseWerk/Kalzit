@@ -445,7 +445,11 @@ function OrganizationsSection() {
         ? t("admin.account.orgLastOwner")
         : errorText(t, leave.error);
   return (
-    <AccountSection title={t("admin.account.orgs")} lead={t("admin.account.orgsLead")}>
+    <AccountSection
+      id="organizations"
+      title={t("admin.account.orgs")}
+      lead={t("admin.account.orgsLead")}
+    >
       <Notice notice={notice.notice} onDismiss={notice.clear} />
       <ul className="admin-list" aria-label={t("admin.account.orgs")} {...keys.listProps}>
         {me.orgs.map((org, index) => (

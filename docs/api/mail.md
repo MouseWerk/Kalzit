@@ -172,7 +172,8 @@ an explicit click.
 
 An account whose address is unconfirmed (made from a copied invitation link) is not added to an
 organization by address (`POST /orgs/{orgId}/members` answers `409 conflict`
-`mail.email_unconfirmed`) until its owner confirms it. Single sign-on must never link a provider's
+`members.invite_instead`, as for any account that cannot be added directly) until its owner
+confirms it. Single sign-on must never link a provider's
 identity to an account by email unless the address is confirmed: it looks accounts up with
 `email_confirmation::confirmed_account_by_email`, which finds only confirmed, enabled accounts.
 Without a mail server: `mail.reset_unavailable`. Unknown, used or expired links answer
@@ -234,7 +235,6 @@ use the `target.*` reasons of the data sources.
 | `mail.invite_expired` | | the invitation expired |
 | `mail.invite_link_by_mail` | | the invitation's link went by mail and is not shown again |
 | `mail.invite_limit` | `max` | the organization sent `max` invitations in the last hour |
-| `mail.email_unconfirmed` | | the account has not confirmed its address yet |
 | `mail.email_confirmed_already` | | the address is confirmed already |
 | `mail.confirm_invalid` | | the confirmation link is used, expired, replaced or unknown |
 | `mail.invite_link_unavailable` | | the link cannot be shown again (the secrets key changed); resend |

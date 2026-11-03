@@ -1,4 +1,4 @@
-import { getRouteApi, Outlet } from "@tanstack/react-router";
+import { getRouteApi, Outlet, useRouterState } from "@tanstack/react-router";
 import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { useAppearanceSync } from "../appearance/api";
 import { Toaster } from "../components/Toaster";
@@ -6,6 +6,7 @@ import { NAV_SECTIONS } from "../features/nav";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import { openLayerCount } from "../lib/layers";
 import { useBackGuard } from "../lib/useBackGuard";
+import { isOpenWhileGated, OrgGatePage, useOrgGate } from "../org/OrgGate";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
 import { usePreferencesSync } from "../preferences/preferences";
 import { markEntered } from "../preferences/startDashboard";
@@ -62,6 +63,11 @@ export function AppShell() {
     ),
   })).filter((section) => section.items.length > 0);
   const currentOrg = currentOrgOf(me);
+  // The current organization's sign-in rules may refuse this session (a second factor it
+  // requires, a sign-in through its provider): its pages give way to a page that says so.
+  const gate = useOrgGate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const gated = gate !== undefined && currentOrg !== undefined && !isOpenWhileGated(pathname);
   const [collapsed, setCollapsed] = useState(readCollapsed);
   // While signing out the page is taken off screen, with everything it polls or streams.
   const [leaving, setLeaving] = useState(false);
@@ -253,6 +259,8 @@ export function AppShell() {
                 <p className="loading" role="status">
                   {t("userMenu.signingOut")}
                 </p>
+              ) : gated ? (
+                <OrgGatePage code={gate} orgName={currentOrg.name} />
               ) : (
                 <Outlet />
               )}

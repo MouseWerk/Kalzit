@@ -56,7 +56,8 @@ pub struct Member {
     #[sqlx(try_from = "i64")]
     idp_managed: IdpManaged,
     /// How the member joined (`invitation`, `creator`, `scim_owned`, `mapping`, `direct`,
-    /// `legacy`); only the first four bind them to this organization's sign-in rules.
+    /// `legacy`). This organization's sign-in rules bind every member on entering it
+    /// (`auth::org_gate`); the first four also apply them at the sign-in.
     joined_by: String,
 }
 
@@ -97,9 +98,9 @@ async fn with_second_factor(state: &AppState, org_id: &str, members: &mut [Membe
                 admin
             }
         };
-        // A membership the person did not consent to is bound by the server's rule only.
-        let requirement = if crate::authz::consented(&m.joined_by) { own } else { sf::Requirement::Off };
-        let rule = sf::MembershipRule { org_id: org_id.into(), org_name: String::new(), requirement, admin };
+        // Every member meets this organization's rule on entering it (`auth::org_gate`), however
+        // they joined.
+        let rule = sf::MembershipRule { org_id: org_id.into(), org_name: String::new(), requirement: own, admin };
         let required = sf::resolve(server, m.sf_server_admin != 0, std::slice::from_ref(&rule)).is_some();
         m.second_factor = sf::summary(m.sf_totp, m.sf_passkeys, m.sf_locked_until, required, now);
     }
@@ -172,13 +173,6 @@ async fn add(
     // and the second finds the membership.
     lock_org(&mut tx, &ctx.org_id).await?;
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
-    // An address nobody proved to read (an account from a copied invitation link) names nobody
-    // for sure: its owner confirms it by mail first (docs/api/mail.md, "Email confirmation").
-    if confirmed == 0 {
-        return Err(conflict("the account has not confirmed this email address yet")
-            .with_field("email")
-            .because("mail.email_unconfirmed"));
-    }
     let (existing,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&ctx.org_id)
         .bind(&user_id)
@@ -187,22 +181,23 @@ async fn add(
     if existing > 0 {
         return Err(conflict("this account is already a member").with_field("email"));
     }
+    // Only an account in no organization yet whose owner confirmed its address is added directly.
     // A person who already belongs to an organization joins another one only by accepting an
-    // invitation: this organization's sign-in rules (password sign-in off, a required second
-    // factor) would bind their account everywhere, so they decide themselves. Accounts in no
-    // organization yet are still added directly.
+    // invitation, so they decide themselves; an address nobody proved to read (an account from a
+    // copied invitation link) names nobody for sure (docs/api/mail.md, "Email confirmation").
+    // Both answer the same, so the answer tells nothing about the account's other organizations.
     let (elsewhere,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE user_id = $1")
         .bind(&user_id)
         .fetch_one(&mut *tx)
         .await?;
-    if elsewhere > 0 {
-        return Err(conflict("this account belongs to another organization; invite it instead")
+    if elsewhere > 0 || confirmed == 0 {
+        return Err(conflict("this account cannot be added directly; invite the person instead")
             .with_field("email")
             .because("members.invite_instead"));
     }
     let now = state.clock.now_ms();
-    // Added by an admin, not by the person: this organization's sign-in rules do not bind them
-    // (`authz::CONSENTED_JOINS`).
+    // Added by an admin, not by the person: this organization's sign-in rules apply to them on
+    // entering it (`auth::org_gate`), not at the sign-in (`authz::CONSENTED_JOINS`).
     sqlx::query(
         "INSERT INTO org_members (org_id, user_id, role, created_at, joined_by) VALUES ($1, $2, $3, $4, 'direct')",
     )

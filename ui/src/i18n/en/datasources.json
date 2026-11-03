@@ -1180,7 +1180,6 @@
   "datasources.reason.mail.reset_password_elsewhere": "This account signs in without a password of its own in Kalzit.",
   "datasources.reason.mail.invite_link_by_mail": "The link went by mail and is not shown again; send the invitation again.",
   "datasources.reason.mail.invite_limit": "This organization sent {max} invitations in the last hour. Wait a while.",
-  "datasources.reason.mail.email_unconfirmed": "This account has not confirmed its email address yet.",
   "datasources.reason.mail.email_confirmed_already": "The address is confirmed already.",
   "datasources.reason.mail.confirm_invalid": "This link no longer works.",
   "datasources.reason.serviceaccount.name_invalid": "Enter 1 to {max} lowercase letters, digits or hyphens, not starting with a hyphen.",
