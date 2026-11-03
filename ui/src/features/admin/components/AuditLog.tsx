@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { type Language, useI18n } from "../../../i18n/i18n";
 import { type AuditEvent, type AuditFilter, adminKeys, listAudit } from "../api";
 import { AUDIT_AREAS, auditActionLabel, knownAuditActions } from "../catalog";
+import { AuditExportDialog } from "./AuditExport";
 import { formatDateTime, formatSummary, startOfDay, startOfNextDay } from "./format";
 import { PagedSelect, type PickerOption } from "./PagedSelect";
 import { useRowKeys } from "./rows";
@@ -59,6 +60,7 @@ export function AuditLog({
   const { t, language, timeZone } = useI18n();
   const ids = { actor: useId(), action: useId(), from: useId(), to: useId(), org: useId() };
   const [input, setInput] = useState<FilterInput>(NO_FILTER);
+  const [exporting, setExporting] = useState(false);
   // Cursors of the pages before the current one; the last entry is the current page's cursor.
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const filter = toFilter(input, timeZone);
@@ -217,7 +219,18 @@ export function AuditLog({
         >
           {t("admin.audit.older")}
         </button>
+        <button
+          type="button"
+          className="button button--secondary"
+          disabled={backwards}
+          onClick={() => setExporting(true)}
+        >
+          {t("admin.audit.export.button")}
+        </button>
       </div>
+      {exporting ? (
+        <AuditExportDialog orgId={orgId} filter={filter} onClose={() => setExporting(false)} />
+      ) : null}
     </div>
   );
 }

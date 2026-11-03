@@ -36,8 +36,8 @@ menu holds the column's actions.
 what you see depends on your rights.
 
 A panel's actions sit in a menu button in its title bar and appear when you point at the panel or
-reach it with the keyboard: its links, view alone, **Annotate**, **Inspect**, export, **Edit**,
-**Duplicate**, **Copy to...** and **Remove**. **Inspect** shows the result's size, the executed
+reach it with the keyboard: its links, view alone, **Annotate**, **Inspect**, export, **Save
+image (PNG)**, **Edit**, **Duplicate**, **Copy to...** and **Remove**. **Inspect** shows the result's size, the executed
 query and the server's notes and warnings, and says when the result was cut off at the data
 source's row limit.
 

@@ -118,6 +118,13 @@ folders you cannot see are left out. Events are deleted after the retention time
 default, setting `audit.retention_days`). Server admins also have a server-wide audit log under
 **Server**.
 
+**Export...** under the list saves every event that matches the filters, not only the page you
+see, as **CSV** (for Excel and other spreadsheets, with German or English separators) or
+**JSON**. Times are in UTC; text that a spreadsheet would read as a formula gets a leading `'`.
+Exporting needs the same right as reading the log, and each export is recorded in the log itself
+(**Audit log exported**, with the format, the filters and the number of events). One file holds
+at most 100,000 events; for more, choose a shorter date range or a filter.
+
 ## Usage
 
 **Administration** > **Usage** (**Verwaltung** > **Nutzung**) shows how your organization uses

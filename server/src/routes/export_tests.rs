@@ -1,4 +1,5 @@
-//! The export routes through the real router, with SQLite files as data sources.
+//! The export routes through the real router, with SQLite files as data sources, and the export
+//! of the audit log (`routes/audit.rs`), which shares the harness.
 
 /// A request that goes away (the client closed the connection) sets the flag its work watches.
 #[test]
@@ -380,7 +381,7 @@ async fn export_needs_the_permission_and_the_same_rights_as_running() {
     let summary: Value = serde_json::from_str(&rows[0].2).unwrap();
     assert_eq!(
         summary,
-        json!({ "format": "csv", "rows": 3, "panelId": "p1", "frame": null,
+        json!({ "format": "csv", "rows": 3, "shape": "frame", "panelId": "p1", "frame": null,
                 "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 } })
     );
     // Refusals inside the route are there too: the reporter's free export and the unknown panel.
@@ -948,4 +949,498 @@ async fn a_second_panel_export_of_a_user_is_busy() {
     drop(held);
     t.slots_free().await;
     t.spool_empty().await;
+}
+
+// ---- documents and graphs in their own shape ----
+
+/// A graph source for the tests: every query answers the same small graph.
+struct GraphSource;
+
+fn small_graph() -> crate::shapes::GraphSet {
+    use crate::shapes::{Edge, GraphPath, GraphSchema, GraphSet, Node};
+    use std::collections::BTreeMap;
+    let props =
+        |pairs: Vec<(&str, Value)>| pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<BTreeMap<_, _>>();
+    GraphSet {
+        nodes: vec![
+            Node {
+                id: "1".into(),
+                labels: vec!["Person".into(), "Kunde".into()],
+                properties: props(vec![
+                    ("name", json!("Jörg <&> \"Söhne\"")),
+                    ("alter", json!(41)),
+                    ("aktiv", json!(true)),
+                ]),
+            },
+            Node {
+                id: "2".into(),
+                labels: vec!["Person".into()],
+                properties: props(vec![("name", json!("Ada\u{1}")), ("alter", json!(36.5)), ("tags", json!(["a", 1]))]),
+            },
+        ],
+        edges: vec![Edge {
+            id: "e1".into(),
+            edge_type: "KENNT".into(),
+            from: "1".into(),
+            to: "2".into(),
+            properties: props(vec![("seit", json!(2020)), ("leer", Value::Null), ("type", json!("privat"))]),
+        }],
+        paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()] }]),
+        schema: GraphSchema {
+            labels: vec!["Kunde".into(), "Person".into()],
+            edge_types: vec!["KENNT".into()],
+            property_keys: BTreeMap::new(),
+        },
+        truncated: None,
+        notices: None,
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::datasources::DataSourcePlugin for GraphSource {
+    fn kind(&self) -> &'static str {
+        "testgraph"
+    }
+    fn shapes(&self) -> &'static [crate::shapes::Shape] {
+        &[crate::shapes::Shape::Graph]
+    }
+    fn check_settings(&self, _: &Value) -> Result<(), crate::datasources::FieldError> {
+        Ok(())
+    }
+    async fn health(&self, _: &crate::datasources::Connection) -> crate::datasources::Health {
+        crate::datasources::Health::connected("Testgraph", "1", false)
+    }
+    async fn schema(
+        &self,
+        _: &crate::datasources::Connection,
+    ) -> Result<crate::datasources::SourceSchema, crate::datasources::SourceError> {
+        Ok(crate::datasources::SourceSchema::Metrics { metrics: vec![], labels: vec![] })
+    }
+    async fn query(
+        &self,
+        _: &crate::datasources::Connection,
+        _: crate::datasources::SourceQuery,
+    ) -> Result<crate::shapes::QueryResult, crate::datasources::SourceError> {
+        Ok(crate::shapes::QueryResult::Graph { graph: small_graph() })
+    }
+}
+
+impl T {
+    /// A data source of the test graph kind, registered as a plugin's kind would be.
+    async fn graph_source(&self) -> String {
+        let kind = crate::datasources::Kind {
+            name: "Testgraph",
+            hint_key: "datasources.kinds.testgraph.hint",
+            settings: &[],
+            plugin: Arc::new(GraphSource),
+        };
+        let origin = crate::datasources::registry::Origin::Plugin { version: "1.0.0".into() };
+        self.state.datasources.registry().register(kind, origin).unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+             VALUES ($1, $2, 'Graph', 'testgraph', '{}', 0, 0)",
+        )
+        .bind(&id)
+        .bind(&self.org)
+        .execute(&self.state.db)
+        .await
+        .unwrap();
+        id
+    }
+
+    /// A file data source of NDJSON documents.
+    async fn documents_source(&self) -> String {
+        let dir = self.dir.path().join("dateien");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bestellungen.ndjson");
+        std::fs::write(&path, ORDERS).unwrap();
+        self.state
+            .datasources
+            .test_settings
+            .lock()
+            .unwrap()
+            .insert("datasources.file_dirs".into(), json!([dir.to_string_lossy()]));
+        let r = self
+            .post(
+                "/datasources",
+                json!({ "name": "Bestellungen", "kind": "file", "settings": { "path": path.to_string_lossy() } }),
+                &self.owner,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+        r.json()["id"].as_str().unwrap().to_string()
+    }
+
+    async fn first_exported(&self) -> Value {
+        let (summary,): (String,) = sqlx::query_as(
+            "SELECT summary FROM audit_events WHERE action = 'data.exported' ORDER BY created_at, id LIMIT 1",
+        )
+        .fetch_one(&self.state.db)
+        .await
+        .unwrap();
+        serde_json::from_str(&summary).unwrap()
+    }
+}
+
+const ORDERS: &str = r#"{"a":{"land":"Österreich"},"betrag":12.5,"z":1}
+{"a":{"land":"=Formel"},"betrag":null,"z":2}
+"#;
+
+fn shaped(ds: &str, format: &str, steps: Value) -> Value {
+    json!({
+        "queries": [{ "refId": "A", "datasourceId": ds, "query": {} }],
+        "timeRange": range(), "steps": steps, "format": format, "language": "en", "title": "Ergebnis"
+    })
+}
+
+/// Documents keep their shape: NDJSON one per line and JSON as the result envelope; a table format
+/// is refused until a projection makes a table (key order: the tests of `analysis::export`).
+#[tokio::test]
+async fn documents_export_as_ndjson_and_json_in_their_own_order() {
+    let t = T::new().await;
+    let ds = t.documents_source().await;
+    let r = t.post("/export", shaped(&ds, "ndjson", json!([])), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header(header::CONTENT_TYPE), "application/x-ndjson");
+    assert_eq!(r.header(header::CONTENT_DISPOSITION), "attachment; filename=\"Ergebnis.ndjson\"");
+    assert_eq!(r.text(), ORDERS, "the documents as the source answered them, values untouched");
+
+    let r = t.post("/export", shaped(&ds, "json", json!([])), &t.owner).await;
+    assert_eq!((r.status, r.header(header::CONTENT_TYPE)), (StatusCode::OK, "application/json"), "{}", r.text());
+    let text = r.text();
+    assert!(text.starts_with(r#"{"shape":"documents","documents":{"documents":[{"a":{"land":"#), "{text}");
+    let back: crate::shapes::QueryResult = serde_json::from_str(&text).unwrap();
+    let crate::shapes::QueryResult::Documents { documents } = back else { panic!("{text}") };
+    assert_eq!(documents.documents.len(), 2);
+    assert!(documents.schema.iter().any(|f| f.path == "a.land"), "{text}");
+    assert!(!text.contains("executedQuery") && !text.contains("nextCursor"), "{text}");
+
+    // No conversion without a step: CSV and Excel refuse documents and name the format.
+    for format in ["csv", "xlsx", "graphml"] {
+        let r = t.post("/export", shaped(&ds, format, json!([])), &t.owner).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "export.format_unsupported".into()));
+        assert_eq!(r.json()["error"]["params"], json!({ "shape": "documents", "format": format }), "{}", r.text());
+        assert_eq!(r.json()["error"]["field"], "format");
+    }
+    // A projection is the explicit step that makes a table; then CSV works and NDJSON does not.
+    let projection = json!([{ "id": "p", "type": "toFrame", "frame": "A",
+                              "columns": [{ "path": "a.land" }, { "path": "betrag" }] }]);
+    let r = t.post("/export", shaped(&ds, "csv", projection.clone()), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("Österreich,12.5\r\n'=Formel,\r\n"), "{}", r.text());
+    let r = t.post("/export", shaped(&ds, "ndjson", projection), &t.owner).await;
+    assert_eq!(r.json()["error"]["params"], json!({ "shape": "frame", "format": "ndjson" }), "{}", r.text());
+
+    let summary = t.first_exported().await;
+    assert_eq!((summary["format"].clone(), summary["documents"].clone()), (json!("ndjson"), json!(2)), "{summary}");
+    assert_eq!(summary["shape"], "documents");
+    assert!(!summary.to_string().contains("Österreich"), "never the data: {summary}");
+}
+
+/// Graphs keep their shape: GraphML for graph tools, with typed keys and escaped text, and JSON
+/// with the paths. A table of a graph is a graph step.
+#[tokio::test]
+async fn graphs_export_as_graphml_and_json() {
+    let t = T::new().await;
+    let ds = t.graph_source().await;
+    let r = t.post("/export", shaped(&ds, "graphml", json!([])), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header(header::CONTENT_TYPE), "application/graphml+xml; charset=utf-8");
+    assert_eq!(r.header(header::CONTENT_DISPOSITION), "attachment; filename=\"Ergebnis.graphml\"");
+    let xml = r.text();
+    assert!(xml.starts_with(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\""
+    ));
+    // Keys in name order, each with the narrowest type of its values.
+    for key in [
+        r#"<key id="n0" for="node" attr.name="aktiv" attr.type="boolean"/>"#,
+        r#"<key id="n1" for="node" attr.name="alter" attr.type="double"/>"#,
+        r#"<key id="n2" for="node" attr.name="name" attr.type="string"/>"#,
+        r#"<key id="n3" for="node" attr.name="tags" attr.type="string"/>"#,
+        r#"<key id="e0" for="edge" attr.name="leer" attr.type="string"/>"#,
+        r#"<key id="e1" for="edge" attr.name="seit" attr.type="long"/>"#,
+        // A property named like a built-in key keeps its name; the built-ins are prefixed.
+        r#"<key id="e2" for="edge" attr.name="type" attr.type="string"/>"#,
+        r#"<key id="type" for="edge" attr.name="kalzit:type" attr.type="string"/>"#,
+        r#"<key id="labels" for="node" attr.name="kalzit:labels" attr.type="string"/>"#,
+    ] {
+        assert!(xml.contains(key), "{key}\n{xml}");
+    }
+    assert!(
+        xml.contains(concat!(
+            r#"<node id="1"><data key="labels">:Person:Kunde</data><data key="n0">true</data>"#,
+            r#"<data key="n1">41</data><data key="n2">Jörg &lt;&amp;&gt; &quot;Söhne&quot;</data></node>"#
+        )),
+        "{xml}"
+    );
+    // A control character XML cannot hold is replaced; lists are JSON text.
+    assert!(xml.contains("<data key=\"n2\">Ada\u{FFFD}</data><data key=\"n3\">[&quot;a&quot;,1]</data>"), "{xml}");
+    // An empty property is left out.
+    assert!(
+        xml.contains(
+            r#"<edge id="e1" source="1" target="2"><data key="type">KENNT</data><data key="e1">2020</data><data key="e2">privat</data></edge>"#
+        ),
+        "{xml}"
+    );
+    assert!(xml.ends_with("  </graph>\n</graphml>\n"));
+
+    let r = t.post("/export", shaped(&ds, "json", json!([])), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let body = r.json();
+    assert_eq!(body["shape"], "graph");
+    assert_eq!(body["graph"]["paths"], json!([{ "nodes": ["1", "2"], "edges": ["e1"] }]));
+    let back: crate::shapes::QueryResult = serde_json::from_value(body).unwrap();
+    assert_eq!(back, crate::shapes::QueryResult::Graph { graph: small_graph() });
+
+    let r = t.post("/export", shaped(&ds, "csv", json!([])), &t.owner).await;
+    assert_eq!(r.json()["error"]["params"], json!({ "shape": "graph", "format": "csv" }), "{}", r.text());
+    // A graph step that makes a table: then CSV, as the browser shows it.
+    let count = json!([{ "id": "c", "type": "countLabels", "frame": "A" }]);
+    let r = t.post("/export", shaped(&ds, "csv", count), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("Person"), "{}", r.text());
+
+    let summary = t.first_exported().await;
+    assert_eq!(
+        (summary["nodes"].clone(), summary["edges"].clone(), summary["shape"].clone()),
+        (json!(2), json!(1), json!("graph")),
+        "{summary}"
+    );
+}
+
+/// A graph panel exports through its dashboard: a role that may read the dashboard and export,
+/// but not query the source, gets the stored graph; the free route refuses it the same query, and
+/// members without `data:export` (viewers) get neither.
+#[tokio::test]
+async fn a_graph_panel_exports_for_readers_of_its_dashboard_only() {
+    let t = T::new().await;
+    let ds = t.graph_source().await;
+    let created = t
+        .post(
+            "/dashboards",
+            json!({ "model": {
+                "schemaVersion": 2, "title": "Netz", "timeRange": { "from": "now-6h", "to": "now" },
+                "panels": [{ "id": "g", "type": "network", "title": "Kunden", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                    "targets": [{ "refId": "A", "datasourceId": ds, "query": {} }] }]
+            } }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    let id = created.json()["id"].as_str().unwrap().to_string();
+    let panel = format!("/dashboards/{id}/panels/g/export");
+    let body = json!({ "timeRange": range(), "format": "graphml", "language": "en" });
+
+    let role = t
+        .post(
+            "/roles",
+            json!({ "name": "Netzberichte", "permissions": ["dashboards:read", "folders:read", "data:export"] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text());
+    let reporter = t.member("reporter", role.json()["id"].as_str().unwrap()).await;
+    let r = t.post(&panel, body.clone(), &reporter).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header(header::CONTENT_DISPOSITION), "attachment; filename=\"Kunden.graphml\"");
+    assert!(r.text().contains("<node id=\"1\">"));
+    let r = t.post("/export", shaped(&ds, "graphml", json!([])), &reporter).await;
+    assert_eq!((r.status, r.code()), (StatusCode::NOT_FOUND, "not_found".into()), "{}", r.text());
+
+    let viewer = t.member("viewer", "viewer").await;
+    let r = t.post(&panel, body, &viewer).await;
+    assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden".into()), "{}", r.text());
+}
+
+// ---- the audit log as a file ----
+
+impl T {
+    async fn audit_event(&self, id: &str, org: Option<&str>, action: &str, resource_id: &str, at: i64) {
+        sqlx::query(
+            "INSERT INTO audit_events (id, org_id, action, resource_type, resource_id, summary, created_at) \
+             VALUES ($1, $2, $3, 'dashboard', $4, '{\"title\":\"Umsatz; Q1\"}', $5)",
+        )
+        .bind(id)
+        .bind(org)
+        .bind(action)
+        .bind(resource_id)
+        .bind(at)
+        .execute(&self.state.db)
+        .await
+        .unwrap();
+    }
+
+    async fn audit_exports(&self) -> Vec<(Option<String>, String)> {
+        sqlx::query_as(
+            "SELECT org_id, summary FROM audit_events WHERE action = 'audit.exported' ORDER BY created_at, id",
+        )
+        .fetch_all(&self.state.db)
+        .await
+        .unwrap()
+    }
+}
+
+/// The organization's audit log as CSV or JSON: every event the filters match, newest first, as
+/// the list shows them; the export is recorded itself, with the filters and the count, and only
+/// members who may read the log may export it.
+#[tokio::test]
+async fn the_audit_log_exports_as_csv_and_json_for_its_readers() {
+    let t = T::new().await;
+    let other = uuid::Uuid::now_v7().to_string();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+        .bind(&other)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    t.audit_event("a1", Some(&t.org), "dashboard.saved", "=1+1", 1_700_000_000_000).await;
+    t.audit_event("a2", Some(&t.org), "dashboard.created", "d2", 1_700_000_001_000).await;
+    t.audit_event("a3", Some(&other), "dashboard.saved", "fremd", 1_700_000_002_000).await;
+    let filter = json!({ "format": "csv", "language": "de", "action": "dashboard.", "from": 1_600_000_000_000_i64 });
+    let r = t.post("/audit/export", filter, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header(header::CONTENT_TYPE), "text/csv; charset=utf-8");
+    assert_eq!(r.header(header::CONTENT_DISPOSITION), "attachment; filename=\"kalzit-audit.csv\"");
+    assert_eq!(r.header(header::CACHE_CONTROL), "no-store");
+    let text = r.text();
+    let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+    assert_eq!(
+        lines[0],
+        "createdAt;id;orgId;actorUserId;actorName;actorAddress;actorTokenId;actorTokenPrefix;action;\
+         resourceType;resourceId;summary"
+    );
+    // Newest first, only this organization, the summary as JSON (quoted for its `;`) and a
+    // formula from the data defused.
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(lines[1].starts_with("2023-11-14T22:13:21.000Z;a2;"), "{}", lines[1]);
+    assert!(
+        lines[2].contains(";dashboard.saved;dashboard;'=1+1;\"{\"\"title\"\":\"\"Umsatz; Q1\"\"}\""),
+        "{}",
+        lines[2]
+    );
+    assert!(!text.contains("fremd"));
+
+    let r = t.post("/audit/export", json!({ "format": "json", "to": 1_700_000_001_000_i64 }), &t.owner).await;
+    assert_eq!((r.status, r.header(header::CONTENT_TYPE)), (StatusCode::OK, "application/json"), "{}", r.text());
+    let events = r.json();
+    let ids: Vec<&str> = events.as_array().unwrap().iter().filter_map(|e| e["id"].as_str()).collect();
+    // The setup's own events come before; `to` is exclusive.
+    assert!(ids.contains(&"a1") && !ids.contains(&"a2") && !ids.contains(&"a3"), "{ids:?}");
+    let a1 = events.as_array().unwrap().iter().find(|e| e["id"] == "a1").unwrap();
+    assert_eq!(a1["summary"], json!({ "title": "Umsatz; Q1" }));
+    assert_eq!(a1["resourceId"], "=1+1", "JSON keeps the value as it is");
+
+    // Each export is in the log, with the format, the filters and the count; never the events.
+    let exports = t.audit_exports().await;
+    assert_eq!(exports.len(), 2);
+    assert_eq!(exports[0].0.as_deref(), Some(t.org.as_str()));
+    let first: Value = serde_json::from_str(&exports[0].1).unwrap();
+    assert_eq!(first, json!({ "format": "csv", "action": "dashboard.", "from": 1_600_000_000_000_i64, "events": 2 }));
+
+    // Who may not read the log may not export it.
+    let editor = t.member("editor", "editor").await;
+    let r = t.post("/audit/export", json!({ "format": "csv" }), &editor).await;
+    assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden".into()), "{}", r.text());
+    let r = t.send(&format!("/api/orgs/{}/audit/export", t.org), json!({ "format": "csv" }), None).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let role = t.post("/roles", json!({ "name": "Revision", "permissions": ["audit:read"] }), &t.owner).await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text());
+    let auditor = t.member("auditor", role.json()["id"].as_str().unwrap()).await;
+    assert_eq!(t.post("/audit/export", json!({ "format": "json" }), &auditor).await.status, StatusCode::OK);
+    // The server's log is for server administrators only.
+    let r = t.send("/api/admin/audit/export", json!({ "format": "csv" }), Some(&auditor)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    assert_eq!(t.audit_exports().await.len(), 3, "refusals make no file and no export entry");
+
+    // Requests that do not fit.
+    for (body, field) in [
+        (json!({ "format": "csv", "orgId": other }), "orgId"),
+        (json!({ "format": "csv", "from": 5, "to": 4 }), "from"),
+    ] {
+        let r = t.post("/audit/export", body, &t.owner).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text());
+        assert_eq!(r.json()["error"]["field"], field);
+    }
+    let r = t.post("/audit/export", json!({ "format": "xlsx" }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text());
+}
+
+/// Server administrators export the whole server's log, or one organization's, as the server
+/// view lists it; the entry of that export stays in the server's log.
+#[tokio::test]
+async fn server_administrators_export_the_whole_log() {
+    let t = T::new().await;
+    let other = uuid::Uuid::now_v7().to_string();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+        .bind(&other)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    t.audit_event("s1", Some(&t.org), "dashboard.saved", "d1", 1_700_000_000_000).await;
+    t.audit_event("s2", Some(&other), "dashboard.saved", "d2", 1_700_000_001_000).await;
+    t.audit_event("s3", None, "dashboard.saved", "d3", 1_700_000_002_000).await;
+    let r =
+        t.send("/api/admin/audit/export", json!({ "format": "json", "action": "dashboard." }), Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let ids: Vec<String> = r.json().as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids, ["s3", "s2", "s1"]);
+    let r = t.send("/api/admin/audit/export", json!({ "format": "csv", "orgId": other }), Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains(";s2;") || r.text().contains(",s2,"), "{}", r.text());
+    assert!(!r.text().contains(",s1,"), "{}", r.text());
+    // A server administrator's export is in the server's log, also when narrowed to one
+    // organization; the filter says which.
+    let exports = t.audit_exports().await;
+    assert_eq!(exports.len(), 2);
+    assert_eq!((exports[0].0.as_deref(), exports[1].0.as_deref()), (None, None));
+    let narrowed: Value = serde_json::from_str(&exports[1].1).unwrap();
+    assert_eq!(narrowed["orgId"], json!(other));
+    for org in [" ", "keine-organisation"] {
+        let r = t.send("/api/admin/audit/export", json!({ "format": "csv", "orgId": org }), Some(&t.owner)).await;
+        assert_eq!((r.status, r.json()["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("orgId")));
+    }
+    assert_eq!(t.audit_exports().await.len(), 2);
+}
+
+/// The cap counts events: exactly as many as allowed make a file, one more is refused before
+/// anything is recorded or sent.
+#[tokio::test]
+async fn an_audit_export_holds_at_most_the_cap_of_events() {
+    let t = T::new().await;
+    t.state.export_limits.write().unwrap().audit_events = 3;
+    for i in 0..4_i64 {
+        t.audit_event(&format!("c{i}"), Some(&t.org), "dashboard.saved", "d", 1_700_000_000_000 + i).await;
+    }
+    // Three of the four.
+    let three = json!({ "format": "json", "action": "dashboard.", "from": 1_700_000_000_001_i64 });
+    let r = t.post("/audit/export", three, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json().as_array().map(Vec::len), Some(3));
+    let r = t.post("/audit/export", json!({ "format": "csv", "action": "dashboard." }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "export.too_many_events".into()));
+    assert_eq!(r.json()["error"]["params"], json!({ "max": "3" }), "{}", r.text());
+    assert_eq!(t.audit_exports().await.len(), 1, "a refused export records nothing");
+    t.spool_empty().await;
+}
+
+/// An audit export takes the export slots: a user with an export running waits for it.
+#[tokio::test]
+async fn an_audit_export_takes_the_users_export_slot() {
+    let t = T::new().await;
+    let (owner,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'joerg@example.de'").fetch_one(&t.state.db).await.unwrap();
+    t.state.export_users.lock().unwrap().insert(owner.clone());
+    let r = t.post("/audit/export", json!({ "format": "csv" }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::SERVICE_UNAVAILABLE, "export.user_busy".into()));
+    t.state.export_users.lock().unwrap().remove(&owner);
+    let r = t.post("/audit/export", json!({ "format": "csv" }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    t.slots_free().await;
+    // The slot comes back once the file was sent.
+    let freed = async {
+        while !t.state.export_users.lock().unwrap().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), freed).await.expect("the user's slot comes back");
 }

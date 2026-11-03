@@ -226,6 +226,10 @@ describe("catalogs", () => {
       // SAML: the protocol's name.
       "SAML 2.0",
       "SAML",
+      // File formats of the export.
+      "Excel",
+      "NDJSON",
+      "GraphML",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");
