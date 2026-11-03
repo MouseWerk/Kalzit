@@ -3,6 +3,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
   startTransition,
   useCallback,
   useEffect,
@@ -160,6 +161,8 @@ export function PanelCard({
   const hintId = useId();
   const [inspecting, setInspecting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // A picture of the panel is being made (saveImage); the card is read in an effect.
+  const [imaging, setImaging] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   // AI shows only while it is usable; a summary reads the saved panel as the server runs it.
   const ai = useAiStatusFor(query.orgId);
@@ -358,6 +361,11 @@ export function PanelCard({
     target.addEventListener("pointercancel", onUp);
   }
 
+  const imageFailed = t("dashboards.panel.imageFailed");
+  useEffect(() => {
+    if (!imaging) return;
+    void saveImage(ref, title, imageFailed).finally(() => setImaging(false));
+  }, [imaging, title, imageFailed]);
   const outcomes = results.data ?? [];
   const noData = results.data === undefined;
   // Every action of the panel, in one menu: its links first, then viewing, then editing.
@@ -407,8 +415,8 @@ export function PanelCard({
       key: "image",
       label: t("dashboards.panel.image"),
       name: t("dashboards.panel.imageNamed", { title }),
-      onSelect: () => void saveImage(ref.current, title, t("dashboards.panel.imageFailed")),
-      disabled: noData,
+      onSelect: () => setImaging(true),
+      disabled: noData || imaging,
     });
   }
   // Each AI function shows while its own provider can be used.
@@ -629,12 +637,12 @@ export function PanelCard({
 }
 
 /** Saves the panel `card` as a PNG image named after its title; a failure says so in a toast. */
-async function saveImage(card: HTMLElement | null, title: string, failed: string) {
-  if (card === null) return;
+async function saveImage(card: RefObject<HTMLElement | null>, title: string, failed: string) {
   try {
     // The menu that asked for it closes first, so focus and hover marks are not in the picture.
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const blob = await panelImage(card);
+    if (card.current === null) return;
+    const blob = await panelImage(card.current);
     saveFile({ blob, filename: imageFileName(title) });
   } catch {
     showErrorToast(failed);

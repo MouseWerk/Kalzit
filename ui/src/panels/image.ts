@@ -11,6 +11,8 @@
  * is not part of the image.
  */
 
+import { fetchOwnFile } from "../api/client";
+
 /** Left out of the image with everything inside: a panel's menu, handles and resize corner. */
 export const NO_IMAGE = "data-no-image";
 
@@ -87,19 +89,14 @@ export function copyForImage(node: Node): Node | null {
 const fontData = new Map<string, Promise<string | null>>();
 
 async function dataUrl(url: string): Promise<string | null> {
-  try {
-    const response = await fetch(url, { credentials: "same-origin" });
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
+  const blob = await fetchOwnFile(url);
+  if (blob === null) return null;
+  return await new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(blob);
+  });
 }
 
 function fontRules(
