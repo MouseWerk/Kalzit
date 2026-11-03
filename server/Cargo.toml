@@ -49,7 +49,7 @@ ring = "0.17.14"
 regex = { version = "1.12.2", default-features = false, features = ["std", "unicode"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rust-embed = "8.13.0"
-rust_xlsxwriter = { version = "0.101.0", default-features = false, features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.102.0", default-features = false, features = ["constant_memory"] }
 # Spool files of Excel exports (constant memory mode) in a private folder.
 tempfile = "3.27.0"
 ryu-js = "1.0.3"
