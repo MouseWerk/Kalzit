@@ -31,8 +31,11 @@ export interface PathStep {
   node?: number;
   /** Its properties as "key value" texts: a node's first two besides its name, an edge's all. */
   details?: string[];
-  /** The node or edge as the result has it, for its data links; absent when it was not in it. */
-  record?: { id: string; properties: Record<string, unknown> };
+  /**
+   * The node or edge as the result has it, for its data links (a node with its id); absent when
+   * it was not in the result.
+   */
+  record?: { nodeId?: string; properties: Record<string, unknown> };
 }
 
 function details(properties: Record<string, unknown>, skip: string, max: number): string[] {
@@ -60,7 +63,7 @@ export function pathSteps(model: GraphModel, path: { nodes: string[]; edges: str
       labels: node?.labels ?? [],
       node: at ?? -1,
       details: node === undefined ? [] : details(node.properties, node.caption, NODE_PROPERTIES),
-      ...(node === undefined ? {} : { record: { id: node.id, properties: node.properties } }),
+      ...(node === undefined ? {} : { record: { nodeId: node.id, properties: node.properties } }),
     });
     const edgeId = path.edges[i];
     if (edgeId !== undefined && i < path.nodes.length - 1) {
@@ -72,7 +75,7 @@ export function pathSteps(model: GraphModel, path: { nodes: string[]; edges: str
         text: edge?.type ?? edgeId,
         forward: from === undefined || from === id,
         details: edge === undefined ? [] : details(edge.properties, "", Number.POSITIVE_INFINITY),
-        ...(edge === undefined ? {} : { record: { id: edge.id, properties: edge.properties } }),
+        ...(edge === undefined ? {} : { record: { properties: edge.properties } }),
       });
     }
   });
@@ -121,7 +124,7 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
       <DataLinkList
         links={linksForRecord(
           options.dataLinks,
-          (field) => graphValue(record.properties, record.id, field),
+          (field) => graphValue(record.properties, field, record.nodeId),
           linkValues,
         )}
         label={t("panels.dataLinks.of", { name: step.text })}

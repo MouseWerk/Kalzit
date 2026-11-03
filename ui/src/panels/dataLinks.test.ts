@@ -1,6 +1,8 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: link placeholders such as ${__value} are typed by users, not template literals
 import { describe, expect, it } from "vitest";
-import { variablesFromSearch } from "../features/dashboards/links";
+import { fitAddressValues, variablesFromSearch } from "../features/dashboards/links";
+import type { PanelModel } from "../features/dashboards/model";
+import { panelExtrasProblem } from "../features/dashboards/PanelExtras";
 import {
   type DataLink,
   dataLinkHref,
@@ -26,6 +28,7 @@ describe("data link addresses", () => {
       "HTTP://intranet/x",
       "/dashboards/d-1?var-kunde=${__value}",
       "/explore",
+      "https://a.example:8443?q=${__value}#${kunde}",
     ]) {
       expect(isDataLinkUrl(url), url).toBe(true);
     }
@@ -43,6 +46,12 @@ describe("data link addresses", () => {
       "https:///x",
       "https:evil",
       "${__value}",
+      "https://${__value}/x",
+      "https://shop.example${__value}",
+      "http://$host/x",
+      "https://user${__value}@shop.example/x",
+      "https://shop.example:${port}/x",
+      "https://?q=1",
       "x/y",
       "/a\nb",
       "/a\tb",
@@ -85,6 +94,20 @@ describe("filling in a data link", () => {
     expect(dataLinkHref(link("javascript:${__value}"), "alert(1)")).toBeNull();
   });
 
+  it("never lets a value or a variable choose the host", () => {
+    // A placeholder in the host is refused as stored, so no value fills it.
+    expect(dataLinkHref(link("https://${__value}/x"), "evil.example")).toBeNull();
+    expect(dataLinkHref(link("https://shop.example${__value}"), ".evil.example")).toBeNull();
+    expect(dataLinkHref(link("https://$host/x"), "1", { host: "evil.example" })).toBeNull();
+    // In the path, query or fragment a value stays there, encoded; the host is the template's.
+    expect(dataLinkHref(link("https://shop.example/${__value}"), "@evil.example")).toBe(
+      "https://shop.example/%40evil.example",
+    );
+    expect(dataLinkHref(link("https://shop.example?h=${__value}"), "//evil.example/")).toBe(
+      "https://shop.example?h=%2F%2Fevil.example%2F",
+    );
+  });
+
   it("gives no link without a plain value or with an incomplete link", () => {
     const ok = link("/x/${__value}");
     expect(dataLinkHref(ok, undefined)).toBeNull();
@@ -114,11 +137,13 @@ describe("filling in a data link", () => {
     ]);
   });
 
-  it("reads a graph element's property, and its own id for `id`", () => {
-    expect(graphValue({ name: "Ada" }, "4:x:0", "name")).toBe("Ada");
-    expect(graphValue({ name: "Ada" }, "4:x:0", "id")).toBe("4:x:0");
-    expect(graphValue({ id: 7 }, "4:x:0", "id")).toBe(7);
-    expect(graphValue({}, "4:x:0", "toString")).toBeUndefined();
+  it("reads a graph element's property, and a node's own id for `id`", () => {
+    expect(graphValue({ name: "Ada" }, "name", "4:x:0")).toBe("Ada");
+    expect(graphValue({ name: "Ada" }, "id", "4:x:0")).toBe("4:x:0");
+    expect(graphValue({ id: 7 }, "id", "4:x:0")).toBe(7);
+    expect(graphValue({}, "toString", "4:x:0")).toBeUndefined();
+    // An edge has no fallback, so a node's `id` link does not show on every edge.
+    expect(graphValue({ quantity: 2 }, "id")).toBeUndefined();
   });
 });
 
@@ -144,6 +169,32 @@ describe("stored data links", () => {
   });
 });
 
+describe("an incomplete data link in the panel editor", () => {
+  it("keeps the editor from applying until it is complete, as the server would refuse it", () => {
+    const panel = (dataLinks: unknown): PanelModel => ({
+      id: "p",
+      type: "documents",
+      title: "",
+      grid: { x: 0, y: 0, w: 12, h: 8 },
+      targets: [],
+      transformations: [],
+      options: { dataLinks },
+      fieldConfig: {},
+    });
+    // A new link starts as "https://" with no field or title.
+    expect(panelExtrasProblem(panel([{ field: "", title: "", url: "https://" }]))).toBe(
+      "dataLinks",
+    );
+    expect(panelExtrasProblem(panel([{ field: "id", title: "Open", url: "https://" }]))).toBe(
+      "dataLinks",
+    );
+    expect(panelExtrasProblem(panel([{ field: "id", title: "Open", url: "/x/${__value}" }]))).toBe(
+      null,
+    );
+    expect(panelExtrasProblem(panel(undefined))).toBe(null);
+  });
+});
+
 describe("variables from a dashboard's address", () => {
   it("reads var- parameters as text, several values as a list", () => {
     expect(variablesFromSearch("?var-kunde=007&var-hosts=a&var-hosts=b&from=now-1h")).toEqual({
@@ -157,5 +208,30 @@ describe("variables from a dashboard's address", () => {
     expect(Object.getPrototypeOf(odd)).toBe(Object.prototype);
     expect(Object.hasOwn(odd, "__proto__")).toBe(true);
     expect(variablesFromSearch("")).toEqual({});
+  });
+
+  it("gives each variable only what it takes", () => {
+    const fitted = fitAddressValues(
+      [
+        { name: "land", type: "custom", options: ["at", "de"] },
+        { name: "hosts", type: "custom", options: ["a", "b"], multi: true },
+        { name: "kunde", type: "textbox" },
+        { name: "ids", type: "query", multi: true },
+        { name: "fix", type: "constant", current: "own" },
+        { name: "every", type: "interval", options: ["1m"] },
+        { name: "free", type: "custom", options: ["x"] },
+      ],
+      {
+        land: "xx",
+        hosts: ["b", "zz", "a"],
+        kunde: ["007", "008"],
+        ids: ["1", "2"],
+        fix: "other",
+        every: "1m",
+        free: ["y", "x"],
+        unknown: "u",
+      },
+    );
+    expect(fitted).toEqual({ hosts: ["b", "a"], kunde: "007", ids: ["1", "2"], free: "x" });
   });
 });

@@ -724,11 +724,32 @@ describe("links", () => {
       ],
       links: [{ type: "url", title: "Wiki", url: "https://wiki.example/$land/$kunde/$fix" }],
     });
-    renderApp("/dashboards/d-main?var-land=de&var-kunde=007&var-fix=other&var-unknown=x");
+    const { location } = renderApp(
+      "/dashboards/d-main?from=now-6h&var-land=de&var-kunde=007&var-kunde=008&var-fix=other&var-unknown=x",
+    );
     const wiki = await screen.findByRole("link", { name: "Wiki" });
-    // Text stays text ("007"), and a constant keeps the dashboard's own value.
+    // Text stays text ("007"), a single-value variable takes the first of several, and a
+    // constant keeps the dashboard's own value.
     expect(wiki.getAttribute("href")).toBe("https://wiki.example/de/007/own");
     expect((screen.getByRole("combobox", { name: "land" }) as HTMLSelectElement).value).toBe("de");
+    // Taken once: the address no longer names them, the rest of it stays.
+    await waitFor(() => expect(location().searchStr).not.toContain("var-"));
+    expect(location().searchStr).toContain("from=now-6h");
+  });
+
+  it("leaves a fixed-values variable as stored when the address names a value it does not offer", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [
+        { name: "land", type: "custom", options: ["at", "de"] },
+        { name: "hosts", type: "custom", options: ["a", "b", "c"], multi: true, current: ["a"] },
+      ],
+      links: [{ type: "url", title: "Wiki", url: "https://wiki.example/$land/$hosts" }],
+    });
+    renderApp("/dashboards/d-main?var-land=xx&var-hosts=c&var-hosts=zz&var-hosts=b");
+    const wiki = await screen.findByRole("link", { name: "Wiki" });
+    // `xx` is no option of $land, so it opens with its first; $hosts takes its options only.
+    expect(wiki.getAttribute("href")).toBe("https://wiki.example/at/c,b");
   });
 
   it("keeps up to two links in the bar and counts only the ones that are shown", async () => {

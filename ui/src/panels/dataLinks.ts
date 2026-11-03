@@ -39,20 +39,46 @@ export const VALUE_PLACEHOLDER = "${__value}";
 /**
  * The address rule of a data link, before and after filling in: `http://` or `https://` with a
  * host, or a path on this server (not `//host`). No backslash, no control character, no spaces
- * at the ends; `javascript:`, `data:` and `mailto:` never pass.
+ * at the ends; `javascript:`, `data:` and `mailto:` never pass. The host is written out: a `$`
+ * in it (`https://${__value}/x`, `https://shop.example${__value}`) would let a value or a
+ * variable choose the site.
  */
 export function isDataLinkUrl(url: string): boolean {
   if (url === "" || url !== url.trim() || url.includes("\\") || /\p{Cc}/u.test(url)) {
     return false;
   }
+  const authority = authorityOf(url);
+  if (authority !== null) {
+    return authority !== "" && !authority.includes("$");
+  }
+  return url.startsWith("/") && !url.startsWith("//");
+}
+
+/**
+ * The part between `http(s)://` and the first `/`, `?` or `#`: the host (with port and user
+ * info); null for an address without one of those schemes.
+ */
+function authorityOf(url: string): string | null {
   const lower = url.toLowerCase();
   for (const scheme of ["https://", "http://"]) {
     if (lower.startsWith(scheme)) {
       const rest = url.slice(scheme.length);
-      return rest !== "" && !rest.startsWith("/");
+      return rest.slice(0, rest.search(/[/?#]|$/));
     }
   }
-  return url.startsWith("/") && !url.startsWith("//");
+  return null;
+}
+
+/** The host a browser opens for an absolute address, or null for a path or what it cannot read. */
+function hostOf(url: string): string | null {
+  if (authorityOf(url) === null) {
+    return null;
+  }
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
 }
 
 /** A stored text without control characters, cut to `max` characters; the ends stay as typed. */
@@ -100,7 +126,11 @@ export function dataLinkHref(
     return null;
   }
   const filled = fillVariables(link.url, values, { __value: text, __field: link.field.trim() });
-  return isDataLinkUrl(filled) && isSafeHref(filled) ? filled : null;
+  if (!isDataLinkUrl(filled) || !isSafeHref(filled)) {
+    return null;
+  }
+  // The site stays the one the link names: the filled-in address opens the template's host.
+  return hostOf(filled) === hostOf(link.url) ? filled : null;
 }
 
 /** The links of `field` for a value, ready to open; links that do not fit it are left out. */
@@ -120,18 +150,19 @@ export function linksForField(
 }
 
 /**
- * The value a graph link reads from a node or an edge: the property with that key, else for
- * `id` the element's own id, so a link can name a node without an id property.
+ * The value a graph link reads from a node or an edge: the property with that key. For a node,
+ * `id` falls back to its own id, so a link can name a node without an id property; an edge has
+ * no such fallback (`nodeId` absent), or a node's link would show on every edge.
  */
 export function graphValue(
   properties: Readonly<Record<string, unknown>>,
-  id: string,
   field: string,
+  nodeId?: string,
 ): unknown {
   if (Object.hasOwn(properties, field)) {
     return properties[field];
   }
-  return field === "id" ? id : undefined;
+  return field === "id" ? nodeId : undefined;
 }
 
 /**

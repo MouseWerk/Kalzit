@@ -728,7 +728,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       ? []
       : linksForRecord(
           options.dataLinks,
-          (field) => graphValue(primaryData.properties, primaryData.id, field),
+          (field) => graphValue(primaryData.properties, field, primaryData.id),
           linkValues,
         );
   const edgeLinksOf = (edge: number) => {
@@ -737,7 +737,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       ? []
       : linksForRecord(
           options.dataLinks,
-          (field) => graphValue(data.properties, data.id, field),
+          (field) => graphValue(data.properties, field),
           linkValues,
         );
   };

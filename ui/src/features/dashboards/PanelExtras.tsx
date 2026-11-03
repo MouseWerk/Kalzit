@@ -1,6 +1,8 @@
 import { useId, useState } from "react";
+import { isRecord } from "../../api/client";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import { isCompleteLink, parseDataLinks } from "../../panels/dataLinks";
 import { isAllowedUrl } from "./links";
 import type { PanelLink, PanelModel, PanelRepeat, RowModel, VariableModel } from "./model";
 import { isTimeFrom, isTimeShift } from "./panelTime";
@@ -33,6 +35,10 @@ export function panelExtrasProblem(panel: PanelModel): string | null {
   if (panel.timeShift !== undefined && !isTimeShift(panel.timeShift)) return "timeShift";
   if ((panel.links ?? []).some((l) => l.title.trim() === "" || !isAllowedUrl(l.url)))
     return "links";
+  // Data links of document and graph panels: one still being typed would fail the whole save.
+  const dataLinks = isRecord(panel.options) ? panel.options.dataLinks : undefined;
+  if (parseDataLinks(dataLinks, Number.POSITIVE_INFINITY).some((l) => !isCompleteLink(l)))
+    return "dataLinks";
   return null;
 }
 

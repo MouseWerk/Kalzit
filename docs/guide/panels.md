@@ -195,7 +195,11 @@ and **Open in a new tab**. The address starts with `https://`, `http://` or `/` 
 Kalzit; `${__value}` is the field's value and `${__field}` its name, dashboard variables such as
 `${region}` work too, and every value is URL-encoded. To open another dashboard with the value as
 its variable, write `/dashboards/<id>?var-customer=${__value}`: a dashboard takes `var-name`
-parameters as the starting values of its variables (a constant keeps its own).
+parameters as the starting values of its variables (a fixed-values variable only one of its
+values, a single-value variable the first of several; a constant keeps its own) and then takes
+them out of the address. The host of a web address is written out: placeholders and variables
+go in the path, query or fragment, never in the host. The panel editor keeps **Apply** until
+every data link has a field, a title and an allowed address.
 
 Where links show: the document explorer offers a field's links while its value is selected (with
 a whole document selected, the links of all its fields), the document card under its title, the

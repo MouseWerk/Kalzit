@@ -605,16 +605,20 @@ fn is_safe_link(link: &str) -> bool {
 
 /// A data link's address: `http://` or `https://` written out at the start, or a path on this
 /// server (`/dashboards/...`, not `//host` or `/\host`). Nothing else, so `javascript:`,
-/// `data:`, `mailto:` and an address that is only a placeholder never pass. Variables may follow
-/// the start; the browser checks the filled-in address again.
+/// `data:`, `mailto:` and an address that is only a placeholder never pass. The host is written
+/// out: no `$` between `://` and the first `/`, `?` or `#`, so neither a value
+/// (`https://${__value}/x`, `https://shop.example${__value}`) nor a variable chooses the site.
+/// Variables may follow in the path, query and fragment; the browser checks the filled-in
+/// address again.
 fn is_data_link_url(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     if url.trim() != url || url.contains('\\') {
         return false;
     }
     if let Some(rest) = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://")) {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
         // A host must follow: "https://" alone or "https:///path" names none.
-        return !rest.is_empty() && !rest.starts_with('/');
+        return !authority.is_empty() && !authority.contains('$');
     }
     url.starts_with('/') && !url.starts_with("//")
 }
@@ -1120,6 +1124,7 @@ mod tests {
             { "field": "customer.id", "title": "Kunde", "url": "/dashboards/kunden?var-kunde=${__value}" },
             { "field": "sku", "title": "Shop", "url": "https://shop.example/p/${__value}?f=${__field}", "newTab": true },
             { "field": "x", "title": "Plain", "url": "HTTP://intranet/${kunde}", "newTab": false },
+            { "field": "x", "title": "Query", "url": "https://a.example:8443?q=${__value}#${kunde}" },
         ]);
         for kind in ["documents", "document", "network", "hierarchy", "path"] {
             check(kind, &json!({ "dataLinks": links }), &json!({})).unwrap_or_else(|e| panic!("{kind}: {e}"));
@@ -1147,6 +1152,13 @@ mod tests {
             "https:evil",
             "${__value}",
             "${target}/x",
+            // A value or a variable in the host would choose the site.
+            "https://${__value}/x",
+            "https://shop.example${__value}",
+            "http://$host/x",
+            "https://user${__value}@shop.example/x",
+            "https://shop.example:${port}/x",
+            "https://?q=1",
             "x/y",
             "/a\nb",
             "/a\tb",

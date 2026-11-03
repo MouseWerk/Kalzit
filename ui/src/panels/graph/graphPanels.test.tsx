@@ -426,6 +426,8 @@ describe("data links of graph panels", () => {
     expect(within(own).getByRole("link", { name: "Element" }).getAttribute("href")).toBe(
       `/explore?id=${encodeURIComponent(ID.ada)}`,
     );
+    // Only the node falls back to its own id; its edges have no `id` property, so no link.
+    expect(within(details).getAllByRole("link", { name: "Element" })).toHaveLength(1);
     // A link whose address is not allowed never shows.
     expect(within(details).queryByRole("link", { name: "Unsafe" })).toBeNull();
     const edge = within(details).getAllByRole("link", { name: "Order lines" });

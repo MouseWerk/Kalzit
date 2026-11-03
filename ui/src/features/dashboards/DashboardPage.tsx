@@ -6,6 +6,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  useRouter,
   useSearch,
 } from "@tanstack/react-router";
 import {
@@ -83,7 +84,7 @@ import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson, missingAnalyses } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
-import { variablesFromSearch } from "./links";
+import { fitAddressValues, variablesFromSearch, withoutVariableParams } from "./links";
 import {
   BROWSER_ZONE,
   clickTargets,
@@ -194,9 +195,23 @@ export function DashboardPage() {
   // Set on the editor's child routes only.
   const { panelId } = useParams({ strict: false });
   const adding = useLocation({ select: (location) => location.pathname.endsWith("/panels/new") });
-  // Values a link brought along (`?var-customer=42`, from a data link of another dashboard).
-  const searchText = useLocation({ select: (location) => location.searchStr });
-  const linked = useMemo(() => variablesFromSearch(searchText), [searchText]);
+  // Values a link brought along (`?var-customer=42`, from a data link of another dashboard). They
+  // are kept here and taken out of the address, so it does not go on naming values the viewer
+  // has changed since.
+  // The address as the browser has it: the router's own text has already turned `007` or
+  // repeated names into JSON.
+  const router = useRouter();
+  const searchText = useLocation({ select: () => router.history.location.search });
+  const fromAddress = useMemo(() => variablesFromSearch(searchText), [searchText]);
+  const [linked, setLinked] = useState({ dashboardId, values: fromAddress });
+  if (Object.keys(fromAddress).length > 0 && linked.values !== fromAddress) {
+    setLinked({ dashboardId, values: fromAddress });
+  }
+  useEffect(() => {
+    if (Object.keys(fromAddress).length > 0) {
+      void navigate({ search: withoutVariableParams, replace: true });
+    }
+  }, [fromAddress, navigate]);
   if (org === undefined) {
     return (
       <EmptyState icon="dashboards" title={t("dashboards.noOrg.title")}>
@@ -208,7 +223,7 @@ export function DashboardPage() {
     <DashboardScreen
       orgId={org.id}
       dashboardId={dashboardId}
-      linked={linked}
+      linked={linked.dashboardId === dashboardId ? linked.values : undefined}
       display={{
         from: search.from,
         to: search.to,
@@ -265,7 +280,7 @@ interface ScreenProps {
   /** Extra controls (the playlist's), shown in the bar. */
   controls?: ReactNode;
   /** Variable values from the address (`var-name`), taken when the dashboard opens. */
-  linked?: VariableValues;
+  linked?: VariableValues | undefined;
 }
 
 /** Loads one dashboard and shows it; also used by the playlist player. */
@@ -284,12 +299,7 @@ export function DashboardScreen({
   usePanelPluginTypes(orgId);
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
-  // Values from the address count as picked, so they apply to the variables the dashboard has.
-  const picked = useRef(
-    new Map<string, VariableValues>(
-      linked === undefined || Object.keys(linked).length === 0 ? [] : [[dashboardId, linked]],
-    ),
-  );
+  const picked = useRef(new Map<string, VariableValues>());
 
   useEffect(() => {
     if (dashboard.data !== undefined) {
@@ -330,6 +340,7 @@ export function DashboardScreen({
       orgId={orgId}
       dashboard={dashboard.data}
       picked={picked.current}
+      linked={linked}
       display={display}
       onDisplay={onDisplay}
       controls={controls}
@@ -422,6 +433,7 @@ function DashboardView({
   orgId,
   dashboard,
   picked,
+  linked,
   display,
   onDisplay,
   controls,
@@ -429,6 +441,8 @@ function DashboardView({
   orgId: string;
   dashboard: Dashboard;
   picked: Map<string, VariableValues>;
+  /** Values from the address, taken while nothing was picked on this dashboard yet. */
+  linked: VariableValues | undefined;
   display: DisplayState;
   onDisplay: (patch: Partial<DisplayState>) => void;
   controls?: ReactNode;
@@ -526,13 +540,12 @@ function DashboardView({
   const analyses = { ...dashboard.analyses, ...extraAnalyses };
   const [values, setValues] = useState<VariableValues>(() => {
     const start = initialVariables(dashboard.model.variables);
-    // A constant keeps the dashboard's own value, whatever an address says.
-    const constants = new Set(
-      dashboard.model.variables.filter((v) => v.type === "constant").map((v) => v.name),
-    );
-    const kept = Object.entries(picked.get(dashboard.id) ?? {}).filter(
-      ([name]) => Object.hasOwn(start, name) && !constants.has(name),
-    );
+    const own = picked.get(dashboard.id);
+    if (own === undefined) {
+      // Opened from an address with values: those the variables take, the rest as stored.
+      return { ...start, ...fitAddressValues(dashboard.model.variables, linked ?? {}) };
+    }
+    const kept = Object.entries(own).filter(([name]) => Object.hasOwn(start, name));
     return { ...start, ...Object.fromEntries(kept) };
   });
   useEffect(() => {
