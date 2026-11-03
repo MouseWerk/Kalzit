@@ -1236,8 +1236,9 @@ size limit (`datasources.max_response_bytes`, the source's `maxResponseBytes`) t
 `truncated` is `{"limit": <documents returned>}`, a notice says why, and `nextCursor` continues it.
 A `$sample` size above the document limit is lowered to it. In `find`, `limit: 0` means no
 limit, as in MongoDB (the document limit still holds). Documents keep the field order the
-database stored. A cursor belongs to its query, time range and variables; with any other it is
-`mongodb.cursor_invalid`. A `limit` in a `find` query is the query's own: reaching it is no cut.
+database stored. A cursor belongs to its caller, query, time range and variables; with any
+other it is `query.cursor_invalid`. A `limit` in a `find` query is the query's own: reaching it
+is no cut.
 
 ### The documents shape
 
@@ -1280,8 +1281,22 @@ set, `truncated.limit` is the number of documents kept, and `truncated.reason` a
 which limit cut it (`documents.limit` with `limit`, or `documents.size_limit`). A search whose
 `size` was lowered to the row limit (or 10,000) and whose total counts more hits than it answered
 is cut the same way (`documents.limit`). `executedQuery` is the query as sent
-(MongoDB, Elasticsearch). `nextCursor` is set where the source can continue the set (MongoDB);
-`cursor` on a query (and `cursors` on the panel route) continues it. Other kinds ignore it.
+(MongoDB, Elasticsearch).
+
+**Load more.** `nextCursor` is set where the source can continue a set that was cut: MongoDB,
+Elasticsearch and OpenSearch hits, and JSON array and NDJSON files. `cursor` on a query (and
+`cursors` on the panel route) answers the next page, which has its own `truncated` and
+`nextCursor`. A cut that kept no document has no `nextCursor`. The cursor is opaque: it is
+sealed with the server's key over the organization, the user, the data source and the query it
+continues (query, graph steps, `timeRange` and variables), so it continues only the same query
+for the same caller. Any other, changed or made-up cursor is `query_rejected` with reason
+`query.cursor_invalid`, before the source is asked. A cursor never widens what the caller may
+run: on the panel route it continues a stored query of a dashboard the caller may read, and
+with `cursors` only the targets they name run. Elasticsearch and OpenSearch page with `from`
+inside the query's own `size` and `from`, up to the 10,000 window; a query with
+`search_after` pages itself and gets no `nextCursor`, nor does one with `track_total_hits:
+false` (no total tells that hits were left out). Files page by document count: a later page
+reads past the documents before it. Other kinds ignore `cursor`.
 
 `schema` is sampled from the first 1,000 documents of the result, the same way for every source:
 every field path (`a.b`, array elements as `items[]`, fields of documents in arrays as
@@ -1436,7 +1451,8 @@ Prometheus label matchers.
 
 Body `PanelQueryRequest`: `timeRange`, optional `intervalMs`, `maxDataPoints`, `limit` (rows per
 target), `cursors` (per `refId`, for document results, M2) and `variables`. Answer `QueryResponse`
-with one outcome per stored target of the panel (empty `results` for a panel without targets).
+with one outcome per stored target of the panel (empty `results` for a panel without targets);
+with `cursors`, only the targets they name run, each continuing its set.
 Per-target errors are as for free queries, including `query_rejected` for a stored statement that
 is not a single read-only `SELECT`.
 
@@ -1772,6 +1788,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `query.time_out_of_range` | `time` | a bound time the database cannot hold |
 | `query.write_refused` | `detail` | the database refused a write (read-only transaction) |
 | `query.timeout` | `seconds` | `query_timeout`: the query ran past its time limit |
+| `query.cursor_invalid` | | the `cursor` was not made by this server for this caller and query (see "Load more") |
 | `query.statement_timeout` | | `datasource_error`: PostgreSQL cancelled it at its statement timeout |
 | `query.stopped` | | `datasource_error`: SQLite stopped the statement |
 | `sql.empty` | | the query is empty |

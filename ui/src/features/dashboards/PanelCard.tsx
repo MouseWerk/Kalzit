@@ -71,6 +71,7 @@ import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
 import { usePanelLive } from "./usePanelLive";
+import { type MoreDocuments, usePanelPages } from "./usePanelPages";
 import {
   firstLoad,
   type PanelQueryInput,
@@ -186,6 +187,8 @@ export function PanelCard({
     keepHandleFocus.current = false;
   });
   const results = usePanelResults({ ...query, panel });
+  // Pages loaded after the answer through its document sets' cursors.
+  const paged = usePanelPages({ ...query, panel }, results.data);
   // Retry after a data source error: the same request again. Stable, so the body is not drawn
   // again for it.
   const { refetch } = results;
@@ -366,7 +369,7 @@ export function PanelCard({
     if (!imaging) return;
     void saveImage(ref, title, imageFailed).finally(() => setImaging(false));
   }, [imaging, title, imageFailed]);
-  const outcomes = results.data ?? [];
+  const outcomes = paged.outcomes;
   const noData = results.data === undefined;
   // Every action of the panel, in one menu: its links first, then viewing, then editing.
   const menuItems: PanelMenuItem[] = [
@@ -577,7 +580,8 @@ export function PanelCard({
                 pending={firstLoad(results)}
                 error={results.error}
                 outcomes={outcomes}
-                revision={results.dataUpdatedAt}
+                revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
+                more={paged.more}
                 variables={variableTexts(query.variables)}
                 kindOf={kindOf}
                 onRetry={retry}
@@ -751,6 +755,8 @@ interface PanelBodyProps {
   onRetry?: (() => void) | undefined;
   /** The queries are running (a retry among them): Retry waits until they are back. */
   fetching?: boolean | undefined;
+  /** "Load more" for document sets whose source has more; absent where pages are not offered. */
+  more?: MoreDocuments | undefined;
 }
 
 /**
@@ -772,6 +778,7 @@ export function PanelBody({
   kindOf = () => undefined,
   onRetry,
   fetching = false,
+  more,
 }: PanelBodyProps) {
   const { t } = useI18n();
   const calendar = useAnalysisCalendar();
@@ -1003,6 +1010,52 @@ export function PanelBody({
       {isTruncated(outcomes) ? (
         <p className="panel-note">{t("dashboards.panel.truncated")}</p>
       ) : null}
+      {more === undefined || !drawable || !takesDocuments ? null : (
+        <MoreButtons documents={documents} more={more} />
+      )}
+    </div>
+  );
+}
+
+/** One "Load more" per document set the source has more of, and why the last page failed. */
+function MoreButtons({
+  documents,
+  more,
+}: {
+  documents: readonly { refId: string; documents: DocumentSet }[];
+  more: MoreDocuments;
+}) {
+  const { t } = useI18n();
+  const open = documents.flatMap((d) =>
+    d.documents.nextCursor === undefined
+      ? []
+      : [{ refId: d.refId, cursor: d.documents.nextCursor }],
+  );
+  if (open.length === 0 && more.error === null) {
+    return null;
+  }
+  return (
+    <div className="panel-more" data-no-image="">
+      {open.map(({ refId, cursor }) => (
+        <button
+          key={refId}
+          type="button"
+          className="button button--secondary button--small"
+          disabled={more.loading !== null}
+          onClick={() => more.load(refId, cursor)}
+        >
+          {more.loading === refId
+            ? t("common.loading")
+            : documents.length > 1
+              ? t("documents.more.loadQuery", { refId })
+              : t("documents.more.load")}
+        </button>
+      ))}
+      {more.error === null ? null : (
+        <p className="panel-note" role="alert">
+          {more.error}
+        </p>
+      )}
     </div>
   );
 }

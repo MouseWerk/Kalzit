@@ -12,6 +12,7 @@ pub mod cache;
 pub mod clickhouse;
 pub mod connect;
 pub mod csv;
+pub mod cursor;
 pub mod cypher;
 pub mod detail;
 pub mod distribution;
@@ -1845,11 +1846,42 @@ async fn run_one(
     if let Some(limit) = item.limit {
         limits.max_rows = limits.max_rows.min(limit.max(1) as usize);
     }
+    // The caller's cursor is opened before the cache or the source sees it, and the next page's
+    // position is sealed for this caller on the way out, whether it came from the cache or not.
+    let binding =
+        cursor::Binding::new(&ctx.org_id, &ctx.user.id, &ds.id, &item.query, &item.steps, run.range, run.variables);
+    let mut item = item;
+    if let Some(sealed) = item.cursor.take() {
+        match cursor::open(&state.secrets, &binding, &sealed) {
+            Ok(position) => item.cursor = Some(position),
+            Err(detail) => return outcome_error("query_rejected", detail),
+        }
+    }
+    let mut outcome = run_cached(state, ctx, &ds, &kind, item, run, limits, cache).await;
+    if let QueryOutcome::Ok { result, .. } = &mut outcome {
+        cursor::seal_result(&state.secrets, &binding, result);
+    }
+    outcome
+}
+
+/// One query through the cache when the request, the server and the source all use it.
+#[allow(clippy::too_many_arguments)]
+async fn run_cached(
+    state: &AppState,
+    ctx: &OrgCtx,
+    ds: &Datasource,
+    kind: &Kind,
+    item: QueryItem,
+    run: Run<'_>,
+    limits: Limits,
+    cache: Option<(&cache::CacheUse, usize)>,
+) -> QueryOutcome {
+    let registry = &state.datasources;
     // The cache, when the request, the server and the source all use it: the answer kept for
     // this caller, or the key to keep the new one under, with the range it runs with.
     let ttl_ms = cache.and_then(|_| cache::source_ttl_ms(&ds.kind, &ds.settings));
     let (Some((use_, limit)), Some(ttl_ms)) = (cache, ttl_ms) else {
-        return execute(state, ctx, &ds, &kind, item, run, limits).await;
+        return execute(state, ctx, ds, kind, item, run, limits).await;
     };
     // The current target rules first: a change of them starts a new generation
     // (`DataSources::policy`), so an answer read under the old ones is neither served nor kept.
@@ -1896,7 +1928,7 @@ async fn run_one(
         }
     }
     let budget = limits.budget.clone();
-    let mut outcome = execute(state, ctx, &ds, &kind, item, Run { range, ..run }, limits).await;
+    let mut outcome = execute(state, ctx, ds, kind, item, Run { range, ..run }, limits).await;
     if let QueryOutcome::Ok { result, steps, cache: info } = &mut outcome {
         // A graph step that failed may have run out of time: such an answer is not kept.
         let complete = steps.as_ref().is_none_or(|places| places.iter().all(|p| p.error.is_none()));

@@ -186,6 +186,11 @@ For `documents` results (see [Explore](explore.md#documents)):
   field** names the card. With **Clicking a value sets**, each value is a button that sets the
   variable to the value at the field path in the shown document, or to the clicked value.
 
+When a source has more documents than a panel shows (**The source has more.**), **Load more
+documents** under the panel appends the next ones, for MongoDB, Elasticsearch and OpenSearch, and
+JSON and NDJSON files. It continues the panel's stored query only, so viewers can use it too; a
+refresh or another time range starts again from the first page.
+
 ![Documents as a tree, schema and distribution](../screenshots/dashboard-documents-dark.png)
 
 ## Graph panels

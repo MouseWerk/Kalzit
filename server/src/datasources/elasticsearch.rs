@@ -736,6 +736,26 @@ struct Search {
     aggs: Option<Map<String, Value>>,
     /// The hits asked for, when the size was lowered to the row limit (or the 10,000 window).
     lowered: Option<u64>,
+    /// How the hits continue on the next page; `None` for aggregations and `search_after`.
+    paging: Option<Paging>,
+}
+
+/// Pages of hits: `offset` hits of the query were answered on earlier pages, of the `wanted`
+/// it asked for (its `size`), counted from its own `from`.
+#[derive(Clone, Copy)]
+struct Paging {
+    from: u64,
+    offset: u64,
+    wanted: u64,
+}
+
+impl Paging {
+    /// The position of the page after one that kept `kept` hits, while the query wants more and
+    /// the search window (`from` + `size` up to 10,000) still reaches them.
+    fn next(self, kept: usize) -> Option<String> {
+        let next = self.offset + kept as u64;
+        (next < self.wanted && self.from + next < MAX_WINDOW).then(|| next.to_string())
+    }
 }
 
 /// Whether a search whose size was lowered to `lowered` left hits out: it answered that many
@@ -794,11 +814,23 @@ fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, S
         None => None,
     };
     let max = (req.limits.max_rows as u64).min(MAX_WINDOW);
-    let (size, lowered) = if aggs.is_some() {
-        (0, false)
+    let (size, lowered, paging) = if aggs.is_some() {
+        (0, false, None)
     } else {
+        // A later page starts `offset` hits further into the query's own window.
+        let offset = super::cursor::offset(req.cursor.as_deref())?;
         let wanted = body.get("size").and_then(Value::as_u64).or(q.size).unwrap_or(DEFAULT_SIZE);
-        (wanted.min(max), wanted > max)
+        let from = body.get("from").and_then(Value::as_u64).unwrap_or(0);
+        let left = wanted.saturating_sub(offset);
+        let mut size = left.min(max);
+        if offset > 0 {
+            // A later page stays inside the window the cluster answers (`Paging::next`).
+            size = size.min(MAX_WINDOW.saturating_sub(from + offset));
+            body.insert("from".into(), json!(from + offset));
+        }
+        // `search_after` pages on its own; `from` cannot be added to it.
+        let paging = (!body.contains_key("search_after")).then_some(Paging { from, offset, wanted });
+        (size, left > size, paging)
     };
     body.insert("size".into(), json!(size));
     let total = match body.get("track_total_hits") {
@@ -812,7 +844,7 @@ fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, S
     };
     body.insert("track_total_hits".into(), total);
     body.insert("timeout".into(), json!(format!("{}s", req.limits.timeout.as_secs().max(1))));
-    Ok(Search { index, body: Value::Object(body), aggs, lowered: lowered.then_some(size) })
+    Ok(Search { index, body: Value::Object(body), aggs, lowered: lowered.then_some(size), paging })
 }
 
 // ---- aggregations to a frame ----
@@ -1353,6 +1385,9 @@ impl DataSourcePlugin for Elasticsearch {
                 if cut && let Some(size) = search.lowered {
                     docs.mark_limit(size as usize);
                 }
+                if let Some(paging) = search.paging {
+                    docs.continue_at(|kept| paging.next(kept));
+                }
                 for detail in notices {
                     docs.notice(NoticeSeverity::Warning, detail);
                 }
@@ -1553,6 +1588,36 @@ mod tests {
     }
 
     #[test]
+    fn later_pages_continue_inside_the_query_and_the_window() {
+        let page = |query: Value, cursor: Option<&str>, max: usize| {
+            let mut r = req(query, json!({}));
+            r.limits.max_rows = max;
+            r.cursor = cursor.map(str::to_string);
+            build_search(r.parse().unwrap(), &settings(), &r).unwrap()
+        };
+        // The query's own size and from stay the bounds of all pages together.
+        let s = page(json!({ "dsl": { "size": 250, "from": 10 } }), Some("200"), 100);
+        assert_eq!((s.body["from"].as_u64(), s.body["size"].as_u64()), (Some(210), Some(50)));
+        let paging = s.paging.unwrap();
+        assert_eq!(paging.next(50), None, "all 250 hits were answered");
+        assert_eq!(
+            page(json!({ "dsl": { "size": 250 } }), None, 100).paging.unwrap().next(100).as_deref(),
+            Some("100")
+        );
+        // Pages end where the search window ends.
+        let s = page(json!({ "dsl": { "size": 20_000 } }), Some("9950"), 1000);
+        assert_eq!((s.body["from"].as_u64(), s.body["size"].as_u64()), (Some(9950), Some(50)));
+        assert_eq!(s.paging.unwrap().next(50), None);
+        // search_after pages on its own; aggregations answer a frame.
+        assert!(page(json!({ "dsl": { "search_after": [1], "sort": ["a"] } }), None, 100).paging.is_none());
+        assert!(page(json!({ "dsl": { "aggs": { "t": { "terms": { "field": "a" } } } } }), None, 100).paging.is_none());
+        // A position this server did not make is refused.
+        let mut r = req(json!({ "lucene": "" }), json!({}));
+        r.cursor = Some("x".into());
+        assert_eq!(reason(build_search(r.parse().unwrap(), &settings(), &r)), "query.cursor_invalid");
+    }
+
+    #[test]
     fn aggregations_map_to_a_frame() {
         let req_aggs = json!({
             "zeit": { "date_histogram": { "field": "@timestamp", "fixed_interval": "1h" }, "aggs": {
@@ -1695,13 +1760,15 @@ mod tests {
                     if body.get("aggs").is_some() {
                         json!({ "hits": { "hits": [] }, "aggregations": { "land": { "buckets": [{ "key": "AT", "doc_count": 2 }] } } })
                     } else {
-                        // Like a cluster, answers at most `size` hits of the two it has.
+                        // Like a cluster, answers at most `size` hits of the two it has from `from`.
                         let size = body["size"].as_u64().unwrap_or(10) as usize;
+                        let from = body["from"].as_u64().unwrap_or(0) as usize;
                         let hits: Vec<Value> = [
                             json!({ "_index": "logs-1", "_id": "1", "_score": 1.0, "_source": { "land": "AT" } }),
                             json!({ "_index": "logs-1", "_id": "2", "_score": 1.0, "_source": { "land": "CH" } }),
                         ]
                         .into_iter()
+                        .skip(from)
                         .take(size)
                         .collect();
                         json!({ "timed_out": false, "hits": { "total": { "value": 2 }, "hits": hits } })
@@ -1761,6 +1828,17 @@ mod tests {
         assert_eq!(documents.notices[0].code, "documents.limit", "{:?}", documents.notices);
         assert_eq!(documents.notices[0].params.as_ref().unwrap()["limit"], "1");
         assert_eq!(documents.truncated.unwrap().reason.as_deref(), Some("documents.limit"));
+        // The next page continues after the hit kept, and is the last.
+        assert_eq!(documents.next_cursor.as_deref(), Some("1"));
+        let mut next = req(json!({ "lucene": "" }), json!({}));
+        next.limits.max_rows = 1;
+        next.cursor = documents.next_cursor;
+        let QueryResult::Documents { documents } = Elasticsearch.query(&conn, next).await.unwrap() else {
+            panic!("documents")
+        };
+        assert_eq!(documents.documents[0].value()["_source"]["land"], "CH");
+        assert!(documents.executed_query.as_deref().unwrap().contains(r#""from":1"#));
+        assert!(documents.truncated.is_none() && documents.next_cursor.is_none(), "{:?}", documents.notices);
 
         let r = Elasticsearch
             .query(&conn, req(json!({ "dsl": { "aggs": { "land": { "terms": { "field": "land" } } } } }), json!({})))
