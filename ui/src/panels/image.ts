@@ -31,15 +31,28 @@ const SKIPPED = new Set(["SCRIPT", "NOSCRIPT", "TEMPLATE", "STYLE", "LINK", "DIA
 /** The computed style of `source` written onto `target`, without motion. */
 function copyStyle(source: Element, target: Element) {
   const computed = getComputedStyle(source);
-  let text = "";
+  // Through the CSSOM, never a style attribute: the content security policy (style-src 'self')
+  // refuses inline style text, but not styles set from script.
+  const style = (target as HTMLElement | SVGElement).style;
   for (let i = 0; i < computed.length; i++) {
     const property = computed.item(i);
     // Custom properties are resolved in the values already; copying them would repeat every
     // design token on every element.
     if (property.startsWith("--")) continue;
-    text += `${property}:${computed.getPropertyValue(property)};`;
+    style.setProperty(property, computed.getPropertyValue(property));
   }
-  target.setAttribute("style", `${text}animation:none;transition:none;`);
+  style.setProperty("animation", "none");
+  style.setProperty("transition", "none");
+}
+
+/** An empty element like `source`, with its attributes but not its style attribute. */
+function shallowCopy(source: Element): Element {
+  const copy = document.createElementNS(source.namespaceURI, source.localName);
+  for (const attribute of Array.from(source.attributes)) {
+    if (attribute.name === "style") continue;
+    copy.setAttributeNS(attribute.namespaceURI, attribute.name, attribute.value);
+  }
+  return copy;
 }
 
 /** A canvas as an image of what it drew; `null` when the canvas cannot be read. */
@@ -66,7 +79,7 @@ export function copyForImage(node: Node): Node | null {
   if (!(node instanceof Element)) return null;
   if (node.hasAttribute(NO_IMAGE) || SKIPPED.has(node.tagName.toUpperCase())) return null;
   if (node instanceof HTMLCanvasElement) return canvasImage(node);
-  const copy = node.cloneNode(false) as Element;
+  const copy = shallowCopy(node);
   copyStyle(node, copy);
   // What a field shows is its value, not its attribute.
   if (node instanceof HTMLInputElement) copy.setAttribute("value", node.value);

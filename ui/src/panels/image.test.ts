@@ -61,9 +61,8 @@ describe("panel image", () => {
     expect(copy.querySelector("circle")).not.toBeNull();
     expect(copy.querySelector("input")?.getAttribute("value")).toBe("typed");
     // Computed styles are written onto the copy, resolved: no design tokens repeated.
-    const style = copy.getAttribute("style") ?? "";
-    expect(style).toContain("color:rgb(1, 2, 3)");
-    expect(style).not.toContain("--accent");
+    expect(copy.style.color).toBe("rgb(1, 2, 3)");
+    expect(copy.getAttribute("style")).not.toContain("--accent");
   });
 
   it("leaves a canvas out that cannot be read", () => {
