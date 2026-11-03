@@ -45,6 +45,7 @@ jobs:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 2
       - name: Test the change detection
         run: .github/scripts/changes.test.sh
@@ -80,6 +81,8 @@ jobs:
         run: echo "No server change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         if: env.RUN_JOB == 'true'
         with:
@@ -193,6 +196,8 @@ jobs:
       KALZIT_TEST_REQUIRE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -227,6 +232,8 @@ jobs:
       KALZIT_TEST_LDAP_ADMIN_PASSWORD: kalzit-ci-ldap
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -257,6 +264,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -404,6 +413,8 @@ jobs:
       KALZIT_TEST_LOKI_URL: http://127.0.0.1:3100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -473,6 +484,8 @@ jobs:
         run: echo "No UI change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
+        with:
+          persist-credentials: false
       - name: Check for the UI
         if: env.RUN_JOB == 'true'
         id: has_ui
@@ -508,6 +521,10 @@ jobs:
         run: npm run build
         env:
           KALZIT_LICENSES_STRICT: "0"
+      # The gzip size of the first page load, of each language catalog and of every chunk against
+      # ui/bundle-budget.json; the catalogs and the time picker's popover must not load on start.
+      - if: steps.has_ui.outputs.present == 'true'
+        run: npm run budget
 
   # The milestone progress bars of the README: the committed SVGs, the README's alt text and the
   # Status column of its roadmap table must match docs/roadmap/progress.json. Plain Node, no
@@ -631,9 +648,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    # A run takes 5 (Linux) to 10 minutes (Windows), about twice that with a cold build cache;
+    # A run takes 5 (Linux) to 12 minutes (Windows), about twice that with a cold build cache;
     # the steps that download have their own, shorter limits.
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       # The test plugin of the server's contract tests, packaged by ui/e2e/plugins.spec.ts.
@@ -646,14 +663,46 @@ jobs:
         run: echo "No server or UI change in this pull request; the end-to-end tests are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
+        with:
+          persist-credentials: false
       # MongoDB, OpenSearch, Neo4j and Memgraph for the document, search and graph specs, started
-      # first so they are up once the build is done. Linux only: Windows runners have no Linux
-      # containers, so those specs skip there with a reason, and the release's Windows checklist
-      # covers them.
+      # first so they are up once the build is done. On Linux as containers; Windows runners have
+      # no Linux containers, so there MongoDB, OpenSearch and Neo4j run as their native Windows
+      # builds (.github/scripts/e2e-services.ps1, versions and SHA-256 pinned in it), unpacked
+      # once and kept in the Actions cache by the script's content. Memgraph has no Windows
+      # build; its spec skips on Windows with that reason.
       - name: Start MongoDB, OpenSearch, Neo4j and Memgraph
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh start
+      - name: Restore MongoDB, OpenSearch and Neo4j for Windows
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        id: services
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/kalzit-e2e-services
+          key: e2e-services-windows-${{ hashFiles('.github/scripts/e2e-services.ps1') }}
+      # Also on a cache hit: the copy from the cache is checked against the digests pinned in the
+      # script, and downloaded again if it differs.
+      - name: Download or check MongoDB, OpenSearch and Neo4j for Windows
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        timeout-minutes: 10
+        shell: pwsh
+        run: .github/scripts/e2e-services.ps1 install
+      # Saved before the servers start, so the cache holds the programs and none of their data.
+      - name: Save MongoDB, OpenSearch and Neo4j for Windows
+        if: >-
+          env.RUN_JOB == 'true' && runner.os == 'Windows' && steps.services.outputs.cache-hit != 'true'
+          && github.event_name != 'merge_group'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/kalzit-e2e-services
+          key: ${{ steps.services.outputs.cache-primary-key }}
+      - name: Start MongoDB, OpenSearch and Neo4j
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        timeout-minutes: 3
+        shell: pwsh
+        run: .github/scripts/e2e-services.ps1 start
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: env.RUN_JOB == 'true'
         with:
@@ -754,6 +803,12 @@ jobs:
         if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh ready
+      # The same for the native servers on Windows (no Memgraph there).
+      - name: Wait for MongoDB, OpenSearch and Neo4j
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        timeout-minutes: 6
+        shell: pwsh
+        run: .github/scripts/e2e-services.ps1 ready
       # Windows: a page load failed with net::ERR_NO_BUFFER_SPACE in about a third of the runs
       # (Winsock WSAENOBUFS on connect, one request of a burst, at any time in the run). The
       # runner's dynamic port range is 49152 to 65535 (16,384 ports), and the run leaves up to
@@ -774,7 +829,7 @@ jobs:
         run: .github/scripts/tcp-watch.ps1 start
       - run: npm run e2e
         if: env.RUN_JOB == 'true'
-        timeout-minutes: 15
+        timeout-minutes: 20
         working-directory: ui
         env:
           KALZIT_E2E_QUIET_FILE: ${{ runner.os == 'Windows' && format('{0}/tcp-watch.pause', runner.temp) || '' }}
@@ -782,6 +837,11 @@ jobs:
         if: ${{ !cancelled() && env.RUN_JOB == 'true' && runner.os == 'Windows' }}
         shell: pwsh
         run: .github/scripts/tcp-watch.ps1 report
+      # Only the servers e2e-services.ps1 started, by their recorded PIDs.
+      - name: Stop MongoDB, OpenSearch and Neo4j
+        if: always() && env.RUN_JOB == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/e2e-services.ps1 stop
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !success() }}
         with:
@@ -883,6 +943,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Commit
         id: commit
@@ -912,6 +974,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26
@@ -962,6 +1026,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: letsencrypt/pebble
@@ -1027,6 +1093,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: cargo-audit

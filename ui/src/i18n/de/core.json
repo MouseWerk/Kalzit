@@ -2,6 +2,7 @@
   "app.name": "Kalzit",
   "app.documentTitle": "{page} – {product}",
   "common.loading": "Wird geladen…",
+  "common.languageLoadFailed": "Die andere Sprache konnte nicht geladen werden. Prüfe die Verbindung und versuche es erneut.",
   "common.retry": "Erneut versuchen",
   "common.undo": "Rückgängig",
   "common.dialog.backKept": "Zurück und Escape behalten deine Eingaben. Wähle Abbrechen, um sie zu verwerfen.",

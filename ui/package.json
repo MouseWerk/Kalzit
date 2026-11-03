@@ -10,6 +10,7 @@
     "dev": "vite",
     "licenses": "node scripts/licenses.mjs",
     "build": "npm run licenses && npm run typecheck && vite build",
+    "budget": "node scripts/bundle-budget.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "biome lint --error-on-warnings .",
     "format": "biome format --write .",

@@ -1,0 +1,150 @@
+# What the MSI package may contain, checked by check-msi.ps1 before the package is signed
+# (release.yml, job `windows-msi`; ci.yml, job `msi`): every table it has, and every row of the
+# tables that run code, change the system or put files on disk, in the English package and with its
+# German transform applied. Nothing more may be there and nothing listed may be missing. A change to Kalzit.wxs or KalzitUI.wxs that adds or changes such a
+# row changes this file in the same pull request, so a reviewer sees it.
+@{
+    # Every table of the package. A table not named here fails the check, so a change that brings
+    # shortcuts, environment variables, self-registration, service failure actions, an embedded UI,
+    # file permissions, COM classes or file associations is seen and listed (with its rows) first.
+    Tables         = @(
+        'Property', 'Upgrade', 'LaunchCondition', 'Icon', 'CustomAction', 'Signature', 'DrLocator', 'AppSearch',
+        'RegLocator', 'Directory', 'File', 'ServiceInstall', 'ServiceControl', 'RemoveFile', 'Component', 'Registry',
+        'Feature', 'Binary', 'FeatureComponents', 'TextStyle', 'ControlEvent', 'Control', 'CheckBox', 'ListBox',
+        'Dialog', 'RadioButton', 'ControlCondition', 'EventMapping', 'UIText', 'AdminUISequence', 'AdminExecuteSequence',
+        'AdvtExecuteSequence', 'InstallUISequence', 'InstallExecuteSequence', 'Media', 'MsiFileHash', '_Validation'
+    )
+
+    # Every custom action with its type and source. Target is compared where it is code or a
+    # command; the texts of the finish page differ per language and are checked by check-msi.ps1.
+    CustomAction   = @(
+        @{ Action = 'SetDATADIR'; Type = 51; Source = 'DATADIR'; Target = '[CommonAppDataFolder]Kalzit\data' }
+        # Kalzit's own steps, run as LocalSystem from the package's copy of kalzit.exe.
+        @{
+            Action = 'KalzitConfigure'; Type = 3074; Source = 'KalzitSetup'
+            Target = 'service configure --program "[#KalzitExe] " --config "[CommonAppDataFolder]Kalzit\kalzit.toml" --data-dir "[DATADIR] " --port "[PORT]" --https "[HTTPS]" --https-port "[HTTPSPORT]" --cert-file "[CERTFILE] " --key-file "[KEYFILE] " --open-firewall "[FIREWALL]" --self-update "[SELFUPDATE]"'
+        }
+        @{
+            Action = 'KalzitCleanup'; Type = 3138; Source = 'KalzitSetup'
+            Target = 'service cleanup --config "[CommonAppDataFolder]Kalzit\kalzit.toml" --remove-data "[REMOVEDATA]"'
+        }
+        @{ Action = 'KalzitExitTextNew'; Type = 51; Source = 'WIXUI_EXITDIALOGOPTIONALTEXT' }
+        @{ Action = 'KalzitExitTextKept'; Type = 51; Source = 'WIXUI_EXITDIALOGOPTIONALTEXT' }
+        @{ Action = 'KalzitOpenSetupText'; Type = 51; Source = 'WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT' }
+        @{
+            Action = 'KalzitOpenSetup'; Type = 226; Source = 'INSTALLFOLDER'
+            Target = '"[System64Folder]rundll32.exe" url.dll,FileProtocolHandler http://localhost:[PORT]/setup'
+        }
+        @{
+            Action = 'KalzitOpenSetupHttps'; Type = 226; Source = 'INSTALLFOLDER'
+            Target = '"[System64Folder]rundll32.exe" url.dll,FileProtocolHandler https://localhost:[HTTPSPORT]/setup'
+        }
+        # WixUI's check of the folder typed on the folder page, from WiX's own signed DLL.
+        @{ Action = 'WixUIValidatePath_X64'; Type = 65; Source = 'WixUiCa_X64'; Target = 'ValidatePath' }
+    )
+
+    # Every stream of the Binary table and what it must be: Program is exactly the given
+    # kalzit.exe; WixDll is a DLL with a valid Authenticode signature of the WiX Toolset;
+    # Picture is a bitmap or icon of the wizard (never run).
+    Binary         = @{
+        KalzitSetup      = 'Program'
+        WixUiCa_X64      = 'WixDll'
+        WixUI_Bmp_Banner = 'Picture'
+        WixUI_Bmp_Dialog = 'Picture'
+        WixUI_Bmp_New    = 'Picture'
+        WixUI_Bmp_Up     = 'Picture'
+        WixUI_Ico_Exclam = 'Picture'
+        WixUI_Ico_Info   = 'Picture'
+    }
+
+    # The certificate WiX's dialog DLL (WixUiCa_X64) is signed with: that of WiX 5.0.2, which the
+    # workflows install. A WiX update changes it here together with the version.
+    WixSigner      = @{
+        Thumbprint = 'C832C5A08718E880B35FF10FA8F41C5B6FF6F561'
+        Issuer     = 'CN=.NET Foundation Projects Code Signing CA2, O=.NET Foundation, C=US'
+    }
+
+    # Every component with the folder it installs to (each file's component names it): 256 is a
+    # 64-bit component, 260 one whose key path is a registry value.
+    Component      = @(
+        @{ Component = 'KalzitExe'; Directory = 'INSTALLFOLDER'; Attributes = 256; Condition = '' }
+        @{ Component = 'KalzitLicense'; Directory = 'INSTALLFOLDER'; Attributes = 256; Condition = '' }
+        @{ Component = 'KalzitRegistration'; Directory = 'INSTALLFOLDER'; Attributes = 260; Condition = '' }
+    )
+
+    # Every registry value (HKLM is root 2; '#%' marks an expandable string). The rows' ids are
+    # generated by WiX and left out.
+    Registry       = @(
+        @{ Root = 2; Key = 'Software\MouseWerk\Kalzit'; Name = 'InstallFolder'; Value = '[INSTALLFOLDER]'; Component = 'KalzitRegistration' }
+        @{
+            Root = 2; Key = 'SYSTEM\CurrentControlSet\Services\EventLog\Application\Kalzit'; Name = 'EventMessageFile'
+            Value = '#%%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll'; Component = 'KalzitRegistration'
+        }
+    )
+
+    # What the updater leaves next to the program, removed on uninstall (InstallMode 2).
+    RemoveFile     = @(
+        @{ FileKey = 'KalzitOldBinaries'; Component = 'KalzitExe'; FileName = 'ogsaao6d.old|.kalzit.exe.old-*'; DirProperty = 'INSTALLFOLDER'; InstallMode = 2 }
+        @{ FileKey = 'KalzitNewBinary'; Component = 'KalzitExe'; FileName = '92jzurss.exe|.kalzit.new.exe'; DirProperty = 'INSTALLFOLDER'; InstallMode = 2 }
+    )
+
+    # The service is started on install, stopped on install and uninstall, deleted on uninstall
+    # (1 + 2 + 32 + 128 = 163), and the package waits for each.
+    ServiceControl = @(
+        @{ ServiceControl = 'KalzitServiceControl'; Name = 'Kalzit'; Event = 163; Arguments = ''; Wait = 1; Component = 'KalzitExe' }
+    )
+
+    # Where the files go: the whole Directory table, so INSTALLFOLDER resolves to
+    # [ProgramFiles64Folder]Kalzit and nowhere else (the folder page and INSTALLFOLDER= on the
+    # command line still let whoever installs choose another).
+    Directory      = @(
+        @{ Directory = 'INSTALLFOLDER'; Parent = 'ProgramFiles64Folder'; DefaultDir = 'Kalzit' }
+        @{ Directory = 'ProgramFiles64Folder'; Parent = 'TARGETDIR'; DefaultDir = 'PFiles64' }
+        @{ Directory = 'TARGETDIR'; Parent = ''; DefaultDir = 'SourceDir' }
+    )
+
+    # The properties that decide that folder and who installs: a per-machine installation (so
+    # ProgramFiles64Folder is the machine's), the folder page bound to INSTALLFOLDER, and the
+    # upgrade code. Absent must not be set by the package at all (a default for one of them would
+    # move the installation).
+    Property       = @{
+        Values = @{
+            ALLUSERS         = '1'
+            WIXUI_INSTALLDIR = 'INSTALLFOLDER'
+            UpgradeCode      = '{1D4828C2-1200-4926-BC6E-4959850AE762}'
+        }
+        Absent = @('INSTALLFOLDER', 'ProgramFiles64Folder', 'TARGETDIR', 'MSIINSTALLPERUSER', 'ROOTDRIVE')
+    }
+
+    # Upgrades: an older version is detected and replaced (attributes 1, its features carried
+    # over), a newer one blocks the installation (2, detect only). [ProductVersion] stands for the
+    # package's own version; no row names a language or removes features.
+    Upgrade        = @(
+        @{
+            UpgradeCode = '{1D4828C2-1200-4926-BC6E-4959850AE762}'; VersionMin = ''; VersionMax = '[ProductVersion]'
+            Language = ''; Attributes = 1; Remove = ''; ActionProperty = 'WIX_UPGRADE_DETECTED'
+        }
+        @{
+            UpgradeCode = '{1D4828C2-1200-4926-BC6E-4959850AE762}'; VersionMin = '[ProductVersion]'; VersionMax = ''
+            Language = ''; Attributes = 2; Remove = ''; ActionProperty = 'WIX_DOWNGRADE_DETECTED'
+        }
+    )
+
+    # Every installed file.
+    File           = @(
+        @{ File = 'KalzitExe'; Component = 'KalzitExe'; FileName = 'kalzit.exe'; Attributes = 512 }
+        @{ File = 'KalzitLicense'; Component = 'KalzitLicense'; FileName = 'LICENSE.txt'; Attributes = 512 }
+    )
+
+    # The one service: own process (16), automatic start (2), normal errors that fail the
+    # installation (32769: msidbServiceInstallErrorNormal plus Vital), as its virtual account.
+    ServiceInstall = @(
+        @{
+            ServiceInstall = 'KalzitService'; Name = 'Kalzit'; DisplayName = 'Kalzit'
+            ServiceType = 16; StartType = 2; ErrorControl = 32769
+            LoadOrderGroup = ''; Dependencies = ''; StartName = 'NT SERVICE\Kalzit'; Password = ''
+            Arguments = 'service run --config "[CommonAppDataFolder]Kalzit\kalzit.toml"'
+            Component = 'KalzitExe'; Description = 'Kalzit: visualize and analyze your data.'
+        }
+    )
+}

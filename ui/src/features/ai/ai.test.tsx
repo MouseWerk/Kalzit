@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
-import { catalogs, type MessageKey, translate } from "../../i18n/i18n";
+import { de as deCatalog, en as enCatalog } from "../../i18n/catalogs";
+import { type MessageKey, translate } from "../../i18n/i18n";
 import { AiGateFor } from "./AiGate";
 import { aiErrorText, aiReasonText } from "./reasons";
 
@@ -39,12 +40,12 @@ describe("AI reason texts", () => {
   });
 
   it.each([...documented.keys()])("has a German and an English text for %s", (reason) => {
-    expect(Object.hasOwn(catalogs.en, `${PREFIX}${reason}`), `en: ${reason}`).toBe(true);
-    expect(Object.hasOwn(catalogs.de, `${PREFIX}${reason}`), `de: ${reason}`).toBe(true);
+    expect(Object.hasOwn(enCatalog, `${PREFIX}${reason}`), `en: ${reason}`).toBe(true);
+    expect(Object.hasOwn(deCatalog, `${PREFIX}${reason}`), `de: ${reason}`).toBe(true);
   });
 
   it("has no text without a documented reason", () => {
-    for (const catalog of [catalogs.en, catalogs.de]) {
+    for (const catalog of [enCatalog, deCatalog]) {
       const left = Object.keys(catalog)
         .filter((key) => key.startsWith(PREFIX))
         .map((key) => key.slice(PREFIX.length))
@@ -54,7 +55,7 @@ describe("AI reason texts", () => {
   });
 
   it.each([...documented])("uses only documented params in %s", (reason, params) => {
-    for (const catalog of [catalogs.en, catalogs.de]) {
+    for (const catalog of [enCatalog, deCatalog]) {
       const text = catalog[`${PREFIX}${reason}` as MessageKey] ?? "";
       for (const [, name] of text.matchAll(/\{(\w+)\}/g)) {
         expect(params.has(name ?? ""), `${reason}: {${name}}`).toBe(true);

@@ -1,4 +1,4 @@
-import { catalogs, LANGUAGES, type Language, type MessageKey } from "../../i18n/i18n";
+import { type Catalog, catalogs, LANGUAGES, type Language, type MessageKey } from "../../i18n/i18n";
 import { isKnownSetting, settingMessage } from "../admin/catalog";
 import {
   LOGO_ROW,
@@ -37,9 +37,13 @@ export function normalize(text: string): string {
     .toLowerCase();
 }
 
-function inAll(keys: readonly MessageKey[]): string {
+type Texts = Readonly<Partial<Record<Language, Catalog>>>;
+
+// The texts of the languages whose catalogs are loaded: the shown one at least; the settings
+// search loads the other when it opens (SettingsLayout.tsx) and builds the index again then.
+function inAll(texts: Texts, keys: readonly MessageKey[]): string {
   return keys
-    .flatMap((key) => LANGUAGES.map((language: Language) => catalogs[language][key]))
+    .flatMap((key) => LANGUAGES.map((language: Language) => texts[language]?.[key] ?? ""))
     .join(" ");
 }
 
@@ -51,7 +55,11 @@ const EXTRA_ROWS: Record<string, { label: MessageKey; description: MessageKey }>
   },
 };
 
-export function buildIndex(sections: readonly SectionDef[], access: SettingsAccess): SearchEntry[] {
+export function buildIndex(
+  sections: readonly SectionDef[],
+  access: SettingsAccess,
+  texts: Texts = catalogs,
+): SearchEntry[] {
   const entries: SearchEntry[] = [];
   for (const section of sections) {
     if (!section.visible(access)) {
@@ -64,8 +72,10 @@ export function buildIndex(sections: readonly SectionDef[], access: SettingsAcce
       rowId: "",
       title: sectionLabel,
       section: sectionLabel,
-      haystack: normalize(`${inAll([sectionLabel, section.lead, section.keywords])} ${section.id}`),
-      titles: normalize(inAll([sectionLabel])),
+      haystack: normalize(
+        `${inAll(texts, [sectionLabel, section.lead, section.keywords])} ${section.id}`,
+      ),
+      titles: normalize(inAll(texts, [sectionLabel])),
     });
     const seen = new Set<string>();
     const rows: { id: string; label: MessageKey; description: MessageKey; key: string }[] = [];
@@ -100,9 +110,9 @@ export function buildIndex(sections: readonly SectionDef[], access: SettingsAcce
         title: row.label,
         section: sectionLabel,
         haystack: normalize(
-          `${inAll([row.label, row.description, section.keywords])} ${row.key} ${row.key.replaceAll(/[._]/g, " ")}`,
+          `${inAll(texts, [row.label, row.description, section.keywords])} ${row.key} ${row.key.replaceAll(/[._]/g, " ")}`,
         ),
-        titles: normalize(inAll([row.label])),
+        titles: normalize(inAll(texts, [row.label])),
         ...(UPDATES_PAGE_KEYS.includes(row.key) ? { page: "/admin/server/updates" as const } : {}),
       });
     }

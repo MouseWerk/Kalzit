@@ -3,10 +3,10 @@
   Language transforms inside one MSI package, through the Windows Installer automation interface.
 
 .DESCRIPTION
-  Dot-sourced by build.ps1 and check-msi.ps1. The package is built once per language; each further
-  language becomes a transform (the difference to the English package) stored inside the English
-  one under its language ID, and the package's Template summary lists the languages
-  ("x64;1033,1031"). Windows Installer then applies the transform by itself when the Windows
+  Dot-sourced by build.ps1 and check-msi.ps1 (which also reads whole rows and exports tables
+  here). The package is built once per language; each further language becomes a transform (the
+  difference to the English package) stored inside the English one under its language ID, and
+  the package's Template summary lists the languages ("x64;1033,1031"). Windows Installer then applies the transform by itself when the Windows
   display language matches, so the release keeps a single MSI file. `TRANSFORMS=:1031` on the
   msiexec command line applies it on any Windows.
 #>
@@ -118,5 +118,41 @@ function Get-TransformedValues([string] $Msi, [int] $LanguageId, [string] $Query
         }
     } finally {
         Close-Msi @($view, $db, $installer)
+    }
+}
+
+# Like Get-TransformedValues, with every column: each row as an array of strings.
+function Get-TransformedRows([string] $Msi, [int] $LanguageId, [string] $Query) {
+    $installer = $null; $db = $null; $view = $null
+    try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $db = Invoke-Msi $installer 'OpenDatabase' @($Msi, $script:MsiReadOnly)
+        if ($LanguageId -ne 0) { Invoke-Msi $db 'ApplyTransform' @(":$LanguageId", 0) | Out-Null }
+        $view = Invoke-Msi $db 'OpenView' @($Query)
+        [void] (Invoke-Msi $view 'Execute')
+        while ($null -ne ($record = Invoke-Msi $view 'Fetch')) {
+            try {
+                $count = [int] (Get-MsiProperty $record 'FieldCount')
+                , @(1..$count | ForEach-Object { [string] (Get-MsiProperty $record 'StringData' @($_)) })
+            } finally { Close-Msi @($record) }
+        }
+    } finally {
+        Close-Msi @($view, $db, $installer)
+    }
+}
+
+# Writes a table of the package (its transform $LanguageId applied; 0 applies none) to $Folder as
+# Windows Installer's own export does: the rows in <Table>.idt and each stream as a file in the
+# subfolder <Table> (Binary\KalzitSetup.ibd).
+function Export-TransformedTable([string] $Msi, [int] $LanguageId, [string] $Table, [string] $Folder) {
+    $installer = $null; $db = $null
+    try {
+        New-Item -ItemType Directory -Force $Folder | Out-Null
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $db = Invoke-Msi $installer 'OpenDatabase' @($Msi, $script:MsiReadOnly)
+        if ($LanguageId -ne 0) { Invoke-Msi $db 'ApplyTransform' @(":$LanguageId", 0) | Out-Null }
+        Invoke-Msi $db 'Export' @($Table, $Folder, "$Table.idt") | Out-Null
+    } finally {
+        Close-Msi @($db, $installer)
     }
 }

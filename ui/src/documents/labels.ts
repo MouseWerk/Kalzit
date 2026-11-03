@@ -1,11 +1,10 @@
-import { en } from "../i18n/catalogs";
-import type { MessageKey, MessageParams, Translate } from "../i18n/i18n";
+import { hasMessage, type MessageKey, type MessageParams, type Translate } from "../i18n/i18n";
 import { entriesOf, formatLeaf, isTyped } from "./values";
 
 /** The name of a value type: BSON's names where Kalzit knows them, the server's own otherwise. */
 export function typeLabel(t: Translate, type: string): string {
   const key = `documents.type.${type}`;
-  return Object.hasOwn(en, key) ? t(key as MessageKey) : type;
+  return hasMessage(key) ? t(key) : type;
 }
 
 /**

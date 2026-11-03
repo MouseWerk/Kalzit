@@ -1,7 +1,13 @@
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
-import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import {
+  loadAllLanguages,
+  type MessageKey,
+  type Translate,
+  useI18n,
+  useLoadedCatalogs,
+} from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { revealInside } from "../../lib/revealInside";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
@@ -195,7 +201,13 @@ function SettingsSearch({
   const id = useId();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const index = buildIndex(SECTIONS, access);
+  // The search finds a setting by its words in both languages; the one not shown loads here,
+  // and the index is built again once it arrives.
+  const texts = useLoadedCatalogs();
+  useEffect(() => {
+    loadAllLanguages().catch(() => undefined);
+  }, []);
+  const index = buildIndex(SECTIONS, access, texts);
   const results = search(index, query);
   const open = query.trim() !== "";
 

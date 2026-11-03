@@ -88,7 +88,7 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
 - Second factor (`auth::second_factor`, docs/api/access.md "Second factor"): TOTP (RFC 6238,
   SHA-1, 30 s, 6 digits, ±1 step, each step once per account; the key AES-GCM encrypted with the
   secrets key and re-encrypted by `secrets rotate`), passkeys through webauthn-rs (pinned
-  `=0.6.1-dev`, the pure-Rust line without OpenSSL; relying party from `server.public_url` or the
+  `=0.6.2`, the stable pure-Rust line without OpenSSL; relying party from `server.public_url` or the
   request's host, no attestation, user verification preferred, sign counters checked) and 10
   recovery codes of 80 bits stored as SHA-256. After the password, `routes::second_factor`
   either opens the session or starts the half-signed-in state: a `sign_in_challenges` row named
@@ -1837,7 +1837,7 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   in the job that holds the key. Windows files are signed with Authenticode in two small jobs
   (`windows-sign-exe`, `windows-sign-msi`) that alone use the environment `windows-signing`,
   which holds only the code-signing secrets; the MSI is built from the signed program in between,
-  in a job without any secret (`windows-msi`), which also runs the signed program once and checks that the package carries exactly it, as installed file and as setup copy (`packaging/windows/check-msi.ps1`). Signing uses Microsoft Artifact Signing (the key
+  in a job without any secret (`windows-msi`), which also runs the signed program once and checks that the package carries exactly it, as installed file and as setup copy, and that it has only the tables `packaging/windows/msi-expected.psd1` lists and exactly its rows of custom actions, Binary streams, files, components, registry values and the service, in English and German (the wizard's dialogs and the sequences are not listed row by row) (`packaging/windows/check-msi.ps1`, with Windows' own `msiexec /a` and the Windows Installer automation interface only). Signing uses Microsoft Artifact Signing (the key
   stays in Microsoft's HSM; recommended) or a PFX imported into the runner's user store for the
   signing only; nothing but signtool runs while key material is present
   (`packaging/windows/sign.ps1`, docs/operations/updates.md). Without either both stay unsigned
@@ -1975,7 +1975,7 @@ Shared, orchestrator only (a stream that needs a change there asks for it, with 
 `routes/mod.rs` (one line per new route table), `lib.rs`, `Cargo.toml`, `config.rs`, `app.rs`
 (`AppState`), `error.rs` (including `ERROR_CODES`), `shapes.rs` and its generated
 `ui/src/api/generated/shapes.ts`, `settings.rs` registry entries (stream B owns the rest of the
-file), `ui/package.json`, `ui/src/api/client.ts`, `ui/src/i18n/catalogs.ts`,
+file), `ui/package.json`, `ui/src/api/client.ts`, `ui/src/i18n/en.ts` and `de.ts`,
 `ui/src/i18n/*/core.json`, `ui/src/features/nav.ts`, this document. Stream C reads settings only
 through `settings::get`; new registry entries are requested from the orchestrator.
 
@@ -2044,11 +2044,15 @@ through `settings::get`; new registry entries are requested from the orchestrato
   OpenSearch as containers (`.github/scripts/e2e-services.sh`, MongoDB seeded from
   `ui/e2e/fixtures/mongo-orders.js` with a read-only login) and names them in
   `KALZIT_E2E_MONGODB` (`host:port`) and `KALZIT_E2E_OPENSEARCH` (a base URL). Windows runners
-  have no Linux containers, so there `documents.spec.ts` and `opensearch.spec.ts` skip with that
-  reason and the release's Windows checklist covers them; on Linux in CI a missing service
-  fails. Graph sources run the same way: the job also starts Neo4j (community) and Memgraph,
-  seeds both from `ui/e2e/fixtures/graph-shop.cypher` and names them in `KALZIT_E2E_NEO4J` and
-  `KALZIT_E2E_MEMGRAPH` (`host:port`), and `graph.spec.ts` skips on Windows with that reason.
+  have no Linux containers, so there the same servers run as their native Windows builds
+  (`.github/scripts/e2e-services.ps1`: versions and SHA-256 pinned, unpacked once and kept in the
+  Actions cache, the cached copy checked against a pinned digest on every run, OpenSearch without
+  its plugins); in CI a missing service fails on both systems.
+  Graph sources run the same way: the job also starts Neo4j (community; on Windows its zip
+  distribution on the Java 25 that OpenSearch brings) and Memgraph, seeds both from
+  `ui/e2e/fixtures/graph-shop.cypher` and names them in `KALZIT_E2E_NEO4J` and
+  `KALZIT_E2E_MEMGRAPH` (`host:port`). Memgraph has no Windows build, so its one spec skips on
+  Windows with that reason.
   Neither community edition has read-only users, so the Neo4j source relies on Neo4j enforcing
   Kalzit's read transactions and the Memgraph source has `allowWriteCapableUser` set. The HTTP
   JSON spec serves its fixture from a small server inside the test, on a free loopback port.

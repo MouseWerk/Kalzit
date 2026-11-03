@@ -314,6 +314,29 @@ With Compose: `docker compose pull && docker compose up -d`. The new version mig
 database on its first start. To go back, run the previous version's tag with the backup taken
 before the update.
 
+### Checking the image's signature
+
+From 0.6.0 on, every released image is signed with [Sigstore cosign](https://docs.sigstore.dev)
+by the release workflow, without a key of its own: the signature names the workflow and the tag
+it ran for, and is recorded in Sigstore's public transparency log. The release workflow signs
+with cosign 3.0.6; checking needs cosign 3.0 or newer. Check it before you run a new version:
+
+```sh
+cosign verify ghcr.io/mousewerk/kalzit:0.6.0 \
+  --certificate-identity https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v0.6.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+It prints the signed digest; pin that digest (`ghcr.io/mousewerk/kalzit@sha256:...`) where you want
+exactly the checked image. A different image, or one built anywhere else, fails the check.
+
+The moving tags `latest` and `<major>.<minor>` (`0.6`) point at the image of a release, and that
+image was signed for its own version tag. Check them with the identity of the release they point
+at: `cosign verify ghcr.io/mousewerk/kalzit:0.6 --certificate-identity
+https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v0.6.1 ...` when `0.6`
+is 0.6.1. With the identity of another version the check fails, which shows which release a moving
+tag holds.
+
 ### Building the image
 
 From a checkout of the repository:

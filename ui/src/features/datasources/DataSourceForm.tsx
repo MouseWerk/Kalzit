@@ -8,7 +8,7 @@ import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { Page, PageActions } from "../../components/Page";
 import { TextField } from "../../components/TextField";
-import { catalogs, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import { hasMessage, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { Dialog } from "../dashboards/ui/Dialog";
@@ -53,7 +53,7 @@ const newRoute = getRouteApi("/_app/data-sources/new");
  * manifest in the UI's language (English when it has none); otherwise the field name.
  */
 export function settingLabel(t: Translate, spec: SettingSpec, language: string): string {
-  if (Object.hasOwn(catalogs.en, spec.labelKey)) {
+  if (hasMessage(spec.labelKey)) {
     return t(spec.labelKey as MessageKey);
   }
   return spec.labels?.[language] ?? spec.labels?.en ?? spec.name;
@@ -77,9 +77,7 @@ export function kindLine(t: Translate, kind: DatasourceKind): string | null {
 
 /** The read-only login advice of the kind (`hintKey`), or the general one for unknown keys. */
 function readOnlyHint(t: Translate, kind: DatasourceKind): string {
-  return Object.hasOwn(catalogs.en, kind.hintKey)
-    ? t(kind.hintKey as MessageKey)
-    : t("datasources.readOnly.lead");
+  return hasMessage(kind.hintKey) ? t(kind.hintKey as MessageKey) : t("datasources.readOnly.lead");
 }
 
 /**

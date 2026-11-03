@@ -1,23 +1,33 @@
 # cargo audit: advisories that do not apply to how Kalzit uses the crate, each with its reason.
-# Decided by the owner for the second factor (PR #163); remove them in M6 once webauthn-rs moves to
-# crates with the fixes (docs/PLAN.md, M6).
+# Decided by the owner for the second factor (PR #163). Checked again in M6 (plan item 5.8):
+# webauthn-rs has its first stable 0.6 release (0.6.2), which Kalzit now uses; it moved to
+# crypto-glue 0.2 (RustCrypto's 0.14 elliptic curves, crypto-bigint 0.7 past the fix, and rsa
+# 0.10). Both ignores still stay, for the reasons below. Check them again when gamlastan moves to
+# a bergshamra on the 0.14 curves, or when rsa publishes a fixed release.
 [advisories]
 ignore = [
-    # rsa 0.9 (Marvin attack: timing of RSA decryption and signing with a private key). It comes in
-    # through webauthn-rs (crypto-glue), which Kalzit uses to verify passkey signatures with public
-    # keys (RS256, as Windows Hello uses), and, since SAML (PR #175), through bergshamra
-    # (bergshamra-keys, and kryptering, which bergshamra uses for its XML signature and encryption
-    # algorithms). Kalzit only verifies signatures with public keys there (passkeys; the provider's
-    # pinned SAML certificate) and refuses encrypted SAML assertions, so it never decrypts or signs
-    # with an RSA private key. No fixed rsa release exists.
+    # rsa (Marvin attack: timing of RSA decryption and signing with a private key). No fixed
+    # release exists in any line (the advisory lists none; 0.9.10 and 0.10.0-rc.19 are both
+    # affected). It comes in through webauthn-rs (crypto-glue 0.2, rsa 0.10), which Kalzit uses to
+    # verify passkey signatures with public keys (RS256, as Windows Hello uses), and through
+    # SAML (PR #175): bergshamra-keys and kryptering (bergshamra's XML signature and encryption
+    # algorithms, rsa 0.9). Restricting passkeys to Ed25519 and ES256 would not remove it:
+    # crypto-glue and both SAML crates depend on rsa unconditionally, and it would refuse the
+    # RS256 passkeys of Windows Hello. Kalzit only verifies signatures with public keys there
+    # (passkeys; the provider's pinned SAML certificate) and refuses encrypted SAML assertions, so
+    # it never decrypts or signs with an RSA private key.
     "RUSTSEC-2023-0071",
-    # crypto-bigint 0.5 (timing variability in operations meant to be constant time). It comes in
-    # through webauthn-rs (crypto-glue, elliptic-curve 0.13) and, since SAML (PR #175), through
-    # bergshamra (bergshamra-keys, ecdsa 0.16, elliptic-curve 0.13). Both only verify signatures
-    # over public data with public keys (passkeys; the provider's pinned SAML certificate), so no
-    # secret passes through it; Kalzit never signs with bergshamra and refuses encrypted
-    # assertions. The fix (0.7.6) is outside the 0.5 line that elliptic-curve 0.13 requires; no
-    # fixed version exists in that line. The crypto-bigint 0.7 that kryptering, crypto-primes and
-    # elliptic-curve 0.14 bring is past the fix.
+    # crypto-bigint 0.5 (timing variability in operations meant to be constant time). Since
+    # webauthn-rs 0.6.2 it comes in through SAML: bergshamra-keys and kryptering 0.6 (through
+    # ecdsa 0.16 and p256, p384 and p521 0.13, all on elliptic-curve 0.13), pinned by gamlastan
+    # 0.9.1, the newest release, which uses bergshamra 0.9.2; and, for the tests only, through the
+    # server's dev-dependency p256 0.13.2, which signs test passkey assertions with throwaway keys
+    # and is never part of the binary. In the binary, bergshamra and kryptering only verify
+    # signatures over public data with the provider's pinned public certificate, so no secret
+    # passes through it; Kalzit never signs with bergshamra and refuses encrypted assertions. The
+    # fix (0.7.6) is outside the 0.5 line that elliptic-curve 0.13 requires; no fixed version
+    # exists in that line. The crypto-bigint 0.7 in the tree is past the fix: it comes through
+    # kryptering (directly and through crypto-primes and ed448-goldilocks on elliptic-curve
+    # 0.14) and through crypto-glue (rsa 0.10 and the 0.14 curves).
     "RUSTSEC-2026-0387",
 ]

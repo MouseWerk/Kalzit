@@ -5,7 +5,8 @@ name: Release
 # update manifest and publishes everything as a GitHub Release, which running servers find through
 # their update check (docs/operations/updates.md). A tag with a pre-release part (-rc.1) becomes
 # a pre-release, offered only on the preview channel. After that, the container image is pushed
-# to ghcr.io (job `image`).
+# to ghcr.io (job `image`) and signed with cosign, keyless through an OIDC token (job
+# `image-sign`).
 #
 # Hardening, because the publish job holds the release signing key:
 # - every action is pinned to a full commit SHA (the comment names the version it was);
@@ -697,6 +698,9 @@ jobs:
   # the release is published: tags <version>, and for a stable release also <major>.<minor> and
   # latest. The server is cross-compiled in the Dockerfile, so no emulation is needed. This job
   # holds only the workflow token (packages: write), never the signing key.
+  #
+  # The pushed image is signed in the next job (`image-sign`), which alone may ask for an OIDC
+  # token; this job reports the digest it pushed.
   image:
     name: container image
     needs: publish
@@ -705,6 +709,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -753,6 +759,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: build
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -769,3 +776,46 @@ jobs:
             KALZIT_UPDATE_PUBLIC_KEYS=${{ vars.KALZIT_UPDATE_PUBLIC_KEYS }}
           cache-from: type=gha,scope=kalzit-image-release
           cache-to: type=gha,scope=kalzit-image-release,mode=max
+
+  # Signs the image `image` pushed with cosign, keyless: the job's OIDC token (id-token: write) gets
+  # a short-lived certificate from Sigstore's Fulcio that names this workflow file and the tag; the
+  # signature goes to the registry next to the image and into Sigstore's public transparency log
+  # (Rekor). No key exists to keep or leak; docs/guide/installation.md says how to verify. The job
+  # builds nothing and checks out nothing: it signs exactly the digest `image` reported.
+  image-sign:
+    name: sign container image
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      packages: write
+      id-token: write
+    env:
+      DIGEST: ${{ needs.image.outputs.digest }}
+    steps:
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # cosign 3.0.6, which the installer checks against the SHA-256 in the action itself.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      # By digest, never by tag, so exactly the pushed image is signed: the index and, with
+      # --recursive, each platform's image in it.
+      - name: Sign the image
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign sign --yes --recursive "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit@$DIGEST"
+      # As a user checks it (docs/guide/installation.md, "Checking the image's signature"): the
+      # certificate must name this workflow at this tag.
+      - name: Verify the signature
+        shell: bash
+        run: |
+          cosign verify "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit@$DIGEST" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          echo "signed: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit@$DIGEST"

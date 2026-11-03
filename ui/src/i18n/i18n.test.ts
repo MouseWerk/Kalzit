@@ -6,8 +6,10 @@ import { de, en } from "./catalogs";
 import {
   detectLanguage,
   getLanguage,
+  hasMessage,
   LANGUAGE_STORAGE_KEY,
   type Language,
+  loadLanguage,
   setLanguage,
   translate,
 } from "./i18n";
@@ -429,5 +431,18 @@ describe("language choice", () => {
     expect(getLanguage()).toBe("de");
     expect(document.documentElement.lang).toBe("de");
     expect(window.localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe("de");
+  });
+});
+
+describe("catalog loading", () => {
+  it("loads each language once and hands out the same catalog", async () => {
+    const first = await loadLanguage("de");
+    expect(await loadLanguage("de")).toBe(first);
+    expect(first["common.retry"]).toBe(de["common.retry"]);
+  });
+
+  it("knows the keys of the catalogs, for keys built at run time", () => {
+    expect(hasMessage("common.retry")).toBe(true);
+    expect(hasMessage("common.noSuchKey")).toBe(false);
   });
 });

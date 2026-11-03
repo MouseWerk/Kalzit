@@ -76,8 +76,9 @@ import { visualizationName } from "../analyses/visualization";
 import { foldersQuery } from "../dashboards/api";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
+import { rangeLabel } from "../dashboards/rangeLabel";
 import { appendPages, documentsOf, outcomesOf } from "../dashboards/results";
-import { rangeLabel, TimeRangePicker } from "../dashboards/TimeRangePicker";
+import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {
   intervalFor,
   MAX_DATA_POINTS,
