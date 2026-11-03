@@ -49,6 +49,18 @@ export function check(budget, sizes, start) {
   const problems = [];
   const kb = (bytes) => `${(bytes / 1024).toFixed(1)} kB`;
   const startSet = new Set(start);
+  // A start that names nothing, or a file the bundle does not have, would measure as small as
+  // it likes: index.html changed its form, or the build left something out.
+  if (start.length === 0) {
+    problems.push(
+      "index.html loads no script or stylesheet from assets/; the start cannot be measured",
+    );
+  }
+  for (const file of start) {
+    if (!sizes.has(file)) {
+      problems.push(`index.html loads ${file}, which is not in the bundle`);
+    }
+  }
   const startSize = start.reduce((sum, file) => sum + (sizes.get(file) ?? 0), 0);
   if (startSize > budget.start) {
     problems.push(

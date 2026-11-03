@@ -1837,7 +1837,7 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   in the job that holds the key. Windows files are signed with Authenticode in two small jobs
   (`windows-sign-exe`, `windows-sign-msi`) that alone use the environment `windows-signing`,
   which holds only the code-signing secrets; the MSI is built from the signed program in between,
-  in a job without any secret (`windows-msi`), which also runs the signed program once and checks that the package carries exactly it, as installed file and as setup copy, and that its custom actions, Binary streams, files and service are exactly those of `packaging/windows/msi-expected.psd1`, in English and German (`packaging/windows/check-msi.ps1`, with Windows' own `msiexec /a` and the Windows Installer automation interface only). Signing uses Microsoft Artifact Signing (the key
+  in a job without any secret (`windows-msi`), which also runs the signed program once and checks that the package carries exactly it, as installed file and as setup copy, and that it has only the tables `packaging/windows/msi-expected.psd1` lists and exactly its rows of custom actions, Binary streams, files, components, registry values and the service, in English and German (the wizard's dialogs and the sequences are not listed row by row) (`packaging/windows/check-msi.ps1`, with Windows' own `msiexec /a` and the Windows Installer automation interface only). Signing uses Microsoft Artifact Signing (the key
   stays in Microsoft's HSM; recommended) or a PFX imported into the runner's user store for the
   signing only; nothing but signtool runs while key material is present
   (`packaging/windows/sign.ps1`, docs/operations/updates.md). Without either both stay unsigned
@@ -2046,7 +2046,8 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `KALZIT_E2E_MONGODB` (`host:port`) and `KALZIT_E2E_OPENSEARCH` (a base URL). Windows runners
   have no Linux containers, so there the same servers run as their native Windows builds
   (`.github/scripts/e2e-services.ps1`: versions and SHA-256 pinned, unpacked once and kept in the
-  Actions cache, OpenSearch without its plugins); in CI a missing service fails on both systems.
+  Actions cache, the cached copy checked against a pinned digest on every run, OpenSearch without
+  its plugins); in CI a missing service fails on both systems.
   Graph sources run the same way: the job also starts Neo4j (community; on Windows its zip
   distribution on the Java 25 that OpenSearch brings) and Memgraph, seeds both from
   `ui/e2e/fixtures/graph-shop.cypher` and names them in `KALZIT_E2E_NEO4J` and

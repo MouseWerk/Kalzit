@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { getBrand, subscribeBrand } from "../appearance/brand";
 import { readPreference, writePreference } from "../lib/storage";
 import { getTimeSettings, subscribeTimeSettings, type WeekStart } from "../lib/timeSettings";
+import { showErrorToast } from "../lib/toasts";
 import type { en } from "./en";
 
 export const LANGUAGES = ["de", "en"] as const;
@@ -133,25 +134,50 @@ export function loadAllLanguages(): Promise<void> {
   return Promise.all(LANGUAGES.map(loadLanguage)).then(() => undefined);
 }
 
-// Runs `apply` once the language's catalog is loaded: at once when it already is, so a switch
-// to a loaded language is synchronous. The latest request wins, so an earlier switch whose
-// catalog arrives later does not undo a newer one.
-let request = 0;
-function whenLoaded(language: Language | null, apply: () => void): void {
-  request += 1;
+// A switch of the saved language and one of the preview, each waiting for its catalog. They are
+// separate, so ending a preview never cancels a pending switch of the saved language (setup ends
+// its preview right after it saves the language it showed). For each, the latest call wins: an
+// earlier switch whose catalog arrives later does not undo a newer one.
+interface Pending {
+  target: Language | null;
+  request: number;
+}
+const savedSwitch: Pending = { target: null, request: 0 };
+const previewSwitch: Pending = { target: null, request: 0 };
+
+// Runs `apply` once the language's catalog is loaded: at once when it already is, so a switch to
+// a loaded language is synchronous. A call whose target already applies, with nothing pending,
+// changes nothing. A failed download keeps the language shown and says so in a toast; the next
+// switch tries again.
+function whenLoaded(
+  pending: Pending,
+  language: Language | null,
+  applies: boolean,
+  apply: () => void,
+): void {
+  if (applies && pending.target === null) {
+    return;
+  }
+  pending.request += 1;
   if (language === null || catalogs[language] !== undefined) {
+    pending.target = null;
     change(apply);
     return;
   }
-  const mine = request;
+  const mine = pending.request;
+  pending.target = language;
   loadLanguage(language).then(
     () => {
-      if (mine === request) {
+      if (mine === pending.request) {
+        pending.target = null;
         change(apply);
       }
     },
     () => {
-      // The page keeps the language it shows; the next switch tries the download again.
+      if (mine === pending.request) {
+        pending.target = null;
+        showErrorToast(translate(getLanguage(), "common.languageLoadFailed"));
+      }
     },
   );
 }
@@ -159,10 +185,22 @@ function whenLoaded(language: Language | null, apply: () => void): void {
 /** Switches the UI language everywhere at once and remembers the choice; a preview ends. */
 export function setLanguage(language: Language): void {
   writePreference(LANGUAGE_STORAGE_KEY, language);
-  whenLoaded(language, () => {
+  // A preview still waiting for its catalog would land over this choice.
+  previewSwitch.request += 1;
+  previewSwitch.target = null;
+  whenLoaded(savedSwitch, language, current === language && preview === null, () => {
     current = language;
     preview = null;
   });
+}
+
+/**
+ * The language the saved choice is heading to: a switch still waiting for its catalog, else the
+ * current language. Whoever decides whether to switch compares with this, not with the language
+ * shown, so a pending switch is not left to land over a later decision.
+ */
+export function getTargetLanguage(): Language {
+  return savedSwitch.target ?? current;
 }
 
 /**
@@ -170,7 +208,7 @@ export function setLanguage(language: Language): void {
  * language returns. A reload never keeps a preview.
  */
 export function previewLanguage(language: Language | null): void {
-  whenLoaded(language, () => {
+  whenLoaded(previewSwitch, language, preview === language, () => {
     preview = language;
   });
 }

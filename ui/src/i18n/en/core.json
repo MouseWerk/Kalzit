@@ -2,6 +2,7 @@
   "app.name": "Kalzit",
   "app.documentTitle": "{page} – {product}",
   "common.loading": "Loading…",
+  "common.languageLoadFailed": "The other language could not be loaded. Check the connection and try again.",
   "common.retry": "Try again",
   "common.undo": "Undo",
   "common.dialog.backKept": "Back and Escape keep what you typed. Choose Cancel to discard it.",

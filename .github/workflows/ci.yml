@@ -45,6 +45,7 @@ jobs:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 2
       - name: Test the change detection
         run: .github/scripts/changes.test.sh
@@ -80,6 +81,8 @@ jobs:
         run: echo "No server change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.RUN_JOB == 'true'
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         if: env.RUN_JOB == 'true'
         with:
@@ -193,6 +196,8 @@ jobs:
       KALZIT_TEST_REQUIRE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -227,6 +232,8 @@ jobs:
       KALZIT_TEST_LDAP_ADMIN_PASSWORD: kalzit-ci-ldap
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -257,6 +264,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -404,6 +413,8 @@ jobs:
       KALZIT_TEST_LOKI_URL: http://127.0.0.1:3100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
@@ -671,8 +682,10 @@ jobs:
         with:
           path: ${{ runner.tool_cache }}/kalzit-e2e-services
           key: e2e-services-windows-${{ hashFiles('.github/scripts/e2e-services.ps1') }}
-      - name: Download MongoDB, OpenSearch and Neo4j for Windows
-        if: env.RUN_JOB == 'true' && runner.os == 'Windows' && steps.services.outputs.cache-hit != 'true'
+      # Also on a cache hit: the copy from the cache is checked against the digests pinned in the
+      # script, and downloaded again if it differs.
+      - name: Download or check MongoDB, OpenSearch and Neo4j for Windows
+        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
         timeout-minutes: 10
         shell: pwsh
         run: .github/scripts/e2e-services.ps1 install
@@ -824,6 +837,11 @@ jobs:
         if: ${{ !cancelled() && env.RUN_JOB == 'true' && runner.os == 'Windows' }}
         shell: pwsh
         run: .github/scripts/tcp-watch.ps1 report
+      # Only the servers e2e-services.ps1 started, by their recorded PIDs.
+      - name: Stop MongoDB, OpenSearch and Neo4j
+        if: always() && env.RUN_JOB == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: .github/scripts/e2e-services.ps1 stop
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !success() }}
         with:
@@ -925,6 +943,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Commit
         id: commit
@@ -954,6 +974,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26
@@ -1004,6 +1026,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: letsencrypt/pebble
@@ -1069,6 +1093,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: cargo-audit

@@ -77,4 +77,13 @@ describe("bundle budget", () => {
       expect.stringContaining("no chunk de"),
     ]);
   });
+
+  it("fails a start that names nothing or a file the bundle lacks", () => {
+    expect(check(BUDGET, sizes(FITS), []).problems).toContainEqual(
+      expect.stringContaining("loads no script or stylesheet"),
+    );
+    expect(
+      check(BUDGET, sizes(FITS), [...startFiles(HTML), "assets/gone-AAAAAAAA.js"]).problems,
+    ).toEqual([expect.stringContaining("gone-AAAAAAAA.js, which is not in the bundle")]);
+  });
 });

@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { expectShape, isRecord, request } from "../api/client";
-import { getLanguage, LANGUAGES, type Language, setLanguage } from "../i18n/i18n";
+import { getTargetLanguage, LANGUAGES, type Language, setLanguage } from "../i18n/i18n";
 import { choiceFor, claimChoice, clearChoice, type LocalChoice } from "../lib/localChoice";
 import { setTimeZone, setWeekStart, WEEK_STARTS, type WeekStart } from "../lib/timeSettings";
 import { getTheme, setTheme, THEMES, type Theme } from "../theme/theme";
@@ -118,7 +118,9 @@ export function preferencesQuery(userId: string) {
 export function applyPreferences(preferences: Preferences, choice: LocalChoice = {}): void {
   const language =
     preferences.language ?? choice.language ?? oneOf(LANGUAGES, preferences.defaults.language);
-  if (language !== null && language !== getLanguage()) {
+  // Compared with where the language is heading, so a switch made before signing in that still
+  // waits for its catalog does not land over the account's preference.
+  if (language !== null && language !== getTargetLanguage()) {
     setLanguage(language);
   }
   const theme = preferences.theme ?? choice.theme ?? oneOf(THEMES, preferences.defaults.theme);

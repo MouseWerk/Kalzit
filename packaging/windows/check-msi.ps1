@@ -1,18 +1,21 @@
 <#
 .SYNOPSIS
-  Checks that an MSI package carries exactly the given kalzit.exe and nothing it should not, with
-  Windows' own tools only: the installed file (unpacked with an administrative installation,
-  `msiexec /a`, which installs nothing) and every row of the tables that run code or put files on
-  disk (CustomAction, Binary, File, ServiceInstall), read through the Windows Installer
-  automation interface and compared with packaging/windows/msi-expected.psd1, in English and with
-  the German transform applied.
+  Checks an MSI package against packaging/windows/msi-expected.psd1 with Windows' own tools only:
+  the installed kalzit.exe (unpacked with an administrative installation, `msiexec /a`, which
+  installs nothing) must be the given program, and, read through the Windows Installer automation
+  interface in English and with the German transform applied, the package may have only the
+  listed tables and exactly the listed rows of those that run code, change the system or put files
+  on disk (CustomAction, Binary, File, Component, Registry, RemoveFile, ServiceInstall,
+  ServiceControl). The languages must be exactly English and German, with German as the only
+  embedded transform.
 
 .DESCRIPTION
   The release workflow runs this before the MSI is signed (job `windows-msi`), so only a package
-  built from the signed program, with no custom action, stream, file or service beyond the listed
-  ones, gets a signature; the CI job `msi` runs it as well. The copy of kalzit.exe the package's
-  setup steps run from (the Binary stream KalzitSetup) must be the given program too, and WiX's
-  dialog DLL must carry the WiX Toolset's valid Authenticode signature.
+  built from the signed program and matching the list gets a signature; the CI job `msi` runs it
+  as well. The copy of kalzit.exe the package's setup steps run from (the Binary stream
+  KalzitSetup) must be the given program too, and WiX's dialog DLL must carry a valid signature
+  with the pinned WiX certificate. What the rows of the other tables do (the wizard's dialogs,
+  the sequences) is covered by the checks below and by the installation tests, not by the list.
 #>
 param(
     [Parameter(Mandatory)] [string] $Msi,
@@ -45,9 +48,13 @@ function Test-Stream([string] $Name, [string] $Kind, [string] $File, [int] $Lang
             }
         }
         'WixDll' {
+            # The certificate of the WiX release the workflows pin (5.0.2), by thumbprint and issuer;
+            # a WiX update changes it here together with the version.
             $signature = Get-AuthenticodeSignature $File
-            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike 'CN=WiX Toolset (.NET Foundation),*') {
-                "$Name (transform $LanguageId) is not signed by the WiX Toolset: $($signature.Status), $($signature.SignerCertificate.Subject)"
+            $certificate = $signature.SignerCertificate
+            if ($signature.Status -ne 'Valid' -or $certificate.Thumbprint -ne $rows.WixSigner.Thumbprint -or
+                $certificate.Issuer -cne $rows.WixSigner.Issuer) {
+                "$Name (transform $LanguageId) is not signed with the WiX Toolset's pinned certificate: $($signature.Status), $($certificate.Thumbprint), $($certificate.Issuer)"
             }
         }
         'Picture' {
@@ -73,12 +80,43 @@ try {
     }
 
     # The rows that run code or land on disk, in English and with the German transform: exactly
-    # those of msi-expected.psd1. Targets are compared where the list gives one.
+    # those of msi-expected.psd1. Targets are compared where the list gives one. Only the listed
+    # languages may exist, each as its embedded transform, so no other transform goes unchecked.
     $problems = [Collections.Generic.List[string]]::new()
+    $languages = @(Get-PackageLanguages $Msi)
+    if (($languages -join ',') -cne '1033,1031') {
+        $problems.Add("the package lists the languages '$($languages -join ',')', expected exactly 1033,1031")
+    }
+    $storages = @(Get-TransformedValues $Msi 0 'SELECT `Name` FROM `_Storages`')
+    if (($storages -join ',') -cne '1031') {
+        $problems.Add("the package embeds the storages '$($storages -join ',')', expected only the transform 1031")
+    }
     $streamNames = @($rows.Binary.Keys | Sort-Object)
     $serviceColumns = 'ServiceInstall', 'Name', 'DisplayName', 'ServiceType', 'StartType', 'ErrorControl',
     'LoadOrderGroup', 'Dependencies', 'StartName', 'Password', 'Arguments', 'Component_', 'Description'
     foreach ($id in 0, 1031) {
+        # Every table: a table the list does not name (a shortcut, an environment variable, a
+        # self-registering DLL, service failure actions, an embedded UI, permissions) fails.
+        @(Compare-Rows '_Tables' $id @(Get-TransformedValues $Msi $id 'SELECT `Name` FROM `_Tables`') @($rows.Tables)) |
+            ForEach-Object { $problems.Add($_) }
+        # Registry values without WiX's generated row ids; ServiceControl and the components'
+        # folders exactly (each file's component names the folder it lands in).
+        @(Compare-Rows 'Registry' $id @(Get-TransformedRows $Msi $id 'SELECT `Root`, `Key`, `Name`, `Value`, `Component_` FROM `Registry`' |
+                    ForEach-Object { $_ -join ' | ' }) `
+                @($rows.Registry | ForEach-Object { @($_.Root, $_.Key, $_.Name, $_.Value, $_.Component) -join ' | ' })) |
+            ForEach-Object { $problems.Add($_) }
+        @(Compare-Rows 'ServiceControl' $id @(Get-TransformedRows $Msi $id 'SELECT `ServiceControl`, `Name`, `Event`, `Arguments`, `Wait`, `Component_` FROM `ServiceControl`' |
+                    ForEach-Object { $_ -join ' | ' }) `
+                @($rows.ServiceControl | ForEach-Object { @($_.ServiceControl, $_.Name, $_.Event, $_.Arguments, $_.Wait, $_.Component) -join ' | ' })) |
+            ForEach-Object { $problems.Add($_) }
+        @(Compare-Rows 'Component' $id @(Get-TransformedRows $Msi $id 'SELECT `Component`, `Directory_`, `Attributes`, `Condition` FROM `Component`' |
+                    ForEach-Object { $_ -join ' | ' }) `
+                @($rows.Component | ForEach-Object { @($_.Component, $_.Directory, $_.Attributes, $_.Condition) -join ' | ' })) |
+            ForEach-Object { $problems.Add($_) }
+        @(Compare-Rows 'RemoveFile' $id @(Get-TransformedRows $Msi $id 'SELECT `FileKey`, `Component_`, `FileName`, `DirProperty`, `InstallMode` FROM `RemoveFile`' |
+                    ForEach-Object { $_ -join ' | ' }) `
+                @($rows.RemoveFile | ForEach-Object { @($_.FileKey, $_.Component, $_.FileName, $_.DirProperty, $_.InstallMode) -join ' | ' })) |
+            ForEach-Object { $problems.Add($_) }
         $actions = @(Get-TransformedRows $Msi $id 'SELECT `Action`, `Type`, `Source`, `Target` FROM `CustomAction`')
         @(Compare-Rows 'CustomAction' $id @($actions | ForEach-Object { "$($_[0]) (type $($_[1]), source $($_[2]))" }) `
                 @($rows.CustomAction | ForEach-Object { "$($_.Action) (type $($_.Type), source $($_.Source))" })) |
@@ -107,6 +145,8 @@ try {
             $file = Join-Path $streams "Binary\$name.ibd"
             if (Test-Path $file) {
                 @(Test-Stream $name $rows.Binary[$name] $file $id) | ForEach-Object { $problems.Add($_) }
+            } else {
+                $problems.Add("the Binary stream $name (transform $id) is missing from the export")
             }
         }
     }
@@ -116,14 +156,10 @@ try {
     }
     $export = Join-Path $work 'binary-0'
     Write-Host "$Msi carries $Exe (SHA-256 $expected) as the installed program and as the setup copy"
-    Write-Host "$Msi has exactly the custom actions, streams, files and service of msi-expected.psd1, in English and German"
+    Write-Host "$Msi has exactly the tables, custom actions, streams, files, components, registry values and service of msi-expected.psd1, in English and German"
 
     # The wizard in German: the package lists the language and its embedded transform turns the
     # settings page German without touching what gets installed.
-    $languages = @(Get-PackageLanguages $Msi)
-    if ($languages -notcontains '1033' -or $languages -notcontains '1031') {
-        throw "the package lists the languages '$($languages -join ',')', expected 1033 and 1031"
-    }
     $title = @(Get-TransformedValues $Msi 1031 "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'KalzitSettingsDlg' AND ``Control`` = 'Title'")
     if ($title.Count -ne 1 -or $title[0] -notlike '*Servereinstellungen') {
         throw "the German settings page is titled '$($title -join ' | ')', expected 'Servereinstellungen'"
