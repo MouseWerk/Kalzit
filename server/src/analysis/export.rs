@@ -519,13 +519,15 @@ fn data_text(value: &Value) -> String {
 
 const GRAPHML_HEAD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
-  <key id="labels" for="node" attr.name="labels" attr.type="string"/>
-  <key id="type" for="edge" attr.name="type" attr.type="string"/>
+  <key id="labels" for="node" attr.name="kalzit:labels" attr.type="string"/>
+  <key id="type" for="edge" attr.name="kalzit:type" attr.type="string"/>
 "#;
 
 /// GraphML (graphml.graphdrawing.org), as Gephi, yEd, Cytoscape and NetworkX read it: a directed
 /// graph whose nodes carry their labels (`:Person:Actor`, as Neo4j writes them) and properties,
-/// and whose edges carry their type and properties. Each property key is declared once for nodes
+/// and whose edges carry their type and properties. The labels and the type are named
+/// `kalzit:labels` and `kalzit:type`, so they never share a name with a property called `labels`
+/// or `type`. Each property key is declared once for nodes
 /// and once for edges, with the narrowest type that holds all its values (`boolean`, `long`,
 /// `double`, else `string`; lists and objects are JSON text). GraphML has no paths: their nodes
 /// and edges are in the file, the JSON file keeps the paths themselves.
@@ -614,7 +616,12 @@ fn json_to(frame: &Frame, control: &Control, max: usize, deadline: bool, out: &m
 /// spaces, line breaks or invisible characters, and a leading tab or carriage return (DDE such as
 /// `=cmd|...` starts with `=`).
 pub(crate) fn defuse(text: &str) -> String {
-    let lead = text.trim_start_matches([' ', '\n', '\u{00A0}', '\u{200B}', '\u{FEFF}', '\u{3000}']);
+    // Spaces, line breaks and the invisible characters a spreadsheet skips before a formula: the
+    // no-break and typographic spaces (U+2000 to U+200A), the zero-width space and joiners
+    // (U+200B to U+200D), the word joiner (U+2060), the byte order mark, the ideographic space.
+    let lead = text.trim_start_matches(|c: char| {
+        matches!(c, ' ' | '\n' | '\u{00A0}' | '\u{2000}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{3000}')
+    });
     let risky = text.starts_with(['\t', '\r'])
         || lead.starts_with(['=', '+', '-', '@', '\t', '\r', '\u{FF1D}', '\u{FF0B}', '\u{FF0D}', '\u{FF20}']);
     if risky { format!("'{text}") } else { text.to_string() }
@@ -1177,7 +1184,18 @@ mod tests {
 
     #[test]
     fn invisible_characters_before_a_formula_are_defused() {
-        for risky in ["\u{200B}=1", "\u{FEFF}+1", "\u{00A0}@x", " \n-1", "\u{3000}=1"] {
+        for risky in [
+            "\u{200B}=1",
+            "\u{FEFF}+1",
+            "\u{00A0}@x",
+            " \n-1",
+            "\u{3000}=1",
+            "\u{200C}=1",
+            "\u{200D}+1",
+            "\u{2060}-1",
+            "\u{2000}=1",
+            "\u{2007}\u{200A}@x",
+        ] {
             assert!(defuse(risky).starts_with('\''), "{risky:?}");
         }
         assert_eq!(defuse("a=1"), "a=1");

@@ -63,6 +63,9 @@ export function reasonText(t: Translate, { reason, params, fallback }: Reason): 
   if (reason === "settings.out_of_range" && params?.max === undefined && params?.min) {
     return t("datasources.form.atLeast", { min: params.min });
   }
+  if (reason === "export.format_unsupported" && params !== undefined) {
+    return formatUnsupported(t, params);
+  }
   const key = reasonKey(reason);
   if (key !== undefined) {
     const text = t(key, typeWords(t, reason, fill(reason, params ?? {})));
@@ -112,4 +115,24 @@ export function errorReason(error: unknown): Reason | undefined {
 /** A result notice (`frame.row_limit`, `prometheus.warning`, ...) in the UI's language. */
 export function noticeText(t: Translate, notice: Notice): string {
   return reasonText(t, { reason: notice.code, params: notice.params, fallback: notice.text }) ?? "";
+}
+
+const EXPORT_SHAPES = new Set(["frame", "documents", "graph"]);
+const EXPORT_FORMATS = new Set(["csv", "xlsx", "json", "ndjson", "graphml"]);
+
+/**
+ * An export format that does not fit the result's shape, in the dialog's words. Only a table
+ * format asked of documents or a graph says which step helps: a projection or a graph step.
+ */
+function formatUnsupported(t: Translate, params: Record<string, string>): string {
+  const shape = params.shape ?? "";
+  const format = params.format ?? "";
+  const text = t("datasources.reason.export.format_unsupported", {
+    shape: EXPORT_SHAPES.has(shape) ? t(`analysis.export.shape.${shape}` as MessageKey) : shape,
+    format: EXPORT_FORMATS.has(format)
+      ? t(`analysis.export.formatName.${format}` as MessageKey)
+      : format,
+  });
+  const tableFormat = format === "csv" || format === "xlsx";
+  return tableFormat && shape !== "frame" ? `${text} ${t("analysis.export.tableStepHint")}` : text;
 }

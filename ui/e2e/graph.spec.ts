@@ -337,6 +337,34 @@ test.describe("Neo4j", () => {
       expect(png.readUInt32BE(20)).toBeGreaterThanOrEqual(Math.floor((box?.height ?? 0) * 2));
       // A drawn panel, not an empty card: title, nodes and labels make the file this large.
       expect(png.length).toBeGreaterThan(5_000);
+      // It looks like the panel on screen: scaled to the panel's size, its pixels differ from a
+      // screenshot of the panel by little on average (an image without the styles would not).
+      await page.mouse.move(0, 0);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      const shot = await tree.screenshot({ animations: "disabled" });
+      const difference = await page.evaluate(
+        async ([image, screen]) => {
+          const load = async (base64: string) => {
+            const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+            return createImageBitmap(new Blob([bytes], { type: "image/png" }));
+          };
+          const [a, b] = await Promise.all([load(image), load(screen)]);
+          const pixels = (bitmap: ImageBitmap) => {
+            const canvas = new OffscreenCanvas(b.width, b.height);
+            const context = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+            context.drawImage(bitmap, 0, 0, b.width, b.height);
+            return context.getImageData(0, 0, b.width, b.height).data;
+          };
+          const [pa, pb] = [pixels(a), pixels(b)];
+          let sum = 0;
+          for (let i = 0; i < pa.length; i += 4) {
+            for (let c = 0; c < 3; c++) sum += Math.abs((pa[i + c] ?? 0) - (pb[i + c] ?? 0));
+          }
+          return sum / ((pa.length / 4) * 3);
+        },
+        [png.toString("base64"), shot.toString("base64")] as const,
+      );
+      expect(difference).toBeLessThan(24);
     });
   });
 

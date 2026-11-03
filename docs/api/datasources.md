@@ -1644,8 +1644,9 @@ Documents (results no projection turned into a frame):
 Graphs (results no graph step turned into a frame):
 
 - `graphml` (`application/graphml+xml`): GraphML 1.0 as Gephi, yEd, Cytoscape and NetworkX read
-  it, one directed `<graph>`. A node's labels are the key `labels` (`:Person:Customer`, as Neo4j
-  writes them), an edge's type the key `type`. Every property key is declared once for nodes
+  it, one directed `<graph>`. A node's labels are the key `labels` named `kalzit:labels`
+  (`:Person:Customer`, as Neo4j writes them), an edge's type the key `type` named `kalzit:type`,
+  so neither shares its name with a property called `labels` or `type`. Every property key is declared once for nodes
   (`n0`, `n1`, ...) and once for edges (`e0`, ...), in name order, with the narrowest type that
   holds all its values: `boolean`, `long`, `double` (integers and decimals mixed), else `string`;
   lists and objects are compact JSON text, `null` values are left out. Text is XML-escaped;

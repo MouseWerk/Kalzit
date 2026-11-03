@@ -432,7 +432,7 @@
   "datasources.reason.expression.no_type": "The expression is always empty.",
   "datasources.reason.export.no_queries": "The panel has no query to export.",
   "datasources.reason.export.frame_missing": "There is no table {frame} to export.",
-  "datasources.reason.export.format_unsupported": "Results of the form {shape} cannot be exported as {format}; a step makes a table of them.",
+  "datasources.reason.export.format_unsupported": "A result of the kind “{shape}” cannot be exported as {format}.",
   "datasources.reason.export.too_many_events": "The export would hold more than {max} events. Choose a shorter time range or a filter.",
   "datasources.reason.export.too_many_rows": "Excel takes at most {max} rows. Export as CSV instead.",
   "datasources.reason.export.too_many_columns": "Excel takes at most {max} columns. Export as CSV instead.",

@@ -70,7 +70,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Chunks waiting between the sending task and the response body.
 const QUEUED_CHUNKS: usize = 2;
 /// Where an export's temporary files go, inside the data directory.
-const SPOOL_DIR: &str = "export-tmp";
+pub(crate) const SPOOL_DIR: &str = "export-tmp";
 /// Free disk space an export leaves, besides its own estimate.
 const KEEP_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 /// The size of one chunk sent.
@@ -87,6 +87,8 @@ pub struct Limits {
     pub file_bytes: usize,
     /// Free disk space kept besides the estimate of the file.
     pub keep_free: u64,
+    /// The most events an audit log export holds (`routes::audit`).
+    pub audit_events: usize,
 }
 
 impl Default for Limits {
@@ -96,6 +98,7 @@ impl Default for Limits {
             download: Duration::from_secs(15 * 60),
             file_bytes: export::MAX_FILE_BYTES,
             keep_free: KEEP_FREE_BYTES,
+            audit_events: super::audit::MAX_EXPORT_EVENTS,
         }
     }
 }
@@ -111,7 +114,7 @@ pub fn clear_spool(data_dir: &FsPath) {
 }
 
 /// One export per user at a time, from making the file to the last byte sent.
-struct UserSlot {
+pub(crate) struct UserSlot {
     users: Arc<Mutex<HashSet<String>>>,
     id: String,
 }
@@ -123,15 +126,21 @@ impl Drop for UserSlot {
 }
 
 /// What a running export holds: a slot of the server while the file is made, its user's slot.
-struct Slots {
-    permit: tokio::sync::OwnedSemaphorePermit,
-    user: UserSlot,
+pub(crate) struct Slots {
+    pub(crate) permit: tokio::sync::OwnedSemaphorePermit,
+    pub(crate) user: UserSlot,
 }
 
 fn acquire(state: &AppState, ctx: &OrgCtx) -> ApiResult<Slots> {
+    acquire_for(state, &ctx.user.id)
+}
+
+/// The export slots for `user_id`: one export per user, at most `MAX_EXPORTS` making files on
+/// the server. Every export takes them, the audit log's too.
+pub(crate) fn acquire_for(state: &AppState, user_id: &str) -> ApiResult<Slots> {
     let user = {
         let mut users = state.export_users.lock_or_recover();
-        if !users.insert(ctx.user.id.clone()) {
+        if !users.insert(user_id.to_string()) {
             return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "busy",
@@ -139,7 +148,7 @@ fn acquire(state: &AppState, ctx: &OrgCtx) -> ApiResult<Slots> {
             )
             .because("export.user_busy"));
         }
-        UserSlot { users: state.export_users.clone(), id: ctx.user.id.clone() }
+        UserSlot { users: state.export_users.clone(), id: user_id.to_string() }
     };
     let permit = state.exports.clone().try_acquire_owned().map_err(|_| too_busy())?;
     Ok(Slots { permit, user })
@@ -746,6 +755,68 @@ fn attachment(file: Spooled, pending: Pending, title: &str) -> Response {
     let kind = file.kind;
     let limits = *pending.state.export_limits.read_or_recover();
     tokio::spawn(send_file(file, tx, pending, limits));
+    body_of(rx, kind.content_type, &name)
+}
+
+/// Sends a finished spool file that needs no audit entry of its own at the end (the caller wrote
+/// it before), with the same bounds as an export's download: chunks of 1 MiB, a client that takes
+/// nothing for `Limits::stall` or needs longer than `Limits::download` loses it. The user's slot
+/// and the file are held until the sending ends.
+pub(crate) fn send_spooled(
+    path: tempfile::TempPath,
+    len: u64,
+    user: UserSlot,
+    limits: Limits,
+    content_type: &'static str,
+    name: &str,
+) -> Response {
+    let (tx, rx) = mpsc::channel::<Msg>(QUEUED_CHUNKS);
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let _user = user;
+        let started = Instant::now();
+        let mut sent: u64 = 0;
+        let failed = |message: &str| Msg::Failed(message.to_string());
+        let mut source = match tokio::fs::File::open(&path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = tx.try_send(failed(&format!("the spool file: {e}")));
+                return;
+            }
+        };
+        while sent < len {
+            let mut chunk = Vec::with_capacity(CHUNK);
+            match (&mut source).take(CHUNK as u64).read_to_end(&mut chunk).await {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = tx.try_send(failed(&format!("the spool file: {e}")));
+                    return;
+                }
+            }
+            let n = chunk.len() as u64;
+            let left = limits.download.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                let _ = tx.try_send(failed("the download took too long"));
+                return;
+            }
+            match tokio::time::timeout(limits.stall.min(left), tx.send(Msg::Chunk(chunk))).await {
+                Ok(Ok(())) => sent += n,
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    let _ = tx.try_send(failed("the client stopped taking the file"));
+                    return;
+                }
+            }
+        }
+        let _ = tokio::time::timeout(limits.stall, tx.send(Msg::Done)).await;
+        drop(path);
+    });
+    body_of(rx, content_type, name)
+}
+
+/// The response that hands over the chunks the sending task puts into `rx`.
+fn body_of(rx: mpsc::Receiver<Msg>, content_type: &'static str, name: &str) -> Response {
     let chunks = futures_util::stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {
             Some(Msg::Chunk(c)) => Some((Ok::<_, std::io::Error>(axum::body::Bytes::from(c)), rx)),
@@ -757,7 +828,7 @@ fn attachment(file: Spooled, pending: Pending, title: &str) -> Response {
     let mut response = Response::new(Body::from_stream(chunks));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(kind.content_type));
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(content_type));
     // `file_name` leaves only ASCII letters, digits, `-`, `_` and the dot: always a valid header.
     if let Ok(value) = header::HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
         headers.insert(header::CONTENT_DISPOSITION, value);

@@ -4,9 +4,8 @@
 
 use std::collections::HashSet;
 
-use axum::body::Body;
 use axum::extract::State;
-use axum::http::{Method, header};
+use axum::http::{Method, StatusCode};
 use axum::response::Response;
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
@@ -23,6 +22,7 @@ use crate::authz::{Access, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders;
+use crate::locks::RwLockExt;
 use crate::net::RequestInfo;
 use crate::settings;
 use crate::shapes::{ExportLanguage, Page};
@@ -38,8 +38,9 @@ pub fn routes() -> Vec<RouteDef> {
     ]
 }
 
-/// Events one export holds at most; more are refused, so a file never holds less than its filters
-/// ask for without saying so. A shorter time range or a filter makes a smaller file.
+/// Events one export holds at most (`routes::export::Limits::audit_events`, smaller in tests);
+/// more are refused, so a file never holds less than its filters ask for without saying so. A
+/// shorter time range or a filter makes a smaller file.
 pub const MAX_EXPORT_EVENTS: usize = 100_000;
 /// Events read per query while an export collects them.
 const EXPORT_BATCH: u32 = 1_000;
@@ -123,7 +124,7 @@ async fn export_org(
         sees_every_folder: folders::sees_every_folder(&ctx),
         scrub: (folders::sees_every_folder(&ctx) == 0).then_some(&ctx),
     };
-    export(&state, viewer, &ctx.user, &info, req).await
+    export(&state, viewer, Scope::Org(&ctx.org_id), &ctx.user, &info, req).await
 }
 
 async fn export_server(
@@ -136,57 +137,104 @@ async fn export_server(
         return Err(ApiError::validation("orgId must not be empty").with_field("orgId"));
     }
     let org = req.org_id.clone();
+    if let Some(org) = org.as_deref() {
+        let found: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM orgs WHERE id = $1").bind(org).fetch_optional(&state.db).await?;
+        if found.is_none() {
+            return Err(ApiError::validation("orgId names no organization").with_field("orgId"));
+        }
+    }
     // Server administrators see every event; no folder is hidden from this view.
     let viewer = Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None };
-    export(&state, viewer, &admin, &info, req).await
+    export(&state, viewer, Scope::Server, &admin, &info, req).await
 }
 
-/// Collects every event the filters match, as the list shows them to this viewer, writes the
-/// file, records `audit.exported` and answers the file. The entry is written before the file is
-/// handed out: when it cannot be written, there is no file.
+/// Where `audit.exported` is recorded: in the organization of an organization's export, at
+/// server level for a server administrator's (also when it was narrowed to one organization).
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    Org(&'a str),
+    Server,
+}
+
+/// Streams every event the filters match, as the list shows them to this viewer, batch by batch
+/// into a spool file (memory holds one batch), records `audit.exported` once the file is complete
+/// and sends the file from disk. When the entry cannot be written, there is no file. The export
+/// takes the same slots as a data export: one per user, and one of the server's while the file
+/// is made.
 async fn export(
     state: &AppState,
     viewer: Viewer<'_>,
+    scope: Scope<'_>,
     actor: &SessionUser,
     info: &RequestInfo,
     req: AuditExportRequest,
 ) -> ApiResult<Response> {
     let q = req.query();
     check_range(&q)?;
+    let limits = *state.export_limits.read_or_recover();
+    let slots = crate::routes::export::acquire_for(state, &actor.id)?;
     let unnamed = unnamed_folders(state, &viewer).await?;
-    let mut events: Vec<AuditItem> = Vec::new();
+    let spool = state.config.paths.data_dir.join(crate::routes::export::SPOOL_DIR);
+    let io = |e: std::io::Error| ApiError::internal("audit", format!("the spool file: {e}"));
+    std::fs::create_dir_all(&spool).map_err(io)?;
+    if let Some(free) = crate::updates::platform::free_space(&spool)
+        && free < limits.keep_free
+    {
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "busy",
+            "the server has too little free disk space to make this file",
+        )
+        .because("export.disk_space")
+        .param("free", free)
+        .param("needed", limits.keep_free));
+    }
+    let (file, path) =
+        tempfile::Builder::new().prefix("audit-").suffix(".part").tempfile_in(&spool).map_err(io)?.into_parts();
+    let language = req.language.unwrap_or(ExportLanguage::En);
+    let mut writer = Some(AuditWriter::new(file, req.format, language, limits.file_bytes));
+    let mut count = 0usize;
     let mut cursor: Option<String> = None;
     loop {
         let paging = Paging::batch(EXPORT_BATCH, cursor.as_deref())?;
         let rows = fetch(state, &viewer, &q, &paging, &unnamed).await?;
         let page = paging.page(rows, |e| (e.created_at, e.id.as_str()));
-        events.extend(page.items);
-        if events.len() > MAX_EXPORT_EVENTS {
+        count += page.items.len();
+        if count > limits.audit_events {
             return Err(ApiError::validation(format!(
-                "the export would hold more than {MAX_EXPORT_EVENTS} events; choose a shorter time range or a filter"
+                "the export would hold more than {} events; choose a shorter time range or a filter",
+                limits.audit_events
             ))
             .because("export.too_many_events")
-            .param("max", MAX_EXPORT_EVENTS));
+            .param("max", limits.audit_events));
         }
+        // Encoding and writing a batch is file work: off the request threads.
+        let mut w = writer.take().ok_or_else(|| ApiError::internal("audit", "the writer is gone"))?;
+        let items = page.items;
+        let w = tokio::task::spawn_blocking(move || w.write(&items).map(|()| w))
+            .await
+            .map_err(|e| ApiError::internal("audit", e))??;
+        writer = Some(w);
         match page.next_cursor {
             Some(next) => cursor = Some(next),
             None => break,
         }
     }
-    let (bytes, content_type, extension) = match req.format {
-        AuditFormat::Csv => {
-            let language = req.language.unwrap_or(ExportLanguage::En);
-            (audit_csv(&events, language), "text/csv; charset=utf-8", "csv")
-        }
-        AuditFormat::Json => {
-            (serde_json::to_vec(&events).map_err(|e| ApiError::internal("audit", e))?, "application/json", "json")
-        }
-    };
+    let writer = writer.ok_or_else(|| ApiError::internal("audit", "the writer is gone"))?;
+    let len =
+        tokio::task::spawn_blocking(move || writer.finish()).await.map_err(|e| ApiError::internal("audit", e))??;
+    // Complete: the server's slot is free for the next export while this one is sent.
+    let crate::routes::export::Slots { permit, user } = slots;
+    drop(permit);
     let mut summary = req.summary();
-    summary.insert("events".into(), json!(events.len()));
+    summary.insert("events".into(), json!(count));
     let mut tx = crate::db::begin(&state.db).await?;
     let event = AuditEvent {
-        org_id: viewer.org_id,
+        org_id: match scope {
+            Scope::Org(org) => Some(org),
+            Scope::Server => None,
+        },
         actor_user_id: Some(&actor.id),
         actor_address: Some(info.client_ip.to_string()),
         action: "audit.exported",
@@ -197,16 +245,12 @@ async fn export(
     };
     audit::record(&mut tx, &event).await?;
     crate::db::commit(tx).await?;
-    let mut response = Response::new(Body::from(bytes));
-    let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(content_type));
-    // `file_name` leaves only ASCII letters, digits, `-`, `_` and the dot: always a valid header.
+    let (content_type, extension) = match req.format {
+        AuditFormat::Csv => ("text/csv; charset=utf-8", "csv"),
+        AuditFormat::Json => ("application/json", "json"),
+    };
     let name = file_name("kalzit-audit", extension);
-    if let Ok(value) = header::HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
-        headers.insert(header::CONTENT_DISPOSITION, value);
-    }
-    headers.insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
-    Ok(response)
+    Ok(crate::routes::export::send_spooled(path, len, user, limits, content_type, &name))
 }
 
 /// The columns of the CSV file, named as the API names the fields.
@@ -225,36 +269,111 @@ const CSV_COLUMNS: [&str; 12] = [
     "summary",
 ];
 
-/// RFC 4180 CSV as the data exports write it: a byte order mark, CRLF line ends, the time in ISO
-/// 8601 UTC, the summary as compact JSON, and every text a spreadsheet would read as a formula
-/// defused with a leading `'`.
-fn audit_csv(events: &[AuditItem], language: ExportLanguage) -> Vec<u8> {
-    let separator = if language == ExportLanguage::De { ';' } else { ',' };
-    let sep = separator.to_string();
-    let cell = |text: &str| quote(&defuse(text), separator);
-    let mut out = String::from("\u{FEFF}");
-    out.push_str(&CSV_COLUMNS.map(cell).join(&sep));
-    out.push_str("\r\n");
-    for e in events {
-        let text = |v: &Option<String>| v.as_deref().map(cell).unwrap_or_default();
+/// Writes an audit export batch by batch, within the file size limit.
+struct AuditWriter {
+    out: std::io::BufWriter<std::fs::File>,
+    format: AuditFormat,
+    separator: char,
+    written: usize,
+    max: usize,
+    started: bool,
+    first: bool,
+}
+
+impl AuditWriter {
+    fn new(file: std::fs::File, format: AuditFormat, language: ExportLanguage, max: usize) -> Self {
+        let separator = if language == ExportLanguage::De { ';' } else { ',' };
+        let out = std::io::BufWriter::with_capacity(64 * 1024, file);
+        Self { out, format, separator, written: 0, max, started: false, first: true }
+    }
+
+    fn put(&mut self, bytes: &[u8]) -> ApiResult<()> {
+        use std::io::Write as _;
+        if self.written + bytes.len() > self.max {
+            return Err(ApiError::validation(format!("the file would be larger than {} bytes", self.max))
+                .because("export.too_large")
+                .param("max", self.max));
+        }
+        self.written += bytes.len();
+        self.out.write_all(bytes).map_err(|e| ApiError::internal("audit", format!("the spool file: {e}")))
+    }
+
+    /// The start of the file (the CSV header, the JSON array) comes with the first batch, so an
+    /// export without events is still a whole file.
+    fn start(&mut self) -> ApiResult<()> {
+        if self.started {
+            return Ok(());
+        }
+        self.started = true;
+        match self.format {
+            AuditFormat::Csv => {
+                let sep = self.separator.to_string();
+                let header = format!("\u{FEFF}{}\r\n", CSV_COLUMNS.map(|c| self.cell(c)).join(&sep));
+                self.put(header.as_bytes())?;
+            }
+            AuditFormat::Json => self.put(b"[")?,
+        }
+        Ok(())
+    }
+
+    fn cell(&self, text: &str) -> String {
+        quote(&defuse(text), self.separator)
+    }
+
+    fn write(&mut self, events: &[AuditItem]) -> ApiResult<()> {
+        self.start()?;
+        for e in events {
+            match self.format {
+                AuditFormat::Csv => {
+                    let line = self.csv_row(e);
+                    self.put(line.as_bytes())?;
+                }
+                AuditFormat::Json => {
+                    let item = serde_json::to_vec(e).map_err(|e| ApiError::internal("audit", e))?;
+                    if !self.first {
+                        self.put(b",")?;
+                    }
+                    self.put(&item)?;
+                }
+            }
+            self.first = false;
+        }
+        Ok(())
+    }
+
+    /// RFC 4180 CSV as the data exports write it: a byte order mark, CRLF line ends, the time in
+    /// ISO 8601 UTC, the summary as compact JSON, and every text a spreadsheet would read as a
+    /// formula defused with a leading `'`.
+    fn csv_row(&self, e: &AuditItem) -> String {
+        let sep = self.separator.to_string();
+        let text = |v: &Option<String>| v.as_deref().map(|t| self.cell(t)).unwrap_or_default();
         let row = [
             iso_time(e.created_at),
-            cell(&e.id),
+            self.cell(&e.id),
             text(&e.org_id),
             text(&e.actor_user_id),
             text(&e.actor_name),
             text(&e.actor_address),
             text(&e.actor_token_id),
             text(&e.actor_token_prefix),
-            cell(&e.action),
+            self.cell(&e.action),
             text(&e.resource_type),
             text(&e.resource_id),
-            cell(&e.summary.to_string()),
+            self.cell(&e.summary.to_string()),
         ];
-        out.push_str(&row.join(&sep));
-        out.push_str("\r\n");
+        format!("{}\r\n", row.join(&sep))
     }
-    out.into_bytes()
+
+    /// Ends the file and answers its size.
+    fn finish(mut self) -> ApiResult<u64> {
+        use std::io::Write as _;
+        self.start()?;
+        if self.format == AuditFormat::Json {
+            self.put(b"]")?;
+        }
+        self.out.flush().map_err(|e| ApiError::internal("audit", format!("the spool file: {e}")))?;
+        Ok(self.written as u64)
+    }
 }
 
 #[derive(Deserialize)]

@@ -983,7 +983,7 @@ fn small_graph() -> crate::shapes::GraphSet {
             edge_type: "KENNT".into(),
             from: "1".into(),
             to: "2".into(),
-            properties: props(vec![("seit", json!(2020)), ("leer", Value::Null)]),
+            properties: props(vec![("seit", json!(2020)), ("leer", Value::Null), ("type", json!("privat"))]),
         }],
         paths: Some(vec![GraphPath { nodes: vec!["1".into(), "2".into()], edges: vec!["e1".into()] }]),
         schema: GraphSchema {
@@ -1160,6 +1160,10 @@ async fn graphs_export_as_graphml_and_json() {
         r#"<key id="n3" for="node" attr.name="tags" attr.type="string"/>"#,
         r#"<key id="e0" for="edge" attr.name="leer" attr.type="string"/>"#,
         r#"<key id="e1" for="edge" attr.name="seit" attr.type="long"/>"#,
+        // A property named like a built-in key keeps its name; the built-ins are prefixed.
+        r#"<key id="e2" for="edge" attr.name="type" attr.type="string"/>"#,
+        r#"<key id="type" for="edge" attr.name="kalzit:type" attr.type="string"/>"#,
+        r#"<key id="labels" for="node" attr.name="kalzit:labels" attr.type="string"/>"#,
     ] {
         assert!(xml.contains(key), "{key}\n{xml}");
     }
@@ -1175,7 +1179,7 @@ async fn graphs_export_as_graphml_and_json() {
     // An empty property is left out.
     assert!(
         xml.contains(
-            r#"<edge id="e1" source="1" target="2"><data key="type">KENNT</data><data key="e1">2020</data></edge>"#
+            r#"<edge id="e1" source="1" target="2"><data key="type">KENNT</data><data key="e1">2020</data><data key="e2">privat</data></edge>"#
         ),
         "{xml}"
     );
@@ -1362,7 +1366,7 @@ async fn the_audit_log_exports_as_csv_and_json_for_its_readers() {
 }
 
 /// Server administrators export the whole server's log, or one organization's, as the server
-/// view lists it; the entry of that export names the organization it was narrowed to.
+/// view lists it; the entry of that export stays in the server's log.
 #[tokio::test]
 async fn server_administrators_export_the_whole_log() {
     let t = T::new().await;
@@ -1384,10 +1388,59 @@ async fn server_administrators_export_the_whole_log() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     assert!(r.text().contains(";s2;") || r.text().contains(",s2,"), "{}", r.text());
     assert!(!r.text().contains(",s1,"), "{}", r.text());
+    // A server administrator's export is in the server's log, also when narrowed to one
+    // organization; the filter says which.
     let exports = t.audit_exports().await;
     assert_eq!(exports.len(), 2);
-    assert_eq!(exports[0].0, None, "the whole server's log");
-    assert_eq!(exports[1].0.as_deref(), Some(other.as_str()));
-    let r = t.send("/api/admin/audit/export", json!({ "format": "csv", "orgId": " " }), Some(&t.owner)).await;
-    assert_eq!((r.status, r.json()["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("orgId")));
+    assert_eq!((exports[0].0.as_deref(), exports[1].0.as_deref()), (None, None));
+    let narrowed: Value = serde_json::from_str(&exports[1].1).unwrap();
+    assert_eq!(narrowed["orgId"], json!(other));
+    for org in [" ", "keine-organisation"] {
+        let r = t.send("/api/admin/audit/export", json!({ "format": "csv", "orgId": org }), Some(&t.owner)).await;
+        assert_eq!((r.status, r.json()["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("orgId")));
+    }
+    assert_eq!(t.audit_exports().await.len(), 2);
+}
+
+/// The cap counts events: exactly as many as allowed make a file, one more is refused before
+/// anything is recorded or sent.
+#[tokio::test]
+async fn an_audit_export_holds_at_most_the_cap_of_events() {
+    let t = T::new().await;
+    t.state.export_limits.write().unwrap().audit_events = 3;
+    for i in 0..4_i64 {
+        t.audit_event(&format!("c{i}"), Some(&t.org), "dashboard.saved", "d", 1_700_000_000_000 + i).await;
+    }
+    // Three of the four.
+    let three = json!({ "format": "json", "action": "dashboard.", "from": 1_700_000_000_001_i64 });
+    let r = t.post("/audit/export", three, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json().as_array().map(Vec::len), Some(3));
+    let r = t.post("/audit/export", json!({ "format": "csv", "action": "dashboard." }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "export.too_many_events".into()));
+    assert_eq!(r.json()["error"]["params"], json!({ "max": "3" }), "{}", r.text());
+    assert_eq!(t.audit_exports().await.len(), 1, "a refused export records nothing");
+    t.spool_empty().await;
+}
+
+/// An audit export takes the export slots: a user with an export running waits for it.
+#[tokio::test]
+async fn an_audit_export_takes_the_users_export_slot() {
+    let t = T::new().await;
+    let (owner,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'joerg@example.de'").fetch_one(&t.state.db).await.unwrap();
+    t.state.export_users.lock().unwrap().insert(owner.clone());
+    let r = t.post("/audit/export", json!({ "format": "csv" }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::SERVICE_UNAVAILABLE, "export.user_busy".into()));
+    t.state.export_users.lock().unwrap().remove(&owner);
+    let r = t.post("/audit/export", json!({ "format": "csv" }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    t.slots_free().await;
+    // The slot comes back once the file was sent.
+    let freed = async {
+        while !t.state.export_users.lock().unwrap().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), freed).await.expect("the user's slot comes back");
 }

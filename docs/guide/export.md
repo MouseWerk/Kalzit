@@ -64,6 +64,9 @@ and slides (at least twice the screen's pixels). The picture is drawn in your br
 screen, so it holds exactly what you see, without a request to the server, and it is not
 recorded in the audit log. It is offered with export, to members who may export data. Menus
 and tooltips that are open are not part of the picture; a table shows the rows that are in view.
+Panels of a panel plugin draw in a frame of their own that the browser does not let Kalzit read:
+their area stays empty in the picture. Images on a panel (in a text panel, for example) are part
+of it when they come from your Kalzit server; images from other sites are left out.
 
 ## Limits
 
