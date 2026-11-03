@@ -118,6 +118,10 @@ test("second factor: sign-in, account and policy", async ({ browser }) => {
 
   // Lea sets up the app through the API, as the account page would.
   const lea = await api(LEA.email, LEA.password);
+  const confirmed = await lea.post("/api/me/security/confirm/password", {
+    data: { password: LEA.password },
+  });
+  expect(confirmed.ok()).toBe(true);
   const setup = await (await lea.post("/api/me/security/totp/setup", { data: {} })).json();
   const secret = base32Decode(String(setup.secret));
   const first = Math.floor(Date.now() / 30_000);

@@ -185,8 +185,20 @@ impl TestApp {
         browser
     }
 
-    /// Sets up the app for the signed-in `who`; answers the key and the recovery codes.
+    /// Confirms the account's password in the session of `who`, which the first second factor
+    /// of an account with a password needs.
+    async fn confirm_password(&self, who: &Browser) {
+        let r = self.post("/api/me/security/confirm/password", json!({ "password": PASSWORD }), who).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+
+    /// Sets up the app for the signed-in `who`; answers the key and the recovery codes. The first
+    /// factor of an account confirms its password first.
     async fn enroll_totp(&self, who: &Browser) -> (Vec<u8>, Vec<String>) {
+        let status = self.get("/api/me/security", who).await;
+        if status.body["totp"].is_null() && status.body["passkeys"] == json!([]) && status.body["hasPassword"] == true {
+            self.confirm_password(who).await;
+        }
         let r = self.post("/api/me/security/totp/setup", json!({}), who).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
         let secret = totp::decode_secret(&r.body["secret"].as_str().unwrap().replace(' ', "")).unwrap();
@@ -966,6 +978,7 @@ async fn check_passkeys_sign_in_and_a_cloned_authenticator_is_refused(t: TestApp
     use authenticator::Authenticator;
     let (owner, _) = t.setup().await;
     let mut key = Authenticator::new();
+    t.confirm_password(&owner).await;
     let options = t.post("/api/me/security/passkeys/setup", json!({}), &owner).await;
     assert_eq!(options.status, StatusCode::OK, "{}", options.body);
     assert_eq!(options.body["publicKey"]["rp"]["id"], HOST);
@@ -1199,6 +1212,177 @@ async fn organization_rules_never_lock_everyone_out() {
     check_organization_rules_never_lock_everyone_out(test_app().await).await;
 }
 
+/// How the session of `who` was signed in and what it proved, as the sign-in records it.
+async fn set_session_proof(t: &TestApp, who: &Browser, factor: Option<&str>, provider: Option<&str>) {
+    let token = who.session.as_deref().unwrap().split_once('=').unwrap().1;
+    sqlx::query(
+        "UPDATE sessions SET sign_in_second_factor = $1, sign_in_provider_id = $2, second_factor_at = NULL \
+         WHERE token_hash = $3",
+    )
+    .bind(factor)
+    .bind(provider)
+    .bind(kalzit::auth::session::hash_token(token))
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+}
+
+/// A provider row for the tests of the gate; `trusted` is its `trustProviderMfa`.
+async fn insert_provider(t: &TestApp, trusted: bool) {
+    sqlx::query(
+        "INSERT INTO sso_providers (id, slug, kind, name, position, enabled, config, create_accounts, \
+         trust_provider_mfa, version, created_at, updated_at) VALUES ('idp', 'idp', 'oidc', 'IdP', 0, 1, '{}', 0, $1, 1, 0, 0)",
+    )
+    .bind(i64::from(trusted))
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+}
+
+/// A stolen session with only the password never gets a second factor of its own, and an
+/// organization that requires one lets in only sessions that proved one (docs/api/access.md,
+/// "Organization sign-in rules"): the sign-in, a confirmation or the setup in this very session.
+async fn check_a_stolen_password_session_never_passes_a_required_second_factor(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    direct_member(&t, &owner, &org, "vera@example.de").await;
+    store_org_setting(&t, &org, "security.two_factor_required", json!("everyone")).await;
+    // Vera's own session, and a copy of her session cookie an attacker took.
+    let (own, _) = t.password("vera@example.de").await;
+    let (stolen, _) = t.password("vera@example.de").await;
+    for who in [&own, &stolen] {
+        let r = t.get(&format!("/api/orgs/{org}"), who).await;
+        assert_eq!(r.code(), "org_second_factor_required", "{}", r.body);
+    }
+
+    // The stolen session cannot plant a factor: the first one needs the password, fresh.
+    for path in ["/api/me/security/totp/setup", "/api/me/security/passkeys/setup"] {
+        let r = t.post(path, json!({}), &stolen).await;
+        assert_eq!(
+            (r.status, r.code(), r.reason()),
+            (StatusCode::FORBIDDEN, "confirmation_required", "second_factor.confirm_password"),
+            "{path}: {}",
+            r.body
+        );
+    }
+    let r = t.post("/api/me/security/totp", json!({ "code": "123456" }), &stolen).await;
+    assert_eq!(r.reason(), "second_factor.confirm_password", "{}", r.body);
+    let r = t.post("/api/me/security/confirm/password", json!({ "password": "geraten" }), &stolen).await;
+    assert_eq!(
+        (r.status, r.body["error"]["field"].as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, Some("password")),
+        "{}",
+        r.body
+    );
+    let r = t.get("/api/me/security", &stolen).await;
+    assert_eq!(r.body["passwordConfirmedUntil"], Value::Null, "{}", r.body);
+
+    // Vera sets one up in her own session, which passes from now on; every other session of the
+    // account ends, the stolen one with them.
+    let (secret, codes) = t.enroll_totp(&own).await;
+    assert_eq!(codes.len(), 10);
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &own).await.status, StatusCode::OK);
+    assert_eq!(t.get("/api/me", &stolen).await.status, StatusCode::UNAUTHORIZED);
+    let enrolled: Vec<(String,)> = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'user.second_factor_enrolled' ORDER BY created_at DESC",
+    )
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&enrolled[0].0).unwrap()["sessionsEnded"], json!(1));
+
+    // A password session that never proved the factor (as one from before 0.5.3 can be) stays
+    // out, also now that the account has one, until it confirms the factor.
+    set_session_proof(&t, &own, None, None).await;
+    let r = t.get(&format!("/api/orgs/{org}"), &own).await;
+    assert_eq!(r.code(), "org_second_factor_required", "{}", r.body);
+    let r = t.post("/api/me/security/confirm", json!({ "method": "totp", "code": t.code(&secret) }), &own).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &own).await.status, StatusCode::OK);
+    // A new sign-in asks for the factor and passes with it.
+    t.next_step();
+    let (pending, _) = t.password("vera@example.de").await;
+    let (signed_in, r) = second_step(&t, &pending, json!({ "method": "totp", "code": t.code(&secret) })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.get(&format!("/api/orgs/{org}"), &signed_in).await.status, StatusCode::OK);
+    t.finish().await;
+}
+
+/// A provider's word for a second factor counts only while that provider is enabled and Kalzit
+/// still takes its word for one.
+async fn check_a_providers_second_factor_counts_while_it_is_trusted(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    direct_member(&t, &owner, &org, "vera@example.de").await;
+    store_org_setting(&t, &org, "security.two_factor_required", json!("everyone")).await;
+    insert_provider(&t, true).await;
+    let (vera, _) = t.password("vera@example.de").await;
+    set_session_method(&t, &vera, "provider").await;
+    set_session_proof(&t, &vera, Some("provider"), Some("idp")).await;
+    let org_path = format!("/api/orgs/{org}");
+    assert_eq!(t.get(&org_path, &vera).await.status, StatusCode::OK);
+    // The switch turned off: the session's earlier word counts no more.
+    sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 0").execute(&t.state.db).await.unwrap();
+    assert_eq!(t.get(&org_path, &vera).await.code(), "org_second_factor_required");
+    // Trusted again, but the provider paused.
+    sqlx::query("UPDATE sso_providers SET trust_provider_mfa = 1, enabled = 0").execute(&t.state.db).await.unwrap();
+    assert_eq!(t.get(&org_path, &vera).await.code(), "org_second_factor_required");
+    sqlx::query("UPDATE sso_providers SET enabled = 1").execute(&t.state.db).await.unwrap();
+    assert_eq!(t.get(&org_path, &vera).await.status, StatusCode::OK);
+    // A session from before 0.5.3 names no provider: its word counts for nothing.
+    set_session_proof(&t, &vera, Some("provider"), None).await;
+    assert_eq!(t.get(&org_path, &vera).await.code(), "org_second_factor_required");
+    t.finish().await;
+}
+
+/// Before an organization turns password sign-in off, its admins see who of its owners and
+/// administrators has no other way in (docs/api/access.md, "Organization sign-in rules").
+async fn check_the_owners_without_a_provider_sign_in_are_listed(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let owner_id = member_id(&t, "joerg@example.de").await;
+    let ada = t.member(&owner, &org, "ada@example.de", "admin").await;
+    t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let path = format!("/api/orgs/{org}/sign-in/password-only");
+    let emails = |r: &Reply| -> Vec<String> {
+        r.body.as_array().unwrap().iter().map(|p| p["email"].as_str().unwrap().to_string()).collect()
+    };
+    let r = t.get(&path, &ada).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(emails(&r), ["ada@example.de", "joerg@example.de"], "viewers are not listed: {}", r.body);
+    // The owner signs in through a provider whose rule for people without a group leads here.
+    insert_provider(&t, false).await;
+    sqlx::query(
+        "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, created_at, last_sign_in_at, confirmed) \
+         VALUES ('idp', 'sub-joerg', 'https://idp.example', $1, 0, 0, 1)",
+    )
+    .bind(&owner_id)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let unmapped = json!({ "rule": "default", "defaultOrgId": org, "defaultRole": "viewer" });
+    let r = t.send(Method::PUT, "/api/admin/sign-in/unmapped", Some(unmapped), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.get(&path, &ada).await;
+    assert_eq!(emails(&r), ["ada@example.de"], "{}", r.body);
+    // A viewer may not read it.
+    let (viewer, _) = t.password("vera@example.de").await;
+    assert_eq!(t.get(&path, &viewer).await.status, StatusCode::FORBIDDEN);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn a_stolen_password_session_never_passes_a_required_second_factor() {
+    check_a_stolen_password_session_never_passes_a_required_second_factor(test_app().await).await;
+}
+
+#[tokio::test]
+async fn a_providers_second_factor_counts_while_it_is_trusted() {
+    check_a_providers_second_factor_counts_while_it_is_trusted(test_app().await).await;
+}
+
+#[tokio::test]
+async fn the_owners_without_a_provider_sign_in_are_listed() {
+    check_the_owners_without_a_provider_sign_in_are_listed(test_app().await).await;
+}
+
 #[tokio::test]
 async fn postgres_two_factor() {
     let Some(base) = common::postgres_url("PostgreSQL test") else { return };
@@ -1218,4 +1402,7 @@ async fn postgres_two_factor() {
     check_recent_sign_ins_are_listed_for_their_owner_and_server_admins(postgres_app(&base).await).await;
     check_organization_rules_apply_to_every_member_on_entering_it(postgres_app(&base).await).await;
     check_organization_rules_never_lock_everyone_out(postgres_app(&base).await).await;
+    check_a_stolen_password_session_never_passes_a_required_second_factor(postgres_app(&base).await).await;
+    check_a_providers_second_factor_counts_while_it_is_trusted(postgres_app(&base).await).await;
+    check_the_owners_without_a_provider_sign_in_are_listed(postgres_app(&base).await).await;
 }

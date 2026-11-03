@@ -62,6 +62,8 @@ export interface SecurityStatus {
   passkeys: PasskeyInfo[];
   recoveryCodes: { remaining: number; total: number; createdAt: number } | null;
   confirmedUntil: number | null;
+  /** This session's fresh confirmation of the password, which the first factor needs. */
+  passwordConfirmedUntil: number | null;
   lockedUntil: number | null;
   hasPassword: boolean;
 }
@@ -147,6 +149,7 @@ function isStatus(value: unknown): value is SecurityStatus {
     (value.recoveryCodes === null ||
       (isRecord(value.recoveryCodes) && isNumber(value.recoveryCodes.remaining))) &&
     isNullableNumber(value.confirmedUntil) &&
+    isNullableNumber(value.passwordConfirmedUntil) &&
     isNullableNumber(value.lockedUntil) &&
     typeof value.hasPassword === "boolean"
   );
@@ -265,6 +268,13 @@ export async function fetchSecurity(): Promise<SecurityStatus> {
 export async function confirmFactor(proof: Proof): Promise<number> {
   const body = await request("POST", "/api/me/security/confirm", proof);
   const until = isRecord(body) ? body.confirmedUntil : undefined;
+  return expectShape(until, isNumber, "confirmation");
+}
+
+/** A fresh confirmation of the account's password, before its first second factor. */
+export async function confirmPassword(password: string): Promise<number> {
+  const body = await request("POST", "/api/me/security/confirm/password", { password });
+  const until = isRecord(body) ? body.passwordConfirmedUntil : undefined;
   return expectShape(until, isNumber, "confirmation");
 }
 

@@ -50,10 +50,18 @@ allow lists and the audit log rely on.
   that wrote it is trusted. The client is the first address that is not in
   `security.trusted_proxies`; entries a client put in front are never read. Scheme and host come
   from the entry the outermost trusted proxy wrote. List every proxy of yours in the chain.
+- **`X-Forwarded-Proto`.** Configure the proxy to **overwrite** this header with the scheme the
+  client used (nginx: `proxy_set_header X-Forwarded-Proto $scheme;`), not to append to it. A
+  single value counts as it is. When there are several, Kalzit takes the one next to the client's
+  address in `X-Forwarded-For` if both lists have the same length (each proxy appended to both),
+  and otherwise the last one, written by the proxy in front of Kalzit, so a scheme a client sent
+  itself never counts. A proxy that passes a client's `X-Forwarded-Proto` through unchanged lets
+  the client claim HTTPS.
 - **`Forwarded` values.** Quoted values, ports (`for="203.0.113.5:4711"`,
   `for="[2001:db8::7]:443"`) and several header lines are understood. A request without the
   header counts as the proxy's own (a health check). A request whose header does not lead to a
-  client address is refused with `400` and a warning in the log: an entry of a trusted proxy that
+  client address is refused with `400` and a warning in the log (once a minute per proxy, with the
+  number of refused requests): an entry of a trusted proxy that
   does not parse, lacks `for` or names no address (`for=unknown`, an obfuscated name such as
   `for=_proxy1`). Counted as the proxy instead, it would share the sign-in and rate limits of
   everyone behind it.

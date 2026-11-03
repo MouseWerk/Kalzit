@@ -53,6 +53,50 @@ impl ForwardedHeaders {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BadForwarded(&'static str);
 
+/// The warning about refused `Forwarded` headers, at most once a minute per proxy: a misconfigured
+/// proxy sends one with every request, and the log would repeat it as often.
+static BAD_FORWARDED_LOG: LogThrottle = LogThrottle::new();
+
+/// Lets a warning through at most once per `LogThrottle::EVERY` per peer and counts what it held
+/// back; the peers it remembers are bounded.
+pub(crate) struct LogThrottle {
+    seen: std::sync::Mutex<Option<std::collections::HashMap<IpAddr, (std::time::Instant, u64)>>>,
+}
+
+impl LogThrottle {
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+    const MAX_PEERS: usize = 1024;
+
+    pub(crate) const fn new() -> Self {
+        Self { seen: std::sync::Mutex::new(None) }
+    }
+
+    /// `Some(count)` when the warning for `peer` is due, with the requests it covers since the
+    /// last one; `None` while it is held back.
+    pub(crate) fn due(&self, peer: IpAddr, now: std::time::Instant) -> Option<u64> {
+        let mut guard = self.seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let seen = guard.get_or_insert_with(std::collections::HashMap::new);
+        if let Some((last, held)) = seen.get_mut(&peer) {
+            *held += 1;
+            if now.duration_since(*last) < Self::EVERY {
+                return None;
+            }
+            let count = *held;
+            *last = now;
+            *held = 0;
+            return Some(count);
+        }
+        if seen.len() >= Self::MAX_PEERS {
+            seen.retain(|_, (last, _)| now.duration_since(*last) < Self::EVERY);
+            if seen.len() >= Self::MAX_PEERS {
+                seen.clear();
+            }
+        }
+        seen.insert(peer, (now, 0));
+        Some(1)
+    }
+}
+
 pub async fn request_info(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     // Listeners insert `ConnectInfo`; tests insert `MockConnectInfo`. Without either the peer is
     // unknown, and an unknown peer must never count as a trusted proxy, so it becomes 0.0.0.0.
@@ -70,7 +114,14 @@ pub async fn request_info(State(state): State<AppState>, mut req: Request, next:
         Err(BadForwarded(why)) => {
             // Counted as the proxy, the request would share the budgets (sign-in limits, rate
             // limits) of everyone behind it, so one malformed header could lock them all out.
-            tracing::warn!(proxy = %peer, why, "refused a request whose Forwarded header names no client");
+            if let Some(refused) = BAD_FORWARDED_LOG.due(peer, std::time::Instant::now()) {
+                tracing::warn!(
+                    proxy = %peer,
+                    why,
+                    refused,
+                    "refused requests whose Forwarded header names no client (logged once a minute per proxy)"
+                );
+            }
             return ApiError::new(
                 axum::http::StatusCode::BAD_REQUEST,
                 "validation",
@@ -127,18 +178,35 @@ fn resolve_x_forwarded(
         .filter(|s| !s.is_empty())
         .collect();
     let mut client_ip = peer;
-    for entry in forwarded.iter().rev() {
+    let mut client_entry = None;
+    for (index, entry) in forwarded.iter().enumerate().rev() {
         let Some(ip) = parse_forwarded_ip(entry) else { break };
         client_ip = ip;
+        client_entry = Some(index);
         if !is_trusted(&ip) {
             break;
         }
     }
-    // The leftmost scheme is the one the user's browser spoke to the first proxy.
-    let https = match single_header(headers, "x-forwarded-proto") {
-        Some(proto) => proto.split(',').next().is_some_and(|p| p.trim().eq_ignore_ascii_case("https")),
-        None => tls,
+    // The scheme of the hop that received the client's request. A proxy that overwrites the
+    // header leaves one entry, which counts. Proxies that append to both headers leave one scheme
+    // per address, so the scheme next to the client's address counts, as in `Forwarded`. Otherwise
+    // which entries the client sent is unknown, and only the trusted peer's own, the rightmost,
+    // counts: a client cannot claim HTTPS by sending its own header.
+    let protos: Vec<&str> = headers
+        .get_all("x-forwarded-proto")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let proto = match (protos.len(), client_entry) {
+        (0, _) => None,
+        (1, _) => protos.first(),
+        (n, Some(index)) if n == forwarded.len() => protos.get(index),
+        _ => protos.last(),
     };
+    let https = proto.map_or(tls, |p| p.eq_ignore_ascii_case("https"));
     let host = single_header(headers, "x-forwarded-host")
         .and_then(|h| h.split(',').next().map(|h| h.trim().to_string()))
         .or(host);
@@ -708,9 +776,36 @@ mod tests {
     }
 
     #[test]
-    fn leftmost_forwarded_proto_wins() {
-        let h = headers(&[("x-forwarded-proto", "https, http")]);
+    fn the_forwarded_proto_of_the_clients_hop_counts() {
+        // One entry: the proxy overwrote the header.
+        let h = headers(&[("x-forwarded-for", "6.6.6.6, 203.0.113.5"), ("x-forwarded-proto", "https")]);
         assert!(x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).https);
+        // One scheme per address: the one next to the client's address.
+        let h = headers(&[("x-forwarded-for", "203.0.113.5, 10.0.0.2"), ("x-forwarded-proto", "https, http")]);
+        let info = x_forwarded(ip("10.0.0.1"), false, &h, &trusted());
+        assert_eq!((info.client_ip, info.https), (ip("203.0.113.5"), true));
+        let h = headers(&[("x-forwarded-for", "203.0.113.5, 10.0.0.2"), ("x-forwarded-proto", "http, https")]);
+        assert!(!x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).https);
+        // A client's own scheme in front of the proxy's does not count.
+        let h = headers(&[("x-forwarded-for", "203.0.113.5"), ("x-forwarded-proto", "https, http")]);
+        assert!(!x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).https);
+        let mut h = HeaderMap::new();
+        h.append("x-forwarded-proto", HeaderValue::from_static("https"));
+        h.append("x-forwarded-proto", HeaderValue::from_static("http"));
+        assert!(!x_forwarded(ip("10.0.0.1"), true, &h, &trusted()).https);
+    }
+
+    #[test]
+    fn the_forwarded_warning_is_logged_once_a_minute_per_proxy() {
+        let throttle = LogThrottle::new();
+        let start = std::time::Instant::now();
+        let at = |secs| start + std::time::Duration::from_secs(secs);
+        assert_eq!(throttle.due(ip("10.0.0.1"), at(0)), Some(1));
+        assert_eq!(throttle.due(ip("10.0.0.1"), at(1)), None);
+        assert_eq!(throttle.due(ip("10.0.0.1"), at(59)), None);
+        assert_eq!(throttle.due(ip("10.0.0.2"), at(59)), Some(1));
+        assert_eq!(throttle.due(ip("10.0.0.1"), at(60)), Some(3));
+        assert_eq!(throttle.due(ip("10.0.0.1"), at(61)), None);
     }
 
     #[test]

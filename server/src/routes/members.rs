@@ -23,6 +23,7 @@ use crate::shapes::Page;
 pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/orgs/{orgId}/members", Access::Org(Permission::UsersRead), list),
+        route(Method::GET, "/orgs/{orgId}/sign-in/password-only", Access::Org(Permission::UsersRead), password_only),
         route(Method::POST, "/orgs/{orgId}/members", Access::Org(Permission::UsersWrite), add).changes_rights(),
         route(Method::PATCH, "/orgs/{orgId}/members/{userId}", Access::Org(Permission::UsersWrite), change_role)
             .changes_rights(),
@@ -141,6 +142,15 @@ async fn list(
     Ok(Json(paging.page(rows, |m| (m.joined_at, m.user_id.as_str()))))
 }
 
+/// The owners and administrators who could not enter the organization any more once its
+/// password sign-in is off (`auth::org_gate::password_only_admins`): the UI warns before saving.
+async fn password_only(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+) -> ApiResult<Json<Vec<crate::auth::org_gate::PasswordOnly>>> {
+    Ok(Json(crate::auth::org_gate::password_only_admins(&state, &ctx.org_id).await?))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AddRequest {
@@ -161,9 +171,14 @@ async fn add(
             .bind(&email)
             .fetch_optional(&mut *tx)
             .await?;
-    // Adding works for existing accounts only; invitations by mail come with `users:invite`.
+    // Adding works for existing accounts only; invitations by mail come with `users:invite`. No
+    // account answers as one that cannot be added (below), after the same check of the role, so
+    // the answer does not tell whether an account has the address.
     let Some((user_id, confirmed)) = user else {
-        return Err(ApiError::validation("no account has this email").with_field("email"));
+        lock_org(&mut tx, &ctx.org_id).await?;
+        assignable_role(&mut tx, &ctx, &req.role).await?;
+        drop(tx);
+        return Err(refuse_add(&state, &ctx, &info, "no_account").await);
     };
     // The account's row first (user rows come before organization rows in the lock order): every
     // way of joining an organization takes it, so the check below that the account belongs to no
@@ -191,9 +206,9 @@ async fn add(
         .fetch_one(&mut *tx)
         .await?;
     if elsewhere > 0 || confirmed == 0 {
-        return Err(conflict("this account cannot be added directly; invite the person instead")
-            .with_field("email")
-            .because("members.invite_instead"));
+        drop(tx);
+        let why = if confirmed == 0 { "email_unconfirmed" } else { "other_organization" };
+        return Err(refuse_add(&state, &ctx, &info, why).await);
     }
     let now = state.clock.now_ms();
     // Added by an admin, not by the person: this organization's sign-in rules apply to them on
@@ -215,6 +230,33 @@ async fn add(
     let member = load(&mut *tx, &ctx.org_id, &user_id).await?;
     crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(member)))
+}
+
+/// The one answer to an address that cannot be added directly (`members.invite_instead`); `why`
+/// (`no_account`, `other_organization`, `email_unconfirmed`) goes to the audit log only, as
+/// `member.add_refused`, outside the rolled back transaction. A busy database does not change the
+/// answer.
+async fn refuse_add(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, why: &str) -> ApiError {
+    let event = crate::audit::AuditEvent {
+        org_id: Some(&ctx.org_id),
+        actor_user_id: Some(&ctx.user.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action: "member.add_refused",
+        resource_type: None,
+        resource_id: None,
+        summary: json!({ "why": why }),
+        at_ms: state.clock.now_ms(),
+    };
+    let recorded = match state.db.acquire().await {
+        Ok(mut conn) => crate::audit::record(&mut conn, &event).await,
+        Err(e) => Err(e),
+    };
+    if let Err(err) = recorded {
+        tracing::warn!("recording a refused member addition in the audit log failed: {err}");
+    }
+    conflict("this account cannot be added directly; invite the person instead")
+        .with_field("email")
+        .because("members.invite_instead")
 }
 
 #[derive(Deserialize)]

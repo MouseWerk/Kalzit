@@ -124,8 +124,9 @@ account without a password and a second factor has nothing of its own to prove i
 not linked by email (`sso=link_refused`) when it signs in through another provider or a directory
 (a confirmed identity of another provider, cause `sso.email_link_other_sign_in`): the person signs
 in the way they already do. Otherwise it links at once only when an organization's SCIM made and
-still owns it (see above) and this provider's group mapping, for the person's groups (or the rule
-for people without a mapped group), gives a membership in that organization; whoever
+still owns it (see above) and one of this provider's group mappings, for the person's groups,
+leads into that organization explicitly; the rule for people without a mapped group
+(`signin.default_org`) does not count, even when it names that organization; whoever
 controls its verified address at that provider signs in to it, so it is protected only as well
 as that address and provider are. Any other such account is refused too
 (`sso.email_link_no_proof`). Links made before 0.5.1 count as confirmed. Such a provider-only

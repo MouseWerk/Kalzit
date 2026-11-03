@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
 import { AccessNotice } from "../../auth/AccessLayout";
+import { PasswordField } from "../../auth/PasswordField";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
@@ -13,6 +14,7 @@ import { errorText } from "../admin/errors";
 import {
   confirmFactor,
   confirmPasskeyOptions,
+  confirmPassword,
   fetchSecurity,
   newRecoveryCodes,
   type PasskeyInfo,
@@ -450,8 +452,9 @@ function RenameField({
 }
 
 /**
- * Adding to an account that has a factor needs a fresh confirmation first; the dialogs ask for it
- * in place before they start.
+ * Adding to an account that has a factor needs a fresh confirmation with it first; the first
+ * factor of an account with a password needs the password. The dialogs ask for it in place
+ * before they start.
  */
 function ConfirmFirst({
   status,
@@ -462,6 +465,9 @@ function ConfirmFirst({
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  if (!hasFactor(status)) {
+    return <ConfirmPasswordFirst onConfirmed={onConfirmed} />;
+  }
   return (
     <>
       <p className="admin-dialog__text">{t("security.dialog.confirmFirst")}</p>
@@ -478,8 +484,80 @@ function ConfirmFirst({
   );
 }
 
+function hasFactor(status: SecurityStatus): boolean {
+  return status.totp !== null || status.passkeys.length > 0;
+}
+
 function needsConfirmation(status: SecurityStatus): boolean {
-  return (status.totp !== null || status.passkeys.length > 0) && !isConfirmed(status);
+  if (hasFactor(status)) {
+    return !isConfirmed(status);
+  }
+  const until = status.passwordConfirmedUntil;
+  return status.hasPassword && (until === null || until - 5_000 <= Date.now());
+}
+
+/**
+ * The account's password before its first second factor: a session someone took over cannot set
+ * up a factor of its own and keep the account.
+ */
+function ConfirmPasswordFirst({ onConfirmed }: { onConfirmed: () => void }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const fieldRef = useRef<HTMLInputElement>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) {
+      return;
+    }
+    if (password === "") {
+      setError(t("security.dialog.passwordRequired"));
+      fieldRef.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      await confirmPassword(password);
+      await queryClient.invalidateQueries({ queryKey: securityKeys.status });
+      onConfirmed();
+    } catch (failure) {
+      setError(
+        isApiError(failure, "validation")
+          ? t("security.dialog.passwordWrong")
+          : errorText(t, failure),
+      );
+      fieldRef.current?.focus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="form" noValidate onSubmit={(event) => void submit(event)}>
+      <p className="admin-dialog__text">{t("security.dialog.passwordFirst")}</p>
+      <PasswordField
+        ref={fieldRef}
+        label={t("security.dialog.passwordLabel")}
+        name="password"
+        autoComplete="current-password"
+        value={password}
+        onValueChange={(value) => {
+          setPassword(value);
+          setError(undefined);
+        }}
+        error={error}
+        readOnly={busy}
+      />
+      <div className="admin-dialog__footer">
+        <button type="submit" className="button button--primary" aria-disabled={busy}>
+          {t("security.factor.confirm")}
+        </button>
+      </div>
+    </form>
+  );
 }
 
 /** Setting up the app (frame 4B). */

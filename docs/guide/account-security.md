@@ -23,10 +23,20 @@ Kalzit asks for one of these.
   copy or print them, keep them apart from your password, and tick "I have stored the codes
   safely" to go on. **Make new ones** replaces the whole set.
 
-Removing a method, making new recovery codes and changing your password first ask you to confirm
-with a method you have (a passkey, a code from the app or a recovery code). A confirmation holds
-for five minutes, and signing in with the second factor counts as one. While a second factor is
-required for your account, the last method cannot be removed; set up another first.
+Your first method asks for your password first, so that nobody who took over a signed-in
+browser of yours can set up a second factor of their own. Setting it up signs you out on every
+other device and browser; sign in there again with the new second factor.
+
+Removing a method, making new recovery codes, adding another method and changing your password
+first ask you to confirm with a method you have (a passkey, a code from the app or a recovery
+code). A confirmation holds for five minutes, and signing in with the second factor counts as
+one. While a second factor is required for your account, the last method cannot be removed; set
+up another first.
+
+An organization that requires a second factor lets a browser in only once it proved yours: by
+signing in with it, by setting it up there, or by confirming it. When the organization shows
+"This organization requires a second factor" although you have one, choose **Confirm your second
+factor**.
 
 ## Signing in
 

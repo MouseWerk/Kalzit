@@ -655,6 +655,37 @@ export async function listOrgSettings(orgId: string): Promise<Setting[]> {
   return (await getPage(orgPath(orgId, "/settings"), isSetting, "settings")).items;
 }
 
+/** An owner or administrator with no sign-in through a provider or directory into the org. */
+export interface PasswordOnlyAdmin {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+function isPasswordOnlyAdmin(value: unknown): value is PasswordOnlyAdmin {
+  return (
+    isRecord(value) &&
+    typeof value.userId === "string" &&
+    typeof value.name === "string" &&
+    typeof value.email === "string" &&
+    typeof value.role === "string"
+  );
+}
+
+/**
+ * The owners and administrators who could no longer enter the organization once its password
+ * sign-in is off (docs/api/access.md, "Organization sign-in rules").
+ */
+export async function listPasswordOnlyAdmins(orgId: string): Promise<PasswordOnlyAdmin[]> {
+  return expectShape(
+    await request("GET", orgPath(orgId, "/sign-in/password-only")),
+    (value): value is PasswordOnlyAdmin[] =>
+      Array.isArray(value) && value.every(isPasswordOnlyAdmin),
+    "password-only admins",
+  );
+}
+
 export function updateOrgSetting(orgId: string, key: string, value: unknown, version: number) {
   const path = orgPath(orgId, `/settings/${enc(key)}`);
   return send("PATCH", path, { value, version }, isSetting, "setting");

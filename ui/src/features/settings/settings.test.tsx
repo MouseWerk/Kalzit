@@ -515,6 +515,46 @@ describe("organization settings", () => {
     expect(within(dialog).getByText("Last 2 days")).toBeTruthy();
   });
 
+  it("names the owners and admins a password sign-in off would shut out, before saving it", async () => {
+    const path = "/api/orgs/o1/settings/signin.local_password";
+    const { user, admin, server } = await openAdmin("/settings/organization", {
+      setup: (state) => {
+        state.orgSettings.push({
+          key: "signin.local_password",
+          scope: "org",
+          value: "inherit",
+          default: "inherit",
+          source: "default",
+          editable: true,
+          version: 0,
+          description: "Password sign-in in this organization",
+          updatedAt: null,
+          updatedBy: null,
+        });
+        state.passwordOnly = [
+          { userId: "u2", name: "Grace Hopper", email: "grace@example.com", role: "admin" },
+        ];
+      },
+    });
+    const local = within(await row("org.signin.local_password"));
+    await user.selectOptions(local.getByRole("combobox"), "off");
+    let dialog = await screen.findByRole("dialog", { name: "Turn password sign-in off?" });
+    expect(within(dialog).getByText("Grace Hopper (grace@example.com)")).toBeTruthy();
+    expect(within(dialog).getByText(/a server admin puts it back/)).toBeTruthy();
+    // Called off: nothing is sent and no error shows.
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(sent(server, "PATCH").filter((p) => p === path)).toHaveLength(0);
+    // Confirmed: the change goes through.
+    await user.selectOptions(local.getByRole("combobox"), "off");
+    dialog = await screen.findByRole("dialog", { name: "Turn password sign-in off?" });
+    await user.click(within(dialog).getByRole("button", { name: "Turn off anyway" }));
+    await waitFor(() => expect(sent(server, "PATCH").filter((p) => p === path)).toHaveLength(1));
+    await waitFor(() =>
+      expect(admin.orgSettings.find((s) => s.key === "signin.local_password")?.value).toBe("off"),
+    );
+  });
+
   it("shows settings read-only without settings:write", async () => {
     await openAdmin("/settings/organization", { permissions: ["settings:read"] });
     await screen.findByRole("heading", { level: 2, name: "Organization Analytical Engines" });

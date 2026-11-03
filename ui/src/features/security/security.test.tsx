@@ -138,7 +138,16 @@ describe("account: sign-in and security", () => {
     expect(await screen.findByText(/Protect your account with a second factor/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Set up" }));
     const dialog = await screen.findByRole("dialog", { name: "Set up an authenticator app" });
-    await user.type(within(dialog).getByLabelText("Six-digit code"), "999999");
+    // The first factor asks for the account's password first, a wrong one included.
+    expect(within(dialog).getByText(/Enter your password first/)).toBeTruthy();
+    const password = within(dialog).getByLabelText("Password of your account");
+    await user.type(password, "wrong");
+    await user.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    expect(await within(dialog).findByText("The password is not correct.")).toBeTruthy();
+    await user.clear(password);
+    await user.type(password, server.security.ownPassword);
+    await user.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await user.type(await within(dialog).findByLabelText("Six-digit code"), "999999");
     expect(
       await within(dialog).findByText(
         "The code does not match the key. Wait for the next code and check the time of your phone.",

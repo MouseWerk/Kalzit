@@ -72,18 +72,59 @@ async fn change_password(
     JsonBody(req): JsonBody<PasswordRequest>,
 ) -> ApiResult<StatusCode> {
     let now = state.clock.now_ms();
-    // A stolen session must not become a way to guess the password at full speed.
-    let wrong_current = || ApiError::validation("the current password is not correct").with_field("current");
     // No password can be this long, so it is refused before it costs a hash or an attempt.
     if req.current.chars().count() > password::MAX_PASSWORD_CHARS {
-        return Err(wrong_current());
+        return Err(wrong_password("current"));
     }
     // With a second factor, a new password needs a fresh confirmation of it (`second_factor`).
     if crate::auth::second_factor::methods(&state.db, &user.id).await?.any() {
         let token = session::read_cookie(&headers, info.https).ok_or_else(ApiError::unauthenticated)?;
         crate::auth::second_factor::require_fresh(&state.db, &session::hash_token(&token), now).await?;
     }
-    // Its own budget. A failure also counts for the account's sign-ins from all addresses
+    let stored = check_own_password(&state, &user, &info, req.current, "current").await?;
+    password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
+    let hash = password::hash(req.new).await?;
+
+    let mut tx = crate::db::begin(&state.db).await?;
+    // Only if the password is still the one just verified: of two changes at once, the second
+    // fails as if its current password were wrong.
+    let changed = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3")
+        .bind(&hash)
+        .bind(&user.id)
+        .bind(&stored)
+        .execute(&mut *tx)
+        .await?;
+    if changed.rows_affected() == 0 {
+        return Err(wrong_password("current"));
+    }
+    let ended =
+        session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers, info.https).as_deref()).await?;
+    let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
+    let summary = json!({ "userId": user.id, "sessionsEnded": ended });
+    audit(&mut tx, &actor, None, "user.password_changed", ("user", &user.id), summary).await?;
+    crate::db::commit(tx).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn wrong_password(field: &'static str) -> ApiError {
+    ApiError::validation("the password is not correct").with_field(field)
+}
+
+/// Checks the signed-in person's own password `given` (the request's field `field`), with its own
+/// budget: a stolen session must not become a way to guess the password at full speed. Answers
+/// the stored hash it matched. An account without a password never matches.
+pub(crate) async fn check_own_password(
+    state: &AppState,
+    user: &SessionUser,
+    info: &RequestInfo,
+    given: String,
+    field: &'static str,
+) -> ApiResult<Option<String>> {
+    // No password can be this long, so it is refused before it costs a hash or an attempt.
+    if given.chars().count() > password::MAX_PASSWORD_CHARS {
+        return Err(wrong_password(field));
+    }
+    // A failure also counts for the account's sign-ins from all addresses
     // (`AppState::account_limiter`), which does not refuse here: the caller has a session.
     use crate::auth::ratelimit::{account_key, network_key};
     let mono = state.clock.monotonic_ms();
@@ -106,38 +147,16 @@ async fn change_password(
     };
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
-    let Some(matched) = password::verify(req.current, stored.clone(), &password::TRUSTED).await else {
+    let Some(matched) = password::verify(given, stored.clone(), &password::TRUSTED).await else {
         return Err(busy());
     };
-    // The slot guards the check; hashing the new password has its own lane.
     drop(checking);
     if !matched {
         state.account_limiter.record(&account_key(&user.email), &network_key(info.client_ip), mono);
-        return Err(wrong_current());
+        return Err(wrong_password(field));
     }
     state.password_limiter.reset(&limit_key);
-    password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
-    let hash = password::hash(req.new).await?;
-
-    let mut tx = crate::db::begin(&state.db).await?;
-    // Only if the password is still the one just verified: of two changes at once, the second
-    // fails as if its current password were wrong.
-    let changed = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3")
-        .bind(&hash)
-        .bind(&user.id)
-        .bind(&stored)
-        .execute(&mut *tx)
-        .await?;
-    if changed.rows_affected() == 0 {
-        return Err(wrong_current());
-    }
-    let ended =
-        session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers, info.https).as_deref()).await?;
-    let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
-    let summary = json!({ "userId": user.id, "sessionsEnded": ended });
-    audit(&mut tx, &actor, None, "user.password_changed", ("user", &user.id), summary).await?;
-    crate::db::commit(tx).await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(stored)
 }
 
 #[derive(Serialize, sqlx::FromRow)]
