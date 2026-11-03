@@ -168,7 +168,10 @@ function Start-Server([string] $Name, [string] $Program, [string[]] $Arguments, 
         CommandLine = $line; CurrentDirectory = (Split-Path $Program)
     }
     if ($result.ReturnValue -ne 0) { throw "starting $Name failed (Win32_Process.Create returned $($result.ReturnValue))" }
-    Add-Content (Join-Path $Data 'pids.txt') "$Name $($result.ProcessId)"
+    # With its name and creation time, so `stop` ends only this process even if Windows has given
+    # the PID to another one since.
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($result.ProcessId)"
+    Add-Content (Join-Path $Data 'pids.txt') "$Name $($result.ProcessId) $($process.Name) $($process.CreationDate.ToUniversalTime().ToString('o'))"
     Write-Host "started $Name (PID $($result.ProcessId))"
 }
 
@@ -324,18 +327,43 @@ function Wait-Servers {
     Write-Host 'MongoDB, OpenSearch and Neo4j are ready'
 }
 
-# Ends the servers `start` began, by the PIDs it recorded and with their child processes (the
-# Java of OpenSearch and Neo4j); nothing else is touched.
+# Ends the servers `start` began and the processes they started (the Java of OpenSearch and Neo4j),
+# by the PIDs it recorded. A PID counts only while the process has the recorded name and creation
+# time, and a child only when it was created after its parent; anything else is a process Windows
+# gave the number to since, and is left alone with a note.
 function Stop-Servers {
     $pids = Join-Path $Data 'pids.txt'
     if (-not (Test-Path $pids)) {
         Write-Host 'no servers were started'
         return
     }
+    $all = @(Get-CimInstance Win32_Process)
     foreach ($line in Get-Content $pids) {
-        $name, $id = $line -split ' ', 2
-        & taskkill.exe /PID $id /T /F 2>&1 | Out-Null
-        Write-Host "stopped $name (PID $id, exit code $LASTEXITCODE)"
+        $name, $id, $image, $created = $line -split ' ', 4
+        $root = $all | Where-Object { $_.ProcessId -eq [int] $id } | Select-Object -First 1
+        if ($null -eq $root) {
+            Write-Host "$name (PID $id) has already ended"
+            continue
+        }
+        if ($root.Name -cne $image -or $root.CreationDate.ToUniversalTime().ToString('o') -cne $created) {
+            Write-Host "skipped $name (PID $id): it is now $($root.Name), created $($root.CreationDate.ToUniversalTime().ToString('o')), not the process started as $image at $created"
+            continue
+        }
+        # The tree below the root, children first.
+        $tree = [Collections.Generic.List[object]]::new()
+        $queue = [Collections.Generic.Queue[object]]::new()
+        $queue.Enqueue($root)
+        while ($queue.Count -gt 0) {
+            $parent = $queue.Dequeue()
+            $tree.Insert(0, $parent)
+            foreach ($child in $all | Where-Object { $_.ParentProcessId -eq $parent.ProcessId -and $_.CreationDate -ge $parent.CreationDate -and $_.ProcessId -ne $parent.ProcessId }) {
+                $queue.Enqueue($child)
+            }
+        }
+        foreach ($process in $tree) {
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host "stopped $name (PID $id and $($tree.Count - 1) processes it started)"
     }
     Remove-Item $pids
 }

@@ -94,6 +94,42 @@
         @{ ServiceControl = 'KalzitServiceControl'; Name = 'Kalzit'; Event = 163; Arguments = ''; Wait = 1; Component = 'KalzitExe' }
     )
 
+    # Where the files go: the whole Directory table, so INSTALLFOLDER resolves to
+    # [ProgramFiles64Folder]Kalzit and nowhere else (the folder page and INSTALLFOLDER= on the
+    # command line still let whoever installs choose another).
+    Directory      = @(
+        @{ Directory = 'INSTALLFOLDER'; Parent = 'ProgramFiles64Folder'; DefaultDir = 'Kalzit' }
+        @{ Directory = 'ProgramFiles64Folder'; Parent = 'TARGETDIR'; DefaultDir = 'PFiles64' }
+        @{ Directory = 'TARGETDIR'; Parent = ''; DefaultDir = 'SourceDir' }
+    )
+
+    # The properties that decide that folder and who installs: a per-machine installation (so
+    # ProgramFiles64Folder is the machine's), the folder page bound to INSTALLFOLDER, and the
+    # upgrade code. Absent must not be set by the package at all (a default for one of them would
+    # move the installation).
+    Property       = @{
+        Values = @{
+            ALLUSERS         = '1'
+            WIXUI_INSTALLDIR = 'INSTALLFOLDER'
+            UpgradeCode      = '{1D4828C2-1200-4926-BC6E-4959850AE762}'
+        }
+        Absent = @('INSTALLFOLDER', 'ProgramFiles64Folder', 'TARGETDIR', 'MSIINSTALLPERUSER', 'ROOTDRIVE')
+    }
+
+    # Upgrades: an older version is detected and replaced (attributes 1, its features carried
+    # over), a newer one blocks the installation (2, detect only). [ProductVersion] stands for the
+    # package's own version; no row names a language or removes features.
+    Upgrade        = @(
+        @{
+            UpgradeCode = '{1D4828C2-1200-4926-BC6E-4959850AE762}'; VersionMin = ''; VersionMax = '[ProductVersion]'
+            Language = ''; Attributes = 1; Remove = ''; ActionProperty = 'WIX_UPGRADE_DETECTED'
+        }
+        @{
+            UpgradeCode = '{1D4828C2-1200-4926-BC6E-4959850AE762}'; VersionMin = '[ProductVersion]'; VersionMax = ''
+            Language = ''; Attributes = 2; Remove = ''; ActionProperty = 'WIX_DOWNGRADE_DETECTED'
+        }
+    )
+
     # Every installed file.
     File           = @(
         @{ File = 'KalzitExe'; Component = 'KalzitExe'; FileName = 'kalzit.exe'; Attributes = 512 }

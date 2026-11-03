@@ -117,6 +117,28 @@ try {
                     ForEach-Object { $_ -join ' | ' }) `
                 @($rows.RemoveFile | ForEach-Object { @($_.FileKey, $_.Component, $_.FileName, $_.DirProperty, $_.InstallMode) -join ' | ' })) |
             ForEach-Object { $problems.Add($_) }
+        # Where INSTALLFOLDER resolves to, the properties that decide it, and the upgrade rows.
+        @(Compare-Rows 'Directory' $id @(Get-TransformedRows $Msi $id 'SELECT `Directory`, `Directory_Parent`, `DefaultDir` FROM `Directory`' |
+                    ForEach-Object { $_ -join ' | ' }) `
+                @($rows.Directory | ForEach-Object { @($_.Directory, $_.Parent, $_.DefaultDir) -join ' | ' })) |
+            ForEach-Object { $problems.Add($_) }
+        $properties = @{}
+        foreach ($property in Get-TransformedRows $Msi $id 'SELECT `Property`, `Value` FROM `Property`') { $properties[$property[0]] = $property[1] }
+        foreach ($name in $rows.Property.Values.Keys) {
+            if ($properties[$name] -cne $rows.Property.Values[$name]) {
+                $problems.Add("the property $name (transform $id) is '$($properties[$name])', expected '$($rows.Property.Values[$name])'")
+            }
+        }
+        foreach ($name in $rows.Property.Absent) {
+            if ($properties.ContainsKey($name)) { $problems.Add("the package sets the property $name (transform $id) to '$($properties[$name])'; it must not set it") }
+        }
+        $version = $properties['ProductVersion']
+        @(Compare-Rows 'Upgrade' $id @(Get-TransformedRows $Msi $id ('SELECT `UpgradeCode`, `VersionMin`, `VersionMax`, `Language`, ' +
+                    '`Attributes`, `Remove`, `ActionProperty` FROM `Upgrade`') | ForEach-Object { $_ -join ' | ' }) `
+                @($rows.Upgrade | ForEach-Object {
+                    @($_.UpgradeCode, $_.VersionMin, $_.VersionMax, $_.Language, $_.Attributes, $_.Remove, $_.ActionProperty) -join ' | '
+                } | ForEach-Object { $_.Replace('[ProductVersion]', $version) })) |
+            ForEach-Object { $problems.Add($_) }
         $actions = @(Get-TransformedRows $Msi $id 'SELECT `Action`, `Type`, `Source`, `Target` FROM `CustomAction`')
         @(Compare-Rows 'CustomAction' $id @($actions | ForEach-Object { "$($_[0]) (type $($_[1]), source $($_[2]))" }) `
                 @($rows.CustomAction | ForEach-Object { "$($_.Action) (type $($_.Type), source $($_.Source))" })) |
@@ -156,7 +178,7 @@ try {
     }
     $export = Join-Path $work 'binary-0'
     Write-Host "$Msi carries $Exe (SHA-256 $expected) as the installed program and as the setup copy"
-    Write-Host "$Msi has exactly the tables, custom actions, streams, files, components, registry values and service of msi-expected.psd1, in English and German"
+    Write-Host "$Msi has exactly the tables, folders, upgrade rules, custom actions, streams, files, components, registry values and service of msi-expected.psd1, in English and German"
 
     # The wizard in German: the package lists the language and its embedded transform turns the
     # settings page German without touching what gets installed.
