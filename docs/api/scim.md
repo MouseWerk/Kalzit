@@ -295,7 +295,6 @@ Kalzit's reasons of refused SCIM requests, in the audit log (`scim.request_refus
 | `scim.user_name_taken` | `409 uniqueness` | another user of the organization has this `userName` |
 | `scim.email_missing` | `400 invalidValue` | a new user without an address |
 | `scim.email_taken` | `409 uniqueness` | a changed address of a user belongs to another account |
-| `scim.email_unconfirmed` | `409 uniqueness` | no longer answered (0.5.3); older audit entries may name it |
 | `scim.account_linked` | `409 uniqueness` | the account with the address is already a SCIM user of this organization |
 | `scim.account_not_linkable` | `409 uniqueness` | a new user's address names an account that cannot be linked (several accounts or a service account, a server admin or the break-glass admin, an unconfirmed address, or another organization's member; the answer does not say which, the audit entry's `why` does); invite the person instead |
 | `scim.account_protected` | `403` | deactivating an owner, a member whose role holds more than an admin's, a server admin or the break-glass admin |
