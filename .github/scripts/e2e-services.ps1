@@ -209,6 +209,8 @@ function Invoke-Mongosh([string[]] $Arguments) {
 }
 
 function Invoke-CypherShell([string[]] $Arguments) {
+    # cypher-shell.bat runs the `java` on PATH (the runner's Java 17) unless JAVACMD names one.
+    $env:JAVACMD = Join-Path (Get-JavaHome) 'bin\java.exe'
     & (Join-Path (Get-Home 'neo4j') 'bin\cypher-shell.bat') -a 'neo4j://127.0.0.1:7687' -u neo4j -p $Neo4jPassword @Arguments
 }
 
@@ -227,6 +229,7 @@ function Test-Ready([string] $Name) {
             # The answer itself, not the exit status: cypher-shell ends with 0 also when it refuses
             # to run (an unsupported Java, say).
             $answer = Invoke-CypherShell @('--format', 'plain', 'RETURN 41 + 1 AS answer;') 2>&1
+            $script:Neo4jAnswer = "$answer"
             "$answer" -match '(^|\s)42(\s|$)'
         }
     }
@@ -264,6 +267,7 @@ function Wait-Servers {
             Write-Host "--- $($log.Name)"
             Get-Content $log.FullName -Tail 40 | Write-Host
         }
+        Write-Host "--- cypher-shell's last answer: $script:Neo4jAnswer"
         throw "$($pending -join ', ') did not become ready"
     }
 
