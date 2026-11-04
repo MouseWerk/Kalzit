@@ -1,7 +1,7 @@
 {
   "usage.title": "Nutzung",
   "usage.lead": "Wie oft Dashboards geöffnet werden und wie oft, wie schnell und wie zuverlässig Panels und Datenquellen antworten.",
-  "usage.privacy": "Gezählt wird nur je Dashboard, Panel und Datenquelle, nie je Person: Kalzit speichert dafür keine Benutzer, keine Sitzungen und keine Adressen.",
+  "usage.privacy": "Gezählt wird nur je Dashboard, Panel und Datenquelle, nie je Person: Kalzit speichert dafür keine Konten, keine Sitzungen und keine Adressen.",
   "usage.org": "Organisation",
   "usage.allOrgs": "Alle Organisationen",
   "usage.period": "Zeitraum",

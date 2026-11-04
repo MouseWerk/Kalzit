@@ -54,14 +54,14 @@ kalzit-0.5.0-linux-x64.deb` checks the manifest's signature too
 | `/usr/bin/kalzit` | The program |
 | `/usr/lib/systemd/system/kalzit.service` | The service; change it with `sudo systemctl edit kalzit` |
 | `/etc/kalzit/kalzit.toml` | The configuration: root may write it, the service only read it (`root:kalzit`, `0640`). Your changes stay on updates |
-| `/var/lib/kalzit` | The data directory (database, ACME certificates, plugins), owned by `kalzit`, mode `0700` |
+| `/var/lib/kalzit` | The data folder (database, ACME certificates, plugins), owned by `kalzit`, mode `0700` |
 | `/etc/credstore.encrypted/kalzit-secrets-key` | The secrets key, encrypted with `systemd-creds` (where that is not possible: `/etc/credstore/kalzit-secrets-key`, readable by root only) |
 
 The service runs as the system account `kalzit` (no login, no shell), which the package creates.
 An existing account named `kalzit` is used only when it is a system account without a login
 shell and its group `kalzit` has no other members; otherwise the installation stops with a
 message, so a person's account never ends up owning Kalzit's data.
-The unit is hardened: the file system is read-only except the data directory
+The unit is hardened: the file system is read-only except the data folder
 (`ProtectSystem=strict`, `ReadWritePaths=/var/lib/kalzit`), no new privileges, no access to
 home directories, devices, kernel settings or other processes, and a system call filter. It
 keeps what the plugin sandbox needs (user, IPC and network namespaces, Landlock, seccomp);
@@ -80,11 +80,11 @@ described in the [README](../../README.md#configuration). Logs are in the journa
 `journalctl -u kalzit`.
 
 The first installation creates the secrets key in the system credential store and the service
-imports it (`ImportCredential=`), so the key is neither in the data directory nor in an
+imports it (`ImportCredential=`), so the key is neither in the data folder nor in an
 environment variable. It is encrypted with the host's credential key
 (`/var/lib/systemd/credential.secret`), not with a TPM, so a restored backup on other hardware
 still works when that file is restored with it. Back up both the key and that file with your
-data: without the key, the stored data source passwords cannot be decrypted. A data directory
+data: without the key, the stored data source passwords cannot be decrypted. A data folder
 that already holds a database or a key file keeps its key; the package never replaces one.
 
 To use your own key, write it before the first start:
@@ -110,7 +110,7 @@ start. Back up `/var/lib/kalzit` first (the package does not); see the
 ### Remove
 
 `sudo apt remove kalzit` or `sudo dnf remove kalzit` stops and disables the service and removes
-the program. The data directory, the configuration and the secrets key stay, so a later
+the program. The data folder, the configuration and the secrets key stay, so a later
 installation finds everything again. `sudo apt purge kalzit` also deletes `/var/lib/kalzit`,
 `/etc/kalzit` and the secrets key; rpm has no purge, so there they are deleted by hand:
 
@@ -177,13 +177,13 @@ above); a new named volume takes over the right owner and mode from the image.
   start containers with an arbitrary user ID (OpenShift, rootless Podman with user namespaces)
   need a volume that user owns with mode 0700: give the pod an `fsGroup` or `chown` the volume to
   the user it runs as.
-- Kalzit refuses a data directory that others may read: a bind mount must belong to 65532 and have
+- Kalzit refuses a data folder that others may read: a bind mount must belong to 65532 and have
   mode 0700, for example `sudo install -d -o 65532 -g 65532 -m 0700 /srv/kalzit`, then
   `-v /srv/kalzit:/var/lib/kalzit`.
 - On Docker Desktop for Windows and macOS, use a named volume. A folder of the Windows or macOS
   host does not carry Linux owners and modes, and Kalzit refuses a database on a network or
   shared file system.
-- Back up the volume as described under [Backups](../ARCHITECTURE.md#backups), together with the
+- Back up the volume as described under [Backup and restore](backup.md), together with the
   secrets key (below).
 
 ### Configuration
@@ -201,7 +201,7 @@ docker run -d --name kalzit -p 3000:3000 \
 ```
 
 The image sets no configuration of its own: the defaults apply (`server.http_addr`
-`0.0.0.0:3000`, data directory `/var/lib/kalzit`). Behind a reverse proxy, set
+`0.0.0.0:3000`, data folder `/var/lib/kalzit`). Behind a reverse proxy, set
 `server.public_url` to the address users open and add the proxy's network to
 `security.trusted_proxies`. All settings are listed in the [README](../../README.md#configuration).
 An environment variable that is set but empty unsets the file's value, so leave out the ones
@@ -523,7 +523,7 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
   Kalzit warns in its log and in Settings, About (for server administrators) when `database.url`
   in the file holds a password.
 - The key for stored passwords is `secrets.key.dpapi` in the data folder, which only this
-  computer can decrypt: back the data folder up as a whole ([Backups](../ARCHITECTURE.md#backups)),
+  computer can decrypt: back the data folder up as a whole ([Backup and restore](backup.md)),
   and after restoring it on another computer, enter the data source passwords again.
 
 ### Updates
@@ -531,7 +531,7 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
 - **A newer MSI package** (the default way) installs over the previous one: the service stops, the
   program is replaced, the service starts again; `kalzit.toml` and the data stay. The new version
   migrates the database on its first start, without the updater's backup and automatic return,
-  so back up the data folder first ([Backups](../ARCHITECTURE.md#backups)). An older package than
+  so back up the data folder first ([Backup and restore](backup.md)). An older package than
   the one installed is refused. The Updates page (Administration (Verwaltung) > Updates) tells you
   when a release is out; it can also download and verify it for `kalzit update apply` from an
   elevated prompt (`Stop-Service Kalzit`, `& "C:\Program Files\Kalzit\kalzit.exe" update apply`,

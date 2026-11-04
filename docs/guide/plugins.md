@@ -231,7 +231,7 @@ layers in force and any that are missing on this server:
 
 - **Windows**: a restricted token at low integrity in a job object (memory and process limits,
   ended with Kalzit), inside an AppContainer of its own without network access. A plugin can
-  read neither Kalzit's data directory nor other processes. On Windows plugins do not start while
+  read neither Kalzit's data folder nor other processes. On Windows plugins do not start while
   one of Kalzit's files with secrets (`kalzit.toml` with a password, the TLS key) is readable by
   them; the plugin's page names the file. A file other local accounts may read is a warning there.
 - **Linux**: Landlock (the file system read-only and visible only where needed), a seccomp filter

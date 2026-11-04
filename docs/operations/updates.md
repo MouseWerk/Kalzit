@@ -97,20 +97,20 @@ kalzit update apply                    # PostgreSQL: add --acknowledge-no-backup
 ```
 
 Use the same `--config` or `KALZIT_CONFIG` as the service. `kalzit update apply` refuses while a
-server runs on the data directory. The next start is the same trial with the same automatic
+server runs on the data folder. The next start is the same trial with the same automatic
 return.
 
 The command usually runs with more rights than the service (root, an Administrator), and nothing
-it reads from the data directory, which the service account can write, is trusted for that:
+it reads from the data folder, which the service account can write, is trusted for that:
 
 - The staged package is opened once, copied into the binary's own folder (which the service
   account cannot write) and checked there against the release's signed SHA-256; only that copy
   runs for the smoke test (with an empty environment) and replaces the binary.
-- On Linux, run as root on a data directory another account owns, the command does everything in
-  the data directory (lock, database, backup, kept versions, plan) with that account's user and
+- On Linux, run as root on a data folder another account owns, the command does everything in
+  the data folder (lock, database, backup, kept versions, plan) with that account's user and
   group ids, and switches back to root only to copy into the binary's folder, run the smoke test
-  and rename. Files it creates in the data directory belong to the service account.
-- Files from the data directory are opened only as regular files, never through a link.
+  and rename. Files it creates in the data folder belong to the service account.
+- Files from the data folder are opened only as regular files, never through a link.
 - On Windows the folders below `updates/` are checked not to be links or junctions before they are
   used. The copy into the binary's folder and its hash check protect the binary itself. The service
   account could still swap such a folder for a junction between that check and its use, so keep
@@ -124,7 +124,7 @@ For servers without internet access:
 1. On a machine with access, download `kalzit-<version>-<platform>-<arch>.kalzit-update` from the
    GitHub release (`windows-x64`, `linux-x64` or `linux-arm64`).
 2. Carry it over and drop it on Administration, Updates, "Offline update". Kalzit verifies it
-   exactly like a download. One upload runs at a time, and only when the data directory's disk has
+   exactly like a download. One upload runs at a time, and only when the data folder's disk has
    room for twice its size.
 3. Install as above.
 

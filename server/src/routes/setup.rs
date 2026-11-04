@@ -267,8 +267,8 @@ impl OpenGate {
 
 /// Creates the file so that only the server's own user can read it. On Unix it is created with
 /// mode 0600 (no window in which it is world-readable) and never through a pre-existing symlink.
-/// On Windows it inherits the data directory's ACL; the service installer (M5) restricts that
-/// directory to the service account and administrators.
+/// On Windows it inherits the data directory's ACL; the MSI package and `kalzit service install`
+/// restrict that directory to the service account and administrators.
 fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
     use std::io::Write;
     if let Some(dir) = path.parent() {

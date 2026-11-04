@@ -358,7 +358,7 @@
   "plugins.details.secretsText": "Die Verbindungsdaten der eigenen Quellen, nur für den jeweiligen Aufruf, vom Plugin nie gespeichert.",
   "plugins.details.files": "Dateien",
   "plugins.details.filesText": "Das eigene Paket zum Lesen und ein eigener temporärer Ordner, der bei jedem Start geleert wird.",
-  "plugins.details.shapes": "Ergebnisformen",
+  "plugins.details.shapes": "Datenformen",
   "plugins.details.platforms": "Plattformen",
   "plugins.details.networkNote": "Das Plugin hat kein eigenes Netzwerk: Es erreicht nur die Ziele oben, und nur über Kalzit, das jede Verbindung gegen die Einstellungen der Datenquelle und die Zielregeln prüft.",
   "plugins.details.networkNotePanel": "Das Panel zeichnet in einem abgeschotteten Rahmen im Browser, ohne Netzwerk und ohne Zugriff auf Kalzit, deine Sitzung oder andere Panels.",

@@ -8,8 +8,12 @@ written as the English interface shows them, with the German label in parenthese
 
 | Page | What it covers |
 |---|---|
-| [Installation](installation.md) | The deb and rpm packages with their systemd service, paths, updates and removal; the container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates |
+| [Installation](installation.md) | The deb and rpm packages with their systemd service, paths, updates and removal; the container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates; the Windows installer (MSI) with its wizard, silent installation, the service, updates and uninstalling |
+| [Linux without a package](linux-binary.md) | The plain binary as a hardened systemd service: account, folders, configuration, the secrets key in the credential store, AppArmor on Ubuntu, updates |
 | [HTTPS and certificates](https.md) | HTTPS with your own certificate files or automatic certificates over ACME (Let's Encrypt or another CA): setup, validation, renewal, troubleshooting |
+| [Reverse proxy](reverse-proxy.md) | Kalzit behind nginx, Caddy, Traefik or IIS: WebSocket, forwarded headers, timeouts and upload sizes, checking the setup |
+| [Backup and restore](backup.md) | What to back up (database, secrets key, ACME and plugin folders, `kalzit.toml`), consistent copies of SQLite and PostgreSQL, restoring, a restore drill |
+| [Upgrading](upgrading.md) | Moving to a new release per installation type, the built-in updater, what to check before and after |
 | [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables (also set by clicks on documents, rows and graph nodes), time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
 | [Panels](panels.md) | Every visualization with its options, the graph panels with node details, selection, pins and the explorer; colours, thresholds, units, value mappings, overrides |
@@ -25,15 +29,23 @@ written as the English interface shows them, with the German label in parenthese
 | [Sign-in and security](account-security.md) | Your second factor (passkeys, authenticator app, recovery codes), the second step of the sign-in, requiring a second factor on the server and per organization, resetting someone's second factor |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 
+For operators there are three more guides: [updates](../operations/updates.md) (the built-in
+updater, offline packages, returning to an earlier version, release signing),
+[several servers](../operations/high-availability.md) (high availability on one PostgreSQL
+database, the load balancer, rolling updates) and, for plugin authors,
+[writing plugins](../plugins/authoring.md) (the Rust SDK, the manifest, packaging and signing).
+
 The HTTP API behind every function is described in [docs/api](../api): [access](../api/access.md),
 [data sources and queries](../api/datasources.md),
 [settings and dashboards](../api/settings-dashboards.md),
 [dashboard features](../api/dashboard-features.md), [saved analyses](../api/analyses.md),
-[shell](../api/shell.md),
-[updates](../api/updates.md), [plugins](../api/plugins.md) and [AI](../api/ai.md). Words used in the interface are explained in the
+[Explore history](../api/explore-history.md), [live updates](../api/live.md),
+[shell](../api/shell.md), [usage](../api/usage.md), [sign-in providers](../api/sso.md),
+[SCIM](../api/scim.md), [mail](../api/mail.md), [updates](../api/updates.md),
+[plugins](../api/plugins.md) and [AI](../api/ai.md). Words used in the interface are explained in the
 [glossary](../glossary.md); how to install and run a server is in
-[Installation](installation.md), the [README](../../README.md#quick-start) and
-[ARCHITECTURE](../ARCHITECTURE.md).
+[Installation](installation.md), [Linux without a package](linux-binary.md) and the
+[README](../../README.md#quick-start).
 
 ## Finding your way
 

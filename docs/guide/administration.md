@@ -170,11 +170,13 @@ name, description or key and jumps to it; every section and setting has its own 
   `kalzit.toml` or the environment only, so a wrong value can never lock you out.
 - A long value in a list (a time zone, for example) ends in "..." when the list is closed; point
   at it to read it whole.
-- Sections: Appearance and brand, General, Network HTTPS and proxy, Sessions and security,
-  Sign-in (OIDC, LDAP, planned for M5), Email, Data sources and targets, Plugins
+- Sections: Appearance and brand, General, Network, HTTPS and proxy ([HTTPS](https.md),
+  [reverse proxy](reverse-proxy.md)), Sessions and security, Sign-in (OpenID Connect, SAML, LDAP,
+  password sign-in and the second factor), Email, Data sources and targets, Plugins
   ([Plugins](plugins.md)), AI ([AI](ai.md)), Storage and retention, Updates, This organization,
-  AI of the organization, Plugins of the organization, Profile and language, Keyboard shortcuts,
-  and Export / import settings.
+  AI of the organization, Plugins of the organization, Profile and language, Sign-in and security
+  ([Sign-in and security](account-security.md)), Keyboard shortcuts, Export / import settings and
+  About Kalzit.
 
 ![Settings: appearance and brand](../screenshots/settings-dark.png)
 
@@ -319,4 +321,4 @@ against the built-in key, the version must be newer) and then installed like an 
   left replaces the database and later changes are lost, which Kalzit asks about first. From the
   command line, `kalzit update rollback <version>` with Kalzit stopped.
 - Back up the secrets key along with the database; see
-  [ARCHITECTURE](../ARCHITECTURE.md#backups).
+  [Backup and restore](backup.md).

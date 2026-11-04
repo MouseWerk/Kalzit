@@ -257,11 +257,11 @@ type QueryResult =
   ```
 - **Targets.** Data sources may point at hosts in private networks and on localhost (self-hosting
   means databases in the own network). Always refused, answering `datasource_target_blocked`:
-  Kalzit's own data directory and database (also through a PostgreSQL source at the same server
+  Kalzit's own data folder and database (also through a PostgreSQL source at the same server
   and database), link-local and cloud metadata addresses (`169.254.0.0/16`, `fe80::/10`,
   `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, in every
   IPv6 form that carries them), and SQLite files outside the directories a server admin allowed
-  (`datasources.sqlite_dirs`, empty by default, never including the data directory); CSV and
+  (`datasources.sqlite_dirs`, empty by default, never including the data folder); CSV and
   JSON files of file sources follow the same rules within `datasources.file_dirs`. A server
   admin can additionally restrict sources to a list of allowed hosts and networks
   (`datasources.allowed_targets`). Rules that make this hold:
@@ -342,7 +342,7 @@ type QueryResult =
     moved to another source or field. Each blob records the id of the key that encrypted it.
   - The key (32 random bytes): `KALZIT_SECRETS_KEY` (base64) if set; on Linux systemd credentials
     (`$CREDENTIALS_DIRECTORY/kalzit-secrets-key`); on Windows a key file protected with DPAPI in
-    machine scope; otherwise `secrets.key` in the data directory with mode 0600 and a warning in
+    machine scope; otherwise `secrets.key` in the data folder with mode 0600 and a warning in
     the log. Backups of the database need the key; without it secrets are unrecoverable and must
     be entered again.
   - `kalzit secrets rotate` re-encrypts every blob with a new key.
@@ -1323,7 +1323,7 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
   exception: it calls the stored provider directly, also while AI is off, is not counted, but is
   audited.
 
-## Data directory
+## Data folder
 
 - Default: `%ProgramData%\Kalzit\data` on Windows (from the `ProgramData` variable; without it
   the start fails and asks for `paths.data_dir`), `/var/lib/kalzit` on Linux and other Unix
@@ -1331,7 +1331,7 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
 - `[paths] data_dir` in `kalzit.toml` or `KALZIT_PATHS_DATA_DIR` override it. Relative paths
   in `kalzit.toml` (`paths.data_dir`, `tls.cert_file`, `tls.key_file` and a `sqlite:` file in
   `database.url`) are relative to the folder of that file, also when the file itself is named
-  relatively (`KALZIT_CONFIG=conf/kalzit.toml`). A relative data directory from the environment
+  relatively (`KALZIT_CONFIG=conf/kalzit.toml`). A relative data folder from the environment
   is relative to the working directory, and the server logs a warning that it depends on it.
 - At start, `data_dir::prepare` runs before `db::connect`, so the folder is checked before the
   database opens. A missing directory is created private from its first moment: on Linux with
@@ -1378,7 +1378,7 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
   the fragment (`#code=`), which the page reads into the field and removes from the address (the
   browser history may keep it until setup is complete, when the code stops working). The link
   uses the listener's IP when bound to one non-loopback address, else `localhost`.
-- One info line names the data directory and the database. `db::redact` parses the URL (`url`) and
+- One info line names the data folder and the database. `db::redact` parses the URL (`url`) and
   rebuilds it from scheme, user, `***` for a password, host, port and path; query values are shown
   only for harmless keys (`sslmode`, `application_name`, `connect_timeout`, `mode`, `host`,
   `port`, `dbname`, ...), all others as `***`. A URL with an `@` after its authority (the text from
@@ -1404,8 +1404,8 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
 - Linux packages (`deploy/linux`, built with nfpm by `deploy/linux/package.sh`): the deb and rpm
   install `/usr/bin/kalzit`, the unit `kalzit.service`, `/etc/kalzit/kalzit.toml` (`root:kalzit`,
   `0640`, kept on updates) and the marker `/usr/lib/kalzit/package` (`deb` or `rpm`). The
-  scripts create the system account `kalzit`, the data directory `/var/lib/kalzit` (`0700`) and,
-  on a first installation whose data directory holds no secrets yet, the secrets key in the
+  scripts create the system account `kalzit`, the data folder `/var/lib/kalzit` (`0700`) and,
+  on a first installation whose data folder holds no secrets yet, the secrets key in the
   credential store (`systemd-creds encrypt --with-key=host` into `/etc/credstore.encrypted`, else
   `/etc/credstore` readable by root), which the unit imports (`ImportCredential=`). The unit runs
   `kalzit --config /etc/kalzit/kalzit.toml serve` as `kalzit` with `CAP_NET_BIND_SERVICE` only and
@@ -1464,9 +1464,9 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
     grace (3 s) of a console close. It ends with exit code 0, `RESTART_EXIT` (3, service-specific)
     when an update or a return asked for a restart, and 1 on a failure.
   - The log goes to `<data dir>\logs\kalzit.log` (rotated at 10 MiB, three older files kept, no
-    terminal colors), after the data directory was prepared and checked, so the folder is private
+    terminal colors), after the data folder was prepared and checked, so the folder is private
     before anything is written into it. What fails before that file is open (the configuration,
-    the data directory) goes to the Windows event log, Application, source `Kalzit`; the MSI
+    the data folder) goes to the Windows event log, Application, source `Kalzit`; the MSI
     registers the source with the general message file of .NET Framework so the text shows as
     written. `kalzit service configure` and `cleanup` report their errors there as well, since
     the installer runs them without a console.
@@ -1497,9 +1497,9 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
     - `%ProgramData%\Kalzit`: created for Administrators to write and everyone to read; an
       existing one is accepted only as Kalzit makes it (owner SYSTEM, Administrators, or the
       service account with a limited owner entry; nobody else may write). An existing
-      `kalzit.toml` is kept (an upgrade, with its ports and data directory) only when it is a
+      `kalzit.toml` is kept (an upgrade, with its ports and data folder) only when it is a
       regular file only Administrators may change; else the installation stops.
-    - The data directory may not be a drive root, a system folder (`%ProgramData%`, `C:\Users`,
+    - The data folder may not be a drive root, a system folder (`%ProgramData%`, `C:\Users`,
       profiles) or lie in Windows, Program Files or the program folder; the folders above it must
       pass the same check as the program folder's. A new one is created with its protected list
       (Administrators and the service account, owner Administrators) from its first moment. An
@@ -1511,7 +1511,7 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
       (`service::service_sid`), so it is known before the MSI creates the service and stays the
       same when the service is created again.
     - With HTTPS `self-signed` it makes a certificate (rcgen) for the computer name, `localhost`,
-      `127.0.0.1` and `::1` in `<data dir>\tls` (reused only after the data directory passed the
+      `127.0.0.1` and `::1` in `<data dir>\tls` (reused only after the data folder passed the
       walk above). With `certificate` the files must be regular files only Administrators may
       change, the key also one only they may read, below folders nobody else may rename; then
       the service account gets read access where they are, so a renewal needs no reinstallation.
@@ -1530,14 +1530,14 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
     change code an administrator might run elevated, which the installation guide warns about.
   - `kalzit service cleanup` (before the MSI removes the program, not during an upgrade, and in
     `kalzit service uninstall`) removes the firewall rule and, with `REMOVEDATA=1` /
-    `--remove-data`, the data directory and `kalzit.toml`. A data directory is removed only when
+    `--remove-data`, the data folder and `kalzit.toml`. A data folder is removed only when
     no link or junction lies on its path, the folders above it are safe, the folder opened
     without following links is the one the path names (`GetFinalPathNameByHandleW`), it is not a
     drive root and it is empty or holds Kalzit's files (`kalzit.db`, `updates`,
     `secrets.key.dpapi`, ...); anything else is left with a note. `remove_dir_all` removes links
     inside as links.
   - At every start, `data_dir::prepare` also checks `updates`, `plugins`, `tls` and `logs` in the
-    data directory: real folders (no link or junction), as private as the data directory.
+    data folder: real folders (no link or junction), as private as the data folder.
   - The MSI package: per machine, x64, program folder `C:\Program Files\Kalzit` (remembered in
     `HKLM\Software\MouseWerk\Kalzit`). A major upgrade removes the previous version completely
     first (`afterInstallValidate`), so a `kalzit.exe` the updater replaced in the meantime does not
@@ -1548,10 +1548,10 @@ query, summarize a result, the agent chat "Fragen"), which all go through it.
     HTTPS mode, HTTPS port, certificate and key, and the firewall, and skips the settings when
     `kalzit.toml` exists; removing asks whether the data goes too. Every setting is also an MSI
     property for silent installations.
-  - Running Kalzit as LocalSystem or another account works as before: the data directory must
+  - Running Kalzit as LocalSystem or another account works as before: the data folder must
     then belong to that account or Administrators, without access for others (Kalzit creates
     `%ProgramData%\Kalzit\data` that way on its first start). Changing the account later means
-    granting the new one access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`)
+    granting the new one access to the data folder (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`)
     and making it or Administrators the owner.
 
 ## HTTPS certificates
@@ -1592,7 +1592,7 @@ ACME (`server/src/acme`, RFC 8555 through the `instant-acme` crate):
   stays in use from memory and storing is retried after the pause, without a new order.
   `/.well-known/acme-challenge/` looks up only base64url tokens.
 - **Store** (`acme::store`): `acme/account-<hash of the directory URL>.enc` and
-  `acme/certificate.enc` in the data directory (`0700` folder, `0600` files on Unix, written
+  `acme/certificate.enc` in the data folder (`0700` folder, `0600` files on Unix, written
   through a temporary file and a rename), each AES-256-GCM encrypted with the secrets key, owner
   `acme` and the file's purpose as associated data. `kalzit secrets rotate` re-encrypts them after
   the database. A file that cannot be read is logged and a new certificate is ordered.
@@ -1617,7 +1617,7 @@ Windows and Linux (`acme::api_tests`).
 
 ## Storage (SQLite)
 
-- SQLite runs on one host with its file on a local disk: a data directory on a network drive
+- SQLite runs on one host with its file on a local disk: a data folder on a network drive
   (UNC path or mapped network drive on Windows, NFS, CIFS/SMB, 9p and similar on Linux) is refused
   at start. Shared storage or several Kalzit servers on one database need PostgreSQL.
 - One server per SQLite database: `server::start` takes an exclusive lock on `<database>.lock`
@@ -1628,7 +1628,7 @@ Windows and Linux (`acme::api_tests`).
   an update's next version never opens it early. The lock is advisory and taken per path: a hard
   link under another name, or file sharing that does not pass locks into a container (CIFS, some
   Docker Desktop bind mounts), is not seen. On PostgreSQL the same lock is `kalzit-server.lock` in the
-  data directory: one server per data directory.
+  data folder: one server per data folder.
 - WAL mode (`kalzit.db` plus `kalzit.db-wal` and `kalzit.db-shm`), `synchronous = FULL`, a 15 s
   busy timeout and `journal_size_limit` = 64 MiB. Readers never wait for writers. Every
   transaction starts through `db::begin`: `BEGIN IMMEDIATE` on SQLite, so it holds the write lock
@@ -1677,7 +1677,7 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
 - **Identity.** Every process gets a new UUID at start and a row in `cluster_instances` (node id,
   host, version, listen addresses, started, heartbeat, stopped, challenge answers served). The
   node id is a random id made once in `<data_dir>/kalzit-node-id` (`cluster::node_id`): every
-  run of one server has it, whatever its host name or path. One server per data directory
+  run of one server has it, whatever its host name or path. One server per data folder
   (`db::InstanceLock` takes `kalzit-server.lock` there on PostgreSQL). The heartbeat is written
   every 5 s (`cluster::Options`), a clean stop sets `stopped_at`; the leader deletes rows silent
   or stopped for a day. Rows of the same node id whose heartbeat is no longer fresh are this
@@ -1686,7 +1686,7 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
   start marks every other row stopped: it holds the instance lock.
 - **Peers** (`cluster::is_peer`). Other servers count when their row is not stopped, their
   heartbeat is fresh (within the lease) and they are of another node, or of this node with a
-  heartbeat written after this run started (a copied data directory that runs elsewhere). Until
+  heartbeat written after this run started (a copied data folder that runs elsewhere). Until
   a count succeeded after the
   start, and while it fails before the first success, the update mode is `updates.mode_cluster`.
 - **Leader: a lease row, not an advisory lock.** `cluster_leader` holds `holder`, `term`,
@@ -1797,7 +1797,8 @@ availability is the operator's. SQLite serves one server (`db::InstanceLock`, "S
 
 ## Backups
 
-One place for everything a backup needs:
+One place for everything a backup needs (the step-by-step guide for operators, with PostgreSQL,
+the ACME and plugin folders and a restore drill, is docs/guide/backup.md):
 
 - What: `kalzit.db` with `kalzit.db-wal` and `kalzit.db-shm`, and the key file when no external key
   source is used (`secrets.key` on Linux, `secrets.key.dpapi` on Windows). Without the key, stored
@@ -1807,7 +1808,7 @@ One place for everything a backup needs:
   is still in the WAL file is lost.
 - With the server stopped: copy `kalzit.db`, `kalzit.db-wal` and `kalzit.db-shm` together (after a
   graceful stop the last two are usually gone).
-- Restore: copy the files into the data directory, do not move them. A copy takes the directory's
+- Restore: copy the files into the data folder, do not move them. A copy takes the directory's
   private entries; a moved file keeps its old ones, and Kalzit refuses it at start. Restore tools
   that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
   Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
@@ -1860,7 +1861,7 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   and must be this platform's. Downgrades, the installed version and releases whose
   `minimumVersion` is above the installed one are refused. File work (splitting, hashing,
   copying, restoring) runs on the blocking pool.
-- **Nothing in the data directory is trusted for what it does.** Installing verifies the staged
+- **Nothing in the data folder is trusted for what it does.** Installing verifies the staged
   manifest again from memory, then copies the package once, from one open file, into the running
   binary's own folder (`.kalzit.new`, `.kalzit.new.exe`) and checks the copy against the signed
   size and SHA-256 (`install::place_binary`); only that copy runs for the smoke test (`--version`
@@ -1892,7 +1893,7 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   replayed) and the previous binary after its copy matched the recorded hash, marks the plan
   `rolledBack` and starts the previous version, which records the return once (the plan's
   `recorded` flag keeps a failed audit write from adding a second history entry). A new version
-  that refuses the configuration returns the same way: `main` finds the data directory with
+  that refuses the configuration returns the same way: `main` finds the data folder with
   `Config::data_dir_hint` when the configuration does not load. On PostgreSQL, when the new build
   carries migrations newer than the schema of the previous version, the plan is marked `migrated`
   before the first start opens the database (they may run, or partly run, before anything could
@@ -1907,13 +1908,13 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   Windows when Kalzit runs as its Windows service (`platform::mark_windows_service`) and the
   service account may write the program folder. Everywhere else (a console on Windows, a
   container, a binary owned by root) the server downloads and verifies, and `kalzit update apply` / `kalzit update
-  rollback <version>` install with the server stopped (they hold the data directory lock
+  rollback <version>` install with the server stopped (they hold the data folder lock
   exclusively); the next start runs the same trial. These commands usually run as root or an
-  Administrator: on Unix, as root on a data directory another account owns, they touch the data
+  Administrator: on Unix, as root on a data folder another account owns, they touch the data
   directory only with that account's user, group and supplementary group ids and switch back to
   root just for the copy into the binary's folder, the smoke test and the rename (the
   supplementary groups are reduced to the owner's group, and an `updates/` folder of another owner
-  than the data directory is refused); files from the data directory are opened as regular files
+  than the data folder is refused); files from the data folder are opened as regular files
   only (`O_NOFOLLOW`, `O_NONBLOCK`, checked with `fstat`). On Windows they refuse links and
   junctions below `updates/`; the service account could still swap such a folder between that
   check and its use. A Windows service with self-update on installs as the service account

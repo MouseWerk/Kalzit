@@ -1,6 +1,14 @@
+import { readFileSync } from "node:fs";
 import babel from "@rolldown/plugin-babel";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+
+// The server's version, so links to the docs point at this release's tag (src/help/docs.ts).
+const serverManifest = readFileSync(new URL("../server/Cargo.toml", import.meta.url), "utf8");
+const version = /^version = "([^"]+)"$/m.exec(serverManifest)?.[1];
+if (version === undefined) {
+  throw new Error("no version in server/Cargo.toml");
+}
 
 // The Rust server listens here during development; the UI is served from the same origin in
 // production, so the dev server proxies every server route instead of using CORS.
@@ -14,6 +22,7 @@ const proxy = {
 
 export default defineConfig({
   plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
+  define: { __KALZIT_VERSION__: JSON.stringify(version) },
   // The help pages before sign-in are the guide files in docs/guide (src/help/HelpPage.tsx).
   server: { proxy, fs: { allow: [".", "../docs/guide"] } },
   preview: { proxy },

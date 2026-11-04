@@ -1,7 +1,7 @@
 //! Data sources: the plugin contract, the built-in kinds, pooled connections and running queries
 //! (docs/ARCHITECTURE.md, "Data sources").
 //!
-//! Built-in kinds implement `DataSourcePlugin`, the same contract external plugins will use (M4).
+//! Built-in kinds implement `DataSourcePlugin`, the same contract external plugins use.
 //! A `Connection` carries one data source's settings and decrypted secrets plus the plugin's
 //! pool; it is cached per data source and rebuilt when the settings or the target rules change.
 

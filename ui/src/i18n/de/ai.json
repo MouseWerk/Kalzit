@@ -125,7 +125,7 @@
   "ai.admin.chats.title": "Chat-Verlauf",
   "ai.admin.privacy.title": "Welche Daten den Server verlassen",
   "ai.admin.privacy.lead": "Wenn jemand KI nutzt, schickt Kalzit dem Anbieter nur, was für die Antwort nötig ist, und nur aus Datenquellen, die dafür freigegeben sind.",
-  "ai.admin.privacy.forEveryone": "Text für alle Benutzer",
+  "ai.admin.privacy.forEveryone": "Text für alle Personen",
   "ai.admin.privacy.explain": "Erklären",
   "ai.admin.privacy.explainText": "Der Abfragetext; das Schema der Datenquelle (Tabellen, Felder, Typen) nur, wenn sie für KI freigegeben ist.",
   "ai.admin.privacy.draft": "Entwerfen",

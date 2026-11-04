@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DOCS_REF } from "../help/docs";
 import { prepareGuide } from "../help/HelpPage";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
@@ -739,16 +740,17 @@ describe("help pages", () => {
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeTruthy();
   });
 
-  it("points links to unshipped pages at the repository and drops pictures", () => {
+  it("points links to unshipped pages at this release in the repository and drops pictures", () => {
     const out = prepareGuide(
       "See [Installation](installation.md#docker), [Explore](explore.md) and [README](../../README.md#quick-start).\n![A picture](../screenshots/x.png)\n[Web](https://example.com)",
     );
     expect(out).toContain("[Installation](/help/installation#docker)");
+    expect(DOCS_REF).toMatch(/^v\d+\.\d+\.\d+/);
     expect(out).toContain(
-      "[Explore](https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/explore.md)",
+      `[Explore](https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/docs/guide/explore.md)`,
     );
     expect(out).toContain(
-      "[README](https://github.com/MouseWerk/Kalzit/blob/main/README.md#quick-start)",
+      `[README](https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/README.md#quick-start)`,
     );
     expect(out).not.toContain("![");
     expect(out).toContain("[Web](https://example.com)");
