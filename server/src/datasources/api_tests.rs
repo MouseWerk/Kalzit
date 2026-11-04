@@ -3398,3 +3398,107 @@ async fn query_cache_hits_are_charged_to_the_response_budget() {
     assert_eq!(t.state.datasources.inflight_available(), 1_073_741_824);
     t.finish().await;
 }
+
+// ---- cursors of document sets ----
+
+/// A document set continues with its cursor only for the caller and the query it came from:
+/// free queries and a dashboard's stored ones alike, so a viewer pages through the stored query
+/// and nothing else.
+#[tokio::test]
+async fn document_cursors_continue_only_their_caller_and_query() {
+    let t = T::new().await;
+    let files = t.dir.path().join("dateien");
+    std::fs::create_dir_all(&files).unwrap();
+    std::fs::write(files.join("log.ndjson"), "{\"n\":1}\n{\"n\":2}\n\n{\"n\":3}\n").unwrap();
+    t.set("datasources.file_dirs", json!([files.to_string_lossy()]));
+    let mut ids = Vec::new();
+    for name in ["Log", "Log 2"] {
+        // With the query cache on: later pages pass it by.
+        let settings =
+            json!({ "path": files.join("log.ndjson").to_string_lossy(), "format": "ndjson", "cacheEnabled": true });
+        let r = t.post("/datasources", json!({ "name": name, "kind": "file", "settings": settings })).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+        ids.push(r.body["id"].as_str().unwrap().to_string());
+    }
+    let item = |ds: &str, cursor: Option<&str>| {
+        let mut item = json!({ "refId": "A", "datasourceId": ds, "query": {}, "limit": 2 });
+        if let Some(c) = cursor {
+            item["cursor"] = json!(c);
+        }
+        json!([item])
+    };
+    let reason = |r: &Reply| r.body["results"]["A"]["error"]["reason"].as_str().unwrap_or("").to_string();
+
+    let first = t.query(&t.owner, item(&ids[0], None)).await;
+    let set = &first.body["results"]["A"]["result"]["documents"];
+    assert_eq!(set["documents"], json!([{ "n": 1 }, { "n": 2 }]), "{}", first.text);
+    assert_eq!(set["truncated"]["limit"], 2);
+    assert_eq!(first.body["results"]["A"]["cache"]["status"], "miss", "{}", first.text);
+    let cursor = set["nextCursor"].as_str().unwrap().to_string();
+    assert_ne!(cursor, "2", "the caller never sees the source's own position");
+    for _ in 0..2 {
+        let second = t.query(&t.owner, item(&ids[0], Some(&cursor))).await;
+        let set = &second.body["results"]["A"]["result"]["documents"];
+        assert_eq!(set["documents"], json!([{ "n": 3 }]), "{}", second.text);
+        assert!(set.get("nextCursor").is_none(), "{}", second.text);
+        // Read from the source each time, never kept in or served from the cache.
+        assert!(second.body["results"]["A"].get("cache").is_none(), "{}", second.text);
+    }
+    // The first page again is a hit, and its cursor continues it all the same.
+    let again = t.query(&t.owner, item(&ids[0], None)).await;
+    assert_eq!(again.body["results"]["A"]["cache"]["status"], "hit", "{}", again.text);
+    let hit = again.body["results"]["A"]["result"]["documents"]["nextCursor"].as_str().unwrap().to_string();
+    let next = t.query(&t.owner, item(&ids[0], Some(&hit))).await;
+    assert_eq!(next.body["results"]["A"]["result"]["documents"]["documents"], json!([{ "n": 3 }]), "{}", next.text);
+
+    // Another data source, another user, a changed or a made-up cursor: refused unrun.
+    let refused = t.query(&t.owner, item(&ids[1], Some(&cursor))).await;
+    assert_eq!(
+        (refused.body["results"]["A"]["error"]["code"].as_str(), reason(&refused).as_str()),
+        (Some("query_rejected"), "query.cursor_invalid"),
+        "{}",
+        refused.text
+    );
+    let editor = t.session_for_role("edda", Some("editor")).await;
+    assert_eq!(reason(&t.query(&editor, item(&ids[0], Some(&cursor))).await), "query.cursor_invalid");
+    let parts: Vec<&str> = cursor.split('.').collect();
+    use base64::Engine;
+    let changed = format!("{}.{}.{}", parts[0], base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("0"), parts[2]);
+    for bad in [changed.as_str(), "2", "c1.Mg.AAAA"] {
+        assert_eq!(reason(&t.query(&t.owner, item(&ids[0], Some(bad))).await), "query.cursor_invalid", "{bad}");
+    }
+
+    // A viewer pages through a dashboard's stored query with the cursors of its own answers only.
+    let model = json!({
+        "schemaVersion": 1, "title": "Log", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{
+            "id": "p1", "type": "table", "title": "Einträge", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [
+                { "refId": "A", "datasourceId": ids[0], "query": {} },
+                { "refId": "B", "datasourceId": ids[1], "query": {} }
+            ],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let r = t.post("/dashboards", json!({ "model": model })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let panel = |cursor: Option<&str>| {
+        let cursors = cursor.map(|c| json!({ "A": c })).unwrap_or_else(|| json!({}));
+        json!({ "timeRange": range(), "limit": 2, "cursors": cursors })
+    };
+    let r = t.panel(&viewer, &dashboard, "p1", panel(None)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let mine = r.body["results"]["A"]["result"]["documents"]["nextCursor"].as_str().unwrap().to_string();
+    let r = t.panel(&viewer, &dashboard, "p1", panel(Some(&mine))).await;
+    assert_eq!(r.body["results"]["A"]["result"]["documents"]["documents"], json!([{ "n": 3 }]), "{}", r.text);
+    assert!(r.body["results"].get("B").is_none(), "only the continued target runs: {}", r.text);
+    // The owner's cursor of the same query is not the viewer's.
+    let r = t.panel(&viewer, &dashboard, "p1", panel(Some(&cursor))).await;
+    assert_eq!(reason(&r), "query.cursor_invalid", "{}", r.text);
+    // Nor does the viewer's cursor open a free query: viewers may not run one at all.
+    let r = t.query(&viewer, item(&ids[0], Some(&mine))).await;
+    assert!(r.status != StatusCode::OK || r.body["results"]["A"]["result"].is_null(), "{}", r.text);
+    t.finish().await;
+}
