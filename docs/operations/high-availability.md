@@ -17,7 +17,8 @@ its process, also after a crash). The lock is an operating system file lock take
 does not see the same database reached through a hard link under another name, and file sharing
 that does not pass locks between a host and a container (CIFS shares, some Docker Desktop bind
 mounts) hides it; keep the data directory on a local disk of the one machine. To go from SQLite
-to several servers, move to PostgreSQL first; Kalzit has no copy tool between the two yet.
+to several servers, move to PostgreSQL first with `kalzit db copy` ("Moving from SQLite to
+PostgreSQL" below).
 
 ## What every server needs
 
@@ -190,6 +191,42 @@ Start Kalzit with the same database URL and secrets key on another machine and a
 balancer; it registers itself. A server that stopped is listed as stopped for a day, then
 removed. Nothing needs to be done to take a server away for good.
 
+## Moving from SQLite to PostgreSQL
+
+`kalzit db copy` copies everything in Kalzit's SQLite database into a new, empty PostgreSQL
+database. It works one way: there is no copy back to SQLite, and Kalzit has no MySQL/MariaDB
+backend.
+
+1. Install the version you want to run on PostgreSQL and start it once on SQLite, so the schema
+   is current. Both databases must have the same schema; the copy says which version to use when
+   they differ.
+2. Stop the server. The copy refuses while a server runs on the SQLite database, and no server
+   starts on it while the copy runs.
+3. Create an empty PostgreSQL database (or an empty schema that the URL's `search_path` names) and
+   a user that may create tables in it. A target that already has tables is refused.
+4. On the server's machine, with its configuration, so the copy finds the SQLite database and the
+   secrets key:
+
+   ```sh
+   KALZIT_DB_COPY_TARGET='postgres://kalzit:<password>@db.example/kalzit' kalzit db copy
+   ```
+
+   On Windows, in an elevated PowerShell: `$env:KALZIT_DB_COPY_TARGET = 'postgres://...'` and
+   `kalzit db copy --config "$env:ProgramData\Kalzit\kalzit.toml"`. `--to <URL>` works too, but
+   puts the password on the command line, where other users of the machine can see it. The output
+   never shows the password.
+5. The copy creates the schema and writes every table with its ids, numbers, bytes and times in
+   one transaction, then compares the number of rows in every table and prints them. Any
+   difference ends with a non-zero exit code and the target stays empty.
+6. Set `database.url` (or `KALZIT_DATABASE_URL`) to the PostgreSQL URL and start the server. Keep
+   the SQLite file until you are sure; changes made after the copy are only in PostgreSQL.
+
+Stored secrets (data source passwords, provider keys, two-factor keys) are copied encrypted, as
+they are. The copy first checks that this machine's secrets key reads them and refuses otherwise;
+the server on PostgreSQL needs the same key. A key file in the data directory keeps working for a
+server with that data directory; more servers need the key from `KALZIT_SECRETS_KEY` or a systemd
+credential ("What every server needs").
+
 ## Troubleshooting
 
 | What you see | What to check |
@@ -199,3 +236,4 @@ removed. Nothing needs to be done to take a server away for good.
 | "Changes arrive: By polling" | The notification connection is down or a pooler blocks `LISTEN`; changes still arrive within a second |
 | A plugin runs on one server only | The log line "the plugin's package is not on this server" names why; install the plugin again |
 | Data sources fail on one server with "not loaded" keys | That server has another secrets key |
+| `kalzit db copy` says "the stored secrets are encrypted with keys ..." | Run it with the secrets key of the server that wrote the SQLite database |

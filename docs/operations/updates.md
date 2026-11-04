@@ -184,6 +184,11 @@ source secrets, but not the key that decrypts them (docs/ARCHITECTURE.md, "Backu
 now" adds a manual backup; the newest `updates.keep_versions` manual backups are kept. Downloads
 are recorded in the audit log.
 
+To move from SQLite to PostgreSQL, stop the server and run `kalzit db copy`: it copies the SQLite
+database into a new, empty PostgreSQL database with the same schema, one way, and compares the
+rows of every table (docs/operations/high-availability.md, "Moving from SQLite to PostgreSQL").
+Updates on PostgreSQL then need your own `pg_dump` (above).
+
 ## Code signing for Windows (project owner, once)
 
 The release workflow signs `kalzit.exe` and the MSI package with Authenticode in two small jobs

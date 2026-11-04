@@ -1811,6 +1811,9 @@ One place for everything a backup needs:
   private entries; a moved file keeps its old ones, and Kalzit refuses it at start. Restore tools
   that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
   Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
+- Moving to PostgreSQL: `kalzit db copy` copies a stopped server's SQLite database into a new,
+  empty PostgreSQL database, one way (`server/src/db_copy.rs`, operator steps in
+  docs/operations/high-availability.md). It is not a backup: back up the SQLite files first.
 
 ## Updates
 
