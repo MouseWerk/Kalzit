@@ -11,13 +11,26 @@ interface Timeout {
   timeout?: number;
 }
 
+/**
+ * The control itself: while it is open, its list carries the same name, so a locator by label
+ * would find both.
+ */
+function comboboxOf(control: Locator): Locator {
+  return control.and(control.page().locator('[role="combobox"]'));
+}
+
 /** The open list of `control`. */
 export async function selectList(control: Locator, options: Timeout = {}): Promise<Locator> {
-  if ((await control.getAttribute("aria-expanded", options)) !== "true") {
-    await control.click(options);
-  }
-  await expect(control).toHaveAttribute("aria-expanded", "true", options);
-  const id = await control.getAttribute("aria-controls", options);
+  const box = comboboxOf(control);
+  // Clicked again when the control is drawn anew between the click and the check (a form that
+  // re-renders after the previous choice).
+  await expect(async () => {
+    if ((await box.getAttribute("aria-expanded")) !== "true") {
+      await box.click({ timeout: 2_000 });
+    }
+    await expect(box).toHaveAttribute("aria-expanded", "true", { timeout: 1_000 });
+  }).toPass(options);
+  const id = await box.getAttribute("aria-controls", options);
   return control.page().locator(`[id="${id}"]`);
 }
 
@@ -38,7 +51,7 @@ export async function selectOption(
         ? byLabel(choice.label)
         : byValue(choice.value);
   await option.first().click(options);
-  await expect(control).toHaveAttribute("aria-expanded", "false", options);
+  await expect(comboboxOf(control)).toHaveAttribute("aria-expanded", "false", options);
 }
 
 /** The options of the select (it is opened for this and stays open). */
@@ -52,5 +65,5 @@ export async function expectSelectValue(
   value: string,
   options: Timeout = {},
 ): Promise<void> {
-  await expect(control).toHaveAttribute("value", value, options);
+  await expect(comboboxOf(control)).toHaveAttribute("value", value, options);
 }

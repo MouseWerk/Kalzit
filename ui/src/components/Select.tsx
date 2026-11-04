@@ -14,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 import { useEscapeLayer } from "../lib/layers";
 import { Icon } from "./Icon";
 import "./select.css";
@@ -247,6 +248,10 @@ export function Select({
   }
 
   function onListKey(event: KeyboardEvent<HTMLElement>, inSearch: boolean): boolean {
+    // A key that confirms an input method composition (in the search field) is left to it.
+    if (isComposingKey(event)) {
+      return false;
+    }
     const key = event.key;
     if (key === "ArrowDown") {
       setActive(event.altKey ? active : step(active, 1));
@@ -288,7 +293,7 @@ export function Select({
 
   function onTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     onKeyDown?.(event);
-    if (event.defaultPrevented || disabled === true) {
+    if (event.defaultPrevented || disabled === true || isComposingKey(event)) {
       return;
     }
     if (open) {
