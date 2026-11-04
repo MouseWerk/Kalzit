@@ -56,6 +56,95 @@ pub const SELF_REFERENCES: &[(&str, &str)] = &[("folders", "parent_id")];
 /// The most bind parameters one INSERT carries (PostgreSQL allows 65535).
 const MAX_BINDS: usize = 30_000;
 
+/// The columns that hold encrypted values: the copy decrypts every one of them before it writes
+/// anything. A test finds every `*key_id` column of the schema here.
+pub struct Encrypted {
+    pub table: &'static str,
+    /// The row's id, from which `owner` makes the associated data's owner.
+    id: &'static str,
+    /// The field of the associated data: a column, or the same text for every row.
+    field: Field,
+    pub key_id: &'static str,
+    nonce: &'static str,
+    ciphertext: &'static str,
+    owner: fn(&str) -> String,
+}
+
+enum Field {
+    Column(&'static str),
+    Fixed(&'static str),
+}
+
+fn as_is(id: &str) -> String {
+    id.to_string()
+}
+
+pub const ENCRYPTED: &[Encrypted] = &[
+    Encrypted {
+        table: "datasource_secrets",
+        id: "datasource_id",
+        field: Field::Column("field"),
+        key_id: "key_id",
+        nonce: "nonce",
+        ciphertext: "ciphertext",
+        owner: as_is,
+    },
+    Encrypted {
+        table: "ai_provider_secrets",
+        id: "provider_id",
+        field: Field::Column("field"),
+        key_id: "key_id",
+        nonce: "nonce",
+        ciphertext: "ciphertext",
+        owner: crate::ai::store::secret_owner,
+    },
+    Encrypted {
+        table: "sso_provider_secrets",
+        id: "provider_id",
+        field: Field::Column("field"),
+        key_id: "key_id",
+        nonce: "nonce",
+        ciphertext: "ciphertext",
+        owner: crate::sso::store::secret_owner,
+    },
+    Encrypted {
+        table: "server_secrets",
+        id: "owner",
+        field: Field::Column("field"),
+        key_id: "key_id",
+        nonce: "nonce",
+        ciphertext: "ciphertext",
+        owner: as_is,
+    },
+    Encrypted {
+        table: "user_totp",
+        id: "user_id",
+        field: Field::Fixed("totp"),
+        key_id: "key_id",
+        nonce: "nonce",
+        ciphertext: "ciphertext",
+        owner: crate::auth::second_factor::totp_owner,
+    },
+    Encrypted {
+        table: "invitations",
+        id: "id",
+        field: Field::Fixed(crate::mail::links::TOKEN_FIELD),
+        key_id: "token_key_id",
+        nonce: "token_nonce",
+        ciphertext: "token_ciphertext",
+        owner: crate::mail::links::owner,
+    },
+    Encrypted {
+        table: "sso_sign_ins",
+        id: "id",
+        field: Field::Fixed(crate::sso::store::CLIENT_SECRET),
+        key_id: "draft_secret_key_id",
+        nonce: "draft_secret_nonce",
+        ciphertext: "draft_secret",
+        owner: crate::sso::store::test_owner,
+    },
+];
+
 /// What `kalzit db copy` did.
 #[derive(Debug)]
 pub struct Summary {
@@ -64,7 +153,7 @@ pub struct Summary {
     pub schema_version: i64,
     /// Rows per table, the same in source and target.
     pub tables: Vec<(&'static str, i64)>,
-    /// Stored secrets read with this machine's key (0: none stored).
+    /// Stored secrets, every one decrypted with this machine's key (0: none stored).
     pub secrets_checked: usize,
 }
 
@@ -87,8 +176,8 @@ impl fmt::Display for Summary {
         } else {
             write!(
                 f,
-                "{} encrypted secrets were copied as they are and read with this machine's secrets key; the server on \
-                 PostgreSQL needs the same key",
+                "{} encrypted secrets were copied as they are, and each one decrypts with this machine's secrets key; \
+                 the server on PostgreSQL needs the same key",
                 self.secrets_checked
             )
         }
@@ -236,23 +325,40 @@ async fn commit(tx: sqlx::Transaction<'_, Postgres>) -> Result<()> {
 }
 
 /// Checks that this machine's secrets key reads the stored secrets, which stay encrypted in the
-/// copy: every key id must be loaded, and the secrets of data sources, AI and identity providers
-/// and the server must decrypt. Nothing is printed of them. Returns how many were read.
+/// copy: every key id must be loaded and every value of `ENCRYPTED` must decrypt. Nothing of them
+/// is printed. Returns how many were decrypted.
 async fn check_secrets(src: &mut SqliteConnection, keyring: impl FnOnce() -> Result<Keyring>) -> Result<usize> {
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT key_id FROM datasource_secrets UNION SELECT key_id FROM ai_provider_secrets \
-         UNION SELECT key_id FROM sso_provider_secrets UNION SELECT key_id FROM server_secrets \
-         UNION SELECT key_id FROM user_totp \
-         UNION SELECT token_key_id FROM invitations WHERE token_key_id IS NOT NULL \
-         UNION SELECT draft_secret_key_id FROM sso_sign_ins WHERE draft_secret_key_id IS NOT NULL",
-    )
-    .fetch_all(&mut *src)
-    .await?;
-    if ids.is_empty() {
+    let mut rows = Vec::new();
+    for e in ENCRYPTED {
+        // A fixed field reads the id twice, to keep one row shape.
+        let field = match e.field {
+            Field::Column(column) => ident(column),
+            Field::Fixed(_) => ident(e.id),
+        };
+        let select = format!(
+            "SELECT {id}, {field}, {key}, {nonce}, {ciphertext} FROM {table} WHERE {key} IS NOT NULL",
+            id = ident(e.id),
+            key = ident(e.key_id),
+            nonce = ident(e.nonce),
+            ciphertext = ident(e.ciphertext),
+            table = ident(e.table)
+        );
+        let found: Vec<(String, String, String, String, String)> =
+            sqlx::query_as(AssertSqlSafe(select)).fetch_all(&mut *src).await?;
+        for (id, field, key_id, nonce, ciphertext) in found {
+            let field = match e.field {
+                Field::Column(_) => field,
+                Field::Fixed(fixed) => fixed.to_string(),
+            };
+            rows.push(((e.owner)(&id), field, Blob { key_id, nonce, ciphertext }));
+        }
+    }
+    if rows.is_empty() {
         return Ok(0);
     }
     let ring = keyring().context("loading the secrets key, which the stored secrets need")?;
-    let foreign: Vec<&String> = ids.iter().filter(|id| !ring.knows(id)).collect();
+    let foreign: BTreeSet<&str> =
+        rows.iter().map(|(_, _, blob)| blob.key_id.as_str()).filter(|id| !ring.knows(id)).collect();
     if !foreign.is_empty() {
         bail!(
             "the stored secrets are encrypted with keys {foreign:?}, but this machine's secrets key is {} (from {}). \
@@ -263,40 +369,17 @@ async fn check_secrets(src: &mut SqliteConnection, keyring: impl FnOnce() -> Res
             crate::secrets::KEY_ENV
         );
     }
-    let rows: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
-        "SELECT 'datasource', datasource_id, field, key_id, nonce, ciphertext FROM datasource_secrets \
-         UNION ALL SELECT 'ai', provider_id, field, key_id, nonce, ciphertext FROM ai_provider_secrets \
-         UNION ALL SELECT 'sso', provider_id, field, key_id, nonce, ciphertext FROM sso_provider_secrets \
-         UNION ALL SELECT 'server', owner, field, key_id, nonce, ciphertext FROM server_secrets",
-    )
-    .fetch_all(&mut *src)
-    .await?;
-    for (kind, id, field, key_id, nonce, ciphertext) in rows {
-        let owner = match kind.as_str() {
-            "ai" => crate::ai::store::secret_owner(&id),
-            "sso" => crate::sso::store::secret_owner(&id),
-            _ => id,
-        };
-        ring.decrypt(&owner, &field, &Blob { key_id, nonce, ciphertext })
+    for (owner, field, blob) in &rows {
+        ring.decrypt(owner, field, blob)
             .with_context(|| format!("the stored secret {field} of {owner} cannot be read with this machine's key"))?;
     }
-    let (stored,): (i64,) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM datasource_secrets) + (SELECT COUNT(*) FROM ai_provider_secrets) \
-         + (SELECT COUNT(*) FROM sso_provider_secrets) + (SELECT COUNT(*) FROM server_secrets) \
-         + (SELECT COUNT(*) FROM user_totp) + (SELECT COUNT(*) FROM invitations WHERE token_key_id IS NOT NULL) \
-         + (SELECT COUNT(*) FROM sso_sign_ins WHERE draft_secret_key_id IS NOT NULL)",
-    )
-    .fetch_one(&mut *src)
-    .await?;
-    Ok(usize::try_from(stored).unwrap_or(0))
+    Ok(rows.len())
 }
 
 /// The PostgreSQL types of Kalzit's columns, and what the copy writes into them.
 #[derive(Clone, Copy, Debug)]
 enum Kind {
     Int,
-    Float,
-    Bool,
     Text,
     Bytes,
 }
@@ -305,8 +388,6 @@ impl Kind {
     fn of(data_type: &str) -> Option<Self> {
         Some(match data_type {
             "bigint" | "integer" | "smallint" => Kind::Int,
-            "double precision" | "real" => Kind::Float,
-            "boolean" => Kind::Bool,
             "text" | "character varying" | "character" => Kind::Text,
             "bytea" => Kind::Bytes,
             _ => return None,
@@ -318,8 +399,6 @@ impl Kind {
 #[derive(Debug, PartialEq)]
 enum Value {
     Int(Option<i64>),
-    Float(Option<f64>),
-    Bool(Option<bool>),
     Text(Option<String>),
     Bytes(Option<Vec<u8>>),
 }
@@ -331,36 +410,21 @@ fn read(row: &SqliteRow, i: usize, kind: Kind) -> Result<Value> {
     if raw.is_null() {
         return Ok(match kind {
             Kind::Int => Value::Int(None),
-            Kind::Float => Value::Float(None),
-            Kind::Bool => Value::Bool(None),
             Kind::Text => Value::Text(None),
             Kind::Bytes => Value::Bytes(None),
         });
     }
     let class = raw.type_info().name().to_string();
     let int = || row.try_get_unchecked::<i64, _>(i);
-    let float = || row.try_get_unchecked::<f64, _>(i);
     let text = || row.try_get_unchecked::<String, _>(i);
     let bytes = || row.try_get_unchecked::<Vec<u8>, _>(i);
+    // Only what Kalzit writes; anything else fails the copy with the table and column.
     Ok(match (kind, class.as_str()) {
         (Kind::Int, "INTEGER") => Value::Int(Some(int()?)),
-        (Kind::Int, "TEXT") => {
-            let t = text()?;
-            Value::Int(Some(t.trim().parse().with_context(|| format!("the text {t:?} is not a whole number"))?))
-        }
-        (Kind::Float, "REAL" | "INTEGER") => Value::Float(Some(float()?)),
-        (Kind::Bool, "INTEGER") => Value::Bool(Some(int()? != 0)),
         (Kind::Text, "TEXT") => Value::Text(Some(text()?)),
-        (Kind::Text, "INTEGER") => Value::Text(Some(int()?.to_string())),
-        (Kind::Text, "REAL") => Value::Text(Some(float()?.to_string())),
-        (Kind::Text, "BLOB") => {
-            Value::Text(Some(String::from_utf8(bytes()?).map_err(|_| anyhow::anyhow!("bytes that are not text"))?))
-        }
         (Kind::Bytes, "BLOB") => Value::Bytes(Some(bytes()?)),
-        // A BYTEA column has numeric affinity in SQLite: its default '' stays text, and a text
-        // that looks like a number would be stored as one.
+        // A BYTEA column keeps its default '' as text in SQLite.
         (Kind::Bytes, "TEXT") => Value::Bytes(Some(text()?.into_bytes())),
-        (Kind::Bytes, "INTEGER") => Value::Bytes(Some(int()?.to_string().into_bytes())),
         (kind, class) => bail!("a {class} value cannot go into a column of kind {kind:?}"),
     })
 }
@@ -434,8 +498,6 @@ async fn insert_batch(tx: &mut PgConnection, insert: &str, batch: Vec<Vec<Value>
         for value in values {
             match value {
                 Value::Int(v) => row.push_bind(v),
-                Value::Float(v) => row.push_bind(v),
-                Value::Bool(v) => row.push_bind(v),
                 Value::Text(v) => row.push_bind(v),
                 Value::Bytes(v) => row.push_bind(v),
             };
@@ -525,6 +587,42 @@ mod tests {
             }
         }
         db.close().await;
+    }
+
+    /// Every column that names a secrets key holds encrypted values, which the copy must decrypt
+    /// before it writes anything (`plugin_keys` holds public signing keys, not secrets).
+    #[tokio::test]
+    async fn every_key_id_column_is_decrypted() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        for table in TABLES.iter().filter(|t| **t != "plugin_keys") {
+            let columns: Vec<String> =
+                sqlx::query_scalar("SELECT name FROM pragma_table_info($1)").bind(*table).fetch_all(&db).await.unwrap();
+            for column in columns.iter().filter(|c| c.ends_with("key_id")) {
+                assert!(
+                    ENCRYPTED.iter().any(|e| e.table == *table && e.key_id == column),
+                    "{table}.{column} names a secrets key: add its values to db_copy::ENCRYPTED"
+                );
+            }
+        }
+        db.close().await;
+    }
+
+    /// Values of a storage class Kalzit does not write into a column kind fail the copy.
+    #[tokio::test]
+    async fn unexpected_values_fail() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        let row = sqlx::query("SELECT x'00ff' AS blob, '' AS empty, 5 AS number, 'x' AS text")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(read(&row, 0, Kind::Bytes).unwrap(), Value::Bytes(Some(vec![0, 0xFF])));
+        assert_eq!(read(&row, 1, Kind::Bytes).unwrap(), Value::Bytes(Some(Vec::new())));
+        assert_eq!(read(&row, 2, Kind::Int).unwrap(), Value::Int(Some(5)));
+        assert!(read(&row, 2, Kind::Bytes).is_err());
+        assert!(read(&row, 2, Kind::Text).is_err());
+        assert!(read(&row, 3, Kind::Int).is_err());
+        assert!(read(&row, 0, Kind::Text).is_err());
+        conn.close().await.unwrap();
     }
 
     #[test]

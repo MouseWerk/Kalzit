@@ -83,6 +83,22 @@ async fn source(dir: &std::path::Path) -> std::path::PathBuf {
     .execute(&db)
     .await
     .unwrap();
+    // An authenticator app key, bound to its user (`auth::second_factor`).
+    sqlx::query("INSERT INTO users (id, email, name, created_at) VALUES ('u1', 'u1@example.test', 'U', 0)")
+        .execute(&db)
+        .await
+        .unwrap();
+    let totp = keyring(&KEY).encrypt("user:u1", "totp", "JBSWY3DPEHPK3PXP");
+    sqlx::query(
+        "INSERT INTO user_totp (user_id, key_id, nonce, ciphertext, last_step, created_at) \
+         VALUES ('u1', $1, $2, $3, 0, 0)",
+    )
+    .bind(&totp.key_id)
+    .bind(&totp.nonce)
+    .bind(&totp.ciphertext)
+    .execute(&db)
+    .await
+    .unwrap();
     db.close().await;
     file
 }
@@ -100,7 +116,7 @@ async fn copies_sqlite_into_postgres() {
 
     let summary = copy_file(&file, &target.url, || Ok(keyring(&KEY))).await.unwrap();
     assert_eq!(summary.tables.len(), TABLES.len());
-    assert_eq!(summary.secrets_checked, 1);
+    assert_eq!(summary.secrets_checked, 2);
     let rows = |t: &str| summary.tables.iter().find(|(name, _)| *name == t).unwrap().1;
     assert_eq!((rows("orgs"), rows("folders"), rows("dashboards"), rows("datasource_secrets")), (1, 3, 2, 1));
     let text = summary.to_string();
@@ -159,6 +175,28 @@ async fn refuses_a_target_that_is_not_postgres() {
     let text = format!("{err:#}");
     assert!(text.contains("PostgreSQL URL"), "{text}");
     assert!(!text.contains("pw-secret"), "the password must not be shown: {text}");
+    common::remove_dir(dir);
+}
+
+/// Every stored secret is decrypted before the target is reached, the authenticator app keys
+/// included: one bound to another user fails although its key is known.
+#[tokio::test]
+async fn refuses_a_secret_that_does_not_decrypt() {
+    let dir = common::private_tempdir();
+    let file = source(dir.path()).await;
+    let db = kalzit::db::connect(&sqlite_url(&file), 1).await.unwrap();
+    let moved = keyring(&KEY).encrypt("user:someone-else", "totp", "JBSWY3DPEHPK3PXP");
+    sqlx::query("UPDATE user_totp SET nonce = $1, ciphertext = $2 WHERE user_id = 'u1'")
+        .bind(&moved.nonce)
+        .bind(&moved.ciphertext)
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    // Nothing listens on port 1: the copy fails before it would connect.
+    let err = copy_file(&file, "postgres://kalzit@127.0.0.1:1/kalzit", || Ok(keyring(&KEY))).await.unwrap_err();
+    let text = format!("{err:#}");
+    assert!(text.contains("totp of user:u1 cannot be read"), "{text}");
     common::remove_dir(dir);
 }
 

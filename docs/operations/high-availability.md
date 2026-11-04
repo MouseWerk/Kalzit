@@ -207,14 +207,28 @@ backend.
 4. On the server's machine, with its configuration, so the copy finds the SQLite database and the
    secrets key:
 
+   Leave the password out of the URL and type it at a hidden prompt into `PGPASSWORD`, which the
+   copy reads like the PostgreSQL tools do, so it stays out of the command line and the shell
+   history:
+
    ```sh
-   KALZIT_DB_COPY_TARGET='postgres://kalzit:<password>@db.example/kalzit' kalzit db copy
+   read -rsp 'PostgreSQL password: ' PGPASSWORD; echo; export PGPASSWORD
+   KALZIT_DB_COPY_TARGET='postgres://kalzit@db.example/kalzit' kalzit db copy
+   unset PGPASSWORD
    ```
 
-   On Windows, in an elevated PowerShell: `$env:KALZIT_DB_COPY_TARGET = 'postgres://...'` and
-   `kalzit db copy --config "$env:ProgramData\Kalzit\kalzit.toml"`. `--to <URL>` works too, but
-   puts the password on the command line, where other users of the machine can see it. The output
-   never shows the password.
+   On Windows, in an elevated PowerShell 7:
+
+   ```powershell
+   $env:PGPASSWORD = Read-Host -MaskInput 'PostgreSQL password'
+   $env:KALZIT_DB_COPY_TARGET = 'postgres://kalzit@db.example/kalzit'
+   kalzit db copy --config "$env:ProgramData\Kalzit\kalzit.toml"
+   Remove-Item Env:PGPASSWORD
+   ```
+
+   A password file works as well (`~/.pgpass`, on Windows `%APPDATA%\postgresql\pgpass.conf`).
+   `--to <URL>` takes the URL as an argument; never put a password in it, other users of the
+   machine can see the command line. The output never shows the password.
 5. The copy creates the schema and writes every table with its ids, numbers, bytes and times in
    one transaction, then compares the number of rows in every table and prints them. Any
    difference ends with a non-zero exit code and the target stays empty.

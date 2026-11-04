@@ -114,8 +114,9 @@ enum DbCommand {
     /// Copy all data from the configured SQLite database into a new, empty PostgreSQL database
     /// (one way). Stop the server first; the copy needs the same secrets key as the server.
     Copy {
-        /// The PostgreSQL database to copy into (postgres://user:password@host/database). Prefer
-        /// the environment variable, which keeps the password out of the process list.
+        /// The PostgreSQL database to copy into (postgres://user@host/database). Leave the
+        /// password out and set PGPASSWORD (or use a .pgpass file), so it never shows in the
+        /// process list or the shell history.
         #[arg(long, env = "KALZIT_DB_COPY_TARGET", hide_env_values = true, value_name = "URL")]
         to: String,
     },
