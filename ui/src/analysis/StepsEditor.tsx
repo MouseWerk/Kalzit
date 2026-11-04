@@ -404,13 +404,13 @@ export function StepsEditor({
                   <span className="step__title">
                     {t("analysis.steps.cardTitle", { n, name: kindLabel(t, step) })}
                   </span>
-                  <span className="step__summary">
-                    {step.disabled === true
-                      ? t("analysis.steps.status.off")
-                      : summary === ""
-                        ? status
-                        : summary}
-                  </span>
+                  {/* Without fields to name, a closed card shows the step's status instead; an
+                      open card shows that status under its form, so the head does not repeat it. */}
+                  {open && summary === "" ? null : (
+                    <span className="step__summary">
+                      {open ? summary : step.disabled === true || summary === "" ? status : summary}
+                    </span>
+                  )}
                 </button>
               ) : null}
               {open ? (

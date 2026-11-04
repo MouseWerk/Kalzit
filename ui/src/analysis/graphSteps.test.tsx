@@ -204,3 +204,28 @@ describe("graph steps the server ran", () => {
     expect(run.graphs).toEqual([]);
   });
 });
+
+describe("compact step cards (Explore)", () => {
+  it("names the step's result once: in the closed card, then under the open form", async () => {
+    const user = userEvent.setup();
+    const count: Step = { id: "c", type: "countLabels", frame: "A" };
+    render(
+      <StepsEditor
+        compact
+        steps={[count]}
+        onChange={() => undefined}
+        refIds={["A"]}
+        inputs={INPUTS}
+        kindOf={() => "neo4j"}
+      />,
+    );
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    const card = within(step).getByRole("button", { expanded: false });
+    expect(card.textContent).toBe("1 · Count per label2 rows, 3 fields");
+    await user.click(card);
+    expect(within(step).getAllByText("2 rows, 3 fields")).toHaveLength(1);
+    expect(within(step).getByRole("button", { expanded: true }).textContent).toBe(
+      "1 · Count per label",
+    );
+  });
+});
