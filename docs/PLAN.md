@@ -505,16 +505,17 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    die beiden Ausnahmen in `.cargo/audit.toml` entfernen (RUSTSEC-2023-0071 `rsa`,
    RUSTSEC-2026-0387 `crypto-bigint`, nur über webauthn-rs), sobald webauthn-rs auf Crates mit den
    Korrekturen wechselt, und dann auf die erste stabile 0.6-Version gehen.
-8. **M7 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
-   (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
-   (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase); Data-Warehouses (BigQuery, Snowflake,
-   Databricks). Außerdem, aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026):
+8. **M7 Ausbau**: Alerting, Freigabe-Links und Snapshots, Provisioning als Code (Git mit
+   Kommandozeile: Dashboards, Quellen, Rollen als Dateien), geplante PDF- und CSV-Berichte per
+   Mail, Import von Grafana-Dashboards (soweit sinnvoll); neue Quellen: Graphite, Redis, Oracle,
+   Traces (Tempo, Jaeger), weitere Graph-Quellen (ArangoDB, Gremlin) und Dokument-Quellen
+   (Couchbase), Data-Warehouses (BigQuery, Snowflake, Databricks).
+9. **M8 Analyse-Tiefe**: Aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026), aus M7
+   herausgelöst:
    - Analyse und Explore: zweite Runde des Schritt-Katalogs, tieferes Explore (Verlauf, Vergleich,
      geteilte Ansichten), tiefere Variablen (Ad-hoc-Filter, verkettete Variablen), Dashboard-Tabs und
-     Regeln zum Ein- und Ausblenden, Teilen-Links und Snapshots, XY- und Karten-Panel (GeoJSON),
-     Prognose- und Ausreißer-Schritte, Drill-down ohne Abfrage je Ergebnisform.
-   - Berichte und als Code: geplante PDF- und CSV-Berichte per Mail, Provisioning über Git mit
-     Kommandozeile (Dashboards, Quellen, Rollen als Dateien).
+     Regeln zum Ein- und Ausblenden, XY- und Karten-Panel (GeoJSON), Prognose- und
+     Ausreißer-Schritte, Drill-down ohne Abfrage je Ergebnisform.
    - Graph-Analyse (nur lesend): Algorithmen als Schritte (Zentralität, Communities, Pfade) mit Größe
      oder Farbe nach Wert, Filterleiste mit Histogrammen, Schema-Panel einer Graph-Quelle, Karten- und
      Koordinaten-Layout, radiales Layout, Icons und bedingte Darstellung, Suchen-als-Graph und
@@ -522,7 +523,17 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Abfrageplan (EXPLAIN/PROFILE). Das Graph-Board wird vorher erweitert.
    - KI: ein MCP-Server, über den andere KI-Werkzeuge Kalzit mit den Rechten einer Person nur lesend
      nutzen.
-9. **M8**: Geplant, Umfang noch offen.
+   - Performance und Tempo: gemessene Beschleunigung über die Performance-Prüfung in M6 hinaus:
+     Startzeit und Größe der Binärdatei, erste Darstellung und Bundle-Größe der Oberfläche, Laden
+     von Dashboards mit vielen Panels (parallele Abfragen, Ergebnisse als Stream), große Ergebnisse
+     (virtualisierte Tabellen und Dokumentbäume, Graph-Darstellung über 20.000 Knoten mit
+     Detailstufen), Abfrage-Cache pro Panel mit TTL, Speicher und CPU des Servers unter Last; dazu
+     eine Benchmark-Suite in der CI, die bei Verschlechterungen fehlschlägt.
+   - Nachzügler aus M6: Erweiterungen aus den Reviews in M6, die keine Fehlerbehebungen sind: Liste
+     „Letzte Anmeldungen“ (2FA-Board Frame 4A), erneute Anmeldung beim Anbieter (`max_age`) vor dem
+     Einrichten des ersten zweiten Faktors, arm64-Binaries für die Beispiel-Plugins (`csv-http`),
+     „Mehr laden“ auch in gespeicherten Analysen und in der Vorschau des Panel-Editors,
+     Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung.
 10. **M9 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
     (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
@@ -544,7 +555,7 @@ Getroffen (stehen auch in `CLAUDE.md`):
 6. Alle üblichen Datenquellen werden unterstützt (Abschnitt 3), nicht nur MongoDB und Graphen.
 7. Ausrichtung: Plattform zur Visualisierung und Auswertung von Daten allgemein, nicht nur Monitoring.
 8. Mehrere Organisationen pro Installation.
-9. Alerting in M7, nach dem Kern und dem Feinschliff in M6.
+9. Alerting in M7, nach dem Kern und dem Feinschliff in M6; die Analyse-Tiefe folgt danach in M8.
 10. Öffentliches Repository auf GitHub.
 11. Produktname Kalzit (statt Arbeitstitel Granit).
 12. Website mit Astro und ausdrucksstarker Bewegung, angelehnt an die Referenz des Inhabers; Hosting wird später entschieden.
