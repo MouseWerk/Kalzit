@@ -1432,7 +1432,7 @@ linux-x64 = "bin/a"
             revoked: vec![],
         };
         let names = BTreeMap::from([(key.to_string(), "Example".to_string())]);
-        let (offered, _) = items(&index, &[], &names, "", None);
+        let (offered, _) = items(&index, &[], &names, "", None, None);
         assert_eq!((offered[0].details_from, offered[0].network.clone()), ("catalog", vec!["*".to_string()]));
         let here = [PluginRow { manifest, ..installed("dev.example.a", "1.0.0") }];
         let (offered, _) = items(&index, &here, &names, "", None, None);
