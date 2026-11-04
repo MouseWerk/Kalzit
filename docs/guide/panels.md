@@ -229,7 +229,10 @@ The options are grouped as in the panel editor:
 - **Nodes**: **Node name property**; **Color by** Label (with **Color and shape per label**: a
   palette color and a shape for each label), Property (a number along a **Color scheme**: blue,
   green-yellow-red or gray ramp, with an automatic or fixed **Range**; or **By value (text)**, a
-  palette color per value; nodes without the property are gray), Community or Component; **Node
+  palette color per value; nodes without the property are gray), Community or Component
+  (communities are computed in the browser up to 2,000 nodes; above that a Neo4j source with GDS
+  or a Memgraph source with MAGE computes them, when you may query the source, see
+  [Graph algorithms](data-sources.md#graph-algorithms-neo4j-gds-memgraph-mage)); **Node
   size** by edges, a property or all the same, with the smallest and largest size in px. Each label
   also gives its nodes a shape, circle, square or diamond, in the order of the labels unless the
   panel sets one (**Shape per label**, whatever colors the nodes), so labels stay apart without

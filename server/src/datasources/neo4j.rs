@@ -148,6 +148,23 @@ struct CypherQuery {
     cypher: String,
 }
 
+/// `{"communities": {"nodeIds": [...]}}`: the communities of these nodes, by the database's own
+/// algorithm (see `communities`). The graph panel asks for it above the size it computes itself.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunitiesQuery {
+    communities: CommunityNodes,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommunityNodes {
+    node_ids: Vec<String>,
+}
+
+/// The most nodes one community request may name.
+const MAX_COMMUNITY_NODES: usize = 100_000;
+
 /// A connection and what Kalzit learned when it opened it.
 struct Opened {
     conn: BoltConn,
@@ -171,8 +188,25 @@ impl Pooled for Opened {
     }
 }
 
+/// What a source's connections share: the pool and the gate of community requests.
+struct Shared {
+    pool: Arc<ConnPool<Opened>>,
+    /// One community request at a time per source (see `communities`).
+    communities: Arc<tokio::sync::Semaphore>,
+}
+
+async fn shared(conn: &Connection) -> Result<Arc<Shared>, SourceError> {
+    conn.shared(|| async {
+        Ok(Shared {
+            pool: Arc::new(ConnPool::new(POOL_SIZE, IDLE_TIMEOUT)),
+            communities: Arc::new(tokio::sync::Semaphore::new(1)),
+        })
+    })
+    .await
+}
+
 async fn pool(conn: &Connection) -> Result<Arc<ConnPool<Opened>>, SourceError> {
-    conn.shared(|| async { Ok(ConnPool::new(POOL_SIZE, IDLE_TIMEOUT)) }).await
+    Ok(shared(conn).await?.pool.clone())
 }
 
 async fn lease(flavor: Flavor, conn: &Connection, pool: &Arc<ConnPool<Opened>>) -> Result<Lease<Opened>, SourceError> {
@@ -540,6 +574,10 @@ impl DataSourcePlugin for GraphDb {
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
+        if req.query.get("communities").is_some() {
+            let q: CommunitiesQuery = req.parse()?;
+            return communities(self.0, conn, &req, &q.communities.node_ids).await;
+        }
         let q: CypherQuery = req.parse()?;
         let checked = super::cypher::check(&q.cypher).map_err(SourceError::Rejected)?;
         let s: Settings = conn.settings_as()?;
@@ -572,6 +610,231 @@ impl Attempt {
             Attempt::Lost(e) | Attempt::Failed(e) => e,
         }
     }
+}
+
+/// The node key in the community queries: Memgraph's integer id, which Bolt 4.4 sends for Neo4j
+/// as well; Neo4j 5's element id otherwise.
+fn community_key(numeric: bool) -> &'static str {
+    if numeric { "id" } else { "elementId" }
+}
+
+/// Memgraph MAGE: Louvain over the given nodes and the relationships between them, in one read
+/// query with no state left behind.
+fn memgraph_community_query() -> &'static str {
+    "MATCH (n) WHERE id(n) IN $ids \
+     OPTIONAL MATCH (n)-[r]->(m) WHERE id(m) IN $ids \
+     WITH collect(DISTINCT n) AS nodes, collect(r) AS rels \
+     CALL community_detection.get_subgraph(nodes, rels) YIELD node, community_id \
+     RETURN id(node) AS id, community_id AS community"
+}
+
+/// Neo4j GDS needs a projected graph: these three queries project the given nodes and the
+/// relationships between them under a name made for this request, stream Louvain over it and
+/// drop it. Their text is fixed, the nodes and the name are parameters.
+fn neo4j_community_queries(numeric: bool) -> [String; 3] {
+    let key = community_key(numeric);
+    [
+        format!(
+            "MATCH (n) WHERE {key}(n) IN $ids \
+             OPTIONAL MATCH (n)-->(m) WHERE {key}(m) IN $ids \
+             WITH gds.graph.project($graph, n, m, {{}}, {{undirectedRelationshipTypes: ['*']}}) AS g \
+             RETURN g.nodeCount AS nodes"
+        ),
+        format!(
+            "CALL gds.louvain.stream($graph) YIELD nodeId, communityId \
+             RETURN {key}(gds.util.asNode(nodeId)) AS id, communityId AS community"
+        ),
+        "CALL gds.graph.drop($graph, false) YIELD graphName RETURN graphName".to_string(),
+    ]
+}
+
+/// Runs `query` with `params` in a read transaction and collects up to `max_rows` records. After
+/// a query error the connection is reset, so it can run the next query.
+async fn internal_rows(
+    c: &mut BoltConn,
+    db: Option<&str>,
+    timeout: Duration,
+    query: &str,
+    params: Vec<(String, Bv)>,
+    max_rows: usize,
+) -> Result<Vec<Vec<Bv>>, BoltError> {
+    let ran = async {
+        c.begin(db, timeout, true).await?;
+        c.run(query, params).await?;
+        let mut rows = Vec::new();
+        loop {
+            match c
+                .pull(BATCH, MAX_MESSAGE, |r, _| {
+                    rows.push(r);
+                    rows.len() <= max_rows
+                })
+                .await?
+            {
+                PullEnd::More => continue,
+                PullEnd::Done => break,
+                PullEnd::Stopped => return Err(BoltError::Protocol("too many rows for an internal query".into())),
+            }
+        }
+        c.rollback().await?;
+        Ok(rows)
+    }
+    .await;
+    if matches!(ran, Err(BoltError::Failure { .. })) {
+        let _ = c.reset().await;
+    }
+    ran
+}
+
+/// Lists the graphs left by community requests that could not drop theirs (a connection that
+/// broke, a server that stopped): those older than `$age` seconds by the database's clock. A
+/// younger one may belong to a request still running on another Kalzit server that shares the
+/// database (high availability), so it stays.
+const SWEEP_QUERY: &str = "CALL gds.graph.list() YIELD graphName, creationTime \
+     WHERE graphName STARTS WITH 'kalzit-communities-' \
+     AND creationTime < datetime() - duration({seconds: $age}) RETURN graphName";
+
+/// How much older than a request's time limit a leftover graph must be before a sweep drops it.
+const SWEEP_MARGIN: Duration = Duration::from_secs(600);
+
+/// The `$age` of `SWEEP_QUERY` for requests with this time limit, in seconds.
+fn sweep_age(timeout: Duration) -> i64 {
+    (timeout + SWEEP_MARGIN).as_secs().try_into().unwrap_or(i64::MAX)
+}
+
+/// The communities of the given nodes by the database's own algorithm: Memgraph MAGE's
+/// `community_detection.get_subgraph`, Neo4j GDS's Louvain on a graph projected for this request
+/// (`neo4j_communities`). Answers a frame of `id` and `community`. A database without the library
+/// answers its error, and the panel goes without. The user needs `datasources:query` on the
+/// source like for any free query (the route checks). One request per source runs at a time.
+async fn communities(
+    flavor: Flavor,
+    conn: &Connection,
+    req: &SourceQuery,
+    ids: &[String],
+) -> Result<QueryResult, SourceError> {
+    if ids.is_empty() || ids.len() > MAX_COMMUNITY_NODES {
+        return Err(SourceError::rejected(
+            "graph.communities_size",
+            format!("communities are asked for 1 to {MAX_COMMUNITY_NODES} nodes"),
+        ));
+    }
+    let numbers: Option<Vec<i64>> = ids.iter().map(|id| id.parse::<i64>().ok()).collect();
+    let numeric = numbers.is_some();
+    let id_list = match (numbers, flavor) {
+        (Some(n), _) => Bv::List(n.into_iter().map(Bv::Int).collect()),
+        (None, Flavor::Memgraph) => {
+            return Err(SourceError::rejected("graph.communities_ids", "Memgraph node ids are numbers"));
+        }
+        (None, Flavor::Neo4j) => Bv::List(ids.iter().map(|id| Bv::String(id.clone())).collect()),
+    };
+    let s: Settings = conn.settings_as()?;
+    let shared = shared(conn).await?;
+    let permit = shared
+        .communities
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| SourceError::failed("internal", "internal: the community gate is closed"))?;
+    let mut lease = lease(flavor, conn, &shared.pool).await?;
+    let timeout = req.limits.timeout;
+    let max_rows = ids.len();
+    let (rows, executed) = match flavor {
+        Flavor::Memgraph => {
+            let q = memgraph_community_query();
+            let db = s.database.as_deref();
+            let rows = internal_rows(&mut lease.conn, db, timeout, q, vec![("ids".into(), id_list)], max_rows).await;
+            drop(permit);
+            (finish_lease(lease, rows)?, q.to_string())
+        }
+        Flavor::Neo4j => {
+            let [_, stream, _] = neo4j_community_queries(numeric);
+            // A task of its own, so a request given up halfway (a closed tab, a timeout) still
+            // drops its graph; it keeps the gate until then.
+            let task = tokio::spawn(neo4j_communities(lease, s.database, timeout, numeric, id_list, max_rows, permit));
+            let rows =
+                task.await.map_err(|_| SourceError::failed("internal", "internal: the community task stopped"))??;
+            (rows, stream)
+        }
+    };
+    let columns = vec![Column::new("id", Some(FieldType::String)), Column::new("community", Some(FieldType::Number))];
+    let mut frame = FrameBuilder::new(columns, max_rows, req.limits.budget.clone());
+    frame.executed_query(executed);
+    for row in rows {
+        let id = match row.first() {
+            Some(Bv::Int(i)) => Value::String(i.to_string()),
+            Some(Bv::String(s)) => Value::String(s.clone()),
+            _ => continue,
+        };
+        let community = match row.get(1) {
+            Some(Bv::Int(i)) => json!(i),
+            _ => continue,
+        };
+        if !frame.push_row(vec![id, community]) {
+            break;
+        }
+    }
+    Ok(QueryResult::Frame { frame: frame.finish() })
+}
+
+/// Back to the pool when the connection is still good, else closed; answers the rows or the error.
+fn finish_lease(lease: Lease<Opened>, rows: Result<Vec<Vec<Bv>>, BoltError>) -> Result<Vec<Vec<Bv>>, SourceError> {
+    let dead = lease.conn.broken || matches!(&rows, Err(e) if e.is_dead());
+    if dead {
+        lease.discard();
+    } else {
+        lease.release();
+    }
+    rows.map_err(BoltError::into_source)
+}
+
+/// Neo4j GDS: drops what earlier requests left (`SWEEP_QUERY`: graphs older than any request of
+/// this time limit, here or on another Kalzit server, could still use), projects the nodes under a name made for this request, streams
+/// Louvain and drops the graph, also when the stream failed. Only a broken connection skips the
+/// drop; the next request's sweep removes that graph. `permit` is the source's community gate,
+/// held until the graph is gone.
+async fn neo4j_communities(
+    mut lease: Lease<Opened>,
+    db: Option<String>,
+    timeout: Duration,
+    numeric: bool,
+    ids: Bv,
+    max_rows: usize,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Result<Vec<Vec<Bv>>, SourceError> {
+    let db = db.as_deref();
+    let c = &mut lease.conn;
+    let [project, stream, drop_graph] = neo4j_community_queries(numeric);
+    let named = |name: &Bv| vec![("graph".to_string(), name.clone())];
+    let rows = async {
+        let left =
+            internal_rows(c, db, timeout, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age(timeout)))], 10_000)
+                .await?;
+        for row in left {
+            if let Some(name @ Bv::String(_)) = row.first() {
+                internal_rows(c, db, CONNECT_TIMEOUT, &drop_graph, named(name), 1).await?;
+            }
+        }
+        let graph = Bv::String(format!("kalzit-communities-{}", uuid::Uuid::now_v7().simple()));
+        let mut projecting = named(&graph);
+        projecting.push(("ids".into(), ids));
+        let mut rows = internal_rows(c, db, timeout, &project, projecting, 1).await;
+        if rows.is_ok() {
+            rows = internal_rows(c, db, timeout, &stream, named(&graph), max_rows).await;
+        }
+        // `false`: a projection that failed left no graph, which is no error.
+        if !c.broken {
+            let dropped = internal_rows(c, db, CONNECT_TIMEOUT, &drop_graph, named(&graph), 1).await;
+            if rows.is_ok()
+                && let Err(e) = dropped
+            {
+                return Err(e);
+            }
+        }
+        rows
+    }
+    .await;
+    drop(permit);
+    finish_lease(lease, rows)
 }
 
 /// One run of a query on the leased connection, which goes back to the pool after a clean finish.
@@ -1205,6 +1468,29 @@ mod tests {
         Collector::new(fields.iter().map(|f| f.to_string()).collect(), true, limits, &r)
     }
 
+    /// The community queries are fixed server text, not user queries; still, the ones that only
+    /// read pass the user check, and the projection and drop are exactly what it refuses.
+    #[test]
+    fn community_queries_against_the_user_check() {
+        use crate::datasources::cypher::check;
+        assert!(check(memgraph_community_query()).is_ok());
+        for numeric in [true, false] {
+            let [project, stream, drop_graph] = neo4j_community_queries(numeric);
+            assert!(check(&stream).is_ok(), "{stream}");
+            assert_eq!(check(&project).unwrap_err().reason, "cypher.function_not_allowed");
+            assert_eq!(check(&drop_graph).unwrap_err().reason, "cypher.procedure_not_allowed");
+            assert!(project.contains(&format!("{}(n) IN $ids", community_key(numeric))));
+        }
+    }
+
+    #[test]
+    fn community_requests_are_parsed() {
+        let q: CommunitiesQuery = serde_json::from_value(json!({"communities": {"nodeIds": ["1", "2"]}})).unwrap();
+        assert_eq!(q.communities.node_ids, ["1", "2"]);
+        assert!(serde_json::from_value::<CommunitiesQuery>(json!({"communities": {"nodeIds": [], "x": 1}})).is_err());
+        assert!(serde_json::from_value::<CommunitiesQuery>(json!({"communities": {}, "cypher": "x"})).is_err());
+    }
+
     #[test]
     fn parameters_bind_macros_and_variables() {
         let names = |n: &[&str]| Checked { params: n.iter().map(|s| s.to_string()).collect(), ..Default::default() };
@@ -1566,6 +1852,171 @@ mod tests {
         let detail = e.detail();
         assert_eq!(detail.reason, "source.connect_refused", "{detail:?}");
         assert_eq!(detail.params["address"], addr.to_string());
+    }
+
+    /// A Bolt 5.0 server for community requests: it records each query with its `graph`
+    /// parameter, answers one row of a graph name and a number, and takes `slow` before
+    /// answering the Louvain stream.
+    async fn recording_server(slow: Duration) -> (std::net::SocketAddr, Arc<Mutex<Vec<(String, Option<String>)>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = listener.accept().await else { return };
+                let log = log.clone();
+                tokio::spawn(async move {
+                    let mut hs = [0u8; 20];
+                    if s.read_exact(&mut hs).await.is_err() {
+                        return;
+                    }
+                    s.write_all(&[0, 0, 0, 5]).await.unwrap();
+                    loop {
+                        let mut message = Vec::new();
+                        loop {
+                            let Ok(n) = s.read_u16().await else { return };
+                            if n == 0 {
+                                break;
+                            }
+                            let mut buf = vec![0; n as usize];
+                            if s.read_exact(&mut buf).await.is_err() {
+                                return;
+                            }
+                            message.extend_from_slice(&buf);
+                        }
+                        let Ok(Bv::Struct(tag, fields)) = bolt::decode(&message) else { return };
+                        let success = |entries: Vec<(&str, Bv)>| {
+                            Bv::Struct(0x70, vec![Bv::Map(entries.into_iter().map(|(k, v)| (k.into(), v)).collect())])
+                        };
+                        if tag == 0x10 {
+                            let query = fields.first().and_then(Bv::as_str).unwrap_or_default().to_string();
+                            let graph = match fields.get(1) {
+                                Some(Bv::Map(params)) => params.iter().find_map(|(k, v)| match v {
+                                    Bv::String(g) if k == "graph" => Some(g.clone()),
+                                    // The sweep's age, recorded in the same place.
+                                    Bv::Int(a) if k == "age" => Some(format!("age={a}")),
+                                    _ => None,
+                                }),
+                                _ => None,
+                            };
+                            let is_stream = query.contains("gds.louvain.stream");
+                            log.lock().unwrap().push((query, graph));
+                            if is_stream {
+                                tokio::time::sleep(slow).await;
+                            }
+                        }
+                        let answers = match tag {
+                            0x01 => vec![success(vec![("server", Bv::String("Neo4j/5.26.0".into()))])],
+                            0x10 => vec![success(vec![(
+                                "fields",
+                                Bv::List(vec![Bv::String("id".into()), Bv::String("community".into())]),
+                            )])],
+                            0x3F => vec![
+                                Bv::Struct(0x71, vec![Bv::List(vec![Bv::String("4:x:1".into()), Bv::Int(3)])]),
+                                success(vec![("has_more", Bv::Bool(false))]),
+                            ],
+                            _ => vec![success(Vec::new())],
+                        };
+                        for answer in answers {
+                            let mut bytes = Vec::new();
+                            bolt::encode(&answer, &mut bytes);
+                            if s.write_all(&(bytes.len() as u16).to_be_bytes()).await.is_err()
+                                || s.write_all(&bytes).await.is_err()
+                                || s.write_all(&[0, 0]).await.is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        (addr, seen)
+    }
+
+    fn community_request(ids: &[&str]) -> SourceQuery {
+        SourceQuery { query: json!({ "communities": { "nodeIds": ids } }), variables: BTreeMap::new(), ..req(100) }
+    }
+
+    /// The graph a request projected is the one it drops.
+    fn dropped_after_stream(seen: &[(String, Option<String>)]) -> bool {
+        let Some(at) = seen.iter().position(|(q, _)| q.contains("gds.louvain.stream")) else { return false };
+        let graph = &seen[at].1;
+        graph.is_some() && seen[at + 1..].iter().any(|(q, g)| q.contains("gds.graph.drop") && g == graph)
+    }
+
+    #[tokio::test]
+    async fn neo4j_communities_project_stream_and_drop() {
+        let (addr, seen) = recording_server(Duration::ZERO).await;
+        let conn = graph_connection(addr).await;
+        let result = GraphDb(Flavor::Neo4j).query(&conn, community_request(&["4:x:1", "4:x:2"])).await.unwrap();
+        let QueryResult::Frame { frame } = result else { panic!("a frame") };
+        assert_eq!(frame.fields()[0].values, [json!("4:x:1")]);
+        assert_eq!(frame.fields()[1].values, [json!(3)]);
+        let seen = seen.lock().unwrap().clone();
+        // The sweep comes first and drops what it lists ("4:x:1" here), then project, stream, drop.
+        assert!(seen[0].0.contains("gds.graph.list"), "{seen:?}");
+        // Only graphs older than the time limit (5 s here) plus ten minutes, by the database's
+        // clock, so another Kalzit server's running request keeps its graph.
+        assert!(seen[0].0.contains("creationTime < datetime() - duration({seconds: $age})"), "{seen:?}");
+        assert_eq!(seen[0].1.as_deref(), Some("age=605"), "{seen:?}");
+        assert!(seen[1].0.contains("gds.graph.drop") && seen[1].1.as_deref() == Some("4:x:1"), "{seen:?}");
+        assert!(
+            seen[2].0.contains("gds.graph.project") && seen[2].1.as_deref().unwrap().starts_with("kalzit-communities-")
+        );
+        assert!(dropped_after_stream(&seen), "{seen:?}");
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_community_request_still_drops_its_graph() {
+        let (addr, seen) = recording_server(Duration::from_millis(400)).await;
+        let conn = graph_connection(addr).await;
+        let plugin = GraphDb(Flavor::Neo4j);
+        // Given up while the stream runs, as a closed tab or a request timeout does.
+        let cut = tokio::time::timeout(Duration::from_millis(150), plugin.query(&conn, community_request(&["4:x:1"])));
+        assert!(cut.await.is_err(), "the request was still running");
+        assert!(!dropped_after_stream(&seen.lock().unwrap()));
+        for _ in 0..50 {
+            if dropped_after_stream(&seen.lock().unwrap()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(dropped_after_stream(&seen.lock().unwrap()), "{:?}", seen.lock().unwrap());
+        // The gate is free again: the next request runs.
+        assert!(plugin.query(&conn, community_request(&["4:x:1"])).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn community_requests_of_one_source_run_one_at_a_time() {
+        let (addr, seen) = recording_server(Duration::from_millis(200)).await;
+        let conn = graph_connection(addr).await;
+        let plugin = GraphDb(Flavor::Neo4j);
+        let (a, b) = tokio::join!(
+            plugin.query(&conn, community_request(&["4:x:1"])),
+            plugin.query(&conn, community_request(&["4:x:2"]))
+        );
+        assert!(a.is_ok() && b.is_ok());
+        // Each request's queries follow each other: list, drop, project, stream, drop.
+        let kinds: Vec<&str> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(q, _)| {
+                if q.contains("gds.graph.list") {
+                    "list"
+                } else if q.contains("gds.graph.project") {
+                    "project"
+                } else if q.contains("gds.louvain") {
+                    "stream"
+                } else {
+                    "drop"
+                }
+            })
+            .collect();
+        assert_eq!(kinds, ["list", "drop", "project", "stream", "drop", "list", "drop", "project", "stream", "drop"]);
     }
 
     #[test]
