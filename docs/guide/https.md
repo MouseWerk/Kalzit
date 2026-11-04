@@ -49,7 +49,12 @@ allow lists and the audit log rely on.
 - **Several proxies.** Kalzit reads the list from the right: each entry counts while the proxy
   that wrote it is trusted. The client is the first address that is not in
   `security.trusted_proxies`; entries a client put in front are never read. Scheme and host come
-  from the entry the outermost trusted proxy wrote. List every proxy of yours in the chain.
+  from the hop that received the client's request: in `Forwarded`, from the element of the first
+  untrusted address. With `X-Forwarded-Proto` and `X-Forwarded-Host`, a single value counts; when
+  your proxies append one value per address, as with `X-Forwarded-For`, the value next to the
+  client's address counts; otherwise the rightmost value, the one your nearest proxy added. A
+  client's own value in front is never used, so a proxy that appends cannot be tricked into
+  another host or into HTTPS. List every proxy of yours in the chain.
 - **`X-Forwarded-Proto`.** The proxy **must set this header on every request and overwrite**
   whatever the client sent, with the scheme the client used (nginx:
   `proxy_set_header X-Forwarded-Proto $scheme;`), not append to it or pass it through. Kalzit

@@ -169,14 +169,7 @@ fn resolve_x_forwarded(
     // read in order. Walk from the right: each trusted hop vouches for the entry to its left. The
     // first untrusted address is the client. An entry that is not an address ends the walk at the
     // last hop we could vouch for, so client-supplied garbage cannot shift the result.
-    let forwarded: Vec<&str> = headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
+    let forwarded = header_list(headers, "x-forwarded-for");
     let mut client_ip = peer;
     let mut client_entry = None;
     for (index, entry) in forwarded.iter().enumerate().rev() {
@@ -187,30 +180,38 @@ fn resolve_x_forwarded(
             break;
         }
     }
-    // The scheme of the hop that received the client's request. A proxy that overwrites the
-    // header leaves one entry, which counts. Proxies that append to both headers leave one scheme
-    // per address, so the scheme next to the client's address counts, as in `Forwarded`. Otherwise
-    // which entries the client sent is unknown, and only the trusted peer's own, the rightmost,
-    // counts: a client cannot claim HTTPS by sending its own header.
-    let protos: Vec<&str> = headers
-        .get_all("x-forwarded-proto")
+    // Scheme and host of the hop that received the client's request, by the same rule for both.
+    let pick = |name: &str| hop_value(&header_list(headers, name), forwarded.len(), client_entry).map(str::to_string);
+    let https = pick("x-forwarded-proto").map_or(tls, |p| p.eq_ignore_ascii_case("https"));
+    let host = pick("x-forwarded-host").or(host);
+    RequestInfo { client_ip, https, host }
+}
+
+/// All entries of a comma-separated header over all its lines, in order.
+fn header_list<'a>(headers: &'a HeaderMap, name: &str) -> Vec<&'a str> {
+    headers
+        .get_all(name)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(','))
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .collect();
-    let proto = match (protos.len(), client_entry) {
+        .collect()
+}
+
+/// The `X-Forwarded-Proto` or `X-Forwarded-Host` entry that belongs to the client's hop. A proxy
+/// that overwrites the header leaves one entry, which counts. Proxies that append to it and to
+/// `X-Forwarded-For` leave one entry per address, so the entry next to the client's address
+/// counts, as in `Forwarded`. Otherwise which entries the client sent is unknown, and only the
+/// trusted peer's own, the rightmost, counts: a client cannot claim HTTPS or another host by
+/// sending its own header, because the proxy appends after it.
+fn hop_value<'a>(entries: &[&'a str], addresses: usize, client_entry: Option<usize>) -> Option<&'a str> {
+    match (entries.len(), client_entry) {
         (0, _) => None,
-        (1, _) => protos.first(),
-        (n, Some(index)) if n == forwarded.len() => protos.get(index),
-        _ => protos.last(),
-    };
-    let https = proto.map_or(tls, |p| p.eq_ignore_ascii_case("https"));
-    let host = single_header(headers, "x-forwarded-host")
-        .and_then(|h| h.split(',').next().map(|h| h.trim().to_string()))
-        .or(host);
-    RequestInfo { client_ip, https, host }
+        (1, _) => entries.first().copied(),
+        (n, Some(index)) if n == addresses => entries.get(index).copied(),
+        _ => entries.last().copied(),
+    }
 }
 
 /// `Forwarded` (RFC 7239) from a trusted peer. Each proxy appends one element describing the
@@ -793,6 +794,82 @@ mod tests {
         h.append("x-forwarded-proto", HeaderValue::from_static("https"));
         h.append("x-forwarded-proto", HeaderValue::from_static("http"));
         assert!(!x_forwarded(ip("10.0.0.1"), true, &h, &trusted()).https);
+    }
+
+    /// A proxy that appends to `X-Forwarded-Host` instead of overwriting it leaves the client's own
+    /// value on the left; the host of the client's hop counts, as for the scheme.
+    #[test]
+    fn the_forwarded_host_of_the_clients_hop_counts() {
+        let host = |pairs: &[(&'static str, &'static str)]| {
+            let mut all = vec![("host", "10.0.0.1:8080")];
+            all.extend_from_slice(pairs);
+            x_forwarded(ip("10.0.0.1"), false, &headers(&all), &trusted()).host
+        };
+        // One value, written or overwritten by the proxy.
+        assert_eq!(
+            host(&[("x-forwarded-for", "203.0.113.5"), ("x-forwarded-host", "kalzit.example")]).as_deref(),
+            Some("kalzit.example")
+        );
+        // Appended after a forged one: the proxy's, the rightmost, counts.
+        assert_eq!(
+            host(&[("x-forwarded-for", "203.0.113.5"), ("x-forwarded-host", "evil.example, kalzit.example")])
+                .as_deref(),
+            Some("kalzit.example")
+        );
+        let mut h = headers(&[("x-forwarded-for", "203.0.113.5")]);
+        h.append("x-forwarded-host", HeaderValue::from_static("evil.example"));
+        h.append("x-forwarded-host", HeaderValue::from_static("kalzit.example"));
+        assert_eq!(x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).host.as_deref(), Some("kalzit.example"));
+        // One host per address: the one next to the client's address, not the forged leftmost.
+        let info = x_forwarded(
+            ip("10.0.0.1"),
+            false,
+            &headers(&[
+                ("x-forwarded-for", "6.6.6.6, 203.0.113.5, 10.0.0.2"),
+                ("x-forwarded-host", "evil.example, kalzit.example, internal.lan"),
+                ("x-forwarded-proto", "http, https, http"),
+            ]),
+            &trusted(),
+        );
+        assert_eq!(
+            (info.client_ip, info.https, info.host.as_deref()),
+            (ip("203.0.113.5"), true, Some("kalzit.example"))
+        );
+        // A client posing as a trusted hop still ends at its own address, appended by the proxy.
+        assert_eq!(
+            host(&[("x-forwarded-for", "10.0.0.9, 203.0.113.5"), ("x-forwarded-host", "evil.example, kalzit.example")])
+                .as_deref(),
+            Some("kalzit.example")
+        );
+        // Without the header the Host header counts.
+        assert_eq!(host(&[("x-forwarded-for", "203.0.113.5")]).as_deref(), Some("10.0.0.1:8080"));
+    }
+
+    /// From a peer that is not a trusted proxy, neither forwarding header counts.
+    #[test]
+    fn an_untrusted_peer_cannot_choose_the_host() {
+        let h = headers(&[
+            ("host", "kalzit.example"),
+            ("x-forwarded-host", "evil.example"),
+            ("x-forwarded-proto", "https"),
+            ("forwarded", "for=1.2.3.4;proto=https;host=evil.example"),
+        ]);
+        for mode in [ForwardedHeaders::XForwarded, ForwardedHeaders::Forwarded] {
+            let info = resolve(ip("203.0.113.50"), false, &h, &trusted(), mode).unwrap();
+            assert_eq!((info.https, info.host.as_deref()), (false, Some("kalzit.example")), "{mode:?}");
+        }
+    }
+
+    /// With both kinds present, each mode takes the host from its own header by the same rule.
+    #[test]
+    fn mixed_headers_give_the_nearest_trusted_host() {
+        let h = headers(&[
+            ("x-forwarded-for", "203.0.113.5"),
+            ("x-forwarded-host", "evil.example, kalzit.example"),
+            ("forwarded", "for=192.0.2.66;host=evil.example, for=203.0.113.5;host=kalzit.example"),
+        ]);
+        assert_eq!(x_forwarded(ip("10.0.0.1"), false, &h, &trusted()).host.as_deref(), Some("kalzit.example"));
+        assert_eq!(forwarded_mode("10.0.0.1", &h).unwrap().host.as_deref(), Some("kalzit.example"));
     }
 
     #[test]
