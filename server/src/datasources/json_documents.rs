@@ -21,6 +21,7 @@ pub struct DocumentsBuilder {
     cut_by: Option<&'static str>,
     notices: Vec<Notice>,
     executed_query: Option<String>,
+    next_cursor: Option<String>,
 }
 
 impl DocumentsBuilder {
@@ -34,6 +35,7 @@ impl DocumentsBuilder {
             cut_by: None,
             notices: Vec::new(),
             executed_query: None,
+            next_cursor: None,
         }
     }
 
@@ -92,6 +94,14 @@ impl DocumentsBuilder {
         self.executed_query = Some(query.into());
     }
 
+    /// Where the next page starts, in the source's own form, for a set that was cut. A cut that
+    /// kept no document offers none: the next page would start at the same place.
+    pub fn continue_at(&mut self, position: impl FnOnce(usize) -> Option<String>) {
+        if self.truncated && !self.docs.is_empty() {
+            self.next_cursor = position(self.docs.len());
+        }
+    }
+
     pub fn is_full(&self) -> bool {
         self.truncated
     }
@@ -117,7 +127,7 @@ impl DocumentsBuilder {
         DocumentSet {
             documents: self.docs,
             schema,
-            next_cursor: None,
+            next_cursor: self.next_cursor,
             truncated,
             notices: self.notices,
             executed_query: self.executed_query,
