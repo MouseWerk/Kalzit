@@ -31,6 +31,7 @@ import {
 import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import "./dashboardTools.css";
+import { Select } from "../../components/Select";
 
 /** Folders a dashboard or library panel may go into: those the caller may write in. */
 export function FolderPicker({
@@ -55,21 +56,14 @@ export function FolderPicker({
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
-      <select
-        id={id}
-        className="select"
-        value={value ?? ""}
-        onChange={(event) =>
-          onChange(event.currentTarget.value === "" ? null : event.currentTarget.value)
-        }
-      >
+      <Select id={id} value={value ?? ""} onChange={(next) => onChange(next === "" ? null : next)}>
         {topLevel ? <option value="">{t("dashboards.folders.none")}</option> : null}
         {writable.map((f) => (
           <option key={f.id} value={f.id}>
             {f.name}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }
@@ -135,12 +129,11 @@ export function RowDialog({
           <p className="field__hint" id={`${formId}-hint`}>
             {t("dashboardTools.repeat.rowHint")}
           </p>
-          <select
+          <Select
             id={`${formId}-repeat`}
-            className="select"
             aria-describedby={`${formId}-hint`}
             value={repeat}
-            onChange={(event) => setRepeat(event.currentTarget.value)}
+            onChange={(next) => setRepeat(next)}
           >
             <option value="">{t("dashboardTools.repeat.none")}</option>
             {multi.map((v) => (
@@ -148,7 +141,7 @@ export function RowDialog({
                 {v.label ?? v.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </form>
     </Dialog>

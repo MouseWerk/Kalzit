@@ -14,6 +14,7 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { buildIndex, type SearchEntry, search } from "./search";
 import { SECTIONS, type SectionDef, type SettingsAccess, type SettingsGroup } from "./sections";
 import "./settings.css";
+import { Select } from "../../components/Select";
 
 const GROUPS: { group: SettingsGroup; label: MessageKey }[] = [
   { group: "server", label: "settings.group.server" },
@@ -97,13 +98,12 @@ export function SettingsLayout() {
         <SettingsSearch access={access} orgName={org?.name} />
         <label className="settings-nav__select field">
           <span className="field__label">{t("settings.sectionSelect")}</span>
-          <select
-            className="select"
+          <Select
             value={current ?? ""}
-            onChange={(event) =>
+            onChange={(next) =>
               void navigate({
                 to: "/settings/$section",
-                params: { section: event.currentTarget.value },
+                params: { section: next },
               })
             }
           >
@@ -124,7 +124,7 @@ export function SettingsLayout() {
                 {t(section.label)}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <ul className="settings-nav__list" ref={listRef} onKeyDown={onListKey}>
           {GROUPS.map(({ group, label }) => {

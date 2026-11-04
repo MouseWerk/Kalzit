@@ -25,6 +25,7 @@ import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import "./dashboards.css";
 import "./dashboardTools.css";
+import { Select } from "../../components/Select";
 
 /** Interval choices in seconds; a wall screen rarely needs less than half a minute. */
 const INTERVALS = [10, 30, 60, 120, 300, 600, 1800, 3600];
@@ -290,18 +291,17 @@ function PlaylistDialog({
           <label className="field__label" htmlFor={`${formId}-interval`}>
             {t("playlists.interval")}
           </label>
-          <select
+          <Select
             id={`${formId}-interval`}
-            className="select"
             value={interval}
-            onChange={(event) => setIntervalSeconds(Number(event.currentTarget.value))}
+            onChange={(next) => setIntervalSeconds(Number(next))}
           >
             {INTERVALS.map((s) => (
               <option key={s} value={s}>
                 {intervalLabel(t, s)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <section className="settings__group" aria-label={t("playlists.items")}>
           <p className="section-title">{t("playlists.items")}</p>

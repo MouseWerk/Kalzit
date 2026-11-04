@@ -27,6 +27,7 @@ import { patternStatus, usePatternEngine } from "./pattern";
 import { toneLabel } from "./toneLabel";
 import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
+import { Select } from "../../components/Select";
 
 /*
  * What the editor adds when asked for a new entry. The contract test sends these, with every
@@ -127,12 +128,11 @@ export function UnitPicker({
         <label className="field__label" htmlFor={id}>
           {t("dashboards.panels.unit")}
         </label>
-        <select
+        <Select
           id={id}
-          className="select"
           value={custom ? "custom" : (value ?? "")}
-          onChange={(event) => {
-            const next = event.currentTarget.value;
+          onChange={(choice) => {
+            const next = choice;
             onChange(next === "" ? undefined : next === "custom" ? CUSTOM_PREFIX : next);
           }}
         >
@@ -147,7 +147,7 @@ export function UnitPicker({
             </optgroup>
           ))}
           <option value="custom">{t("panels.unit.custom")}</option>
-        </select>
+        </Select>
       </div>
       {custom ? (
         <TextField

@@ -8,6 +8,7 @@ import { emptyQuery } from "../datasources/queryKinds";
 import { isAllowedUrl } from "./links";
 import type { AnnotationQueryModel, DashboardLinkModel } from "./model";
 import "./dashboardTools.css";
+import { Select } from "../../components/Select";
 
 /**
  * Parts of the dashboard settings that version 2 of the model added: tags, links in the header
@@ -65,14 +66,13 @@ export function LinksEditor({
               <label className="field__label" htmlFor={`${id}-${index}-type`}>
                 {t("dashboardTools.links.type")}
               </label>
-              <select
+              <Select
                 id={`${id}-${index}-type`}
-                className="select"
                 value={link.type}
-                onChange={(event) =>
+                onChange={(next) =>
                   update(
                     index,
-                    event.currentTarget.value === "url"
+                    next === "url"
                       ? { type: "url", title: link.title, url: "" }
                       : { type: "dashboards", title: link.title, tag: "" },
                   )
@@ -80,7 +80,7 @@ export function LinksEditor({
               >
                 <option value="url">{t("dashboardTools.links.type.url")}</option>
                 <option value="dashboards">{t("dashboardTools.links.type.dashboards")}</option>
-              </select>
+              </Select>
             </div>
             <TextField
               label={t("dashboardTools.links.linkTitle")}
@@ -181,14 +181,13 @@ export function AnnotationQueriesEditor({
               <label className="field__label" htmlFor={`${id}-${index}-ds`}>
                 {t("dashboards.editor.datasource")}
               </label>
-              <select
+              <Select
                 id={`${id}-${index}-ds`}
-                className="select"
                 value={query.datasourceId}
-                onChange={(event) => {
-                  const next = datasources.data?.find((d) => d.id === event.currentTarget.value);
+                onChange={(choice) => {
+                  const next = datasources.data?.find((d) => d.id === choice);
                   update(index, {
-                    datasourceId: event.currentTarget.value,
+                    datasourceId: choice,
                     query: emptyQuery(next?.kind ?? ""),
                   });
                 }}
@@ -199,7 +198,7 @@ export function AnnotationQueriesEditor({
                     {d.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             {source === undefined ? null : (
               <QueryEditor
@@ -214,12 +213,11 @@ export function AnnotationQueriesEditor({
               <label className="field__label" htmlFor={`${id}-${index}-color`}>
                 {t("annotations.queries.color")}
               </label>
-              <select
+              <Select
                 id={`${id}-${index}-color`}
-                className="select"
                 value={query.color ?? 0}
-                onChange={(event) => {
-                  const color = Number(event.currentTarget.value);
+                onChange={(next) => {
+                  const color = Number(next);
                   const { color: _old, ...rest } = query;
                   onChange(
                     queries.map((q, i) =>
@@ -234,7 +232,7 @@ export function AnnotationQueriesEditor({
                     {t("annotations.queries.colorN", { n })}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <label className="checkbox">
               <input

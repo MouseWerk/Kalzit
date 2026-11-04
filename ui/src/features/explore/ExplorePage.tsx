@@ -124,6 +124,7 @@ import { clearExploreHandoff, peekExploreHandoff } from "./handoff";
 import { HISTORY_KEY, type HistoryEntry } from "./history";
 import { LAST_DATASOURCE_KEY } from "./lastSource";
 import "./explore.css";
+import { Select } from "../../components/Select";
 
 // Explore always shows a query editor; its editor starts loading with the page.
 preloadCodeEditor();
@@ -706,7 +707,9 @@ function Explore({
     if (noCode) {
       setStartedNoCode(true);
       // The steps are where the result is shaped without code: the way to add one gets focus.
-      requestAnimationFrame(() => asideRef.current?.querySelector<HTMLElement>("select")?.focus());
+      requestAnimationFrame(() =>
+        asideRef.current?.querySelector<HTMLElement>("button.select")?.focus(),
+      );
     }
   }
   function openCheatSheet(topic?: string) {
@@ -1035,14 +1038,13 @@ function Explore({
         ) : null}
         <div className="preference">
           <label htmlFor={datasourceId}>{t("explore.datasource")}</label>
-          <select
+          <Select
             id={datasourceId}
-            className="select"
             value={datasource.id}
-            onChange={(event) => {
-              setChosen(event.currentTarget.value);
+            onChange={(next) => {
+              setChosen(next);
               setFilterError(null);
-              writePreference(LAST_DATASOURCE_KEY, event.currentTarget.value);
+              writePreference(LAST_DATASOURCE_KEY, next);
             }}
           >
             {list.map((d) => (
@@ -1050,7 +1052,7 @@ function Explore({
                 {d.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="explore__run">
           {saved === null ? null : <SavedAgo analysis={saved.analysis} meId={meId} />}
@@ -1264,18 +1266,17 @@ function Explore({
                 <Tabs idPrefix={tabsId} tab={tab} onTab={setTab} />
                 <div className="preference">
                   <label htmlFor={`${datasourceId}-panel`}>{t("explore.visualization")}</label>
-                  <select
+                  <Select
                     id={`${datasourceId}-panel`}
-                    className="select"
                     value={type}
-                    onChange={(event) => setPanelType(event.currentTarget.value)}
+                    onChange={(next) => setPanelType(next)}
                   >
                     {choices.map(({ panel: choice }) => (
                       <option key={choice.type} value={choice.type}>
                         {t(choice.name)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 {summary.button}
                 {liveText === null ? null : (

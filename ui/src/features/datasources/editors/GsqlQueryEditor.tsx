@@ -8,6 +8,7 @@ import { CodeEditor } from "./CodeEditor";
 import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
+import { Select } from "../../../components/Select";
 
 /**
  * Where the graph's name goes when the source's settings cannot be read (members who may only
@@ -108,11 +109,10 @@ export function GsqlQueryEditor({
           {queries.length === 0 ? (
             <p className="field__hint">{t("datasources.editor.gsql.noQueries")}</p>
           ) : (
-            <select
+            <Select
               id={pickId}
-              className="select"
               value={value.installed}
-              onChange={(event) => withParams({ installed: event.currentTarget.value })}
+              onChange={(next) => withParams({ installed: next })}
             >
               {queries.includes(value.installed) ? null : (
                 <option value={value.installed}>{value.installed}</option>
@@ -122,7 +122,7 @@ export function GsqlQueryEditor({
                   {name}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
           {declared === undefined ? null : declared.length === 0 ? (
             <p className="field__hint">{t("datasources.editor.gsql.noParams")}</p>

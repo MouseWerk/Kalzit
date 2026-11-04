@@ -1,5 +1,6 @@
 import { Api, type Member, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { expectSelectValue, selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { addPanel, fillQuery, startEditing } from "./support/ui";
 
@@ -16,7 +17,7 @@ test("an Explore query is saved, found in the list, opened again and linked into
 
     // Explore: run a query and save it as an analysis.
     await page.goto("/explore");
-    await page.getByLabel(t("explore.datasource")).selectOption({ label: world.sourceName });
+    await selectOption(page.getByLabel(t("explore.datasource")), { label: world.sourceName });
     await fillQuery(page, SQL.series);
     await page.getByRole("button", { name: t("explore.run") }).click();
     await expect(
@@ -49,9 +50,7 @@ test("an Explore query is saved, found in the list, opened again and linked into
 
     // The list sorts by last opened, under the breadcrumb back to Explore.
     await page.goto(`/explore/saved?sort=opened&q=${encodeURIComponent(title)}`);
-    await expect(page.getByRole("combobox", { name: t("analyses.list.sort") })).toHaveValue(
-      "opened",
-    );
+    await expectSelectValue(page.getByLabel(t("analyses.list.sort"), { exact: true }), "opened");
     await expect(
       page.getByRole("navigation", { name: t("shell.breadcrumbs") }).getByRole("link", {
         name: t("explore.nav"),

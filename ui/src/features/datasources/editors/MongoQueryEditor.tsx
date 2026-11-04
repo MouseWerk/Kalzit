@@ -25,6 +25,7 @@ import type { QueryEditorProps } from "./QueryEditor";
 import "../../../documents/documents.css";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
+import { Select } from "../../../components/Select";
 
 /** Documents a stage preview asks for: enough to see the shape, cheap to run. */
 export const PREVIEW_LIMIT = 20;
@@ -459,18 +460,18 @@ function PipelineEditor({
             <label className="visually-hidden" htmlFor={`${addId}-stage`}>
               {t("documents.pipeline.addWhich")}
             </label>
-            <select
+            <Select
               id={`${addId}-stage`}
-              className="select input--mono"
+              className="input--mono"
               value={toAdd}
-              onChange={(event) => setToAdd(event.currentTarget.value)}
+              onChange={(next) => setToAdd(next)}
             >
               {STAGES.map((name) => (
                 <option key={name} value={name}>
                   {name}
                 </option>
               ))}
-            </select>
+            </Select>
             <button
               type="button"
               id={addId}

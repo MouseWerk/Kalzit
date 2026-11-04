@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MAIL_AT } from "../../test/fakeMail";
 import type { FakeServer } from "../../test/fakeServer";
+import { pickOption } from "../../test/select";
 import type { Invitation } from "./invitationsApi";
 import { ALL_PERMISSIONS, openAdmin, sent } from "./test/openAdmin";
 
@@ -43,8 +44,8 @@ describe("invitations", () => {
     expect(sent(server, "POST")).not.toContain("/api/orgs/o1/invitations");
 
     await user.type(within(dialog).getByLabelText("Email addresses"), ".example");
-    await user.selectOptions(within(dialog).getByLabelText("Role"), "editor");
-    await user.selectOptions(within(dialog).getByLabelText("Team"), "t1");
+    await pickOption(user, within(dialog).getByLabelText("Role"), "editor");
+    await pickOption(user, within(dialog).getByLabelText("Team"), "t1");
     await user.click(within(dialog).getByRole("button", { name: "Send 2 invitations" }));
     expect(await screen.findByText("Invitations sent: 2.")).toBeTruthy();
     expect(

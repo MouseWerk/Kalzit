@@ -615,4 +615,53 @@
     padding: 0;
     border: 0;
   }
+
+  /*
+   * A very wide table renders only the columns in view: every column has a known width, two empty
+   * cells per row hold the room of the columns out of view, and the first column stays in place.
+   */
+  .vt__table--columns {
+    width: var(--vt-table-width);
+    table-layout: fixed;
+  }
+
+  .vt__hspacer {
+    padding: 0;
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  /*
+   * The first column is opaque, so the columns scrolling under it stay hidden; the row's tint
+   * (hover) and a cell's tone are drawn on top of that layer instead of being covered by it.
+   */
+  .vt__table--columns tr > :first-child {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: var(--z-sticky-column);
+    background-color: var(--bg-surface);
+    background-image: linear-gradient(var(--vt-row-tint), var(--vt-row-tint));
+  }
+
+  .vt__table--columns tr {
+    --vt-row-tint: transparent;
+  }
+
+  .vt__table--columns .vt__row--pick:hover {
+    --vt-row-tint: var(--bg-hover);
+  }
+
+  .vt__table--columns tr > .vt__cell--fill:first-child {
+    background-color: var(--bg-surface);
+    background-image: linear-gradient(var(--tone-bg), var(--tone-bg));
+  }
+
+  /* The corner: above the sticky headings and the sticky column. */
+  .vt__table--columns tr > .vt__head.vt__head:first-child {
+    z-index: var(--z-sticky-corner);
+  }
+
+  .vt__table--columns .vt__spacer > td:first-child {
+    position: static;
+    background: transparent;
+  }
 }

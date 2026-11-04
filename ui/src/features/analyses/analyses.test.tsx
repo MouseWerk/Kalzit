@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { emptyModel, type PanelModel } from "../dashboards/model";
 import { addDashboard, addFolder, latest } from "../dashboards/test/fakeDashboards";
 import { PG_ID } from "../datasources/test/fakeDatasources";
@@ -421,12 +422,12 @@ describe("the list of saved analyses", () => {
     expect(owner("Payments")).toBe("STSales Team, owner team");
     expect(owner("Customers")).toMatch(/You$/);
     const filter = screen.getByRole("combobox", { name: "Owner" });
-    await user.selectOptions(filter, "Team Sales Team");
+    await pickOption(user, filter, "Team Sales Team");
     await waitFor(() => expect(location().search).toEqual({ ownerTeam: "t1" }));
     const rows = () => within(screen.getByRole("table"));
     await waitFor(() => expect(rows().queryByRole("link", { name: "Customers" })).toBeNull());
     // "Me": what you created and no team owns.
-    await user.selectOptions(filter, "Me");
+    await pickOption(user, filter, "Me");
     await waitFor(() => expect(location().search).toEqual({ mine: true }));
     await waitFor(() => expect(rows().queryByRole("link", { name: "Payments" })).toBeNull());
     expect(rows().getByRole("link", { name: "Customers" })).toBeTruthy();
@@ -447,7 +448,7 @@ describe("the list of saved analyses", () => {
     second.openedAt = Date.now() - 1000;
     const { user, location, view } = renderApp("/explore/saved");
     await screen.findByRole("table");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Sort" }), "Last opened");
+    await pickOption(user, screen.getByRole("combobox", { name: "Sort" }), "Last opened");
     await waitFor(() => expect(location().search).toEqual({ sort: "opened" }));
     const names = () =>
       within(screen.getByRole("table"))

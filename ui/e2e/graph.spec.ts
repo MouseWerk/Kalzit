@@ -5,6 +5,7 @@ import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
 import { findOverflow } from "./support/overflow";
 import { BINARY as PLUGIN_BINARY, publisherKey, testPluginPackage } from "./support/plugin";
+import { expectSelectValue, selectList, selectOption } from "./support/select";
 import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
@@ -81,9 +82,11 @@ function nodeTable(scope: Locator, title: string, count: number): Locator {
 /** Runs a Cypher query on a source in Explore and waits for the result. */
 async function explore(page: Page, source: string, cypher: string): Promise<Locator> {
   await page.goto("/explore", { timeout: STEP_MS });
-  await page
-    .getByLabel(t("explore.datasource"))
-    .selectOption({ label: source }, { timeout: STEP_MS });
+  await selectOption(
+    page.getByLabel(t("explore.datasource")),
+    { label: source },
+    { timeout: STEP_MS },
+  );
   await fillQuery(page, cypher);
   await page.getByRole("button", { name: t("explore.run") }).click({ timeout: STEP_MS });
   return page.getByRole("region", { name: t("explore.result") });
@@ -172,10 +175,12 @@ test.describe("Neo4j", () => {
       },
     );
     const visualization = page.getByLabel(t("explore.visualization"), { exact: true });
-    await expect(visualization).toHaveValue("network");
+    await expectSelectValue(visualization, "network");
+    const offered = await selectList(visualization);
     for (const type of ["network", "hierarchy", "path"]) {
-      await expect(visualization.locator(`option[value="${type}"]`)).toHaveCount(1);
+      await expect(offered.locator(`[role="option"][data-value="${type}"]`)).toHaveCount(1);
     }
+    await page.keyboard.press("Escape");
     await showTables(result, t("explore.result"));
     await expect(nodeTable(result, t("explore.result"), GRAPH_FIXTURE.shop.nodes)).toBeVisible();
     await expect(result.getByRole("button", { name: "Ana", exact: true })).toBeVisible();
@@ -382,8 +387,11 @@ test.describe("Neo4j", () => {
     const addStep = steps.getByRole("button", { name: t("analysis.steps.add"), exact: true });
 
     // Graph steps are offered for a graph; table steps wait for a step that makes a table.
-    await kind.selectOption({ label: t("analysis.kind.countLabels") }, { timeout: STEP_MS });
-    await expect(kind.locator("option", { hasText: t("analysis.kind.group") })).toHaveCount(0);
+    await selectOption(kind, { label: t("analysis.kind.countLabels") }, { timeout: STEP_MS });
+    await expect(
+      (await selectList(kind)).getByRole("option", { name: t("analysis.kind.group") }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await addStep.click({ timeout: STEP_MS });
     const first = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
     await expect(
@@ -407,18 +415,21 @@ test.describe("Neo4j", () => {
         timeout: STEP_MS,
       });
     }
-    await expect(kind.locator("option", { hasText: t("analysis.kind.group") })).toHaveCount(1);
+    await expect(
+      (await selectList(kind)).getByRole("option", { name: t("analysis.kind.group") }),
+    ).toHaveCount(1);
+    await page.keyboard.press("Escape");
 
     // Orders that share a product, named by their order number.
     await steps
       .getByRole("button", { name: t("analysis.steps.removeNamed", { n: 1 }) })
       .click({ timeout: STEP_MS });
-    await kind.selectOption({ label: t("analysis.kind.sharedNeighbours") }, { timeout: STEP_MS });
+    await selectOption(kind, { label: t("analysis.kind.sharedNeighbours") }, { timeout: STEP_MS });
     await addStep.click({ timeout: STEP_MS });
     const shared = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
-    await shared.getByLabel(t("analysis.graph.pairsOf")).selectOption("Order");
-    await shared.getByLabel(t("analysis.graph.via")).selectOption("Product");
-    await shared.getByLabel(t("analysis.graph.nameBy")).selectOption("name");
+    await selectOption(shared.getByLabel(t("analysis.graph.pairsOf")), "Order");
+    await selectOption(shared.getByLabel(t("analysis.graph.via")), "Product");
+    await selectOption(shared.getByLabel(t("analysis.graph.nameBy")), "name");
     await expect(shared.getByText(t("analysis.chain.frame", { rows: 4, fields: 4 }))).toBeVisible({
       timeout: STEP_MS,
     });
@@ -894,7 +905,7 @@ test("Memgraph: a Cypher query in Explore draws a network", async ({ page }) => 
   await expect(result).toContainText(summary(GRAPH_FIXTURE.shop.nodes, GRAPH_FIXTURE.shop.edges), {
     timeout: STEP_MS,
   });
-  await expect(page.getByLabel(t("explore.visualization"), { exact: true })).toHaveValue("network");
+  await expectSelectValue(page.getByLabel(t("explore.visualization"), { exact: true }), "network");
   await showTables(result, t("explore.result"));
   await expect(nodeTable(result, t("explore.result"), GRAPH_FIXTURE.shop.nodes)).toBeVisible();
   expect(await seriousViolations(page)).toEqual([]);

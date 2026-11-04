@@ -13,6 +13,7 @@ import {
 } from "./projection";
 import "./documents.css";
 import "../features/dashboards/ui/shared.css";
+import { Select } from "../components/Select";
 
 const TYPE_CHOICES: readonly ("" | ProjectionType)[] = ["", ...PROJECTION_TYPES];
 
@@ -153,12 +154,11 @@ export function ProjectionEditor({
                     <label className="field__label" htmlFor={`${baseId}-${index}-type`}>
                       {t("documents.projection.type", { number })}
                     </label>
-                    <select
+                    <Select
                       id={`${baseId}-${index}-type`}
-                      className="select"
                       value={column.type ?? ""}
-                      onChange={(event) => {
-                        const type = event.currentTarget.value as "" | ProjectionType;
+                      onChange={(choice) => {
+                        const type = choice as "" | ProjectionType;
                         const next: ProjectionColumn = { ...column };
                         if (type === "") {
                           delete next.type;
@@ -173,7 +173,7 @@ export function ProjectionEditor({
                           {t(`documents.projection.type.${type === "" ? "auto" : type}`)}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                   <button
                     type="button"
