@@ -106,8 +106,9 @@ async fn copies_sqlite_into_postgres() {
     let text = summary.to_string();
     assert!(text.contains("every table has the same number of rows"), "{text}");
 
-    // The server opens the copy as it is: same schema, nothing to migrate.
-    let pg = kalzit::db::connect(&target.url, 2).await.unwrap();
+    // The copy as written, before a server opens it (a server fills empty sort keys at start).
+    sqlx::any::install_default_drivers();
+    let pg = sqlx::AnyPool::connect(&target.url).await.unwrap();
     let (name, created): (String, i64) =
         sqlx::query_as("SELECT name, created_at FROM orgs WHERE id = $1").bind(ORG).fetch_one(&pg).await.unwrap();
     assert_eq!((name.as_str(), created), ("Kälte \"GmbH\"", i64::MIN));
@@ -135,6 +136,12 @@ async fn copies_sqlite_into_postgres() {
             .unwrap();
     let plain = keyring(&KEY).decrypt("ds1", "password", &Blob { key_id, nonce, ciphertext }).unwrap();
     assert_eq!(plain.as_str(), "geheim");
+    pg.close().await;
+
+    // The server opens the copy as it is: same schema, nothing to migrate.
+    let pg = kalzit::db::connect(&target.url, 2).await.unwrap();
+    let (dashboards,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM dashboards").fetch_one(&pg).await.unwrap();
+    assert_eq!(dashboards, 2);
     pg.close().await;
 
     // A target that is not empty is refused.
