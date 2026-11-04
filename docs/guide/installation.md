@@ -528,12 +528,19 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
   `Start-Service Kalzit`, `Stop-Service Kalzit` and `Restart-Service Kalzit`. Stopping finishes
   open requests (up to 10 seconds) and closes the database cleanly.
 - The log is `<data folder>\logs\kalzit.log` (a new file every 10 MB, three older ones kept).
-  Its warnings and errors are also in the Windows event log (Event Viewer, Windows Logs,
-  Application, source `Kalzit`), where monitoring tools that watch the event log find them, as are
-  errors before that file can be written, such as a broken `kalzit.toml`. They are the log file's
-  text, which never holds passwords or keys; `log.level = "error"` leaves out the warnings. The MSI
-  package and `kalzit service install` register the source `Kalzit`; uninstalling removes it, the
-  entries already written stay.
+- Its errors are also in the Windows event log (Event Viewer, Windows Logs, Application, source
+  `Kalzit`), where monitoring tools that watch the event log find them, as are errors before that
+  file can be written, such as a broken `kalzit.toml`. Every local user can read the Application
+  log, and it is often forwarded to other systems, so an entry holds only where in Kalzit it
+  happened and the message, never details such as addresses, user ids or the reason for a
+  refusal; those stay in `kalzit.log`. At most 10 entries per minute come from the same place;
+  the next one after a pause says how many were left out. `log.event_log` in `kalzit.toml` (or
+  `KALZIT_LOG_EVENT_LOG`) chooses what goes there: `"errors"` (the default), `"warnings"`
+  (warnings too) or `"off"`.
+- The MSI package and `kalzit service install` register the event source `Kalzit`; uninstalling
+  removes it, the entries already written stay. The source uses the message file of the .NET
+  Framework 4, which every desktop and server Windows has, but not Nano Server: there Event Viewer
+  shows the entries with a note that the description cannot be found, followed by the text.
 - To change a setting, edit `%ProgramData%\Kalzit\kalzit.toml` as an administrator and restart
   the service. All settings are listed in the [README](../../README.md#configuration). Everyone on
   the computer may read the file, so put no secrets into it: give a PostgreSQL URL with a password

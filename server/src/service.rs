@@ -4,8 +4,8 @@
 //! - `kalzit service run` is what the service manager starts. It reports the service's state,
 //!   stops the server gracefully on Stop (and with the short grace on a system shutdown) and
 //!   writes the log to `<data dir>\logs\kalzit.log`; what goes wrong before that file is open
-//!   goes to the Windows event log (Application, source `Kalzit`), as do all warnings and
-//!   errors once it runs.
+//!   goes to the Windows event log (Application, source `Kalzit`), as do its errors once it
+//!   runs (`log.event_log`).
 //! - `kalzit service install` and `uninstall` set the service (and the event log source) up and
 //!   remove it, for installations without the MSI package. `kalzit service configure` and `cleanup` are the steps both share
 //!   with the MSI package (packaging/windows), which creates and removes the service itself.
@@ -283,6 +283,7 @@ mod windows_impl {
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::process::ExitCode;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
@@ -429,6 +430,7 @@ mod windows_impl {
         } else {
             ServiceExitCode::ServiceSpecific(FAILURE_EXIT)
         };
+        flush_event_log();
         report(ServiceState::Stopped, exit, 0, Duration::ZERO);
     }
 
@@ -437,8 +439,9 @@ mod windows_impl {
     /// The registry key of the event source `Kalzit` in the Application log. The MSI package
     /// writes the same value (packaging/windows/Kalzit.wxs, component `KalzitRegistration`).
     const EVENT_SOURCE_KEY: &str = r"SYSTEM\CurrentControlSet\Services\EventLog\Application\Kalzit";
-    /// The general message file of Windows (part of every Windows since 8): it shows the text
-    /// Kalzit reports as it is, so Kalzit needs no message DLL of its own.
+    /// The general message file of the .NET Framework 4 (part of every desktop and server Windows
+    /// since 8, not of Nano Server): it shows the text Kalzit reports as it is, so Kalzit needs no
+    /// message DLL of its own. Without it, Event Viewer adds a "description cannot be found" note.
     const EVENT_MESSAGE_FILE: &str = r"%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll";
     /// The longest text one event takes is 31,839 characters; longer messages are cut well below.
     const EVENT_TEXT_LIMIT: usize = 16 * 1024;
@@ -495,74 +498,168 @@ mod windows_impl {
         format!("{} [cut, the full text is in kalzit.log]", &message[..end]).into()
     }
 
-    /// A tracing layer that copies warnings and errors to the Windows event log, with the same
-    /// text the log file gets (the log never holds secrets, so neither does this copy). It sits
-    /// behind the configured log level, so `log.level = "error"` sends no warnings.
-    pub struct EventLogLayer {
-        sink: Box<EventSink>,
+    /// Which events go to the event log (`log.event_log`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum EventLogLevel {
+        Errors,
+        Warnings,
     }
 
-    /// Where the layer writes: the event log, or a list in the tests.
-    type EventSink = dyn Fn(EventKind, &str) + Send + Sync;
+    impl EventLogLevel {
+        /// The value of `log.event_log` (checked when the configuration loads); `None` for "off".
+        pub fn from_config(value: &str) -> Option<Self> {
+            match value {
+                "off" => None,
+                "warnings" => Some(Self::Warnings),
+                _ => Some(Self::Errors),
+            }
+        }
+    }
+
+    /// Entries per place in the code and minute; more are left out and counted.
+    const EVENTS_PER_MINUTE: u32 = 10;
+    /// Entries waiting for the writer thread; more are dropped, the log file has them.
+    const EVENT_QUEUE: usize = 256;
+
+    /// A tracing layer that copies errors (and with `log.event_log = "warnings"` warnings) to the
+    /// Windows event log. The Application log is readable by every local user and often
+    /// forwarded, so only the place in the code and the message go there, never the event's
+    /// fields (addresses, user ids, refusal reasons); the details stay in kalzit.log. It sits
+    /// behind the configured log level, at most `EVENTS_PER_MINUTE` entries per place and minute,
+    /// and a thread of its own writes them, so a request never waits for the event log.
+    pub struct EventLogLayer {
+        level: EventLogLevel,
+        limit: Mutex<RateLimit<tracing::callsite::Identifier>>,
+        queue: Option<std::sync::mpsc::SyncSender<(EventKind, String)>>,
+        writer: Option<std::thread::JoinHandle<()>>,
+    }
 
     impl EventLogLayer {
         /// The layer that writes to the event log.
-        pub fn new() -> Self {
-            Self::with_sink(report_event)
+        pub fn new(level: EventLogLevel) -> Self {
+            Self::with_sink(level, report_event)
         }
 
-        fn with_sink(sink: impl Fn(EventKind, &str) + Send + Sync + 'static) -> Self {
-            Self { sink: Box::new(sink) }
+        fn with_sink(level: EventLogLevel, sink: impl Fn(EventKind, &str) + Send + 'static) -> Self {
+            let (queue, entries) = std::sync::mpsc::sync_channel::<(EventKind, String)>(EVENT_QUEUE);
+            let writer = std::thread::Builder::new()
+                .name("kalzit-event-log".into())
+                .spawn(move || {
+                    for (kind, text) in entries {
+                        sink(kind, &text);
+                        EVENTS_PENDING.fetch_sub(1, Ordering::SeqCst);
+                    }
+                })
+                .ok();
+            Self { level, limit: Mutex::new(RateLimit::default()), queue: Some(queue), writer }
+        }
+
+        fn send(&self, kind: EventKind, text: String) {
+            if let Some(queue) = &self.queue {
+                EVENTS_PENDING.fetch_add(1, Ordering::SeqCst);
+                if queue.try_send((kind, text)).is_err() {
+                    EVENTS_PENDING.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
         }
     }
 
-    impl Default for EventLogLayer {
-        fn default() -> Self {
-            Self::new()
+    /// Entries queued for the event log and not yet written.
+    static EVENTS_PENDING: AtomicUsize = AtomicUsize::new(0);
+
+    /// Waits (up to two seconds) until the queued entries are in the event log, so the errors
+    /// that end the service are there before the process exits.
+    pub fn flush_event_log() {
+        let until = Instant::now() + Duration::from_secs(2);
+        while EVENTS_PENDING.load(Ordering::SeqCst) > 0 && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    impl Drop for EventLogLayer {
+        /// Writes what is still queued before the layer goes.
+        fn drop(&mut self) {
+            self.queue = None;
+            if let Some(writer) = self.writer.take() {
+                let _ = writer.join();
+            }
         }
     }
 
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for EventLogLayer {
         fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-            let level = *event.metadata().level();
-            let kind = if level == tracing::Level::ERROR {
-                EventKind::Error
-            } else if level == tracing::Level::WARN {
-                EventKind::Warning
-            } else {
+            let metadata = event.metadata();
+            let kind = match *metadata.level() {
+                tracing::Level::ERROR => EventKind::Error,
+                tracing::Level::WARN if self.level == EventLogLevel::Warnings => EventKind::Warning,
+                _ => return,
+            };
+            let Some(left_out) = self.limit.lock_or_recover().admit(metadata.callsite(), Instant::now()) else {
                 return;
             };
-            let mut fields = EventFields::default();
-            event.record(&mut fields);
-            let mut text = format!("{}: {}", event.metadata().target(), fields.message);
-            text.push_str(&fields.rest);
-            (self.sink)(kind, &text);
+            let target = metadata.target();
+            if left_out > 0 {
+                self.send(
+                    kind,
+                    format!("{target}: {left_out} more entries like the next one were left out (see kalzit.log)"),
+                );
+            }
+            let mut message = EventMessage::default();
+            event.record(&mut message);
+            self.send(kind, format!("{target}: {}", message.0));
         }
     }
 
-    /// The message of an event and its other fields as ` name=value`, as the log file shows them.
-    #[derive(Default)]
-    struct EventFields {
-        message: String,
-        rest: String,
+    /// At most `EVENTS_PER_MINUTE` entries per key and minute.
+    struct RateLimit<K> {
+        windows: std::collections::HashMap<K, RateWindow>,
     }
 
-    impl tracing::field::Visit for EventFields {
+    impl<K> Default for RateLimit<K> {
+        fn default() -> Self {
+            Self { windows: std::collections::HashMap::new() }
+        }
+    }
+
+    struct RateWindow {
+        start: Instant,
+        count: u32,
+        left_out: u64,
+    }
+
+    impl<K: std::hash::Hash + Eq> RateLimit<K> {
+        /// `None`: leave the entry out. `Some(n)`: write it; `n` entries of the key were left out
+        /// since the last one written. The keys are places in the code, so the map stays small.
+        fn admit(&mut self, key: K, now: Instant) -> Option<u64> {
+            let window = self.windows.entry(key).or_insert(RateWindow { start: now, count: 0, left_out: 0 });
+            if now.saturating_duration_since(window.start) >= Duration::from_secs(60) {
+                window.start = now;
+                window.count = 0;
+            }
+            if window.count >= EVENTS_PER_MINUTE {
+                window.left_out += 1;
+                return None;
+            }
+            window.count += 1;
+            Some(std::mem::take(&mut window.left_out))
+        }
+    }
+
+    /// The message of an event, without its other fields.
+    #[derive(Default)]
+    struct EventMessage(String);
+
+    impl tracing::field::Visit for EventMessage {
         fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
             if field.name() == "message" {
-                self.message.push_str(value);
-            } else {
-                use std::fmt::Write as _;
-                let _ = write!(self.rest, " {}={value:?}", field.name());
+                self.0.push_str(value);
             }
         }
 
         fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-            use std::fmt::Write as _;
             if field.name() == "message" {
-                let _ = write!(self.message, "{value:?}");
-            } else {
-                let _ = write!(self.rest, " {}={value:?}", field.name());
+                use std::fmt::Write as _;
+                let _ = write!(self.0, "{value:?}");
             }
         }
     }
@@ -785,8 +882,11 @@ mod windows_impl {
             }
             Err(e) => lines.push(format!("there is no service {SERVICE_NAME} ({e})")),
         }
-        if remove_event_source()? {
-            lines.push(format!("removed the event log source {SERVICE_NAME}"));
+        // The service is gone already, so a failure here does not stop the rest of the cleanup.
+        match remove_event_source() {
+            Ok(true) => lines.push(format!("removed the event log source {SERVICE_NAME}")),
+            Ok(false) => {}
+            Err(e) => lines.push(format!("kept the event log source {SERVICE_NAME}: {e:#}")),
         }
         lines.extend(cleanup(config, remove_data)?);
         Ok(lines.join("\n"))
@@ -1639,28 +1739,66 @@ mod windows_impl {
             assert_eq!(std::fs::read_to_string(path.with_file_name("kalzit.1.log")).unwrap(), "round 4\n");
         }
 
-        #[test]
-        fn only_warnings_and_errors_reach_the_event_log_with_their_fields() {
+        /// What the layer writes for the events `emit` logs; dropping the layer waits for its writer.
+        fn event_log_entries(level: EventLogLevel, emit: impl FnOnce()) -> Vec<(EventKind, String)> {
             use tracing_subscriber::layer::SubscriberExt;
             let seen = Arc::new(Mutex::new(Vec::new()));
             let sink = seen.clone();
-            let layer = EventLogLayer::with_sink(move |kind, text| sink.lock().unwrap().push((kind, text.to_string())));
-            let subscriber = tracing_subscriber::registry().with(layer);
-            tracing::subscriber::with_default(subscriber, || {
-                tracing::info!("started");
-                tracing::debug!("details");
-                tracing::warn!(source = "pg", "slow query");
-                tracing::error!(code = 3, "cannot open {}", "kalzit.db");
-            });
-            let seen = seen.lock().unwrap();
+            let layer =
+                EventLogLayer::with_sink(level, move |kind, text| sink.lock().unwrap().push((kind, text.to_string())));
+            tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), emit);
+            seen.lock().unwrap().clone()
+        }
+
+        fn emit_each_level() {
+            tracing::info!("started");
+            tracing::debug!("details");
+            tracing::warn!(client = "192.0.2.7", "slow query");
+            tracing::error!(user = 42, reason = "not allowed", "cannot open {}", "kalzit.db");
+        }
+
+        #[test]
+        fn only_errors_reach_the_event_log_by_default_and_never_their_fields() {
             let target = module_path!();
             assert_eq!(
-                *seen,
+                event_log_entries(EventLogLevel::Errors, emit_each_level),
+                [(EventKind::Error, format!("{target}: cannot open kalzit.db"))]
+            );
+            assert_eq!(
+                event_log_entries(EventLogLevel::Warnings, emit_each_level),
                 [
-                    (EventKind::Warning, format!("{target}: slow query source=\"pg\"")),
-                    (EventKind::Error, format!("{target}: cannot open kalzit.db code=3")),
+                    (EventKind::Warning, format!("{target}: slow query")),
+                    (EventKind::Error, format!("{target}: cannot open kalzit.db")),
                 ]
             );
+            assert_eq!(EventLogLevel::from_config("off"), None);
+            assert_eq!(EventLogLevel::from_config("errors"), Some(EventLogLevel::Errors));
+            assert_eq!(EventLogLevel::from_config("warnings"), Some(EventLogLevel::Warnings));
+        }
+
+        #[test]
+        fn a_flood_from_one_place_is_cut_per_minute() {
+            let entries = event_log_entries(EventLogLevel::Errors, || {
+                for i in 0..25 {
+                    tracing::error!("query {i} failed");
+                }
+                tracing::error!("another place");
+            });
+            assert_eq!(entries.len(), EVENTS_PER_MINUTE as usize + 1);
+            assert!(entries.last().unwrap().1.ends_with("another place"));
+
+            let mut limit = RateLimit::default();
+            let start = Instant::now();
+            for _ in 0..EVENTS_PER_MINUTE {
+                assert_eq!(limit.admit("site", start), Some(0));
+            }
+            for _ in 0..5 {
+                assert_eq!(limit.admit("site", start + Duration::from_secs(30)), None);
+            }
+            assert_eq!(limit.admit("other", start + Duration::from_secs(30)), Some(0));
+            // The next minute writes again and says how many were left out.
+            assert_eq!(limit.admit("site", start + Duration::from_secs(61)), Some(5));
+            assert_eq!(limit.admit("site", start + Duration::from_secs(62)), Some(0));
         }
 
         #[test]

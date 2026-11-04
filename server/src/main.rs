@@ -244,7 +244,7 @@ fn main() -> ExitCode {
 }
 
 /// Where `serve` logs: the console, or as the Windows service a file in the data directory, with
-/// warnings and errors (and what happens before that file is open) also in the Windows event log.
+/// errors (and what happens before that file is open) also in the Windows event log.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Logging {
     Console,
@@ -432,8 +432,8 @@ fn init_logging(cfg: &LogConfig) {
     }
 }
 
-/// Logging into `writer` (the service's log file), without terminal colors; warnings and errors
-/// also go to the Windows event log.
+/// Logging into `writer` (the service's log file), without terminal colors; errors (or with
+/// `log.event_log` warnings too, or nothing) also go to the Windows event log.
 #[cfg(windows)]
 fn init_logging_to<W>(cfg: &LogConfig, writer: W)
 where
@@ -443,7 +443,8 @@ where
     use tracing_subscriber::util::SubscriberInitExt;
     let filter = EnvFilter::try_new(&cfg.level).expect("log.level is checked in Config::validate");
     let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_writer(writer);
-    let event_log = kalzit::service::EventLogLayer::new();
+    let event_log =
+        kalzit::service::EventLogLevel::from_config(&cfg.event_log).map(kalzit::service::EventLogLayer::new);
     if cfg.format == "json" {
         builder.json().finish().with(event_log).init();
     } else {

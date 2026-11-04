@@ -14,5 +14,11 @@ Installers:
   - Architecture: x64
     InstallerUrl: "{{MSI_URL}}"
     InstallerSha256: "{{MSI_SHA256}}"
+    # As the MSI package names itself in Settings, Apps (packaging/windows/Kalzit.wxs, Package).
+    AppsAndFeaturesEntries:
+      - DisplayName: Kalzit
+        Publisher: MouseWerk
+        DisplayVersion: "{{VERSION}}"
+        UpgradeCode: "{1D4828C2-1200-4926-BC6E-4959850AE762}"
 ManifestType: installer
 ManifestVersion: 1.9.0
