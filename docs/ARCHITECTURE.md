@@ -2092,20 +2092,21 @@ through `settings::get`; new registry entries are requested from the orchestrato
   on a clock fixed to it; times the server records (sessions, member since, last saved) are
   moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
   UI reruns `npm run screenshots` and commits the changed images.**
-- CI (`.github/workflows/ci.yml`) runs on pull requests, on pushes to `main` and in the GitHub
-  merge queue (`merge_group`). Its first job, `changes`, compares a pull request's merge commit
+- CI (`.github/workflows/ci.yml`) runs on pull requests, on pushes to `main`, in the GitHub
+  merge queue (`merge_group`) and when started by hand (`workflow_dispatch`). Its first job, `changes`, compares a pull request's merge commit
   with its first parent (`main`) and sets flags through `.github/scripts/changes.sh` (tested by
   `changes.test.sh` in the same job). Renames count with both paths, so moving a file out of
   `server/` is a server change:
 
   | Flag | Set by |
   | --- | --- |
-  | `server` | `server/`, `release/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `clippy.toml`, `rustfmt.toml`, `.cargo/`, `ui/src/api/generated/`, `docs/api/` |
+  | `server` | `server/`, `release/`, `plugin-api/`, `plugin-sdk/`, `plugin-tool/`, `examples/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `clippy.toml`, `rustfmt.toml`, `.cargo/`, `ui/src/api/generated/`, `docs/api/` |
   | `ui` | `ui/` (including `ui/e2e/`), `server/src/analysis/`, `ui/src/api/generated/`, `docs/api/`, `docs/glossary.md` |
   | `e2e` | `server` or `ui` |
   | `audit` | `server`, `ui/package.json`, `ui/package-lock.json` |
   | `workflows` | `.github/`; turns every flag on (shown in the log only) |
   | `docs_only` | only `docs/`, Markdown files and `LICENSE` changed (shown in the log only) |
+  | `docker` | `e2e`, `Dockerfile`, `.dockerignore`, `deploy/` |
   | `installer` | `server` or `packaging/` |
   | `devkit` | `tools/devkit/` and the shared `.mcp.json` (the developer toolkit, job `devkit`) |
   | `devgen` | `tools/devgen/` and the shared `.mcp.json` (the developer generators, job `devgen`, which also runs for `server` and `ui`) |
@@ -2116,11 +2117,14 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
   runs the same cases, and the generated types for the server, whose test compares them. A
   path in no listed area turns every flag on, so a new top-level file runs the full check until
-  the script knows it. On pushes to `main` and in the merge queue every flag is on: the queue
-  tests each pull request fully on top of `main`.
+  the script knows it. On pushes to `main`, in the merge queue and in a manual run every flag is
+  on: the queue tests each pull request fully on top of `main`, so `main` stays gated by the full
+  matrix on Windows and Linux. A docs-only pull request runs `changes`, `roadmap` when it touches
+  the progress bars, and the matrix jobs with every step skipped.
 
-  `server`, `postgres`, `datasources` and `update-rights` (the privilege switch of the update command
-  line, run with sudo against a `kalzit` account) need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
+  `server`, `plugins`, `postgres`, `ldap`, `acme`, `datasources` and `update-rights` (the privilege
+  switch of the update command line, run with sudo against a `kalzit` account) need `server`,
+  `docker` and `packages` (x64 and arm64) need `docker`, `ui` needs `ui`, `e2e` needs `e2e`,
   `audit` needs `audit`, and `msi` (the Windows installer built and installed on the runner,
   `.github/scripts/msi-test.ps1`) needs `installer`. The required checks keep reporting when their area did not change:
   `postgres`, `datasources`, `update-rights` and `audit` are skipped as a whole (GitHub counts a skipped job as
