@@ -284,6 +284,7 @@
   "datasources.reason.request.query_invalid": "Die Listenanfrage enthält Parameter, die der Server nicht kennt: {detail}",
   "datasources.reason.request.limit": "Frag 1 bis {max} Einträge auf einmal ab.",
   "datasources.reason.request.trash": "Der Papierkorb-Filter muss wahr oder falsch sein.",
+  "datasources.reason.sign_in.address_locked": "Die Anmeldung für diese Adresse ist vorübergehend gesperrt.",
   "datasources.reason.request.cursor": "Diese Seite der Liste ist nicht mehr gültig. Lade die Liste neu.",
   "datasources.reason.request.name_length": "Gib einen Namen mit 1 bis {max} Zeichen ein.",
   "datasources.reason.request.name_control_characters": "Der Name darf keine Steuerzeichen wie Zeilenumbrüche enthalten.",

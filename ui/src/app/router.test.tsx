@@ -255,7 +255,7 @@ describe("login", () => {
     server.failNext("/api/auth/login", 429, "rate_limited");
     const { user } = renderApp("/login");
     await signIn(user);
-    expect(await screen.findByText("Too many failed sign-ins.")).toBeTruthy();
+    expect(await screen.findByText("Too many failed sign-ins from this device.")).toBeTruthy();
     expect(screen.queryByText(/server message/)).toBeNull();
   });
 

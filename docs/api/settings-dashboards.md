@@ -143,6 +143,8 @@ Server settings:
 | `appearance.week_start` | `"monday"` | `"monday"`, `"sunday"`, `"saturday"` |
 | `signin.welcome` | `""` | text up to 280 characters, line breaks allowed, no other control characters |
 | `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
+| `signin.organization` | `""` | text up to 80 characters, one line: the organization named above the sign-in form |
+| `signin.server_name` | `""` | text up to 80 characters, one line: the server name next to it, such as its address |
 | `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format` | as `kalzit.toml` | read-only (configuration), source `file`, `env` or `default` |
 
 The product name and the sign-in texts refuse invisible direction and format characters (bidi
@@ -412,8 +414,12 @@ database's clock.
 ### `GET /branding`
 
 Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
-null, signIn: {welcome, notice}, defaultTheme, accent, density, fontSize}` with the server's
-values. The sign-in page applies `defaultTheme` when the visitor chose no theme in this browser;
+null, signIn: {welcome, notice, organization, serverName, maxFailures, lockMinutes},
+defaultTheme, accent, density, fontSize}` with the server's values. `organization` and
+`serverName` (`signin.organization`, `signin.server_name`, empty unless an administrator sets
+them) make the line above the form; `maxFailures` and `lockMinutes` are
+`security.login_max_failures` and `security.login_window_secs` in minutes, for the texts about
+the lockout. The sign-in page applies `defaultTheme` when the visitor chose no theme in this browser;
 the language stays the browser's until sign-in.
 
 ### `GET /branding/logo`
