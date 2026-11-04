@@ -828,8 +828,8 @@
 
   .top-bar__tools {
     display: flex;
+    /* Shrinks only as far as the search's own minimum: New and Help always keep their room. */
     flex: 0 1 auto;
-    min-width: 0;
     align-items: center;
     gap: var(--space-1);
   }
