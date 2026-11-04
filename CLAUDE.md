@@ -84,8 +84,10 @@ where it is more specific.
   current states (graph node selection included); quiet neutral tint and text weight instead.
   Focus visible only on `:focus-visible`, neutral. No colored bars on the left anywhere.
 - Authorization is checked on the server for every request and resource.
-- Release notes: `docs/releases/v<version>.md` with "## Improved", "## Fixed" and
-  "## Checklist for Windows (manual)"; user-facing lines only.
+- Release notes: each PR adds a fragment `docs/releases/unreleased/<pr>-<topic>.md` with
+  "## Improved", "## Fixed" and "## Checklist for Windows (manual)" as needed; the release PR
+  assembles them into `docs/releases/v<version>.md` with those three sections; user-facing lines
+  only.
 
 ## Checks
 
