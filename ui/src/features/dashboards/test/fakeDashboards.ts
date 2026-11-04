@@ -896,10 +896,22 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         : linked === undefined
           ? panel.targets
           : ((linked.model.targets ?? []) as typeof panel.targets);
+    // As the server: with cursors, only the targets they name run, each continuing its set.
+    const cursors = query.cursors ?? {};
+    const continued = Object.keys(cursors).length > 0;
     for (const target of targets) {
+      const cursor = cursors[target.refId];
+      if (continued && cursor === undefined) {
+        continue;
+      }
       results[target.refId] = await answerQuery(
         areas.datasources,
-        { refId: target.refId, datasourceId: target.datasourceId, query: target.query },
+        {
+          refId: target.refId,
+          datasourceId: target.datasourceId,
+          query: target.query,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
         query.timeRange,
         query.variables,
       );
