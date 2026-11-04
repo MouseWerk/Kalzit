@@ -196,10 +196,9 @@ pub async fn login_with(
             Some(c) => Some((accounts, account_key.clone(), c)),
             None => {
                 let bucket = overflow_bucket(&state, &email);
-                let c = state
-                    .overflow_limiter
-                    .try_acquire(&bucket, &bucket, mono)
-                    .map_err(|_| address_locked(refuse(window)))?;
+                // A bucket is shared by many emails, so its refusal does not say this address is
+                // locked: it answers without a reason, like the other budgets.
+                let c = state.overflow_limiter.try_acquire(&bucket, &bucket, mono).map_err(|_| refuse(window))?;
                 Some((&state.overflow_limiter, bucket, c))
             }
         }

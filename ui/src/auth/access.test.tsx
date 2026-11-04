@@ -103,7 +103,7 @@ describe("sign-in page", () => {
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(
       screen.getByText(
-        "Check what you entered. After 10 failed attempts, sign-in for this address is locked for 15 minutes.",
+        "Check what you entered. After 10 failed attempts you have to wait up to 15 minutes.",
       ),
     ).toBeTruthy();
     expect((screen.getByLabelText("Email address") as HTMLInputElement).value).toBe(
@@ -161,7 +161,9 @@ describe("sign-in page", () => {
     server.rateLimitNext("/api/auth/login", 900, "sign_in.address_locked");
     const { user } = renderApp("/login");
     await signIn(user);
-    const alert = await screen.findByText(/^Sign-in for this address is locked until \d/);
+    const alert = await screen.findByText(
+      /^Sign-in for this address is locked, possible again at the latest by \d/,
+    );
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(
       screen.getByText(
@@ -170,6 +172,12 @@ describe("sign-in page", () => {
     ).toBeTruthy();
     const button = screen.getByRole("button", { name: "Sign in" });
     expect(button.getAttribute("aria-disabled")).toBe("true");
+    // Another address is not locked: typing one clears the lock at once.
+    await user.type(screen.getByLabelText("Email address"), "x");
+    expect(screen.queryByText(/^Sign-in for this address is locked/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in" }).getAttribute("aria-disabled")).toBe(
+      "false",
+    );
   });
 
   it("names the organization and the server above the form once an admin set them", async () => {

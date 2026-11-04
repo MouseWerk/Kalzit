@@ -566,7 +566,14 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
               required
               readOnly={busy}
               value={email}
-              onValueChange={edit("email", setEmail)}
+              onValueChange={(value) => {
+                // Another address is not under this one's lock: it may be tried at once.
+                if (addressLocked) {
+                  setUntil(null);
+                  signIn.reset();
+                }
+                edit("email", setEmail)(value);
+              }}
               error={fieldError("email")}
             />
             <PasswordField
