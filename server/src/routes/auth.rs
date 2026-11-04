@@ -72,6 +72,12 @@ fn rate_limited(wait: std::time::Duration) -> ApiError {
     ApiError::rate_limited("too many failed sign-ins, wait a few minutes", wait)
 }
 
+/// The budget of the typed email (account or not, alike) is used up, not that of this device:
+/// the sign-in page says the address is locked until the wait ends.
+fn address_locked(error: ApiError) -> ApiError {
+    error.because("auth.address_locked")
+}
+
 /// A failed sign-in while a directory could not be asked, whether or not a local account has the
 /// login (docs/api/sso.md, "LDAP and Active Directory").
 fn directory_unreachable_error() -> ApiError {
@@ -186,11 +192,14 @@ pub async fn login_with(
     let counted_in = if known_device {
         accounts.record(&account_key, &network, mono).map(|c| (accounts, account_key.clone(), c))
     } else {
-        match accounts.try_count(&account_key, &network, mono).map_err(|_| refuse(window))? {
+        match accounts.try_count(&account_key, &network, mono).map_err(|_| address_locked(refuse(window)))? {
             Some(c) => Some((accounts, account_key.clone(), c)),
             None => {
                 let bucket = overflow_bucket(&state, &email);
-                let c = state.overflow_limiter.try_acquire(&bucket, &bucket, mono).map_err(|_| refuse(window))?;
+                let c = state
+                    .overflow_limiter
+                    .try_acquire(&bucket, &bucket, mono)
+                    .map_err(|_| address_locked(refuse(window)))?;
                 Some((&state.overflow_limiter, bucket, c))
             }
         }
