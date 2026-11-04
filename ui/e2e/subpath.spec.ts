@@ -59,6 +59,10 @@ test.afterAll(async () => {
 });
 
 test("the app works below its sub-path and asks for nothing outside it", async ({ page }) => {
+  // The root points to the sub-path.
+  await page.goto(`${origin}/`);
+  await expect(page).toHaveURL(new RegExp(`^${origin}${BASE}/`));
+
   const outside: string[] = [];
   const inside = (url: string) => {
     const { origin: o, pathname } = new URL(url);
@@ -70,10 +74,6 @@ test("the app works below its sub-path and asks for nothing outside it", async (
   page.on("websocket", (ws) => {
     if (!inside(ws.url())) outside.push(ws.url());
   });
-
-  // The root points to the sub-path.
-  await page.goto(`${origin}/`);
-  await expect(page).toHaveURL(new RegExp(`^${origin}${BASE}/`));
 
   await page.goto(`${origin}${BASE}/login`);
   await page.getByLabel(t("access.login.email", {}, "en")).fill(OWNER.email);
