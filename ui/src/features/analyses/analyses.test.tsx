@@ -355,7 +355,11 @@ describe("the list of saved analyses", () => {
       createdBy: "u7",
       createdByName: "Grace Hopper",
     });
-    const gone = addAnalysis(server.areas.analyses, { title: "Old", datasourceId: PG_ID, query: {} });
+    const gone = addAnalysis(server.areas.analyses, {
+      title: "Old",
+      datasourceId: PG_ID,
+      query: {},
+    });
     gone.deletedAt = Date.now();
     renderApp("/explore/saved");
     const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
