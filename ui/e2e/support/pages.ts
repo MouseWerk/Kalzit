@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { SQL } from "./api";
 import { type Language, t } from "./i18n";
 import { aiInUse, installedPlugin, loadedCatalog, MOCK_PLUGIN } from "./mocks";
+import { selectOption } from "./select";
 import { expect, type World } from "./test";
 import { fillQuery, panelAction, startEditing, toolbarButton } from "./ui";
 
@@ -170,9 +171,9 @@ export const MAIN_PAGES: readonly MainPage[] = [
     name: "explore result",
     path: () => "/explore",
     ready: async (page, world, language) => {
-      await page
-        .getByLabel(t("explore.datasource", {}, language))
-        .selectOption({ label: world.sourceName });
+      await selectOption(page.getByLabel(t("explore.datasource", {}, language)), {
+        label: world.sourceName,
+      });
       await fillQuery(page, SQL.series);
       await page.getByRole("button", { name: t("explore.run", {}, language) }).click();
       await expect(

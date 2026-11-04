@@ -120,7 +120,7 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   }
   return (
     target.closest(
-      'input, textarea, select, [contenteditable]:not([contenteditable="false"]), .cm-editor',
+      'input, textarea, select, button.select, [contenteditable]:not([contenteditable="false"]), .cm-editor',
     ) !== null
   );
 }

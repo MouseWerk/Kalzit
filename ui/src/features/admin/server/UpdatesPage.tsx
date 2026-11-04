@@ -45,6 +45,7 @@ import {
   uploadPackage,
 } from "./updatesApi";
 import "./updates.css";
+import { Select } from "../../../components/Select";
 
 /** Phases in which the status changes by itself; the page asks again every second. */
 const BUSY = new Set(["checking", "downloading", "applying", "restarting"]);
@@ -469,19 +470,19 @@ function StatusStrip({
         <label htmlFor={channelId} className="updates-caps">
           {t("admin.updates.channel")}
         </label>
-        <select
+        <Select
           id={channelId}
-          className="select updates-strip__select"
+          className="updates-strip__select"
           value={data.channel}
           data-found-control
           disabled={!known("updates.channel") || channel.lock !== undefined}
           aria-invalid={channel.error === undefined ? undefined : true}
           aria-describedby={channel.shown ? channel.id : undefined}
-          onChange={(event) => onChannel(event.target.value)}
+          onChange={(next) => onChannel(next)}
         >
           <option value="stable">{t("admin.updates.channel.stable")}</option>
           <option value="preview">{t("admin.updates.channel.preview")}</option>
-        </select>
+        </Select>
         <div className="updates-muted updates-strip__meta">
           {t(
             data.channel === "stable"

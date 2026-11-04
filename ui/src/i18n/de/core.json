@@ -6,6 +6,8 @@
   "common.retry": "Erneut versuchen",
   "common.undo": "Rückgängig",
   "common.dialog.backKept": "Zurück und Escape behalten deine Eingaben. Wähle Abbrechen, um sie zu verwerfen.",
+  "common.select.search": "Optionen durchsuchen",
+  "common.select.noMatches": "Keine passenden Optionen",
   "common.dismiss": "Ausblenden",
   "common.skipToContent": "Zum Inhalt springen",
   "nav.label": "Hauptnavigation",

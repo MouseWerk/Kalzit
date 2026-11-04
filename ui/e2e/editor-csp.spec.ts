@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Api, fixturesDir, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
@@ -32,7 +33,7 @@ test("the query editor is styled under the server's Content-Security-Policy", as
     .click();
   await expect(page).toHaveURL(/\/explore(\?|$)/);
 
-  await page.getByLabel(t("explore.datasource")).selectOption({ label: name });
+  await selectOption(page.getByLabel(t("explore.datasource")), { label: name });
   const editor = page.locator(".cm-editor");
   await expect(editor).toBeVisible();
 

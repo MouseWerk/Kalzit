@@ -8,6 +8,7 @@ import { PanelPicker } from "../../../panels/picker/PanelPicker";
 import { getPanel, setExternalPanels } from "../../../panels/registry";
 import type { PanelSeries } from "../../../panels/types";
 import { expectConsoleOutput } from "../../../test/console";
+import { pickOption } from "../../../test/select";
 import type { PanelPluginInfo } from "./api";
 import { linkOrigin, PluginFrame, READY_TIMEOUT_MS, sameSeries } from "./PluginFrame";
 import { PluginOptionsEditor, pluginPanelType } from "./types";
@@ -319,7 +320,7 @@ describe("a panel plugin's type", () => {
     expect([decimals.min, decimals.max, decimals.step]).toEqual(["0", "10", "1"]);
     await user.type(screen.getByLabelText("Feld"), "c");
     expect(onChange).toHaveBeenLastCalledWith({ decimals: 2, mode: "last", field: "c" });
-    await user.selectOptions(screen.getByLabelText("Mode"), "mean");
+    await pickOption(user, screen.getByLabelText("Mode"), "mean");
     expect(onChange).toHaveBeenLastCalledWith({ decimals: 2, mode: "mean" });
     await user.clear(decimals);
     await user.type(decimals, "11");

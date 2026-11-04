@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { pickOption } from "../../test/select";
 import type { Setting } from "./api";
 import { nextWindow } from "./server/UpdatesPage";
 import type { UpdateStatus } from "./server/updatesApi";
@@ -427,7 +428,7 @@ describe("updates page", () => {
     });
     const channel = await screen.findByRole("combobox", { name: "Channel" });
     await waitFor(() => expect((channel as HTMLSelectElement).disabled).toBe(false));
-    await user.selectOptions(channel, "preview");
+    await pickOption(user, channel, "preview");
     expect(await screen.findByText("“Update channel” was saved.")).toBeTruthy();
     const stored = admin.serverSettings.find((s) => s.key === "updates.channel");
     expect(stored).toMatchObject({ value: "preview", version: 1 });
@@ -479,7 +480,7 @@ describe("updates page", () => {
       version: 3,
       source: "database",
     });
-    await user.selectOptions(channel, "preview");
+    await pickOption(user, channel, "preview");
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
     await user.click(within(dialog).getByRole("button", { name: "Overwrite with mine" }));
     await waitFor(() =>

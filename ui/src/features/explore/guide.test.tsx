@@ -4,6 +4,7 @@ import type { QueryRequest } from "../../api/generated/shapes";
 import { resetActiveTip } from "../../help/tips";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { optionLabels, optionValues, pickOption } from "../../test/select";
 import {
   addMongoSource,
   addNeo4jSource,
@@ -31,7 +32,8 @@ function open(role = "editor", options: { tips?: boolean; grant?: boolean } = {}
 /** Explore on the PostgreSQL source (the MongoDB one sorts first). */
 async function openPg(role = "editor", options: { tips?: boolean } = {}) {
   const opened = open(role, options);
-  await opened.user.selectOptions(
+  await pickOption(
+    opened.user,
     await screen.findByRole("combobox", { name: "Data source" }),
     PG_ID,
   );
@@ -53,16 +55,12 @@ describe("Explore's start panel", () => {
     expect(within(start).getByText(/This source holds tables/)).toBeTruthy();
     // The tables of the schema are offered, the first one picked.
     const pick = within(start).getByRole("combobox", { name: "Table for the examples" });
-    expect(
-      within(pick)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["public.orders", "public.customers"]);
+    expect(optionLabels(pick)).toEqual(["public.orders", "public.customers"]);
     // The query is there to see before it is used.
     await user.click(within(start).getAllByText("Show the query")[0] as HTMLElement);
     expect(within(start).getByText(/SELECT \* FROM orders LIMIT 100/)).toBeTruthy();
 
-    await user.selectOptions(pick, "customers");
+    await pickOption(user, pick, "customers");
     await user.click(
       within(start).getByRole("button", { name: "Show the first 100 rows of a table" }),
     );
@@ -83,7 +81,7 @@ describe("Explore's start panel", () => {
       within(start).getByRole("button", { name: "Latest rows in the time range" }),
     ).toBeTruthy();
     expect(within(start).getByRole("button", { name: "A number over time" })).toBeTruthy();
-    await user.selectOptions(within(start).getByRole("combobox"), "customers");
+    await pickOption(user, within(start).getByRole("combobox"), "customers");
     expect(
       within(start).queryByRole("button", { name: "Latest rows in the time range" }),
     ).toBeNull();
@@ -101,10 +99,7 @@ describe("Explore's start panel", () => {
 
   it("follows the source: a MongoDB collection and a graph label", async () => {
     const { server, user } = await openPg();
-    await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Data source" }),
-      MONGO_ID,
-    );
+    await pickOption(user, await screen.findByRole("combobox", { name: "Data source" }), MONGO_ID);
     const mongo = await screen.findByRole("region", { name: /^Start here: MongoDB/ });
     await user.click(within(mongo).getByRole("button", { name: "Count all documents" }));
     await waitFor(() =>
@@ -113,7 +108,7 @@ describe("Explore's start panel", () => {
         pipeline: '[\n  {"$count":"n"}\n]',
       }),
     );
-    await user.selectOptions(screen.getByRole("combobox", { name: "Data source" }), NEO4J_ID);
+    await pickOption(user, screen.getByRole("combobox", { name: "Data source" }), NEO4J_ID);
     const graph = await screen.findByRole("region", { name: /^Start here: Neo4j/ });
     expect(
       within(graph).getByRole("combobox", { name: "Node label for the examples" }),
@@ -280,7 +275,7 @@ describe("the query behind a group step", () => {
     );
     await screen.findByText("Grace");
     const aside = screen.getByRole("complementary", { name: /Steps/ });
-    await user.selectOptions(within(aside).getAllByRole("combobox")[0] as HTMLElement, "group");
+    await pickOption(user, within(aside).getAllByRole("combobox")[0] as HTMLElement, "group");
     await user.click(within(aside).getByRole("button", { name: /Add step/ }));
     const show = await within(aside).findByText("Show the query of this step");
     await user.click(show);
@@ -333,10 +328,6 @@ describe("Explore's guidance and rights", () => {
     open("viewer", { grant: true });
     expect(await startPanel()).toBeTruthy();
     const sources = screen.getByRole("combobox", { name: "Data source" });
-    expect(
-      within(sources)
-        .getAllByRole("option")
-        .map((o) => o.getAttribute("value")),
-    ).toEqual([PG_ID]);
+    expect(optionValues(sources)).toEqual([PG_ID]);
   });
 });

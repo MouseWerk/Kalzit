@@ -126,13 +126,19 @@
 
     /* Layers, lowest first. */
     --z-base: 0;
+    /* The first column of a wide table, which stays put while the others scroll under it. */
+    --z-sticky-column: 5;
     --z-sticky: 10;
+    /* The first column's heading: above the sticky headings and the sticky column. */
+    --z-sticky-corner: 11;
     /* The top bar and the dashboard toolbar: above sticky parts inside panels, below menus. */
     --z-bar: 50;
     /* Kiosk and TV mode cover the page, bars included. */
     --z-kiosk: 60;
     --z-menu: 100;
     --z-dialog: 200;
+    /* A select's list, open over a dialog. */
+    --z-popover: 250;
     --z-toast: 300;
     --z-skip-link: 400;
 

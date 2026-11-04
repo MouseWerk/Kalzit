@@ -3,6 +3,7 @@ import type { DocumentSet } from "../api/generated/shapes";
 import { useI18n } from "../i18n/i18n";
 import { plural } from "./labels";
 import "./documents.css";
+import { Select } from "../components/Select";
 
 /** Which result a document panel shows, when several queries answered with documents. */
 export function SetPicker({
@@ -22,19 +23,14 @@ export function SetPicker({
   return (
     <div className="preference">
       <label htmlFor={id}>{t("dashboards.panels.result")}</label>
-      <select
-        id={id}
-        className="select"
-        value={index}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-      >
+      <Select id={id} value={index} onChange={(next) => onChange(Number(next))}>
         {Array.from({ length: count }, (_, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: one entry per result, in order
           <option key={i} value={i}>
             {t("dashboards.panels.resultNumber", { number: i + 1 })}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }
