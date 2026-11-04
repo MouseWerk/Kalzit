@@ -19,8 +19,11 @@ everyone: turning it on needs a token, allowed networks, or both (then both must
 [metrics]
 enabled = true                              # KALZIT_METRICS_ENABLED
 allowed_networks = ["10.0.0.0/8"]           # KALZIT_METRICS_ALLOWED_NETWORKS
-# token: give it in KALZIT_METRICS_TOKEN (at least 16 characters), not in this file
+# token: give it in KALZIT_METRICS_TOKEN, not in this file
 ```
+
+The token needs at least 16 characters, 8 of them different; make one with
+`openssl rand -hex 32`.
 
 The settings are read at start; restart Kalzit after changing them. Settings > General shows them
 read-only. A token in `kalzit.toml` works but logs a warning at start, since everyone who may read
@@ -30,6 +33,11 @@ environment).
 
 Behind a trusted proxy, the allowed networks are compared with the client address the proxy
 forwards ([HTTPS and certificates](https.md#client-address-scheme-and-host-behind-a-proxy)).
+Do not list the network of a reverse proxy in `allowed_networks` unless that proxy is in
+`security.trusted_proxies`: otherwise every request it passes on comes from the proxy's address,
+and anyone on the internet who reaches the proxy can read `/metrics`. The same holds for loopback
+(`127.0.0.1`, `::1`) when a proxy runs on the same machine. Kalzit logs a warning at start when
+`allowed_networks` covers loopback or a trusted proxy; prefer the token in those setups.
 Answers: `404` while metrics are off, `403` from another network, `401` without the right token.
 
 Prometheus:

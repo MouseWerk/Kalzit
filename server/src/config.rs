@@ -115,6 +115,8 @@ pub struct MetricsConfig {
 
 /// The shortest metrics token: long enough that guessing is hopeless.
 pub const MIN_METRICS_TOKEN_CHARS: usize = 16;
+/// Different characters a metrics token needs, so `aaaaaaaaaaaaaaaa` is refused.
+pub const MIN_METRICS_TOKEN_DISTINCT: usize = 8;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -494,6 +496,7 @@ impl Config {
         config.env_keys = env_keys;
         config.server.base_path = normalize_base_path(&config.server.base_path)?;
         config.validate()?;
+        config.warnings.extend(metrics_network_warnings(&config));
         Ok(config)
     }
 
@@ -540,6 +543,13 @@ impl Config {
         }
         if !m.token.is_empty() && m.token.trim().chars().count() < MIN_METRICS_TOKEN_CHARS {
             bail!("metrics.token must have at least {MIN_METRICS_TOKEN_CHARS} characters");
+        }
+        let distinct: BTreeSet<char> = m.token.trim().chars().collect();
+        if !m.token.is_empty() && distinct.len() < MIN_METRICS_TOKEN_DISTINCT {
+            bail!(
+                "metrics.token must have at least {MIN_METRICS_TOKEN_DISTINCT} different characters; make one with \
+                 openssl rand -hex 32"
+            );
         }
         let s = &self.sessions;
         if s.lifetime_hours == 0 || s.lifetime_hours > MAX_SESSION_HOURS || s.idle_timeout_hours > MAX_SESSION_HOURS {
@@ -640,6 +650,34 @@ fn resolve_sqlite_url(url: &str, base: &Path) -> Option<String> {
         Some(query) => format!("{joined}?{query}"),
         None => joined,
     })
+}
+
+/// Allowed metrics networks that let more in than meant: loopback (a proxy on the same machine
+/// that is not trusted makes every client look local) and a trusted proxy's addresses (its
+/// requests count as the proxy's own when it forwards no client address).
+fn metrics_network_warnings(config: &Config) -> Vec<String> {
+    let m = &config.metrics;
+    if !m.enabled {
+        return Vec::new();
+    }
+    let overlaps = |a: &IpNet, b: &IpNet| a.contains(&b.network()) || b.contains(&a.network());
+    let loopback: [IpNet; 2] = ["127.0.0.0/8".parse().expect("valid"), "::1/128".parse().expect("valid")];
+    let mut warnings = Vec::new();
+    for net in &m.allowed_networks {
+        if loopback.iter().any(|l| overlaps(net, l)) {
+            warnings.push(format!(
+                "metrics.allowed_networks contains {net}, which covers this machine: a reverse proxy here that is not \
+                 in security.trusted_proxies passes every client in as local (docs/guide/monitoring.md)"
+            ));
+        }
+        if let Some(proxy) = config.security.trusted_proxies.iter().find(|p| overlaps(net, p)) {
+            warnings.push(format!(
+                "metrics.allowed_networks {net} covers the trusted proxy {proxy}: requests it forwards count with the \
+                 client address it names, its own requests with its address (docs/guide/monitoring.md)"
+            ));
+        }
+    }
+    warnings
 }
 
 /// `server.base_path` as the server uses it: empty, or `/` and segments without a trailing
@@ -910,6 +948,20 @@ mod tests {
         let e = Config::from_sources("", env(&[("KALZIT_METRICS_ENABLED", "true"), ("KALZIT_METRICS_TOKEN", "short")]))
             .unwrap_err();
         assert!(format!("{e:#}").contains("at least 16"), "{e:#}");
+        let e = Config::from_sources(
+            "",
+            env(&[("KALZIT_METRICS_ENABLED", "true"), ("KALZIT_METRICS_TOKEN", "abababababababababab")]),
+        )
+        .unwrap_err();
+        assert!(format!("{e:#}").contains("different characters"), "{e:#}");
+        let c = Config::from_sources(
+            "[metrics]\nenabled = true\nallowed_networks = [\"127.0.0.1/32\", \"10.1.0.0/16\", \"192.168.0.0/24\"]\n\
+             [security]\ntrusted_proxies = [\"10.1.2.3/32\"]\n",
+            env(&[]),
+        )
+        .unwrap();
+        assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
+        assert!(c.warnings[0].contains("127.0.0.1/32") && c.warnings[1].contains("10.1.2.3/32"), "{:?}", c.warnings);
         let c = Config::from_sources(
             "[metrics]\nenabled = true\n",
             env(&[("KALZIT_METRICS_TOKEN", "0123456789abcdef"), ("KALZIT_METRICS_ALLOWED_NETWORKS", "10.0.0.0/8")]),

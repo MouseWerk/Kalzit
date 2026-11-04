@@ -331,11 +331,14 @@ function FrameHost({
   );
 }
 
-/** A path opens in Kalzit; an address in a new tab, without a referrer or a handle back. */
+/**
+ * A path opens in Kalzit; an address in a new tab, without a referrer or a handle back. `//host`
+ * and `/\host` look like paths but browsers read them as another host, so they open nothing.
+ */
 export function openLink(url: string): void {
-  if (url.startsWith("/")) {
+  if (/^\/(?![/\\])/.test(url)) {
     window.location.assign(withBase(url));
-  } else {
+  } else if (!url.startsWith("/")) {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 }

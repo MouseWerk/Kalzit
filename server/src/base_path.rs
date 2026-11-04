@@ -89,11 +89,20 @@ fn incoming_cookies(headers: &mut HeaderMap) {
     if !values.iter().any(|v| v.contains(SECURE_PREFIX) || v.contains(HOST_PREFIX)) {
         return;
     }
-    let pairs: Vec<String> = values
+    let all: Vec<&str> =
+        values.iter().flat_map(|v| v.split(';')).map(str::trim).filter(|pair| !pair.is_empty()).collect();
+    // A `__Secure-` cookie, unlike a `__Host-` one, may be set with `Domain=` by a sibling
+    // subdomain, with a longer path so the browser sends it first. When a name arrives twice,
+    // neither copy can be told to be this server's, so both are dropped (no session, no device).
+    let name = |pair: &str| pair.split_once('=').map_or(pair, |(n, _)| n).to_string();
+    let mut seen = std::collections::HashMap::<String, usize>::new();
+    for pair in all.iter().filter(|p| p.starts_with(SECURE_PREFIX)) {
+        *seen.entry(name(pair)).or_default() += 1;
+    }
+    let pairs: Vec<String> = all
         .iter()
-        .flat_map(|v| v.split(';'))
-        .map(str::trim)
-        .filter(|pair| !pair.is_empty() && !pair.starts_with(HOST_PREFIX))
+        .filter(|pair| !pair.starts_with(HOST_PREFIX))
+        .filter(|pair| !pair.starts_with(SECURE_PREFIX) || seen.get(&name(pair)) == Some(&1))
         .map(|pair| match pair.strip_prefix(SECURE_PREFIX) {
             Some(rest) => format!("{HOST_PREFIX}{rest}"),
             None => pair.to_string(),
@@ -171,6 +180,22 @@ mod tests {
         incoming_cookies(&mut h);
         assert_eq!(h[header::COOKIE], "theme=dark; __Host-kalzit_session=mine; __Host-kalzit_device=d");
         assert_eq!(crate::auth::session::read_cookie(&h, true).as_deref(), Some("mine"));
+    }
+
+    /// A sibling subdomain can set a `__Secure-` cookie of the same name; with two of a name, no
+    /// copy counts, while the other cookies stay.
+    #[test]
+    fn a_cookie_name_that_arrives_twice_is_dropped() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::COOKIE,
+            HeaderValue::from_static("__Secure-kalzit_session=planted; __Secure-kalzit_device=d; theme=dark"),
+        );
+        h.append(header::COOKIE, HeaderValue::from_static("__Secure-kalzit_session=mine"));
+        incoming_cookies(&mut h);
+        assert_eq!(h[header::COOKIE], "__Host-kalzit_device=d; theme=dark");
+        assert_eq!(crate::auth::session::read_cookie(&h, true), None);
+        assert_eq!(crate::auth::device::read_cookie(&h, true).as_deref(), Some("d"));
     }
 
     #[test]
