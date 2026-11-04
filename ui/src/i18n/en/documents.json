@@ -159,6 +159,7 @@
   "documents.pipeline.switched.find": "Switched to find; the pipeline was set aside.",
   "documents.pipeline.switched.aggregate": "Switched to the pipeline; the find was set aside.",
   "documents.more.load": "Load more documents",
+  "documents.more.loadQuery": "Load more documents of {refId}",
   "documents.more.failed": "The next documents could not be loaded.",
   "documents.projection.error.control": "Remove control characters such as line breaks.",
   "documents.projection.error.length": "At most {max} characters.",

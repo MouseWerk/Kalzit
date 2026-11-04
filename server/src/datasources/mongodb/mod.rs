@@ -31,7 +31,6 @@ use mongodb::options::{ClientOptions, Credential, SelectionCriteria, ServerAddre
 use mongodb::{Client, ServerInfo, ServerType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::Digest;
 
 use super::document_schema::{SAMPLE_DOCUMENTS, SchemaSampler, charge_schema, schema_cut};
 use super::{
@@ -819,30 +818,6 @@ fn ext_json_doc(d: &Document) -> String {
     format!("{{{}}}", parts.join(", "))
 }
 
-/// The cursor token: where the next page starts, bound to the query it came from.
-fn fingerprint(req: &SourceQuery) -> String {
-    let basis = serde_json::json!({ "q": req.query, "r": [req.range.from, req.range.to], "v": req.variables });
-    hex::encode(&sha2::Sha256::digest(basis.to_string().as_bytes())[..8])
-}
-
-fn cursor_token(offset: u64, fp: &str) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("{offset}:{fp}"))
-}
-
-fn cursor_offset(cursor: Option<&str>, fp: &str) -> Result<u64, SourceError> {
-    use base64::Engine;
-    let Some(cursor) = cursor else { return Ok(0) };
-    let invalid = || SourceError::rejected("mongodb.cursor_invalid", "the cursor does not belong to this query");
-    let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cursor).map_err(|_| invalid())?;
-    let text = String::from_utf8(raw).map_err(|_| invalid())?;
-    let (offset, hash) = text.split_once(':').ok_or_else(invalid)?;
-    if hash != fp {
-        return Err(invalid());
-    }
-    offset.parse().map_err(|_| invalid())
-}
-
 fn notice(severity: NoticeSeverity, detail: Detail) -> Notice {
     detail.notice(severity)
 }
@@ -1136,8 +1111,8 @@ impl DataSourcePlugin for MongoDb {
         let q: Query = req.parse()?;
         pipeline::check_collection(&q.collection)?;
         let max = req.limits.max_rows.max(1) as u64;
-        let fp = fingerprint(&req);
-        let offset = cursor_offset(req.cursor.as_deref(), &fp)?;
+        // Where the next page starts; the caller's cursor is sealed to this query (`cursor`).
+        let offset = super::cursor::offset(req.cursor.as_deref())?;
         let plan = plan(&req, &q, max)?;
         // Everything is checked before Kalzit connects.
         let s: Settings = conn.settings_as()?;
@@ -1243,7 +1218,8 @@ impl DataSourcePlugin for MongoDb {
         let set = DocumentSet {
             documents: docs,
             schema,
-            next_cursor: cut.map(|_| cursor_token(offset + count, &fp)),
+            // A cut that kept no document has no next page: it would start at the same place.
+            next_cursor: cut.filter(|_| count > 0).map(|_| (offset + count).to_string()),
             truncated: cut.map(|r| Truncated { limit: count.min(u64::from(u32::MAX)) as u32, reason: Some(r.into()) }),
             notices,
             executed_query: Some(executed),
@@ -1423,20 +1399,6 @@ mod tests {
         for db in ["admin", "local", "config"] {
             let e = kind.validate_settings(&json!({ "hosts": "h", "database": db })).unwrap_err();
             assert_eq!((e.field, e.detail.reason), ("database", "mongodb.database_reserved"), "{db}");
-        }
-    }
-
-    #[test]
-    fn cursors_belong_to_their_query() {
-        let token = cursor_token(200, "abcd");
-        assert_eq!(cursor_offset(Some(&token), "abcd").unwrap(), 200);
-        assert_eq!(cursor_offset(None, "abcd").unwrap(), 0);
-        for bad in [token.as_str(), "nein", "", "MjAwOg"] {
-            assert_eq!(
-                cursor_offset(Some(bad), "efgh").unwrap_err().detail().reason,
-                "mongodb.cursor_invalid",
-                "{bad}"
-            );
         }
     }
 
