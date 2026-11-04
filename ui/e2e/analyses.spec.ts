@@ -47,6 +47,19 @@ test("an Explore query is saved, found in the list, opened again and linked into
       page.getByRole("region", { name: t("explore.result") }).locator(".ts__plot"),
     ).toBeVisible();
 
+    // The list sorts by last opened, under the breadcrumb back to Explore.
+    await page.goto(`/explore/saved?sort=opened&q=${encodeURIComponent(title)}`);
+    await expect(page.getByRole("combobox", { name: t("analyses.list.sort") })).toHaveValue(
+      "opened",
+    );
+    await expect(
+      page.getByRole("navigation", { name: t("shell.breadcrumbs") }).getByRole("link", {
+        name: t("explore.nav"),
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.locator("a.analysis-row__name").first()).toHaveText(title);
+
     // A new panel starts from the saved analysis, linked.
     await page.goto(`/dashboards/${dashboardId}`);
     await expect(page.getByRole("heading", { name: dashboardTitle })).toBeVisible();
