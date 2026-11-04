@@ -591,6 +591,8 @@ its plan that are merged.
 - [docs/plugins/authoring.md](docs/plugins/authoring.md): writing, packaging and signing plugins.
 - [docs/operations/updates.md](docs/operations/updates.md): installing updates online and offline,
   returning to an earlier version, the release key and its rotation.
+- [docs/operations/winget.md](docs/operations/winget.md): the winget package and submitting a
+  release to winget.
 - [docs/glossary.md](docs/glossary.md): the terms used in the interface, in German and English.
 - [docs/design/feel.md](docs/design/feel.md) and [docs/design/depth.md](docs/design/depth.md):
   look and feel, and the depth of options.

@@ -243,8 +243,8 @@ fn main() -> ExitCode {
     }
 }
 
-/// Where `serve` logs: the console, or as the Windows service a file in the data directory
-/// (with the Windows event log for what happens before that file is open).
+/// Where `serve` logs: the console, or as the Windows service a file in the data directory, with
+/// warnings and errors (and what happens before that file is open) also in the Windows event log.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Logging {
     Console,
@@ -259,8 +259,12 @@ impl Logging {
             Logging::Console => eprintln!("kalzit: {message}"),
             #[cfg(windows)]
             Logging::Service => {
-                tracing::error!("{message}");
-                kalzit::service::event_log_error(message);
+                // Once logging is set up, its event log layer copies the error there.
+                if tracing::dispatcher::has_been_set() {
+                    tracing::error!("{message}");
+                } else {
+                    kalzit::service::event_log_error(message);
+                }
             }
         }
     }
@@ -428,17 +432,21 @@ fn init_logging(cfg: &LogConfig) {
     }
 }
 
-/// Logging into `writer` (the service's log file), without terminal colors.
+/// Logging into `writer` (the service's log file), without terminal colors; warnings and errors
+/// also go to the Windows event log.
 #[cfg(windows)]
 fn init_logging_to<W>(cfg: &LogConfig, writer: W)
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
     let filter = EnvFilter::try_new(&cfg.level).expect("log.level is checked in Config::validate");
     let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_writer(writer);
+    let event_log = kalzit::service::EventLogLayer::new();
     if cfg.format == "json" {
-        builder.json().init();
+        builder.json().finish().with(event_log).init();
     } else {
-        builder.init();
+        builder.finish().with(event_log).init();
     }
 }

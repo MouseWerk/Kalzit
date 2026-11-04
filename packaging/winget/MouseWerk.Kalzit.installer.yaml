@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+# Template; render.sh fills it in for a release (docs/operations/winget.md).
+PackageIdentifier: MouseWerk.Kalzit
+PackageVersion: "{{VERSION}}"
+InstallerType: wix
+Scope: machine
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: "{{RELEASE_DATE}}"
+Installers:
+  - Architecture: x64
+    InstallerUrl: "{{MSI_URL}}"
+    InstallerSha256: "{{MSI_SHA256}}"
+ManifestType: installer
+ManifestVersion: 1.9.0

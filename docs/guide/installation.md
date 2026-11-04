@@ -452,6 +452,20 @@ event log says what, when:
 
 Move such a folder aside (or fix its access list) and install again.
 
+### Installing with winget
+
+Stable releases are also in winget, as `MouseWerk.Kalzit`. In an elevated PowerShell:
+
+```powershell
+winget install MouseWerk.Kalzit
+winget install MouseWerk.Kalzit --override "/qn PORT=8080 FIREWALL=1"
+winget upgrade MouseWerk.Kalzit
+```
+
+winget downloads the same MSI package from the GitHub release, checks its SHA-256 and installs
+it silently with the defaults; `--override` passes the properties of a silent installation (below)
+instead. A new release can take a few days to appear in winget.
+
 ### Silent installation
 
 Every setting is an MSI property:
@@ -501,8 +515,8 @@ what is in it), then in an elevated prompt:
 
 | Command | What it does |
 |---|---|
-| `kalzit service install` | creates the service for this `kalzit.exe`, writes `kalzit.toml` (unless it exists), secures the data folder and starts the service. Options as the properties above: `--port`, `--data-dir`, `--https` (`off`, `self-signed` or `certificate`), `--https-port`, `--cert-file`, `--key-file`, `--open-firewall`, `--self-update 1` (off by default, see the note on `SELFUPDATE`); `--no-start` sets up without starting; `--config` uses another configuration file than `%ProgramData%\Kalzit\kalzit.toml` |
-| `kalzit service uninstall` | stops and removes the service and the firewall rule; the data and `kalzit.toml` stay. `--remove-data` removes them too |
+| `kalzit service install` | creates the service for this `kalzit.exe`, registers the event log source `Kalzit`, writes `kalzit.toml` (unless it exists), secures the data folder and starts the service. Options as the properties above: `--port`, `--data-dir`, `--https` (`off`, `self-signed` or `certificate`), `--https-port`, `--cert-file`, `--key-file`, `--open-firewall`, `--self-update 1` (off by default, see the note on `SELFUPDATE`); `--no-start` sets up without starting; `--config` uses another configuration file than `%ProgramData%\Kalzit\kalzit.toml` |
+| `kalzit service uninstall` | stops and removes the service, its event log source and the firewall rule; the data and `kalzit.toml` stay. `--remove-data` removes them too |
 | `kalzit service run` | what the service manager starts; in a console, use `kalzit serve` |
 
 Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
@@ -514,8 +528,12 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
   `Start-Service Kalzit`, `Stop-Service Kalzit` and `Restart-Service Kalzit`. Stopping finishes
   open requests (up to 10 seconds) and closes the database cleanly.
 - The log is `<data folder>\logs\kalzit.log` (a new file every 10 MB, three older ones kept).
-  Errors before that file can be written, such as a broken `kalzit.toml`, are in the Windows event
-  log (Application, source `Kalzit`).
+  Its warnings and errors are also in the Windows event log (Event Viewer, Windows Logs,
+  Application, source `Kalzit`), where monitoring tools that watch the event log find them, as are
+  errors before that file can be written, such as a broken `kalzit.toml`. They are the log file's
+  text, which never holds passwords or keys; `log.level = "error"` leaves out the warnings. The MSI
+  package and `kalzit service install` register the source `Kalzit`; uninstalling removes it, the
+  entries already written stay.
 - To change a setting, edit `%ProgramData%\Kalzit\kalzit.toml` as an administrator and restart
   the service. All settings are listed in the [README](../../README.md#configuration). Everyone on
   the computer may read the file, so put no secrets into it: give a PostgreSQL URL with a password
