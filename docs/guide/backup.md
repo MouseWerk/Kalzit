@@ -5,8 +5,9 @@ SQLite and PostgreSQL as Kalzit's own database, on Linux, Windows and in a conta
 restore once (the [drill](#restore-drill) at the end) before you rely on it.
 
 Kalzit has no backup schedule of its own (planned for M7): run the steps below from your usual
-backup tool or a timer. It backs up the SQLite database by itself before every update, and on
-**Administration** (Verwaltung) > **Updates** with **Back up now**; those copies stay on the same
+backup tool or a timer. The built-in updater backs up the SQLite database before every update it
+installs itself (not before a package, MSI or image upgrade), and **Administration** (Verwaltung) >
+**Updates** has **Back up now**; those copies stay on the same
 disk and are meant for returning from an update, not as your only backup
 ([updates guide](../operations/updates.md#backups)).
 
@@ -34,9 +35,10 @@ example in your password manager, and keep old keys as long as you keep backups 
 - On Linux with the packages, the key in `/etc/credstore.encrypted/` is encrypted with the host's
   credential key, `/var/lib/systemd/credential.secret`: back that file up too, or a restore on
   other hardware cannot read the key.
-- On Windows, `secrets.key.dpapi` can only be decrypted on the same computer. Restored on another
-  computer, Kalzit starts, but every stored password, token and key has to be entered again, and
-  ACME orders a new certificate. If you need to restore on other hardware, run Kalzit with
+- On Windows, `secrets.key.dpapi` can only be decrypted on the same computer. Copied to another
+  computer, it makes Kalzit refuse to start. When you restore on other hardware, leave that file
+  out: Kalzit then makes a new key, every stored password, token and key has to be entered again,
+  and ACME orders a new certificate. To restore on other hardware without that, run Kalzit with
   `KALZIT_SECRETS_KEY` from the start and keep that key.
 
 ## SQLite
@@ -75,6 +77,10 @@ docker run --rm -v kalzit-data:/data:ro -v "$PWD":/backup alpine \
 docker start kalzit
 ```
 
+Compose prefixes the names with the project (by default the folder's name): the volume is then
+for example `kalzit_kalzit-data` and the container `kalzit-kalzit-1`; `docker volume ls` and
+`docker compose ps` show them.
+
 ### Restore
 
 1. Install the same Kalzit version the backup was taken with (a newer version migrates the
@@ -89,7 +95,16 @@ docker start kalzit
    - On Linux the files must belong to the account Kalzit runs as
      (`sudo chown -R kalzit:kalzit /var/lib/kalzit`), and the folder must stay closed to others
      (`chmod 700`).
-4. Put back `kalzit.toml` and the secrets key the backup was taken with.
+   - In a container, restore into the stopped container's volume and give the files to the
+     image's user:
+
+     ```sh
+     docker stop kalzit
+     docker run --rm -v kalzit-data:/data -v "$PWD":/backup alpine        sh -c 'rm -rf /data/* && tar -C /data -xzf /backup/kalzit-data.tar.gz && chown -R 65532:65532 /data && chmod 700 /data'
+     docker start kalzit
+     ```
+4. Put back `kalzit.toml` and the secrets key the backup was taken with (on Windows on another
+   computer, without `secrets.key.dpapi`, see above).
 5. Start Kalzit and check the log: a warning that stored secrets use keys which are not loaded
    means the key is not the one the backup was taken with.
 

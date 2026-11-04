@@ -11,9 +11,11 @@ nginx, Caddy, IIS and Traefik, with Kalzit at the root of its own host name
   `/api/orgs/<id>/live`. Without the upgrade, panels with Live on stay still.
 - **Keep the host and say the scheme.** Send the host name the browser used (`Host`, or
   `X-Forwarded-Host`) and the scheme it used (`X-Forwarded-Proto: https`), and **overwrite** both
-  when a client sends them. Kalzit compares the browser's `Origin` with them and refuses
-  cross-origin requests with "cross-origin request rejected" otherwise; the scheme also decides
-  whether the session cookie is marked `Secure`.
+  when a client sends them. Kalzit checks the browser's `Origin` on changes and on the live
+  WebSocket: with `server.public_url` set, the `Origin` must equal it (scheme, host and port);
+  without it, the `Origin`'s host and port must match the forwarded host. Otherwise Kalzit
+  refuses the request with "cross-origin request rejected". The scheme also decides whether the
+  session cookie is marked `Secure`.
 - **Say the client's address** in `X-Forwarded-For` (or `Forwarded`, see below), so sign-in limits,
   IP allow lists of API tokens and the audit log see the person, not the proxy.
 - **Allow long requests and large uploads.** Live connections and streamed AI answers stay open;
@@ -158,10 +160,14 @@ Traefik passes WebSocket upgrades on its own and sets `X-Forwarded-For`, `X-Forw
 `X-Forwarded-Host`; it drops those headers from clients unless you list them under
 `forwardedHeaders.trustedIPs` of the entry point, so leave that list empty for an entry point the
 public reaches. In Docker with labels, the same router and service are
-`traefik.http.routers.kalzit.rule=Host(\`kalzit.example.com\`)`,
-`traefik.http.routers.kalzit.tls.certresolver=letsencrypt` and
-`traefik.http.services.kalzit.loadbalancer.server.port=3000`; then list the Docker network of
-Traefik in `security.trusted_proxies`.
+``traefik.http.routers.kalzit.rule=Host(`kalzit.example.com`)``,
+`traefik.http.routers.kalzit.tls.certresolver=letsencrypt`,
+`traefik.http.services.kalzit.loadbalancer.server.port=3000` and
+`traefik.http.services.kalzit.loadbalancer.serverstransport=kalzit@file`; keep the
+`serversTransports` part of the dynamic file above for that last label, so idle connections are
+closed before Kalzit's 75 seconds. Kalzit must then listen on all addresses of its container
+(`server.http_addr = "0.0.0.0:3000"`, the default), and `security.trusted_proxies` lists the Docker
+network Traefik reaches it through.
 
 ## IIS
 
@@ -178,6 +184,12 @@ Server > Application Development). Then, once per server:
 3. Allow the rewrite rule to set the forwarding headers: IIS Manager > the server > **URL
    Rewrite** > **View Server Variables** > add `HTTP_X_FORWARDED_PROTO` and
    `HTTP_X_FORWARDED_HOST`.
+4. ARR has no setting for how long it keeps an idle connection to Kalzit open, so it may reuse one
+   Kalzit is just closing after 75 seconds and answer 502. Untick **Keep alive** in **Server Proxy
+   Settings** (or
+   `%windir%\system32\inetsrv\appcmd.exe set config -section:system.webServer/proxy -keepAlive:false /commit:apphost`):
+   each request then opens its own connection, which costs little with Kalzit on the same
+   machine.
 
 The site for `kalzit.example.com` holds the certificate (HTTPS binding) and this `web.config`:
 
@@ -219,8 +231,9 @@ Kalzit handles by reading the list from the right. The rule above overwrites
   answers `101 Switching Protocols`.
 - Settings > Sign-in and security lists your sign-in under recent sign-ins with your own
   address, not the proxy's.
-- Saving a setting works. "Cross-origin request rejected" means the proxy does not pass the host
-  or the scheme, or `server.public_url` does not match the address in the browser.
+- Saving a setting works. "Cross-origin request rejected" means `server.public_url` does not
+  match the address in the browser (scheme, host and port), or, without `server.public_url`, the
+  proxy does not pass the host the browser used.
 - `curl -s https://kalzit.example.com/readyz` answers `ready` (status 200) while Kalzit reaches
   its database; use it for the proxy's health check.
 

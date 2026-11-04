@@ -50,6 +50,11 @@ allow lists and the audit log rely on.
   that wrote it is trusted. The client is the first address that is not in
   `security.trusted_proxies`; entries a client put in front are never read. Scheme and host come
   from the entry the outermost trusted proxy wrote. List every proxy of yours in the chain.
+- **`X-Forwarded-Host`.** The proxy in front of Kalzit **must set this header and overwrite**
+  whatever the client sent (nginx: `proxy_set_header X-Forwarded-Host $host;`), or remove it and
+  pass the `Host` header through unchanged. Do not let it append to a client's value or pass one
+  through: the host decides which browser origins Kalzit accepts when `server.public_url` is not
+  set.
 - **`X-Forwarded-Proto`.** The proxy **must set this header on every request and overwrite**
   whatever the client sent, with the scheme the client used (nginx:
   `proxy_set_header X-Forwarded-Proto $scheme;`), not append to it or pass it through. Kalzit
