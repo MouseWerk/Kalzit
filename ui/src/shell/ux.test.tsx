@@ -403,12 +403,15 @@ describe("start page", () => {
     renderApp("/");
     const status = await screen.findByRole("region", { name: "Data source status" });
     const rows = await within(status).findAllByRole("listitem");
-    // Problems first; the latency of a passing test, "not tested" where none ran.
-    expect(rows[0]?.textContent).toBe(`${second.name}unreachable`);
-    expect(rows.map((row) => row.textContent)).toContain(`${first.name}Connected12 ms`);
+    // Problems first; the latency of a passing test and when it ran, "not tested" where none ran.
+    expect(rows[0]?.textContent).toBe(`${second.name}unreachable · just now`);
+    expect(rows.map((row) => row.textContent)).toContain(`${first.name}Connected12 ms · just now`);
     expect(rows.map((row) => row.textContent)).toContain(`${third.name}not tested`);
     const hints = screen.getByRole("region", { name: "Hints" });
-    await within(hints).findByText(`${second.name} has been unreachable for 1 week`);
+    // From the first failing test to the last one, not up to now.
+    await within(hints).findByText(
+      `At its last test (just now), ${second.name} had been unreachable for 1 week`,
+    );
     expect(within(hints).getByRole("link", { name: "Check" }).getAttribute("href")).toBe(
       `/data-sources/${second.id}`,
     );

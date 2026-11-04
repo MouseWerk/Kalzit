@@ -1305,6 +1305,16 @@ async fn the_status_lists_stored_tests_for_who_may_see_the_sources() {
     let viewer = t.session_for_role("viewer", Some("viewer")).await;
     let r = t.send(Method::GET, &t.path("/datasources/status"), None, Some(&viewer)).await;
     assert_eq!((r.status, r.body["items"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "{}", r.text);
+    // A query grant shows the source (it includes reading it) with its test; whether anything uses
+    // it stays with who may change it.
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE name = 'viewer'").fetch_one(&t.state.db).await.unwrap();
+    let grant = json!({ "subjectType": "user", "subjectId": vera, "resourceType": "datasource", "resourceId": used, "level": "query" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    let r = t.send(Method::GET, &t.path("/datasources/status"), None, Some(&viewer)).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{}", r.text);
+    assert!(items[0]["lastTest"].is_object() && items[0].get("unused").is_none(), "{}", r.text);
     t.finish().await;
 }
 

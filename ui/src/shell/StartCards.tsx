@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useId } from "react";
+import { type ReactNode, useId, useMemo } from "react";
 import { FormAlert } from "../components/FormAlert";
 import type { AuditEvent } from "../features/admin/api";
 import { auditActionLabel } from "../features/admin/catalog";
@@ -9,6 +9,7 @@ import { type SourceStatusItem, sourceStatusQuery } from "../features/datasource
 import { SLOW_MS } from "../features/datasources/sourceStatus";
 import { hasMessage, type Translate, useI18n } from "../i18n/i18n";
 import { apiErrorText } from "./shellErrors";
+import { relativeTime } from "./startData";
 import "./shellUx.css";
 
 /*
@@ -23,20 +24,27 @@ export const STATUS_ROWS = 6;
 /** Hints listed at most. */
 export const HINT_ROWS = 5;
 
+/** A stored test older than this no longer stands for the source: "not tested recently". */
+export const STALE_MS = 24 * 3_600_000;
+
 /** The status of a source from its last stored test. */
-export type StoredStatus = "unreachable" | "slow" | "connected" | "untested";
+export type StoredStatus = "unreachable" | "slow" | "connected" | "stale" | "untested";
 
 const STATUS_ORDER: Record<StoredStatus, number> = {
   unreachable: 0,
   slow: 1,
   connected: 2,
-  untested: 3,
+  stale: 3,
+  untested: 4,
 };
 
-export function storedStatus(item: SourceStatusItem): StoredStatus {
+export function storedStatus(item: SourceStatusItem, now = Date.now()): StoredStatus {
   const test = item.lastTest;
   if (test === undefined) {
     return "untested";
+  }
+  if (now - test.testedAt > STALE_MS) {
+    return "stale";
   }
   if (!test.ok) {
     return "unreachable";
@@ -45,12 +53,16 @@ export function storedStatus(item: SourceStatusItem): StoredStatus {
 }
 
 /** The rows of the status card: problems first, then by name. */
-export function statusRows(items: readonly SourceStatusItem[], locale: string): SourceStatusItem[] {
+export function statusRows(
+  items: readonly SourceStatusItem[],
+  locale: string,
+  now = Date.now(),
+): SourceStatusItem[] {
   const collator = new Intl.Collator(locale, { sensitivity: "base", numeric: true });
   return [...items]
     .sort(
       (a, b) =>
-        STATUS_ORDER[storedStatus(a)] - STATUS_ORDER[storedStatus(b)] ||
+        STATUS_ORDER[storedStatus(a, now)] - STATUS_ORDER[storedStatus(b, now)] ||
         collator.compare(a.name, b.name),
     )
     .slice(0, STATUS_ROWS);
@@ -73,9 +85,23 @@ export function sinceText(t: Translate, language: string, ms: number): string {
   return t(`shell.start.since.${unit}.${form}`, { count: String(count) });
 }
 
-/** The data sources' stored status: a dot, the name, and the latency or what is wrong. */
+/** "2 hours ago" for a time in Unix milliseconds, in the UI language. */
+function useAgo(): (at: number, now: number) => string {
+  const { t, language } = useI18n();
+  const format = useMemo(
+    () => new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" }),
+    [language],
+  );
+  return (at, now) => relativeTime(format, at, now, t("shell.start.justNow"));
+}
+
+/**
+ * The data sources' stored status: a dot, the name, and the latency or what is wrong, with when
+ * the test ran. A test older than a day shows as "not tested recently", in neutral.
+ */
 export function SourceStatusCard({ orgId }: { orgId: string }) {
   const { t, language } = useI18n();
+  const ago = useAgo();
   const titleId = useId();
   const status = useQuery(sourceStatusQuery(orgId));
   let body: ReactNode;
@@ -86,20 +112,29 @@ export function SourceStatusCard({ orgId }: { orgId: string }) {
   } else if (status.data.length === 0) {
     body = <p className="start__muted">{t("shell.start.sources.empty")}</p>;
   } else {
+    const now = Date.now();
     body = (
       <ul className="start__sources">
-        {statusRows(status.data, language).map((item) => {
-          const state = storedStatus(item);
+        {statusRows(status.data, language, now).map((item) => {
+          const state = storedStatus(item, now);
           const latency = item.lastTest?.latencyMs;
           let detail: string;
           if (state === "unreachable") {
             detail = t("shell.start.sources.unreachable");
           } else if (state === "untested") {
             detail = t("shell.start.sources.untested");
+          } else if (state === "stale") {
+            detail = t("shell.start.sources.stale");
           } else if (latency === undefined) {
             detail = t(`datasources.status.${state}`);
           } else {
             detail = t("datasources.status.ms", { ms: Math.round(latency) });
+          }
+          if (item.lastTest !== undefined && state !== "untested") {
+            detail = t("shell.start.sources.when", {
+              detail,
+              ago: ago(item.lastTest.testedAt, now),
+            });
           }
           return (
             <li key={item.id} className="start__source" data-status={state}>
@@ -149,6 +184,7 @@ export function HintsCard({
   updates: boolean;
 }) {
   const { t, language } = useI18n();
+  const ago = useAgo();
   const titleId = useId();
   const status = useQuery({ ...sourceStatusQuery(orgId), enabled: sources });
   const update = useQuery({
@@ -172,16 +208,19 @@ export function HintsCard({
   }
   const now = Date.now();
   for (const item of status.data ?? []) {
-    if (item.lastTest !== undefined && !item.lastTest.ok) {
-      const since = item.lastTest.failingSince;
+    const test = item.lastTest;
+    if (test !== undefined && !test.ok) {
+      // What the stored tests showed, from the first failing one to the last; never up to now.
+      const span = test.failingSince === undefined ? 0 : test.testedAt - test.failingSince;
       hints.push({
         key: `down:${item.id}`,
         text:
-          since === undefined
-            ? t("shell.start.hints.down", { name: item.name })
-            : t("shell.start.hints.downSince", {
+          span < 60_000
+            ? t("shell.start.hints.down", { name: item.name, ago: ago(test.testedAt, now) })
+            : t("shell.start.hints.downSpan", {
                 name: item.name,
-                since: sinceText(t, language, Math.max(0, now - since)),
+                span: sinceText(t, language, span),
+                ago: ago(test.testedAt, now),
               }),
         link: (
           <Link

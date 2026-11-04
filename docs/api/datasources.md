@@ -172,7 +172,7 @@ Items in the trash also carry `deletedAt`. `access` is described under [Access](
 Every member; for the start page's "Data source status" and "Hints". The live sources the caller
 may read or query (as the list), newest first, at most 200, in one page (`nextCursor` is `null`).
 Each holds `id`, `name`, `kind`, `lastTest` as under [One data source](#one-data-source)
-(omitted until a test ran) and, only on
+(omitted until a test ran, and for callers who may query the source without reading it) and, only on
 sources the caller may change (`write`), `unused`: whether no dashboard and no library panel
 refers to it. No connection test runs here.
 

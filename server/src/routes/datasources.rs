@@ -164,7 +164,7 @@ struct ListParams {
 }
 
 /// The most sources the status answer holds (the newest); the start page shows a few of them.
-const STATUS_LIMIT: i64 = 200;
+const STATUS_LIMIT: usize = 200;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -172,7 +172,8 @@ struct StatusItem {
     id: String,
     name: String,
     kind: String,
-    /// The last "Test connection" since the settings last changed, as on the source itself.
+    /// The last "Test connection" since the settings last changed, as on the source itself; only
+    /// for who may read the source (a query grant alone shows name and kind).
     #[serde(skip_serializing_if = "Option::is_none")]
     last_test: Option<datasources::LastTest>,
     /// Whether no dashboard or library panel refers to the source; only for who may change it.
@@ -196,46 +197,53 @@ async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>
     .bind(&ctx.org_id)
     .fetch_all(&mut *conn)
     .await?;
-    let mut items = Vec::new();
-    for (id, name, kind, ok, warnings, tested_at, latency_ms, failing_since) in rows {
-        let Some(held) = index.datasource(&id) else { continue };
-        if !(held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery)) {
-            continue;
-        }
-        if items.len() as i64 >= STATUS_LIMIT {
-            break;
-        }
-        let last_test = match (ok, warnings, tested_at) {
-            (Some(ok), Some(warnings), Some(tested_at)) => {
-                Some(datasources::LastTest::from_row((ok, warnings, tested_at, latency_ms, failing_since)))
-            }
-            _ => None,
-        };
-        let unused = if held.contains(&Permission::DatasourcesWrite) {
-            Some(!in_use(&mut conn, &ctx.org_id, &id).await?)
-        } else {
-            None
-        };
-        items.push(StatusItem { id, name, kind, last_test, unused });
-    }
+    let visible: Vec<(StatusRow, BTreeSet<Permission>)> = rows
+        .into_iter()
+        .filter_map(|row| {
+            let held = index.datasource(&row.0)?;
+            (held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery))
+                .then_some((row, held))
+        })
+        .take(STATUS_LIMIT)
+        .collect();
+    // What refers to the sources, read once for all of them and only when the caller may change one.
+    let models = if visible.iter().any(|(_, held)| held.contains(&Permission::DatasourcesWrite)) {
+        stored_models(&mut conn, &ctx.org_id).await?
+    } else {
+        Vec::new()
+    };
+    let items = visible
+        .into_iter()
+        .map(|((id, name, kind, ok, warnings, tested_at, latency_ms, failing_since), held)| {
+            // The test's details are the source's own data: for who may read it, not only query it.
+            let last_test = match (ok, warnings, tested_at) {
+                (Some(ok), Some(warnings), Some(tested_at)) if held.contains(&Permission::DatasourcesRead) => {
+                    Some(datasources::LastTest::from_row((ok, warnings, tested_at, latency_ms, failing_since)))
+                }
+                _ => None,
+            };
+            // The ids are UUIDs, so the quoted id in a stored model is a reference and nothing else.
+            let needle = format!("\"{id}\"");
+            let unused = held
+                .contains(&Permission::DatasourcesWrite)
+                .then(|| !models.iter().any(|model| model.contains(&needle)));
+            StatusItem { id, name, kind, last_test, unused }
+        })
+        .collect();
     Ok(Json(Page { items, next_cursor: None }))
 }
 
-/// Whether a dashboard or a library panel of the organization refers to the source, as the purge
-/// checks it.
-async fn in_use(conn: &mut sqlx::AnyConnection, org_id: &str, id: &str) -> ApiResult<bool> {
-    // The ids are UUIDs, so the quoted id in a stored model is a reference and nothing else.
-    let needle = format!("%\"{id}\"%");
-    let found = sqlx::query(
-        "SELECT d.id FROM dashboards d JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
-         WHERE d.org_id = $1 AND v.model LIKE $2 \
-         UNION ALL SELECT id FROM library_panels WHERE org_id = $1 AND model LIKE $2 LIMIT 1",
+/// The current models of the organization's dashboards and its library panels, where a source in
+/// use is referred to (as the purge checks it).
+async fn stored_models(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResult<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT v.model FROM dashboards d JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
+         WHERE d.org_id = $1 UNION ALL SELECT model FROM library_panels WHERE org_id = $1",
     )
     .bind(org_id)
-    .bind(&needle)
-    .fetch_optional(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
-    Ok(found.is_some())
+    Ok(rows.into_iter().map(|(model,)| model).collect())
 }
 
 /// Newest first (ids are UUIDv7, so id order is creation order); the cursor is the last id.

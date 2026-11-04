@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { AuditEvent } from "../features/admin/api";
 import type { SourceStatusItem } from "../features/datasources/api";
 import { translate } from "../i18n/i18n";
-import { changeText, STATUS_ROWS, sinceText, statusRows, storedStatus } from "./StartCards";
+import {
+  changeText,
+  STALE_MS,
+  STATUS_ROWS,
+  sinceText,
+  statusRows,
+  storedStatus,
+} from "./StartCards";
 
 const en = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
   translate("en", key, params);
@@ -37,13 +44,21 @@ function event(fields: Partial<AuditEvent>): AuditEvent {
 }
 
 describe("start page cards", () => {
-  it("reads the status from the stored test: failing, slow, connected or untested", () => {
-    expect(storedStatus(source("a"))).toBe("untested");
-    expect(storedStatus(source("a", { ok: false, warnings: [], testedAt: 1 }))).toBe("unreachable");
-    expect(storedStatus(source("a", passed(840)))).toBe("slow");
-    expect(storedStatus(source("a", passed(12)))).toBe("connected");
+  it("reads the status from the stored test: failing, slow, connected, stale or untested", () => {
+    const now = 2;
+    expect(storedStatus(source("a"), now)).toBe("untested");
+    expect(storedStatus(source("a", { ok: false, warnings: [], testedAt: 1 }), now)).toBe(
+      "unreachable",
+    );
+    expect(storedStatus(source("a", passed(840)), now)).toBe("slow");
+    expect(storedStatus(source("a", passed(12)), now)).toBe("connected");
     // A test kept before latencies were stored still counts as connected.
-    expect(storedStatus(source("a", passed()))).toBe("connected");
+    expect(storedStatus(source("a", passed()), now)).toBe("connected");
+    // A day later the test no longer stands for the source, passed or failed.
+    expect(storedStatus(source("a", passed(12)), 1 + STALE_MS + 1)).toBe("stale");
+    expect(
+      storedStatus(source("a", { ok: false, warnings: [], testedAt: 1 }), 1 + STALE_MS + 1),
+    ).toBe("stale");
   });
 
   it("lists problems first, then by name, a few at most", () => {
@@ -56,6 +71,7 @@ describe("start page cards", () => {
         source("Beta", passed(5)),
       ],
       "en",
+      2,
     ).map((item) => item.name);
     expect(rows).toEqual(["Monitoring", "Graph", "Beta", "Zeta", "Alpha"]);
     const many = Array.from({ length: STATUS_ROWS + 3 }, (_, index) => source(`S${index}`));
