@@ -943,7 +943,13 @@ parameters are tokens of their own, so a keyword inside them is never seen):
   procedures in `MAGE_PROCEDURES` (`community_detection.get`, `pagerank.get`, ...). GDS `write`,
   `mutate` and `estimate` modes and every other `gds.graph.*` procedure are refused, as are GDS
   1.x anonymous projections (`nodeQuery`, `relationshipQuery`, `nodeProjection` or
-  `relationshipProjection` in the arguments). Allowed functions add `gds.util.asNode`,
+  `relationshipProjection` in the arguments) and the settings `sudo`, `concurrency`,
+  `readConcurrency` and `writeConcurrency` (GDS's memory check and default concurrency apply). A
+  GDS algorithm's arguments must read `('graph')` or `($graph)`, optionally followed by a
+  configuration written as a map literal (`, {maxIterations: 20}`), so every key is in the text
+  (`cypher.gds_arguments` otherwise). `gds.graph.list` answers the configuration of every graph
+  the login can see, including the Cypher of a Cypher projection. `cycles.get` and
+  `node_similarity.*` of MAGE are not on the list (exponential or quadratic work). Allowed functions add `gds.util.asNode`,
   `gds.util.asNodes`, `gds.util.nan`, `gds.util.infinity`, `gds.util.isFinite`,
   `gds.util.isInfinite` and `gds.similarity.*`; `gds.graph.project` as a function is refused.
 - A word counts as a keyword unless it is in backticks, follows `.` or `:`, or is followed by
@@ -980,7 +986,12 @@ computed by the database: Memgraph runs MAGE's `community_detection.get_subgraph
 query (ids must be numbers); Neo4j runs GDS Louvain on a graph projected with
 `gds.graph.project` from those nodes under a name made for the request
 (`kalzit-communities-<uuid>`), and drops it after the stream, whether or not the stream
-succeeded (on a fresh connection when the first one broke). The query texts are fixed in the
+succeeded. The three run in a task of their own, so a request given up halfway (a closed tab, a
+timeout) still drops its graph. Each source runs one community request at a time; before it
+projects, it drops every `kalzit-communities-*` graph `gds.graph.list` shows, left by a request
+whose connection broke or a server that stopped (with one request at a time none is in use; a
+second Kalzit server on the same database and login could lose a running request's graph, which
+then fails and the panel goes without). The query texts are fixed in the
 server; the ids and the graph name are parameters. Like a Cypher query it is a free query and
 needs `datasources:query` on the source. A database without GDS (2.4 or later) or MAGE answers
 its own error; the graph panel then goes without.
@@ -1912,6 +1923,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `cypher.procedure_not_allowed` | `name` | `CALL` of a procedure that is not on the read list |
 | `cypher.parse_error` | `name` (when there is one) | `CALL` without a procedure name or subquery, or a procedure name followed by anything but its arguments, a clause or the end (such as an invisible character) |
 | `cypher.gds_anonymous_projection` | `key` | a GDS procedure given a projection (`key`) instead of the name of a projected graph |
+| `cypher.gds_arguments` | | GDS algorithm arguments other than a graph name (text or `$parameter`) and an optional map literal |
+| `cypher.gds_config_key` | `key` | a GDS setting that lifts GDS's limits: `sudo`, `concurrency`, `readConcurrency`, `writeConcurrency` |
 | `graph.communities_size` | | a communities request with no nodes or more than 100,000 |
 | `graph.communities_ids` | | a Memgraph communities request with node ids that are not numbers |
 | `cypher.function_not_allowed` | `name` | a function that is neither a built-in nor on the list of allowed namespaced functions |

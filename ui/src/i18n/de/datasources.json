@@ -576,6 +576,8 @@
   "datasources.reason.cypher.in_transactions": "Schreiben in Stapeln (IN TRANSACTIONS, PERIODIC COMMIT) ist nicht erlaubt.",
   "datasources.reason.cypher.procedure_not_allowed": "Die Prozedur {name} steht nicht auf der Liste der lesenden Prozeduren.",
   "datasources.reason.cypher.gds_anonymous_projection": "Eine GDS-Prozedur läuft auf einem Graphen, den ein Admin projiziert hat. Gib seinen Namen statt einer Projektion an.",
+  "datasources.reason.cypher.gds_arguments": "Ein GDS-Algorithmus nimmt den Namen eines projizierten Graphen als Text oder $Parameter, danach optional eine ausgeschriebene Konfiguration { }.",
+  "datasources.reason.cypher.gds_config_key": "Die GDS-Einstellung {key} ist nicht erlaubt; es gelten die Speicherprüfung und Parallelität von GDS.",
   "datasources.reason.graph.communities_size": "Communities werden für 1 bis 100.000 Knoten abgefragt.",
   "datasources.reason.graph.communities_ids": "Memgraph-Knoten-IDs sind Zahlen.",
   "datasources.reason.cypher.parse_error": "Nach CALL braucht es einen Prozedurnamen oder eine Unterabfrage.",

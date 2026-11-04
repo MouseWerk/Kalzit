@@ -128,19 +128,22 @@ pub const MAGE_PROCEDURES: &[&str] = &[
     "weakly_connected_components.get",
     "biconnected_components.get",
     "bridges.get",
-    "cycles.get",
     "graph_coloring.color_graph",
     "graph_coloring.color_subgraph",
-    "node_similarity.cosine",
-    "node_similarity.jaccard",
-    "node_similarity.overlap",
     "kmeans.get_clusters",
     "max_flow.get_flow",
 ];
+// Left out on purpose: `cycles.get` (all cycles, exponential in the graph) and
+// `node_similarity.*` (every pair of nodes). Memgraph neither enforces the read mode nor stops a
+// running C++ procedure before its query timeout, so this list is the only limit there.
 
 /// Configuration keys of a GDS 1.x anonymous projection, which loads a graph with Cypher given as
 /// text; refused in the arguments of a GDS procedure.
 const GDS_PROJECTION_KEYS: &[&str] = &["nodeQuery", "relationshipQuery", "nodeProjection", "relationshipProjection"];
+
+/// GDS configuration keys refused in queries: `sudo` turns off GDS's memory check, and the
+/// concurrency settings could take every core of the database server; GDS's defaults apply.
+const GDS_REFUSED_KEYS: &[&str] = &["sudo", "concurrency", "readConcurrency", "writeConcurrency"];
 
 /// Whether the procedure `name` (its parts joined with `.`) may be called.
 pub fn allowed_procedure(name: &str) -> bool {
@@ -830,39 +833,91 @@ fn check_call(toks: &[Tok], i: usize) -> Result<(), Detail> {
         )
         .with("name", name));
     }
-    if name.to_ascii_lowercase().starts_with("gds.") && toks.get(j + 1) == Some(&Tok::Sym('(')) {
+    let lower = name.to_ascii_lowercase();
+    if lower.starts_with("gds.") && !READ_PROCEDURES.iter().any(|p| p.eq_ignore_ascii_case(&lower)) {
         check_gds_arguments(toks, j + 1)?;
     }
     Ok(())
 }
 
-/// The arguments of a GDS procedure, from its `(` at `open`: no anonymous projection
-/// (`GDS_PROJECTION_KEYS`), whose Cypher text this check cannot see into.
+/// The arguments of a GDS algorithm, from the token after its name at `open`. They must read
+/// `('graph')` or `($graph)`, optionally followed by a configuration written as a map literal
+/// (`, {maxIterations: 20}`): the graph is then a name in the catalog, never a projection, and
+/// every configuration key is in the query's text. Refused keys: those of a GDS 1.x anonymous
+/// projection (`GDS_PROJECTION_KEYS`, Cypher as text this check cannot see into) and
+/// `GDS_REFUSED_KEYS`.
 fn check_gds_arguments(toks: &[Tok], open: usize) -> Result<(), Detail> {
+    let shape = || {
+        reject(
+            "cypher.gds_arguments",
+            "a GDS algorithm takes the name of a projected graph as text or a $parameter, then optionally a configuration map written out { }",
+        )
+    };
+    if toks.get(open) != Some(&Tok::Sym('(')) {
+        return Err(shape());
+    }
+    // The span of the arguments and its keys, whatever their shape.
     let mut depth = 0usize;
+    let mut close = None;
     for (k, t) in toks.iter().enumerate().skip(open) {
         match t {
-            Tok::Sym('(') => depth += 1,
-            Tok::Sym(')') => {
+            Tok::Sym('(') | Tok::Sym('{') | Tok::Sym('[') => depth += 1,
+            Tok::Sym(')') | Tok::Sym('}') | Tok::Sym(']') => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
+                    close = Some(k);
                     break;
                 }
             }
-            Tok::Ident { text, .. }
-                if toks.get(k + 1) == Some(&Tok::Sym(':'))
-                    && GDS_PROJECTION_KEYS.iter().any(|key| key.eq_ignore_ascii_case(text)) =>
-            {
-                return Err(reject(
-                    "cypher.gds_anonymous_projection",
-                    "a GDS procedure runs on a graph an administrator projected; give its name instead of a projection",
-                )
-                .with("key", text.clone()));
+            Tok::Ident { text, .. } if toks.get(k + 1) == Some(&Tok::Sym(':')) => {
+                if GDS_PROJECTION_KEYS.iter().any(|key| key.eq_ignore_ascii_case(text)) {
+                    return Err(reject(
+                        "cypher.gds_anonymous_projection",
+                        "a GDS procedure runs on a graph an administrator projected; give its name instead of a projection",
+                    )
+                    .with("key", text.clone()));
+                }
+                if GDS_REFUSED_KEYS.iter().any(|key| key.eq_ignore_ascii_case(text)) {
+                    return Err(reject(
+                        "cypher.gds_config_key",
+                        format!("the GDS setting {text} is not allowed; GDS's own memory check and default concurrency apply"),
+                    )
+                    .with("key", text.clone()));
+                }
             }
             _ => {}
         }
     }
-    Ok(())
+    let Some(close) = close else { return Err(shape()) };
+    if !matches!(toks.get(open + 1), Some(Tok::Str | Tok::Param(_))) {
+        return Err(shape());
+    }
+    let fits = match toks.get(open + 2) {
+        Some(Tok::Sym(')')) => true,
+        Some(Tok::Sym(',')) if toks.get(open + 3) == Some(&Tok::Sym('{')) => {
+            matching(toks, open + 3) == Some(close - 1)
+        }
+        _ => false,
+    };
+    if fits { Ok(()) } else { Err(shape()) }
+}
+
+/// The index of the bracket that closes the one at `open`.
+fn matching(toks: &[Tok], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (k, t) in toks.iter().enumerate().skip(open) {
+        match t {
+            Tok::Sym('(' | '{' | '[') => depth += 1,
+            Tok::Sym(')' | '}' | ']') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(k);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1134,6 +1189,33 @@ mod tests {
                 "cypher.gds_anonymous_projection",
             ),
             ("CALL gds.wcc.stream({NODEQUERY: 'x'})", "cypher.gds_anonymous_projection"),
+            // The graph is a name and the configuration a map written out, so no key hides.
+            (
+                "WITH {nodeQuery: 'MATCH (n) RETURN id(n) AS id', relationshipQuery: 'x'} AS c CALL gds.wcc.stream(c) YIELD nodeId RETURN nodeId",
+                "cypher.gds_arguments",
+            ),
+            ("WITH {sudo: true} AS c CALL gds.wcc.stream('g', c) YIELD nodeId RETURN nodeId", "cypher.gds_arguments"),
+            ("CALL gds.wcc.stream('g', $config) YIELD nodeId RETURN nodeId", "cypher.gds_arguments"),
+            (
+                "CALL gds.wcc.stream('g', apoc.map.fromPairs([['sudo', true]])) YIELD nodeId RETURN nodeId",
+                "cypher.gds_arguments",
+            ),
+            (
+                "CALL gds.wcc.stream(apoc.map.fromPairs([['nodeQuery', 'x']])) YIELD nodeId RETURN nodeId",
+                "cypher.gds_arguments",
+            ),
+            ("CALL gds.wcc.stream('g', {}, 'x') YIELD nodeId RETURN nodeId", "cypher.gds_arguments"),
+            ("CALL gds.wcc.stream('g', {} + {}) YIELD nodeId RETURN nodeId", "cypher.gds_arguments"),
+            ("CALL gds.wcc.stream('g' + 'h')", "cypher.gds_arguments"),
+            ("CALL gds.wcc.stream(['g'])", "cypher.gds_arguments"),
+            ("CALL gds.wcc.stream()", "cypher.gds_arguments"),
+            ("CALL gds.wcc.stream YIELD nodeId RETURN nodeId", "cypher.gds_arguments"),
+            ("CALL gds.wcc.stream('g'", "cypher.gds_arguments"),
+            // Settings that lift GDS's own limits.
+            ("CALL gds.louvain.stream('g', {sudo: true}) YIELD nodeId RETURN nodeId", "cypher.gds_config_key"),
+            ("CALL gds.louvain.stream('g', {`SUDO`: true}) YIELD nodeId RETURN nodeId", "cypher.gds_config_key"),
+            ("CALL gds.louvain.stream('g', {concurrency: 512}) YIELD nodeId RETURN nodeId", "cypher.gds_config_key"),
+            ("CALL gds.pageRank.stats('g', {maxIterations: 5, readConcurrency: 64})", "cypher.gds_config_key"),
             // Comments, whitespace, backticks and look-alike characters change nothing.
             ("CALL gds/* x */.louvain.write('g', {})", "cypher.procedure_not_allowed"),
             ("CALL gds.louvain // x\n.write('g', {})", "cypher.procedure_not_allowed"),
@@ -1180,6 +1262,8 @@ mod tests {
             ("CALL community_detection_online.update([], [], [], [], [], [])", "cypher.procedure_not_allowed"),
             ("CALL pagerank_online.set(100, 0.2)", "cypher.procedure_not_allowed"),
             ("CALL kmeans.set_clusters(3, 'emb')", "cypher.procedure_not_allowed"),
+            ("CALL cycles.get() YIELD cycle_id RETURN cycle_id", "cypher.procedure_not_allowed"),
+            ("CALL node_similarity.jaccard() YIELD node1 RETURN node1", "cypher.procedure_not_allowed"),
             ("CALL export_util.json('/tmp/x.json')", "cypher.procedure_not_allowed"),
             ("CALL import_util.json('/tmp/x.json')", "cypher.procedure_not_allowed"),
             ("CALL periodic.iterate('MATCH (n) RETURN n', 'DELETE n', {})", "cypher.procedure_not_allowed"),

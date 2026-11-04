@@ -197,7 +197,11 @@ the ones that read, from a reviewed list; the server checks every query.
 - **Memgraph MAGE**: the `get` procedures that compute without keeping anything, such as
   `community_detection.get`, `community_detection.get_subgraph`, `pagerank.get`,
   `betweenness_centrality.get`, `degree_centrality.get` and `weakly_connected_components.get`.
-  Refused: the online modules (`set`, `update`, `reset`), loaders, exporters and `periodic`.
+  Refused: the online modules (`set`, `update`, `reset`), loaders, exporters and `periodic`, and
+  `cycles.get` and `node_similarity.*`, whose work grows too fast with the graph. Memgraph does
+  not enforce read transactions and does not stop a running algorithm, so start Memgraph with a
+  query timeout (`--query-execution-timeout-sec`, 600 by default; lower it for shared servers):
+  there, the list is the only limit.
 - APOC procedures stay refused, as does any procedure not on the list.
 
 GDS runs on a graph projected into its in-memory catalog. Projecting changes that catalog, which
@@ -210,14 +214,23 @@ CALL gds.louvain.stream('people') YIELD nodeId, communityId
 RETURN gds.util.asNode(nodeId).name AS name, communityId ORDER BY communityId
 ```
 
-GDS 1.x anonymous projections (`nodeQuery`, `relationshipQuery`, `nodeProjection`,
-`relationshipProjection` in the configuration) are refused, since they carry Cypher as text.
+The graph is named as text or a `$parameter`, and an optional configuration is written out as a
+map (`CALL gds.pageRank.stream('people', {maxIterations: 20})`). Refused: GDS 1.x anonymous
+projections (`nodeQuery`, `relationshipQuery`, `nodeProjection`, `relationshipProjection`), which
+carry Cypher as text, and the settings `sudo` (turns off GDS's memory check) and `concurrency`,
+`readConcurrency`, `writeConcurrency` (GDS's default applies).
+
+`gds.graph.list` shows every query user the configuration of each graph the login can see,
+including the Cypher of a Cypher projection. Give Kalzit a login that sees only graphs meant for
+it, or keep confidential Cypher out of projections.
 
 **Communities in graph panels.** The panel computes communities in the browser for up to 2,000
 nodes. For a larger graph from one Neo4j or Memgraph source, and a viewer who may query that source
 (`datasources:query`), it asks the database: Memgraph runs MAGE's
 `community_detection.get_subgraph` over the nodes shown; Neo4j runs GDS Louvain on a graph that
-Kalzit projects from the nodes shown under a name made for that request and drops right after.
+Kalzit projects from the nodes shown under a name made for that request and drops right after,
+also when the request is given up halfway; one such request runs per source at a time, and a
+graph left behind (a broken connection) is dropped before the next one.
 These queries are fixed in the server, not typed by anyone. Without GDS or MAGE, or without the
 right, the panel says that communities are computed up to 2,000 nodes. For Neo4j this needs GDS
 2.4 or later, and the user needs the right to run GDS procedures.
