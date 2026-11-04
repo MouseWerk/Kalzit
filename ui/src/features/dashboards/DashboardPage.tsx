@@ -112,7 +112,7 @@ import {
   RowDialog,
   SaveAsDialog,
 } from "./ToolDialogs";
-import { delayedNow, resolveRange, type TextRange } from "./timeRange";
+import { delayedNow, resolveRange, type TextRange, toStoredAbsolute } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import type { PanelLiveOptions } from "./usePanelResults";
@@ -1255,6 +1255,9 @@ function DashboardView({
       setMany: (name: string, list: readonly string[]) =>
         setValues((v) => ({ ...v, [name]: [...list] })),
     },
+    // A plugin panel's `range` event, as the time picker sets a range.
+    setRange: (from: number, to: number) =>
+      onRangeChange({ from: toStoredAbsolute(from), to: toStoredAbsolute(to) }),
   };
 
   const gridQuery = useMemo(

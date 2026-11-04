@@ -96,7 +96,7 @@ test.beforeAll(async ({ world }) => {
       schemaVersion: 1,
       title: "Plugin panel",
       timeRange: { from: "now-30d", to: "now" },
-      variables: [],
+      variables: [{ name: "region", type: "textbox", current: "" }],
       panels: [
         {
           id: "kpi",
@@ -112,7 +112,12 @@ test.beforeAll(async ({ world }) => {
               },
             },
           ],
-          options: { field: "total", decimals: 1 },
+          // A click in the panel sets $region from the clicked row's region.
+          options: {
+            field: "total",
+            decimals: 1,
+            $click: { variable: "region", source: "region" },
+          },
         },
       ],
     });
@@ -153,6 +158,25 @@ test("a panel plugin draws in its sandboxed frame and is edited with options fro
     // The tile shows the panel's title and the last value of the field, with one decimal.
     await expect(frame.locator(".label")).toHaveText("Revenue");
     await expect(frame.locator(".value")).toHaveText(/^\d[\d,.]*\.\d$/);
+  });
+
+  await test.step("the panel's click, variable and range events act like a built-in panel's", async () => {
+    // As the bundle would send them, from inside the sandboxed frame.
+    const panelFrame = page.frames().find((f) => f.url().includes(`/panel-plugins/${ID}/frame`));
+    if (panelFrame === undefined) throw new Error("the panel's frame is not there");
+    const send = (event: Record<string, unknown>) =>
+      panelFrame.evaluate((e) => {
+        window.parent.postMessage({ kalzit: "panel", api: 1, ...e }, "*");
+      }, event);
+    const region = page.getByRole("textbox", { name: "region" });
+    await send({ type: "click", refId: "A", target: "row", index: 0 });
+    await expect(region).not.toHaveValue("");
+    await send({ type: "setVariable", name: "region", value: "Nord" });
+    await expect(region).toHaveValue("Nord");
+    const from = Date.UTC(2026, 0, 1);
+    await send({ type: "range", from, to: from + 86_400_000 });
+    // Into the address, as the time picker sets a range.
+    await expect(page).toHaveURL(/from=2026-01-01T00(%3A|:)00/);
   });
 
   await test.step("the panel editor offers it with its publisher and builds its options", async () => {

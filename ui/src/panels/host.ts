@@ -44,6 +44,12 @@ export interface PanelHost {
    * its checks). Absent while viewing, where a panel cannot change its options.
    */
   editOptions?: (options: Record<string, unknown>) => void;
+  /**
+   * Sets the dashboard's time range to an absolute one (Unix milliseconds), as the time picker
+   * does: into the address, or into the draft while the dashboard is edited. Absent outside a
+   * dashboard.
+   */
+  setRange?: (from: number, to: number) => void;
 }
 
 export const PanelHostContext = createContext<PanelHost>({});

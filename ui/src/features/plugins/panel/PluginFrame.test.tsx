@@ -257,6 +257,86 @@ describe("the panel frame", () => {
     expect(info.mock.calls.length).toBe(4);
   });
 
+  it("acts on range and setVariable like the built-in panels, and says so", () => {
+    expectConsoleOutput(
+      /dropped setVariable: \$env is not a variable a panel may set/,
+      /dropped an event \(panel\.field_invalid\): from is before to/,
+    );
+    const set = vi.fn();
+    const setRange = vi.fn();
+    const host: PanelHost = {
+      orgId: "org-1",
+      dashboardId: "dash-1",
+      variables: { names: ["region"], accepts: () => true, set },
+      setRange,
+    };
+    const { target, container } = draw(host);
+    fromFrame(target, event({ type: "ready" }));
+    fromFrame(target, event({ type: "range", from: 1000, to: 5000 }));
+    expect(setRange).toHaveBeenCalledWith(1000, 5000);
+    const status = container.querySelector("[role=status]") as HTMLElement;
+    expect(status.textContent).toBe("The panel set the dashboard’s time range.");
+    fromFrame(target, event({ type: "range", from: 5000, to: 1000 }));
+    fromFrame(target, event({ type: "setVariable", name: "region", value: "eu" }));
+    expect(set).toHaveBeenCalledWith("region", "eu");
+    expect(status.textContent).toBe("$region is now eu");
+    fromFrame(target, event({ type: "setVariable", name: "env", value: "prod" }));
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(setRange).toHaveBeenCalledTimes(1);
+  });
+
+  it("acts on events only from its own frame, and at most twenty a second", () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_800_000_000_000 });
+    expectConsoleOutput(/dropped a message from origin https:\/\/evil\.example/);
+    const setRange = vi.fn();
+    const { target } = draw({ orgId: "org-1", dashboardId: "dash-1", setRange });
+    fromFrame(target, event({ type: "ready" }));
+    // The page itself or another panel, and the frame's window from another origin: ignored.
+    fromFrame(window, event({ type: "range", from: 1, to: 2 }));
+    fromFrame(target, event({ type: "range", from: 1, to: 2 }), "https://evil.example");
+    expect(setRange).not.toHaveBeenCalled();
+    // A flood: ready and the foreign-origin message do not count, so 19 more fit this second.
+    for (let i = 0; i < 50; i += 1) {
+      fromFrame(target, event({ type: "range", from: i, to: i + 1 }));
+    }
+    expect(setRange).toHaveBeenCalledTimes(19);
+    vi.setSystemTime(1_800_000_001_000);
+    fromFrame(target, event({ type: "range", from: 100, to: 200 }));
+    expect(setRange).toHaveBeenCalledTimes(20);
+  });
+
+  it("sets its click variable from a clicked row, and never shows the plugin that setting", () => {
+    const set = vi.fn();
+    const host: PanelHost = {
+      orgId: "org-1",
+      dashboardId: "dash-1",
+      variables: { names: ["cpu"], accepts: () => true, set },
+    };
+    const view = render(
+      <PanelHostContext value={host}>
+        <PluginFrame
+          info={INFO}
+          options={{ field: "cpu", $click: { variable: "cpu", source: "cpu" } }}
+          series={SERIES}
+          timeRange={{ from: 1, to: 2 }}
+          title="CPU"
+        />
+      </PanelHostContext>,
+    );
+    const iframe = view.container.querySelector("iframe") as HTMLIFrameElement;
+    const target = iframe.contentWindow as Window;
+    const sent: { type: string; [key: string]: unknown }[] = [];
+    vi.spyOn(target, "postMessage").mockImplementation((data: unknown) => {
+      sent.push(data as { type: string });
+    });
+    fireEvent.load(iframe);
+    fromFrame(target, event({ type: "ready" }));
+    expect(sent[0]).toMatchObject({ type: "init", options: { field: "cpu" } });
+    expect(sent[0]?.options).not.toHaveProperty("$click");
+    fromFrame(target, event({ type: "click", refId: "A", target: "row", index: 2 }));
+    expect(set).toHaveBeenCalledWith("cpu", "3");
+  });
+
   it("shows an error when the panel does not start, and starts it again", () => {
     vi.useFakeTimers();
     expectConsoleOutput(/did not say ready within 10 s/);
@@ -325,6 +405,29 @@ describe("a panel plugin's type", () => {
     await user.type(decimals, "11");
     // 11 is outside the range: never written.
     expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ decimals: 11 }));
+  });
+
+  it("offers the dashboard's variables for clicks and selection, apart from its options", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <PanelHostContext
+        value={{
+          orgId: "org-1",
+          variables: { names: ["region"], multi: ["hosts"], accepts: () => true, set: vi.fn() },
+        }}
+      >
+        <PluginOptionsEditor info={INFO} options={{ decimals: 2 }} onChange={onChange} />
+      </PanelHostContext>,
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Clicking or selecting in the panel sets"),
+      "hosts",
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      decimals: 2,
+      $click: { variable: "hosts", source: "" },
+    });
   });
 
   it("says when a panel has no options", () => {
