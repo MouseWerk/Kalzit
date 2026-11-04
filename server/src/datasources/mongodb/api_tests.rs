@@ -361,7 +361,7 @@ async fn limits_cut_the_set_and_the_cursor_continues_it() {
     // A cursor from another query is refused.
     let other =
         t.query_with(&id, json!({ "collection": "orders", "pipeline": "[{\"$match\": {}}]" }), Some(&cursor)).await;
-    assert_eq!(other["error"]["reason"], "mongodb.cursor_invalid", "{other}");
+    assert_eq!(other["error"]["reason"], "query.cursor_invalid", "{other}");
 
     // find: the query's own limit and skip, and the source's limit on top.
     let r = t.query(&id, json!({ "collection": "orders", "filter": "{\"n\": {\"$gte\": 1}}", "sort": "{\"n\": 1}", "skip": 1, "limit": 2 })).await;

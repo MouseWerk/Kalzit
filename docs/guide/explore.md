@@ -136,7 +136,7 @@ For a table, use the explicit projection step:
 **Add projection step** names columns by field path (`items.0.price` for an element of an array),
 with optional names and types. Remove the step and you get the documents back. A result shows at
 most a limited number of documents (**Cut off at N documents**) and **Load more documents** fetches
-the next ones.
+the next ones (MongoDB, Elasticsearch and OpenSearch, JSON and NDJSON files).
 
 ### Graphs
 
