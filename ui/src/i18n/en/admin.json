@@ -788,6 +788,8 @@
   "admin.settings.plugins.catalog_url.description": "HTTPS address of the catalog list; its signature is read from the same address with .sig appended.",
   "admin.settings.plugins.catalog_refresh_hours.label": "Plugin catalog refresh (hours)",
   "admin.settings.plugins.catalog_refresh_hours.description": "How often the catalog list is loaded again while the catalog is on.",
+  "admin.settings.plugins.catalog_use_proxy.label": "Load plugin catalog via proxy",
+  "admin.settings.plugins.catalog_use_proxy.description": "Whether the catalog list and plugin downloads use the outbound proxy. Off, they go out directly.",
   "admin.settings.ai.provider_explain.label": "Provider for explain and draft",
   "admin.settings.ai.provider_explain.description": "The server’s provider for “Explain” and “Draft”; empty uses the default provider. An organization’s own provider comes first.",
   "admin.settings.ai.provider_summarize.label": "Provider for summaries",

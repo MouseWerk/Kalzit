@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useDeferredValue, useId, useState } from "react";
+import { type FormEvent, Fragment, type ReactNode, useDeferredValue, useId, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
@@ -20,13 +20,50 @@ import { groupedKeyId, pluginReasonText } from "./status";
 import "./catalog.css";
 import "./plugins.css";
 
-type Category = "" | "datasource" | "panel";
+type Kind = "datasource" | "panel";
 
-const CATEGORIES: readonly [Category, MessageKey][] = [
-  ["", "plugins.catalog.category.all"],
+/** What the category tree has chosen: all, a kind, or one category within a kind. */
+interface Filter {
+  kind: "" | Kind;
+  category: string;
+}
+
+const ALL: Filter = { kind: "", category: "" };
+
+const KINDS: readonly [Kind, MessageKey][] = [
   ["datasource", "plugins.catalog.category.datasource"],
   ["panel", "plugins.catalog.category.panel"],
 ];
+
+/**
+ * The names of the categories the catalog knows, in the order the tree lists them; a category
+ * of the index without a name here is shown as it is written and listed after them.
+ */
+const CATEGORY_NAMES: readonly [string, MessageKey][] = [
+  ["databases", "plugins.catalog.category.databases"],
+  ["metrics-and-logs", "plugins.catalog.category.metricsAndLogs"],
+  ["cloud-and-saas", "plugins.catalog.category.cloudAndSaas"],
+  ["files-and-apis", "plugins.catalog.category.filesAndApis"],
+  ["visualization", "plugins.catalog.category.visualization"],
+  ["charts", "plugins.catalog.category.charts"],
+  ["maps", "plugins.catalog.category.maps"],
+  ["tables-and-text", "plugins.catalog.category.tablesAndText"],
+  ["utilities", "plugins.catalog.category.utilities"],
+];
+
+function categoryName(t: Translate, slug: string): string {
+  const known = CATEGORY_NAMES.find(([name]) => name === slug);
+  return known === undefined ? slug : t(known[1]);
+}
+
+/** The categories of one kind with their counts, known ones first, the rest by name. */
+function categoriesOf(counts: Record<string, number> | undefined): [string, number][] {
+  const order = (slug: string) => {
+    const at = CATEGORY_NAMES.findIndex(([name]) => name === slug);
+    return at === -1 ? CATEGORY_NAMES.length : at;
+  };
+  return Object.entries(counts ?? {}).sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b));
+}
 
 /** How often the catalog may be loaded again, in hours. */
 const REFRESH_CHOICES = [1, 6, 12, 24, 72, 168] as const;
@@ -60,11 +97,11 @@ export function CatalogTab({
 }) {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState<Category>("");
+  const [filter, setFilter] = useState<Filter>(ALL);
   const deferred = useDeferredValue(search);
   const catalog = useQuery({
-    queryKey: catalogKeys.view(deferred, category),
-    queryFn: ({ signal }) => getCatalog(deferred, category, signal),
+    queryKey: catalogKeys.view(deferred, filter.kind, filter.category),
+    queryFn: ({ signal }) => getCatalog(deferred, filter.kind, filter.category, signal),
     placeholderData: (previous) => previous,
   });
   const queryClient = useQueryClient();
@@ -147,8 +184,8 @@ export function CatalogTab({
           view={view}
           search={search}
           onSearch={setSearch}
-          category={category}
-          onCategory={setCategory}
+          filter={filter}
+          onFilter={setFilter}
           refreshButton={refreshButton}
           onAcceptKey={() => refresh.mutate(true)}
           onInstall={onInstall}
@@ -274,7 +311,11 @@ function useSettingChange() {
             : "plugins.catalog.saved.off"
           : change.key === "url"
             ? "plugins.catalog.saved.url"
-            : "plugins.catalog.saved.interval";
+            : change.key === "useProxy"
+              ? change.value === true
+                ? "plugins.catalog.saved.proxyOn"
+                : "plugins.catalog.saved.proxyOff"
+              : "plugins.catalog.saved.interval";
       showToast({
         message: t(message),
         undo: () =>
@@ -294,7 +335,7 @@ function useSettingChange() {
   return mutation;
 }
 
-/** The catalog's address and refresh interval (board frame 5A, second card). */
+/** The catalog's address, refresh interval and proxy switch (board frame 5A, second card). */
 function SettingsCard({
   view,
   onChanged,
@@ -306,8 +347,9 @@ function SettingsCard({
   const { t } = useI18n();
   const urlId = useId();
   const hoursId = useId();
+  const proxyHintId = useId();
   const change = useSettingChange();
-  const { url, refreshHours } = view.settings;
+  const { url, refreshHours, useProxy } = view.settings;
   const [draft, setDraft] = useState<string | null>(null);
   const shown = draft ?? url.value;
   const urlError = change.error !== null && change.variables?.key === "url" ? change.error : null;
@@ -403,7 +445,36 @@ function SettingsCard({
             </select>
           </div>
         </div>
-        {url.editable && refreshHours.editable ? null : (
+        <div className="catalog-setting">
+          <div className="catalog-setting__text">
+            <span className="plugin-switch__title">{t("plugins.catalog.proxy")}</span>
+            <p className="plugins-hint" id={proxyHintId}>
+              {t("plugins.catalog.proxyText")}
+            </p>
+          </div>
+          <div className="catalog-setting__control">
+            <label className="catalog-switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={useProxy.value}
+                aria-checked={useProxy.value}
+                aria-describedby={proxyHintId}
+                disabled={!useProxy.editable}
+                onChange={() =>
+                  change.mutate({
+                    key: "useProxy",
+                    value: !useProxy.value,
+                    version: useProxy.version,
+                    undoValue: useProxy.value,
+                  })
+                }
+              />
+              <span>{t("plugins.catalog.proxy")}</span>
+            </label>
+          </div>
+        </div>
+        {url.editable && refreshHours.editable && useProxy.editable ? null : (
           <p className="plugins-hint plugins-lock">
             <Icon name="lock" />
             {t("plugins.catalog.locked")}
@@ -419,8 +490,8 @@ function Browse({
   view,
   search,
   onSearch,
-  category,
-  onCategory,
+  filter,
+  onFilter,
   refreshButton,
   onAcceptKey,
   onInstall,
@@ -429,8 +500,8 @@ function Browse({
   view: CatalogView;
   search: string;
   onSearch: (value: string) => void;
-  category: Category;
-  onCategory: (value: Category) => void;
+  filter: Filter;
+  onFilter: (value: Filter) => void;
   refreshButton: ReactNode;
   /** Takes the list although another key signed it than before. */
   onAcceptKey: () => void;
@@ -523,23 +594,31 @@ function Browse({
       )}
       <div className="catalog-browse">
         <nav className="catalog-nav" aria-label={t("plugins.catalog.categories")}>
-          {CATEGORIES.map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              className="plugins-filter catalog-nav__item"
-              aria-pressed={category === value}
-              onClick={() => onCategory(value)}
-            >
-              <span>{t(label)}</span>
-              <span className="plugins__count">
-                {value === ""
-                  ? view.counts.all
-                  : value === "datasource"
-                    ? view.counts.datasource
-                    : view.counts.panel}
-              </span>
-            </button>
+          <NavItem
+            label={t("plugins.catalog.category.all")}
+            count={view.counts.all}
+            pressed={filter.kind === ""}
+            onClick={() => onFilter(ALL)}
+          />
+          {KINDS.map(([kind, label]) => (
+            <Fragment key={kind}>
+              <NavItem
+                label={t(label)}
+                count={view.counts[kind]}
+                pressed={filter.kind === kind && filter.category === ""}
+                onClick={() => onFilter({ kind, category: "" })}
+              />
+              {categoriesOf(view.counts.categories[kind]).map(([category, count]) => (
+                <NavItem
+                  key={category}
+                  label={categoryName(t, category)}
+                  count={count}
+                  sub
+                  pressed={filter.kind === kind && filter.category === category}
+                  onClick={() => onFilter({ kind, category })}
+                />
+              ))}
+            </Fragment>
           ))}
           <label className="plugin-check catalog-nav__trusted">
             <input
@@ -600,6 +679,33 @@ function Browse({
         />
       )}
     </>
+  );
+}
+
+/** One entry of the category tree; a category sits indented under its kind. */
+function NavItem({
+  label,
+  count,
+  pressed,
+  sub = false,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  pressed: boolean;
+  sub?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`plugins-filter catalog-nav__item${sub ? " catalog-nav__item--sub" : ""}`}
+      aria-pressed={pressed}
+      onClick={onClick}
+    >
+      <span>{label}</span>
+      <span className="plugins__count">{count}</span>
+    </button>
   );
 }
 

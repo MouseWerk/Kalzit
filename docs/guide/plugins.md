@@ -135,9 +135,11 @@ erlauben…) on a trusted key, after a confirmation. Trusting a key for plugins 
 it sign the catalog. The signature lies next to the list at the same address with `.sig`
 appended. Packages and redirects on other hosts than the catalog's own must be public addresses,
 and the catalog address can never be Kalzit itself. **Load again every** (Erneut laden alle)
-sets how often Kalzit loads it (24 hours by default). The three settings can also be set in the
-environment (`KALZIT_SETTING_PLUGINS_CATALOG_ENABLED`, `..._URL`, `..._REFRESH_HOURS`); the tab
-then shows them read-only.
+sets how often Kalzit loads it (24 hours by default). **Load via proxy** (Über Proxy laden, on by
+default) sends the list and the plugin downloads through the proxy from **Network, HTTPS and
+proxy**; turned off, they go out directly. Without a proxy there it changes nothing. The four
+settings can also be set in the environment (`KALZIT_SETTING_PLUGINS_CATALOG_ENABLED`, `..._URL`,
+`..._REFRESH_HOURS`, `..._USE_PROXY`); the tab then shows them read-only.
 
 Kalzit loads the list itself, with the same target rules as data sources (allowed targets,
 metadata addresses refused), over HTTPS only, and sends nothing but its version and platform. It
@@ -153,8 +155,9 @@ When a check fails, the tab says why and keeps the list taken before; **Refresh 
 aktualisieren) tries again at once.
 
 The list shows each plugin with its kind, version, publisher, the key that signs it and whether
-you trust it, and the network targets it declares, with categories, a search and **Only trusted
-publishers** (Nur vertraute Herausgeber). **Details** shows the key id, the package's size, source
+you trust it, and the network targets it declares, with a search and **Only trusted publishers**
+(Nur vertraute Herausgeber). The categories on the left are a tree: **Data sources** and **Panels**,
+each with the categories the list names for its plugins (such as Databases or Maps). **Details** shows the key id, the package's size, source
 and SHA-256. **Install** (Installieren) or **Update to …** (Auf … aktualisieren, offered when the
 list has a newer version than the installed one) downloads the package and opens the same check
 as **Install from file**: the package must be exactly the one the list names (size, SHA-256, id,

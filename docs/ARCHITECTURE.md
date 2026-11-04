@@ -803,10 +803,11 @@ signature) always works, also offline, and runs the same checks.
 
 - An index may withdraw versions (`revoked`: plugin id, a semver requirement, a reason); they are
   never installed from the catalog and installed versions they match are named in the UI.
-  Optional `description`, `publisher` and `network` texts of an entry are for browsing only; the
-  review before approval shows the package's own manifest.
+  Optional `description`, `publisher`, `network` and `categories` texts of an entry are for
+  browsing only; the review before approval shows the package's own manifest.
 - The host side is `plugins::catalog` (settings `plugins.catalog_enabled`, off by default,
-  `plugins.catalog_url`, no default host, and `plugins.catalog_refresh_hours`). Kalzit itself
+  `plugins.catalog_url`, no default host, `plugins.catalog_refresh_hours` and
+  `plugins.catalog_use_proxy`, whether the outbound proxy carries it). Kalzit itself
   loads the index and `<url>.sig` (a detached signature like a package's) with the one HTTP
   client (`crate::http`): the data source target policy, HTTPS only on every hop, 30 s and 4 MiB
   for the index, 10 minutes and the entry's size for a package. Redirects are followed hop by

@@ -1,7 +1,7 @@
 //! The plugin catalog, host side, against a local catalog served over HTTPS in the test: off by
 //! default without any connection; the index's signature, sequence (no rollback) and expiry;
-//! revoked entries; installs from the catalog through the same checks as an uploaded file; and
-//! that only server administrators reach it.
+//! revoked entries; installs from the catalog through the same checks as an uploaded file;
+//! categories and the switch for the outbound proxy; and that only server administrators reach it.
 
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
@@ -335,6 +335,7 @@ impl TestApp {
             description: Some("Rows from a test.".into()),
             publisher: Some("Example GmbH".into()),
             network: declared.permissions.network.iter().map(kalzit_plugin_api::catalog::target_words).collect(),
+            categories: vec![],
         };
         self.files.put(&path, package);
         entry
@@ -1103,5 +1104,96 @@ async fn a_signed_update_of_an_unsigned_plugin_is_a_publisher_change() {
     );
     let item = t.catalog(&format!("?q={ID}")).await["items"][0].clone();
     assert_eq!(item["action"], "installed", "{item}");
+    t.finish().await;
+}
+
+/// Categories are part of the signed bytes: an index listing them is browsed by category, one
+/// whose categories were changed after signing is refused, and a malformed category is refused.
+#[tokio::test]
+async fn categories_are_signed_and_filter_the_list() {
+    let t = test_app().await;
+    let catalog_key = key(1);
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
+    t.turn_on().await;
+    let pkg = package(ID, "1.0.0", Some(&catalog_key), false, "");
+    let entry = CatalogEntry { categories: vec!["databases".into()], ..t.offer(ID, "1.0.0", &catalog_key, pkg) };
+
+    // Retagged after signing: the signature covers the categories too.
+    let signed = t.publish(&index(1, vec![entry.clone()]), &catalog_key);
+    let retagged = String::from_utf8(signed).unwrap().replace(r#"["databases"]"#, r#"["utilities"]"#);
+    t.files.put("index.json", retagged.into_bytes());
+    let r = t.refresh().await;
+    assert_eq!(r.reason(), "catalog.signature_invalid", "{}", r.body);
+
+    // A category that is no slug refuses the whole index.
+    let bad = CatalogEntry { categories: vec!["Data Bases".into()], ..entry.clone() };
+    t.publish(&index(1, vec![bad]), &catalog_key);
+    let r = t.refresh().await;
+    assert_eq!(r.reason(), "catalog.entry_invalid", "{}", r.body);
+
+    t.publish(&index(1, vec![entry]), &catalog_key);
+    let r = t.refresh().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["items"][0]["categories"], json!(["databases"]));
+    assert_eq!(r.body["counts"]["categories"], json!({ "datasource": { "databases": 1 } }));
+    let found = t.catalog("?kind=datasource&category=databases").await;
+    assert_eq!(found["items"].as_array().unwrap().len(), 1, "{found}");
+    let none = t.catalog("?category=maps").await;
+    assert_eq!(none["items"].as_array().unwrap().len(), 0);
+    assert_eq!(none["counts"]["all"], 1, "counted before the category filter");
+    let r = t.send(Method::GET, "/admin/plugin-catalog?category=Data%20Bases", None).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    t.finish().await;
+}
+
+/// A stand-in proxy that counts connections and closes each at once.
+async fn closing_proxy() -> (SocketAddr, Arc<AtomicUsize>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let seen = Arc::new(AtomicUsize::new(0));
+    let count = seen.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            drop(stream);
+        }
+    });
+    (addr, seen)
+}
+
+/// With an outbound proxy set, the catalog goes through it by default; the switch sends the
+/// index and packages out directly, and the change is in the audit log.
+#[tokio::test]
+async fn the_proxy_switch_decides_whether_the_catalog_uses_the_proxy() {
+    let t = test_app().await;
+    let catalog_key = key(1);
+    t.trust_catalog(&catalog_key, "Katalog GmbH").await;
+    t.turn_on().await;
+    let pkg = package(ID, "1.0.0", Some(&catalog_key), false, "");
+    let entry = t.offer(ID, "1.0.0", &catalog_key, pkg);
+    t.publish(&index(1, vec![entry]), &catalog_key);
+    let (proxy, seen) = closing_proxy().await;
+    t.setting("network.proxy_url", json!(format!("http://127.0.0.1:{}", proxy.port()))).await;
+    assert_eq!(t.catalog("").await["settings"]["useProxy"]["value"], true, "on by default");
+
+    let r = t.refresh().await;
+    assert_ne!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(seen.load(Ordering::SeqCst) > 0, "the request went to the proxy");
+
+    t.setting("plugins.catalog_use_proxy", json!(false)).await;
+    let before = seen.load(Ordering::SeqCst);
+    let r = t.refresh().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["settings"]["useProxy"]["value"], false);
+    let r = t.install(ID, "1.0.0").await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(seen.load(Ordering::SeqCst), before, "index and package went out directly");
+    let changed: Vec<(String,)> = sqlx::query_as(
+        "SELECT resource_id FROM audit_events WHERE action = 'settings.updated' ORDER BY created_at, id",
+    )
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert!(changed.iter().any(|(k,)| k == "plugins.catalog_use_proxy"), "{changed:?}");
     t.finish().await;
 }

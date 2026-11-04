@@ -382,6 +382,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "How often the catalog is loaded again while it is on.",
     },
     SettingDef {
+        key: "plugins.catalog_use_proxy",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Load the catalog and its packages through the outbound proxy (network.proxy_url) when one is set. Off, they go out directly.",
+    },
+    SettingDef {
         key: "network.proxy_url",
         scope: Scope::Server,
         default: || json!(""),
@@ -890,6 +897,7 @@ fn rule(key: &str) -> Option<Rule> {
         "plugins.catalog_url" => Rule::HttpsUrl,
         // At least hourly, at most weekly; an index is valid for at most 31 days.
         "plugins.catalog_refresh_hours" => Rule::Int { min: 1, max: 168 },
+        "plugins.catalog_use_proxy" => Rule::Bool,
         "network.proxy_url" => Rule::ProxyUrl,
         "network.no_proxy" => Rule::NoProxy,
         "network.proxy_username" => Rule::Text { max_chars: 256, multiline: false, required: false },
