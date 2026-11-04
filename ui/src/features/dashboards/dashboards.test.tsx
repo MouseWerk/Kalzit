@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { optionLabels, pickOption, waitForOption } from "../../test/select";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { mayManageAccess } from "./accessIntegration";
 import { fetchDashboards } from "./api";
@@ -268,14 +269,15 @@ describe("dashboard view", () => {
     };
     server.areas.dashboards.variableOptions.city = [{ value: "graz", label: "Graz" }];
     const { user } = renderApp("/dashboards/d-sales");
-    await screen.findByRole("option", { name: "Graz" });
+    const city = await screen.findByRole("combobox", { name: "city" });
+    await waitForOption(city, "Graz");
     const requests = server.areas.dashboards.variableRequests;
     expect(requests).toHaveLength(1);
     // Its own name is left out, and so is a variable the query does not mention.
     expect(requests[0]?.body.variables).toEqual({ country: "at" });
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "unit" }), "usd");
-    await user.selectOptions(screen.getByRole("combobox", { name: "country" }), "de");
+    await pickOption(user, screen.getByRole("combobox", { name: "unit" }), "usd");
+    await pickOption(user, screen.getByRole("combobox", { name: "country" }), "de");
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]?.body.variables).toEqual({ country: "de" });
 
@@ -324,18 +326,14 @@ describe("dashboard view", () => {
     };
     const { user } = renderApp("/dashboards/d-sales");
     const select = await screen.findByRole("combobox", { name: "region" });
-    expect(
-      within(select)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Europe", "United States"]);
+    expect(optionLabels(select)).toEqual(["Europe", "United States"]);
     expect(select).toHaveProperty("value", "eu");
     await waitFor(() =>
       expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables).toEqual({
         region: "eu",
       }),
     );
-    await user.selectOptions(select, "us");
+    await pickOption(user, select, "us");
     await waitFor(() =>
       expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables).toEqual({
         region: "us",
@@ -360,7 +358,7 @@ describe("dashboard view", () => {
     const select = await screen.findByRole("combobox", { name: "city" });
     await waitFor(() => expect(select).toHaveProperty("value", "graz"));
     // The placeholder for "no value" is gone once a value is chosen.
-    expect(within(select).queryByRole("option", { name: "No value" })).toBeNull();
+    expect(optionLabels(select)).not.toContain("No value");
   });
 
   it("keeps the values a viewer picked when the dashboard is saved", async () => {
@@ -371,7 +369,7 @@ describe("dashboard view", () => {
       variables: [{ name: "region", type: "custom", options: ["eu", "us"] }],
     };
     const { user } = renderApp("/dashboards/d-sales");
-    await user.selectOptions(await screen.findByRole("combobox", { name: "region" }), "us");
+    await pickOption(user, await screen.findByRole("combobox", { name: "region" }), "us");
     await user.click(screen.getByRole("button", { name: "Edit" }));
     await panelAction(user, "Remove “Slow”");
     await user.click(screen.getByRole("button", { name: "Save…" }));
@@ -394,7 +392,8 @@ describe("dashboard view", () => {
     };
     server.areas.dashboards.variableOptions.city = [{ value: "graz", label: "Graz" }];
     const { user } = renderApp("/dashboards/d-sales");
-    await screen.findByRole("option", { name: "Graz" });
+    const city = await screen.findByRole("combobox", { name: "city" });
+    await waitForOption(city, "Graz");
     await user.click(screen.getAllByRole("button", { name: "Edit" })[0] as HTMLElement);
     const dialog = await openSettings(user, "Variables");
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Query" }), {
@@ -403,7 +402,7 @@ describe("dashboard view", () => {
     // In edit mode Apply takes the change into the unsaved dashboard and goes back to it.
     await user.click(screen.getByRole("button", { name: "Apply" }));
     // The fake answers that SQL with a table whose first field is ids and second names.
-    expect(await screen.findByRole("option", { name: "Ada" })).toBeTruthy();
+    await waitForOption(screen.getByRole("combobox", { name: "city" }), "Ada");
     expect(server.areas.dashboards.variableRequests).toHaveLength(1);
     expect(server.areas.datasources.queries.at(-1)).toMatchObject({
       queries: [{ refId: "A", query: { sql: "SELECT name, score FROM customers" } }],
@@ -490,7 +489,7 @@ describe("dashboard view", () => {
     ];
     renderApp("/dashboards/d-sales");
     const select = await screen.findByRole("combobox", { name: "region" });
-    expect(await within(select).findByRole("option", { name: "United States" })).toBeTruthy();
+    await waitForOption(select, "United States");
     // A constant has nothing to choose and is not shown.
     expect(screen.queryByRole("combobox", { name: "tenant" })).toBeNull();
     // Nor is it sent: the server answers 422 for a constant's value in a stored query.
@@ -780,7 +779,7 @@ describe("editing a dashboard", () => {
     await user.click(screen.getAllByRole("button", { name: "Add panel" })[0] as HTMLElement);
     const dialog = await screen.findByRole("region", { name: "New panel" });
     await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Color" }), "background");
+    await pickOption(user, within(dialog).getByRole("combobox", { name: "Color" }), "background");
     // Arrow keys in the radio group pass through other types; coming back restores the options.
     await user.click(within(dialog).getByRole("radio", { name: "Gauge" }));
     await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
@@ -811,7 +810,7 @@ describe("editing a dashboard", () => {
       { name: "region", type: "custom", options: ["eu", "us"] },
     ]);
 
-    await user.selectOptions(await screen.findByRole("combobox", { name: "region" }), "us");
+    await pickOption(user, await screen.findByRole("combobox", { name: "region" }), "us");
     await waitFor(() => {
       const last = server.areas.dashboards.panelQueries.at(-1);
       expect(last?.body.variables).toEqual({ region: "us" });

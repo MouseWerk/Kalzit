@@ -1,5 +1,6 @@
 import { Api, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { expectSelectValue, selectOption } from "./support/select";
 import { serviceAddress } from "./support/services";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
@@ -82,15 +83,18 @@ test("OpenSearch in Explore: a search answers hits as documents, an aggregation 
     await test.step("a Lucene search answers its hits as documents", async () => {
       await signInOwner(page);
       await page.goto("/explore", { timeout: STEP_MS });
-      await page
-        .getByLabel(t("explore.datasource"))
-        .selectOption({ label: name }, { timeout: STEP_MS });
+      await selectOption(
+        page.getByLabel(t("explore.datasource")),
+        { label: name },
+        { timeout: STEP_MS },
+      );
       await fillQuery(page, "region:Nord");
       await run.click({ timeout: STEP_MS });
       await expect(result).toContainText(t("documents.summary.countMany", { count: 3 }), {
         timeout: STEP_MS,
       });
-      await expect(page.getByLabel(t("explore.visualization"), { exact: true })).toHaveValue(
+      await expectSelectValue(
+        page.getByLabel(t("explore.visualization"), { exact: true }),
         "documents",
       );
       await expect(result.getByRole("tree").first()).toBeVisible({ timeout: STEP_MS });
@@ -113,9 +117,9 @@ test("OpenSearch in Explore: a search answers hits as documents, an aggregation 
       );
       await run.click({ timeout: STEP_MS });
       // The answer is a frame now: shown as a table, one row per bucket.
-      await page
-        .getByLabel(t("explore.visualization"), { exact: true })
-        .selectOption("table", { timeout: STEP_MS });
+      await selectOption(page.getByLabel(t("explore.visualization"), { exact: true }), "table", {
+        timeout: STEP_MS,
+      });
       await expect(result.getByText("Süd", { exact: true }).first()).toBeVisible({
         timeout: STEP_MS,
       });

@@ -7,7 +7,7 @@ import { setTimeZone } from "../lib/timeSettings";
 import { formatValue, timeField, valueFields } from "./frame";
 import { getPanel, panelsForShapes, suggestPanel } from "./registry";
 import { reduceField } from "./stat";
-import { sortedRows } from "./table";
+import { COLUMN_WIDTH, columnGaps, columnWindow, shownColumns, sortedRows } from "./table";
 import { buildSeries, seriesPath } from "./timeseries/series";
 import type { AnyPanelPlugin } from "./types";
 
@@ -134,6 +134,62 @@ describe("table panel", () => {
     const rendered = within(table).getAllByRole("row").length;
     expect(rendered).toBeGreaterThan(5);
     expect(rendered).toBeLessThan(60);
+  });
+
+  it("renders only the columns in view of a very wide result, the first one always", () => {
+    const count = 500;
+    const frame: Frame = {
+      fields: Array.from({ length: count }, (_, i) => ({
+        name: `c${i}`,
+        type: "number" as const,
+        values: [i],
+      })),
+    };
+    const view = renderPanel("table", [frame]);
+    const table = screen.getByRole("table");
+    expect(table.getAttribute("aria-colcount")).toBe(String(count));
+    const headers = () => within(table).getAllByRole("columnheader");
+    const first = headers();
+    expect(first.length).toBeGreaterThan(3);
+    expect(first.length).toBeLessThan(20);
+    expect(first.map((h) => h.getAttribute("aria-colindex")).slice(0, 2)).toEqual(["1", "2"]);
+    // Scrolled sideways: the first column stays, the columns in view follow.
+    const scroller = view.container.querySelector(".vt") as HTMLElement;
+    scroller.scrollLeft = 300 * COLUMN_WIDTH;
+    fireEvent.scroll(scroller);
+    const later = headers();
+    expect(later[0]?.textContent).toBe("c0");
+    expect(later.some((h) => h.textContent === "c300")).toBe(true);
+    expect(later.some((h) => h.textContent === "c1")).toBe(false);
+    const row = within(table).getAllByRole("row")[1] as HTMLElement;
+    expect(within(row).getAllByRole("cell")).toHaveLength(later.length);
+    expect(columnWindow([100, 100, 100, 100, 100, 100, 100, 100, 100, 100], 0, 250)).toMatchObject({
+      from: 1,
+      to: 6,
+      before: 0,
+    });
+    // A focused column stays, with its neighbours, wherever the table scrolls.
+    const sort = within(headers().find((h) => h.textContent === "c300") as HTMLElement).getByRole(
+      "button",
+    );
+    sort.focus();
+    scroller.scrollLeft = 0;
+    fireEvent.scroll(scroller);
+    const back = headers().map((h) => h.textContent);
+    expect(back).toContain("c1");
+    expect(back).toEqual(expect.arrayContaining(["c299", "c300", "c301"]));
+    expect(document.activeElement).toBe(sort);
+    const cells = within(within(table).getAllByRole("row")[1] as HTMLElement).getAllByRole("cell");
+    expect(cells).toHaveLength(back.length);
+    const window = { from: 1, to: 4, before: 0, after: 0, total: 0 };
+    const shown = shownColumns(window, 8, 10);
+    expect(shown).toEqual([0, 1, 2, 3, 7, 8, 9]);
+    expect([
+      ...columnGaps(
+        shown,
+        Array.from({ length: 10 }, () => 10),
+      ),
+    ]).toEqual([[3, 30]]);
   });
 });
 

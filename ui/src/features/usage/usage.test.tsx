@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { translate } from "../../i18n/i18n";
+import { pickOption } from "../../test/select";
 import { openAdmin, sent } from "../admin/test/openAdmin";
 import { errorRate, hitRate } from "./api";
 import { sampleReport } from "./test/fakeUsage";
@@ -129,7 +130,7 @@ describe("usage insights", () => {
     );
     expect(sent(server, "GET").at(-1)).toMatch(/orgId=o1/);
     const page = within(screen.getByRole("region", { name: "Usage" }));
-    await user.selectOptions(await page.findByLabelText("Organization"), "");
+    await pickOption(user, await page.findByLabelText("Organization"), "");
     await waitFor(() => {
       const last = sent(server, "GET")
         .filter((path) => path.startsWith("/api/admin/usage?"))

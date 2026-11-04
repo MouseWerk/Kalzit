@@ -20,6 +20,7 @@ import { FolderPicker } from "./ToolDialogs";
 import { Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import "./dashboardTools.css";
+import { Select } from "../../components/Select";
 
 /**
  * Imports a dashboard from a JSON file or pasted text. The server checks the model first; then
@@ -210,12 +211,11 @@ export function ImportDialog({
                       <label className="field__label" htmlFor={`${formId}-${source.id}`}>
                         {label}
                       </label>
-                      <select
+                      <Select
                         id={`${formId}-${source.id}`}
-                        className="select"
                         value={mapping[source.id] ?? ""}
-                        onChange={(event) => {
-                          const value = event.currentTarget.value;
+                        onChange={(next) => {
+                          const value = next;
                           setMapping((current) => ({ ...current, [source.id]: value }));
                         }}
                       >
@@ -227,7 +227,7 @@ export function ImportDialog({
                               {a.name}
                             </option>
                           ))}
-                      </select>
+                      </Select>
                     </div>
                   );
                 })}

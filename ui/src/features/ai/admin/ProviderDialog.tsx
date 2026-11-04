@@ -26,6 +26,7 @@ import {
 } from "../adminApi";
 import { aiErrorText, aiReasonText } from "../reasons";
 import "./ai-admin.css";
+import { Select } from "../../../components/Select";
 
 /** The fields of the dialog, in their order on the page (the first bad one gets focus). */
 const FIELDS = ["name", "baseUrl", "apiKey", "model", "tokenLimitField"] as const;
@@ -162,12 +163,12 @@ export function ProviderDialog({
   const [testResult, setTestResult] = useState<AiProviderTest | null>(null);
   const [busy, setBusy] = useState<"test" | "save" | "delete" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const refs: Record<Field, RefObject<HTMLInputElement | HTMLSelectElement | null>> = {
+  const refs: Record<Field, RefObject<HTMLInputElement | HTMLButtonElement | null>> = {
     name: useRef<HTMLInputElement>(null),
     baseUrl: useRef<HTMLInputElement>(null),
     apiKey: useRef<HTMLInputElement>(null),
     model: useRef<HTMLInputElement>(null),
-    tokenLimitField: useRef<HTMLSelectElement>(null),
+    tokenLimitField: useRef<HTMLButtonElement>(null),
   };
   /** Shows the errors at their fields and moves focus to the first bad one. */
   function markFields(errors: FieldErrors) {
@@ -551,21 +552,18 @@ export function ProviderDialog({
                 hint={t("ai.admin.dialog.tokenLimitFieldHint")}
                 error={fieldErrors.tokenLimitField}
               >
-                <select
-                  ref={refs.tokenLimitField as RefObject<HTMLSelectElement>}
+                <Select
+                  ref={refs.tokenLimitField as RefObject<HTMLButtonElement>}
                   id={`${ids}-tokens`}
-                  className="select"
                   value={tokenLimitField}
                   aria-invalid={fieldErrors.tokenLimitField === undefined ? undefined : true}
                   aria-describedby={describedBy(`${ids}-tokens`, true, fieldErrors.tokenLimitField)}
-                  onChange={(event) =>
-                    setTokenLimitField(event.currentTarget.value as TokenLimitField)
-                  }
+                  onChange={(next) => setTokenLimitField(next as TokenLimitField)}
                 >
                   <option value="auto">{t("ai.admin.dialog.tokenLimitAuto")}</option>
                   <option value="max_tokens">max_tokens</option>
                   <option value="max_completion_tokens">max_completion_tokens</option>
-                </select>
+                </Select>
               </DialogField>
             ) : null}
           </div>
@@ -575,17 +573,16 @@ export function ProviderDialog({
             hint={t("ai.admin.dialog.leavesNetworkHint")}
             error={undefined}
           >
-            <select
+            <Select
               id={`${ids}-network`}
-              className="select"
               value={leavesNetwork}
               aria-describedby={describedBy(`${ids}-network`, true, undefined)}
-              onChange={(event) => setLeavesNetwork(event.currentTarget.value as LeavesNetwork)}
+              onChange={(next) => setLeavesNetwork(next as LeavesNetwork)}
             >
               <option value="auto">{t("ai.admin.dialog.leavesNetworkAuto")}</option>
               <option value="yes">{t("ai.admin.dialog.leavesNetworkYes")}</option>
               <option value="no">{t("ai.admin.dialog.leavesNetworkNo")}</option>
-            </select>
+            </Select>
           </DialogField>
           <label className="ai-dialog__check">
             <input

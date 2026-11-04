@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Api, fixturesDir, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { expectSelectValue, selectOption } from "./support/select";
 import { expect, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
@@ -35,7 +36,7 @@ test("a viewer reads a dashboard and changes its variable, but cannot edit or ex
   const region = page
     .getByRole("region", { name: t("dashboards.variables.label") })
     .getByLabel("Region");
-  await expect(region).toHaveValue("Nord");
+  await expectSelectValue(region, "Nord");
   await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
 
   // Changing the variable runs the stored panel query again with the new value.
@@ -44,7 +45,7 @@ test("a viewer reads a dashboard and changes its variable, but cannot edit or ex
       response.url().includes(`/dashboards/${dashboardId}/panels/p1/query`) &&
       (response.request().postData() ?? "").includes('"West"'),
   );
-  await region.selectOption("West");
+  await selectOption(region, "West");
   const answer = await rerun;
   expect(answer.status()).toBe(200);
   type Answer = {
@@ -84,7 +85,7 @@ test("a viewer with query access to one data source can use Explore", async ({ p
   const nav = page.getByRole("navigation", { name: t("nav.label") });
   await nav.getByRole("link", { name: t("explore.nav") }).click();
   await expect(page.getByRole("heading", { name: t("explore.title") })).toBeVisible();
-  await page.getByLabel(t("explore.datasource")).selectOption({ label: name });
+  await selectOption(page.getByLabel(t("explore.datasource")), { label: name });
   await fillQuery(page, SQL.series);
   await page.getByRole("button", { name: t("explore.run") }).click();
   const result = page.getByRole("region", { name: t("explore.result") });

@@ -33,6 +33,7 @@ import {
 import { outcomeDetail, ssoErrorText } from "./texts";
 import "../../settings/settings.css";
 import "./sso.css";
+import { Select } from "../../../components/Select";
 
 /** The fields a mapping holds, as a mapping is sent back to undo its removal or change. */
 function inputOf(mapping: Mapping): MappingInput {
@@ -328,14 +329,12 @@ function UnmappedCard({ unmapped }: { unmapped: Unmapped }) {
             {orgs.items === undefined ? (
               <LoadState error={orgs.query.error} onRetry={() => void orgs.query.refetch()} />
             ) : (
-              <select
+              <Select
                 id={`${ids}-org`}
-                className="select"
                 value={unmapped.defaultOrgId ?? ""}
-                onChange={(event) =>
+                onChange={(next) =>
                   apply({
-                    defaultOrgId:
-                      event.currentTarget.value === "" ? null : event.currentTarget.value,
+                    defaultOrgId: next === "" ? null : next,
                   })
                 }
               >
@@ -345,23 +344,22 @@ function UnmappedCard({ unmapped }: { unmapped: Unmapped }) {
                     {org.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             )}
             <label className="visually-hidden" htmlFor={`${ids}-role`}>
               {t("sso.unmapped.role")}
             </label>
-            <select
+            <Select
               id={`${ids}-role`}
-              className="select"
               value={unmapped.defaultRole}
-              onChange={(event) => apply({ defaultRole: event.currentTarget.value as DefaultRole })}
+              onChange={(next) => apply({ defaultRole: next as DefaultRole })}
             >
               {DEFAULT_ROLES.map((role) => (
                 <option key={role} value={role}>
                   {roleLabel(t, role, undefined)}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
       ) : null}
@@ -624,19 +622,18 @@ function MappingDialog({
           <label className="field__label" htmlFor={`${ids}-providerId`}>
             {t("sso.mappings.provider")}
           </label>
-          <select
+          <Select
             id={`${ids}-providerId`}
-            className="select"
             value={providerId}
             {...errorProps("providerId")}
-            onChange={(event) => setProviderId(event.currentTarget.value)}
+            onChange={(next) => setProviderId(next)}
           >
             {providers.map((provider) => (
               <option key={provider.id} value={provider.id}>
                 {provider.name}
               </option>
             ))}
-          </select>
+          </Select>
           {errorLine("providerId")}
         </div>
         <div className="field">
@@ -680,12 +677,11 @@ function MappingDialog({
           {teams.isError ? (
             <p className="field__hint">{t("sso.mappings.teamsUnreadable")}</p>
           ) : (
-            <select
+            <Select
               id={`${ids}-teamId`}
-              className="select"
               value={teamId}
               {...errorProps("teamId")}
-              onChange={(event) => setTeamId(event.currentTarget.value)}
+              onChange={(next) => setTeamId(next)}
             >
               <option value="">{t("sso.mappings.noTeam")}</option>
               {(teams.data?.items ?? []).map((team) => (
@@ -693,7 +689,7 @@ function MappingDialog({
                   {team.name}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
           {errorLine("teamId")}
         </div>
@@ -701,19 +697,18 @@ function MappingDialog({
           <label className="field__label" htmlFor={`${ids}-role`}>
             {t("sso.mappings.role")}
           </label>
-          <select
+          <Select
             id={`${ids}-role`}
-            className="select"
             value={role}
             {...errorProps("role")}
-            onChange={(event) => setRole(event.currentTarget.value as MappingRole)}
+            onChange={(next) => setRole(next as MappingRole)}
           >
             {MAPPING_ROLES.map((option) => (
               <option key={option} value={option}>
                 {roleLabel(t, option, undefined)}
               </option>
             ))}
-          </select>
+          </Select>
           {errorLine("role")}
         </div>
         <div className="field">

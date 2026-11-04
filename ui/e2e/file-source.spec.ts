@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { unique } from "./support/api";
 import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
 /** Each step gets its own limit, so a failure names the step instead of the test's timeout. */
@@ -52,9 +53,11 @@ test("the owner connects a CSV file and explores it with the file query editor",
 
   await test.step("open it in Explore", async () => {
     await page.goto("/explore", { timeout: STEP_MS });
-    await page
-      .getByLabel(t("explore.datasource"))
-      .selectOption({ label: source }, { timeout: STEP_MS });
+    await selectOption(
+      page.getByLabel(t("explore.datasource")),
+      { label: source },
+      { timeout: STEP_MS },
+    );
   });
 
   await test.step("the editor shows the file, how it is read and its columns", async () => {

@@ -44,6 +44,7 @@ import { placeLabel } from "./places";
 import { SaveAnalysisDialog } from "./SaveAnalysisDialog";
 import "../dashboards/dashboards.css";
 import "./analyses.css";
+import { Select } from "../../components/Select";
 import { withBase } from "../../lib/basePath";
 
 const listRoute = getRouteApi("/_app/explore/saved");
@@ -203,12 +204,11 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
             </div>
             <div className="preference">
               <label htmlFor={`${searchId}-source`}>{t("analyses.list.source")}</label>
-              <select
+              <Select
                 id={`${searchId}-source`}
-                className="select"
                 value={search.source ?? ""}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
+                onChange={(next) => {
+                  const value = next;
                   void navigate({
                     search: (prev) => ({ ...prev, source: value === "" ? undefined : value }),
                     replace: true,
@@ -221,37 +221,35 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
                     {source.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="preference">
               <label htmlFor={`${searchId}-owner`}>{t("analyses.list.creator")}</label>
-              <select
+              <Select
                 id={`${searchId}-owner`}
-                className="select"
                 value={search.mine === true ? "me" : ""}
-                onChange={(event) => {
-                  const mine = event.currentTarget.value === "me" ? true : undefined;
+                onChange={(next) => {
+                  const mine = next === "me" ? true : undefined;
                   void navigate({ search: (prev) => ({ ...prev, mine }), replace: true });
                 }}
               >
                 <option value="">{t("analyses.list.any")}</option>
                 <option value="me">{t("analyses.list.me")}</option>
-              </select>
+              </Select>
             </div>
             <div className="preference analysis-filters__sort">
               <label htmlFor={`${searchId}-sort`}>{t("analyses.list.sort")}</label>
-              <select
+              <Select
                 id={`${searchId}-sort`}
-                className="select"
                 value={search.sort ?? "updated"}
-                onChange={(event) => {
-                  const sort = event.currentTarget.value === "title" ? "title" : undefined;
+                onChange={(next) => {
+                  const sort = next === "title" ? "title" : undefined;
                   void navigate({ search: (prev) => ({ ...prev, sort }), replace: true });
                 }}
               >
                 <option value="updated">{t("analyses.list.sortUpdated")}</option>
                 <option value="title">{t("analyses.list.sortTitle")}</option>
-              </select>
+              </Select>
             </div>
           </div>
           <AnalysisList

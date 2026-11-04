@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Api, fixturesDir, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery, panelAction } from "./support/ui";
 
@@ -35,7 +36,7 @@ test("Explore adds a panel to an existing dashboard", async ({ page, world }) =>
   await owner.dispose();
   await signInOwner(page);
   await page.goto("/explore");
-  await page.getByLabel(t("explore.datasource")).selectOption({ label: world.sourceName });
+  await selectOption(page.getByLabel(t("explore.datasource")), { label: world.sourceName });
   await fillQuery(page, SQL.series);
   await page.getByRole("button", { name: t("explore.run") }).click();
   const result = page.getByRole("region", { name: t("explore.result") });
@@ -46,7 +47,7 @@ test("Explore adds a panel to an existing dashboard", async ({ page, world }) =>
     .click();
   const add = page.getByRole("dialog", { name: t("explore.add.title") });
   await add.getByLabel(t("explore.add.existing")).check();
-  await add.getByLabel(t("explore.add.dashboard"), { exact: true }).selectOption({ label: title });
+  await selectOption(add.getByLabel(t("explore.add.dashboard"), { exact: true }), { label: title });
   await add.getByRole("button", { name: t("explore.add.submit") }).click();
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   await expect(page.locator(".ts__plot")).toHaveCount(2);
@@ -137,7 +138,7 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
   await expect(page).toHaveURL(/\/panels\/new$/);
   await panelEditor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
   // A new panel comes with a first query; it gets this editor's source.
-  await panelEditor.getByLabel(t("dashboards.editor.datasource")).selectOption({ label: name });
+  await selectOption(panelEditor.getByLabel(t("dashboards.editor.datasource")), { label: name });
   await fillQuery(panelEditor, SQL.series);
   await panelEditor.getByRole("button", { name: t("dashboards.editor.run") }).click();
   await expect(panelEditor.locator(".ts__plot")).toBeVisible();
@@ -165,14 +166,12 @@ test("a time series drawn as stacked bars is saved with its graph style", async 
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   await expect(editor.locator(".uplot")).toHaveCount(1);
   await editor.getByText(t("panels.section.graphStyle"), { exact: true }).first().click();
-  await editor
-    .getByLabel(t("panels.graph.drawStyle"), { exact: true })
-    .first()
-    .selectOption({ label: t("panels.graph.drawStyle.bars") });
-  await editor
-    .getByLabel(t("panels.graph.stack"), { exact: true })
-    .first()
-    .selectOption({ label: t("panels.graph.stack.normal") });
+  await selectOption(editor.getByLabel(t("panels.graph.drawStyle"), { exact: true }).first(), {
+    label: t("panels.graph.drawStyle.bars"),
+  });
+  await selectOption(editor.getByLabel(t("panels.graph.stack"), { exact: true }).first(), {
+    label: t("panels.graph.stack.normal"),
+  });
   // The bar options appear for bars, the gap options leave.
   await expect(editor.getByLabel(t("panels.graph.barWidth")).first()).toBeVisible();
   await expect(editor.getByLabel(t("panels.graph.connectGaps"))).toHaveCount(0);

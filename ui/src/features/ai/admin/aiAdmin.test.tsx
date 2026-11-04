@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { optionLabels, pickOption } from "../../../test/select";
 import { openAdmin } from "../../admin/test/openAdmin";
 import { addAiSettings, fakeProvider } from "../test/fakeAiAdmin";
 
@@ -52,9 +53,7 @@ describe("AI, server section", () => {
     const chat = within(functions).getByRole("combobox", {
       name: "Provider for Ask (chat with tools)",
     });
-    const options = within(chat)
-      .getAllByRole("option")
-      .map((option) => option.textContent);
+    const options = optionLabels(chat);
     expect(options).toEqual(["Default (Local)", "Local · llama3.3:70b", "Cloud · claude-x"]);
     // The limits, the usage and the notice of what leaves the server are on the same page.
     expect(screen.getByRole("region", { name: "Limits" })).toBeTruthy();
@@ -121,7 +120,7 @@ describe("AI, server section", () => {
     await user.clear(url);
     await user.type(url, "https://api.anthropic.com");
     // A cloud model: the administrators say so, instead of the estimate from the address.
-    await user.selectOptions(within(dialog).getByLabelText("Data leaves the own network"), "yes");
+    await pickOption(user, within(dialog).getByLabelText("Data leaves the own network"), "yes");
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     const keyError = await within(dialog).findByText(
       "The AI provider refused the key (401). Check the key and its rights.",
@@ -283,7 +282,7 @@ describe("AI, organization section", () => {
       if (element === null) throw new Error("no row");
       return element;
     });
-    await user.selectOptions(within(row).getByRole("combobox"), "own");
+    await pickOption(user, within(row).getByRole("combobox"), "own");
     const amount = within(row).getByRole("spinbutton", {
       name: "Own value for AI calls per user and day",
     });

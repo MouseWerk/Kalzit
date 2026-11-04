@@ -16,6 +16,7 @@ import {
   historyQuery,
 } from "./history";
 import "./explore.css";
+import { Select } from "../../components/Select";
 
 /** How long typing pauses before the search goes to the server. */
 const SEARCH_DELAY_MS = 250;
@@ -154,19 +155,14 @@ export function HistoryPanel({
         </div>
         <div className="preference">
           <label htmlFor={sourceId}>{t("explore.history.source")}</label>
-          <select
-            id={sourceId}
-            className="select"
-            value={datasourceId}
-            onChange={(event) => setDatasourceId(event.currentTarget.value)}
-          >
+          <Select id={sourceId} value={datasourceId} onChange={(next) => setDatasourceId(next)}>
             <option value="">{t("explore.history.allSources")}</option>
             {sources.map((source) => (
               <option key={source.id} value={source.id}>
                 {source.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
       {history.isPending ? (

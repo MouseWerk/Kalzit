@@ -19,6 +19,7 @@ import { rangeLabel } from "../dashboards/rangeLabel";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import type { TextRange } from "../dashboards/timeRange";
 import "./settings.css";
+import { Select } from "../../components/Select";
 
 /**
  * One row of a settings card: title, one-line description and a source badge on the left, the
@@ -422,8 +423,8 @@ function Control(props: ControlProps) {
     const zones = timeZones();
     const current = String(value);
     return (
-      <select
-        className="select settings-select"
+      <Select
+        className="settings-select"
         value={current}
         title={
           current === INHERIT
@@ -434,7 +435,7 @@ function Control(props: ControlProps) {
         }
         aria-disabled={pending}
         {...labelled}
-        onChange={(event) => guard(event.currentTarget.value)}
+        onChange={(next) => guard(next)}
       >
         {inheritable ? <option value={INHERIT}>{t("settings.inherit")}</option> : null}
         <option value="browser">{t("settings.browserZone")}</option>
@@ -446,21 +447,21 @@ function Control(props: ControlProps) {
             {zone}
           </option>
         ))}
-      </select>
+      </Select>
     );
   }
   const choices = props.choices ?? choicesOf(t, key);
   if (choices !== undefined) {
     const numeric = typeof choices[0]?.value === "number";
     return (
-      <select
-        className="select settings-select"
+      <Select
+        className="settings-select"
         value={String(value)}
         title={value === INHERIT ? t("settings.inherit") : choiceTitle(choices, value)}
         aria-disabled={pending}
         {...labelled}
-        onChange={(event) => {
-          const raw = event.currentTarget.value;
+        onChange={(next) => {
+          const raw = next;
           guard(raw === INHERIT || !numeric ? raw : Number(raw));
         }}
       >
@@ -470,7 +471,7 @@ function Control(props: ControlProps) {
             {choice.label}
           </option>
         ))}
-      </select>
+      </Select>
     );
   }
   if (isTextRange(value)) {

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ORG_ROLES } from "../../../api/auth";
+import { Select } from "../../../components/Select";
 import { useI18n } from "../../../i18n/i18n";
 import { adminKeys, listRoles, type Role } from "../api";
 import { holdsAll, permissionsOfRole, roleLabel } from "../catalog";
@@ -61,15 +62,14 @@ export function RoleSelect({
     keys.unshift(value);
   }
   return (
-    <select
+    <Select
       id={id}
-      className="select"
       aria-label={label}
       aria-disabled={pending}
       value={value}
-      onChange={(event) => {
+      onChange={(next) => {
         if (!pending) {
-          onChange(event.currentTarget.value);
+          onChange(next);
         }
       }}
     >
@@ -78,6 +78,6 @@ export function RoleSelect({
           {roleLabel(t, key, roles)}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

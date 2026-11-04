@@ -5,6 +5,7 @@ import { type Browser, expect, type Locator, type Page, test } from "@playwright
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
 import { BINARY, writePackage } from "../support/plugin";
+import { selectOption } from "../support/select";
 import { boltTarget, GRAPH_FIXTURE, MONGO_FIXTURE } from "../support/services";
 import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
 import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
@@ -273,7 +274,7 @@ test("explore", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);
   await page.goto("/explore");
-  await page.getByLabel(t("explore.datasource")).selectOption({ label: demo.sourceName });
+  await selectOption(page.getByLabel(t("explore.datasource")), { label: demo.sourceName });
   await fillQuery(
     page,
     "SELECT ts AS time, amount FROM sales WHERE region = 'West' AND $__timeFilter(ts) ORDER BY ts",
@@ -298,7 +299,7 @@ for (const scheme of ["light", "dark"] as const) {
       name: t("explore.guide.title", { kind: "SQLite" }),
     });
     await expect(start).toContainText(t("help.source.sql.holds"));
-    await start.getByLabel(t("help.pick.table")).selectOption("sales");
+    await selectOption(start.getByLabel(t("help.pick.table")), "sales");
     // The query behind the first starter, shown before it is used.
     await start.getByText(t("help.showQuery")).first().click();
     await expect(start.locator("pre").first()).toContainText("FROM sales");
@@ -863,7 +864,7 @@ test("explore, field distribution, dark", async ({ browser }) => {
   const page = await openPage(browser, "dark");
   await signIn(page);
   await page.goto("/explore");
-  await page.getByLabel(t("explore.datasource")).selectOption({ label: name });
+  await selectOption(page.getByLabel(t("explore.datasource")), { label: name });
   await page
     .getByLabel(t("documents.pipeline.collection"), { exact: true })
     .fill(MONGO_FIXTURE.collection);
@@ -872,10 +873,11 @@ test("explore, field distribution, dark", async ({ browser }) => {
   await expect(result).toContainText(
     t("documents.summary.countMany", { count: MONGO_FIXTURE.documents }),
   );
-  await page.getByLabel(t("explore.visualization"), { exact: true }).selectOption("distribution");
-  await page
-    .getByLabel(t("documents.distribution.path"), { exact: true })
-    .selectOption("customer.city");
+  await selectOption(page.getByLabel(t("explore.visualization"), { exact: true }), "distribution");
+  await selectOption(
+    page.getByLabel(t("documents.distribution.path"), { exact: true }),
+    "customer.city",
+  );
   await expect(
     result.getByText(t("documents.distribution.scope.all", { count: MONGO_FIXTURE.documents }), {
       exact: true,

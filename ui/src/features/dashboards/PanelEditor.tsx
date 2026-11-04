@@ -72,6 +72,7 @@ import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
 import { documentsOf } from "./results";
 import { firstLoad, panelDistribution, usePanelResults } from "./usePanelResults";
 import "./panelEditor.css";
+import { isInsideSelectPopup, Select } from "../../components/Select";
 
 /** What the dashboard reads from the open editor when it is left another way than Discard. */
 export interface EditorSnapshot {
@@ -1449,7 +1450,10 @@ const TargetEditor = memo(function TargetEditor({
   }
   const onBlur = (event: FocusEvent<HTMLElement>) => {
     const next = event.relatedTarget;
-    if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+    if (
+      !(next instanceof Node) ||
+      (!event.currentTarget.contains(next) && !isInsideSelectPopup(next))
+    ) {
       onLeave();
     }
   };
@@ -1474,18 +1478,17 @@ const TargetEditor = memo(function TargetEditor({
         <label className="visually-hidden" htmlFor={id}>
           {t("dashboards.editor.datasource")}
         </label>
-        <select
+        <Select
           id={id}
-          className="select"
           value={target.datasourceId}
-          onChange={(event) => {
-            const next = datasources.find((d) => d.id === event.currentTarget.value);
+          onChange={(choice) => {
+            const next = datasources.find((d) => d.id === choice);
             // Another kind means another query form; the old text would not fit it.
             onChange(
               refId,
               next !== undefined && next.kind !== datasource?.kind
                 ? { datasourceId: next.id, query: emptyQuery(next.kind) }
-                : { datasourceId: event.currentTarget.value },
+                : { datasourceId: choice },
             );
           }}
         >
@@ -1497,7 +1500,7 @@ const TargetEditor = memo(function TargetEditor({
               {d.name}
             </option>
           ))}
-        </select>
+        </Select>
         {hidden ? <span className="target__badge">{t("dashboards.editor.hidden")}</span> : null}
         <span className="target__actions">
           <button

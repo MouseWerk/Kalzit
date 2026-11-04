@@ -12,6 +12,7 @@ import { setTimeZone } from "../lib/timeSettings";
 import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
+import { pickOption, waitForOption } from "../test/select";
 import { getTheme } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
@@ -562,7 +563,7 @@ describe("preferences", () => {
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
     const theme = await within(section).findByLabelText("Theme");
-    await user.selectOptions(theme, "contrast");
+    await pickOption(user, theme, "contrast");
     expect(getTheme()).toBe("contrast");
     await waitFor(() => expect(server.state.preferences.theme).toBe("contrast"));
     expect(await screen.findByText("Theme saved.")).toBeTruthy();
@@ -583,17 +584,13 @@ describe("preferences", () => {
     const server = setup();
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
-    await user.selectOptions(await within(section).findByLabelText("Time zone"), "UTC");
+    await pickOption(user, await within(section).findByLabelText("Time zone"), "UTC");
     await waitFor(() => expect(server.state.preferences.timeZone).toBe("UTC"));
-    await user.selectOptions(within(section).getByLabelText("First day of the week"), "sunday");
+    await pickOption(user, within(section).getByLabelText("First day of the week"), "sunday");
     await waitFor(() => expect(server.state.preferences.weekStart).toBe("sunday"));
     const start = within(section).getByLabelText("Start dashboard");
-    await waitFor(() =>
-      expect(
-        within(start).getByRole("option", { name: "Operations / Sales overview" }),
-      ).toBeTruthy(),
-    );
-    await user.selectOptions(start, "d-sales");
+    await waitForOption(start, "Operations / Sales overview");
+    await pickOption(user, start, "d-sales");
     await waitFor(() =>
       expect(server.state.preferences.startDashboard).toEqual({
         orgId: "o1",
@@ -610,7 +607,7 @@ describe("preferences", () => {
     const section = await screen.findByRole("region", { name: "Preferences" });
     await user.click(await within(section).findByRole("button", { name: "Show all tips again" }));
     await waitFor(() => expect(server.state.preferences.seenTips).toEqual([]));
-    await user.selectOptions(within(section).getByLabelText("Tips"), "off");
+    await pickOption(user, within(section).getByLabelText("Tips"), "off");
     await waitFor(() => expect(server.state.preferences.showTips).toBe(false));
     expect(await screen.findByText("Tips setting saved.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -623,7 +620,7 @@ describe("preferences", () => {
     const section = await screen.findByRole("region", { name: "Preferences" });
     const theme = await within(section).findByLabelText("Theme");
     server.failNext("/api/me/preferences", 422, "validation", "PATCH");
-    await user.selectOptions(theme, "dark");
+    await pickOption(user, theme, "dark");
     expect((await screen.findByText(/did not accept/)).closest('[role="alert"]')).not.toBeNull();
     await waitFor(() => expect(getTheme()).toBe("system"));
   });
