@@ -456,13 +456,15 @@ fn too_large(limit: u64) -> SourceError {
     SourceError::failed("file.too_large", format!("the JSON file is larger than {limit} bytes")).with("bytes", limit)
 }
 
-/// The elements of a top-level array go into the documents one by one; once the documents are
-/// full, the rest of the array is only checked to be JSON, without being kept. Each element
-/// may take at most the bytes the answer has left, counted while it is read.
+/// The elements of a top-level array go into the documents one by one, after the first `skip`
+/// (answered on earlier pages); once the documents are full, the rest of the array is only
+/// checked to be JSON, without being kept. Each element may take at most the bytes the answer
+/// has left, counted while it is read.
 struct Elements<'a> {
     docs: &'a mut DocumentsBuilder,
     budget: &'a ResponseBudget,
     element: ElementBytes,
+    skip: u64,
 }
 
 impl<'de> serde::de::Visitor<'de> for Elements<'_> {
@@ -473,6 +475,12 @@ impl<'de> serde::de::Visitor<'de> for Elements<'_> {
     }
 
     fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        self.element.start(usize::MAX);
+        for _ in 0..self.skip {
+            if seq.next_element::<serde::de::IgnoredAny>()?.is_none() {
+                return Ok(());
+            }
+        }
         while !self.docs.is_full() {
             self.element.start(self.budget.remaining());
             match seq.next_element::<Value>()? {
@@ -488,11 +496,12 @@ impl<'de> serde::de::Visitor<'de> for Elements<'_> {
     }
 }
 
-/// A JSON file: the elements of a top-level array, read one by one so only the documents kept
-/// are held (an array file of any size up to `MAX_JSON_FILE_BYTES` can be sampled), or any
-/// other value as one document, which must fit the budget.
+/// A JSON file: the elements of a top-level array after the first `skip`, read one by one so
+/// only the documents kept are held (an array file of any size up to `MAX_JSON_FILE_BYTES` can
+/// be sampled), or any other value as one document, which must fit the budget.
 fn read_json(
     plan: &Plan,
+    skip: u64,
     max_docs: usize,
     budget: &ResponseBudget,
     deadline: &Deadline,
@@ -516,10 +525,12 @@ fn read_json(
     let element = reader.element.clone();
     let mut de = serde_json::Deserializer::from_reader(reader);
     let parsed = if is_array {
-        serde::Deserializer::deserialize_seq(&mut de, Elements { docs: &mut docs, budget, element })
+        serde::Deserializer::deserialize_seq(&mut de, Elements { docs: &mut docs, budget, element, skip })
     } else {
         <Value as serde::Deserialize>::deserialize(&mut de).map(|v| {
-            docs.push(v);
+            if skip == 0 {
+                docs.push(v);
+            }
         })
     };
     if let Err(e) = parsed.and_then(|()| de.end()) {
@@ -537,8 +548,11 @@ fn read_json(
     Ok(docs)
 }
 
+/// An NDJSON file: one document per line that is not blank, after the first `skip` (answered on
+/// earlier pages, read past without being parsed).
 fn read_ndjson(
     plan: &Plan,
+    mut skip: u64,
     max_docs: usize,
     budget: &ResponseBudget,
     deadline: &Deadline,
@@ -564,6 +578,10 @@ fn read_ndjson(
             break;
         }
         let text = line.trim_ascii();
+        if !text.is_empty() && skip > 0 {
+            skip -= 1;
+            continue;
+        }
         if text.is_empty() {
             skipped += read;
             if skipped > budget.remaining() {
@@ -651,8 +669,8 @@ impl DataSourcePlugin for Files {
                 }
                 Format::Json | Format::Ndjson => {
                     let docs = match plan.format {
-                        Format::Json => read_json(&plan, SCHEMA_SAMPLE, &budget, &deadline)?,
-                        _ => read_ndjson(&plan, SCHEMA_SAMPLE, &budget, &deadline)?,
+                        Format::Json => read_json(&plan, 0, SCHEMA_SAMPLE, &budget, &deadline)?,
+                        _ => read_ndjson(&plan, 0, SCHEMA_SAMPLE, &budget, &deadline)?,
                     };
                     Ok(SourceSchema::Fields { fields: docs.finish().schema })
                 }
@@ -665,17 +683,19 @@ impl DataSourcePlugin for Files {
         let _: FileQuery = req.parse()?;
         let plan = plan(conn)?;
         let limits = req.limits.clone();
+        // Documents page by their count: a later page starts after the ones answered before.
+        let offset = super::cursor::offset(req.cursor.as_deref())?;
+        let documents = move |mut docs: DocumentsBuilder| {
+            docs.continue_at(|kept| Some((offset + kept as u64).to_string()));
+            QueryResult::Documents { documents: docs.finish() }
+        };
         blocking(limits.timeout, move |deadline| match plan.format {
             Format::Csv => {
                 let frame = read_csv(&plan, limits.max_rows, &limits.budget, &deadline)?;
                 Ok(QueryResult::Frame { frame: frame.finish() })
             }
-            Format::Json => Ok(QueryResult::Documents {
-                documents: read_json(&plan, limits.max_rows, &limits.budget, &deadline)?.finish(),
-            }),
-            Format::Ndjson => Ok(QueryResult::Documents {
-                documents: read_ndjson(&plan, limits.max_rows, &limits.budget, &deadline)?.finish(),
-            }),
+            Format::Json => Ok(documents(read_json(&plan, offset, limits.max_rows, &limits.budget, &deadline)?)),
+            Format::Ndjson => Ok(documents(read_ndjson(&plan, offset, limits.max_rows, &limits.budget, &deadline)?)),
         })
         .await
     }
@@ -814,6 +834,39 @@ mod tests {
             documents.truncated,
             Some(crate::shapes::Truncated { limit: 2, reason: Some("documents.limit".into()) })
         );
+        // The next page starts after the documents answered; blank lines do not count.
+        assert_eq!(documents.next_cursor.as_deref(), Some("2"));
+        let mut next = req(2, 1 << 20);
+        next.cursor = documents.next_cursor;
+        let QueryResult::Documents { documents } = Files.query(&conn, next).await.unwrap() else { panic!("documents") };
+        assert_eq!(documents.documents, [json!({ "a": 3 })]);
+        assert!(documents.truncated.is_none() && documents.next_cursor.is_none());
+
+        // JSON arrays page the same way; a page past the end is empty.
+        let path = d.write("liste.json", br#"[1, {"b": [2]}, 3, 4, 5]"#);
+        let conn = d.conn(json!({ "path": path })).await;
+        let mut pages = Vec::new();
+        let mut cursor = None;
+        loop {
+            let mut r = req(2, 1 << 20);
+            r.cursor = cursor;
+            let QueryResult::Documents { documents } = Files.query(&conn, r).await.unwrap() else {
+                panic!("documents")
+            };
+            pages.push(documents.documents);
+            cursor = documents.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(pages, [vec![json!(1), json!({ "b": [2] })], vec![json!(3), json!(4)], vec![json!(5)]]);
+        let mut past = req(2, 1 << 20);
+        past.cursor = Some("9".into());
+        let QueryResult::Documents { documents } = Files.query(&conn, past).await.unwrap() else { panic!("documents") };
+        assert!(documents.documents.is_empty() && documents.next_cursor.is_none());
+        let mut wrong = req(2, 1 << 20);
+        wrong.cursor = Some("zwei".into());
+        assert_eq!(Files.query(&conn, wrong).await.unwrap_err().detail().reason, "query.cursor_invalid");
 
         let path = d.write("kaputt.ndjson", b"{\"a\":1}\n{kaputt\n");
         let e = Files.query(&d.conn(json!({ "path": path })).await, req(10, 1 << 20)).await.unwrap_err();
@@ -980,8 +1033,8 @@ mod hardening_tests {
             let p = plan(files.join(name), format);
             let r = match format {
                 Format::Csv => read_csv_rows(&p, 10, &budget, &deadline).map(|_| ()),
-                Format::Ndjson => read_ndjson(&p, 10, &budget, &deadline).map(|_| ()),
-                Format::Json => read_json(&p, 10, &budget, &deadline).map(|_| ()),
+                Format::Ndjson => read_ndjson(&p, 0, 10, &budget, &deadline).map(|_| ()),
+                Format::Json => read_json(&p, 0, 10, &budget, &deadline).map(|_| ()),
             };
             assert!(matches!(r, Err(SourceError::Timeout(_))), "{name}");
         }
@@ -1031,6 +1084,7 @@ mod hardening_tests {
         std::fs::write(files.join("gross.json"), &text).unwrap();
         let docs = read_json(
             &plan(files.join("gross.json"), Format::Json),
+            0,
             SCHEMA_SAMPLE,
             &ResponseBudget::new(SCHEMA_BYTES),
             &later(),
@@ -1111,8 +1165,11 @@ mod bounded_reads_tests {
         let element = reader.element.clone();
         let mut docs = DocumentsBuilder::new(10, budget.clone());
         let mut de = serde_json::Deserializer::from_reader(reader);
-        let e = serde::Deserializer::deserialize_seq(&mut de, Elements { docs: &mut docs, budget: &budget, element })
-            .unwrap_err();
+        let e = serde::Deserializer::deserialize_seq(
+            &mut de,
+            Elements { docs: &mut docs, budget: &budget, element, skip: 0 },
+        )
+        .unwrap_err();
         assert!(e.to_string().contains(ELEMENT_TOO_LARGE), "{e}");
         drop(de);
         assert!(input.position() < 2 * 1024 * 1024, "read {} bytes", input.position());
@@ -1122,7 +1179,7 @@ mod bounded_reads_tests {
         let path = dir.path().join("gross.json");
         std::fs::write(&path, &text).unwrap();
         let plan = Plan { path, format: Format::Json, delimiter: None, decimal: Decimal::Auto, header: true };
-        let docs = read_json(&plan, 10, &ResponseBudget::new(1024 * 1024), &later()).unwrap().finish();
+        let docs = read_json(&plan, 0, 10, &ResponseBudget::new(1024 * 1024), &later()).unwrap().finish();
         assert_eq!(docs.documents, [serde_json::json!(1)]);
         assert_eq!(
             docs.truncated,
