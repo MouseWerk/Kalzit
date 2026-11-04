@@ -6,6 +6,7 @@ import type { GraphSet } from "../../api/generated/shapes";
 import { cutGraph, FAKE_GRAPH, ID } from "../../features/datasources/test/fakeGraph";
 import { setLanguage } from "../../i18n/i18n";
 import { openLayerCount } from "../../lib/layers";
+import { pickOption } from "../../test/select";
 import { type PanelHost, PanelHostContext } from "../host";
 import { pathSteps } from "../path/PathPanel";
 import { getPanel, suggestPanel } from "../registry";
@@ -497,21 +498,19 @@ describe("graph panel editor", () => {
         graphLabels={[{ label: "Customer", count: 2 }]}
       />,
     );
-    await user.selectOptions(
+    await pickOption(
+      user,
       await screen.findByRole("combobox", { name: "Color for Customer" }),
       "chart-4",
     );
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ labelColors: { Customer: "chart-4" } }),
     );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Shape for Customer" }),
-      "square",
-    );
+    await pickOption(user, screen.getByRole("combobox", { name: "Shape for Customer" }), "square");
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ labelShapes: { Customer: "square" } }),
     );
-    await user.selectOptions(screen.getByRole("combobox", { name: "Action" }), "expand");
+    await pickOption(user, screen.getByRole("combobox", { name: "Action" }), "expand");
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ clickAction: "expand" }));
     view.rerender(
       <Editor
@@ -525,7 +524,7 @@ describe("graph panel editor", () => {
     expect(screen.getByRole("group", { name: "Shape per label" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Shape for Customer" })).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Color for Customer" })).toBeNull();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Range" }), "fixed");
+    await pickOption(user, screen.getByRole("combobox", { name: "Range" }), "fixed");
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ colorRange: "fixed" }));
   });
 });

@@ -12,6 +12,7 @@ import {
   publisherKey,
   testPluginPackage,
 } from "../support/plugin";
+import { selectOption } from "../support/select";
 import { boltTarget, GRAPH_FIXTURE } from "../support/services";
 import { ASK_QUESTION, type Assistant, PUE_QUERY, startAssistant } from "./assistant";
 import { GALLERY_MONGO, GALLERY_NOW, HALLS, seedLogs, writeDatacenterDatabase } from "./datacenter";
@@ -1336,7 +1337,7 @@ async function exploreStart(page: Page): Promise<Locator> {
   await page.goto(`/explore?source=${seeded().sql}`);
   const start = page.getByRole("region", { name: t("explore.guide.title", { kind: "SQLite" }) });
   await expect(start).toContainText(t("help.source.sql.holds"));
-  await start.getByLabel(t("help.pick.table")).selectOption("rack_metrics");
+  await selectOption(start.getByLabel(t("help.pick.table")), "rack_metrics");
   return start;
 }
 
@@ -1374,7 +1375,7 @@ for (const scheme of SCHEMES) {
     await expect(result.getByLabel(t("explore.visualization"))).toBeVisible();
     await expect(result).toHaveAttribute("aria-busy", "false");
     // The newest rows of all racks share a few moments: a table reads them better than a chart.
-    await result.getByLabel(t("explore.visualization"), { exact: true }).selectOption("table");
+    await selectOption(result.getByLabel(t("explore.visualization"), { exact: true }), "table");
     await expect(result.getByRole("table")).toBeVisible();
     // The tip after the first result, and the cheat sheet from the keyboard.
     await expect(page.getByRole("note", { name: t("help.tip.label") })).toBeVisible();

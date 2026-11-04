@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { openOptions, optionLabels, pickOption } from "../../test/select";
 import { openAdmin, sent } from "./test/openAdmin";
 
 async function usersList() {
@@ -200,7 +201,7 @@ describe("server organizations", () => {
     const dialog = screen.getByRole("dialog", { name: "New organization" });
     await user.click(within(dialog).getByLabelText("Organization name"));
     await user.paste("Difference Engines");
-    await user.selectOptions(await within(dialog).findByLabelText("Owner"), "u2");
+    await pickOption(user, await within(dialog).findByLabelText("Owner"), "u2");
     await user.click(within(dialog).getByRole("button", { name: "Create organization" }));
     expect(await screen.findByText("Organization “Difference Engines” was created.")).toBeTruthy();
     expect(admin.orgs.map((org) => org.name)).toContain("Difference Engines");
@@ -265,9 +266,10 @@ describe("server organizations", () => {
     await user.click(screen.getByRole("button", { name: "New organization…" }));
     const dialog = screen.getByRole("dialog", { name: "New organization" });
     const owner = await within(dialog).findByLabelText("Owner");
-    expect(within(owner).getAllByRole("option")).toHaveLength(2);
+    expect(optionLabels(owner)).toHaveLength(2);
     await user.click(within(dialog).getByRole("button", { name: "Show more" }));
-    await waitFor(() => expect(within(owner).getAllByRole("option")).toHaveLength(3));
+    openOptions(owner);
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(3));
   });
 });
 

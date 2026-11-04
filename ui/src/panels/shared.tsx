@@ -4,6 +4,7 @@ import { useI18n } from "../i18n/i18n";
 import { rowCount } from "./frame";
 import "./panels.css";
 import "../features/dashboards/ui/shared.css";
+import { Select } from "../components/Select";
 
 const EMPTY_REASONS = {
   noData: "dashboards.panels.empty.noData",
@@ -56,13 +57,12 @@ export function SelectField<T extends string>({
           {hint}
         </p>
       )}
-      <select
+      <Select
         id={fieldId}
-        className="select"
         value={value}
         aria-describedby={hint === undefined ? undefined : `${fieldId}-hint`}
-        onChange={(event) => {
-          const next = choices.find(([choice]) => choice === event.currentTarget.value);
+        onChange={(picked) => {
+          const next = choices.find(([choice]) => choice === picked);
           if (next !== undefined) {
             onChange(next[0]);
           }
@@ -73,7 +73,7 @@ export function SelectField<T extends string>({
             {text}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }

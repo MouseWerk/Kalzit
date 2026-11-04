@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
+import { Select } from "../../../components/Select";
 import { useI18n } from "../../../i18n/i18n";
 import { adminKeys, createTeam, deleteTeam, listTeams, type Team } from "../api";
 import { ConfirmDialog } from "../components/Dialog";
@@ -152,12 +153,11 @@ export function TeamsPage() {
           <label className="field__label" htmlFor={transferId}>
             {t("admin.teams.transferTo")}
           </label>
-          <select
+          <Select
             id={transferId}
-            className="select"
             value={transferTo}
-            onChange={(event) => {
-              setTransferTo(event.currentTarget.value);
+            onChange={(next) => {
+              setTransferTo(next);
               setChoiceMissing(false);
             }}
             aria-invalid={choiceMissing}
@@ -171,7 +171,7 @@ export function TeamsPage() {
                   {team.name}
                 </option>
               ))}
-          </select>
+          </Select>
           <p className="field__hint">{t("admin.teams.transferHint")}</p>
         </div>
       </ConfirmDialog>

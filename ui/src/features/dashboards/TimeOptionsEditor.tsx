@@ -12,6 +12,7 @@ import {
 import { parseDuration } from "./timeRange";
 import "./ui/shared.css";
 import "./toolbar.css";
+import { Select } from "../../components/Select";
 
 /** The time options as the settings dialog edits them: text and choices, checked on apply. */
 export interface TimeOptionsDraft {
@@ -132,11 +133,10 @@ export function TimeOptionsEditor({ draft, onChange, problems }: TimeOptionsEdit
           <label className="field__label" htmlFor={`${id}-zone`}>
             {t("toolbar.settings.timeZone")}
           </label>
-          <select
+          <Select
             id={`${id}-zone`}
-            className="select"
             value={draft.timeZone}
-            onChange={(event) => onChange({ timeZone: event.currentTarget.value })}
+            onChange={(next) => onChange({ timeZone: next })}
           >
             <option value="">{t("toolbar.settings.timeZoneViewer")}</option>
             <option value={BROWSER_ZONE}>
@@ -152,19 +152,16 @@ export function TimeOptionsEditor({ draft, onChange, problems }: TimeOptionsEdit
                 {zone}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label className="field__label" htmlFor={`${id}-week`}>
             {t("shell.preferences.weekStart")}
           </label>
-          <select
+          <Select
             id={`${id}-week`}
-            className="select"
             value={draft.weekStart}
-            onChange={(event) =>
-              onChange({ weekStart: event.currentTarget.value as WeekStart | "" })
-            }
+            onChange={(next) => onChange({ weekStart: next as WeekStart | "" })}
           >
             <option value="">{t("toolbar.settings.weekStartViewer")}</option>
             {WEEK_STARTS.map((start) => (
@@ -172,17 +169,16 @@ export function TimeOptionsEditor({ draft, onChange, problems }: TimeOptionsEdit
                 {t(`shell.preferences.week.${start}`)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label className="field__label" htmlFor={`${id}-fiscal`}>
             {t("toolbar.settings.fiscalYear")}
           </label>
-          <select
+          <Select
             id={`${id}-fiscal`}
-            className="select"
             value={draft.fiscalMonth === "" ? "1" : draft.fiscalMonth}
-            onChange={(event) => onChange({ fiscalMonth: event.currentTarget.value })}
+            onChange={(next) => onChange({ fiscalMonth: next })}
             aria-describedby={`${id}-fiscal-hint`}
           >
             {months.map((month) => (
@@ -190,7 +186,7 @@ export function TimeOptionsEditor({ draft, onChange, problems }: TimeOptionsEdit
                 {month.label}
               </option>
             ))}
-          </select>
+          </Select>
           <p className="field__hint" id={`${id}-fiscal-hint`}>
             {t("toolbar.settings.fiscalYearHint")}
           </p>
@@ -217,13 +213,10 @@ export function TimeOptionsEditor({ draft, onChange, problems }: TimeOptionsEdit
           <label className="field__label" htmlFor={`${id}-cursor`}>
             {t("toolbar.settings.sharedCursor")}
           </label>
-          <select
+          <Select
             id={`${id}-cursor`}
-            className="select"
             value={draft.sharedCursor}
-            onChange={(event) =>
-              onChange({ sharedCursor: event.currentTarget.value as SharedCursor })
-            }
+            onChange={(next) => onChange({ sharedCursor: next as SharedCursor })}
             aria-describedby={`${id}-cursor-hint`}
           >
             {SHARED_CURSORS.map((mode) => (
@@ -231,7 +224,7 @@ export function TimeOptionsEditor({ draft, onChange, problems }: TimeOptionsEdit
                 {t(`toolbar.settings.sharedCursor.${mode}`)}
               </option>
             ))}
-          </select>
+          </Select>
           <p className="field__hint" id={`${id}-cursor-hint`}>
             {t("toolbar.settings.sharedCursorHint")}
           </p>

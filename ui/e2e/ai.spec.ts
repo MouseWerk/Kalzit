@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { Api, fixturesDir, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
@@ -105,7 +106,7 @@ test("an admin connects a provider and turns AI on; Explore explains a query and
 
     // Off: Explore has no AI buttons.
     await page.goto("/explore");
-    await page.getByLabel(t("explore.datasource")).selectOption({ label: sourceName });
+    await selectOption(page.getByLabel(t("explore.datasource")), { label: sourceName });
     await fillQuery(page, SQL.regions);
     await expect(page.getByRole("button", { name: t("ai.call.explain") })).toHaveCount(0);
 
@@ -139,7 +140,7 @@ test("an admin connects a provider and turns AI on; Explore explains a query and
 
     // Explain: the first call shows the notice, then the answer streams in.
     await page.goto("/explore");
-    await page.getByLabel(t("explore.datasource")).selectOption({ label: sourceName });
+    await selectOption(page.getByLabel(t("explore.datasource")), { label: sourceName });
     await fillQuery(page, SQL.regions);
     await page.getByRole("button", { name: t("ai.call.explain") }).click();
     const notice = page.getByRole("dialog", { name: t("ai.notice.title") });

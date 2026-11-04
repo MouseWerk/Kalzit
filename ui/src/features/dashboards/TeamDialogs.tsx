@@ -14,6 +14,7 @@ import {
   type Visibility,
 } from "./api";
 import "./dashboardTools.css";
+import { Select } from "../../components/Select";
 import { Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 
@@ -94,12 +95,11 @@ export function TeamSpaceDialog({
           <label className="field__label" htmlFor={selectId}>
             {t("dashboards.team.team")}
           </label>
-          <select
+          <Select
             id={selectId}
-            className="select"
             value={teamId}
-            onChange={(event) => {
-              const next = event.currentTarget.value;
+            onChange={(choice) => {
+              const next = choice;
               // A name still equal to the old team's follows the new team.
               if (name === (teams.find((team) => team.id === teamId)?.name ?? "")) {
                 setName(teams.find((team) => team.id === next)?.name ?? name);
@@ -112,7 +112,7 @@ export function TeamSpaceDialog({
                 {team.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <TextField
           label={t("dashboards.folders.name")}
@@ -214,20 +214,14 @@ export function OwnerDialog({
           <label className="field__label" htmlFor={selectId}>
             {t("dashboards.team.owner")}
           </label>
-          <select
-            id={selectId}
-            className="select"
-            value={teamId}
-            onChange={(event) => setTeamId(event.currentTarget.value)}
-            data-autofocus
-          >
+          <Select id={selectId} value={teamId} onChange={(next) => setTeamId(next)} data-autofocus>
             <option value="">{t("dashboards.team.noOwner")}</option>
             {teams.map((team) => (
               <option key={team.id} value={team.id}>
                 {team.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <fieldset className="tool-choices">
           <legend className="field__label">{t("dashboards.team.visibility")}</legend>
