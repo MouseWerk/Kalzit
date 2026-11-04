@@ -75,7 +75,7 @@ fn rate_limited(wait: std::time::Duration) -> ApiError {
 /// The budget of the typed email (account or not, alike) is used up, not that of this device:
 /// the sign-in page says the address is locked until the wait ends.
 fn address_locked(error: ApiError) -> ApiError {
-    error.because("auth.address_locked")
+    error.because("sign_in.address_locked")
 }
 
 /// A failed sign-in while a directory could not be asked, whether or not a local account has the

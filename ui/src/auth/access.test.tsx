@@ -158,7 +158,7 @@ describe("sign-in page", () => {
 
   it("says until when an address is locked, without a countdown", async () => {
     const server = installFakeServer();
-    server.rateLimitNext("/api/auth/login", 900, "auth.address_locked");
+    server.rateLimitNext("/api/auth/login", 900, "sign_in.address_locked");
     const { user } = renderApp("/login");
     await signIn(user);
     const alert = await screen.findByText(/^Sign-in for this address is locked until \d/);

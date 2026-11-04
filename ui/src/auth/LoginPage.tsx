@@ -62,7 +62,7 @@ const PASSWORD_OPEN_KEY = "kalzit.signIn.passwordOpen";
 /** The reason of `POST /auth/login` when password sign-in is off for the account. */
 const PASSWORD_OFF = "sso.password_sign_in_off";
 /** The budget of the typed email is used up, from whatever device (docs/api/access.md). */
-const ADDRESS_LOCKED = "auth.address_locked";
+const ADDRESS_LOCKED = "sign_in.address_locked";
 /** A directory could not be reached and no local account matched (docs/api/sso.md, LDAP). */
 const DIRECTORY_UNREACHABLE = "ldap.directory_unreachable";
 /** The directory confirmed the person, but Kalzit refuses the sign-in; `outcome` says why. */
@@ -645,11 +645,17 @@ function OrgLine({ organization, serverName }: { organization: string; serverNam
           <span className="access__org-tile" aria-hidden="true">
             {initials(organization)}
           </span>
-          <b className="truncate">{organization}</b>
+          <b className="truncate" title={organization}>
+            {organization}
+          </b>
         </>
       )}
       {organization === "" || serverName === "" ? null : <span aria-hidden="true">·</span>}
-      {serverName === "" ? null : <span className="access__org-server truncate">{serverName}</span>}
+      {serverName === "" ? null : (
+        <span className="access__org-server truncate" title={serverName}>
+          {serverName}
+        </span>
+      )}
     </p>
   );
 }

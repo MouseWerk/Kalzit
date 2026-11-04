@@ -191,7 +191,7 @@ export interface FakeServer {
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
   failNext: (path: string, status: number, code: string, method?: string, field?: string) => void;
   /** Makes the next request to `path` a rate-limited answer that names the wait. */
-  /** `reason`: the refusal's reason, such as `auth.address_locked`. */
+  /** `reason`: the refusal's reason, such as `sign_in.address_locked`. */
   rateLimitNext: (path: string, seconds: number, reason?: string) => void;
   /** Holds the next request to `path` until the returned function is called. */
   holdNext: (path: string) => () => void;

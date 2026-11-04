@@ -735,7 +735,7 @@ applies to each of:
   many failures as an account does.
 
 A refusal by the budget of the email (the last item, or its overflow bucket) carries the reason
-`auth.address_locked`, so the sign-in page can say that this address is locked until the wait
+`sign_in.address_locked`, so the sign-in page can say that this address is locked until the wait
 ends rather than this device; it is answered alike for emails with and without an account. The
 other budgets answer without a reason.
 

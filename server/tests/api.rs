@@ -955,12 +955,12 @@ async fn distributed_guessing_gets_only_the_account_budget() {
     let r = t.from("[2001:db8:99::1]:1").login("joerg@example.de", PASSWORD).await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
     // The address is locked, not the device, and an email without an account answers alike.
-    assert_eq!(r.body["error"]["reason"], "auth.address_locked", "{}", r.body);
+    assert_eq!(r.body["error"]["reason"], "sign_in.address_locked", "{}", r.body);
     for i in 0..4 {
         t.from(&format!("[2001:db8:5{i:x}::1]:1")).login("niemand@example.de", "falsch falsch falsch").await;
     }
     let r = t.from("[2001:db8:60::1]:1").login("niemand@example.de", "falsch falsch falsch").await;
-    assert_eq!(r.body["error"]["reason"], "auth.address_locked", "{}", r.body);
+    assert_eq!(r.body["error"]["reason"], "sign_in.address_locked", "{}", r.body);
     t.finish().await;
 }
 

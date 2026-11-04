@@ -1699,6 +1699,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `request.body_invalid` | `detail` | the JSON body is malformed, has unknown fields or wrong types |
 | `request.query_invalid` | `detail` | the list's query string has unknown parameters |
 | `request.limit` | `max` | `limit` outside 1 to `max` |
+| `sign_in.address_locked` | | `429 rate_limited` at sign-in: the typed email's budget of failed sign-ins is used up, from whatever device (docs/api/access.md, Sign-in rate limits) |
 | `request.trash` | | `trash` is not `true` or `false` |
 | `request.cursor` | | `cursor` is not valid |
 | `request.name_length` | `field`, `max` | the name is empty or longer than `max` characters |
