@@ -390,6 +390,48 @@ describe("the list of saved analyses", () => {
     expect(trash.getAttribute("href")).toBe("/explore/saved/trash");
   });
 
+  it("names the owner team as owner, and filters by it", async () => {
+    const server = setup();
+    server.areas.dashboards.teams = [
+      { id: "t1", name: "Sales Team", member: true, maintainer: false },
+    ];
+    server.areas.dashboards.teamId = null;
+    addAnalysis(server.areas.analyses, {
+      title: "Customers",
+      datasourceId: PG_ID,
+      query: {},
+      createdBy: TEST_USER.id,
+      createdByName: TEST_USER.name,
+    });
+    addAnalysis(server.areas.analyses, {
+      title: "Payments",
+      datasourceId: PG_ID,
+      query: {},
+      createdBy: TEST_USER.id,
+      createdByName: TEST_USER.name,
+      ownerTeam: { id: "t1", name: "Sales Team" },
+    });
+    const { user, location } = renderApp("/explore/saved");
+    const table = await screen.findByRole("table");
+    const owner = (title: string) =>
+      within(table)
+        .getAllByRole("row")
+        .find((r) => within(r).queryByRole("link", { name: title }) !== null)
+        ?.querySelector(".analysis-row__owner")?.textContent;
+    expect(owner("Payments")).toBe("STSales Team, owner team");
+    expect(owner("Customers")).toMatch(/You$/);
+    const filter = screen.getByRole("combobox", { name: "Owner" });
+    await user.selectOptions(filter, "Team Sales Team");
+    await waitFor(() => expect(location().search).toEqual({ ownerTeam: "t1" }));
+    const rows = () => within(screen.getByRole("table"));
+    await waitFor(() => expect(rows().queryByRole("link", { name: "Customers" })).toBeNull());
+    // "Me": what you created and no team owns.
+    await user.selectOptions(filter, "Me");
+    await waitFor(() => expect(location().search).toEqual({ mine: true }));
+    await waitFor(() => expect(rows().queryByRole("link", { name: "Payments" })).toBeNull());
+    expect(rows().getByRole("link", { name: "Customers" })).toBeTruthy();
+  });
+
   it("sorts what was opened last first, and opening records it", async () => {
     const server = setup();
     const first = addAnalysis(server.areas.analyses, {

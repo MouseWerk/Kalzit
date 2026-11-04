@@ -257,7 +257,7 @@ export interface AnalysisCounts {
 /** How many analyses the list shows per folder, with the list's filters. */
 export async function fetchCounts(
   orgId: string,
-  filter: Pick<AnalysisFilter, "q" | "team" | "datasourceId" | "createdBy">,
+  filter: Pick<AnalysisFilter, "q" | "team" | "datasourceId" | "createdBy" | "ownerTeamId">,
   signal?: AbortSignal,
 ): Promise<AnalysisCounts> {
   const params = new URLSearchParams();

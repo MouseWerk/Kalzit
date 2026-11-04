@@ -13,8 +13,10 @@ export interface SavedSearch {
   q?: string | undefined;
   /** Only analyses on this data source. */
   source?: string | undefined;
-  /** Only the caller's own analyses. */
+  /** Only the caller's own analyses (created by them, owned by no team). */
   mine?: boolean | undefined;
+  /** Only analyses this team owns. */
+  ownerTeam?: string | undefined;
   /** Newest change first (the default), by name, or what the caller opened last first. */
   sort?: "updated" | "title" | "opened" | undefined;
 }
@@ -41,6 +43,7 @@ const savedRoute = createRoute({
     q: text(search.q),
     source: text(search.source),
     mine: search.mine === true || search.mine === "true" ? true : undefined,
+    ownerTeam: text(search.ownerTeam),
     sort: search.sort === "title" || search.sort === "opened" ? search.sort : undefined,
   }),
   component: lazyRouteComponent(() => import("../analyses/AnalysesPage"), "AnalysesPage"),

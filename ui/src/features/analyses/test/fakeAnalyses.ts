@@ -35,6 +35,7 @@ export interface StoredAnalysis {
   teamOnly: boolean;
   /** When the caller last opened it (`POST .../opens`). */
   openedAt: number | null;
+  ownerTeam: { id: string; name: string } | null;
   versions: StoredAnalysisVersion[];
 }
 
@@ -75,6 +76,7 @@ export function addAnalysis(
     createdByName?: string | null;
     updatedAt?: number;
     teamOnly?: boolean;
+    ownerTeam?: { id: string; name: string } | null;
   },
 ): StoredAnalysis {
   const id = input.id ?? `an${next++}`;
@@ -99,6 +101,7 @@ export function addAnalysis(
     deletedAt: null,
     teamOnly: input.teamOnly ?? false,
     openedAt: null,
+    ownerTeam: input.ownerTeam ?? null,
     versions: [
       {
         version: 1,
@@ -186,7 +189,7 @@ export function analysesFake(areas: FakeAreaStates): FakeArea<FakeAnalysesState>
         delete: permissions.has("analyses:write"),
         permissions: permissions.has("dashboards:share"),
       },
-      ownerTeam: null,
+      ownerTeam: analysis.ownerTeam,
       teamOnly: analysis.teamOnly,
       datasourceIds: [...new Set(targets.map((t) => t.datasourceId))],
       mayQuery: permissions.has("datasources:query") && !state.noQuery.has(analysis.id),
@@ -211,8 +214,11 @@ export function analysesFake(areas: FakeAreaStates): FakeArea<FakeAnalysesState>
     const q = search.get("q")?.toLowerCase() ?? "";
     const source = search.get("datasourceId");
     const createdBy = search.get("createdBy");
+    const ownerTeamId = search.get("ownerTeamId");
     const matches = (a: StoredAnalysis) =>
       (createdBy === null || a.createdBy === createdBy) &&
+      (ownerTeamId === null ||
+        (ownerTeamId === "none" ? a.ownerTeam === null : a.ownerTeam?.id === ownerTeamId)) &&
       String(newestOf(a).model.title).toLowerCase().includes(q) &&
       (source === null ||
         ((newestOf(a).model.targets ?? []) as { datasourceId: string }[]).some(

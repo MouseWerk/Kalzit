@@ -1161,14 +1161,14 @@ async fn lists_sort_by_last_opened_and_count_per_folder(t: TestApp) {
     let source = t.source("shop").await;
     let folder = t.folder("Vertrieb", false).await;
     let hidden = t.folder("Geheim", true).await;
-    let (_, emil) = t.member("Emil", "editor").await;
+    let (emil_id, emil) = t.member("Emil", "editor").await;
     let first = id_of(t.create("Anfang", &source, Some(&folder), &t.owner).await);
     t.clock.advance_ms(1000);
     let second = id_of(t.create("Bestand", &source, Some(&folder), &t.owner).await);
     t.clock.advance_ms(1000);
     t.create("Charge", &source, None, &t.owner).await;
     t.clock.advance_ms(1000);
-    t.create("Daten", &source, Some(&hidden), &t.owner).await;
+    let daten = id_of(t.create("Daten", &source, Some(&hidden), &t.owner).await);
 
     // Never opened: newest change first. Then the caller's own opens go first, newest first.
     assert_eq!(t.get("~/analyses?sort=opened", &t.owner).await.titles(), ["Daten", "Charge", "Bestand", "Anfang"]);
@@ -1209,6 +1209,21 @@ async fn lists_sort_by_last_opened_and_count_per_folder(t: TestApp) {
     let counts = t.get("~/analyses/counts", &emil).await;
     assert_eq!(counts.body["total"], 3);
     assert_eq!(of(&counts, json!(hidden)), None);
+    // Granted the analysis alone, Emil counts it in all, but its hidden folder stays unnamed.
+    t.grant("user", &emil_id, "analysis", &daten, "view").await;
+    let counts = t.get("~/analyses/counts", &emil).await;
+    assert_eq!(counts.body["total"], 4);
+    assert_eq!(of(&counts, json!(hidden)), None);
+    assert_eq!(of(&counts, Value::Null), Some(json!(1)));
+    assert_eq!(counts.body["folders"].as_array().unwrap().len(), 2, "{}", counts.body);
+    // `ownerTeamId=none`: only what no team owns.
+    let team = t.team("Betrieb").await;
+    let body = json!({ "ownerTeamId": team, "visibility": "shared" });
+    let r = t.put(&format!("~/analyses/{second}/owner"), body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.get("~/analyses/counts?ownerTeamId=none", &t.owner).await.body["total"], 3);
+    let unowned = t.get("~/analyses?ownerTeamId=none", &t.owner).await.titles();
+    assert!(!unowned.contains(&"Bestand".to_string()), "{unowned:?}");
     let counts = t.get("~/analyses/counts?q=best", &t.owner).await;
     assert_eq!(counts.body["total"], 1);
     assert_eq!(t.delete(&format!("~/analyses/{first}"), &t.owner).await.status, StatusCode::NO_CONTENT);

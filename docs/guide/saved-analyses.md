@@ -45,10 +45,12 @@ Explore and runs them. Analyses also appear in the command palette (Ctrl+K) by n
 
 **Saved** (Gespeichert) sits under **Explore** in the sidebar. It shows the folders and team spaces
 on the left with the number of analyses in each, a search, filters for **Data source** and
-**Owner** (everyone or you) and the sort (**Last changed**, **Name A to Z** or **Last opened**,
-which puts what you opened last first). The header leads to the **Trash** with its count and to a
-new query in Explore. Each row shows the name and location, the data source, its owner (**Owner**,
-Eigentümer: whoever created it; **You** for your own, **Unknown** once the account was removed), the
+**Owner** (everyone, you, or one of your teams) and the sort (**Last changed**, **Name A to Z**
+or **Last opened**, which puts what you opened last first). The header leads to the **Trash** with
+its count and to a new query in Explore. Each row shows the name and location, the data source,
+its owner (**Owner**, Eigentümer: the owner team when a team owns it, else whoever created it;
+**You** for your own, **Unknown** once the account was removed; **You** in the filter means what
+you created and no team owns), the
 dashboards that use it (**Used in**) and when and by whom it was last changed. J and K move
 between rows, Enter opens.
 

@@ -498,7 +498,7 @@ pub struct ListQuery {
     datasource_id: Option<String>,
     /// Only analyses this user created.
     created_by: Option<String>,
-    /// Only analyses this team owns.
+    /// Only analyses this team owns; `none`: only those no team owns.
     owner_team_id: Option<String>,
     #[serde(default)]
     sort: Sort,
@@ -579,7 +579,7 @@ async fn list(
          AND (CAST($13 AS TEXT) IS NULL OR id IN \
               (SELECT analysis_id FROM analysis_sources WHERE org_id = $1 AND datasource_id = $13)) \
          AND (CAST($14 AS TEXT) IS NULL OR created_by = $14) \
-         AND (CAST($15 AS TEXT) IS NULL OR owner_team_id = $15) \
+         AND (CAST($15 AS TEXT) IS NULL OR owner_team_id = $15 OR ($15 = 'none' AND owner_team_id IS NULL)) \
          ORDER BY {order} LIMIT $10",
         folders::VISIBILITY_CTE,
         folders::scope_cte(11),
@@ -641,7 +641,7 @@ pub struct CountQuery {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderCount {
-    /// `null`: the top level, or a folder hidden from the caller.
+    /// `null`: the top level.
     folder_id: Option<String>,
     count: i64,
 }
@@ -651,7 +651,8 @@ pub struct FolderCount {
 pub struct Counts {
     /// Every analysis the list would show without a folder, outside the trash.
     total: i64,
-    /// The same, per folder the caller sees; folders without any are left out.
+    /// The same, per folder the caller sees (`null`: the top level); folders without any, and
+    /// folders hidden from the caller, are left out.
     folders: Vec<FolderCount>,
     /// The caller's trash with the same filters.
     trashed: i64,
@@ -668,7 +669,7 @@ async fn counts(
     super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
     let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
     let sql = format!(
-        "{}{} SELECT CASE WHEN folder_id IN (SELECT id FROM hidden_folders) THEN NULL ELSE folder_id END AS place, \
+        "{}{} SELECT folder_id, CASE WHEN folder_id IN (SELECT id FROM hidden_folders) THEN 1 ELSE 0 END AS hidden, \
          SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END), SUM(CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END) \
          FROM analyses WHERE org_id = $1 \
          AND (CAST($5 AS TEXT) IS NULL OR search_title LIKE $5 ESCAPE '\\') \
@@ -678,14 +679,14 @@ async fn counts(
          AND (CAST($7 AS TEXT) IS NULL OR id IN \
               (SELECT analysis_id FROM analysis_sources WHERE org_id = $1 AND datasource_id = $7)) \
          AND (CAST($8 AS TEXT) IS NULL OR created_by = $8) \
-         AND (CAST($9 AS TEXT) IS NULL OR owner_team_id = $9) \
-         GROUP BY place",
+         AND (CAST($9 AS TEXT) IS NULL OR owner_team_id = $9 OR ($9 = 'none' AND owner_team_id IS NULL)) \
+         GROUP BY folder_id, hidden",
         folders::VISIBILITY_CTE,
         folders::scope_cte(6),
         folders::analysis_visible("analyses"),
     );
     // Built from constants and parameter numbers only, so nothing from the request reaches the SQL.
-    let rows: Vec<(Option<String>, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let rows: Vec<(Option<String>, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(&ctx.org_id)
         .bind(&ctx.user.id)
         .bind(&ctx.role)
@@ -697,12 +698,14 @@ async fn counts(
         .bind(q.owner_team_id.as_deref())
         .fetch_all(&mut *conn)
         .await?;
-    let total = rows.iter().map(|(_, live, _)| live).sum();
-    let trashed = rows.iter().map(|(_, _, gone)| gone).sum();
+    let total = rows.iter().map(|(_, _, live, _)| live).sum();
+    let trashed = rows.iter().map(|(_, _, _, gone)| gone).sum();
+    // An analysis reached through a grant inside a hidden folder counts in all, but its folder
+    // is not named: the caller does not see it.
     let folders = rows
         .into_iter()
-        .filter(|(_, live, _)| *live > 0)
-        .map(|(folder_id, count, _)| FolderCount { folder_id, count })
+        .filter(|(_, hidden, live, _)| *live > 0 && *hidden == 0)
+        .map(|(folder_id, _, count, _)| FolderCount { folder_id, count })
         .collect();
     Ok(Json(Counts { total, folders, trashed }))
 }

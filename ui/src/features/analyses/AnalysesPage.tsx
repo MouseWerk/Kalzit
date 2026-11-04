@@ -164,7 +164,13 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
     folder === undefined ? t("analyses.list.all") : placeLabel(t, allFolders, folder.id);
   const select = (id: string | undefined) =>
     navigate({ search: (prev) => ({ ...prev, folder: id }), replace: true });
-  const filtered = search.q !== undefined || search.source !== undefined || search.mine === true;
+  const filtered =
+    search.q !== undefined ||
+    search.source !== undefined ||
+    search.mine === true ||
+    search.ownerTeam !== undefined;
+  // The owner filter: everyone, the caller, or one of the caller's teams.
+  const myTeams = teams.context.teams.filter((team) => team.member);
 
   return (
     <div className="analyses-layout">
@@ -251,14 +257,30 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
               <select
                 id={`${searchId}-owner`}
                 className="select"
-                value={search.mine === true ? "me" : ""}
+                value={
+                  search.mine === true
+                    ? "me"
+                    : search.ownerTeam === undefined
+                      ? ""
+                      : `team:${search.ownerTeam}`
+                }
                 onChange={(event) => {
-                  const mine = event.currentTarget.value === "me" ? true : undefined;
-                  void navigate({ search: (prev) => ({ ...prev, mine }), replace: true });
+                  const value = event.currentTarget.value;
+                  const mine = value === "me" ? true : undefined;
+                  const ownerTeam = value.startsWith("team:") ? value.slice(5) : undefined;
+                  void navigate({
+                    search: (prev) => ({ ...prev, mine, ownerTeam }),
+                    replace: true,
+                  });
                 }}
               >
                 <option value="">{t("analyses.list.any")}</option>
                 <option value="me">{t("analyses.list.me")}</option>
+                {myTeams.map((team) => (
+                  <option key={team.id} value={`team:${team.id}`}>
+                    {t("analyses.list.teamOption", { team: team.name })}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="preference analysis-filters__sort">
@@ -289,6 +311,7 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
             q={search.q}
             source={search.source}
             mine={search.mine === true}
+            ownerTeam={search.ownerTeam}
             sort={search.sort ?? "updated"}
             team={teams.scope}
             enabled={teams.settled}
@@ -317,6 +340,8 @@ interface AnalysisListProps {
   q: string | undefined;
   source: string | undefined;
   mine: boolean;
+  /** Only analyses this team owns. */
+  ownerTeam: string | undefined;
   sort: AnalysisSort;
   team: string | undefined;
   enabled: boolean;
@@ -335,6 +360,7 @@ export function AnalysisList({
   q,
   source,
   mine,
+  ownerTeam,
   sort,
   team,
   enabled,
@@ -358,6 +384,7 @@ export function AnalysisList({
       q ?? "",
       source ?? null,
       mine,
+      ownerTeam ?? null,
       sort,
       team ?? null,
     ],
@@ -369,6 +396,8 @@ export function AnalysisList({
           q,
           datasourceId: source,
           createdBy: mine ? meId : undefined,
+          // "Me" is what the caller created and no team owns.
+          ownerTeamId: mine ? "none" : ownerTeam,
           sort,
           team,
           cursor: pageParam,
@@ -385,11 +414,26 @@ export function AnalysisList({
   const emptyHere =
     folderId !== undefined && filtered && list.data?.pages.every((p) => p.items.length === 0);
   const everywhere = useQuery({
-    queryKey: [ANALYSES_KEY, orgId, "counts", team ?? null, q ?? "", source ?? null, mine],
+    queryKey: [
+      ANALYSES_KEY,
+      orgId,
+      "counts",
+      team ?? null,
+      q ?? "",
+      source ?? null,
+      mine,
+      ownerTeam ?? null,
+    ],
     queryFn: ({ signal }) =>
       fetchCounts(
         orgId,
-        { q, team, datasourceId: source, createdBy: mine ? meId : undefined },
+        {
+          q,
+          team,
+          datasourceId: source,
+          createdBy: mine ? meId : undefined,
+          ownerTeamId: mine ? "none" : ownerTeam,
+        },
         signal,
       ),
     enabled: enabled && emptyHere === true,
@@ -763,7 +807,16 @@ export function AnalysisList({
                   )}
                 </td>
                 <td {...STACK_ROLES.cell} data-label={t("analyses.column.owner")}>
-                  {item.createdBy === null ? null : (
+                  {item.ownerTeam !== null ? (
+                    // A team that owns the analysis is its owner, before whoever created it.
+                    <span className="analysis-row__owner">
+                      <span className="analysis-row__avatar" aria-hidden="true">
+                        {initialsOf(item.ownerTeam.name)}
+                      </span>
+                      {item.ownerTeam.name}
+                      <span className="visually-hidden">{`, ${t("analyses.list.ownerTeam")}`}</span>
+                    </span>
+                  ) : item.createdBy === null ? null : (
                     <span className="analysis-row__owner">
                       <span className="analysis-row__avatar" aria-hidden="true">
                         {initialsOf(
@@ -1082,30 +1135,43 @@ function MoveHereDialog({
   } else if (candidates.isError) {
     body = <FormAlert>{errorMessage(t, candidates.error)}</FormAlert>;
   } else if (items.length === 0) {
-    body = <p className="data-table__muted">{t("analyses.moveHere.none")}</p>;
+    body = (
+      <p className="data-table__muted">
+        {candidates.data?.nextCursor == null
+          ? t("analyses.moveHere.none")
+          : t("analyses.moveHere.search")}
+      </p>
+    );
   } else {
     body = (
-      <ul className="analysis-move-here">
-        {items.map((item) => (
-          <li key={item.id} className="analysis-move-here__item">
-            <span className="analysis-row__title">
-              <span className="truncate" title={item.title}>
-                {item.title}
+      <>
+        {candidates.data?.nextCursor == null ? null : (
+          <p className="data-table__muted">{t("analyses.moveHere.more")}</p>
+        )}
+        <ul className="analysis-move-here">
+          {items.map((item) => (
+            <li key={item.id} className="analysis-move-here__item">
+              <span className="analysis-row__title">
+                <span className="truncate" title={item.title}>
+                  {item.title}
+                </span>
+                <span className="analysis-row__detail">
+                  {placeLabel(t, folders, item.folderId)}
+                </span>
               </span>
-              <span className="analysis-row__detail">{placeLabel(t, folders, item.folderId)}</span>
-            </span>
-            <button
-              type="button"
-              className="button button--secondary button--small"
-              disabled={move.isPending}
-              aria-label={t("analyses.moveHere.moveNamed", { title: item.title })}
-              onClick={() => move.mutate(item)}
-            >
-              {t("analyses.moveHere.move")}
-            </button>
-          </li>
-        ))}
-      </ul>
+              <button
+                type="button"
+                className="button button--secondary button--small"
+                disabled={move.isPending}
+                aria-label={t("analyses.moveHere.moveNamed", { title: item.title })}
+                onClick={() => move.mutate(item)}
+              >
+                {t("analyses.moveHere.move")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </>
     );
   }
   return (
