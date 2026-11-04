@@ -2,9 +2,9 @@
 
 - The sign-in page can name your organization and the server above the form (Verwaltung >
   Darstellung, "Organisation auf der Anmeldeseite" and "Servername auf der Anmeldeseite"). After
-  wrong credentials it says after how many attempts and for how long an address is locked, and a
-  lockout says whether this device has to wait (with the countdown) or the address is locked
-  until a time on the clock.
+  wrong credentials it says after how many attempts you have to wait and for how long at most,
+  and a lockout says whether this device has to wait (with the countdown) or the address is
+  locked, and at the latest until when; typing another address lifts that at once.
 
 ## Checklist for Windows (manual)
 
