@@ -48,24 +48,23 @@ allow lists and the audit log rely on.
 
 - **Several proxies.** Kalzit reads the list from the right: each entry counts while the proxy
   that wrote it is trusted. The client is the first address that is not in
-  `security.trusted_proxies`; entries a client put in front are never read. Scheme and host come
-  from the hop that received the client's request: in `Forwarded`, from the element of the first
-  untrusted address. With `X-Forwarded-Proto` and `X-Forwarded-Host`, a single value counts; when
-  your proxies append one value per address, as with `X-Forwarded-For`, the value next to the
-  client's address counts; otherwise the rightmost value, the one your nearest proxy added. A
-  client's own value in front is never used, so a proxy that appends cannot be tricked into
-  another host or into HTTPS. List every proxy of yours in the chain.
-- **`X-Forwarded-Proto`.** The proxy **must set this header on every request and overwrite**
-  whatever the client sent, with the scheme the client used (nginx:
-  `proxy_set_header X-Forwarded-Proto $scheme;`), not append to it or pass it through. Kalzit
-  takes a trusted proxy's word for the scheme: it decides whether session cookies are marked
-  `Secure` and whether the request counts as HTTPS. Check your proxy's documentation; one that
-  only adds the header when it is missing is not enough. A
-  single value counts as it is. When there are several, Kalzit takes the one next to the client's
-  address in `X-Forwarded-For` if both lists have the same length (each proxy appended to both),
-  and otherwise the last one, written by the proxy in front of Kalzit, so a scheme a client sent
-  itself never counts. A proxy that passes a client's `X-Forwarded-Proto` through unchanged lets
-  the client claim HTTPS.
+  `security.trusted_proxies`; entries a client put in front are never read. With `Forwarded`,
+  scheme and host come from the element of the first untrusted address. With `X-Forwarded-Proto`
+  and `X-Forwarded-Host`, only the last value counts, the one the proxy next to Kalzit set; values
+  in front of it are never matched to addresses, because a proxy that appends to
+  `X-Forwarded-For` but not to these headers would let a client's own values line up. List every
+  proxy of yours in the chain.
+- **`X-Forwarded-Proto` and `X-Forwarded-Host`.** The proxy next to Kalzit **must set both
+  headers on every request and overwrite** whatever the client sent, with the scheme and the host
+  the client used (nginx: `proxy_set_header X-Forwarded-Proto $scheme;` and
+  `proxy_set_header X-Forwarded-Host $host;`), not pass them through. Kalzit takes a trusted
+  proxy's word for both: the scheme decides whether session cookies are marked `Secure` and
+  whether the request counts as HTTPS; the host is used for the cross-origin check when
+  `server.public_url` is not set, for links in mails and for sign-in redirects. Check your
+  proxy's documentation; one that only adds a header when it is missing is not enough. A proxy
+  that passes a client's header through unchanged lets the client claim HTTPS or another host. A
+  forwarded host that is not a plain `host` or `host:port` is ignored, and the `Host` header
+  counts instead.
 - **`Forwarded` values.** Quoted values, ports (`for="203.0.113.5:4711"`,
   `for="[2001:db8::7]:443"`) and several header lines are understood. A request without the
   header counts as the proxy's own (a health check). A request whose header does not lead to a
