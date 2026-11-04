@@ -1,5 +1,6 @@
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { forgetDrafts } from "../features/dashboards/draftStore";
+import { withBase } from "../lib/basePath";
 import { resetLiveClients } from "../live/client";
 import { expectShape, isApiError, isRecord, request } from "./client";
 
@@ -190,7 +191,9 @@ export const signInProvidersQuery = queryOptions({
 
 /** The address that starts a sign-in through a provider; the browser navigates there. */
 export function ssoStartUrl(slug: string, returnTo: string): string {
-  return `/api/auth/sso/${encodeURIComponent(slug)}/start?returnTo=${encodeURIComponent(returnTo)}`;
+  return withBase(
+    `/api/auth/sso/${encodeURIComponent(slug)}/start?returnTo=${encodeURIComponent(returnTo)}`,
+  );
 }
 
 /** Signs out; with `forgetBrowser` the browser is no longer a known device of the account. */

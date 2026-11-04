@@ -38,6 +38,7 @@ import { RecentSignIns } from "./RecentSignIns";
 import { createPasskey, isPasskeyCancelled, passkeysAvailable } from "./webauthn";
 import "../settings/settings.css";
 import "./security.css";
+import { withBase, withoutBase } from "../../lib/basePath";
 
 type Open =
   | { kind: "totp" }
@@ -519,8 +520,8 @@ function SignInAgain() {
     onSuccess: () => {
       forgetAccountData(queryClient);
       queryClient.setQueryData(meQuery.queryKey, null);
-      const back = `${window.location.pathname}${window.location.search}`;
-      window.location.assign(`/login?redirect=${encodeURIComponent(back)}`);
+      const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
+      window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
     },
   });
   return (

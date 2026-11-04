@@ -3,6 +3,7 @@
  * headers and error mapping live in one place (a guard test fails on `fetch(` anywhere else).
  */
 
+import { withBase } from "../lib/basePath";
 import type { ErrorCode as GeneratedErrorCode } from "./generated/shapes";
 
 /** Error codes the server sends in `{"error":{"code","message","field"?}}`, generated from it. */
@@ -221,7 +222,7 @@ export async function request(
 
   let response: Response;
   try {
-    response = await fetch(path, init);
+    response = await fetch(withBase(path), init);
   } catch (cause) {
     if (cancelled(cause)) {
       throw cause;
@@ -309,7 +310,7 @@ export async function requestFile(
     options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
   let response: Response;
   try {
-    response = await fetch(path, init);
+    response = await fetch(withBase(path), init);
   } catch (cause) {
     if (cancelled(cause)) {
       throw cause;
@@ -403,7 +404,7 @@ export async function requestStream(
     options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
   let response: Response;
   try {
-    response = await fetch(path, init);
+    response = await fetch(withBase(path), init);
   } catch (cause) {
     if (cancelled(cause)) {
       throw cause;
@@ -469,7 +470,7 @@ export function expectShape<T>(value: unknown, guard: (v: unknown) => v is T, wh
  * The session cookie signs it in; the browser sends the page's Origin, which the server checks.
  */
 export function openSocket(path: string): WebSocket {
-  const url = new URL(path, window.location.href);
+  const url = new URL(withBase(path), window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return new WebSocket(url);
 }

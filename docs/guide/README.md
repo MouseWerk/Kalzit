@@ -9,6 +9,8 @@ written as the English interface shows them, with the German label in parenthese
 | Page | What it covers |
 |---|---|
 | [Installation](installation.md) | The deb and rpm packages with their systemd service, paths, updates and removal; the container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates |
+| [Behind a reverse proxy](reverse-proxy.md) | Serving Kalzit under a sub-path such as `/kalzit`, proxy examples for nginx, Caddy, Traefik and IIS |
+| [Monitoring](monitoring.md) | Health checks and Prometheus metrics (`/metrics`): turning them on, protecting them, what they measure |
 | [HTTPS and certificates](https.md) | HTTPS with your own certificate files or automatic certificates over ACME (Let's Encrypt or another CA): setup, validation, renewal, troubleshooting |
 | [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables (also set by clicks on documents, rows and graph nodes), time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |

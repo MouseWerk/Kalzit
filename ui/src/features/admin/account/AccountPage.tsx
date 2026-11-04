@@ -15,6 +15,7 @@ import { fetchSecurity, securityKeys } from "../../security/api";
 import { ConfirmFactorDialog } from "../../security/ConfirmFactorDialog";
 import { WhyCanI } from "../access/WhyCanI";
 import "../admin.css";
+import { withBase } from "../../../lib/basePath";
 import {
   adminKeys,
   changeMyPassword,
@@ -427,7 +428,7 @@ function OrganizationsSection() {
       setLeaving(null);
       // Every page reads its organization when it loads: leaving the current one starts over.
       if (org.id === current?.id) {
-        window.location.assign("/");
+        window.location.assign(withBase("/"));
         return;
       }
       await queryClient.invalidateQueries({ queryKey: meQuery.queryKey });

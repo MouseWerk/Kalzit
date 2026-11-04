@@ -22,6 +22,7 @@ import {
 import { panelTheme } from "./theme";
 import "../../../panels/panels.css";
 import "./panelPlugins.css";
+import { withBase } from "../../../lib/basePath";
 
 /** How long a panel has to say `ready` after its frame loaded. */
 export const READY_TIMEOUT_MS = 10_000;
@@ -333,7 +334,7 @@ function FrameHost({
 /** A path opens in Kalzit; an address in a new tab, without a referrer or a handle back. */
 export function openLink(url: string): void {
   if (url.startsWith("/")) {
-    window.location.assign(url);
+    window.location.assign(withBase(url));
   } else {
     window.open(url, "_blank", "noopener,noreferrer");
   }
