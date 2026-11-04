@@ -269,7 +269,10 @@ describe("Explore with MongoDB", () => {
     await addStage(user, "$match", "{}");
     const stage = screen.getByLabelText("Stage 1");
     fireEvent.change(stage, { target: { value: '{"$ma' } });
-    const options = () => optionLabels(screen.getByRole("listbox", { name: "Suggestions" }));
+    const options = () =>
+      within(screen.getByRole("listbox", { name: "Suggestions" }))
+        .getAllByRole("option")
+        .map((option) => option.textContent);
     expect(options()).toEqual(["$matchkeyword"]);
     fireEvent.change(stage, { target: { value: '{"$match": {"sta' } });
     expect(options()).toEqual(["statuscolumn"]);
