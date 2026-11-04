@@ -53,8 +53,12 @@ export function encodeShare(state: SharedExplore): string {
   );
 }
 
-/** The state of a `share` parameter; `null` for one that is damaged or from a newer version. */
-export function decodeShare(value: string): SharedExplore | null {
+/**
+ * The state of a `share` parameter; `null` for one that is damaged or from a newer version. A
+ * visualization not among `panels` (the ones this installation knows) is dropped, so the
+ * suggestion for the result applies instead.
+ */
+export function decodeShare(value: string, panels: readonly string[]): SharedExplore | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(fromBase64Url(value));
@@ -78,7 +82,7 @@ export function decodeShare(value: string): SharedExplore | null {
     query: parsed.q,
     range: { from: parsed.r.from, to: parsed.r.to },
     steps: Array.isArray(parsed.s) ? parsed.s : [],
-    ...(typeof parsed.p === "string" ? { panel: parsed.p } : {}),
+    ...(typeof parsed.p === "string" && panels.includes(parsed.p) ? { panel: parsed.p } : {}),
   };
 }
 

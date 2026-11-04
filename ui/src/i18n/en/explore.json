@@ -20,6 +20,7 @@
   "explore.tab.table": "Table (projection)",
   "explore.size.documentsOne": "{count} document",
   "explore.size.documentsMany": "{count} documents",
+  "explore.size.documentsLoaded": "{count} documents loaded",
   "explore.size.rowsOne": "{count} row",
   "explore.size.rowsMany": "{count} rows",
   "explore.size.graph": "{nodes} nodes, {edges} edges",

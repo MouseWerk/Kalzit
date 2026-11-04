@@ -343,8 +343,11 @@ describe("Explore with MongoDB, after review", () => {
     expect(
       await screen.findByText("1,000 documents. Cut off at 1,000 documents. The source has more."),
     ).toBeTruthy();
+    // While more pages exist, the count beside the tabs says it counts what is loaded.
+    expect(screen.getByText(/^1,000 documents loaded · \d+ ms$/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Load more documents" }));
     expect(await screen.findByText("1,500 documents.")).toBeTruthy();
+    expect(screen.getByText(/^1,500 documents( · \d+ ms)?$/)).toBeTruthy();
     expect(sent(server).queries[0]).toMatchObject({ cursor: "1000" });
     expect(screen.queryByRole("button", { name: "Load more documents" })).toBeNull();
   });

@@ -53,7 +53,7 @@ import { liveNote } from "../../live/text";
 import { useLiveSubscription } from "../../live/useLive";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
-import { panelsForShapes, suggestPanel } from "../../panels/registry";
+import { PANELS, panelsForShapes, suggestPanel } from "../../panels/registry";
 import { modShortcut } from "../../shell/sidebarState";
 import { AiGate } from "../ai/AiGate";
 import { ExploreAiTools, useExploreAiSummary } from "../ai/ExploreAi";
@@ -539,7 +539,12 @@ function Explore({
   }
   const onShareArrived = useEffectEvent((value: string) => {
     setShareSeen(value);
-    openShared(decodeShare(value));
+    openShared(
+      decodeShare(
+        value,
+        PANELS.map((p) => p.type),
+      ),
+    );
   });
   useEffect(() => {
     if (shareArrived !== undefined) {
@@ -886,7 +891,7 @@ function Explore({
   // A table of documents needs a projection first; the view offers to add one.
   const tableWaits = docsResult && view === "result" && !projected && type === "table";
   const topFields = [...new Set(resultFields)].filter((path) => !path.includes(".")).slice(0, 12);
-  const sizeLabel = resultSize(t, outcomes);
+  const sizeLabel = resultSize(t, language, outcomes, nextCursor !== undefined);
 
   /** The editor as an analysis model; `base` gives the name and the queries beyond the first. */
   function currentModel(
@@ -1838,7 +1843,14 @@ function LeaveGuard({ dirty, title }: { dirty: boolean; title: string }) {
 type ResultTab = "documents" | "schema" | "result" | "inspect";
 
 /** How big the query's answer is, in words: documents, rows, or nodes and edges. */
-function resultSize(t: ReturnType<typeof useI18n>["t"], outcomes: readonly TargetOutcome[]) {
+/** `more`: further pages exist, so the documents counted are those loaded so far. */
+function resultSize(
+  t: ReturnType<typeof useI18n>["t"],
+  language: string,
+  outcomes: readonly TargetOutcome[],
+  more: boolean,
+) {
+  const n = (value: number) => value.toLocaleString(language);
   let documents = 0;
   let rows = 0;
   let nodes = 0;
@@ -1857,12 +1869,15 @@ function resultSize(t: ReturnType<typeof useI18n>["t"], outcomes: readonly Targe
   }
   if (shapes.size !== 1) return null;
   if (shapes.has("documents")) {
+    if (more) {
+      return t("explore.size.documentsLoaded", { count: n(documents) });
+    }
     return t(documents === 1 ? "explore.size.documentsOne" : "explore.size.documentsMany", {
-      count: documents,
+      count: n(documents),
     });
   }
-  if (shapes.has("graph")) return t("explore.size.graph", { nodes, edges });
-  return t(rows === 1 ? "explore.size.rowsOne" : "explore.size.rowsMany", { count: rows });
+  if (shapes.has("graph")) return t("explore.size.graph", { nodes: n(nodes), edges: n(edges) });
+  return t(rows === 1 ? "explore.size.rowsOne" : "explore.size.rowsMany", { count: n(rows) });
 }
 
 /** The result's tabs; Left and Right switch, as in the WAI-ARIA tabs pattern. */

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { decodeShare, encodeShare, shareUrl } from "./share";
 
+const PANELS = ["table", "documents", "schema"];
+
 describe("sharing the Explore state", () => {
   const state = {
     orgId: "o1",
@@ -14,13 +16,18 @@ describe("sharing the Explore state", () => {
   it("keeps the state through the link, umlauts included", () => {
     const value = encodeShare(state);
     expect(value).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(decodeShare(value)).toEqual(state);
+    expect(decodeShare(value, PANELS)).toEqual(state);
   });
 
   it("refuses a damaged or newer link instead of guessing", () => {
-    expect(decodeShare("not base64 at all!")).toBeNull();
-    expect(decodeShare(btoa(JSON.stringify({ v: 2, o: "o1" })))).toBeNull();
-    expect(decodeShare(btoa(JSON.stringify({ v: 1, o: "o1", d: "x" })))).toBeNull();
+    expect(decodeShare("not base64 at all!", PANELS)).toBeNull();
+    expect(decodeShare(btoa(JSON.stringify({ v: 2, o: "o1" })), PANELS)).toBeNull();
+    expect(decodeShare(btoa(JSON.stringify({ v: 1, o: "o1", d: "x" })), PANELS)).toBeNull();
+  });
+
+  it("drops a visualization the installation does not know", () => {
+    const value = encodeShare({ ...state, panel: "<script>" });
+    expect(decodeShare(value, PANELS)?.panel).toBeUndefined();
   });
 
   it("links a saved analysis without changes by its id", () => {
