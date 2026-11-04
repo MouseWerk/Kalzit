@@ -393,7 +393,10 @@ export const UPDATES_PAGE_KEYS: readonly string[] = [
   "updates.window",
 ];
 
-/** The section a row lives in: its id and the row's element id. */
+/**
+ * The element id of a setting's row in a section: an organization's settings carry an `org.`
+ * prefix, and the two sign-in texts share one row.
+ */
 export function rowId(section: SectionDef, key: string): string {
   if (section.kind === "appearance" && (key === "signin.welcome" || key === "signin.notice")) {
     return SIGN_IN_ROW;

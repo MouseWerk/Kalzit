@@ -84,9 +84,13 @@ function normalize(value: Preferences): Preferences {
   };
 }
 
-export async function fetchPreferences(): Promise<Preferences> {
+export async function fetchPreferences(signal?: AbortSignal): Promise<Preferences> {
   return normalize(
-    expectShape(await request("GET", "/api/me/preferences"), parsePreferences, "preferences"),
+    expectShape(
+      await request("GET", "/api/me/preferences", undefined, { signal }),
+      parsePreferences,
+      "preferences",
+    ),
   );
 }
 
@@ -106,7 +110,7 @@ export const PREFERENCES_KEY = "preferences";
 export function preferencesQuery(userId: string) {
   return queryOptions({
     queryKey: [PREFERENCES_KEY, userId],
-    queryFn: fetchPreferences,
+    queryFn: ({ signal }) => fetchPreferences(signal),
     staleTime: 60_000,
   });
 }

@@ -60,6 +60,11 @@
   }
 
   @media (min-width: 72rem) {
+    /* The header's actions end where the column beside the form ends. */
+    .ds-edit {
+      max-width: calc(var(--size-form) + var(--space-4) + var(--size-drawer));
+    }
+
     .ds-edit__layout {
       grid-template-columns: minmax(0, var(--size-form)) minmax(0, var(--size-drawer));
     }
@@ -391,6 +396,25 @@
   .ds-steps__mark .icon {
     width: 70%;
     height: 70%;
+  }
+
+  /*
+   * On a phone the pill keeps one line: the other steps show their number only, their names stay
+   * for screen readers.
+   */
+  @media (max-width: 30rem) {
+    .ds-steps {
+      flex-wrap: nowrap;
+    }
+
+    .ds-steps__step:not([data-state="current"]) .ds-steps__label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
   }
 
   /* The form as one card: header, the name, then one section per group of settings. */

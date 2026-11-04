@@ -875,10 +875,12 @@ interface SessionView {
 **`PATCH /me`** `{ "name" }`. Errors: `validation` `name`. Audit `user.updated`.
 
 **`POST /me/password`** `{ "current", "new" }`. Ends every other session of the account; this one
-stays. Attempts count against a budget of their own (`security.login_max_failures` per window);
-once it is used up the answer is `429 rate_limited`. Failed checks also count for the account's
-shared sign-in budget (see Sign-in rate limits), which does not refuse here, since the caller
-has a session. A correct password resets the budget of its own, and the new password revokes
+stays. Attempts count against a budget of their own, one per account shared by all its
+signed-in sessions (`security.login_max_failures` per window): once it is used up, every browser
+the account is signed in with answers `429 rate_limited` here and in `POST
+/me/security/confirm/password` until the window ends. Failed checks never count for the
+account's shared sign-in budget (see Sign-in rate limits), so they cannot block a sign-in on a
+new device. A correct password resets the budget of its own, and the new password revokes
 the account's device cookies. Of two changes at the same moment with the same
 current password, the second answers `validation` `current`. Errors: `validation` `current` (not correct), `validation` `new`
 (policy), `429 rate_limited`. Audit `user.password_changed`.

@@ -56,9 +56,14 @@ export async function fetchBranding(): Promise<Branding> {
   };
 }
 
-export async function fetchOrgAppearance(orgId: string): Promise<OrgAppearance> {
+export async function fetchOrgAppearance(
+  orgId: string,
+  signal?: AbortSignal,
+): Promise<OrgAppearance> {
   const value = expectShape(
-    await request("GET", `/api/orgs/${encodeURIComponent(orgId)}/appearance`),
+    await request("GET", `/api/orgs/${encodeURIComponent(orgId)}/appearance`, undefined, {
+      signal,
+    }),
     isRecord,
     "appearance",
   );
@@ -82,7 +87,9 @@ export const brandingQuery = queryOptions({
 export function orgAppearanceQuery(orgId: string) {
   return queryOptions({
     queryKey: ["appearance", orgId],
-    queryFn: () => fetchOrgAppearance(orgId),
+    // With the signal, signing out (which cancels every query) stops the request itself, so it
+    // is not answered with 401 once the session has ended.
+    queryFn: ({ signal }) => fetchOrgAppearance(orgId, signal),
     staleTime: 60_000,
   });
 }
