@@ -7,7 +7,7 @@ import { setTimeZone } from "../lib/timeSettings";
 import { formatValue, timeField, valueFields } from "./frame";
 import { getPanel, panelsForShapes, suggestPanel } from "./registry";
 import { reduceField } from "./stat";
-import { COLUMN_WIDTH, columnWindow, sortedRows } from "./table";
+import { COLUMN_WIDTH, columnGaps, columnWindow, shownColumns, sortedRows } from "./table";
 import { buildSeries, seriesPath } from "./timeseries/series";
 import type { AnyPanelPlugin } from "./types";
 
@@ -168,6 +168,28 @@ describe("table panel", () => {
       to: 6,
       before: 0,
     });
+    // A focused column stays, with its neighbours, wherever the table scrolls.
+    const sort = within(headers().find((h) => h.textContent === "c300") as HTMLElement).getByRole(
+      "button",
+    );
+    sort.focus();
+    scroller.scrollLeft = 0;
+    fireEvent.scroll(scroller);
+    const back = headers().map((h) => h.textContent);
+    expect(back).toContain("c1");
+    expect(back).toEqual(expect.arrayContaining(["c299", "c300", "c301"]));
+    expect(document.activeElement).toBe(sort);
+    const cells = within(within(table).getAllByRole("row")[1] as HTMLElement).getAllByRole("cell");
+    expect(cells).toHaveLength(back.length);
+    const window = { from: 1, to: 4, before: 0, after: 0, total: 0 };
+    const shown = shownColumns(window, 8, 10);
+    expect(shown).toEqual([0, 1, 2, 3, 7, 8, 9]);
+    expect([
+      ...columnGaps(
+        shown,
+        Array.from({ length: 10 }, () => 10),
+      ),
+    ]).toEqual([[3, 30]]);
   });
 });
 

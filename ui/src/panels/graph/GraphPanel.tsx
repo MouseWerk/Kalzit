@@ -69,7 +69,7 @@ import {
 } from "./view";
 import { usePanelViewState } from "./viewState";
 import "./graph.css";
-import { Select } from "../../components/Select";
+import { isInsideSelectPopup, Select } from "../../components/Select";
 
 /** Sigma loads with the first drawn graph, so the start bundle does not carry WebGL code. */
 const LazySigmaCanvas = lazy(() =>
@@ -265,7 +265,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     if (root === null) return;
     const onIn = () => setFocused(true);
     const onOut = (event: FocusEvent) => {
-      if (!(event.relatedTarget instanceof Node && root.contains(event.relatedTarget))) {
+      const next = event.relatedTarget;
+      if (!(next instanceof Node && (root.contains(next) || isInsideSelectPopup(next)))) {
         setFocused(false);
       }
     };

@@ -256,6 +256,47 @@ export function filterRows(
   return kept.slice(0, count);
 }
 
+/**
+ * The columns a wide table renders, in order: the first, those in `view`, and the focused one with
+ * its neighbours, wherever the table is scrolled.
+ */
+export function shownColumns(view: ColumnWindow, focused: number | null, count: number): number[] {
+  const set = new Set<number>([0]);
+  for (let i = view.from; i < view.to; i++) {
+    set.add(i);
+  }
+  if (focused !== null) {
+    for (const i of [focused - 1, focused, focused + 1]) {
+      if (i > 0 && i < count) {
+        set.add(i);
+      }
+    }
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+/**
+ * For each shown column that columns out of view follow, the width of those columns (up to the
+ * next shown column or the end).
+ */
+export function columnGaps(
+  shown: readonly number[],
+  widths: readonly number[],
+): Map<number, number> {
+  const gaps = new Map<number, number>();
+  shown.forEach((index, at) => {
+    const next = shown[at + 1] ?? widths.length;
+    let width = 0;
+    for (let i = index + 1; i < next; i++) {
+      width += widths[i] ?? 0;
+    }
+    if (width > 0) {
+      gaps.set(index, width);
+    }
+  });
+  return gaps;
+}
+
 function nextSort(current: Sort, column: number): Sort {
   if (current === null || current.column !== column) {
     return { column, direction: "ascending" };
@@ -434,6 +475,9 @@ function FrameTable({
   const { width, height } = useElementSize(scrollRef);
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
+  // The column focus is in (a sort button, a filter, a value): it stays rendered while the table
+  // scrolls, and so do its neighbours, so Tab and Shift+Tab reach the next column.
+  const [focusedColumn, setFocusedColumn] = useState<number | null>(null);
   const [sort, setSort] = useState<Sort>(null);
   const [filterTexts, setFilterTexts] = useState<string[]>([]);
   const [page, setPage] = useState(0);
@@ -471,18 +515,19 @@ function FrameTable({
   const shown =
     view === null
       ? columns.map((_, index) => index)
-      : [0, ...Array.from({ length: view.to - view.from }, (_, i) => view.from + i)];
+      : shownColumns(view, focusedColumn, columns.length);
+  // The room of the columns out of view: one empty cell after each shown column a gap follows.
+  const gaps = view === null ? new Map<number, number>() : columnGaps(shown, widths);
   const colIndex = (index: number) => (view === null ? undefined : index + 1);
-  /** The row's cells, with the room of the columns out of view held by two empty cells. */
+  /** The row's cells (one per shown column, in order), with an empty cell in each gap. */
   const spaced = (cells: ReactNode[]): ReactNode[] =>
     view === null
       ? cells
-      : [
-          cells[0],
-          <td key="before" className="vt__hspacer" aria-hidden="true" />,
-          ...cells.slice(1),
-          <td key="after" className="vt__hspacer" aria-hidden="true" />,
-        ];
+      : shown.flatMap((index, at) =>
+          gaps.has(index)
+            ? [cells[at], <td key={`gap-${index}`} className="vt__hspacer" aria-hidden="true" />]
+            : [cells[at]],
+        );
   useStyleVars(tableRef, view === null ? {} : { "--vt-table-width": `${view.total}px` });
 
   const picked = clicked.variable === null ? -1 : pickColumn(columns, options.variableColumn);
@@ -543,6 +588,18 @@ function FrameTable({
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs focus to scroll by keyboard
         tabIndex={0}
         aria-label={title}
+        onFocus={(event) => {
+          const cell =
+            event.target instanceof Element ? event.target.closest("[aria-colindex]") : null;
+          const place = Number(cell?.getAttribute("aria-colindex"));
+          setFocusedColumn(Number.isInteger(place) && place > 0 ? place - 1 : null);
+        }}
+        onBlur={(event) => {
+          const next = event.relatedTarget;
+          if (!(next instanceof Node && event.currentTarget.contains(next))) {
+            setFocusedColumn(null);
+          }
+        }}
         onScroll={(event) => {
           setScrollTop(event.currentTarget.scrollTop);
           if (view !== null) {
@@ -562,12 +619,13 @@ function FrameTable({
                   // biome-ignore lint/suspicious/noArrayIndexKey: one per column, in order
                   <ColWidth key={index} width={column.options.width} />
                 ))
-              : [
-                  <ColWidth key={0} width={widths[0]} />,
-                  <ColWidth key="before" width={view.before} />,
-                  ...shown.slice(1).map((index) => <ColWidth key={index} width={widths[index]} />),
-                  <ColWidth key="after" width={view.after} />,
-                ]}
+              : shown.flatMap((index) => {
+                  const gap = gaps.get(index);
+                  const col = <ColWidth key={index} width={widths[index]} />;
+                  return gap === undefined
+                    ? [col]
+                    : [col, <ColWidth key={`gap-${index}`} width={gap} />];
+                })}
           </colgroup>
           <thead>
             <tr aria-rowindex={1}>
@@ -641,12 +699,12 @@ function FrameTable({
             {/* Spacers hold the height of the rows out of view; they are not rows to read. */}
             {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
             <tr className="vt__spacer" ref={topRef} role="presentation">
-              <td colSpan={view === null ? columns.length : shown.length + 2} />
+              <td colSpan={view === null ? columns.length : shown.length + gaps.size} />
             </tr>
             {rows}
             {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
             <tr className="vt__spacer" ref={bottomRef} role="presentation">
-              <td colSpan={view === null ? columns.length : shown.length + 2} />
+              <td colSpan={view === null ? columns.length : shown.length + gaps.size} />
             </tr>
           </tbody>
         </table>

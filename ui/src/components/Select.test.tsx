@@ -1,10 +1,10 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { Dialog } from "../features/dashboards/ui/Dialog";
 import { optionLabels, pickOption } from "../test/select";
-import { Select } from "./Select";
+import { isInsideSelectPopup, Select } from "./Select";
 
 const FRUITS = ["Apple", "Banana", "Blueberry", "Cherry", "Date"];
 
@@ -150,5 +150,49 @@ describe("Select", () => {
     await user.keyboard("{Escape}");
     expect(control.getAttribute("aria-expanded")).toBe("false");
     expect(closed).toBe(false);
+  });
+
+  it("takes the active option on Tab and lets the key through to a surrounding handler", async () => {
+    const user = userEvent.setup();
+    const keys: string[] = [];
+    render(
+      // biome-ignore lint/a11y/noStaticElementInteractions: records the keys that reach it
+      <div onKeyDown={(event) => keys.push(event.key)}>
+        <Fruit initial="apple" />
+      </div>,
+    );
+    const control = screen.getByRole("combobox", { name: "Fruit" });
+    control.focus();
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(keys).toEqual([]);
+    await user.keyboard("{Tab}");
+    expect(keys).toEqual(["Tab"]);
+    expect(control.getAttribute("aria-expanded")).toBe("false");
+    expect((control as HTMLButtonElement).value).toBe("banana");
+  });
+
+  it("returns focus from the search field to the control when a click outside closes it", async () => {
+    const user = userEvent.setup();
+    render(<Fruit initial="apple" count={20} />);
+    const control = screen.getByRole("combobox", { name: "Fruit" });
+    await user.click(control);
+    const search = screen.getByRole("combobox", { name: "Search options" });
+    expect(document.activeElement).toBe(search);
+    expect(isInsideSelectPopup(search)).toBe(true);
+    expect(isInsideSelectPopup(control)).toBe(false);
+    await user.keyboard("nothing like it");
+    // The note sits beside the list, not among its options.
+    const note = screen.getByText("No matching options");
+    expect(screen.getByRole("listbox").contains(note)).toBe(false);
+    fireEvent.pointerDown(document.body);
+    expect(control.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(control);
+  });
+
+  it("submits the option it shows with a form", () => {
+    render(<Fruit initial="kiwi" />);
+    const form = screen.getByRole("form", { name: "Order" }) as HTMLFormElement;
+    // No option has that value: the first one is shown, and sent.
+    expect(new FormData(form).get("fruit")).toBe("apple");
   });
 });

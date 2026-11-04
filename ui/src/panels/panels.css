@@ -630,14 +630,33 @@
     border-bottom: var(--border-width) solid var(--border);
   }
 
-  .vt__table--columns tr > :first-child:not(.vt__cell--fill) {
+  /*
+   * The first column is opaque, so the columns scrolling under it stay hidden; the row's tint
+   * (hover) and a cell's tone are drawn on top of that layer instead of being covered by it.
+   */
+  .vt__table--columns tr > :first-child {
     position: sticky;
     inset-inline-start: 0;
     z-index: var(--z-sticky-column);
-    background: var(--bg-surface);
+    background-color: var(--bg-surface);
+    background-image: linear-gradient(var(--vt-row-tint), var(--vt-row-tint));
   }
 
-  .vt__table--columns .vt__head:first-child {
+  .vt__table--columns tr {
+    --vt-row-tint: transparent;
+  }
+
+  .vt__table--columns .vt__row--pick:hover {
+    --vt-row-tint: var(--bg-hover);
+  }
+
+  .vt__table--columns tr > .vt__cell--fill:first-child {
+    background-color: var(--bg-surface);
+    background-image: linear-gradient(var(--tone-bg), var(--tone-bg));
+  }
+
+  /* The corner: above the sticky headings and the sticky column. */
+  .vt__table--columns tr > .vt__head.vt__head:first-child {
     z-index: var(--z-sticky-corner);
   }
 

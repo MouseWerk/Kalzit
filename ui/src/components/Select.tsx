@@ -88,6 +88,16 @@ function collect(children: ReactNode, group: string | undefined, out: SelectOpti
   });
 }
 
+/**
+ * Whether a node is inside an open select's list. The list is drawn at the end of the page, so
+ * focus moving into its search field leaves the surrounding part of the page only in the DOM; a
+ * handler that acts when focus leaves treats the list as still inside.
+ */
+export function isInsideSelectPopup(node: EventTarget | null): boolean {
+  const element = node instanceof Element ? node : node instanceof Node ? node.parentElement : null;
+  return element?.closest("[data-select-popup]") != null;
+}
+
 /** The options described by `<option>` and `<optgroup>` children, in order. */
 export function readOptions(children: ReactNode): SelectOption[] {
   const out: SelectOption[] = [];
@@ -192,9 +202,14 @@ export function Select({
   }
 
   function closeList(focusTrigger: boolean) {
+    // Focus in the search field would fall to the page when the list goes (a click outside, a
+    // scroll), out of a dialog that keeps it; it goes back to the control instead.
+    const inList =
+      document.activeElement !== null &&
+      popupRef.current?.contains(document.activeElement) === true;
     setOpen(false);
     setQuery("");
-    if (focusTrigger) {
+    if (focusTrigger || inList) {
       triggerRef.current?.focus();
     }
   }
@@ -272,11 +287,23 @@ export function Select({
     } else if (key === " " && !inSearch && Date.now() - typeahead.current.at > TYPEAHEAD_MS) {
       choose(active);
     } else if (key === "Tab") {
+      // Tab takes the active option, as the pattern says, and moves on; a surrounding dialog
+      // still sees the key. From the search field (drawn at the end of the page) focus goes back
+      // to the control first.
+      const option = options[active];
       if (inSearch) {
         event.preventDefault();
       }
       closeList(inSearch);
-      return true;
+      if (
+        option !== undefined &&
+        !option.disabled &&
+        visible.includes(active) &&
+        option.value !== value
+      ) {
+        onChange(option.value);
+      }
+      return false;
     } else if (!inSearch && key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const found = findTyped(key, active);
       if (found !== -1) {
@@ -483,10 +510,10 @@ export function Select({
           <span className="select__label">{label}</span>
         </span>
       </button>
-      {name === undefined ? null : <input type="hidden" name={name} value={value} />}
+      {name === undefined ? null : <input type="hidden" name={name} value={shown?.value ?? ""} />}
       {open
         ? createPortal(
-            <div ref={popupRef} className="select-popup">
+            <div ref={popupRef} className="select-popup" data-select-popup="">
               {withSearch ? (
                 <input
                   ref={searchRef}
@@ -544,10 +571,12 @@ export function Select({
                     </div>
                   ),
                 )}
-                {visible.length === 0 ? (
-                  <div className="select-popup__empty">{t("common.select.noMatches")}</div>
-                ) : null}
               </div>
+              {visible.length === 0 ? (
+                <p className="select-popup__empty" role="status">
+                  {t("common.select.noMatches")}
+                </p>
+              ) : null}
             </div>,
             document.body,
           )

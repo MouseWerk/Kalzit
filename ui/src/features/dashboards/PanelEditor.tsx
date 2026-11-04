@@ -72,7 +72,7 @@ import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
 import { documentsOf } from "./results";
 import { firstLoad, panelDistribution, usePanelResults } from "./usePanelResults";
 import "./panelEditor.css";
-import { Select } from "../../components/Select";
+import { isInsideSelectPopup, Select } from "../../components/Select";
 
 /** What the dashboard reads from the open editor when it is left another way than Discard. */
 export interface EditorSnapshot {
@@ -1450,7 +1450,10 @@ const TargetEditor = memo(function TargetEditor({
   }
   const onBlur = (event: FocusEvent<HTMLElement>) => {
     const next = event.relatedTarget;
-    if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+    if (
+      !(next instanceof Node) ||
+      (!event.currentTarget.contains(next) && !isInsideSelectPopup(next))
+    ) {
       onLeave();
     }
   };
