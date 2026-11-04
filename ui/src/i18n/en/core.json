@@ -6,6 +6,8 @@
   "common.retry": "Try again",
   "common.undo": "Undo",
   "common.dialog.backKept": "Back and Escape keep what you typed. Choose Cancel to discard it.",
+  "common.select.search": "Search options",
+  "common.select.noMatches": "No matching options",
   "common.dismiss": "Dismiss",
   "common.skipToContent": "Skip to content",
   "nav.label": "Main navigation",

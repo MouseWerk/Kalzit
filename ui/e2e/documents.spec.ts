@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { Api, OWNER_DE, unique } from "./support/api";
 import { de } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { MONGO_FIXTURE, serviceAddress } from "./support/services";
 import { expect, test } from "./support/test";
 
@@ -51,9 +52,11 @@ test("MongoDB in Explore: stages with a preview, the schema, the distribution ov
 
   await test.step("open the collection in Explore and run it without stages", async () => {
     await page.goto("/explore", { timeout: STEP_MS });
-    await page
-      .getByLabel(de("explore.datasource"))
-      .selectOption({ label: name }, { timeout: STEP_MS });
+    await selectOption(
+      page.getByLabel(de("explore.datasource")),
+      { label: name },
+      { timeout: STEP_MS },
+    );
     await page
       .getByLabel(de("documents.pipeline.collection"), { exact: true })
       .fill(MONGO_FIXTURE.collection, { timeout: STEP_MS });
@@ -65,9 +68,11 @@ test("MongoDB in Explore: stages with a preview, the schema, the distribution ov
   });
 
   await test.step("a $match stage, previewed on its own", async () => {
-    await page
-      .getByLabel(de("documents.pipeline.addWhich"), { exact: true })
-      .selectOption("$match", { timeout: STEP_MS });
+    await selectOption(
+      page.getByLabel(de("documents.pipeline.addWhich"), { exact: true }),
+      "$match",
+      { timeout: STEP_MS },
+    );
     await page
       .getByRole("button", { name: de("documents.pipeline.add"), exact: true })
       .click({ timeout: STEP_MS });
@@ -88,9 +93,9 @@ test("MongoDB in Explore: stages with a preview, the schema, the distribution ov
   });
 
   await test.step("the schema lists the nested paths", async () => {
-    await page
-      .getByLabel(de("explore.visualization"), { exact: true })
-      .selectOption("schema", { timeout: STEP_MS });
+    await selectOption(page.getByLabel(de("explore.visualization"), { exact: true }), "schema", {
+      timeout: STEP_MS,
+    });
     await expect(result.getByText("customer.region", { exact: true }).first()).toBeVisible({
       timeout: STEP_MS,
     });
@@ -100,12 +105,16 @@ test("MongoDB in Explore: stages with a preview, the schema, the distribution ov
   });
 
   await test.step("the distribution counts all documents of the result in the database", async () => {
-    await page
-      .getByLabel(de("explore.visualization"), { exact: true })
-      .selectOption("distribution", { timeout: STEP_MS });
-    await page
-      .getByLabel(de("documents.distribution.path"), { exact: true })
-      .selectOption("status", { timeout: STEP_MS });
+    await selectOption(
+      page.getByLabel(de("explore.visualization"), { exact: true }),
+      "distribution",
+      { timeout: STEP_MS },
+    );
+    await selectOption(
+      page.getByLabel(de("documents.distribution.path"), { exact: true }),
+      "status",
+      { timeout: STEP_MS },
+    );
     await expect(
       result.getByText(de("documents.distribution.scope.all", { count: OST }), { exact: true }),
     ).toBeVisible({ timeout: STEP_MS });

@@ -4,6 +4,7 @@ import { useI18n } from "../i18n/i18n";
 import { clipChars } from "../lib/chars";
 import { setVariableFromClick, usePanelHost } from "./host";
 import "../features/dashboards/ui/shared.css";
+import { Select } from "../components/Select";
 
 /**
  * A clicked value as the text a variable takes: text as is, numbers and booleans as their text,
@@ -97,12 +98,11 @@ export function ClickVariableOptions({
         <p className="field__hint" id={`${id}-hint`}>
           {names.length === 0 ? texts.none : texts.hint}
         </p>
-        <select
+        <Select
           id={id}
-          className="select"
           value={variable}
           aria-describedby={`${id}-hint`}
-          onChange={(event) => onChange({ variable: event.currentTarget.value })}
+          onChange={(next) => onChange({ variable: next })}
         >
           <option value="">{texts.off}</option>
           {choices.map((name) => (
@@ -110,7 +110,7 @@ export function ClickVariableOptions({
               ${name}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
       {variable === "" ? null : (
         <div className="field">

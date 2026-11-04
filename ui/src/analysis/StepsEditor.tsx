@@ -36,6 +36,7 @@ import {
 import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
 import { Icon } from "../components/Icon";
+import { Select } from "../components/Select";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
 
 /** Rows the preview shows. */
@@ -216,7 +217,7 @@ export function StepsEditor({
     if (focus.id === null) {
       target =
         root?.querySelector<HTMLElement>(".steps__add-button") ??
-        root?.querySelector<HTMLElement>("select");
+        root?.querySelector<HTMLElement>("button.select");
     } else {
       const item = root?.querySelector(`[data-step="${CSS.escape(focus.id)}"]`);
       const wanted = item?.querySelector<HTMLButtonElement>(`[data-action="${focus.action}"]`);
@@ -514,12 +515,11 @@ export function StepsEditor({
           <label className="visually-hidden" htmlFor={addId}>
             {t("analysis.steps.addType")}
           </label>
-          <select
+          <Select
             id={addId}
-            className="select"
             value={chosen}
             aria-describedby={`${addId}-about`}
-            onChange={(event) => setAdding(event.currentTarget.value as StepType)}
+            onChange={(next) => setAdding(next as StepType)}
           >
             {graphsLeft ? (
               <optgroup label={t("analysis.catalog.graph")}>
@@ -541,7 +541,7 @@ export function StepsEditor({
                 ))}
               </optgroup>
             ) : null}
-          </select>
+          </Select>
           <button type="button" className="button button--secondary" onClick={() => add(chosen)}>
             {t("analysis.steps.add")}
           </button>
@@ -1659,18 +1659,13 @@ function Choice({
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
-      <select
-        id={id}
-        className="select"
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      >
+      <Select id={id} value={value} onChange={(next) => onChange(next)}>
         {list.map(([v, text]) => (
           <option key={v} value={v}>
             {text}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }

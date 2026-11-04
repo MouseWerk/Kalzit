@@ -31,6 +31,7 @@ import { useAdminAccess } from "../sections";
 import { RoleSelect, useRoles } from "./shared";
 import "../admin.css";
 import "./invitations.css";
+import { Select } from "../../../components/Select";
 
 /**
  * The text of a refused invitation request: the address the server names, the missing public
@@ -435,19 +436,14 @@ export function InviteDialog({
               <label className="field__label" htmlFor={ids.team}>
                 {t("admin.invitations.team")}
               </label>
-              <select
-                id={ids.team}
-                className="select"
-                value={team}
-                onChange={(event) => setTeam(event.currentTarget.value)}
-              >
+              <Select id={ids.team} value={team} onChange={(next) => setTeam(next)}>
                 <option value="">{t("admin.invitations.noTeam")}</option>
                 {(teams.data?.items ?? []).map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           ) : null}
         </div>

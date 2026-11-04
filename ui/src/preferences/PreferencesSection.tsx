@@ -18,6 +18,7 @@ import {
 } from "./preferences";
 import "../features/admin/admin.css";
 import "../shell/shellUx.css";
+import { Select } from "../components/Select";
 
 const appRoute = getRouteApi("/_app");
 
@@ -256,15 +257,15 @@ function Choice({
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
-      <select
+      <Select
         id={id}
-        className="select preferences__select"
+        className="preferences__select"
         value={value}
         aria-describedby={hint === undefined ? undefined : `${id}-hint`}
         aria-disabled={disabled}
-        onChange={(event) => {
+        onChange={(next) => {
           if (!disabled) {
-            onChange(event.currentTarget.value);
+            onChange(next);
           }
         }}
       >
@@ -273,7 +274,7 @@ function Choice({
             {option.label}
           </option>
         ))}
-      </select>
+      </Select>
       {hint === undefined ? null : (
         <span className="field__hint" id={`${id}-hint`}>
           {hint}

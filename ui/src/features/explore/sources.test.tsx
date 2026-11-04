@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { addSourceKinds, PG_ID } from "../datasources/test/fakeDatasources";
@@ -19,7 +20,7 @@ function open(id: string, role = "editor") {
 }
 
 async function choose(user: ReturnType<typeof renderApp>["user"], id: string) {
-  await user.selectOptions(await screen.findByRole("combobox", { name: "Data source" }), id);
+  await pickOption(user, await screen.findByRole("combobox", { name: "Data source" }), id);
 }
 
 const lastQuery = (server: ReturnType<typeof installFakeServer>) =>
@@ -64,7 +65,8 @@ describe("Explore with an Elasticsearch source", () => {
     // The Lucene text moves into the body, visibly.
     const body = screen.getByRole("textbox", { name: "Query" }) as HTMLTextAreaElement;
     expect(JSON.parse(body.value)).toEqual({ query: { query_string: { query: "land:AT" } } });
-    await user.selectOptions(
+    await pickOption(
+      user,
       screen.getByRole("combobox", { name: "Start from a template" }),
       "terms",
     );
@@ -158,10 +160,7 @@ describe("Explore with an HTTP JSON source", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Name of parameter 1" }), {
       target: { value: "limit" },
     });
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Type of parameter 1" }),
-      "number",
-    );
+    await pickOption(user, screen.getByRole("combobox", { name: "Type of parameter 1" }), "number");
     fireEvent.change(screen.getByRole("textbox", { name: "Value of parameter 1" }), {
       target: { value: "10" },
     });

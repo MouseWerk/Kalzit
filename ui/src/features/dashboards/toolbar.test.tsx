@@ -4,6 +4,7 @@ import { getTimeSettings } from "../../lib/timeSettings";
 import { SHORTCUT_AREAS } from "../../shell/ShortcutsHelp";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { diffModels } from "./diff";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
@@ -261,19 +262,22 @@ describe("the dashboard's time options", () => {
     const nav = await screen.findByRole("navigation", { name: "Settings sections" });
     await user.click(within(nav).getByRole("link", { name: "Time options" }));
     const dialog = await screen.findByRole("region", { name: "Time options" });
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Time zone" }), "UTC");
-    await user.selectOptions(
+    await pickOption(user, within(dialog).getByRole("combobox", { name: "Time zone" }), "UTC");
+    await pickOption(
+      user,
       within(dialog).getByRole("combobox", { name: "First day of the week" }),
       "sunday",
     );
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(dialog).getByRole("combobox", { name: "Fiscal year starts in" }),
       "7",
     );
     await user.type(within(dialog).getByRole("textbox", { name: "Now delay" }), "1m");
     const intervals = within(dialog).getByRole("textbox", { name: "Refresh intervals" });
     await user.type(intervals, "1m, 2s");
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(dialog).getByRole("combobox", { name: "Shared cursor" }),
       "tooltip",
     );

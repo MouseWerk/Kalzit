@@ -17,6 +17,7 @@ import { EmptyPanel } from "../shared";
 import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
+import { Select } from "../../components/Select";
 import { DistributionPreview } from "../picker/previews";
 
 export interface DistributionOptions {
@@ -170,18 +171,13 @@ function DistributionPanel({
         <SetPicker count={documents.length} index={position} onChange={setIndex} />
         <div className="preference">
           <label htmlFor={pathId}>{t("documents.distribution.path")}</label>
-          <select
-            id={pathId}
-            className="select"
-            value={path}
-            onChange={(event) => setChosen(event.currentTarget.value)}
-          >
+          <Select id={pathId} value={path} onChange={(next) => setChosen(next)}>
             {schema.map((field) => (
               <option key={field.path} value={field.path}>
                 {field.path}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
       <section

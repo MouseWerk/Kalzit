@@ -30,6 +30,7 @@ import { templateGraph } from "../datasources/editors/GsqlQueryEditor";
 import { familyOf, queryText } from "../datasources/queryKinds";
 import "../../help/help.css";
 import "./explore.css";
+import { Select } from "../../components/Select";
 
 /**
  * Explore's guidance for people new to a source's query language (docs/guide/query-languages.md),
@@ -146,18 +147,17 @@ export function ExploreStart({
             <label className="field__label" htmlFor={pickId}>
               {t(guide.pick.label)}
             </label>
-            <select
+            <Select
               id={pickId}
-              className="select"
               value={context.object?.name ?? ""}
-              onChange={(event) => state.pick(event.currentTarget.value)}
+              onChange={(next) => state.pick(next)}
             >
               {choices.map((object) => (
                 <option key={`${object.schema ?? ""}.${object.name}`} value={object.name}>
                   {objectLabel(object)}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )
       }

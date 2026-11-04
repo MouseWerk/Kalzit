@@ -7,6 +7,7 @@ import { PanelBody } from "../features/dashboards/PanelCard";
 import { fakeOrders } from "../features/datasources/test/fakeMongo";
 import { getPanel } from "../panels/registry";
 import type { AnyPanelPlugin, DistributionRunner, DocumentFilter } from "../panels/types";
+import { pickOption } from "../test/select";
 import { forgetDistributions } from "./distributionCache";
 import { sampleSchema } from "./schema";
 
@@ -220,7 +221,7 @@ describe("field distribution", () => {
       }),
     ).toBeTruthy();
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Field path" }), "items[].sku");
+    await pickOption(user, screen.getByRole("combobox", { name: "Field path" }), "items[].sku");
     const top = screen
       .getAllByRole("listitem")
       .map((item) => item.querySelector(".dist__value")?.textContent);
@@ -315,7 +316,7 @@ describe("field distribution over the whole result", () => {
         }),
     );
     renderWhole(run);
-    await user.selectOptions(screen.getByRole("combobox", { name: "Field path" }), "rating");
+    await pickOption(user, screen.getByRole("combobox", { name: "Field path" }), "rating");
     expect(run).toHaveBeenLastCalledWith(0, { path: ["rating"] }, expect.any(AbortSignal));
     expect(signals[0]?.aborted).toBe(true);
     expect(signals.at(-1)?.aborted).toBe(false);

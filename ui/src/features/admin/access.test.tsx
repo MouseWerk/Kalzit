@@ -13,6 +13,7 @@ import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import type { Me } from "../../api/auth";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
+import { optionLabels, pickOption } from "../../test/select";
 import { AccessDialog, type AccessResource } from "./access";
 import { fakeAdmin } from "./test/fakeAdmin";
 import { ALL_PERMISSIONS } from "./test/openAdmin";
@@ -94,9 +95,9 @@ describe("access dialog", () => {
     const { user, admin } = renderHarness(ALL_PERMISSIONS, DASHBOARD);
     await user.click(await screen.findByRole("button", { name: "Access…" }));
     const dialog = screen.getByRole("dialog");
-    await user.selectOptions(await within(dialog).findByLabelText("Give access to"), "user");
-    await user.selectOptions(await within(dialog).findByLabelText("User"), "u3");
-    await user.selectOptions(within(dialog).getByLabelText("Access"), "view");
+    await pickOption(user, await within(dialog).findByLabelText("Give access to"), "user");
+    await pickOption(user, await within(dialog).findByLabelText("User"), "u3");
+    await pickOption(user, within(dialog).getByLabelText("Access"), "view");
     await user.click(within(dialog).getByRole("button", { name: "Give access" }));
     expect(
       await within(dialog).findByText("Alan Turing (alan@example.com) now has access."),
@@ -125,9 +126,9 @@ describe("access dialog", () => {
     const { user, admin } = renderHarness(ALL_PERMISSIONS, DASHBOARD);
     await user.click(await screen.findByRole("button", { name: "Access…" }));
     const dialog = screen.getByRole("dialog");
-    await user.selectOptions(await within(dialog).findByLabelText("Give access to"), "team");
-    await user.selectOptions(await within(dialog).findByLabelText("Team"), "t1");
-    await user.selectOptions(within(dialog).getByLabelText("Access"), "admin");
+    await pickOption(user, await within(dialog).findByLabelText("Give access to"), "team");
+    await pickOption(user, await within(dialog).findByLabelText("Team"), "t1");
+    await pickOption(user, within(dialog).getByLabelText("Access"), "admin");
     await user.click(within(dialog).getByRole("button", { name: "Give access" }));
     const list = within(dialog).getByRole("list", { name: "Granted access" });
     expect(await within(list).findByText("Can manage")).toBeTruthy();
@@ -142,11 +143,7 @@ describe("access dialog", () => {
     });
     await user.click(await screen.findByRole("button", { name: "Access…" }));
     const levels = await within(screen.getByRole("dialog")).findByLabelText("Access");
-    expect(
-      within(levels)
-        .getAllByRole("option")
-        .map((option) => option.textContent),
-    ).toEqual(["Can query", "Can edit", "Can manage"]);
+    expect(optionLabels(levels)).toEqual(["Can query", "Can edit", "Can manage"]);
   });
 
   it("says so when the server does not let the user see who has access", async () => {
@@ -178,11 +175,7 @@ describe("access dialog", () => {
     const { user } = renderHarness(["dashboards:share", "teams:read"], DASHBOARD);
     await user.click(await screen.findByRole("button", { name: "Access…" }));
     const to = await within(screen.getByRole("dialog")).findByLabelText("Give access to");
-    expect(
-      within(to)
-        .getAllByRole("option")
-        .map((option) => option.textContent),
-    ).toEqual(["Team"]);
+    expect(optionLabels(to)).toEqual(["Team"]);
   });
 
   it("maps a refused grant to a readable text", async () => {

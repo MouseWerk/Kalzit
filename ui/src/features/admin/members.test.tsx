@@ -1,5 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { openOptions, pickOption } from "../../test/select";
 import { BUILT_IN_ROLE_PERMISSIONS } from "./catalog";
 import { ALL_PERMISSIONS, openAdmin, sent } from "./test/openAdmin";
 
@@ -24,7 +25,8 @@ describe("members", () => {
   it("changes a role at once and undoes it", async () => {
     const { user, server, admin } = await openAdmin("/admin/members");
     const list = await membersList();
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Grace Hopper" }),
       "viewer",
     );
@@ -40,7 +42,8 @@ describe("members", () => {
   it("explains that the last owner cannot be demoted", async () => {
     const { user, admin } = await openAdmin("/admin/members");
     const list = await membersList();
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Ada Lovelace" }),
       "admin",
     );
@@ -109,7 +112,7 @@ describe("members", () => {
     await user.clear(email);
     await user.click(email);
     await user.paste(" Grace@Example.com ");
-    await user.selectOptions(within(dialog).getByLabelText("Role"), "admin");
+    await pickOption(user, within(dialog).getByLabelText("Role"), "admin");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await screen.findByText("Grace@Example.com was added.")).toBeTruthy();
     expect(admin.members.find((member) => member.userId === "u2")?.role).toBe("admin");
@@ -124,7 +127,7 @@ describe("members", () => {
     const dialog = screen.getByRole("dialog", { name: "Add member" });
     await user.click(within(dialog).getByLabelText("Email address"));
     await user.paste("grace@example.com");
-    await user.selectOptions(within(dialog).getByLabelText("Role"), "editor");
+    await pickOption(user, within(dialog).getByLabelText("Role"), "editor");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(
       await within(dialog).findByText(
@@ -168,11 +171,13 @@ describe("members", () => {
     expect(within(list).queryByRole("combobox", { name: "Role of Ada Lovelace" })).toBeNull();
     expect(within(list).queryByRole("button", { name: "Remove Ada Lovelace…" })).toBeNull();
     const select = within(list).getByRole("combobox", { name: "Role of Alan Turing" });
-    const options = within(select).getAllByRole("option") as HTMLOptionElement[];
-    expect(options.filter((option) => option.disabled).map((option) => option.value)).toEqual([
-      "owner",
-    ]);
-    await user.selectOptions(select, "r1");
+    const options = openOptions(select);
+    expect(
+      options
+        .filter((option) => option.getAttribute("aria-disabled") === "true")
+        .map((option) => option.dataset.value),
+    ).toEqual(["owner"]);
+    await pickOption(user, select, "r1");
     expect(await screen.findByText("Alan Turing is now Auditor.")).toBeTruthy();
     expect(sent(server, "PATCH")).toEqual(["/api/orgs/o1/members/u3"]);
   });
@@ -183,8 +188,13 @@ describe("members", () => {
     });
     const list = await membersList();
     const select = within(list).getByRole("combobox", { name: "Role of Alan Turing" });
-    const options = within(select).getAllByRole("option") as HTMLOptionElement[];
-    expect(options.map((option) => [option.value, option.disabled])).toEqual([
+    const options = openOptions(select);
+    expect(
+      options.map((option) => [
+        option.dataset.value,
+        option.getAttribute("aria-disabled") === "true",
+      ]),
+    ).toEqual([
       ["owner", true],
       ["admin", true],
       ["editor", false],
@@ -196,7 +206,8 @@ describe("members", () => {
     const { user, server } = await openAdmin("/admin/members");
     const list = await membersList();
     server.failNext("/api/orgs/o1/members/u3", 403, "forbidden", "PATCH");
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Alan Turing" }),
       "editor",
     );
@@ -237,7 +248,8 @@ describe("members", () => {
     if (grace !== undefined) {
       grace.idpManaged = true;
     }
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Grace Hopper" }),
       "viewer",
     );

@@ -24,6 +24,7 @@ import { MacroHelp } from "./MacroHelp";
 import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
+import { Select } from "../../../components/Select";
 
 /**
  * InfluxDB: one language per query. Flux answers on 1.8 and 2.x, InfluxQL everywhere, SQL on 3.x;
@@ -52,20 +53,18 @@ export function InfluxQueryEditor({
           <label className="field__label" htmlFor={languageId}>
             {t("datasources.editor.influx.language")}
           </label>
-          <select
+          <Select
             id={languageId}
             className="input"
             value={language}
-            onChange={(event) =>
-              onChange(influxQuery(event.currentTarget.value as InfluxLanguage, text))
-            }
+            onChange={(next) => onChange(influxQuery(next as InfluxLanguage, text))}
           >
             {INFLUX_LANGUAGES.map((l) => (
               <option key={l} value={l}>
                 {t(`datasources.editor.influx.${l}`)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
       <CodeEditor
@@ -199,17 +198,15 @@ export function LokiQueryEditor({
           <label className="field__label" htmlFor={directionId}>
             {t("datasources.editor.loki.direction")}
           </label>
-          <select
+          <Select
             id={directionId}
             className="input"
             value={value.direction ?? "backward"}
-            onChange={(event) =>
-              update({ direction: event.currentTarget.value as "backward" | "forward" })
-            }
+            onChange={(next) => update({ direction: next as "backward" | "forward" })}
           >
             <option value="backward">{t("datasources.editor.loki.backward")}</option>
             <option value="forward">{t("datasources.editor.loki.forward")}</option>
-          </select>
+          </Select>
         </div>
         <div className="field query-editor__step">
           <label className="field__label" htmlFor={stepId}>

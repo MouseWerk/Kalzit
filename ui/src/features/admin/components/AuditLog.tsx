@@ -9,6 +9,7 @@ import { PagedSelect, type PickerOption } from "./PagedSelect";
 import { useRowKeys } from "./rows";
 import { LoadState } from "./Section";
 import "../admin.css";
+import { Select } from "../../../components/Select";
 
 /** A list to filter by (people, organizations), loaded page by page. */
 export interface PickerSource {
@@ -119,12 +120,7 @@ export function AuditLog({
           <label className="field__label" htmlFor={ids.action}>
             {t("admin.audit.action")}
           </label>
-          <select
-            id={ids.action}
-            className="select"
-            value={input.action}
-            onChange={(event) => change("action", event.currentTarget.value)}
-          >
+          <Select id={ids.action} value={input.action} onChange={(next) => change("action", next)}>
             <option value="">{t("admin.audit.anyAction")}</option>
             <optgroup label={t("admin.audit.areas")}>
               {Object.entries(AUDIT_AREAS).map(([prefix, label]) => (
@@ -140,7 +136,7 @@ export function AuditLog({
                 </option>
               ))}
             </optgroup>
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label className="field__label" htmlFor={ids.from}>

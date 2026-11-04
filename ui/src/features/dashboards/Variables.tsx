@@ -25,6 +25,7 @@ import { errorMessage } from "./ui/errors";
 import { VariableMultiSelect } from "./VariableMultiSelect";
 import "./dashboards.css";
 import "./dashboardTools.css";
+import { Select } from "../../components/Select";
 
 /** The value each variable starts with: its stored current value, else the first fixed value. */
 export function initialVariables(variables: readonly VariableModel[]): VariableValues {
@@ -330,11 +331,10 @@ function VariableControl({
         onChange={onChange}
       />
     ) : (
-      <select
+      <Select
         id={id}
-        className="select"
         value={valueText(picked)}
-        onChange={(event) => onChange(event.currentTarget.value)}
+        onChange={(next) => onChange(next)}
         aria-describedby={optionsError === null ? undefined : `${id}-error`}
       >
         {unknown.length === 0 && picked.length > 0 ? null : (
@@ -347,7 +347,7 @@ function VariableControl({
             {option.label}
           </option>
         ))}
-      </select>
+      </Select>
     );
   }
   return (

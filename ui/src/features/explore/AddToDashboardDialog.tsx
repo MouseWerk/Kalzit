@@ -9,6 +9,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { FormAlert } from "../../components/FormAlert";
 import { QueryPreview } from "../../components/QueryPreview";
+import { Select } from "../../components/Select";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import {
@@ -191,12 +192,11 @@ export function AddToDashboardDialog({
             <label className="field__label" htmlFor={pickId}>
               {t("explore.add.dashboard")}
             </label>
-            <select
+            <Select
               id={pickId}
-              className="select"
               value={dashboardId}
-              onChange={(event) => {
-                setDashboardId(event.currentTarget.value);
+              onChange={(next) => {
+                setDashboardId(next);
                 setProblem(undefined);
               }}
               aria-invalid={problem === undefined ? undefined : true}
@@ -208,7 +208,7 @@ export function AddToDashboardDialog({
                   {d.title === "" ? t("dashboards.untitled") : d.title}
                 </option>
               ))}
-            </select>
+            </Select>
             {problem === undefined ? null : (
               <p className="field__error" id={`${pickId}-error`}>
                 {problem}
@@ -241,19 +241,14 @@ export function AddToDashboardDialog({
               <label className="field__label" htmlFor={folderId}>
                 {t("dashboards.column.folder")}
               </label>
-              <select
-                id={folderId}
-                className="select"
-                value={folder}
-                onChange={(event) => setFolder(event.currentTarget.value)}
-              >
+              <Select id={folderId} value={folder} onChange={(next) => setFolder(next)}>
                 <option value="">{t("dashboards.folders.none")}</option>
                 {(folders.data ?? []).map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </>
         )}

@@ -2,6 +2,7 @@ import { act, render, renderHook, screen, waitFor } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import type { ElkNode } from "elkjs/lib/elk-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { pickOption } from "../../test/select";
 import { getPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
 import { elkInput, elkPositions } from "./elkGraph";
@@ -260,17 +261,17 @@ describe("hierarchy editor", () => {
     const view = render(<Editor options={plugin.options({})} onChange={onChange} />);
     const layout = await screen.findByRole("combobox", { name: "Layout" }, { timeout: 4_000 });
     expect(screen.queryByRole("combobox", { name: "Direction" })).toBeNull();
-    await user.selectOptions(layout, "elk");
+    await pickOption(user, layout, "elk");
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ hierarchyLayout: "elk" }));
 
     view.rerender(
       <Editor options={plugin.options({ hierarchyLayout: "elk" })} onChange={onChange} />,
     );
-    await user.selectOptions(screen.getByRole("combobox", { name: "Direction" }), "right");
+    await pickOption(user, screen.getByRole("combobox", { name: "Direction" }), "right");
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ hierarchyLayout: "elk", elkDirection: "right" }),
     );
-    await user.selectOptions(screen.getByRole("combobox", { name: "Edge routing" }), "polyline");
+    await pickOption(user, screen.getByRole("combobox", { name: "Edge routing" }), "polyline");
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ elkEdgeRouting: "polyline" }),
     );
