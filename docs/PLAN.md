@@ -312,7 +312,8 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 - **Windows**: `kalzit service install|uninstall` als Windows-Dienst (Start und Stopp über die
   Dienste-Verwaltung), Daten unter `%ProgramData%\Kalzit`, Log im Datenordner und frühe Fehler im
   Ereignisprotokoll, Installer als MSI (seit M5; signiert, sobald das Code-Signing des Projekts
-  eingerichtet ist). Ein winget-Paket ist noch nicht gebaut und nicht Teil von M6.
+  eingerichtet ist). Ein winget-Paket kommt in M6: Das Manifest erzeugt der Release-Workflow, die Einreichung bei
+  winget-pkgs ist ein Schritt von Hand.
 - **Linux**: `.deb` und `.rpm` für x64 und arm64 mit gehärteter systemd-Unit, `/etc/kalzit`,
   `/var/lib/kalzit`, eigener Systembenutzer; Docker-Image für amd64 und arm64.
 - **Geheimnisse** (Passwörter und Tokens von Datenquellen, Schlüssel der KI-Anbieter, Mailserver,
