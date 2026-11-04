@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
 import { clipChars } from "../../lib/chars";
+import { type DataLink, parseDataLinks } from "../dataLinks";
 import { MAX_EXPAND_LIMIT } from "./adapter";
 
 /** The hard cap on drawn nodes per panel; the panel's own limit may only be lower. */
@@ -120,6 +121,8 @@ export interface GraphPanelOptions {
   elkNodeSpacing: number;
   elkLayerSpacing: number;
   elkEdgeRouting: ElkEdgeRouting;
+  /** Links from a node property, offered in the node's details. */
+  dataLinks: DataLink[];
 }
 
 /** Longest caption, property key or variable name the graph panels store. */
@@ -239,6 +242,7 @@ export function parseGraphOptions(stored: unknown): GraphPanelOptions {
       ELK_LAYER_SPACING.default,
     ),
     elkEdgeRouting: choice(ELK_EDGE_ROUTINGS, value.elkEdgeRouting, "orthogonal"),
+    dataLinks: parseDataLinks(value.dataLinks, MAX_OPTION_TEXT),
   };
 }
 

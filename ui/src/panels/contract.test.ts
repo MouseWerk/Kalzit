@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { type DataLink, MAX_DATA_LINK_TITLE, MAX_DATA_LINK_URL } from "./dataLinks";
 import { newMapping, newOverride, newStep } from "./fieldConfig/FieldConfigEditor";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
 import { GRAPH_LIMITS } from "./fieldConfig/graphStyle";
@@ -132,6 +133,25 @@ function editorFieldConfigs(): FieldConfig[] {
 /** Text as long as the editors' fields take (`maxLength`). */
 const LONGEST = "x".repeat(100);
 
+/** Data links as their editor writes them, with the longest field a panel type takes. */
+function dataLinks(field: string): DataLink[] {
+  return [
+    {
+      field,
+      title: "t".repeat(MAX_DATA_LINK_TITLE),
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type
+      url: "/dashboards/d-1?var-customer=${__value}&f=${__field}",
+      newTab: false,
+    },
+    {
+      field: "id",
+      title: "Shop",
+      url: `https://shop.example/${"u".repeat(MAX_DATA_LINK_URL - 40)}/\${__value}`,
+      newTab: true,
+    },
+  ];
+}
+
 /**
  * Options the graph editors write beyond the defaults: every choice and both ends of each
  * number. The network and hierarchy editors store what `parseGraphOptions` returns, the path
@@ -156,15 +176,22 @@ function editorOptions(type: string): unknown[] {
         }),
       ),
       parseGraphOptions({ sizeBy: "", nodeLimit: 1, expandLimit: 1, explorer: false }),
+      parseGraphOptions({ dataLinks: dataLinks(LONGEST) }),
     ];
   }
   if (type === "path") {
-    return [{ caption: LONGEST, variable: "customer", variableProperty: LONGEST }];
+    return [
+      { caption: LONGEST, variable: "customer", variableProperty: LONGEST },
+      { caption: "", variable: "", variableProperty: "", dataLinks: dataLinks(LONGEST) },
+    ];
   }
   const parse = (stored: unknown) => PANELS.find((panel) => panel.type === type)?.options(stored);
   // A click that sets a variable, with the longest texts each editor takes.
   if (type === "documents" || type === "document") {
-    return [parse({ variable: "$customer", variablePath: "p".repeat(500) })];
+    return [
+      parse({ variable: "$customer", variablePath: "p".repeat(500) }),
+      parse({ dataLinks: dataLinks("p".repeat(500)) }),
+    ];
   }
   if (type === "table") {
     return [parse({ variable: "customer", variableColumn: "c".repeat(200) })];

@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
-import { optionText as text } from "../graph/options";
+import { type DataLink, parseDataLinks } from "../dataLinks";
+import { MAX_OPTION_TEXT, optionText as text } from "../graph/options";
 import { lazyPanel } from "../lazy";
 import { PathPreview } from "../picker/previews";
 import type { PanelPlugin } from "../types";
@@ -8,6 +9,8 @@ export interface PathOptions {
   caption: string;
   variable: string;
   variableProperty: string;
+  /** Links from a node or edge property, offered with each step of a path. */
+  dataLinks: DataLink[];
 }
 
 export function parsePathOptions(stored: unknown): PathOptions {
@@ -16,6 +19,7 @@ export function parsePathOptions(stored: unknown): PathOptions {
     caption: text(value.caption),
     variable: text(value.variable).replace(/^\$/, ""),
     variableProperty: text(value.variableProperty),
+    dataLinks: parseDataLinks(value.dataLinks, MAX_OPTION_TEXT),
   };
 }
 

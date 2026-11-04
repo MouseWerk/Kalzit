@@ -1,9 +1,10 @@
 # The deb and rpm of Kalzit, built by deploy/linux/package.sh with nfpm (https://nfpm.goreleaser.com).
-# package.sh fills in @VERSION@, @GLIBC@ (the newest glibc symbol version the binary uses),
-# @WORK@ (its work folder with the binary and the package markers) and @ROOT@ (the repository).
+# package.sh fills in @VERSION@, @ARCH@ (amd64 or arm64, from the binary), @GLIBC@ (the newest
+# glibc symbol version the binary uses), @WORK@ (its work folder with the binary and the package
+# markers) and @ROOT@ (the repository).
 
 name: kalzit
-arch: amd64
+arch: "@ARCH@"
 platform: linux
 version: "@VERSION@"
 version_schema: semver

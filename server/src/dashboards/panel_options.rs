@@ -37,6 +37,10 @@ pub const MAX_STACK_GROUP_CHARS: usize = 50;
 pub const MAX_FIELD_PATH_CHARS: usize = 500;
 /// Property keys, captions and variable names of the graph panels.
 pub const MAX_GRAPH_TEXT_CHARS: usize = 100;
+/// Data links of one document or graph panel (`MAX_DATA_LINKS` in the UI).
+pub const MAX_DATA_LINKS: usize = 20;
+/// The longest data link address, as for panel links.
+pub const MAX_DATA_LINK_URL_CHARS: usize = 2048;
 /// The hard cap on drawn nodes per graph panel (`MAX_NODE_LIMIT` in the UI).
 pub const MAX_NODE_LIMIT: u32 = 20_000;
 /// Neighbours one expand step of the explorer adds at most (`MAX_EXPAND_LIMIT` in the UI).
@@ -481,6 +485,7 @@ struct NoOptions {}
 struct ExplorerOptions {
     variable: Option<String>,
     variable_path: Option<String>,
+    data_links: Option<Vec<DataLink>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -529,6 +534,7 @@ struct GraphOptions {
     elk_node_spacing: Option<u32>,
     elk_layer_spacing: Option<u32>,
     elk_edge_routing: Option<ElkEdgeRouting>,
+    data_links: Option<Vec<DataLink>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -537,6 +543,22 @@ struct CardOptions {
     title_path: Option<String>,
     variable: Option<String>,
     variable_path: Option<String>,
+    data_links: Option<Vec<DataLink>>,
+}
+
+/// A link from a document field or a node or edge property (`ui/src/panels/dataLinks.ts`): the
+/// panel offers it where that field or property has a plain value, with `${__value}` (the value),
+/// `${__field}` (the field) and dashboard variables filled in, URL-encoded, by the viewer's
+/// browser. The address itself is fixed here: the scheme or the path never comes from a value.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DataLink {
+    /// A dotted field path of a document panel, or a property key of a graph panel.
+    field: String,
+    title: String,
+    url: String,
+    #[allow(dead_code)]
+    new_tab: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -545,6 +567,7 @@ struct PathOptions {
     caption: Option<String>,
     variable: Option<String>,
     variable_property: Option<String>,
+    data_links: Option<Vec<DataLink>>,
 }
 
 fn parse<T: DeserializeOwned>(what: &str, value: &Value) -> Result<T, String> {
@@ -578,6 +601,49 @@ fn is_safe_link(link: &str) -> bool {
     !lower.contains('\\')
         && (["http://", "https://", "mailto:", "./", "?", "#", "${__value}"].iter().any(|p| lower.starts_with(p))
             || (lower.starts_with('/') && !lower.starts_with("//")))
+}
+
+/// A data link's address: `http://` or `https://` written out at the start, or a path on this
+/// server (`/dashboards/...`, not `//host` or `/\host`). Nothing else, so `javascript:`,
+/// `data:`, `mailto:` and an address that is only a placeholder never pass. The host is written
+/// out: no `$` between `://` and the first `/`, `?` or `#`, so neither a value
+/// (`https://${__value}/x`, `https://shop.example${__value}`) nor a variable chooses the site.
+/// Variables may follow in the path, query and fragment; the browser checks the filled-in
+/// address again.
+fn is_data_link_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if url.trim() != url || url.contains('\\') {
+        return false;
+    }
+    if let Some(rest) = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://")) {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        // A host must follow: "https://" alone or "https:///path" names none.
+        return !authority.is_empty() && !authority.contains('$');
+    }
+    url.starts_with('/') && !url.starts_with("//")
+}
+
+/// The data links of a document or graph panel: at most `MAX_DATA_LINKS`, each with a field, a
+/// title and a safe address.
+fn check_data_links(links: Option<&Vec<DataLink>>, max_field: usize) -> Result<(), String> {
+    let Some(links) = links else { return Ok(()) };
+    if links.len() > MAX_DATA_LINKS {
+        return Err(format!("options.dataLinks takes at most {MAX_DATA_LINKS} entries"));
+    }
+    for (i, link) in links.iter().enumerate() {
+        let at = format!("options.dataLinks[{i}]");
+        for (name, text, max) in [("field", &link.field, max_field), ("title", &link.title, MAX_TEXT_CHARS)] {
+            if text.trim().is_empty() {
+                return Err(format!("{at}.{name} must not be empty"));
+            }
+            check_text(&format!("{at}.{name}"), text, max, false)?;
+        }
+        check_text(&format!("{at}.url"), &link.url, MAX_DATA_LINK_URL_CHARS, false)?;
+        if !is_data_link_url(&link.url) {
+            return Err(format!("{at}.url must start with http://, https:// or / for a page of this server"));
+        }
+    }
+    Ok(())
 }
 
 /// Largest compiled size of a pattern: the crate's own default. The syntax check keeps Unicode-wide
@@ -830,6 +896,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         "documents" => {
             let o: ExplorerOptions = parse("options", options)?;
             check_graph_texts(&[("variable", &o.variable)])?;
+            check_data_links(o.data_links.as_ref(), MAX_FIELD_PATH_CHARS)?;
             match &o.variable_path {
                 Some(path) => check_text("options.variablePath", path, MAX_FIELD_PATH_CHARS, false),
                 None => Ok(()),
@@ -845,6 +912,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         "document" => {
             let o: CardOptions = parse("options", options)?;
             check_graph_texts(&[("variable", &o.variable)])?;
+            check_data_links(o.data_links.as_ref(), MAX_FIELD_PATH_CHARS)?;
             for (name, path) in [("titlePath", &o.title_path), ("variablePath", &o.variable_path)] {
                 if let Some(path) = path {
                     check_text(&format!("options.{name}"), path, MAX_FIELD_PATH_CHARS, false)?;
@@ -854,6 +922,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         }
         "network" | "hierarchy" => {
             let o: GraphOptions = parse("options", options)?;
+            check_data_links(o.data_links.as_ref(), MAX_GRAPH_TEXT_CHARS)?;
             check_graph_texts(&[
                 ("caption", &o.caption),
                 ("colorProperty", &o.color_property),
@@ -900,6 +969,7 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         }
         "path" => {
             let o: PathOptions = parse("options", options)?;
+            check_data_links(o.data_links.as_ref(), MAX_GRAPH_TEXT_CHARS)?;
             check_graph_texts(&[
                 ("caption", &o.caption),
                 ("variable", &o.variable),
@@ -1046,6 +1116,99 @@ mod tests {
             assert!(err.contains(expect), "{kind} {options}: {err}");
         }
         assert!(check("documents", &json!({}), &json!({ "anything": 1 })).unwrap_err().contains("fieldConfig"));
+    }
+
+    #[test]
+    fn data_links_of_document_and_graph_panels_pass() {
+        let links = json!([
+            { "field": "customer.id", "title": "Kunde", "url": "/dashboards/kunden?var-kunde=${__value}" },
+            { "field": "sku", "title": "Shop", "url": "https://shop.example/p/${__value}?f=${__field}", "newTab": true },
+            { "field": "x", "title": "Plain", "url": "HTTP://intranet/${kunde}", "newTab": false },
+            { "field": "x", "title": "Query", "url": "https://a.example:8443?q=${__value}#${kunde}" },
+        ]);
+        for kind in ["documents", "document", "network", "hierarchy", "path"] {
+            check(kind, &json!({ "dataLinks": links }), &json!({})).unwrap_or_else(|e| panic!("{kind}: {e}"));
+            check(kind, &json!({ "dataLinks": [] }), &json!({})).unwrap_or_else(|e| panic!("{kind}: {e}"));
+        }
+        let most = json!(vec![json!({ "field": "a", "title": "t", "url": "/x" }); MAX_DATA_LINKS]);
+        check("documents", &json!({ "dataLinks": most }), &json!({})).unwrap();
+    }
+
+    #[test]
+    fn unsafe_or_oversized_data_links_are_refused_on_every_panel_type() {
+        let link = |url: &str| json!({ "dataLinks": [{ "field": "id", "title": "Open", "url": url }] });
+        let refused_urls = [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            " javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox(1)",
+            "mailto:a@example.org",
+            "//evil.example/x",
+            "/\\evil.example",
+            "https:\\\\evil.example",
+            "https://",
+            "https:///path",
+            "https:evil",
+            "${__value}",
+            "${target}/x",
+            // A value or a variable in the host would choose the site.
+            "https://${__value}/x",
+            "https://shop.example${__value}",
+            "http://$host/x",
+            "https://user${__value}@shop.example/x",
+            "https://shop.example:${port}/x",
+            "https://?q=1",
+            "x/y",
+            "/a\nb",
+            "/a\tb",
+            "https://a.example/\u{7f}",
+            "",
+        ];
+        for kind in ["documents", "document", "network", "hierarchy", "path"] {
+            for url in refused_urls {
+                let err = check(kind, &link(url), &json!({})).unwrap_err();
+                assert!(err.contains("options.dataLinks[0].url"), "{kind} {url:?}: {err}");
+            }
+        }
+        let long_url = format!("https://a.example/{}", "x".repeat(MAX_DATA_LINK_URL_CHARS));
+        let too_many = json!(vec![json!({ "field": "a", "title": "t", "url": "/x" }); MAX_DATA_LINKS + 1]);
+        for (kind, options, expect) in [
+            ("documents", link(&long_url), "options.dataLinks[0].url"),
+            ("documents", json!({ "dataLinks": too_many }), "at most 20"),
+            ("document", json!({ "dataLinks": [{ "field": "", "title": "t", "url": "/x" }] }), "dataLinks[0].field"),
+            ("network", json!({ "dataLinks": [{ "field": "id", "title": " ", "url": "/x" }] }), "dataLinks[0].title"),
+            (
+                "documents",
+                json!({ "dataLinks": [{ "field": "p".repeat(MAX_FIELD_PATH_CHARS + 1), "title": "t", "url": "/x" }] }),
+                "dataLinks[0].field",
+            ),
+            (
+                "hierarchy",
+                json!({ "dataLinks": [{ "field": "p".repeat(MAX_GRAPH_TEXT_CHARS + 1), "title": "t", "url": "/x" }] }),
+                "dataLinks[0].field",
+            ),
+            (
+                "path",
+                json!({ "dataLinks": [{ "field": "id", "title": "x".repeat(MAX_TEXT_CHARS + 1), "url": "/x" }] }),
+                "dataLinks[0].title",
+            ),
+            (
+                "network",
+                json!({ "dataLinks": [{ "field": "id", "title": "a\u{0}", "url": "/x" }] }),
+                "control characters",
+            ),
+            (
+                "network",
+                json!({ "dataLinks": [{ "field": "id", "title": "t", "url": "/x", "target": "_top" }] }),
+                "unknown field",
+            ),
+            ("document", json!({ "dataLinks": [{ "field": "id", "title": "t" }] }), "options"),
+            ("documents", json!({ "dataLinks": "https://a.example" }), "options"),
+        ] {
+            let err = check(kind, &options, &json!({})).unwrap_err();
+            assert!(err.contains(expect), "{kind} {options}: {err}");
+        }
     }
 
     #[test]

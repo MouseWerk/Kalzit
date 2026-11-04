@@ -133,15 +133,23 @@ const MODE_TEXT: Record<string, MessageKey> = {
   "updates.mode_unsupported_platform": "admin.updates.mode.unsupported",
 };
 
-/** Installed from the deb or rpm: the text and the command that installs a release's package. */
-const PACKAGE_MODES: Record<string, { text: MessageKey; command: (version: string) => string }> = {
+/**
+ * Installed from the deb or rpm: the text and the command that installs a release's package for
+ * the server's processor (`x64` or `arm64`).
+ */
+interface PackageMode {
+  text: MessageKey;
+  command: (version: string, arch: string) => string;
+}
+
+const PACKAGE_MODES: Record<string, PackageMode> = {
   "updates.mode_deb": {
     text: "admin.updates.mode.deb",
-    command: (version) => `sudo apt install ./kalzit-${version}-linux-x64.deb`,
+    command: (version, arch) => `sudo apt install ./kalzit-${version}-linux-${arch}.deb`,
   },
   "updates.mode_rpm": {
     text: "admin.updates.mode.rpm",
-    command: (version) => `sudo dnf install ./kalzit-${version}-linux-x64.rpm`,
+    command: (version, arch) => `sudo dnf install ./kalzit-${version}-linux-${arch}.rpm`,
   },
 };
 
@@ -785,7 +793,7 @@ function ReleaseCard({
         <div className="updates-manual">
           <p>{t(packaged.text)}</p>
           <pre className="updates-mono updates-manual__command">
-            {packaged.command(release.version)}
+            {packaged.command(release.version, data.installed.arch)}
           </pre>
         </div>
       ) : data.mode.automatic || !release.staged ? null : (

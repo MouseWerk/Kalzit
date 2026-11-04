@@ -40,7 +40,7 @@
         { "id": "3.4", "wave": 3, "title": "Node shape per label", "done": true, "pr": 205 },
         { "id": "3.5", "wave": 3, "title": "Plugin panel events", "done": false },
         { "id": "3.6", "wave": 3, "title": "Load more for document results", "done": true, "pr": 222 },
-        { "id": "3.7", "wave": 3, "title": "Data links from documents and nodes", "done": false },
+        { "id": "3.7", "wave": 3, "title": "Data links from documents and nodes", "done": true },
         { "id": "3.8", "wave": 3, "title": "Audit log export", "done": false },
         { "id": "3.9", "wave": 3, "title": "Catalog categories and proxy switch", "done": false },
         { "id": "3.10", "wave": 3, "title": "Linux arm64 binary, deb and rpm", "done": false },

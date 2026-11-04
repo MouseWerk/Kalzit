@@ -2835,7 +2835,8 @@
     "type": "documents",
     "options": {
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -2846,7 +2847,8 @@
     "type": "documents",
     "options": {
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -2897,7 +2899,8 @@
     "type": "documents",
     "options": {
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -2912,7 +2915,8 @@
     "type": "documents",
     "options": {
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -2986,7 +2990,8 @@
     "type": "documents",
     "options": {
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -3053,7 +3058,33 @@
     "type": "documents",
     "options": {
       "variable": "customer",
-      "variablePath": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+      "variablePath": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+      "dataLinks": []
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "documents",
+    "options": {
+      "variable": "",
+      "variablePath": "",
+      "dataLinks": [
+        {
+          "field": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "url": "/dashboards/d-1?var-customer=${__value}&f=${__field}",
+          "newTab": false
+        },
+        {
+          "field": "id",
+          "title": "Shop",
+          "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
+          "newTab": true
+        }
+      ]
     },
     "fieldConfig": {
       "defaults": {},
@@ -3481,7 +3512,8 @@
     "options": {
       "titlePath": "",
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -3493,7 +3525,8 @@
     "options": {
       "titlePath": "",
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -3545,7 +3578,8 @@
     "options": {
       "titlePath": "",
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -3561,7 +3595,8 @@
     "options": {
       "titlePath": "",
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -3636,7 +3671,8 @@
     "options": {
       "titlePath": "",
       "variable": "",
-      "variablePath": ""
+      "variablePath": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -3704,7 +3740,34 @@
     "options": {
       "titlePath": "",
       "variable": "customer",
-      "variablePath": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+      "variablePath": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+      "dataLinks": []
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": "",
+      "variable": "",
+      "variablePath": "",
+      "dataLinks": [
+        {
+          "field": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "url": "/dashboards/d-1?var-customer=${__value}&f=${__field}",
+          "newTab": false
+        },
+        {
+          "field": "id",
+          "title": "Shop",
+          "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
+          "newTab": true
+        }
+      ]
     },
     "fieldConfig": {
       "defaults": {},
@@ -3744,7 +3807,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -3784,7 +3848,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -3864,7 +3929,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -3908,7 +3974,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4011,7 +4078,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4107,7 +4175,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4147,7 +4216,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4187,7 +4257,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4227,7 +4298,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4267,7 +4339,62 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "colorProperty": "",
+      "colorScheme": "blues",
+      "colorRange": "auto",
+      "colorMin": null,
+      "colorMax": null,
+      "labelColors": {},
+      "labelShapes": {},
+      "sizeBy": "degree",
+      "sizeMin": 4,
+      "sizeMax": 14,
+      "edgeWidthBy": "",
+      "arrows": "always",
+      "edgeLabels": "never",
+      "labels": "zoom",
+      "labelTop": 0,
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "clickAction": "details",
+      "clickDetails": true,
+      "variable": "",
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": [
+        {
+          "field": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "url": "/dashboards/d-1?var-customer=${__value}&f=${__field}",
+          "newTab": false
+        },
+        {
+          "field": "id",
+          "title": "Shop",
+          "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
+          "newTab": true
+        }
+      ]
     },
     "fieldConfig": {
       "defaults": {},
@@ -4307,7 +4434,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4347,7 +4475,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4427,7 +4556,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4471,7 +4601,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4574,7 +4705,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4670,7 +4802,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4710,7 +4843,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4750,7 +4884,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4790,7 +4925,8 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4830,7 +4966,62 @@
       "elkDirection": "down",
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
-      "elkEdgeRouting": "orthogonal"
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": []
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "colorProperty": "",
+      "colorScheme": "blues",
+      "colorRange": "auto",
+      "colorMin": null,
+      "colorMax": null,
+      "labelColors": {},
+      "labelShapes": {},
+      "sizeBy": "degree",
+      "sizeMin": 4,
+      "sizeMax": 14,
+      "edgeWidthBy": "",
+      "arrows": "always",
+      "edgeLabels": "never",
+      "labels": "zoom",
+      "labelTop": 0,
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "clickAction": "details",
+      "clickDetails": true,
+      "variable": "",
+      "variableProperty": "",
+      "hierarchyLayout": "kalzit",
+      "elkDirection": "down",
+      "elkNodeSpacing": 30,
+      "elkLayerSpacing": 80,
+      "elkEdgeRouting": "orthogonal",
+      "dataLinks": [
+        {
+          "field": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "url": "/dashboards/d-1?var-customer=${__value}&f=${__field}",
+          "newTab": false
+        },
+        {
+          "field": "id",
+          "title": "Shop",
+          "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
+          "newTab": true
+        }
+      ]
     },
     "fieldConfig": {
       "defaults": {},
@@ -4842,7 +5033,8 @@
     "options": {
       "caption": "",
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {},
@@ -4854,7 +5046,8 @@
     "options": {
       "caption": "",
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4906,7 +5099,8 @@
     "options": {
       "caption": "",
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4922,7 +5116,8 @@
     "options": {
       "caption": "",
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -4997,7 +5192,8 @@
     "options": {
       "caption": "",
       "variable": "",
-      "variableProperty": ""
+      "variableProperty": "",
+      "dataLinks": []
     },
     "fieldConfig": {
       "defaults": {
@@ -5066,6 +5262,32 @@
       "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "variable": "customer",
       "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "path",
+    "options": {
+      "caption": "",
+      "variable": "",
+      "variableProperty": "",
+      "dataLinks": [
+        {
+          "field": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "url": "/dashboards/d-1?var-customer=${__value}&f=${__field}",
+          "newTab": false
+        },
+        {
+          "field": "id",
+          "title": "Shop",
+          "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
+          "newTab": true
+        }
+      ]
     },
     "fieldConfig": {
       "defaults": {},

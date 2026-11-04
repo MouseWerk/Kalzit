@@ -213,7 +213,7 @@ never returned by the API. Plugins add further kinds (see below).
 
 - Windows installer (MSI) that sets up the Windows service with its own service account, in German
   or English; deb and rpm packages with a hardened systemd service for Debian, Ubuntu, Fedora and
-  RHEL; a Docker image.
+  RHEL on x86-64 and 64-bit ARM (arm64); a Docker image for amd64 and arm64.
 - HTTPS with your own certificate files or automatic certificates from Let's Encrypt or another
   ACME authority (HTTP-01 or TLS-ALPN-01), renewed without a restart.
 - High availability: several Kalzit servers on one PostgreSQL database behind a load balancer,
@@ -343,9 +343,11 @@ Your sign-ins, with this session marked and refused attempts with their reason.
 
 Run the container image (below), install the Windows service with the MSI package from the
 [releases](https://github.com/MouseWerk/Kalzit/releases) (see
-[the installation guide](docs/guide/installation.md#windows)), or build Kalzit from source. The
-result of a build is one binary, `kalzit` (`kalzit.exe` on Windows), with the web interface
-embedded.
+[the installation guide](docs/guide/installation.md#windows)), install the deb or rpm package
+on Linux, or build Kalzit from source. Each release has the Windows program for x64 and the
+Linux program with its deb and rpm for x64 and arm64
+([Linux packages](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm)). The result
+of a build is one binary, `kalzit` (`kalzit.exe` on Windows), with the web interface embedded.
 
 ### Docker
 
@@ -555,7 +557,7 @@ instance.
 
 The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (German).
 
-<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 22 of 68 plan items done. M7 Expansion: planned. M8 To be defined: planned. M9 Plugin store: planned."></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 23 of 68 plan items done. M7 Expansion: planned. M8 To be defined: planned. M9 Plugin store: planned."></picture>
 
 The bars come from [docs/roadmap/progress.json](docs/roadmap/progress.json); M6 counts the items of
 its plan that are merged.

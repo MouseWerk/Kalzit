@@ -1,10 +1,12 @@
 import { useId, useState } from "react";
 import { isRecord } from "../../api/client";
 import { DocumentTree } from "../../documents/DocumentTree";
-import { type Segment, valueAt, valueAtSegments } from "../../documents/paths";
+import { filterPath, type Segment, valueAt, valueAtSegments } from "../../documents/paths";
 import { MAX_PATH_CHARS } from "../../documents/projection";
 import { SetPicker, SetSummary } from "../../documents/shared";
 import { useI18n } from "../../i18n/i18n";
+import { DataLinksEditor, useLinkValues } from "../DataLinkViews";
+import { type DataLink, linksForField, linksForRecord, parseDataLinks } from "../dataLinks";
 import { usePanelHost } from "../host";
 import { EmptyPanel } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
@@ -27,6 +29,8 @@ export interface ExplorerOptions {
    * value, or `_id` for a whole document.
    */
   variablePath: string;
+  /** Links from a field (a dotted path in the document), offered while its value is selected. */
+  dataLinks: DataLink[];
 }
 
 export function parseExplorerOptions(stored: unknown): ExplorerOptions {
@@ -34,6 +38,7 @@ export function parseExplorerOptions(stored: unknown): ExplorerOptions {
   return {
     variable: clickOption(value.variable, MAX_VARIABLE_CHARS, true),
     variablePath: clickOption(value.variablePath, MAX_PATH_CHARS),
+    dataLinks: parseDataLinks(value.dataLinks, MAX_PATH_CHARS),
   };
 }
 
@@ -77,6 +82,9 @@ function ExplorerPanel({
 }: PanelProps<ExplorerOptions>) {
   const { t } = useI18n();
   const clicked = useClickVariable(options.variable);
+  const linkValues = useLinkValues();
+  // Options a page passes unparsed have none.
+  const dataLinks = options.dataLinks ?? [];
   const [index, setIndex] = useState(0);
   const [trail, setTrail] = useState<Drill[]>([]);
   const position = Math.min(index, documents.length - 1);
@@ -194,6 +202,19 @@ function ExplorerPanel({
             ? undefined
             : t("panels.variable.setAction", { name: clicked.variable })
         }
+        linksOf={
+          dataLinks.length === 0
+            ? undefined
+            : (item, segments, value) => {
+                // A link names a field of the whole document; a drilled-down list is part of it.
+                if (here === undefined && segments.length === 0) {
+                  const document = set.documents[item];
+                  return linksForRecord(dataLinks, (field) => valueAt(document, field), linkValues);
+                }
+                const full = here === undefined ? segments : [...here.segments, item, ...segments];
+                return linksForField(dataLinks, filterPath(full), value, linkValues);
+              }
+        }
       />
       {clicked.variable === null ? null : (
         <p className="visually-hidden" role="status" aria-live="polite">
@@ -232,6 +253,13 @@ function ExplorerEditor({ options, onChange }: PanelEditorProps<ExplorerOptions>
             }),
           )
         }
+      />
+      <DataLinksEditor
+        links={options.dataLinks}
+        fieldLabel={t("panels.dataLinks.field")}
+        fieldHint={t("panels.dataLinks.fieldHintDocuments")}
+        maxField={MAX_PATH_CHARS}
+        onChange={(dataLinks) => onChange({ ...options, dataLinks })}
       />
     </>
   );

@@ -1,4 +1,6 @@
 import { useI18n } from "../../i18n/i18n";
+import { DataLinkList } from "../DataLinkViews";
+import type { OpenLink } from "../dataLinks";
 import { propertyText } from "./adapter";
 import { edgeSummary, neighbourGroups, propertyType } from "./inspect";
 import type { Communities } from "./metrics";
@@ -57,6 +59,8 @@ export function NodeSheet({
   capped,
   expandText,
   moreText,
+  links = [],
+  edgeLinksOf,
   actions,
 }: {
   model: GraphModel;
@@ -80,6 +84,10 @@ export function NodeSheet({
   expandText: string | null;
   /** "Ada has 312 neighbours, 25 are loaded." for the primary node, or null. */
   moreText: string | null;
+  /** The data links of the primary node, from its properties. */
+  links?: readonly OpenLink[];
+  /** The data links of an edge (a model index), shown with the neighbour it leads to. */
+  edgeLinksOf?: (edge: number) => readonly OpenLink[];
   actions: SheetActions;
 }) {
   const { t, language } = useI18n();
@@ -143,6 +151,15 @@ export function NodeSheet({
                   ))}
                 </dl>
               )}
+              {links.length === 0 ? null : (
+                <>
+                  <h4 className="graph-sheet__heading">{t("panels.dataLinks.title")}</h4>
+                  <DataLinkList
+                    links={links}
+                    label={t("panels.dataLinks.of", { name: node.caption })}
+                  />
+                </>
+              )}
               <h4 className="graph-sheet__heading">{t("graph.sheet.metrics")}</h4>
               <dl className="graph__properties">
                 <div>
@@ -171,7 +188,13 @@ export function NodeSheet({
                   </div>
                 )}
               </dl>
-              <Neighbours model={model} view={view} node={node.node} actions={actions} />
+              <Neighbours
+                model={model}
+                view={view}
+                node={node.node}
+                actions={actions}
+                edgeLinksOf={edgeLinksOf}
+              />
               {moreText === null ? null : <p className="graph__note">{moreText}</p>}
               <div className="graph__actions">
                 {expandText === null || actions.expand === null ? null : (
@@ -333,11 +356,13 @@ function Neighbours({
   view,
   node,
   actions,
+  edgeLinksOf,
 }: {
   model: GraphModel;
   view: GraphView;
   node: number;
   actions: SheetActions;
+  edgeLinksOf?: ((edge: number) => readonly OpenLink[]) | undefined;
 }) {
   const { t, language } = useI18n();
   const number = new Intl.NumberFormat(language);
@@ -382,6 +407,10 @@ function Neighbours({
                       <span>{other.caption}</span>
                     )}
                     {summary === "" ? null : <span className="graph-sheet__muted">{summary}</span>}
+                    <DataLinkList
+                      links={edgeLinksOf?.(item.edge) ?? []}
+                      label={t("panels.dataLinks.of", { name: group.type })}
+                    />
                   </li>
                 );
               })}

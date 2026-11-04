@@ -131,16 +131,23 @@ interface PanelCardProps {
 function PanelViewHost({
   dashboardId,
   panelId,
+  values,
   children,
 }: {
   dashboardId: string;
   panelId: string | null;
+  /** The values this panel runs with (a repeat copy's own included), for its data links. */
+  values: VariableValues;
   children: ReactNode;
 }) {
   const host = usePanelHost();
   const value = useMemo(
-    () => (panelId === null ? host : { ...host, view: { dashboardId, panelId } }),
-    [host, dashboardId, panelId],
+    () => ({
+      ...host,
+      linkValues: values,
+      ...(panelId === null ? {} : { view: { dashboardId, panelId } }),
+    }),
+    [host, dashboardId, panelId, values],
   );
   return <PanelHostContext value={value}>{children}</PanelHostContext>;
 }
@@ -572,6 +579,7 @@ export function PanelCard({
             <PanelViewHost
               dashboardId={query.dashboardId}
               panelId={repeatValue === undefined && edit === undefined ? panel.id : null}
+              values={query.variables}
             >
               <PanelBody
                 panel={panel}
